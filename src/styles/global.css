@@ -1,0 +1,317 @@
+/*
+ * Global layout + base element styles. Colours flow exclusively through
+ * the theme tokens declared in `theme.css` — never hard-coded literals.
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--app-bg);
+  color: var(--app-fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
+    Ubuntu, "Helvetica Neue", sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+button {
+  font: inherit;
+  color: var(--button-fg);
+  background: var(--button-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) {
+  background: var(--button-hover-bg);
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+button.primary {
+  background: var(--button-primary-bg);
+  color: var(--button-primary-fg);
+  border-color: var(--button-primary-bg);
+}
+button.danger {
+  background: var(--button-danger-bg);
+  color: var(--button-danger-fg);
+  border-color: var(--button-danger-bg);
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  background: var(--input-bg);
+  color: var(--input-fg);
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--input-focus-border);
+}
+
+.legit-app-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--app-bg);
+  color: var(--app-fg);
+}
+
+.legit-splash {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  background: var(--app-bg);
+  color: var(--app-fg);
+}
+.legit-splash__inner {
+  text-align: center;
+}
+.legit-splash__title {
+  font-size: 28px;
+  font-weight: 600;
+}
+.legit-splash__subtitle {
+  margin-top: 8px;
+  color: var(--subtle-fg);
+}
+
+/* Panel chrome shared between every dockable panel. */
+.legit-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--panel-bg);
+  color: var(--panel-fg);
+}
+.legit-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+}
+.legit-panel__toolbar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--panel-border);
+  background: var(--panel-header-bg);
+  color: var(--panel-header-fg);
+}
+
+/* Repository tab strip. Three regions:
+ *   .legit-tabs__scroll   — flex: 1, horizontally scrollable
+ *   .legit-tabs__actions  — fixed right cluster (overflow menu, +, View)
+ *   .legit-tab            — individual tab with ellipsis on the name
+ */
+.legit-tabs {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--tab-border);
+  background: var(--tab-bg);
+  min-height: 32px;
+}
+.legit-tabs__scroll {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--panel-border) transparent;
+}
+.legit-tabs__scroll::-webkit-scrollbar {
+  height: 4px;
+}
+.legit-tabs__scroll::-webkit-scrollbar-thumb {
+  background: var(--panel-border);
+  border-radius: 2px;
+}
+.legit-tabs__actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  border-left: 1px solid var(--panel-border);
+  background: var(--tab-bg);
+}
+.legit-tabs__icon {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--subtle-fg);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 8px;
+  cursor: pointer;
+}
+.legit-tabs__icon:hover {
+  background: var(--button-hover-bg);
+  border-color: var(--panel-border);
+}
+
+.legit-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  max-width: 220px;
+  min-width: 80px;
+  color: var(--tab-fg);
+  border-right: 1px solid var(--tab-border);
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+}
+.legit-tab.is-active {
+  background: var(--tab-active-bg);
+  color: var(--tab-active-fg);
+}
+.legit-tab__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.legit-tab__close {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: inherit;
+  padding: 0 2px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.legit-tab__close:hover {
+  opacity: 1;
+  color: var(--error-fg);
+}
+
+/* Dockview customization. Drive dockview's own CSS variables so the
+ * tabs-and-actions container provides the *only* tab-row background;
+ * individual tabs are transparent unless they're the active one. */
+.dv-dockview {
+  --dv-tabs-and-actions-container-background-color: var(--tab-bg);
+  --dv-tabs-and-actions-container-height: 32px;
+  --dv-tabs-container-scrollbar-color: var(--panel-border);
+
+  --dv-activegroup-visiblepanel-tab-background-color: var(--tab-active-bg);
+  --dv-activegroup-visiblepanel-tab-color: var(--tab-active-fg);
+  --dv-activegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-activegroup-hiddenpanel-tab-color: var(--tab-fg);
+
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--tab-bg);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--tab-fg);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--tab-fg);
+
+  --dv-tab-divider-color: transparent;
+  --dv-separator-border: var(--panel-border);
+  --dv-group-view-background-color: var(--panel-bg);
+  --dv-paneview-active-outline-color: var(--accent);
+  --dv-drag-over-background-color: rgba(74, 158, 255, 0.22);
+  --dv-drag-over-border-color: var(--accent);
+  --dv-icon-hover-background-color: var(--button-hover-bg);
+}
+
+/* Centre tab content (title + close action stay together, centred as a pair). */
+.dv-dockview .dv-tab.dv-default-tab {
+  justify-content: center;
+  padding: 0 12px;
+}
+.dv-dockview .dv-default-tab .dv-default-tab-content {
+  flex: 0 1 auto;
+  text-align: center;
+}
+
+.legit-error {
+  color: var(--error-fg);
+  white-space: pre-wrap;
+}
+.legit-success {
+  color: var(--success-fg);
+}
+.legit-subtle {
+  color: var(--subtle-fg);
+}
+
+/* Theme Editor — palette rows. Explicit fixed sizing on the right-hand
+ * cells so the colour picker and the delete button never overlap, even when
+ * the colour-input rendering varies between platforms. */
+.palette-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px 36px 28px;
+  gap: 6px;
+  align-items: center;
+  padding: 2px 0;
+}
+.palette-row > * {
+  min-width: 0;
+}
+.palette-row__name {
+  width: 100%;
+}
+.palette-row__hex {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  width: 100%;
+}
+.palette-row__picker {
+  width: 36px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+.palette-row__picker:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.palette-row__delete {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--subtle-fg);
+  font-size: 16px;
+  line-height: 1;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.palette-row__delete:hover:not(:disabled) {
+  background: var(--button-hover-bg);
+  border-color: var(--panel-border);
+  color: var(--error-fg);
+}
+.palette-row__delete:disabled {
+  opacity: 0.3;
+  cursor: default;
+}

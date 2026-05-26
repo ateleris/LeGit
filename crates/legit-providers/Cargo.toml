@@ -1,0 +1,9 @@
+[package]
+name = "legit-providers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LeGit provider integrations (GitHub, GitLab, Bitbucket). Stub crate in v0.1."
+
+[dependencies]
+serde = { workspace = true }

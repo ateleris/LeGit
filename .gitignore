@@ -1,0 +1,39 @@
+# Rust
+/target
+**/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# Tauri
+/src-tauri/gen
+/src-tauri/target
+/src-tauri/WixTools
+
+# Node
+node_modules
+.pnpm-store
+
+# Frontend build
+dist
+dist-ssr
+
+# Generated specta bindings (regenerated on cargo build; kept out of VCS so
+# the manual wrappers in src/lib/commands.ts are the source of truth until
+# bindings stabilize).
+src/lib/bindings.ts
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.swp
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log

@@ -1,0 +1,489 @@
+//! `GitRunner` — the single chokepoint that invokes `git`.
+//!
+//! Execution only. Never parses. See DESIGN.md §3.1, §3.2.
+//!
+//! Every Git operation in LeGit (Console included) goes through this
+//! struct. Each invocation:
+//!
+//! - sets a hardened base environment (`GIT_EDITOR=false`,
+//!   `GIT_TERMINAL_PROMPT=0`, `LANG=C.UTF-8`) so subprocesses can't hang
+//!   waiting for prompts and ASCII parsers stay deterministic;
+//! - is logged via `tracing` with args, working dir, duration, exit code;
+//! - is cancellable through an `OperationId` recorded in the runner's
+//!   `running` map (the only thing the runner ever shares between callers).
+
+use serde::{Deserialize, Serialize};
+use specta::Type;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+use thiserror::Error;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
+use tokio::sync::{mpsc, oneshot};
+use tracing::{debug, error, info, instrument, warn};
+use uuid::Uuid;
+
+/// Minimum supported `git` version (DESIGN.md §7.6 — set for SSH signing).
+pub const MIN_SUPPORTED_GIT_VERSION: (u32, u32, u32) = (2, 34, 0);
+
+/// Stable identifier for an in-flight `git` invocation. Used for cancellation
+/// and for keying progress events emitted to the UI.
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(transparent)]
+pub struct OperationId(pub String);
+
+impl OperationId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4().to_string())
+    }
+}
+
+impl Default for OperationId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for OperationId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Raw output from a one-shot `git` invocation.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct RunOutput {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: Option<i32>,
+    pub success: bool,
+    pub duration_ms: u64,
+}
+
+/// Streaming event emitted while a `git` invocation is in flight.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RunnerEvent {
+    Stdout { line: String },
+    Stderr { line: String },
+    Finished {
+        exit_code: Option<i32>,
+        success: bool,
+        duration_ms: u64,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum RunnerError {
+    #[error("failed to spawn git: {0}")]
+    Spawn(#[source] std::io::Error),
+
+    #[error("git io error: {0}")]
+    Io(#[source] std::io::Error),
+
+    #[error("git executable not found at {0}")]
+    GitNotFound(PathBuf),
+
+    #[error("operation cancelled")]
+    Cancelled,
+}
+
+/// In-flight operation handle stored in the runner's cancellation map.
+struct RunningOp {
+    /// One-shot signal that asks the spawn task to kill the child.
+    kill: oneshot::Sender<()>,
+}
+
+/// `GitRunner` is bound to a working directory (typically a repo's working
+/// tree). The same runner type is also used for the unbound startup check —
+/// see `check_version`.
+#[derive(Clone)]
+pub struct GitRunner {
+    git_path: PathBuf,
+    cwd: Option<PathBuf>,
+    base_env: Arc<Vec<(String, String)>>,
+    running: Arc<Mutex<HashMap<OperationId, RunningOp>>>,
+}
+
+impl GitRunner {
+    /// Build a runner for a specific repository working tree.
+    pub fn for_repo(git_path: impl Into<PathBuf>, cwd: impl Into<PathBuf>) -> Self {
+        Self {
+            git_path: git_path.into(),
+            cwd: Some(cwd.into()),
+            base_env: Arc::new(default_base_env()),
+            running: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Build a runner without a working directory — used for `git --version`
+    /// and other invocations that should not be bound to a repo.
+    pub fn unbound(git_path: impl Into<PathBuf>) -> Self {
+        Self {
+            git_path: git_path.into(),
+            cwd: None,
+            base_env: Arc::new(default_base_env()),
+            running: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub fn git_path(&self) -> &Path {
+        &self.git_path
+    }
+
+    pub fn cwd(&self) -> Option<&Path> {
+        self.cwd.as_deref()
+    }
+
+    /// Run a one-shot `git` invocation and collect the full output.
+    #[instrument(level = "info", skip(self), fields(cwd = ?self.cwd, args = ?args))]
+    pub async fn run(&self, args: &[&str]) -> Result<RunOutput, RunnerError> {
+        self.run_with_op(args, OperationId::new()).await
+    }
+
+    /// Run a one-shot `git` invocation under a caller-supplied operation id,
+    /// so the caller can cancel it.
+    pub async fn run_with_op(
+        &self,
+        args: &[&str],
+        op_id: OperationId,
+    ) -> Result<RunOutput, RunnerError> {
+        let started = Instant::now();
+        let mut cmd = self.build_command(args);
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        let mut child = cmd.spawn().map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                RunnerError::GitNotFound(self.git_path.clone())
+            } else {
+                RunnerError::Spawn(e)
+            }
+        })?;
+
+        let (kill_tx, kill_rx) = oneshot::channel();
+        self.insert_running(op_id.clone(), kill_tx);
+
+        let stdout = child.stdout.take().expect("stdout piped");
+        let stderr = child.stderr.take().expect("stderr piped");
+
+        let stdout_task = tokio::spawn(read_to_string(stdout));
+        let stderr_task = tokio::spawn(read_to_string(stderr));
+
+        let exit_code = tokio::select! {
+            _ = kill_rx => {
+                warn!(op_id = %op_id, "git invocation cancelled — killing child");
+                let _ = child.start_kill();
+                let status = child.wait().await.map_err(RunnerError::Io)?;
+                self.remove_running(&op_id);
+                let stdout = stdout_task.await.unwrap_or_default();
+                let stderr = stderr_task.await.unwrap_or_default();
+                log_invocation(args, started, status.code(), false, &stderr);
+                return Ok(RunOutput {
+                    stdout,
+                    stderr,
+                    exit_code: status.code(),
+                    success: false,
+                    duration_ms: started.elapsed().as_millis() as u64,
+                });
+            }
+            status = child.wait() => {
+                status.map_err(RunnerError::Io)?
+            }
+        };
+
+        self.remove_running(&op_id);
+
+        let stdout = stdout_task.await.unwrap_or_default();
+        let stderr = stderr_task.await.unwrap_or_default();
+
+        log_invocation(args, started, exit_code.code(), exit_code.success(), &stderr);
+
+        Ok(RunOutput {
+            stdout,
+            stderr,
+            exit_code: exit_code.code(),
+            success: exit_code.success(),
+            duration_ms: started.elapsed().as_millis() as u64,
+        })
+    }
+
+    /// Stream stdout/stderr line-by-line through `events_tx`.
+    ///
+    /// Sends `RunnerEvent::Finished` exactly once before returning.
+    pub async fn stream(
+        &self,
+        args: &[&str],
+        op_id: OperationId,
+        events_tx: mpsc::UnboundedSender<RunnerEvent>,
+    ) -> Result<i32, RunnerError> {
+        let started = Instant::now();
+        let mut cmd = self.build_command(args);
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        let mut child = cmd.spawn().map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                RunnerError::GitNotFound(self.git_path.clone())
+            } else {
+                RunnerError::Spawn(e)
+            }
+        })?;
+
+        let (kill_tx, kill_rx) = oneshot::channel();
+        self.insert_running(op_id.clone(), kill_tx);
+
+        let stdout = child.stdout.take().expect("stdout piped");
+        let stderr = child.stderr.take().expect("stderr piped");
+
+        let stdout_tx = events_tx.clone();
+        let stdout_task = tokio::spawn(async move {
+            let mut lines = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if stdout_tx.send(RunnerEvent::Stdout { line }).is_err() {
+                    break;
+                }
+            }
+        });
+
+        let stderr_tx = events_tx.clone();
+        let stderr_task = tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if stderr_tx.send(RunnerEvent::Stderr { line }).is_err() {
+                    break;
+                }
+            }
+        });
+
+        let status = tokio::select! {
+            _ = kill_rx => {
+                warn!(op_id = %op_id, "streaming git invocation cancelled — killing child");
+                let _ = child.start_kill();
+                child.wait().await.map_err(RunnerError::Io)?
+            }
+            status = child.wait() => {
+                status.map_err(RunnerError::Io)?
+            }
+        };
+
+        self.remove_running(&op_id);
+
+        // Drain reader tasks.
+        let _ = stdout_task.await;
+        let _ = stderr_task.await;
+
+        let exit_code = status.code();
+        log_invocation(args, started, exit_code, status.success(), "<streamed>");
+
+        let _ = events_tx.send(RunnerEvent::Finished {
+            exit_code,
+            success: status.success(),
+            duration_ms: started.elapsed().as_millis() as u64,
+        });
+
+        Ok(exit_code.unwrap_or(-1))
+    }
+
+    /// Cancel an in-flight operation. Returns `true` if the id was found.
+    pub fn cancel(&self, op_id: &OperationId) -> bool {
+        let removed = self
+            .running
+            .lock()
+            .expect("running map poisoned")
+            .remove(op_id);
+        if let Some(op) = removed {
+            let _ = op.kill.send(());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Number of in-flight operations against this runner.
+    pub fn in_flight(&self) -> usize {
+        self.running
+            .lock()
+            .expect("running map poisoned")
+            .len()
+    }
+
+    fn build_command(&self, args: &[&str]) -> Command {
+        let mut cmd = Command::new(&self.git_path);
+        cmd.args(args);
+        if let Some(cwd) = &self.cwd {
+            cmd.current_dir(cwd);
+        }
+        cmd.env_clear();
+        // Preserve a minimal PATH so credential helpers etc. resolve.
+        if let Ok(path) = std::env::var("PATH") {
+            cmd.env("PATH", path);
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            cmd.env("HOME", home);
+        }
+        if let Ok(user) = std::env::var("USER") {
+            cmd.env("USER", user);
+        }
+        if let Ok(userprofile) = std::env::var("USERPROFILE") {
+            cmd.env("USERPROFILE", userprofile);
+        }
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            cmd.env("APPDATA", appdata);
+        }
+        for (k, v) in self.base_env.iter() {
+            cmd.env(k, v);
+        }
+        cmd.kill_on_drop(true);
+        cmd
+    }
+
+    fn insert_running(&self, op_id: OperationId, kill: oneshot::Sender<()>) {
+        self.running
+            .lock()
+            .expect("running map poisoned")
+            .insert(op_id, RunningOp { kill });
+    }
+
+    fn remove_running(&self, op_id: &OperationId) {
+        self.running
+            .lock()
+            .expect("running map poisoned")
+            .remove(op_id);
+    }
+}
+
+/// Default base environment applied to every `git` invocation (DESIGN.md §3.2).
+fn default_base_env() -> Vec<(String, String)> {
+    vec![
+        ("GIT_EDITOR".to_string(), "false".to_string()),
+        ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
+        ("GIT_ASKPASS".to_string(), "echo".to_string()),
+        ("LANG".to_string(), "C.UTF-8".to_string()),
+        ("LC_ALL".to_string(), "C.UTF-8".to_string()),
+    ]
+}
+
+async fn read_to_string<R: tokio::io::AsyncRead + Unpin>(reader: R) -> String {
+    use tokio::io::AsyncReadExt;
+    let mut buf = String::new();
+    let mut reader = reader;
+    let _ = reader.read_to_string(&mut buf).await;
+    buf
+}
+
+fn log_invocation(
+    args: &[&str],
+    started: Instant,
+    exit_code: Option<i32>,
+    success: bool,
+    stderr_summary: &str,
+) {
+    let duration_ms = started.elapsed().as_millis();
+    if success {
+        info!(
+            duration_ms,
+            exit_code = exit_code.unwrap_or(-1),
+            args = ?args,
+            "git ok",
+        );
+    } else {
+        let snippet: String = stderr_summary.lines().take(5).collect::<Vec<_>>().join(" | ");
+        error!(
+            duration_ms,
+            exit_code = exit_code.unwrap_or(-1),
+            args = ?args,
+            stderr = %snippet,
+            "git failed",
+        );
+    }
+    debug!(?args, duration_ms, "git invocation complete");
+}
+
+/// Parsed `git --version` output.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct GitVersion {
+    pub raw: String,
+    pub major: u32,
+    pub minor: u32,
+    pub patch: u32,
+}
+
+impl GitVersion {
+    pub fn tuple(&self) -> (u32, u32, u32) {
+        (self.major, self.minor, self.patch)
+    }
+
+    pub fn meets_minimum(&self) -> bool {
+        self.tuple() >= MIN_SUPPORTED_GIT_VERSION
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        // `git version 2.43.0 (Apple Git-... )` or `git version 2.43.0.windows.1`.
+        let after = raw.split_whitespace().nth(2)?;
+        let core = after.split(|c: char| !c.is_ascii_digit() && c != '.').next()?;
+        let mut parts = core.split('.').map(|p| p.parse::<u32>().ok());
+        let major = parts.next().flatten()?;
+        let minor = parts.next().flatten()?;
+        let patch = parts.next().flatten().unwrap_or(0);
+        Some(Self {
+            raw: raw.trim().to_string(),
+            major,
+            minor,
+            patch,
+        })
+    }
+}
+
+impl GitRunner {
+    /// Run `git --version` and parse the result. Returns `Err(GitNotFound)`
+    /// if the executable cannot be spawned.
+    pub async fn check_version(&self) -> Result<GitVersion, RunnerError> {
+        let output = self.run(&["--version"]).await?;
+        let parsed = GitVersion::parse(output.stdout.trim()).ok_or_else(|| {
+            RunnerError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("could not parse `git --version` output: {:?}", output.stdout),
+            ))
+        })?;
+        info!(version = %parsed.raw, "resolved git");
+        Ok(parsed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_standard_version_string() {
+        let v = GitVersion::parse("git version 2.43.0").unwrap();
+        assert_eq!(v.tuple(), (2, 43, 0));
+        assert!(v.meets_minimum());
+    }
+
+    #[test]
+    fn parses_apple_git_suffix() {
+        let v = GitVersion::parse("git version 2.39.3 (Apple Git-145)").unwrap();
+        assert_eq!(v.tuple(), (2, 39, 3));
+    }
+
+    #[test]
+    fn parses_windows_suffix() {
+        let v = GitVersion::parse("git version 2.45.0.windows.1").unwrap();
+        assert_eq!(v.tuple(), (2, 45, 0));
+    }
+
+    #[test]
+    fn rejects_below_minimum() {
+        let v = GitVersion::parse("git version 2.33.0").unwrap();
+        assert!(!v.meets_minimum());
+    }
+
+    #[test]
+    fn rejects_junk() {
+        assert!(GitVersion::parse("hello").is_none());
+        assert!(GitVersion::parse("git version xyz").is_none());
+    }
+}

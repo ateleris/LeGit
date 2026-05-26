@@ -1,0 +1,46 @@
+[package]
+name = "legit-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LeGit desktop application (Tauri 2.x)."
+default-run = "legit-app"
+
+[lib]
+# Required so that `tauri::generate_context!()` works on mobile targets,
+# and to make `cargo test` exercise the lib without launching the binary.
+name = "legit_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
+
+legit-core = { workspace = true }
+legit-providers = { workspace = true }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+async-trait = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+specta = { workspace = true }
+specta-typescript = { workspace = true }
+
+shlex = "1"
+which = "6"
+dirs = "5"
+
+[features]
+# Used by tauri-build to emit cfg flags.
+custom-protocol = ["tauri/custom-protocol"]

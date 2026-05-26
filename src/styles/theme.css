@@ -1,0 +1,65 @@
+/*
+ * Fallback theme variables. These match the built-in Dark theme so the app
+ * renders sensibly before the user's chosen theme is loaded. Once
+ * `applyTheme` runs, these are replaced.
+ *
+ * Per DESIGN.md §6.2: no component anywhere uses a literal colour — only
+ * `var(--<token>)`. The lint rule that enforces this lives at the
+ * project level (TODO once the codebase has more CSS).
+ */
+:root {
+  /* Palette */
+  --palette-main-bg: #1e1e1e;
+  --palette-main-fg: #e0e0e0;
+  --palette-panel-bg: #252526;
+  --palette-panel-border: #333333;
+  --palette-accent: #4a9eff;
+  --palette-accent-fg: #ffffff;
+  --palette-danger: #e58e26;
+  --palette-success: #3498db;
+  --palette-warning: #f1fa8c;
+  --palette-subtle-fg: #888888;
+  --palette-input-bg: #2d2d30;
+  --palette-console-bg: #1a1a1a;
+  --palette-stderr-fg: #e58e26;
+
+  /* Tokens */
+  --app-bg: var(--palette-main-bg);
+  --app-fg: var(--palette-main-fg);
+  --panel-bg: var(--palette-panel-bg);
+  --panel-fg: var(--palette-main-fg);
+  --panel-border: var(--palette-panel-border);
+  --panel-header-bg: var(--palette-panel-bg);
+  --panel-header-fg: var(--palette-main-fg);
+  --tab-bg: var(--palette-panel-bg);
+  --tab-fg: var(--palette-subtle-fg);
+  --tab-active-bg: var(--palette-accent);
+  --tab-active-fg: var(--palette-accent-fg);
+  --tab-border: var(--palette-panel-border);
+  --button-bg: var(--palette-panel-bg);
+  --button-fg: var(--palette-main-fg);
+  --button-hover-bg: var(--palette-input-bg);
+  --button-primary-bg: var(--palette-accent);
+  --button-primary-fg: var(--palette-accent-fg);
+  --button-danger-bg: var(--palette-danger);
+  --button-danger-fg: var(--palette-main-bg);
+  --input-bg: var(--palette-input-bg);
+  --input-fg: var(--palette-main-fg);
+  --input-border: var(--palette-panel-border);
+  --input-focus-border: var(--palette-accent);
+  --console-bg: var(--palette-console-bg);
+  --console-fg: var(--palette-main-fg);
+  --console-stdout-fg: var(--palette-main-fg);
+  --console-stderr-fg: var(--palette-stderr-fg);
+  --console-prompt-fg: var(--palette-accent);
+  --subtle-fg: var(--palette-subtle-fg);
+  --error-fg: var(--palette-danger);
+  --success-fg: var(--palette-success);
+  --warning-fg: var(--palette-warning);
+  --diff-added-bg: var(--palette-success);
+  --diff-added-fg: var(--palette-main-fg);
+  --diff-removed-bg: var(--palette-danger);
+  --diff-removed-fg: var(--palette-main-fg);
+  --branch-current-fg: var(--palette-accent);
+  --commit-signed-indicator: var(--palette-success);
+}
