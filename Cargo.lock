@@ -1730,6 +1730,7 @@ dependencies = [
  "legit-providers",
  "serde",
  "serde_json",
+ "sha2",
  "shlex",
  "specta",
  "specta-typescript",

@@ -3,29 +3,29 @@ import type { IDockviewPanelProps } from "dockview-react";
 import { ConsolePanel } from "./Console/ConsolePanel";
 import { RepositoriesPanel } from "./Repositories/RepositoriesPanel";
 import { ThemeEditorPanel } from "./ThemeEditor/ThemeEditorPanel";
-import { SettingsPanel } from "./Settings/SettingsPanel";
+import { GlobalSettingsPanel } from "./Settings/GlobalSettingsPanel";
+import { RepoSettingsPanel } from "./Settings/RepoSettingsPanel";
 
-/** Panel descriptor used by both dockview's component map and the
- *  "Add panel" menu in the tab strip. */
 export interface PanelDescriptor {
-  /** Stable identifier — also used as dockview's `component` string. */
   id: string;
-  /** Human-readable name shown in tabs. */
   title: string;
-  /** Available in v0.1. */
-  shipInV0_1: boolean;
+  scope: "global" | "repo";
 }
 
-export const PANELS: PanelDescriptor[] = [
-  { id: "repositories", title: "Repositories", shipInV0_1: true },
-  { id: "console", title: "Git Console", shipInV0_1: true },
-  { id: "theme-editor", title: "Theme Editor", shipInV0_1: true },
-  { id: "settings", title: "Settings", shipInV0_1: true },
+export const GLOBAL_PANELS: PanelDescriptor[] = [
+  { id: "repositories", title: "Repositories", scope: "global" },
+  { id: "theme-editor", title: "Theme Editor", scope: "global" },
+  { id: "global-settings", title: "Global Settings", scope: "global" },
 ];
 
-// Dockview's components map expects components that *accept* IDockviewPanelProps.
-// Our panel components ignore the props; the wrappers below are the type
-// adapter so each panel can be a normal React component internally.
+export const REPO_PANELS: PanelDescriptor[] = [
+  { id: "console", title: "Git Console", scope: "repo" },
+  { id: "repo-settings", title: "Repo Settings", scope: "repo" },
+];
+
+/** All panels, for menus that need to enumerate both docks. */
+export const ALL_PANELS = [...GLOBAL_PANELS, ...REPO_PANELS];
+
 const wrap = (
   Inner: FunctionComponent
 ): FunctionComponent<IDockviewPanelProps> => {
@@ -34,12 +34,19 @@ const wrap = (
   return Wrapped;
 };
 
-export const DOCKVIEW_COMPONENTS: Record<
+export const GLOBAL_DOCKVIEW_COMPONENTS: Record<
   string,
   FunctionComponent<IDockviewPanelProps>
 > = {
   repositories: wrap(RepositoriesPanel),
-  console: wrap(ConsolePanel),
   "theme-editor": wrap(ThemeEditorPanel),
-  settings: wrap(SettingsPanel),
+  "global-settings": wrap(GlobalSettingsPanel),
+};
+
+export const REPO_DOCKVIEW_COMPONENTS: Record<
+  string,
+  FunctionComponent<IDockviewPanelProps>
+> = {
+  console: wrap(ConsolePanel),
+  "repo-settings": wrap(RepoSettingsPanel),
 };

@@ -1,8 +1,8 @@
 //! LeGit Tauri application entry point.
 //!
-//! `run()` wires the dependency tree described in `DESIGN.md`: resolve the
-//! `git` binary (§7.6), construct the multi-repo `AppState` (§4.1), register
-//! the typed Tauri commands (interface layer), and hand off to Tauri.
+//! `run()` wires the dependency tree described in the design documents:
+//! resolve the `git` binary, construct the scoped `AppState`, register the
+//! typed Tauri commands, and hand off to Tauri.
 
 mod commands;
 mod error;
@@ -11,7 +11,7 @@ mod state;
 
 use std::path::PathBuf;
 
-use state::{AppSettings, AppState};
+use state::{GlobalSettings, AppState, SystemInfo};
 use tauri::Manager;
 use tauri_specta::{collect_commands, Builder};
 use tracing_subscriber::EnvFilter;
@@ -19,8 +19,6 @@ use tracing_subscriber::EnvFilter;
 pub fn run() {
     init_tracing();
 
-    // Specta builder. Lists every command exposed to the frontend; the
-    // resulting TS bindings file is written on debug builds.
     let specta_builder = Builder::<tauri::Wry>::new().commands(collect_commands![
         commands::open_repo,
         commands::close_repo,
@@ -32,13 +30,22 @@ pub fn run() {
         commands::console_cancel,
         commands::git_status_check,
         commands::set_git_path,
-        commands::get_settings,
+        commands::set_repo_git_path,
+        commands::get_global_settings,
+        commands::get_repo_settings,
+        commands::update_repo_settings,
         commands::set_active_theme,
-        commands::save_layout,
+        commands::save_global_layout,
+        commands::save_repo_layout,
+        commands::save_region_state,
         commands::list_themes,
         commands::load_theme,
         commands::save_theme,
         commands::delete_theme,
+        commands::repo_line_endings_view,
+        commands::global_line_endings_view,
+        commands::repo_write_line_endings,
+        commands::global_write_line_endings,
     ]);
 
     #[cfg(debug_assertions)]
@@ -60,18 +67,20 @@ pub fn run() {
         .setup(move |app| {
             specta_builder.mount_events(app);
 
-            let (settings_path, user_themes_dir, builtin_themes_dir) =
+            let (global_settings_path, repos_data_dir, user_themes_dir, builtin_themes_dir) =
                 commands::resolve_dirs(&app.handle());
 
-            // Load settings synchronously so the rest of startup sees the
-            // user's git_path_override.
-            let settings = load_settings_sync(&settings_path);
-            let git_path_override = settings.git_path_override.as_deref().map(PathBuf::from);
-            let resolved_git_path = git_resolve::resolve_git_path(git_path_override.as_ref());
+            let global_settings = load_global_settings_sync(&global_settings_path);
+            let git_override = global_settings.git_path_override.as_deref().map(PathBuf::from);
+            let resolved_git_path = git_resolve::resolve_git_path(git_override.as_ref());
+            let system_info = SystemInfo {
+                system_git_path: git_resolve::resolve_git_path(None),
+            };
 
             tracing::info!(
                 resolved_git_path = %resolved_git_path.display(),
-                settings_path = %settings_path.display(),
+                global_settings_path = %global_settings_path.display(),
+                repos_data_dir = %repos_data_dir.display(),
                 user_themes_dir = %user_themes_dir.display(),
                 builtin_themes_dir = %builtin_themes_dir.display(),
                 "legit startup",
@@ -79,10 +88,12 @@ pub fn run() {
 
             let state = AppState::new(
                 resolved_git_path,
-                settings,
-                settings_path,
+                global_settings,
+                global_settings_path,
+                repos_data_dir,
                 user_themes_dir,
                 builtin_themes_dir,
+                system_info,
             );
             app.manage(state);
             Ok(())
@@ -91,20 +102,20 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-fn load_settings_sync(path: &std::path::Path) -> AppSettings {
+fn load_global_settings_sync(path: &std::path::Path) -> GlobalSettings {
     match std::fs::read(path) {
-        Ok(bytes) => match serde_json::from_slice::<AppSettings>(&bytes) {
+        Ok(bytes) => match serde_json::from_slice::<GlobalSettings>(&bytes) {
             Ok(s) => s,
             Err(e) => {
                 tracing::warn!(
                     err = %e,
                     path = %path.display(),
-                    "settings.json is malformed — starting with defaults",
+                    "global-settings.json is malformed — starting with defaults",
                 );
-                AppSettings::default()
+                GlobalSettings::default()
             }
         },
-        Err(_) => AppSettings::default(),
+        Err(_) => GlobalSettings::default(),
     }
 }
 

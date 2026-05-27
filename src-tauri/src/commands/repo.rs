@@ -1,11 +1,64 @@
-//! Multi-repo session commands. Every command takes a `repo_id` (DESIGN.md
-//! §4.1) — the centralized lookup-or-error is `AppState::get_session`.
+//! Multi-repo session commands.
+//! Every repo command takes a `repo_id`; global scope takes none.
+//! See DESIGN-v0.2.md §D.3.
 
 use crate::error::AppError;
-use crate::state::{AppState, RepoSession, RepoSummary};
+use crate::state::{
+    load_repo_settings_sync, persist_repo_settings, AppState, RepoSession, RepoSettings,
+    RepoSummary,
+};
 use legit_core::GitRunner;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Resolve the git binary for a specific repo: repo override → global.
+/// Falls back to `global_git_path` if the override path doesn't exist.
+pub fn resolve_repo_git_path(
+    repo_settings: &RepoSettings,
+    global_git_path: &std::path::Path,
+) -> PathBuf {
+    if let Some(ref ov) = repo_settings.git_path_override {
+        let p = PathBuf::from(ov);
+        if p.exists() {
+            return p;
+        }
+        tracing::warn!(
+            override_path = ?p,
+            "repo git path override does not exist — falling back to global"
+        );
+    }
+    global_git_path.to_path_buf()
+}
+
+/// Open (or reuse) a session for `toplevel`, loading its `RepoSettings`
+/// and resolving the git binary through the scope hierarchy.
+pub async fn open_session(
+    state: &AppState,
+    global_git_path: PathBuf,
+    toplevel: PathBuf,
+) -> RepoSummary {
+    let (_, settings_path) = state.repo_data_paths(&toplevel);
+    let repo_settings = load_repo_settings_sync(&settings_path);
+    let resolved_git = resolve_repo_git_path(&repo_settings, &global_git_path);
+
+    let runner = Arc::new(GitRunner::for_repo(resolved_git, &toplevel));
+    let session = Arc::new(RepoSession::new(toplevel, runner, repo_settings, settings_path));
+    let summary = session.summary();
+    state
+        .repos
+        .write()
+        .await
+        .insert(session.id.clone(), session);
+    summary
+}
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
 
 #[tauri::command]
 #[specta::specta]
@@ -31,8 +84,7 @@ pub async fn open_repo(
     }
     let toplevel = PathBuf::from(out.stdout.trim());
 
-    // If a session for this canonical path is already open, reuse it.
-    // The lock is dropped before any further work.
+    // Reuse an existing session for this canonical path if one is open.
     let existing_summary = {
         let repos = state.repos.read().await;
         repos
@@ -45,34 +97,21 @@ pub async fn open_repo(
         tracing::info!(path = %toplevel.display(), id = %s.id, "open_repo: reusing existing session");
         s
     } else {
-        let runner = Arc::new(GitRunner::for_repo(git_path, &toplevel));
-        let session = Arc::new(RepoSession::new(toplevel, runner));
-        let summary = session.summary();
-        state
-            .repos
-            .write()
-            .await
-            .insert(session.id.clone(), session);
-        summary
+        open_session(&state, git_path, toplevel).await
     };
 
-    // Bump the path to the front of the recents list and remember it as
-    // currently-open so it's restored on next launch. Both updates are
-    // independent of new-vs-reused — the user explicitly asked to open it.
     {
-        let mut settings = state.settings.write().await;
+        let mut settings = state.global_settings.write().await;
         let p = summary.path.clone();
         settings.last_open_repos.retain(|other| other != &p);
         settings.last_open_repos.insert(0, p.clone());
         settings.last_open_repos.truncate(20);
-
         if !settings.currently_open.iter().any(|x| x == &p) {
             settings.currently_open.push(p.clone());
         }
-        // Opening a repo activates it.
         settings.active_open_repo = Some(p);
     }
-    state.persist_settings().await.ok();
+    state.persist_global_settings().await.ok();
 
     Ok(summary)
 }
@@ -91,16 +130,13 @@ pub async fn close_repo(
         .map(|s| s.path.to_string_lossy().to_string());
 
     if let Some(path) = path {
-        let mut settings = state.settings.write().await;
+        let mut settings = state.global_settings.write().await;
         settings.currently_open.retain(|p| p != &path);
-        // If the closed repo was the active one, fall back to the next open
-        // path (the frontend will reconcile by picking from the resulting
-        // session list anyway).
         if settings.active_open_repo.as_deref() == Some(path.as_str()) {
             settings.active_open_repo = settings.currently_open.last().cloned();
         }
     }
-    state.persist_settings().await.ok();
+    state.persist_global_settings().await.ok();
     Ok(())
 }
 
@@ -121,10 +157,10 @@ pub async fn set_active_repo(
         None
     };
     {
-        let mut settings = state.settings.write().await;
+        let mut settings = state.global_settings.write().await;
         settings.active_open_repo = path;
     }
-    state.persist_settings().await.ok();
+    state.persist_global_settings().await.ok();
     Ok(())
 }
 
@@ -144,28 +180,23 @@ pub async fn list_repos(
 pub async fn recent_repos(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<String>, AppError> {
-    let settings = state.settings.read().await;
+    let settings = state.global_settings.read().await;
     Ok(settings.last_open_repos.clone())
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct RestoreResult {
     pub repos: Vec<RepoSummary>,
-    /// Id of the session matching the persisted active path, if any.
     pub active_id: Option<String>,
 }
 
-/// Re-open every repo that was open at last shutdown. Paths that no longer
-/// exist (or no longer pass `git rev-parse`) are dropped from settings so
-/// the broken entries don't accumulate. The returned `active_id` (if any)
-/// matches the persisted active-repo path.
 #[tauri::command]
 #[specta::specta]
 pub async fn restore_open_repos(
     state: tauri::State<'_, AppState>,
 ) -> Result<RestoreResult, AppError> {
     let (paths, persisted_active) = {
-        let s = state.settings.read().await;
+        let s = state.global_settings.read().await;
         (s.currently_open.clone(), s.active_open_repo.clone())
     };
     let git_path = state.git_path.read().await.clone();
@@ -201,15 +232,7 @@ pub async fn restore_open_repos(
         let summary = if let Some(s) = existing {
             s
         } else {
-            let runner = Arc::new(GitRunner::for_repo(git_path.clone(), &toplevel));
-            let session = Arc::new(RepoSession::new(toplevel.clone(), runner));
-            let summary = session.summary();
-            state
-                .repos
-                .write()
-                .await
-                .insert(session.id.clone(), session);
-            summary
+            open_session(&state, git_path.clone(), toplevel.clone()).await
         };
         still_valid.push(summary.path.clone());
         if persisted_active.as_deref() == Some(summary.path.as_str()) {
@@ -218,15 +241,12 @@ pub async fn restore_open_repos(
         summaries.push(summary);
     }
 
-    // If the persisted active didn't survive, fall back to the first restored
-    // repo so the user lands on *something* rather than nothing.
     if active_id.is_none() {
         active_id = summaries.first().map(|s| s.id.clone());
     }
 
-    // Persist the cleaned list (drops broken entries; preserves order).
     {
-        let mut settings = state.settings.write().await;
+        let mut settings = state.global_settings.write().await;
         settings.currently_open = still_valid;
         if let Some(id) = &active_id {
             settings.active_open_repo = summaries
@@ -235,10 +255,39 @@ pub async fn restore_open_repos(
                 .map(|s| s.path.clone());
         }
     }
-    state.persist_settings().await.ok();
+    state.persist_global_settings().await.ok();
 
     Ok(RestoreResult {
         repos: summaries,
         active_id,
     })
+}
+
+/// Read the repo-scoped settings for an open repo.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_repo_settings(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<RepoSettings, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    let s = session.settings.read().await.clone();
+    Ok(s)
+}
+
+/// Replace the repo-scoped settings and persist them to disk.
+#[tauri::command]
+#[specta::specta]
+pub async fn update_repo_settings(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    settings: RepoSettings,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    {
+        let mut s = session.settings.write().await;
+        *s = settings.clone();
+    }
+    let (repo_dir, _) = state.repo_data_paths(&session.path);
+    persist_repo_settings(&settings, &repo_dir, &session.settings_path, &session.path).await
 }

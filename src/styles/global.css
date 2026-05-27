@@ -75,6 +75,87 @@ select:focus {
   color: var(--app-fg);
 }
 
+/* Two-region layout */
+.legit-global-region {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.legit-repo-region {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Split row container for left mode */
+.legit-split-row {
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+
+/* Draggable horizontal divider (top mode) / vertical divider (left mode) */
+.legit-region-divider {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 8px;
+  background: var(--panel-border);
+  cursor: row-resize;
+  flex-shrink: 0;
+  position: relative;
+  user-select: none;
+  gap: 2px;
+  padding-right: 4px;
+}
+.legit-region-divider--vertical {
+  flex-direction: column;
+  justify-content: flex-end;
+  height: auto;
+  width: 8px;
+  cursor: col-resize;
+  padding-right: 0;
+  padding-bottom: 4px;
+  gap: 2px;
+}
+.legit-region-divider:hover,
+.legit-region-divider--vertical:hover {
+  background: var(--input-focus-border);
+}
+.legit-region-divider.is-collapsed,
+.legit-region-divider--vertical.is-collapsed {
+  cursor: default;
+}
+.legit-region-divider__toggle,
+.legit-region-divider__mode {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--subtle-fg);
+  font-size: 9px;
+  padding: 0 4px;
+  cursor: pointer;
+  border-radius: 2px;
+  line-height: 1;
+  height: 100%;
+}
+.legit-region-divider--vertical .legit-region-divider__toggle,
+.legit-region-divider--vertical .legit-region-divider__mode {
+  height: auto;
+  width: 100%;
+  padding: 4px 0;
+  writing-mode: vertical-lr;
+}
+.legit-region-divider__toggle:hover,
+.legit-region-divider__mode:hover {
+  color: var(--panel-fg);
+  background: transparent;
+}
+
 .legit-splash {
   display: flex;
   height: 100%;

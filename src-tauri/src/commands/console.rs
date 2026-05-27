@@ -47,7 +47,7 @@ pub async fn console_exec(
     let op_id = OperationId::new();
     let op_id_str = op_id.0.clone();
 
-    let runner = session.runner.clone();
+    let runner = session.runner.read().await.clone();
     let app_handle = app.clone();
     let op_id_for_emit = op_id_str.clone();
     let argv_owned = argv.clone();
@@ -94,7 +94,8 @@ pub async fn console_cancel(
     op_id: String,
 ) -> Result<bool, AppError> {
     let session = state.get_session(&repo_id).await?;
-    Ok(session.runner.cancel(&OperationId(op_id)))
+    let runner = session.runner.read().await.clone();
+    Ok(runner.cancel(&OperationId(op_id)))
 }
 
 /// Reject arguments that would let the Console escape the active

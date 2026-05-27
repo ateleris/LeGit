@@ -6,7 +6,7 @@
 //! validation rules from §6.5 live next to `save_theme`.
 
 use crate::error::AppError;
-use crate::state::{AppSettings, AppState};
+use crate::state::{GlobalSettings, RegionPlacement, AppState};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::PathBuf;
@@ -29,10 +29,10 @@ pub enum ThemeSource {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn get_settings(
+pub async fn get_global_settings(
     state: tauri::State<'_, AppState>,
-) -> Result<AppSettings, AppError> {
-    Ok(state.settings.read().await.clone())
+) -> Result<GlobalSettings, AppError> {
+    Ok(state.global_settings.read().await.clone())
 }
 
 #[tauri::command]
@@ -42,23 +42,57 @@ pub async fn set_active_theme(
     name: String,
 ) -> Result<(), AppError> {
     {
-        let mut s = state.settings.write().await;
+        let mut s = state.global_settings.write().await;
         s.active_theme = Some(name);
     }
-    state.persist_settings().await
+    state.persist_global_settings().await
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn save_layout(
+pub async fn save_global_layout(
     state: tauri::State<'_, AppState>,
     layout: serde_json::Value,
 ) -> Result<(), AppError> {
     {
-        let mut s = state.settings.write().await;
-        s.dock_layout = Some(layout);
+        let mut s = state.global_settings.write().await;
+        s.global_dock_layout = Some(layout);
     }
-    state.persist_settings().await
+    state.persist_global_settings().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn save_repo_layout(
+    state: tauri::State<'_, AppState>,
+    layout: serde_json::Value,
+) -> Result<(), AppError> {
+    {
+        let mut s = state.global_settings.write().await;
+        s.repo_dock_layout = Some(layout);
+    }
+    state.persist_global_settings().await
+}
+
+/// Persist the region layout state (divider sizes, collapse, placement).
+/// Called on drag-end and toggle; debounced by the frontend for dragging.
+#[tauri::command]
+#[specta::specta]
+pub async fn save_region_state(
+    state: tauri::State<'_, AppState>,
+    placement: RegionPlacement,
+    size_top: Option<f64>,
+    size_left: Option<f64>,
+    collapsed: bool,
+) -> Result<(), AppError> {
+    {
+        let mut s = state.global_settings.write().await;
+        s.global_region_placement = placement;
+        s.global_region_size_top = size_top;
+        s.global_region_size_left = size_left;
+        s.global_dock_collapsed = collapsed;
+    }
+    state.persist_global_settings().await
 }
 
 #[tauri::command]
@@ -256,16 +290,18 @@ async fn unique_name(dir: &std::path::Path, base: &str) -> String {
     format!("{base} ({})", uuid::Uuid::new_v4())
 }
 
-/// Compute the on-disk locations used by `AppState`. Falls back to the
-/// current working directory when `app_data_dir` is unavailable (rare,
-/// mostly during tests).
-pub fn resolve_dirs(app: &tauri::AppHandle) -> (PathBuf, PathBuf, PathBuf) {
+/// Compute the on-disk locations used by `AppState`. Returns
+/// `(global_settings_path, repos_data_dir, user_themes_dir, builtin_themes_dir)`.
+/// Falls back to the current working directory when `app_data_dir` is
+/// unavailable (rare; mostly during tests).
+pub fn resolve_dirs(app: &tauri::AppHandle) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
     use tauri::Manager;
     let data = app
         .path()
         .app_data_dir()
         .unwrap_or_else(|_| PathBuf::from("."));
-    let settings_path = data.join("settings.json");
+    let global_settings_path = data.join("global-settings.json");
+    let repos_data_dir = data.join("repos");
     let user_themes_dir = data.join("themes");
     let builtin_themes_dir = app
         .path()
@@ -278,7 +314,7 @@ pub fn resolve_dirs(app: &tauri::AppHandle) -> (PathBuf, PathBuf, PathBuf) {
                 .and_then(|p| p.parent().map(|d| d.join("themes")))
         })
         .unwrap_or_else(|| PathBuf::from("themes"));
-    (settings_path, user_themes_dir, builtin_themes_dir)
+    (global_settings_path, repos_data_dir, user_themes_dir, builtin_themes_dir)
 }
 
 #[cfg(test)]

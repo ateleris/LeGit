@@ -14,13 +14,26 @@ export interface RepoSummary {
   name: string;
 }
 
-export interface AppSettings {
+export type RegionPlacement = "top" | "left";
+
+export interface GlobalSettings {
   git_path_override: string | null;
   last_open_repos: string[];
   currently_open: string[];
   active_open_repo: string | null;
   active_theme: string | null;
-  dock_layout: unknown | null;
+  global_dock_layout: unknown | null;
+  repo_dock_layout: unknown | null;
+  global_region_placement: RegionPlacement;
+  global_region_size_top: number | null;
+  global_region_size_left: number | null;
+  global_dock_collapsed: boolean;
+  warn_on_mixed_endings: boolean;
+}
+
+export interface RepoSettings {
+  git_path_override: string | null;
+  warn_on_mixed_endings: boolean | null;
 }
 
 export interface RestoreResult {
@@ -88,6 +101,35 @@ export function formatAppError(e: unknown): string {
   }
   if (e instanceof Error) return e.message;
   return String(e);
+}
+
+// --- Line endings types (matches §H of DESIGN-v0.2.md) ---
+
+export type ConfigScope = "local" | "global" | "system" | "unset";
+
+export interface ConfigValue {
+  value: string | null;
+  source: ConfigScope;
+}
+
+export interface GitAttrRule {
+  pattern: string;
+  text: string | null;
+  eol: string | null;
+}
+
+export interface LineEndingsView {
+  autocrlf_local: ConfigValue;
+  autocrlf_global: ConfigValue;
+  autocrlf_system: ConfigValue;
+  autocrlf_resolved: ConfigValue;
+  eol_local: ConfigValue;
+  eol_global: ConfigValue;
+  eol_system: ConfigValue;
+  eol_resolved: ConfigValue;
+  gitattributes: GitAttrRule[];
+  gitattributes_covers_all: boolean;
+  mixed_ending_files: string[];
 }
 
 // --- Theme document shape (matches DESIGN.md §6.3) ---

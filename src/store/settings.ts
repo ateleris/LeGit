@@ -1,30 +1,56 @@
 import { create } from "zustand";
-import { getSettings, saveLayout } from "../lib/commands";
-import type { AppSettings } from "../lib/types";
+import { invoke } from "@tauri-apps/api/core";
+import { getGlobalSettings, saveGlobalLayout, saveRepoLayout } from "../lib/commands";
+import type { GlobalSettings, RegionPlacement } from "../lib/types";
 
 interface SettingsStore {
-  settings: AppSettings | null;
+  settings: GlobalSettings | null;
   init: () => Promise<void>;
-  saveLayoutDebounced: (layout: unknown) => void;
+  saveGlobalLayoutDebounced: (layout: unknown) => void;
+  saveRepoLayoutDebounced: (layout: unknown) => void;
+  setRegionPlacement: (placement: RegionPlacement) => Promise<void>;
 }
 
-let layoutTimer: ReturnType<typeof setTimeout> | null = null;
+let globalLayoutTimer: ReturnType<typeof setTimeout> | null = null;
+let repoLayoutTimer: ReturnType<typeof setTimeout> | null = null;
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
   settings: null,
 
   async init() {
     if (get().settings) return;
-    const settings = await getSettings();
+    const settings = await getGlobalSettings();
     set({ settings });
   },
 
-  saveLayoutDebounced(layout: unknown) {
-    if (layoutTimer) clearTimeout(layoutTimer);
-    layoutTimer = setTimeout(() => {
-      saveLayout(layout).catch((e) => {
-        console.warn("save_layout failed", e);
+  saveGlobalLayoutDebounced(layout: unknown) {
+    if (globalLayoutTimer) clearTimeout(globalLayoutTimer);
+    globalLayoutTimer = setTimeout(() => {
+      saveGlobalLayout(layout).catch((e) => {
+        console.warn("save_global_layout failed", e);
       });
     }, 500);
+  },
+
+  saveRepoLayoutDebounced(layout: unknown) {
+    if (repoLayoutTimer) clearTimeout(repoLayoutTimer);
+    repoLayoutTimer = setTimeout(() => {
+      saveRepoLayout(layout).catch((e) => {
+        console.warn("save_repo_layout failed", e);
+      });
+    }, 500);
+  },
+
+  async setRegionPlacement(placement: RegionPlacement) {
+    const s = get().settings;
+    await invoke("save_region_state", {
+      placement,
+      sizeTop: s?.global_region_size_top ?? null,
+      sizeLeft: s?.global_region_size_left ?? null,
+      collapsed: s?.global_dock_collapsed ?? false,
+    });
+    if (s) {
+      set({ settings: { ...s, global_region_placement: placement } });
+    }
   },
 }));

@@ -6,13 +6,15 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type {
-  AppSettings,
+  GlobalSettings,
+  RepoSettings,
   ConsoleExecHandle,
   GitStatus,
   RepoSummary,
   RestoreResult,
   ThemeEntry,
   ThemeDocument,
+  LineEndingsView,
 } from "./types";
 
 // --- repo ---
@@ -47,15 +49,37 @@ export const gitStatusCheck = () => invoke<GitStatus>("git_status_check");
 export const setGitPath = (path: string | null) =>
   invoke<GitStatus>("set_git_path", { path });
 
+export const setRepoGitPath = (repoId: string, path: string | null) =>
+  invoke<RepoSummary>("set_repo_git_path", { repoId, path });
+
+// --- repo settings ---
+
+export const getRepoSettings = (repoId: string) =>
+  invoke<RepoSettings>("get_repo_settings", { repoId });
+
+export const updateRepoSettings = (repoId: string, settings: RepoSettings) =>
+  invoke<null>("update_repo_settings", { repoId, settings });
+
 // --- persistence ---
 
-export const getSettings = () => invoke<AppSettings>("get_settings");
+export const getGlobalSettings = () =>
+  invoke<GlobalSettings>("get_global_settings");
 
 export const setActiveTheme = (name: string) =>
   invoke<null>("set_active_theme", { name });
 
-export const saveLayout = (layout: unknown) =>
-  invoke<null>("save_layout", { layout });
+export const saveGlobalLayout = (layout: unknown) =>
+  invoke<null>("save_global_layout", { layout });
+
+export const saveRepoLayout = (layout: unknown) =>
+  invoke<null>("save_repo_layout", { layout });
+
+export const saveRegionState = (
+  placement: import("./types").RegionPlacement,
+  sizeTop: number | null,
+  sizeLeft: number | null,
+  collapsed: boolean
+) => invoke<null>("save_region_state", { placement, sizeTop, sizeLeft, collapsed });
 
 // --- themes ---
 
@@ -69,3 +93,22 @@ export const saveTheme = (name: string, contents: ThemeDocument) =>
 
 export const deleteTheme = (name: string) =>
   invoke<null>("delete_theme", { name });
+
+// --- line endings ---
+
+export const repoLineEndingsView = (repoId: string) =>
+  invoke<LineEndingsView>("repo_line_endings_view", { repoId });
+
+export const globalLineEndingsView = () =>
+  invoke<LineEndingsView>("global_line_endings_view");
+
+export const repoWriteLineEndings = (
+  repoId: string,
+  autocrlf: string | null,
+  eol: string | null
+) => invoke<LineEndingsView>("repo_write_line_endings", { repoId, autocrlf, eol });
+
+export const globalWriteLineEndings = (
+  autocrlf: string | null,
+  eol: string | null
+) => invoke<LineEndingsView>("global_write_line_endings", { autocrlf, eol });

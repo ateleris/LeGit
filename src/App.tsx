@@ -4,8 +4,8 @@ import { useSettingsStore } from "./store/settings";
 import { useGitStatusStore } from "./store/git-status";
 import { useRepoStore } from "./store/repos";
 import { GitSetupGate } from "./panels/Setup/GitSetupGate";
-import { PanelHost } from "./panels/PanelHost";
-import { RepoTabBar } from "./panels/RepoTabBar";
+import { AppLayout } from "./panels/AppLayout";
+import { ErrorBoundary } from "./panels/ErrorBoundary";
 
 export function App() {
   const initThemes = useThemeStore((s) => s.init);
@@ -31,12 +31,11 @@ export function App() {
   }
 
   return (
-    <GitSetupGate status={gitStatus}>
-      <div className="legit-app-root">
-        <RepoTabBar />
-        <PanelHost />
-      </div>
-    </GitSetupGate>
+    <ErrorBoundary>
+      <GitSetupGate status={gitStatus}>
+        <AppLayout />
+      </GitSetupGate>
+    </ErrorBoundary>
   );
 }
 

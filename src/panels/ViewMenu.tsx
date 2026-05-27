@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { useDockviewStore } from "../store/dockview";
-import { PANELS } from "./registry";
+import { GLOBAL_PANELS, REPO_PANELS } from "./registry";
+import { openGlobalPanel } from "./GlobalDock";
+import { openRepoPanel } from "./RepoDock";
 
 /**
- * Dropdown that lets the user re-open closed panels and reset the layout.
- * Lives in the top bar; reads the live `DockviewApi` from the store.
+ * Dropdown that lets the user re-open closed panels in either dock.
+ * Lives in the repo tab strip.
  */
 export function ViewMenu() {
-  const api = useDockviewStore((s) => s.api);
+  const globalApi = useDockviewStore((s) => s.globalApi);
+  const repoApi = useDockviewStore((s) => s.repoApi);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -20,27 +23,47 @@ export function ViewMenu() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
 
-  const openOrFocus = (id: string, title: string) => {
-    if (!api) return;
-    const existing = api.getPanel(id);
-    if (existing) {
-      existing.focus();
-    } else {
-      api.addPanel({ id, component: id, title });
+  const resetLayouts = () => {
+    if (globalApi) {
+      for (const panel of globalApi.panels) globalApi.removePanel(panel);
+      for (const p of GLOBAL_PANELS)
+        globalApi.addPanel({ id: p.id, component: p.id, title: p.title });
+    }
+    if (repoApi) {
+      for (const panel of repoApi.panels) repoApi.removePanel(panel);
+      for (const p of REPO_PANELS)
+        repoApi.addPanel({ id: p.id, component: p.id, title: p.title });
     }
     setOpen(false);
   };
 
-  const resetLayout = () => {
-    if (!api) return;
-    for (const panel of api.panels) {
-      api.removePanel(panel);
-    }
-    for (const p of PANELS) {
-      api.addPanel({ id: p.id, component: p.id, title: p.title });
-    }
-    setOpen(false);
-  };
+  const menuItem = (
+    id: string,
+    title: string,
+    isOpen: boolean,
+    onClick: () => void
+  ) => (
+    <button
+      key={id}
+      role="menuitem"
+      onClick={onClick}
+      style={{
+        display: "block",
+        width: "100%",
+        textAlign: "left",
+        background: "transparent",
+        border: "none",
+        padding: "4px 8px",
+        color: "inherit",
+        borderRadius: 3,
+      }}
+    >
+      <span style={{ display: "inline-block", width: 18 }}>
+        {isOpen ? "✓" : "  "}
+      </span>
+      {title}
+    </button>
+  );
 
   return (
     <div ref={ref} style={{ position: "relative" }}>
@@ -54,7 +77,7 @@ export function ViewMenu() {
             position: "absolute",
             top: "calc(100% + 4px)",
             right: 0,
-            minWidth: 220,
+            minWidth: 240,
             background: "var(--panel-bg)",
             color: "var(--panel-fg)",
             border: "1px solid var(--panel-border)",
@@ -65,44 +88,28 @@ export function ViewMenu() {
           }}
         >
           <div style={{ padding: "4px 8px", color: "var(--subtle-fg)", fontSize: 11 }}>
-            Panels
+            Global panels
           </div>
-          {PANELS.map((p) => {
-            const isOpen = !!api?.getPanel(p.id);
-            return (
-              <button
-                key={p.id}
-                role="menuitem"
-                onClick={() => openOrFocus(p.id, p.title)}
-                disabled={!api}
-                style={{
-                  display: "block",
-                  width: "100%",
-                  textAlign: "left",
-                  background: "transparent",
-                  border: "none",
-                  padding: "4px 8px",
-                  color: "inherit",
-                  borderRadius: 3,
-                }}
-              >
-                <span style={{ display: "inline-block", width: 18 }}>
-                  {isOpen ? "✓" : "  "}
-                </span>
-                {p.title}
-              </button>
-            );
-          })}
-          <div
-            style={{
-              borderTop: "1px solid var(--panel-border)",
-              margin: "4px 0",
-            }}
-          />
+          {GLOBAL_PANELS.map((p) =>
+            menuItem(p.id, p.title, !!globalApi?.getPanel(p.id), () => {
+              openGlobalPanel(globalApi, p.id);
+              setOpen(false);
+            })
+          )}
+          <div style={{ borderTop: "1px solid var(--panel-border)", margin: "4px 0" }} />
+          <div style={{ padding: "4px 8px", color: "var(--subtle-fg)", fontSize: 11 }}>
+            Repo panels
+          </div>
+          {REPO_PANELS.map((p) =>
+            menuItem(p.id, p.title, !!repoApi?.getPanel(p.id), () => {
+              openRepoPanel(repoApi, p.id);
+              setOpen(false);
+            })
+          )}
+          <div style={{ borderTop: "1px solid var(--panel-border)", margin: "4px 0" }} />
           <button
             role="menuitem"
-            onClick={resetLayout}
-            disabled={!api}
+            onClick={resetLayouts}
             style={{
               display: "block",
               width: "100%",
