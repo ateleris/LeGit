@@ -6,6 +6,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  Commit,
+  CommitDetails,
   GlobalSettings,
   RepoSettings,
   ConsoleExecHandle,
@@ -65,6 +67,9 @@ export const updateRepoSettings = (repoId: string, settings: RepoSettings) =>
 export const getGlobalSettings = () =>
   invoke<GlobalSettings>("get_global_settings");
 
+export const setWarnOnMixedEndings = (warn: boolean) =>
+  invoke<null>("set_warn_on_mixed_endings", { warn });
+
 export const setActiveTheme = (name: string) =>
   invoke<null>("set_active_theme", { name });
 
@@ -112,3 +117,11 @@ export const globalWriteLineEndings = (
   autocrlf: string | null,
   eol: string | null
 ) => invoke<LineEndingsView>("global_write_line_endings", { autocrlf, eol });
+
+// --- log / commit details ---
+
+export const repoLog = (repoId: string, maxCount?: number, skip?: number) =>
+  invoke<Commit[]>("repo_log", { repoId, maxCount: maxCount ?? null, skip: skip ?? null });
+
+export const repoCommitDetails = (repoId: string, commitId: string) =>
+  invoke<CommitDetails>("repo_commit_details", { repoId, commitId });

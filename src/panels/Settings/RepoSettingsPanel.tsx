@@ -1,10 +1,12 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
 import { formatAppError } from "../../lib/types";
 import type { ConfigScope, LineEndingsView, GitAttrRule } from "../../lib/types";
-import { setRepoGitPath, repoLineEndingsView, repoWriteLineEndings } from "../../lib/commands";
+import { setRepoGitPath, repoLineEndingsView, repoWriteLineEndings, updateRepoSettings } from "../../lib/commands";
 import { useGitStatusStore } from "../../store/git-status";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
+import { useSettingsStore } from "../../store/settings";
 
 /**
  * Repo Settings panel — edits repo-scope settings for the active repo.
@@ -129,9 +131,70 @@ export function RepoSettingsPanel() {
           )}
         </Section>
 
+        <MixedEndingRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
         <LineEndingsRepoSection repoId={activeRepo.id} />
       </div>
     </div>
+  );
+}
+
+function MixedEndingRepoSection({
+  repoId,
+  repoSettings,
+}: {
+  repoId: string;
+  repoSettings: import("../../lib/types").RepoSettings | null;
+}) {
+  const globalWarn = useSettingsStore((s) => s.settings?.warn_on_mixed_endings ?? true);
+  const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
+  const [saving, setSaving] = useState(false);
+
+  // null = inherit global
+  const repoOverride = repoSettings?.warn_on_mixed_endings ?? null;
+  const effective = repoOverride !== null ? repoOverride : globalWarn;
+
+  const setOverride = async (value: boolean | null) => {
+    if (!repoSettings) return;
+    setSaving(true);
+    try {
+      await updateRepoSettings(repoId, { ...repoSettings, warn_on_mixed_endings: value });
+      await loadRepoSettings(repoId);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Mixed ending detection">
+      <FieldNote>writes to: repos/&lt;hash&gt;/settings.json (this repo only)</FieldNote>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+        {(["inherit", "on", "off"] as const).map((opt) => {
+          const checked =
+            opt === "inherit" ? repoOverride === null :
+            opt === "on" ? repoOverride === true :
+            repoOverride === false;
+          return (
+            <label key={opt} style={{ display: "flex", alignItems: "center", gap: 6, cursor: saving ? "default" : "pointer", opacity: saving ? 0.5 : 1 }}>
+              <input
+                type="radio"
+                name={`repo-mixed-${repoId}`}
+                checked={checked}
+                disabled={saving}
+                onChange={() => setOverride(opt === "inherit" ? null : opt === "on")}
+              />
+              <span style={{ fontSize: 13 }}>
+                {opt === "inherit"
+                  ? `Inherit from global (currently ${globalWarn ? "on" : "off"})`
+                  : opt === "on" ? "On" : "Off"}
+              </span>
+            </label>
+          );
+        })}
+        <div style={{ fontSize: 11, color: "var(--subtle-fg)", marginTop: 2 }}>
+          Effective: <strong>{effective ? "on" : "off"}</strong>
+        </div>
+      </div>
+    </Section>
   );
 }
 
@@ -144,7 +207,7 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [confirmPending, setConfirmPending] = useState(false);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     setLoading(true);
     setView(null);
     setConfirmPending(false);
@@ -158,15 +221,21 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
       .finally(() => setLoading(false));
   }, [repoId]);
 
+  useEffect(() => { load(); }, [load]);
+  usePanelFocusEffect(load);
+
+  const dirty = view !== null && (
+    draftAutocrlf !== (view.autocrlf_local.value ?? null) ||
+    draftEol !== (view.eol_local.value ?? null)
+  );
+
+  usePanelDirty(dirty);
+
   if (loading) return <Section title="Line endings (this repo)"><span className="legit-subtle">Loading…</span></Section>;
   if (!view) return null;
 
   const coversAll = view.gitattributes_covers_all;
   const hasPartialRules = view.gitattributes.length > 0 && !coversAll;
-
-  const dirty =
-    draftAutocrlf !== (view.autocrlf_local.value ?? null) ||
-    draftEol !== (view.eol_local.value ?? null);
 
   const changes = getChangedValues(
     { autocrlf: view.autocrlf_local.value, eol: view.eol_local.value },

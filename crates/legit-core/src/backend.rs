@@ -8,7 +8,8 @@
 
 use crate::error::GitError;
 use crate::types::{
-    Branch, Commit, CommitId, CommitOptions, Diff, FileStatus, LogOptions, SubmoduleInfo,
+    Branch, Commit, CommitDetails, CommitId, CommitOptions, Diff, FileStatus, LogOptions,
+    SubmoduleInfo,
 };
 use async_trait::async_trait;
 
@@ -17,6 +18,8 @@ pub trait GitBackend: Send + Sync {
     async fn status(&self) -> Result<Vec<FileStatus>, GitError>;
 
     async fn log(&self, opts: LogOptions) -> Result<Vec<Commit>, GitError>;
+
+    async fn commit_details(&self, id: &CommitId) -> Result<CommitDetails, GitError>;
 
     async fn branches(&self) -> Result<Vec<Branch>, GitError>;
 

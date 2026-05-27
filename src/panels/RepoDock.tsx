@@ -7,8 +7,9 @@ import {
 import { useDockviewStore } from "../store/dockview";
 import { useSettingsStore } from "../store/settings";
 import { useThemeStore } from "../store/themes";
+import { useSummonStore, computeFallbackPosition } from "../store/summon";
 import { validateTheme } from "../theme/validate";
-import { REPO_DOCKVIEW_COMPONENTS, REPO_PANELS } from "./registry";
+import { REPO_DOCKVIEW_COMPONENTS, REPO_DOCKVIEW_TAB_COMPONENTS, REPO_PANELS } from "./registry";
 
 /**
  * Repo-scope dockview instance. Hosts the Git Console and Repo Settings.
@@ -30,7 +31,36 @@ export function RepoDock() {
       let restored = false;
       if (persisted && typeof persisted === "object") {
         try {
-          event.api.fromJSON(persisted as any);
+          // v0.3+ format: { dockview: <layout>, placements: <map>, fallbacks: <map> }
+          // v0.2 legacy:  the raw dockview JSON directly
+          const envelope = persisted as any;
+          const dockviewJson = envelope.dockview ?? envelope;
+
+          // Restore placement memory before opening panels so summon has it
+          // immediately if a payload arrives during mount.
+          if (envelope.placements && typeof envelope.placements === "object") {
+            const { capturePlacement } = useSummonStore.getState();
+            for (const [panelId, groupId] of Object.entries(envelope.placements)) {
+              if (typeof groupId === "string") capturePlacement(panelId, groupId);
+            }
+          }
+
+          // Restore fallback positions so summon can restore closed solo panels.
+          if (envelope.fallbacks && typeof envelope.fallbacks === "object") {
+            const { captureFallback } = useSummonStore.getState();
+            for (const [panelId, pos] of Object.entries(envelope.fallbacks)) {
+              if (
+                pos &&
+                typeof pos === "object" &&
+                "referencePanel" in (pos as object) &&
+                "direction" in (pos as object)
+              ) {
+                captureFallback(panelId, pos as any);
+              }
+            }
+          }
+
+          event.api.fromJSON(dockviewJson);
           if (event.api.panels.length > 0) {
             restored = true;
           } else {
@@ -44,10 +74,19 @@ export function RepoDock() {
         buildDefaultRepoLayout(event.api);
       }
 
+      // Capture initial placements from the just-built/restored layout so that
+      // summon works correctly even before the first layout-change event fires.
+      capturePlacements(event.api);
+
       event.api.onDidLayoutChange(() => {
         try {
-          const json = event.api.toJSON();
-          saveLayoutDebounced(json);
+          const dockview = event.api.toJSON();
+          capturePlacements(event.api, dockview);
+          saveLayoutDebounced({
+            dockview,
+            placements: useSummonStore.getState().placements,
+            fallbacks: useSummonStore.getState().fallbackPositions,
+          });
         } catch (e) {
           console.warn("toJSON failed", e);
         }
@@ -107,6 +146,7 @@ export function RepoDock() {
     <div style={{ height: "100%", position: "relative" }}>
       <DockviewReact
         components={REPO_DOCKVIEW_COMPONENTS}
+        tabComponents={REPO_DOCKVIEW_TAB_COMPONENTS}
         onReady={onReady}
         className="dockview-theme-abyss"
       />
@@ -114,17 +154,46 @@ export function RepoDock() {
   );
 }
 
+/**
+ * Snapshot the current group ID and fallback position for every open panel.
+ * Pass `layoutJson` if you already called `api.toJSON()` to avoid a second call.
+ */
+function capturePlacements(api: DockviewApi, layoutJson?: unknown) {
+  const json = layoutJson ?? api.toJSON();
+  const { capturePlacement, captureFallback } = useSummonStore.getState();
+  for (const panel of api.panels) {
+    const groupId = panel.group?.id;
+    if (!groupId) continue;
+    capturePlacement(panel.id, groupId);
+    const fallback = computeFallbackPosition(json, groupId);
+    if (fallback) captureFallback(panel.id, fallback);
+  }
+}
+
 function buildDefaultRepoLayout(api: DockviewApi) {
+  // Log fills the main area.
+  api.addPanel({ id: "log", component: "log", title: "Log" });
+  // Commit Details opens to the right of Log.
+  api.addPanel({
+    id: "commit-details",
+    component: "commit-details",
+    title: "Commit Details",
+    position: { referencePanel: "log", direction: "right" },
+  });
+  // Console sits below in a collapsed-friendly position.
   api.addPanel({
     id: "console",
     component: "console",
     title: "Git Console",
+    position: { referencePanel: "log", direction: "below" },
   });
+  // Repo Settings hidden until explicitly opened.
   api.addPanel({
     id: "repo-settings",
     component: "repo-settings",
+    tabComponent: "confirm-close",
     title: "Repo Settings",
-    position: { referencePanel: "console", direction: "right" },
+    position: { referencePanel: "console", direction: "within" },
   });
 }
 

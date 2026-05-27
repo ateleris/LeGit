@@ -53,7 +53,7 @@ pub enum SignatureStatus {
 
 /// Signing metadata attached to a commit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
-pub struct CommitSignature {
+pub struct SignatureVerification {
     pub status: SignatureStatus,
     pub signer: Option<String>,
     pub key_id: Option<KeyId>,
@@ -70,7 +70,7 @@ pub struct Commit {
     pub message: String,
     /// Author timestamp (Unix seconds).
     pub timestamp: i64,
-    pub signature: Option<CommitSignature>,
+    pub signature: Option<SignatureVerification>,
 }
 
 /// Sign mode requested when creating a commit.
@@ -201,6 +201,19 @@ pub struct Branch {
     pub is_remote: bool,
     pub upstream: Option<String>,
     pub head: Option<CommitId>,
+}
+
+/// Detailed information for a single commit (Commit Details panel).
+///
+/// `commit.signature` is populated from `git verify-commit --raw` when the
+/// commit object contains a `gpgsig` or similar header; otherwise it is `None`.
+/// Verification is intentionally omitted from the log listing (too expensive
+/// per row) and only computed on demand here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct CommitDetails {
+    pub commit: Commit,
+    /// The raw output of `git cat-file -p <sha>` — available for power-user inspection.
+    pub raw_object: String,
 }
 
 /// Submodule entry as recorded in the superproject.

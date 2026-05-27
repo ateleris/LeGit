@@ -1,8 +1,9 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
 import { formatAppError } from "../../lib/types";
 import type { ConfigScope, LineEndingsView, RegionPlacement } from "../../lib/types";
-import { globalLineEndingsView, globalWriteLineEndings } from "../../lib/commands";
+import { globalLineEndingsView, globalWriteLineEndings, setWarnOnMixedEndings } from "../../lib/commands";
 import { useGitStatusStore } from "../../store/git-status";
 import { useSettingsStore } from "../../store/settings";
 
@@ -99,6 +100,7 @@ export function GlobalSettingsPanel() {
         </Section>
 
         <LayoutOrientationSection />
+        <MixedEndingDetectionSection />
         <LineEndingsGlobalSection />
       </div>
     </div>
@@ -143,6 +145,41 @@ function LayoutOrientationSection() {
   );
 }
 
+function MixedEndingDetectionSection() {
+  const warn = useSettingsStore((s) => s.settings?.warn_on_mixed_endings ?? true);
+  const [saving, setSaving] = useState(false);
+
+  const toggle = async () => {
+    setSaving(true);
+    try {
+      await setWarnOnMixedEndings(!warn);
+      useSettingsStore.setState((s) =>
+        s.settings ? { settings: { ...s.settings, warn_on_mixed_endings: !warn } } : {}
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Mixed ending detection">
+      <FieldNote>writes to: global settings — default for all repos</FieldNote>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <input
+          type="checkbox"
+          id="global-warn-mixed"
+          checked={warn}
+          onChange={toggle}
+          disabled={saving}
+        />
+        <label htmlFor="global-warn-mixed" style={{ fontSize: 13, cursor: "pointer" }}>
+          Detect files with mixed CRLF+LF line endings (shown in Repo Settings)
+        </label>
+      </div>
+    </Section>
+  );
+}
+
 function LineEndingsGlobalSection() {
   const [view, setView] = useState<LineEndingsView | null>(null);
   const [loading, setLoading] = useState(true);
@@ -152,7 +189,8 @@ function LineEndingsGlobalSection() {
   const [error, setError] = useState<string | null>(null);
   const [confirmPending, setConfirmPending] = useState(false);
 
-  useEffect(() => {
+  const load = useCallback(() => {
+    setLoading(true);
     globalLineEndingsView()
       .then((v) => {
         setView(v);
@@ -163,12 +201,18 @@ function LineEndingsGlobalSection() {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => { load(); }, [load]);
+  usePanelFocusEffect(load);
+
+  const dirty = view !== null && (
+    draftAutocrlf !== (view.autocrlf_global.value ?? null) ||
+    draftEol !== (view.eol_global.value ?? null)
+  );
+
+  usePanelDirty(dirty);
+
   if (loading) return <Section title="Line endings (global)"><span className="legit-subtle">Loading…</span></Section>;
   if (!view) return null;
-
-  const dirty =
-    draftAutocrlf !== (view.autocrlf_global.value ?? null) ||
-    draftEol !== (view.eol_global.value ?? null);
 
   const changes = getChangedValues(
     { autocrlf: view.autocrlf_global.value, eol: view.eol_global.value },

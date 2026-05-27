@@ -132,6 +132,48 @@ export interface LineEndingsView {
   mixed_ending_files: string[];
 }
 
+// --- Git log / commit types (matches legit-core/src/types.rs) ---
+
+export type CommitId = string;
+
+export interface Signature {
+  name: string;
+  email: string;
+  timestamp: number; // Unix seconds UTC
+  tz_offset_minutes: number;
+}
+
+export type SignatureStatus =
+  | "Good"
+  | "BadSignature"
+  | "UnknownKey"
+  | "Untrusted"
+  | "Expired"
+  | "Revoked"
+  | "NoSignature";
+
+export interface SignatureVerification {
+  status: SignatureStatus;
+  signer: string | null;
+  key_id: string | null;
+  raw: string | null;
+}
+
+export interface Commit {
+  id: CommitId;
+  parents: CommitId[];
+  author: Signature;
+  committer: Signature;
+  message: string;
+  timestamp: number;
+  signature: SignatureVerification | null;
+}
+
+export interface CommitDetails {
+  commit: Commit;
+  raw_object: string;
+}
+
 // --- Theme document shape (matches DESIGN.md §6.3) ---
 
 export interface ThemeDocument {

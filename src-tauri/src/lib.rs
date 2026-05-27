@@ -46,6 +46,9 @@ pub fn run() {
         commands::global_line_endings_view,
         commands::repo_write_line_endings,
         commands::global_write_line_endings,
+        commands::set_warn_on_mixed_endings,
+        commands::repo_log,
+        commands::repo_commit_details,
     ]);
 
     #[cfg(debug_assertions)]

@@ -15,7 +15,11 @@
   - Free and open source (no rug-pull risk).
   - First-class support for Windows, macOS, **and** Linux.
   - Lighter footprint than Electron-based competitors.
-  - Dockable panel UI: users choose which views to display, like Visual Studio.
+  - Dockable panel UI that adapts to your workflow: users choose which views
+    to display and where they live, and panels can summon each other based
+    on selection (clicking a commit reveals its diff in the panel the user
+    last placed it in). Configurability and workflow-driven flow are not
+    opposed.
   - Full user-defined theming with import/export, designed for accessibility
     (including red-green colorblindness) from day one.
 - **Explicitly not targeted at v1:** absolute Git beginners, CLI purists,
@@ -459,6 +463,138 @@ Mutations (commit, checkout, push, ...) use TanStack Query's `useMutation`
 with explicit cache invalidation of affected queries. **After any Git
 Console command completes, all queries for the active repo are invalidated**
 (coarse but correct; refinement deferred).
+
+### 5.4 Panel Relationships
+
+A pure dockable shell asks the user to compose their workspace from scratch.
+A pure slot-and-mode shell decides for the user what goes where. Git
+workflows want both: users want to *configure* their panels (where Log
+lives, how big the diff is, what's tabbed with what), but they also want
+the app to *respond* to selection (click a commit → see its diff;
+click a file → see that file's diff). LeGit's shell supports both by
+giving panels a small vocabulary for **summoning** each other while
+respecting the user's last placement.
+
+#### Driver and Target Panels
+
+Panels play one or both of two roles in a relationship:
+
+- A **driver** panel is one whose user interactions can trigger another
+  panel. Log is a driver (selecting a commit drives Commit Details).
+  Status, once it exists, will be a driver (selecting a changed file drives
+  Diff).
+- A **target** panel is one that can be summoned by a driver and which
+  accepts a payload describing what to show. Commit Details is a target
+  (payload: a `CommitId`). Diff will be a target (payload: a file path +
+  base + head).
+
+A panel can be both. The Changes-files list for a selected commit, for
+example, is a target of Log *and* a driver of Diff.
+
+#### The Summon Operation
+
+A driver invokes summon with:
+
+```ts
+summon(targetPanelId, payload)
+```
+
+The shell handles three cases:
+
+1. **Target is visible.** Focus the target. Dispatch the payload to it.
+   The target updates its internal state to render the payload.
+2. **Target is hidden but has been placed before.** Restore the target at
+   its last-known location in the layout. Focus it. Dispatch the payload.
+3. **Target has never been opened.** Open it at a sensible default
+   position declared in the panel's registration metadata. Focus it.
+   Dispatch the payload.
+
+The user's last placement is sacred. Summoning never moves a visible
+panel. Summoning a hidden panel restores it where the user last saw fit
+to put it.
+
+#### Position Memory for Hidden Panels
+
+`dockview` persists the layout of *visible* panels. The panel registry
+extends this with **placement memory** for hidden panels: when a panel is
+closed, its last-known location (dock region, group, tab order,
+relative size) is stored separately and survives across LeGit restarts.
+Reopening a panel restores it there.
+
+Placement memory is per-panel, not per-relationship. The Commit Details
+panel has one last-known location, regardless of which driver summoned
+it most recently.
+
+#### Payloads Are Per-Panel State
+
+A target panel's "what am I currently showing" lives in the panel's own
+state (Zustand store per panel, or local React state for simple cases).
+The shell is not in the business of routing payloads beyond delivering
+the most recent one to the target. If the target panel needs to react to
+the payload (refetch, scroll, highlight), that's the panel's own logic.
+
+Concretely: Commit Details holds a `selectedCommitId: CommitId | null`
+in its own state. A summon from Log sets that field. The panel's render
+reacts to the field. The shell didn't touch the state.
+
+#### What's Not Defined By Relationships
+
+Several panel behaviors are explicitly **not** part of the relationship
+mechanism, to keep its surface small:
+
+- **Default selection.** Whether the Log panel auto-selects the first
+  commit when it opens is a panel-internal choice, not a relationship.
+- **Cross-panel synchronization beyond summon.** If both a Log panel and
+  a hypothetical Refs panel showed selection state, keeping them in sync
+  would be a separate concern (a shared selection store, probably).
+  Summon is one-shot: driver fires, target updates, done.
+- **History / back navigation.** "Show me the commit I was looking at
+  before this one" is a target-panel concern, not a shell concern. The
+  shell doesn't track per-target payload history.
+- **Multiple targets for one driver event.** Clicking a commit in Log
+  could plausibly summon both Commit Details and a Changed Files view.
+  This is fine — the driver fires `summon()` twice. The mechanism does
+  not have a primitive for "summon group."
+
+#### Why Not Build This Into the Shell as Slot-and-Mode?
+
+A slot-and-mode shell (main slot + side slot, content driven by app
+state) would solve the same workflow problem more aggressively but
+removes user configurability — which §1 keeps as a core differentiator.
+The summon model preserves configurability and layers selection-driven
+behavior on top.
+
+The cost is that panels declare summon relationships explicitly, in
+their registration metadata. There is no implicit "this panel summons
+that one" — every relationship is named code. That's a feature: the
+relationships are auditable in one place and don't grow organically out
+of UI events scattered across components.
+
+#### Relationship Registration
+
+A driver panel that summons another declares it at registration time:
+
+```ts
+registerPanel({
+  id: "log",
+  scope: "repo",
+  // ...
+  summons: ["commit-details"],
+});
+
+registerPanel({
+  id: "commit-details",
+  scope: "repo",
+  defaultPlacement: { region: "right", group: "details" },
+  // ...
+});
+```
+
+The declared `summons` list is informational for tooling and future
+documentation (a panel cannot summon something it didn't declare, but
+that's enforced by the API rather than the registry). The
+`defaultPlacement` is used only the first time a panel is ever opened;
+afterward, placement memory takes over.
 
 ---
 
@@ -1118,3 +1254,8 @@ Indicative ordering; not a schedule.
 | Git binary path                 | Auto-detected with user-configurable override | Pre-empts the "wrong git" bug class that has long plagued Sourcetree                   |
 | Startup check                   | `git --version` with version-floor validation | Clear setup screen rather than mysterious failures later                              |
 | Embedded `git` binary           | Not in v0.1                                | Architecture supports it; Sourcetree-style bundling is a v0.2+ packaging decision        |
+| Panel UX paradigm               | Dockable shell + selection-driven summon   | Pure dockable mismatches Git workflows; pure slot-and-mode removes configurability; hybrid preserves both |
+| Summon vs. moving panels        | Summon never moves visible panels; only restores hidden ones | User's last placement is sacred; surprise movement would undermine the configurability story |
+| Placement memory                | Per-panel last-known location, persisted across restarts | Hidden panels reopen where the user last had them, regardless of which driver summoned them |
+| Relationship surface            | Explicit `summons` declarations at panel registration | Auditable in one place; prevents organic growth of cross-panel coupling in UI event handlers |
+| Payload routing                 | Shell delivers payload to target; target owns its own state | Keeps the shell's responsibility small; payload reaction is panel logic, not shell logic |

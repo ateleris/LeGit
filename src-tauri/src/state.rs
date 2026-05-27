@@ -149,10 +149,11 @@ pub struct SystemInfo {
 pub struct RepoSession {
     pub id: RepoId,
     pub path: PathBuf,
-    /// The active runner. Wrapped in a lock so the per-repo git binary
-    /// override can rebuild it live without disrupting in-flight operations
-    /// (each spawned task clones the Arc before locking).
-    pub runner: RwLock<Arc<GitRunner>>,
+    /// The active runner. Wrapped in an `Arc<RwLock<…>>` so the same lock is
+    /// shared with `GitCliBackend`. Swapping the inner `Arc<GitRunner>` (e.g.
+    /// on per-repo git-path override) is visible to both the session and the
+    /// backend without rebuilding either (DESIGN-v0.3.md §C.5/F.3).
+    pub runner: Arc<RwLock<Arc<GitRunner>>>,
     pub backend: Arc<dyn GitBackend>,
     pub opened_at: SystemTime,
     /// Repo-scoped settings loaded on open; flushed on close.
@@ -168,11 +169,12 @@ impl RepoSession {
         settings: RepoSettings,
         settings_path: PathBuf,
     ) -> Self {
-        let backend = Arc::new(GitCliBackend::new(runner.clone()));
+        let runner_lock = Arc::new(RwLock::new(runner));
+        let backend = Arc::new(GitCliBackend::new(runner_lock.clone()));
         Self {
             id: Uuid::new_v4().to_string(),
             path,
-            runner: RwLock::new(runner),
+            runner: runner_lock,
             backend,
             opened_at: SystemTime::now(),
             settings: Arc::new(RwLock::new(settings)),

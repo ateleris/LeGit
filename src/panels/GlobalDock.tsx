@@ -6,7 +6,7 @@ import {
 } from "dockview-react";
 import { useDockviewStore } from "../store/dockview";
 import { useSettingsStore } from "../store/settings";
-import { GLOBAL_DOCKVIEW_COMPONENTS, GLOBAL_PANELS } from "./registry";
+import { GLOBAL_DOCKVIEW_COMPONENTS, GLOBAL_DOCKVIEW_TAB_COMPONENTS, GLOBAL_PANELS } from "./registry";
 
 /**
  * Global-scope dockview instance. Hosts Repositories, Theme Editor, and
@@ -63,6 +63,7 @@ export function GlobalDock() {
     <div style={{ height: "100%", position: "relative" }}>
       <DockviewReact
         components={GLOBAL_DOCKVIEW_COMPONENTS}
+        tabComponents={GLOBAL_DOCKVIEW_TAB_COMPONENTS}
         onReady={onReady}
         className="dockview-theme-abyss"
       />
@@ -85,6 +86,7 @@ function buildDefaultGlobalLayout(api: DockviewApi) {
   api.addPanel({
     id: "global-settings",
     component: "global-settings",
+    tabComponent: "confirm-close",
     title: "Global Settings",
     position: { referencePanel: "theme-editor", direction: "within" },
   });
