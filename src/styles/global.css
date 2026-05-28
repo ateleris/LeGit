@@ -6,6 +6,23 @@
 * {
   box-sizing: border-box;
 }
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
 
 html,
 body,
@@ -34,6 +51,12 @@ button {
 }
 button:hover:not(:disabled) {
   background: var(--button-hover-bg);
+}
+button.primary:hover:not(:disabled) {
+  background: var(--button-primary-hover-bg);
+}
+button.danger:hover:not(:disabled) {
+  background: var(--button-danger-hover-bg);
 }
 button:disabled {
   opacity: 0.6;
@@ -100,29 +123,26 @@ select:focus {
 .legit-region-divider {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  height: 8px;
-  background: var(--panel-border);
+  justify-content: center;
+  height: 12px;
+  background: var(--divider-bg);
   cursor: row-resize;
   flex-shrink: 0;
   position: relative;
   user-select: none;
   gap: 2px;
-  padding-right: 4px;
 }
 .legit-region-divider--vertical {
   flex-direction: column;
-  justify-content: flex-end;
+  justify-content: center;
   height: auto;
-  width: 8px;
+  width: 12px;
   cursor: col-resize;
-  padding-right: 0;
-  padding-bottom: 4px;
   gap: 2px;
 }
 .legit-region-divider:hover,
 .legit-region-divider--vertical:hover {
-  background: var(--input-focus-border);
+  background: var(--divider-hover-bg);
 }
 .legit-region-divider.is-collapsed,
 .legit-region-divider--vertical.is-collapsed {
@@ -147,11 +167,11 @@ select:focus {
 .legit-region-divider--vertical .legit-region-divider__mode {
   height: auto;
   width: 100%;
-  padding: 4px 0;
+  padding: 0;
   writing-mode: vertical-lr;
 }
-.legit-region-divider__toggle:hover,
-.legit-region-divider__mode:hover {
+button.legit-region-divider__toggle:hover,
+button.legit-region-divider__mode:hover {
   color: var(--panel-fg);
   background: transparent;
 }
@@ -219,15 +239,6 @@ select:focus {
   align-items: stretch;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: var(--panel-border) transparent;
-}
-.legit-tabs__scroll::-webkit-scrollbar {
-  height: 4px;
-}
-.legit-tabs__scroll::-webkit-scrollbar-thumb {
-  background: var(--panel-border);
-  border-radius: 2px;
 }
 .legit-tabs__actions {
   flex: 0 0 auto;
@@ -278,6 +289,9 @@ select:focus {
 }
 .legit-tab__close {
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: none;
   color: inherit;
@@ -285,28 +299,28 @@ select:focus {
   cursor: pointer;
   opacity: 0.7;
 }
-.legit-tab__close:hover {
+button.legit-tab__close:hover {
   opacity: 1;
-  color: var(--error-fg);
+  background: transparent;
 }
 
 /* Dockview customization. Drive dockview's own CSS variables so the
  * tabs-and-actions container provides the *only* tab-row background;
  * individual tabs are transparent unless they're the active one. */
 .dv-dockview {
-  --dv-tabs-and-actions-container-background-color: var(--tab-bg);
-  --dv-tabs-and-actions-container-height: 32px;
-  --dv-tabs-container-scrollbar-color: var(--panel-border);
+  --dv-tabs-and-actions-container-background-color: var(--panel-tab-bg);
+  --dv-tabs-and-actions-container-height: 26px;
+  --dv-tabs-container-scrollbar-color: var(--scrollbar-thumb);
 
-  --dv-activegroup-visiblepanel-tab-background-color: var(--tab-active-bg);
-  --dv-activegroup-visiblepanel-tab-color: var(--tab-active-fg);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--panel-tab-active-bg);
+  --dv-activegroup-visiblepanel-tab-color: var(--panel-tab-active-fg);
   --dv-activegroup-hiddenpanel-tab-background-color: transparent;
-  --dv-activegroup-hiddenpanel-tab-color: var(--tab-fg);
+  --dv-activegroup-hiddenpanel-tab-color: var(--panel-tab-fg);
 
-  --dv-inactivegroup-visiblepanel-tab-background-color: var(--tab-bg);
-  --dv-inactivegroup-visiblepanel-tab-color: var(--tab-fg);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--panel-tab-active-bg);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--panel-tab-active-fg);
   --dv-inactivegroup-hiddenpanel-tab-background-color: transparent;
-  --dv-inactivegroup-hiddenpanel-tab-color: var(--tab-fg);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--panel-tab-fg);
 
   --dv-tab-divider-color: transparent;
   --dv-separator-border: var(--panel-border);

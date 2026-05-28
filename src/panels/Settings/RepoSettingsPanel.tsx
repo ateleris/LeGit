@@ -19,6 +19,8 @@ export function RepoSettingsPanel() {
     activeRepo ? s.repoSettings[activeRepo.id] : null
   );
   const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
+  const refresh = useRepoStore((s) => s.refresh);
+  const setActive = useRepoStore((s) => s.setActive);
 
   const [draft, setDraft] = useState("");
   const [applying, setApplying] = useState(false);
@@ -55,9 +57,6 @@ export function RepoSettingsPanel() {
     const selected = await openDialog({ multiple: false });
     if (typeof selected === "string") setDraft(selected);
   };
-
-  const refresh = useRepoStore((s) => s.refresh);
-  const setActive = useRepoStore((s) => s.setActive);
 
   const apply = async (path: string | null) => {
     setError(null);

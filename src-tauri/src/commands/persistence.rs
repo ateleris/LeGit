@@ -176,12 +176,11 @@ pub async fn save_theme(
     let safe = sanitize_theme_name(&name)?;
     let dir = state.user_themes_dir.clone();
     tokio::fs::create_dir_all(&dir).await?;
-    let final_name = unique_name(&dir, &safe).await;
-    let path = dir.join(format!("{final_name}{THEME_EXT}"));
+    let path = dir.join(format!("{safe}{THEME_EXT}"));
     let json = serde_json::to_string_pretty(&contents)?;
     tokio::fs::write(&path, json).await?;
     Ok(ThemeEntry {
-        name: final_name,
+        name: safe,
         source: ThemeSource::User,
         path: path.to_string_lossy().to_string(),
     })
@@ -286,22 +285,6 @@ fn sanitize_theme_name(name: &str) -> Result<String, AppError> {
     Ok(trimmed.to_string())
 }
 
-async fn unique_name(dir: &std::path::Path, base: &str) -> String {
-    if !dir.join(format!("{base}{THEME_EXT}")).exists() {
-        return base.to_string();
-    }
-    let with_imported = format!("{base} (Imported)");
-    if !dir.join(format!("{with_imported}{THEME_EXT}")).exists() {
-        return with_imported;
-    }
-    for n in 2..1000 {
-        let candidate = format!("{base} ({n})");
-        if !dir.join(format!("{candidate}{THEME_EXT}")).exists() {
-            return candidate;
-        }
-    }
-    format!("{base} ({})", uuid::Uuid::new_v4())
-}
 
 /// Compute the on-disk locations used by `AppState`. Returns
 /// `(global_settings_path, repos_data_dir, user_themes_dir, builtin_themes_dir)`.

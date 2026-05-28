@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useSummonTarget } from "../../store/summon";
@@ -12,6 +12,8 @@ import { formatAppError } from "../../lib/types";
 export function CommitDetailsPanel() {
   const repo = useActiveRepo();
   const [selectedId, setSelectedId] = useState<CommitId | null>(null);
+
+  useEffect(() => { setSelectedId(null); }, [repo?.id]);
 
   const onReceive = useCallback((id: unknown) => {
     if (typeof id === "string") setSelectedId(id as CommitId);

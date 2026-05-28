@@ -170,7 +170,13 @@ function walkGrid(
   for (let i = 0; i < children.length; i++) {
     if (!subtreeContainsGroup(children[i], targetGroupId)) continue;
 
-    // Found the subtree containing the target group.
+    // Recurse first to get the most precise sibling (e.g. "right of log"
+    // rather than the coarser "above console" found at a higher level).
+    const next = orientation === "HORIZONTAL" ? "VERTICAL" : "HORIZONTAL";
+    const deeper = walkGrid(children[i], next, targetGroupId);
+    if (deeper) return deeper;
+
+    // Target is a direct leaf of this branch — use an adjacent sibling.
     if (children.length > 1) {
       const siblingIdx = i === 0 ? 1 : i - 1;
       const refPanel = firstPanelInSubtree(children[siblingIdx]);
@@ -183,9 +189,7 @@ function walkGrid(
       }
     }
 
-    // No sibling at this level — recurse deeper with alternated orientation.
-    const next = orientation === "HORIZONTAL" ? "VERTICAL" : "HORIZONTAL";
-    return walkGrid(children[i], next, targetGroupId);
+    return null;
   }
   return null;
 }

@@ -5,8 +5,17 @@ import {
   type DockviewReadyEvent,
 } from "dockview-react";
 import { useDockviewStore } from "../store/dockview";
-import { useSettingsStore } from "../store/settings";
 import { GLOBAL_DOCKVIEW_COMPONENTS, GLOBAL_DOCKVIEW_TAB_COMPONENTS, GLOBAL_PANELS } from "./registry";
+
+const LAYOUT_KEY = "legit.global-dock-layout";
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function persistLayout(data: unknown) {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(data)); } catch { /* quota */ }
+  }, 300);
+}
 
 /**
  * Global-scope dockview instance. Hosts Repositories, Theme Editor, and
@@ -14,7 +23,6 @@ import { GLOBAL_DOCKVIEW_COMPONENTS, GLOBAL_DOCKVIEW_TAB_COMPONENTS, GLOBAL_PANE
  */
 export function GlobalDock() {
   const setGlobalApi = useDockviewStore((s) => s.setGlobalApi);
-  const saveLayoutDebounced = useSettingsStore((s) => s.saveGlobalLayoutDebounced);
   const apiRef = useRef<DockviewApi | null>(null);
 
   const onReady = useCallback(
@@ -22,11 +30,12 @@ export function GlobalDock() {
       apiRef.current = event.api;
       setGlobalApi(event.api);
 
-      const persisted = useSettingsStore.getState().settings?.global_dock_layout;
       let restored = false;
-      if (persisted && typeof persisted === "object") {
+      const raw = localStorage.getItem(LAYOUT_KEY);
+      if (raw) {
         try {
-          event.api.fromJSON(persisted as any);
+          const persisted = JSON.parse(raw);
+          event.api.fromJSON(persisted);
           if (event.api.panels.length > 0) {
             restored = true;
           } else {
@@ -41,15 +50,10 @@ export function GlobalDock() {
       }
 
       event.api.onDidLayoutChange(() => {
-        try {
-          const json = event.api.toJSON();
-          saveLayoutDebounced(json);
-        } catch (e) {
-          console.warn("toJSON failed", e);
-        }
+        try { persistLayout(event.api.toJSON()); } catch { /* ignore */ }
       });
     },
-    [saveLayoutDebounced, setGlobalApi]
+    [setGlobalApi]
   );
 
   useEffect(

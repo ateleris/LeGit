@@ -20,7 +20,8 @@
         "minHeight": 500,
         "resizable": true,
         "fullscreen": false,
-        "dragDropEnabled": false
+        "dragDropEnabled": false,
+        "backgroundColor": "#1e1e1e"
       }
     ],
     "security": {
@@ -40,6 +41,11 @@
     "category": "DeveloperTool",
     "shortDescription": "A free, cross-platform Git GUI",
     "longDescription": "LeGit — community-driven Git GUI with first-class Linux support and colorblind-friendly theming.",
-    "resources": ["../themes/*.legit-theme.json"]
+    "resources": ["../themes/*.legit-theme.json"],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
   }
 }

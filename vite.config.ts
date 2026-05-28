@@ -21,5 +21,8 @@ export default defineConfig({
     sourcemap: true,
     minify: "esbuild",
     outDir: "dist",
+    // Tauri loads assets from disk — no network latency, so chunk size has no
+    // performance impact. Raise the limit to silence the irrelevant warning.
+    chunkSizeWarningLimit: 1000,
   },
 });

@@ -381,24 +381,24 @@ fn log_invocation(
     stderr_summary: &str,
 ) {
     let duration_ms = started.elapsed().as_millis();
+    // Log at debug for both outcomes — the runner doesn't know whether a
+    // non-zero exit code is expected (e.g. `git config --get` returning 1 for
+    // "key not found"). Callers that consider a non-zero result an actual error
+    // are responsible for logging at the appropriate level.
+    let snippet: String = stderr_summary.lines().take(5).collect::<Vec<_>>().join(" | ");
+    debug!(
+        duration_ms,
+        exit_code = exit_code.unwrap_or(-1),
+        success,
+        args = ?args,
+        stderr = %snippet,
+        "git invocation complete",
+    );
+    // Keep a higher-level info log only for successful long-running ops so
+    // progress is visible without enabling full debug output.
     if success {
-        info!(
-            duration_ms,
-            exit_code = exit_code.unwrap_or(-1),
-            args = ?args,
-            "git ok",
-        );
-    } else {
-        let snippet: String = stderr_summary.lines().take(5).collect::<Vec<_>>().join(" | ");
-        error!(
-            duration_ms,
-            exit_code = exit_code.unwrap_or(-1),
-            args = ?args,
-            stderr = %snippet,
-            "git failed",
-        );
+        info!(duration_ms, args = ?args, "git ok");
     }
-    debug!(?args, duration_ms, "git invocation complete");
 }
 
 /// Parsed `git --version` output.

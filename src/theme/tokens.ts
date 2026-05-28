@@ -21,12 +21,14 @@ export const PALETTE_CONTRACT: readonly PaletteDescriptor[] = [
   { name: "panel-bg", documentation: "Panel background. Often equal to `main-bg`." },
   { name: "panel-border", documentation: "Borders, dividers, hairlines." },
   { name: "accent", documentation: "Selection, focus, current-branch markers." },
+  { name: "accent-hover", documentation: "Hover shade for primary buttons and accent surfaces." },
   { name: "accent-fg", documentation: "Text drawn on `accent`." },
   {
     name: "danger",
     documentation:
       "Error and removed-line colour. Chosen colourblind-friendly by default (orange).",
   },
+  { name: "danger-hover", documentation: "Hover shade for danger buttons." },
   {
     name: "success",
     documentation:
@@ -49,18 +51,26 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "panel.header.bg", group: "Panel", documentation: "Panel header background." },
   { name: "panel.header.fg", group: "Panel", documentation: "Panel header text." },
 
-  { name: "tab.bg", group: "Tabs", documentation: "Inactive tab background." },
-  { name: "tab.fg", group: "Tabs", documentation: "Inactive tab text." },
-  { name: "tab.active.bg", group: "Tabs", documentation: "Active tab background." },
-  { name: "tab.active.fg", group: "Tabs", documentation: "Active tab text." },
-  { name: "tab.border", group: "Tabs", documentation: "Tab strip border." },
+  { name: "tab.bg", group: "Repo Tabs", documentation: "Inactive repository tab background." },
+  { name: "tab.fg", group: "Repo Tabs", documentation: "Inactive repository tab text." },
+  { name: "tab.active.bg", group: "Repo Tabs", documentation: "Active repository tab background." },
+  { name: "tab.active.fg", group: "Repo Tabs", documentation: "Active repository tab text." },
+  { name: "tab.border", group: "Repo Tabs", documentation: "Repository tab strip border." },
+
+  { name: "panel-tab.bg", group: "Panel Tabs", documentation: "Panel tab strip background (dockview panels)." },
+  { name: "panel-tab.fg", group: "Panel Tabs", documentation: "Inactive panel tab text." },
+  { name: "panel-tab.active.bg", group: "Panel Tabs", documentation: "Active panel tab background." },
+  { name: "panel-tab.active.fg", group: "Panel Tabs", documentation: "Active panel tab text." },
+  { name: "panel-tab.border", group: "Panel Tabs", documentation: "Panel tab strip border." },
 
   { name: "button.bg", group: "Controls", documentation: "Default button background." },
   { name: "button.fg", group: "Controls", documentation: "Default button text." },
   { name: "button.hover.bg", group: "Controls", documentation: "Default button hover background." },
   { name: "button.primary.bg", group: "Controls", documentation: "Primary action button background." },
+  { name: "button.primary.hover.bg", group: "Controls", documentation: "Primary action button hover background." },
   { name: "button.primary.fg", group: "Controls", documentation: "Primary action button text." },
   { name: "button.danger.bg", group: "Controls", documentation: "Destructive action button background." },
+  { name: "button.danger.hover.bg", group: "Controls", documentation: "Destructive action button hover background." },
   { name: "button.danger.fg", group: "Controls", documentation: "Destructive action button text." },
 
   { name: "input.bg", group: "Controls", documentation: "Text input background." },
@@ -73,6 +83,13 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "console.stdout.fg", group: "Console", documentation: "stdout lines." },
   { name: "console.stderr.fg", group: "Console", documentation: "stderr lines." },
   { name: "console.prompt.fg", group: "Console", documentation: "Input prompt indicator." },
+
+  { name: "divider.bg", group: "Divider", documentation: "Region divider background (between global and repo panels)." },
+  { name: "divider.hover.bg", group: "Divider", documentation: "Region divider background on hover." },
+
+  { name: "scrollbar.thumb", group: "Scrollbar", documentation: "Scrollbar thumb (draggable handle)." },
+  { name: "scrollbar.thumb.hover", group: "Scrollbar", documentation: "Scrollbar thumb on hover." },
+  { name: "scrollbar.track", group: "Scrollbar", documentation: "Scrollbar track (gutter behind the thumb)." },
 
   { name: "subtle.fg", group: "Text", documentation: "Muted text." },
   { name: "error.fg", group: "Text", documentation: "Error text." },

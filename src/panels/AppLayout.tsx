@@ -9,6 +9,8 @@ import { RepoTabBar } from "./RepoTabBar";
 const DEFAULT_SIZE_TOP = 240;
 const DEFAULT_SIZE_LEFT = 280;
 const MIN_SIZE = 60;
+const DIVIDER_SIZE = 12;
+const TAB_BAR_HEIGHT = 32;
 
 function saveRegionState(
   placement: RegionPlacement,
@@ -101,6 +103,7 @@ export function AppLayout() {
   const dragging = useRef(false);
   const dragStart = useRef(0);
   const dragStartSize = useRef(0);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   const onDividerMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -112,9 +115,16 @@ export function AppLayout() {
 
       const onMove = (ev: MouseEvent) => {
         if (!dragging.current) return;
-        const coord = placementRef.current === "top" ? ev.clientY : ev.clientX;
-        const next = Math.max(MIN_SIZE, dragStartSize.current + coord - dragStart.current);
-        if (placementRef.current === "top") {
+        const isTopMode = placementRef.current === "top";
+        const coord = isTopMode ? ev.clientY : ev.clientX;
+        const container = containerRef.current;
+        const totalSize = container
+          ? (isTopMode ? container.clientHeight : container.clientWidth)
+          : 0;
+        const overhead = isTopMode ? DIVIDER_SIZE + TAB_BAR_HEIGHT : DIVIDER_SIZE;
+        const maxSize = totalSize > 0 ? totalSize - overhead - MIN_SIZE : Infinity;
+        const next = Math.min(maxSize, Math.max(MIN_SIZE, dragStartSize.current + coord - dragStart.current));
+        if (isTopMode) {
           setSizeTop(next);
           debouncedPersist(next, sizeLeftRef.current);
         } else {
@@ -150,8 +160,7 @@ export function AppLayout() {
 
   if (placement === "left") {
     return (
-      <div className="legit-app-root">
-        <RepoTabBar />
+      <div className="legit-app-root" ref={containerRef}>
         <div className="legit-split-row" style={{ flex: 1, minHeight: 0 }}>
           {!collapsed && (
             <div
@@ -167,8 +176,11 @@ export function AppLayout() {
           >
             {dividerControls}
           </div>
-          <div className="legit-repo-region" style={{ flex: 1, minWidth: 0 }}>
-            <RepoDock />
+          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+            <RepoTabBar />
+            <div className="legit-repo-region" style={{ flex: 1, minHeight: 0 }}>
+              <RepoDock />
+            </div>
           </div>
         </div>
       </div>
@@ -177,7 +189,7 @@ export function AppLayout() {
 
   // Top mode (default).
   return (
-    <div className="legit-app-root">
+    <div className="legit-app-root" ref={containerRef}>
       {!collapsed && (
         <div
           className="legit-global-region"

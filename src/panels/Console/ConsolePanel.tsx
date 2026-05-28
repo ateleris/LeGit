@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { consoleCancel, consoleExec } from "../../lib/commands";
 import { onConsoleOutput } from "../../lib/events";
 import { formatAppError } from "../../lib/types";
@@ -27,6 +27,7 @@ export function ConsolePanel() {
   const [currentOpId, setCurrentOpId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const linesEnd = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const nextId = useRef(0);
 
   const append = useCallback((stream: LogLine["stream"], text: string) => {
@@ -77,7 +78,8 @@ export function ConsolePanel() {
   }, [lines]);
 
   const submit = async () => {
-    const text = input.trim();
+    const raw = input.trim();
+    const text = raw.startsWith("git ") ? raw.slice(4) : raw;
     if (!text) return;
     if (!activeRepo) {
       append("system", "No active repository. Open one with the + button first.");
@@ -136,27 +138,13 @@ export function ConsolePanel() {
     }
   };
 
-  const repoLabel = useMemo(
-    () => (activeRepo ? `${activeRepo.name} (${activeRepo.path})` : "(no active repo)"),
-    [activeRepo]
-  );
-
   return (
     <div className="legit-panel" style={{ background: "var(--console-bg)" }}>
-      <div className="legit-panel__toolbar">
-        <strong style={{ color: "var(--console-prompt-fg)" }}>git</strong>
-        <span className="legit-subtle" style={{ flex: 1 }}>
-          {repoLabel}
-        </span>
-        <button onClick={() => setLines([])}>Clear</button>
-        {running && (
-          <button className="danger" onClick={cancel}>
-            Cancel
-          </button>
-        )}
-      </div>
       <div
         className="legit-panel__body"
+        onClick={() => {
+          if (!window.getSelection()?.toString()) inputRef.current?.focus();
+        }}
         style={{
           fontFamily:
             'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", monospace',
@@ -189,6 +177,7 @@ export function ConsolePanel() {
         }}
         style={{
           display: "flex",
+          alignItems: "center",
           gap: 8,
           padding: 8,
           borderTop: "1px solid var(--panel-border)",
@@ -196,6 +185,7 @@ export function ConsolePanel() {
       >
         <span style={{ color: "var(--console-prompt-fg)" }}>$ git</span>
         <input
+          ref={inputRef}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKeyDown}
@@ -207,6 +197,12 @@ export function ConsolePanel() {
         <button type="submit" className="primary" disabled={!activeRepo || running}>
           Run
         </button>
+        <button type="button" onClick={() => setLines([])}>Clear</button>
+        {running && (
+          <button type="button" className="danger" onClick={cancel}>
+            Cancel
+          </button>
+        )}
       </form>
     </div>
   );

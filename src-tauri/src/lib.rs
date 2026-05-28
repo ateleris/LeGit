@@ -11,7 +11,7 @@ mod state;
 
 use std::path::PathBuf;
 
-use state::{GlobalSettings, AppState, SystemInfo};
+use state::{GlobalSettings, AppState};
 use tauri::Manager;
 use tauri_specta::{collect_commands, Builder};
 use tracing_subscriber::EnvFilter;
@@ -53,10 +53,12 @@ pub fn run() {
 
     #[cfg(debug_assertions)]
     {
-        use specta_typescript::Typescript;
+        use specta_typescript::{BigIntExportBehavior, Typescript};
         let _ = specta_builder
             .export(
-                Typescript::default(),
+                // i64 timestamps (Unix seconds) are safe as JS `number` —
+                // MAX_SAFE_INTEGER covers timestamps until the year 285,428,751.
+                Typescript::default().bigint(BigIntExportBehavior::Number),
                 "../src/lib/bindings.ts",
             )
             .map_err(|e| eprintln!("specta export failed: {e}"));
@@ -76,9 +78,6 @@ pub fn run() {
             let global_settings = load_global_settings_sync(&global_settings_path);
             let git_override = global_settings.git_path_override.as_deref().map(PathBuf::from);
             let resolved_git_path = git_resolve::resolve_git_path(git_override.as_ref());
-            let system_info = SystemInfo {
-                system_git_path: git_resolve::resolve_git_path(None),
-            };
 
             tracing::info!(
                 resolved_git_path = %resolved_git_path.display(),
@@ -96,7 +95,6 @@ pub fn run() {
                 repos_data_dir,
                 user_themes_dir,
                 builtin_themes_dir,
-                system_info,
             );
             app.manage(state);
             Ok(())

@@ -25,6 +25,7 @@ interface ThemeStore {
   refreshList: () => Promise<void>;
   setActive: (name: string) => Promise<void>;
   startEditing: () => void;
+  cancelEditing: () => void;
   updateDraftPalette: (palette: Record<string, string>) => void;
   updateDraftTokens: (tokens: Record<string, string>) => void;
   updateDraftMeta: (patch: Partial<Pick<ThemeDocument, "name" | "description" | "author">>) => void;
@@ -88,6 +89,12 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
       draft: { ...active, palette: { ...active.palette }, tokens: { ...active.tokens } },
       draftDirty: false,
     });
+  },
+
+  cancelEditing() {
+    const active = get().activeDocument;
+    if (active) applyTheme(active);
+    set({ draft: null, draftDirty: false });
   },
 
   updateDraftPalette(palette) {

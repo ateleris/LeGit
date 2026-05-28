@@ -16,6 +16,7 @@ export function ThemeEditorPanel() {
   const draftDirty = useThemeStore((s) => s.draftDirty);
   const setActive = useThemeStore((s) => s.setActive);
   const startEditing = useThemeStore((s) => s.startEditing);
+  const cancelEditing = useThemeStore((s) => s.cancelEditing);
   const updateDraftPalette = useThemeStore((s) => s.updateDraftPalette);
   const updateDraftTokens = useThemeStore((s) => s.updateDraftTokens);
   const updateDraftMeta = useThemeStore((s) => s.updateDraftMeta);
@@ -167,7 +168,7 @@ export function ThemeEditorPanel() {
           <select value={activeName ?? ""} onChange={(e) => setActive(e.target.value)}>
             {themes.map((t) => (
               <option key={`${t.source}:${t.name}`} value={t.name}>
-                {t.name} {t.source === "builtin" ? "·built-in" : "·user"}
+                {t.name}
               </option>
             ))}
           </select>
@@ -175,7 +176,7 @@ export function ThemeEditorPanel() {
         {!editing ? (
           <button onClick={startEditing}>Edit</button>
         ) : (
-          <span className="legit-subtle">Editing (unsaved)</span>
+          <button onClick={cancelEditing}>Cancel</button>
         )}
         <button onClick={onImport}>Import…</button>
         <button onClick={onExport}>Export…</button>

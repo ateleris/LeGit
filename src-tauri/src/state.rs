@@ -10,7 +10,6 @@ use specta::Type;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::SystemTime;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -132,17 +131,6 @@ pub struct RepoSettings {
 }
 
 // ---------------------------------------------------------------------------
-// System info (read-only at startup)
-// ---------------------------------------------------------------------------
-
-/// Host-system information determined once at startup. Not persisted.
-#[derive(Debug, Clone)]
-pub struct SystemInfo {
-    /// The git binary that would be used absent any user overrides.
-    pub system_git_path: PathBuf,
-}
-
-// ---------------------------------------------------------------------------
 // Repo session
 // ---------------------------------------------------------------------------
 
@@ -155,7 +143,6 @@ pub struct RepoSession {
     /// backend without rebuilding either (DESIGN-v0.3.md §C.5/F.3).
     pub runner: Arc<RwLock<Arc<GitRunner>>>,
     pub backend: Arc<dyn GitBackend>,
-    pub opened_at: SystemTime,
     /// Repo-scoped settings loaded on open; flushed on close.
     pub settings: Arc<RwLock<RepoSettings>>,
     /// On-disk path for `repos/<hash>/settings.json`.
@@ -176,7 +163,6 @@ impl RepoSession {
             path,
             runner: runner_lock,
             backend,
-            opened_at: SystemTime::now(),
             settings: Arc::new(RwLock::new(settings)),
             settings_path,
         }
@@ -210,7 +196,6 @@ pub struct RepoSummary {
 pub struct AppState {
     pub repos: RwLock<HashMap<RepoId, Arc<RepoSession>>>,
     pub global_settings: Arc<RwLock<GlobalSettings>>,
-    pub system_info: Arc<SystemInfo>,
     /// Resolved git binary path the runner uses *right now*.
     pub git_path: RwLock<PathBuf>,
     /// On-disk path for `global-settings.json`.
@@ -231,12 +216,10 @@ impl AppState {
         repos_data_dir: PathBuf,
         user_themes_dir: PathBuf,
         builtin_themes_dir: PathBuf,
-        system_info: SystemInfo,
     ) -> Self {
         Self {
             repos: RwLock::new(HashMap::new()),
             global_settings: Arc::new(RwLock::new(global_settings)),
-            system_info: Arc::new(system_info),
             git_path: RwLock::new(git_path),
             global_settings_path,
             repos_data_dir,
