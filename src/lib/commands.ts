@@ -6,9 +6,11 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  Branch,
   Commit,
   CommitDetails,
   GlobalSettings,
+  LaneLock,
   RepoSettings,
   ConsoleExecHandle,
   GitStatus,
@@ -125,3 +127,32 @@ export const repoLog = (repoId: string, maxCount?: number, skip?: number) =>
 
 export const repoCommitDetails = (repoId: string, commitId: string) =>
   invoke<CommitDetails>("repo_commit_details", { repoId, commitId });
+
+export const repoBranches = (repoId: string) =>
+  invoke<Branch[]>("repo_branches", { repoId });
+
+// --- lane locks ---
+
+export const listLaneLocks = (repoId: string) =>
+  invoke<LaneLock[]>("list_lane_locks", { repoId });
+
+export const setLaneLock = (repoId: string, refName: string, laneIndex: number) =>
+  invoke<LaneLock[]>("set_lane_lock", { repoId, refName, laneIndex });
+
+export const unsetLaneLock = (repoId: string, refName: string) =>
+  invoke<LaneLock[]>("unset_lane_lock", { repoId, refName });
+
+// --- column preferences ---
+
+export const saveColumnPreferences = (prefs: unknown) =>
+  invoke<null>("save_column_preferences", { prefs });
+
+// --- commits graph metrics ---
+
+export const saveCommitsGraphMetrics = (
+  rowHeight: number,
+  laneWidth: number,
+  dotRadius: number,
+  lineWidth: number,
+  textSize: number
+) => invoke<null>("save_commits_graph_metrics", { rowHeight, laneWidth, dotRadius, lineWidth, textSize });

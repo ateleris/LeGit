@@ -105,6 +105,7 @@ pub fn parse_cat_file(sha: &str, raw: &str) -> Result<ParsedCatFile, ParseError>
             message,
             timestamp: author_ts,
             signature: None, // filled in by the caller after verify-commit
+            decorations: vec![],
         },
         has_signature_header: has_sig,
         raw_object: raw.to_string(),

@@ -48,7 +48,13 @@ pub fn run() {
         commands::global_write_line_endings,
         commands::set_warn_on_mixed_endings,
         commands::repo_log,
+        commands::repo_branches,
         commands::repo_commit_details,
+        commands::list_lane_locks,
+        commands::set_lane_lock,
+        commands::unset_lane_lock,
+        commands::save_column_preferences,
+        commands::save_commits_graph_metrics,
     ]);
 
     #[cfg(debug_assertions)]

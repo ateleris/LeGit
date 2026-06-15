@@ -29,6 +29,12 @@ export interface GlobalSettings {
   global_region_size_left: number | null;
   global_dock_collapsed: boolean;
   warn_on_mixed_endings: boolean;
+  column_preferences?: unknown;
+  commits_row_height: number;
+  commits_lane_width: number;
+  commits_dot_radius: number;
+  commits_line_width: number;
+  commits_text_size: number;
 }
 
 export interface RepoSettings {
@@ -90,6 +96,7 @@ export type AppError =
   | { kind: "InvalidTheme"; details: string }
   | { kind: "Settings"; details: string }
   | { kind: "ParseArgs"; details: string }
+  | { kind: "InvalidLockIndex"; details: number }
   | { kind: "OperationNotFound"; details: string };
 
 /** Construct a short message suitable for display, regardless of variant. */
@@ -136,6 +143,26 @@ export interface LineEndingsView {
 
 export type CommitId = string;
 
+export type RefDecoration =
+  | { type: "head" }
+  | { type: "headOf"; value: string }
+  | { type: "branch"; value: string }
+  | { type: "tag"; value: string }
+  | { type: "remote"; value: string }
+  | { type: "other"; value: string };
+
+export type LaneLock = { refName: string; laneIndex: number };
+
+/** A local or remote-tracking branch (matches legit-core `Branch`). */
+export interface Branch {
+  name: string;
+  is_current: boolean;
+  is_remote: boolean;
+  /** Full upstream ref (e.g. "refs/remotes/origin/dev") for local branches. */
+  upstream: string | null;
+  head: CommitId | null;
+}
+
 export interface Signature {
   name: string;
   email: string;
@@ -167,6 +194,7 @@ export interface Commit {
   message: string;
   timestamp: number;
   signature: SignatureVerification | null;
+  decorations?: RefDecoration[];
 }
 
 export interface CommitDetails {

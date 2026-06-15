@@ -37,8 +37,29 @@ export const PALETTE_CONTRACT: readonly PaletteDescriptor[] = [
   { name: "warning", documentation: "Non-fatal warnings." },
   { name: "subtle-fg", documentation: "Muted text: timestamps, hints, inactive labels." },
   { name: "input-bg", documentation: "Background of text inputs." },
+  {
+    name: "row-selected-bg",
+    documentation: "Background of the selected row in list panels (e.g. the Commits panel).",
+  },
   { name: "console-bg", documentation: "Git Console background." },
   { name: "stderr-fg", documentation: "Stderr text in the Git Console." },
+  // Ref chip colours (Commits panel). Each chip type has a translucent fill,
+  // a border, and a text/icon colour.
+  { name: "ref-branch-bg", documentation: "Local branch chip fill." },
+  { name: "ref-branch-border", documentation: "Local branch chip border." },
+  { name: "ref-branch-fg", documentation: "Local branch chip text." },
+  { name: "ref-branch-current-bg", documentation: "Checked-out branch chip fill." },
+  { name: "ref-branch-current-border", documentation: "Checked-out branch chip border." },
+  { name: "ref-branch-current-fg", documentation: "Checked-out branch chip text." },
+  { name: "ref-remote-bg", documentation: "Remote branch chip fill (and fused-chip remote indicator)." },
+  { name: "ref-remote-border", documentation: "Remote branch chip border." },
+  { name: "ref-remote-fg", documentation: "Remote branch chip text / remote indicator colour." },
+  { name: "ref-tag-bg", documentation: "Tag chip fill." },
+  { name: "ref-tag-border", documentation: "Tag chip border." },
+  { name: "ref-tag-fg", documentation: "Tag chip text." },
+  { name: "ref-head-bg", documentation: "HEAD chip fill." },
+  { name: "ref-head-border", documentation: "HEAD chip border." },
+  { name: "ref-head-fg", documentation: "HEAD chip / HEAD→ indicator text." },
 ] as const;
 
 export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
@@ -103,6 +124,31 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
 
   { name: "branch.current.fg", group: "Refs", documentation: "Colour of the current branch label." },
   { name: "commit.signed.indicator", group: "Refs", documentation: "Signed-commit indicator colour." },
+
+  { name: "ref.branch.bg", group: "Refs", documentation: "Local branch chip fill." },
+  { name: "ref.branch.border", group: "Refs", documentation: "Local branch chip border." },
+  { name: "ref.branch.fg", group: "Refs", documentation: "Local branch chip text." },
+  { name: "ref.branch.current.bg", group: "Refs", documentation: "Checked-out branch chip fill." },
+  { name: "ref.branch.current.border", group: "Refs", documentation: "Checked-out branch chip border." },
+  { name: "ref.branch.current.fg", group: "Refs", documentation: "Checked-out branch chip text." },
+  { name: "ref.remote.bg", group: "Refs", documentation: "Remote branch chip fill." },
+  { name: "ref.remote.border", group: "Refs", documentation: "Remote branch chip border." },
+  { name: "ref.remote.fg", group: "Refs", documentation: "Remote branch chip text and the fused-chip remote indicator." },
+  { name: "ref.tag.bg", group: "Refs", documentation: "Tag chip fill." },
+  { name: "ref.tag.border", group: "Refs", documentation: "Tag chip border." },
+  { name: "ref.tag.fg", group: "Refs", documentation: "Tag chip text." },
+  { name: "ref.head.bg", group: "Refs", documentation: "HEAD chip fill." },
+  { name: "ref.head.border", group: "Refs", documentation: "HEAD chip border." },
+  { name: "ref.head.fg", group: "Refs", documentation: "HEAD chip and HEAD→ indicator text." },
+
+  { name: "graph.lane.0", group: "Graph", documentation: "Lane 0 colour (main branch by convention)." },
+  { name: "graph.lane.1", group: "Graph", documentation: "Lane 1 colour." },
+  { name: "graph.lane.2", group: "Graph", documentation: "Lane 2 colour." },
+  { name: "graph.lane.3", group: "Graph", documentation: "Lane 3 colour." },
+  { name: "graph.lane.4", group: "Graph", documentation: "Lane 4 colour." },
+  { name: "graph.lane.5", group: "Graph", documentation: "Lane 5 colour." },
+  { name: "graph.lane.fallback", group: "Graph", documentation: "Fallback colour for lanes beyond index 5." },
+  { name: "graph.row.selected.bg", group: "Graph", documentation: "Background of the selected commit row." },
 ] as const;
 
 /** Pairs whose contrast the editor surfaces for the user. */

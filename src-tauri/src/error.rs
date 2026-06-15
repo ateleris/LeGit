@@ -40,6 +40,9 @@ pub enum AppError {
     #[error("invalid command arguments: {0}")]
     ParseArgs(String),
 
+    #[error("lane index {0} exceeds maximum of 64")]
+    InvalidLockIndex(u32),
+
     #[error("operation not found: {0}")]
     OperationNotFound(String),
 }

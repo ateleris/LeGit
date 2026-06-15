@@ -44,10 +44,11 @@ export function CommitDetailsPanel() {
 
   return (
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
-      <div className="legit-panel__toolbar">
-        <strong>Commit Details</strong>
-        {isFetching && <span className="legit-subtle" style={{ fontSize: 11, marginLeft: 8 }}>Loading…</span>}
-      </div>
+      {isFetching && (
+        <div className="legit-panel__toolbar">
+          <span className="legit-subtle" style={{ fontSize: 11 }}>Loading…</span>
+        </div>
+      )}
 
       {isError && (
         <pre className="legit-error" style={{ margin: "8px 12px", fontSize: 12 }}>

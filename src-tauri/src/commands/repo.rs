@@ -4,7 +4,7 @@
 
 use crate::error::AppError;
 use crate::state::{
-    load_repo_settings_sync, persist_repo_settings, AppState, RepoSession, RepoSettings,
+    load_repo_settings_sync, persist_repo_settings, AppState, LaneLock, RepoSession, RepoSettings,
     RepoSummary,
 };
 use legit_core::GitRunner;
@@ -290,4 +290,63 @@ pub async fn update_repo_settings(
     }
     let (repo_dir, _) = state.repo_data_paths(&session.path);
     persist_repo_settings(&settings, &repo_dir, &session.settings_path, &session.path).await
+}
+
+/// Return all lane locks for an open repo.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_lane_locks(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<Vec<LaneLock>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    let locks = session.settings.read().await.lane_locks_doc.locks.clone();
+    Ok(locks)
+}
+
+/// Add or replace a lane lock. Returns the updated lock list.
+/// Rejects lane_index > 64.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_lane_lock(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    ref_name: String,
+    lane_index: u32,
+) -> Result<Vec<LaneLock>, AppError> {
+    if lane_index > 64 {
+        return Err(AppError::InvalidLockIndex(lane_index));
+    }
+    let session = state.get_session(&repo_id).await?;
+    let settings = {
+        let mut s = session.settings.write().await;
+        if let Some(existing) = s.lane_locks_doc.locks.iter_mut().find(|l| l.ref_name == ref_name) {
+            existing.lane_index = lane_index;
+        } else {
+            s.lane_locks_doc.locks.push(LaneLock { ref_name, lane_index });
+        }
+        s.clone()
+    };
+    let (repo_dir, _) = state.repo_data_paths(&session.path);
+    persist_repo_settings(&settings, &repo_dir, &session.settings_path, &session.path).await?;
+    Ok(settings.lane_locks_doc.locks)
+}
+
+/// Remove a lane lock by ref name. Returns the updated lock list (no-op if not found).
+#[tauri::command]
+#[specta::specta]
+pub async fn unset_lane_lock(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    ref_name: String,
+) -> Result<Vec<LaneLock>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    let settings = {
+        let mut s = session.settings.write().await;
+        s.lane_locks_doc.locks.retain(|l| l.ref_name != ref_name);
+        s.clone()
+    };
+    let (repo_dir, _) = state.repo_data_paths(&session.path);
+    persist_repo_settings(&settings, &repo_dir, &session.settings_path, &session.path).await?;
+    Ok(settings.lane_locks_doc.locks)
 }

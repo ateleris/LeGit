@@ -6,3 +6,4 @@
 
 pub mod log;
 pub mod commit;
+pub mod branches;

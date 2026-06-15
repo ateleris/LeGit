@@ -9,7 +9,7 @@ use crate::error::GitError;
 use crate::runner::GitRunner;
 use crate::types::{
     Branch, Commit, CommitDetails, CommitId, CommitOptions, Diff, FileStatus, LogOptions,
-    SubmoduleInfo,
+    RefSelector, SubmoduleInfo,
 };
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -55,6 +55,16 @@ impl GitBackend for GitCliBackend {
         if skip > 0 {
             args.push(&skip_arg);
         }
+
+        let refs_flag;
+        match opts.refs {
+            RefSelector::AllLocalBranches => {
+                refs_flag = "--branches";
+                args.push(refs_flag);
+            }
+            RefSelector::Head => {}
+        }
+        args.push("--decorate=full");
 
         let output = runner
             .run(&args)
@@ -109,7 +119,22 @@ impl GitBackend for GitCliBackend {
     }
 
     async fn branches(&self) -> Result<Vec<Branch>, GitError> {
-        Err(GitError::NotYet)
+        let runner = self.runner().await;
+        let fmt_arg = format!("--format={}", parsers::branches::BRANCH_FORMAT);
+
+        let output = runner
+            .run(&["for-each-ref", &fmt_arg, "refs/heads", "refs/remotes"])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+
+        if !output.success {
+            return Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr,
+            });
+        }
+
+        Ok(parsers::branches::parse_branches(&output.stdout))
     }
 
     async fn diff(&self, _from: &CommitId, _to: &CommitId) -> Result<Diff, GitError> {

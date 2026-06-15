@@ -71,6 +71,8 @@ pub struct Commit {
     /// Author timestamp (Unix seconds).
     pub timestamp: i64,
     pub signature: Option<SignatureVerification>,
+    #[serde(default)]
+    pub decorations: Vec<RefDecoration>,
 }
 
 /// Sign mode requested when creating a commit.
@@ -104,6 +106,16 @@ impl Default for CommitOptions {
     }
 }
 
+/// Selects which refs are walked by `GitBackend::log`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, Default)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub enum RefSelector {
+    #[default]
+    Head,
+    AllLocalBranches,
+}
+
 /// Options for `GitBackend::log`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, Default)]
 pub struct LogOptions {
@@ -111,6 +123,25 @@ pub struct LogOptions {
     pub skip: Option<u32>,
     pub revision_range: Option<String>,
     pub paths: Vec<PathBuf>,
+    pub refs: RefSelector,
+}
+
+/// Decoration attached to a commit in `git log --decorate=full` output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "type", content = "value", rename_all = "camelCase")]
+pub enum RefDecoration {
+    /// Bare HEAD (detached).
+    Head,
+    /// HEAD pointing at a branch, e.g. `HEAD -> refs/heads/main`.
+    HeadOf(String),
+    /// A local branch ref, e.g. `refs/heads/main`.
+    Branch(String),
+    /// A tag ref, e.g. `refs/tags/v1.0`.
+    Tag(String),
+    /// A remote-tracking branch ref, e.g. `refs/remotes/origin/main`.
+    Remote(String),
+    /// Any other ref (notes, stash, …).
+    Other(String),
 }
 
 /// Working-tree / index state of a single path.

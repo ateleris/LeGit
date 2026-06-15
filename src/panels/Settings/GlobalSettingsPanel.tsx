@@ -1,11 +1,29 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
+import { WarningIcon } from "../../icons";
 import { formatAppError } from "../../lib/types";
 import type { ConfigScope, LineEndingsView, RegionPlacement } from "../../lib/types";
 import { globalLineEndingsView, globalWriteLineEndings, setWarnOnMixedEndings } from "../../lib/commands";
 import { useGitStatusStore } from "../../store/git-status";
-import { useSettingsStore } from "../../store/settings";
+import {
+  useSettingsStore,
+  COMMITS_ROW_HEIGHT_DEFAULT,
+  COMMITS_LANE_WIDTH_DEFAULT,
+  COMMITS_DOT_RADIUS_DEFAULT,
+  COMMITS_LINE_WIDTH_DEFAULT,
+  COMMITS_ROW_HEIGHT_MIN,
+  COMMITS_ROW_HEIGHT_MAX,
+  COMMITS_LANE_WIDTH_MIN,
+  COMMITS_LANE_WIDTH_MAX,
+  COMMITS_DOT_RADIUS_MIN,
+  COMMITS_LINE_WIDTH_MIN,
+  COMMITS_TEXT_SIZE_DEFAULT,
+  COMMITS_TEXT_SIZE_MIN,
+  maxCommitsDotRadius,
+  maxCommitsLineWidth,
+  maxCommitsTextSize,
+} from "../../store/settings";
 
 /** Global Settings panel — edits global-scope settings (DESIGN-v0.2.md §F.6). */
 export function GlobalSettingsPanel() {
@@ -100,6 +118,7 @@ export function GlobalSettingsPanel() {
         </Section>
 
         <LayoutOrientationSection />
+        <CommitsGraphSection />
         <MixedEndingDetectionSection />
         <LineEndingsGlobalSection />
       </div>
@@ -142,6 +161,197 @@ function LayoutOrientationSection() {
         </button>
       </div>
     </Section>
+  );
+}
+
+function CommitsGraphSection() {
+  const rowHeight = useSettingsStore(
+    (s) => s.settings?.commits_row_height ?? COMMITS_ROW_HEIGHT_DEFAULT,
+  );
+  const laneWidth = useSettingsStore(
+    (s) => s.settings?.commits_lane_width ?? COMMITS_LANE_WIDTH_DEFAULT,
+  );
+  const dotRadius = useSettingsStore(
+    (s) => s.settings?.commits_dot_radius ?? COMMITS_DOT_RADIUS_DEFAULT,
+  );
+  const lineWidth = useSettingsStore(
+    (s) => s.settings?.commits_line_width ?? COMMITS_LINE_WIDTH_DEFAULT,
+  );
+  const textSize = useSettingsStore(
+    (s) => s.settings?.commits_text_size ?? COMMITS_TEXT_SIZE_DEFAULT,
+  );
+  const setMetrics = useSettingsStore((s) => s.setCommitsGraphMetrics);
+  const [saving, setSaving] = useState(false);
+
+  const save = async (
+    nextRow: number,
+    nextLane: number,
+    nextDot: number,
+    nextLine: number,
+    nextText: number,
+  ) => {
+    setSaving(true);
+    try {
+      await setMetrics(nextRow, nextLane, nextDot, nextLine, nextText);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // The dot and the line width can't exceed half the smaller cell dimension,
+  // and the text size scales with the row height; bound the fields accordingly
+  // so they reflect the current height/width.
+  const dotMax = maxCommitsDotRadius(rowHeight, laneWidth);
+  const lineMax = maxCommitsLineWidth(rowHeight, laneWidth);
+  const textMax = maxCommitsTextSize(rowHeight);
+
+  const isDefault =
+    rowHeight === COMMITS_ROW_HEIGHT_DEFAULT &&
+    laneWidth === COMMITS_LANE_WIDTH_DEFAULT &&
+    dotRadius === COMMITS_DOT_RADIUS_DEFAULT &&
+    lineWidth === COMMITS_LINE_WIDTH_DEFAULT &&
+    textSize === COMMITS_TEXT_SIZE_DEFAULT;
+
+  return (
+    <Section title="Commits graph">
+      <FieldNote>writes to: global settings — affects the Commits panel for all repos</FieldNote>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginTop: 8 }}>
+        <NumberField
+          label="Line height"
+          value={rowHeight}
+          min={COMMITS_ROW_HEIGHT_MIN}
+          max={COMMITS_ROW_HEIGHT_MAX}
+          disabled={saving}
+          onCommit={(v) => save(v, laneWidth, dotRadius, lineWidth, textSize)}
+        />
+        <NumberField
+          label="Graph lane width"
+          value={laneWidth}
+          min={COMMITS_LANE_WIDTH_MIN}
+          max={COMMITS_LANE_WIDTH_MAX}
+          disabled={saving}
+          onCommit={(v) => save(rowHeight, v, dotRadius, lineWidth, textSize)}
+        />
+        <NumberField
+          label="Commit dot radius"
+          value={dotRadius}
+          min={COMMITS_DOT_RADIUS_MIN}
+          max={dotMax}
+          disabled={saving}
+          onCommit={(v) => save(rowHeight, laneWidth, v, lineWidth, textSize)}
+        />
+        <NumberField
+          label="Line width"
+          value={lineWidth}
+          min={COMMITS_LINE_WIDTH_MIN}
+          max={lineMax}
+          step={0.5}
+          disabled={saving}
+          onCommit={(v) => save(rowHeight, laneWidth, dotRadius, v, textSize)}
+        />
+        <NumberField
+          label="Text size"
+          value={textSize}
+          min={COMMITS_TEXT_SIZE_MIN}
+          max={textMax}
+          disabled={saving}
+          onCommit={(v) => save(rowHeight, laneWidth, dotRadius, lineWidth, v)}
+        />
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <button
+          disabled={saving || isDefault}
+          onClick={() =>
+            save(
+              COMMITS_ROW_HEIGHT_DEFAULT,
+              COMMITS_LANE_WIDTH_DEFAULT,
+              COMMITS_DOT_RADIUS_DEFAULT,
+              COMMITS_LINE_WIDTH_DEFAULT,
+              COMMITS_TEXT_SIZE_DEFAULT,
+            )
+          }
+        >
+          Reset to defaults
+        </button>
+      </div>
+    </Section>
+  );
+}
+
+function NumberField({
+  label,
+  value,
+  min,
+  max,
+  step = 1,
+  disabled,
+  onCommit,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  /** Rounding granularity for committed values. Defaults to whole numbers. */
+  step?: number;
+  disabled?: boolean;
+  onCommit: (value: number) => void;
+}) {
+  // Local draft so typing doesn't clamp/persist mid-edit.
+  const [draft, setDraft] = useState(String(value));
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Keep the field in sync when the stored value changes elsewhere (e.g. Reset).
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  const commit = (raw: string) => {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) {
+      setDraft(String(value));
+      return;
+    }
+    const snapped = Math.round(parsed / step) * step;
+    const clamped = Math.min(max, Math.max(min, snapped));
+    setDraft(String(clamped));
+    if (clamped !== value) onCommit(clamped);
+  };
+
+  // Commit on the native `change` event: it fires when the spinner arrows step
+  // the value (so it applies immediately) and on blur/Enter, but not on every
+  // typed keystroke — those only fire `input` (React onChange) and update the
+  // draft. Reads `el.value` directly since the draft state update is async.
+  const commitRef = useRef(commit);
+  commitRef.current = commit;
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    const onChangeNative = () => commitRef.current(el.value);
+    el.addEventListener("change", onChangeNative);
+    return () => el.removeEventListener("change", onChangeNative);
+  }, []);
+
+  return (
+    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+      <span className="legit-subtle">{label}</span>
+      <input
+        ref={inputRef}
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={draft}
+        disabled={disabled}
+        style={{ width: 72 }}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        }}
+      />
+      <span className="legit-subtle" style={{ fontSize: 11 }}>
+        px ({min}–{max})
+      </span>
+    </label>
   );
 }
 
@@ -272,8 +482,8 @@ function LineEndingsGlobalSection() {
 
       {confirmPending && (
         <div style={{ marginTop: 10, padding: "10px 12px", background: "var(--button-hover-bg)", border: "1px solid var(--panel-border)", borderRadius: 4 }}>
-          <div style={{ fontWeight: 600, marginBottom: 6, color: "var(--error-fg)" }}>
-            ⚠ Save line-ending changes to your global Git config (~/.gitconfig)?
+          <div style={{ fontWeight: 600, marginBottom: 6, color: "var(--error-fg)", display: "flex", alignItems: "center", gap: 6 }}>
+            <WarningIcon /> Save line-ending changes to your global Git config (~/.gitconfig)?
           </div>
           <div style={{ marginBottom: 8, fontSize: 12 }}>
             {changes.map((c) => (

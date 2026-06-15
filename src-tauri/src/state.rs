@@ -59,6 +59,43 @@ fn default_warn_on_mixed_endings() -> bool {
     true
 }
 
+/// Default line/row height for the Commits panel, in px.
+pub fn default_commits_row_height() -> f64 {
+    40.0
+}
+
+/// Default per-lane horizontal spacing for the Commits graph, in px.
+pub fn default_commits_lane_width() -> f64 {
+    40.0
+}
+
+/// Default commit-dot radius for the Commits graph, in px.
+pub fn default_commits_dot_radius() -> f64 {
+    5.0
+}
+
+/// Default stroke width for the Commits graph connector lines/arcs, in px.
+pub fn default_commits_line_width() -> f64 {
+    1.5
+}
+
+/// Default text size (font size) for the Commits panel columns, in px.
+pub fn default_commits_text_size() -> f64 {
+    12.0
+}
+
+/// Largest sensible text size for a given row height — text taller than this
+/// would not sit comfortably within the line.
+pub fn max_commits_text_size(row_height: f64) -> f64 {
+    row_height * 0.7
+}
+
+/// Largest commit-dot radius that fits a cell of the given row height and lane
+/// width without overflowing vertically or overlapping the neighbouring lane.
+pub fn max_commits_dot_radius(row_height: f64, lane_width: f64) -> f64 {
+    row_height.min(lane_width) / 2.0
+}
+
 /// User-level settings shared across all repos. On disk as
 /// `<app-data>/global-settings.json`. See DESIGN-v0.2.md §G.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -93,6 +130,24 @@ pub struct GlobalSettings {
     /// Default for mixed-ending detection; per-repo settings can override.
     #[serde(default = "default_warn_on_mixed_endings")]
     pub warn_on_mixed_endings: bool,
+    /// Serialized column preferences for the Commits panel (frontend-owned schema).
+    #[serde(default)]
+    pub column_preferences: serde_json::Value,
+    /// Line/row height for the Commits panel rows, in px.
+    #[serde(default = "default_commits_row_height")]
+    pub commits_row_height: f64,
+    /// Per-lane horizontal spacing for the Commits graph column, in px.
+    #[serde(default = "default_commits_lane_width")]
+    pub commits_lane_width: f64,
+    /// Commit-dot radius for the Commits graph, in px.
+    #[serde(default = "default_commits_dot_radius")]
+    pub commits_dot_radius: f64,
+    /// Stroke width for the Commits graph connector lines/arcs, in px.
+    #[serde(default = "default_commits_line_width")]
+    pub commits_line_width: f64,
+    /// Text size (font size) for the Commits panel columns, in px.
+    #[serde(default = "default_commits_text_size")]
+    pub commits_text_size: f64,
 }
 
 impl Default for GlobalSettings {
@@ -110,6 +165,12 @@ impl Default for GlobalSettings {
             global_region_size_left: None,
             global_dock_collapsed: false,
             warn_on_mixed_endings: true,
+            column_preferences: serde_json::Value::Null,
+            commits_row_height: default_commits_row_height(),
+            commits_lane_width: default_commits_lane_width(),
+            commits_dot_radius: default_commits_dot_radius(),
+            commits_line_width: default_commits_line_width(),
+            commits_text_size: default_commits_text_size(),
         }
     }
 }
@@ -117,6 +178,33 @@ impl Default for GlobalSettings {
 // ---------------------------------------------------------------------------
 // Repo-scope settings  (DESIGN-v0.2.md §D.1)
 // ---------------------------------------------------------------------------
+
+/// A per-repo lane lock: pins a ref to a specific lane index.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LaneLock {
+    pub ref_name: String,
+    pub lane_index: u32,
+}
+
+/// Versioned on-disk envelope for lane locks (§I.2).
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LaneLocksDoc {
+    pub format: String,
+    pub format_version: u32,
+    pub locks: Vec<LaneLock>,
+}
+
+impl Default for LaneLocksDoc {
+    fn default() -> Self {
+        LaneLocksDoc {
+            format: "legit-lane-locks".to_string(),
+            format_version: 1,
+            locks: vec![],
+        }
+    }
+}
 
 /// Settings that persist for a specific repo. On disk as
 /// `<app-data>/repos/<hash>/settings.json`. Loaded into the `RepoSession`
@@ -128,6 +216,9 @@ pub struct RepoSettings {
     pub git_path_override: Option<String>,
     /// Per-repo override for mixed-ending detection (None = inherit global).
     pub warn_on_mixed_endings: Option<bool>,
+    /// Lane locks: pin specific refs to fixed lane indices (versioned envelope).
+    #[serde(default, rename = "laneLocks")]
+    pub lane_locks_doc: LaneLocksDoc,
 }
 
 // ---------------------------------------------------------------------------

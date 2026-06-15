@@ -168,14 +168,14 @@ function capturePlacements(api: DockviewApi, layoutJson?: unknown) {
 }
 
 function buildDefaultRepoLayout(api: DockviewApi) {
-  api.addPanel({ id: "log", component: "log", title: "Log" });
+  api.addPanel({ id: "log", component: "log", title: "Commits" });
   api.addPanel({
     id: "commit-details",
     component: "commit-details",
     title: "Commit Details",
     position: { referencePanel: "log", direction: "right" },
   });
-  api.addPanel({
+  const consolePanel = api.addPanel({
     id: "console",
     component: "console",
     title: "Git Console",
@@ -188,6 +188,10 @@ function buildDefaultRepoLayout(api: DockviewApi) {
     title: "Repo Settings",
     position: { referencePanel: "console", direction: "within" },
   });
+  // Collapse the bottom group (console + repo-settings) on first launch.
+  // Users can expand it by dragging the sash or opening a panel via the menu.
+  // Existing saved layouts are NOT affected — they restore from localStorage.
+  consolePanel.group.api.setVisible(false);
 }
 
 /** Open or focus a repo panel by id. */

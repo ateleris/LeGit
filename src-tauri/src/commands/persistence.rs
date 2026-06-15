@@ -6,7 +6,7 @@
 //! validation rules from §6.5 live next to `save_theme`.
 
 use crate::error::AppError;
-use crate::state::{GlobalSettings, RegionPlacement, AppState};
+use crate::state::{max_commits_dot_radius, max_commits_text_size, GlobalSettings, RegionPlacement, AppState};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::PathBuf;
@@ -91,6 +91,51 @@ pub async fn save_region_state(
         s.global_region_size_top = size_top;
         s.global_region_size_left = size_left;
         s.global_dock_collapsed = collapsed;
+    }
+    state.persist_global_settings().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn save_column_preferences(
+    state: tauri::State<'_, AppState>,
+    prefs: serde_json::Value,
+) -> Result<(), AppError> {
+    {
+        let mut s = state.global_settings.write().await;
+        s.column_preferences = prefs;
+    }
+    state.persist_global_settings().await
+}
+
+/// Persist the Commits-panel graph metrics (row/line height, per-lane width,
+/// commit-dot radius, connector line width, and column text size). Clamps each
+/// value to sane px bounds before storing; the dot radius and line width are
+/// capped to half the smaller cell dimension so they can never overflow the
+/// cell or overlap a neighbouring lane, and the text size is capped relative
+/// to the row height.
+#[tauri::command]
+#[specta::specta]
+pub async fn save_commits_graph_metrics(
+    state: tauri::State<'_, AppState>,
+    row_height: f64,
+    lane_width: f64,
+    dot_radius: f64,
+    line_width: f64,
+    text_size: f64,
+) -> Result<(), AppError> {
+    {
+        let mut s = state.global_settings.write().await;
+        let rh = row_height.clamp(16.0, 120.0);
+        let lw = lane_width.clamp(12.0, 120.0);
+        s.commits_row_height = rh;
+        s.commits_lane_width = lw;
+        s.commits_dot_radius = dot_radius.clamp(1.0, max_commits_dot_radius(rh, lw));
+        // Line width can't exceed half the smaller cell dimension or the stroke
+        // would overflow the cell / neighbouring lane — same bound as the dot.
+        s.commits_line_width = line_width.clamp(1.0, max_commits_dot_radius(rh, lw));
+        // Text size scales with the row height so it stays within the line.
+        s.commits_text_size = text_size.clamp(8.0, max_commits_text_size(rh));
     }
     state.persist_global_settings().await
 }

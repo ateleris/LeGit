@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { CheckIcon } from "../icons";
 import { useDockviewStore } from "../store/dockview";
 import { GLOBAL_PANELS, REPO_PANELS } from "./registry";
 import { openGlobalPanel } from "./GlobalDock";
@@ -58,8 +59,8 @@ export function ViewMenu() {
         borderRadius: 3,
       }}
     >
-      <span style={{ display: "inline-block", width: 18 }}>
-        {isOpen ? "✓" : "  "}
+      <span style={{ display: "inline-flex", justifyContent: "center", width: 18 }}>
+        {isOpen ? <CheckIcon /> : null}
       </span>
       {title}
     </button>

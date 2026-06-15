@@ -1,7 +1,7 @@
 import type { FunctionComponent } from "react";
 import type { IDockviewPanelProps } from "dockview-react";
 import { ConsolePanel } from "./Console/ConsolePanel";
-import { LogPanel } from "./Log/LogPanel";
+import { CommitsPanel } from "./Commits/CommitsPanel";
 import { CommitDetailsPanel } from "./CommitDetails/CommitDetailsPanel";
 import { RepositoriesPanel } from "./Repositories/RepositoriesPanel";
 import { ThemeEditorPanel } from "./ThemeEditor/ThemeEditorPanel";
@@ -39,7 +39,7 @@ export const REPO_PANELS: PanelDescriptor[] = [
   { id: "repo-settings", title: "Repo Settings", scope: "repo" },
   {
     id: "log",
-    title: "Log",
+    title: "Commits",
     scope: "repo",
     summons: ["commit-details"],
   },
@@ -88,6 +88,6 @@ export const REPO_DOCKVIEW_COMPONENTS: Record<
 > = {
   console: wrap(ConsolePanel),
   "repo-settings": wrap(RepoSettingsPanel),
-  log: wrap(LogPanel),
+  log: wrap(CommitsPanel),
   "commit-details": wrap(CommitDetailsPanel),
 };

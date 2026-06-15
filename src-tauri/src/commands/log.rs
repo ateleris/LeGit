@@ -2,7 +2,7 @@
 
 use crate::error::AppError;
 use crate::state::AppState;
-use legit_core::types::{Commit, CommitDetails, CommitId, LogOptions};
+use legit_core::types::{Branch, Commit, CommitDetails, CommitId, LogOptions};
 
 /// Fetch the log for the active repo.
 ///
@@ -22,8 +22,22 @@ pub async fn repo_log(
         skip,
         revision_range: None,
         paths: vec![],
+        refs: legit_core::types::RefSelector::AllLocalBranches,
     };
     session.backend.log(opts).await.map_err(AppError::Git)
+}
+
+/// List all local and remote-tracking branches for the active repo,
+/// including each local branch's configured upstream (used by the Commits
+/// panel to fuse a branch with its remote when they sit on the same commit).
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_branches(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<Vec<Branch>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.branches().await.map_err(AppError::Git)
 }
 
 /// Fetch full details for a single commit.

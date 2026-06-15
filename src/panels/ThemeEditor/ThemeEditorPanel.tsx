@@ -1,6 +1,6 @@
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { formatAppError } from "../../lib/types";
 import { useThemeStore } from "../../store/themes";
 import { contrastRatio, wcagBadge } from "../../theme/contrast";
@@ -382,6 +382,32 @@ interface PaletteRowProps {
 
 function PaletteRow(p: PaletteRowProps) {
   const [rename, setRename] = useState(p.name);
+
+  // Local swatch state so dragging in the colour picker stays responsive
+  // without re-rendering (and live-applying) the whole theme on every
+  // intermediate value. The committed value is applied only on the native
+  // `change` event below.
+  const [picker, setPicker] = useState(() => hexForPicker(p.value));
+  const pickerRef = useRef<HTMLInputElement>(null);
+  const commit = useRef(p.onChange);
+  commit.current = p.onChange;
+
+  // Keep the swatch in sync when the value changes elsewhere (hex field edit,
+  // theme switch) — but not mid-drag.
+  useEffect(() => {
+    setPicker(hexForPicker(p.value));
+  }, [p.value]);
+
+  // `change` fires only when a colour is selected/committed, unlike React's
+  // `onChange` (the DOM `input` event) which fires continuously while picking.
+  useEffect(() => {
+    const el = pickerRef.current;
+    if (!el) return;
+    const onCommit = () => commit.current(p.name, el.value);
+    el.addEventListener("change", onCommit);
+    return () => el.removeEventListener("change", onCommit);
+  }, [p.name]);
+
   return (
     <div className="palette-row">
       <input
@@ -401,11 +427,12 @@ function PaletteRow(p: PaletteRowProps) {
         onChange={(e) => p.onChange(p.name, e.target.value)}
       />
       <input
+        ref={pickerRef}
         type="color"
         className="palette-row__picker"
         disabled={p.disabled}
-        value={hexForPicker(p.value)}
-        onChange={(e) => p.onChange(p.name, e.target.value)}
+        value={picker}
+        onChange={(e) => setPicker(e.target.value)}
       />
       <button
         className="palette-row__delete"
