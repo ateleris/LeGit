@@ -148,6 +148,10 @@ pub struct GlobalSettings {
     /// Text size (font size) for the Commits panel columns, in px.
     #[serde(default = "default_commits_text_size")]
     pub commits_text_size: f64,
+    /// Remembered view mode for the Changed Files panel (`"tree"` | `"flat"`).
+    /// `None` until the user first toggles it.
+    #[serde(default)]
+    pub changed_files_view_mode: Option<String>,
 }
 
 impl Default for GlobalSettings {
@@ -171,6 +175,7 @@ impl Default for GlobalSettings {
             commits_dot_radius: default_commits_dot_radius(),
             commits_line_width: default_commits_line_width(),
             commits_text_size: default_commits_text_size(),
+            changed_files_view_mode: None,
         }
     }
 }

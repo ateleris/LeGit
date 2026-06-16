@@ -8,3 +8,4 @@ pub mod log;
 pub mod commit;
 pub mod branches;
 pub mod status;
+pub mod commit_files;

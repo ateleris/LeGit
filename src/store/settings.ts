@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import { getGlobalSettings, saveCommitsGraphMetrics } from "../lib/commands";
+import { getGlobalSettings, saveChangedFilesViewMode, saveCommitsGraphMetrics } from "../lib/commands";
 import type { GlobalSettings, RegionPlacement } from "../lib/types";
 
 /** Defaults + bounds for the Commits-panel graph metrics. Mirror the backend
@@ -49,6 +49,7 @@ interface SettingsStore {
     lineWidth: number,
     textSize: number
   ) => Promise<void>;
+  setChangedFilesViewMode: (mode: "tree" | "flat") => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
@@ -96,6 +97,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
           commits_text_size: ts,
         },
       });
+    }
+  },
+
+  async setChangedFilesViewMode(mode) {
+    await saveChangedFilesViewMode(mode);
+    const s = get().settings;
+    if (s) {
+      set({ settings: { ...s, changed_files_view_mode: mode } });
     }
   },
 }));

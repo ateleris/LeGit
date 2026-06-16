@@ -8,8 +8,8 @@
 
 use crate::error::GitError;
 use crate::types::{
-    Branch, Commit, CommitDetails, CommitId, CommitOptions, Diff, FileStatus, LogOptions,
-    SubmoduleInfo,
+    Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, Diff, FileStatus,
+    LogOptions, SubmoduleInfo,
 };
 use async_trait::async_trait;
 
@@ -20,6 +20,10 @@ pub trait GitBackend: Send + Sync {
     async fn log(&self, opts: LogOptions) -> Result<Vec<Commit>, GitError>;
 
     async fn commit_details(&self, id: &CommitId) -> Result<CommitDetails, GitError>;
+
+    /// Files changed by `id`, relative to its first parent (or the empty tree
+    /// for a root commit). Used by the Changed Files panel.
+    async fn commit_files(&self, id: &CommitId) -> Result<Vec<CommitFileChange>, GitError>;
 
     async fn branches(&self) -> Result<Vec<Branch>, GitError>;
 

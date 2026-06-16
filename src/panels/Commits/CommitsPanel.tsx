@@ -379,9 +379,12 @@ export function CommitsPanel() {
     (commit: Commit) => {
       setSelectedId(commit.id);
       // The synthetic working-dir row is not a real commit — select it for
-      // highlight but don't summon commit-details (there's nothing to fetch).
+      // highlight but don't summon commit views (there's nothing to fetch).
       if (commit.id === WORKING_DIR_ID) return;
+      // Summon Changed Files last so it's the active tab when the two stack in
+      // one group.
       useSummonStore.getState().summon("commit-details", commit.id);
+      useSummonStore.getState().summon("changed-files", commit.id);
     },
     []
   );

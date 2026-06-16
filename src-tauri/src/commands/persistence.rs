@@ -108,6 +108,20 @@ pub async fn save_column_preferences(
     state.persist_global_settings().await
 }
 
+/// Persist the Changed Files panel's view mode (`"tree"` | `"flat"`).
+#[tauri::command]
+#[specta::specta]
+pub async fn save_changed_files_view_mode(
+    state: tauri::State<'_, AppState>,
+    mode: String,
+) -> Result<(), AppError> {
+    {
+        let mut s = state.global_settings.write().await;
+        s.changed_files_view_mode = Some(mode);
+    }
+    state.persist_global_settings().await
+}
+
 /// Persist the Commits-panel graph metrics (row/line height, per-lane width,
 /// commit-dot radius, connector line width, and column text size). Clamps each
 /// value to sane px bounds before storing; the dot radius and line width are

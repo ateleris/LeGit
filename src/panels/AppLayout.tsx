@@ -8,7 +8,7 @@ import { RepoTabBar } from "./RepoTabBar";
 
 const DEFAULT_SIZE_TOP = 240;
 const DEFAULT_SIZE_LEFT = 280;
-const MIN_SIZE = 60;
+const MIN_SIZE = 500;
 const DIVIDER_SIZE = 12;
 const TAB_BAR_HEIGHT = 32;
 

@@ -3,6 +3,7 @@ import type { IDockviewPanelProps } from "dockview-react";
 import { ConsolePanel } from "./Console/ConsolePanel";
 import { CommitsPanel } from "./Commits/CommitsPanel";
 import { CommitDetailsPanel } from "./CommitDetails/CommitDetailsPanel";
+import { ChangedFilesPanel } from "./ChangedFiles/ChangedFilesPanel";
 import { RepositoriesPanel } from "./Repositories/RepositoriesPanel";
 import { ThemeEditorPanel } from "./ThemeEditor/ThemeEditorPanel";
 import { GlobalSettingsPanel } from "./Settings/GlobalSettingsPanel";
@@ -41,13 +42,20 @@ export const REPO_PANELS: PanelDescriptor[] = [
     id: "log",
     title: "Commits",
     scope: "repo",
-    summons: ["commit-details"],
+    summons: ["commit-details", "changed-files"],
   },
   {
     id: "commit-details",
     title: "Commit Details",
     scope: "repo",
     defaultPlacement: { direction: "right", referencePanel: "log" },
+  },
+  {
+    id: "changed-files",
+    title: "Changed Files",
+    scope: "repo",
+    summons: ["diff"],
+    defaultPlacement: { direction: "below", referencePanel: "commit-details" },
   },
 ];
 
@@ -90,4 +98,5 @@ export const REPO_DOCKVIEW_COMPONENTS: Record<
   "repo-settings": wrap(RepoSettingsPanel),
   log: wrap(CommitsPanel),
   "commit-details": wrap(CommitDetailsPanel),
+  "changed-files": wrap(ChangedFilesPanel),
 };

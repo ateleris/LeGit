@@ -166,6 +166,23 @@ pub struct FileStatus {
     pub staged: bool,
 }
 
+/// A single file changed by a commit, relative to its first parent (or the
+/// empty tree for a root commit). Backs the Changed Files panel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct CommitFileChange {
+    /// The file's path after the change (the destination path for renames/copies).
+    pub path: PathBuf,
+    /// The source path for a rename or copy; `None` otherwise.
+    pub old_path: Option<PathBuf>,
+    pub change: FileState,
+    /// Added lines. `0` for binary files (see `binary`).
+    pub additions: u32,
+    /// Removed lines. `0` for binary files (see `binary`).
+    pub deletions: u32,
+    /// True when git reports the file as binary (numstat `-`/`-`).
+    pub binary: bool,
+}
+
 /// A hunk in a textual diff.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct DiffHunk {

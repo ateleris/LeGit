@@ -2,7 +2,9 @@
 
 use crate::error::AppError;
 use crate::state::AppState;
-use legit_core::types::{Branch, Commit, CommitDetails, CommitId, FileStatus, LogOptions};
+use legit_core::types::{
+    Branch, Commit, CommitDetails, CommitFileChange, CommitId, FileStatus, LogOptions,
+};
 
 /// Fetch the log for the active repo.
 ///
@@ -50,6 +52,24 @@ pub async fn repo_status(
 ) -> Result<Vec<FileStatus>, AppError> {
     let session = state.get_session(&repo_id).await?;
     session.backend.status().await.map_err(AppError::Git)
+}
+
+/// Files changed by a commit, relative to its first parent (empty tree for a
+/// root commit). Drives the Changed Files panel.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_commit_files(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    commit_id: String,
+) -> Result<Vec<CommitFileChange>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    let id = CommitId::new(commit_id);
+    session
+        .backend
+        .commit_files(&id)
+        .await
+        .map_err(AppError::Git)
 }
 
 /// Fetch full details for a single commit.

@@ -12,6 +12,7 @@ import type {
   GlobalSettings,
   LaneLock,
   RepoSettings,
+  CommitFileChange,
   ConsoleExecHandle,
   FileStatus,
   GitStatus,
@@ -132,6 +133,9 @@ export const repoStatus = (repoId: string) =>
 export const repoCommitDetails = (repoId: string, commitId: string) =>
   invoke<CommitDetails>("repo_commit_details", { repoId, commitId });
 
+export const repoCommitFiles = (repoId: string, commitId: string) =>
+  invoke<CommitFileChange[]>("repo_commit_files", { repoId, commitId });
+
 export const repoBranches = (repoId: string) =>
   invoke<Branch[]>("repo_branches", { repoId });
 
@@ -150,6 +154,9 @@ export const unsetLaneLock = (repoId: string, refName: string) =>
 
 export const saveColumnPreferences = (prefs: unknown) =>
   invoke<null>("save_column_preferences", { prefs });
+
+export const saveChangedFilesViewMode = (mode: string) =>
+  invoke<null>("save_changed_files_view_mode", { mode });
 
 // --- commits graph metrics ---
 

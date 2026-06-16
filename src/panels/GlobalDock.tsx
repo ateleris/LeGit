@@ -4,7 +4,7 @@ import {
   type DockviewApi,
   type DockviewReadyEvent,
 } from "dockview-react";
-import { useDockviewStore } from "../store/dockview";
+import { applyPanelConstraints, useDockviewStore } from "../store/dockview";
 import { GLOBAL_DOCKVIEW_COMPONENTS, GLOBAL_DOCKVIEW_TAB_COMPONENTS, GLOBAL_PANELS } from "./registry";
 
 const LAYOUT_KEY = "legit.global-dock-layout";
@@ -48,6 +48,9 @@ export function GlobalDock() {
       if (!restored) {
         buildDefaultGlobalLayout(event.api);
       }
+
+      // Enforce the panel minimum width on existing and future groups.
+      applyPanelConstraints(event.api);
 
       event.api.onDidLayoutChange(() => {
         try { persistLayout(event.api.toJSON()); } catch { /* ignore */ }

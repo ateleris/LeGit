@@ -8,9 +8,13 @@ use crate::backend::GitBackend;
 use crate::error::GitError;
 use crate::runner::GitRunner;
 use crate::types::{
-    Branch, Commit, CommitDetails, CommitId, CommitOptions, Diff, FileStatus, LogOptions,
-    RefSelector, SubmoduleInfo,
+    Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, Diff, FileStatus,
+    LogOptions, RefSelector, SubmoduleInfo,
 };
+
+/// Git's well-known empty-tree object id, used as the "before" side when
+/// diffing a root commit (which has no parent).
+const EMPTY_TREE_OID: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -130,6 +134,67 @@ impl GitBackend for GitCliBackend {
             commit: parsed.commit,
             raw_object: parsed.raw_object,
         })
+    }
+
+    async fn commit_files(&self, id: &CommitId) -> Result<Vec<CommitFileChange>, GitError> {
+        let runner = self.runner().await;
+
+        // Resolve the first parent. `rev-list --parents -n 1 <sha>` prints
+        // `<sha> <parent1> <parent2> …`; a root commit prints only `<sha>`, so
+        // we diff against the empty tree. Using an explicit `<from> <to>` pair
+        // (rather than a bare commit) makes the diff first-parent for merges
+        // and avoids diff-tree's empty default output for merge commits.
+        let rev = runner
+            .run(&["rev-list", "--parents", "-n", "1", id.as_str()])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !rev.success {
+            return Err(GitError::CommandFailed {
+                exit_code: rev.exit_code.unwrap_or(-1),
+                stderr: rev.stderr,
+            });
+        }
+        let from = rev
+            .stdout
+            .split_whitespace()
+            .nth(1)
+            .unwrap_or(EMPTY_TREE_OID)
+            .to_string();
+
+        let flags = parsers::commit_files::DIFF_TREE_FLAGS;
+        let to = id.as_str();
+
+        let run_diff = |kind: &'static str| {
+            let runner = runner.clone();
+            let from = from.clone();
+            let to = to.to_string();
+            async move {
+                let mut args = vec!["diff-tree"];
+                args.extend_from_slice(&flags);
+                args.push(kind);
+                args.push(&from);
+                args.push(&to);
+                let out = runner
+                    .run(&args)
+                    .await
+                    .map_err(|e| GitError::Internal(e.to_string()))?;
+                if !out.success {
+                    return Err(GitError::CommandFailed {
+                        exit_code: out.exit_code.unwrap_or(-1),
+                        stderr: out.stderr,
+                    });
+                }
+                Ok::<String, GitError>(out.stdout)
+            }
+        };
+
+        let name_status = run_diff("--name-status").await?;
+        let numstat = run_diff("--numstat").await?;
+
+        Ok(parsers::commit_files::parse_commit_files(
+            &name_status,
+            &numstat,
+        ))
     }
 
     async fn branches(&self) -> Result<Vec<Branch>, GitError> {

@@ -35,6 +35,8 @@ export interface GlobalSettings {
   commits_dot_radius: number;
   commits_line_width: number;
   commits_text_size: number;
+  /** Remembered Changed Files panel view mode ("tree" | "flat"). */
+  changed_files_view_mode?: string | null;
 }
 
 export interface RepoSettings {
@@ -161,6 +163,21 @@ export interface FileStatus {
   state: FileState;
   /** True when the change is staged (in the index); false for working-tree-only changes. */
   staged: boolean;
+}
+
+/** A file changed by a commit, vs its first parent (matches legit-core `CommitFileChange`). */
+export interface CommitFileChange {
+  /** Path after the change (destination path for renames/copies). */
+  path: string;
+  /** Source path for a rename/copy; null otherwise. */
+  old_path: string | null;
+  change: FileState;
+  /** Added lines; 0 for binary files. */
+  additions: number;
+  /** Removed lines; 0 for binary files. */
+  deletions: number;
+  /** True when git reports the file as binary. */
+  binary: boolean;
 }
 
 export type RefDecoration =

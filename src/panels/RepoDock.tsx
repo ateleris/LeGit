@@ -4,7 +4,7 @@ import {
   type DockviewApi,
   type DockviewReadyEvent,
 } from "dockview-react";
-import { useDockviewStore } from "../store/dockview";
+import { applyPanelConstraints, useDockviewStore } from "../store/dockview";
 import { useThemeStore } from "../store/themes";
 import { useSummonStore, computeFallbackPosition } from "../store/summon";
 import { validateTheme } from "../theme/validate";
@@ -76,6 +76,9 @@ export function RepoDock() {
       // Capture initial placements immediately so summon works before the first
       // layout-change event fires.
       capturePlacements(event.api);
+
+      // Enforce the panel minimum width on existing and future groups.
+      applyPanelConstraints(event.api);
 
       event.api.onDidLayoutChange(() => {
         try {

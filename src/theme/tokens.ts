@@ -60,6 +60,11 @@ export const PALETTE_CONTRACT: readonly PaletteDescriptor[] = [
   { name: "ref-head-bg", documentation: "HEAD chip fill." },
   { name: "ref-head-border", documentation: "HEAD chip border." },
   { name: "ref-head-fg", documentation: "HEAD chip / HEAD→ indicator text." },
+  // File-status indicator colours (Changed Files panel icons + line counts).
+  { name: "status-added", documentation: "Added-file indicator (icon and +N count)." },
+  { name: "status-modified", documentation: "Modified-file indicator." },
+  { name: "status-deleted", documentation: "Deleted-file indicator (icon and −N count)." },
+  { name: "status-renamed", documentation: "Renamed/copied-file indicator." },
 ] as const;
 
 export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
@@ -149,6 +154,13 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "graph.lane.5", group: "Graph", documentation: "Lane 5 colour." },
   { name: "graph.lane.fallback", group: "Graph", documentation: "Fallback colour for lanes beyond index 5." },
   { name: "graph.row.selected.bg", group: "Graph", documentation: "Background of the selected commit row." },
+
+  { name: "status.added", group: "File Status", documentation: "Added-file icon and +N line count (Changed Files panel)." },
+  { name: "status.modified", group: "File Status", documentation: "Modified-file icon." },
+  { name: "status.deleted", group: "File Status", documentation: "Deleted-file icon and −N line count." },
+  { name: "status.renamed", group: "File Status", documentation: "Renamed-file icon." },
+  { name: "status.copied", group: "File Status", documentation: "Copied-file icon." },
+  { name: "status.conflicted", group: "File Status", documentation: "Conflicted-file icon." },
 ] as const;
 
 /** Pairs whose contrast the editor surfaces for the user. */
