@@ -13,8 +13,8 @@ import {
 import { useLaneLocks, useLaneLocksStore } from "../../store/laneLocks";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { useSummonStore } from "../../store/summon";
-import { repoBranches, repoLog } from "../../lib/commands";
-import type { Branch, Commit, CommitId } from "../../lib/types";
+import { repoBranches, repoLog, repoStatus } from "../../lib/commands";
+import type { Branch, Commit, CommitId, FileStatus, Signature } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { formatRelative } from "../../lib/time";
 import { RefsCell } from "./cells/RefsCell";
@@ -54,6 +54,19 @@ const COLUMN_LABELS: Record<ColumnId, string> = {
 // height, which would create an infinite growth loop via measureElement.
 
 const PAGE_SIZE = 500;
+
+// Sentinel id for the synthetic "uncommitted changes" row prepended above HEAD.
+// Chosen to never collide with a real 40-hex commit id.
+export const WORKING_DIR_ID = "__legit_working_dir__";
+
+// Placeholder signature for the synthetic working-dir row. Its author/date
+// columns are rendered blank, so these values are never shown.
+const EMPTY_SIGNATURE: Signature = {
+  name: "",
+  email: "",
+  timestamp: 0,
+  tz_offset_minutes: 0,
+};
 
 /** Commits panel — virtualised, multi-column log of commits for the active repo. */
 export function CommitsPanel() {
@@ -141,6 +154,14 @@ export function CommitsPanel() {
     staleTime: 5_000,
   });
 
+  // Working-tree status — drives the synthetic "uncommitted changes" row.
+  const { data: status = [] } = useQuery<FileStatus[]>({
+    queryKey: [repo?.id, "status"],
+    queryFn: () => repoStatus(repo!.id),
+    enabled: !!repo,
+    staleTime: 5_000,
+  });
+
   // Full local ref → full upstream ref (e.g. refs/heads/dev → refs/remotes/origin/dev).
   const upstreamMap = useMemo((): Map<string, string> => {
     const map = new Map<string, string>();
@@ -156,6 +177,7 @@ export function CommitsPanel() {
     if (repo) {
       queryClient.invalidateQueries({ queryKey: [repo.id, "log"] });
       queryClient.invalidateQueries({ queryKey: [repo.id, "branches"] });
+      queryClient.invalidateQueries({ queryKey: [repo.id, "status"] });
     }
   }, [repo, queryClient]);
 
@@ -168,8 +190,45 @@ export function CommitsPanel() {
     [refetch, isFetching],
   );
 
+  // HEAD commit id — the parent of the synthetic working-dir row. Found from
+  // log decorations (`HEAD` when detached, `HEAD -> branch` otherwise); falls
+  // back to the newest loaded commit if no HEAD decoration is in the window.
+  const headId = useMemo((): CommitId | null => {
+    for (const c of commits) {
+      for (const dec of c.decorations ?? []) {
+        if (dec.type === "head" || dec.type === "headOf") return c.id;
+      }
+    }
+    return commits[0]?.id ?? null;
+  }, [commits]);
+
+  // Synthetic "uncommitted changes" row, present only when the working tree is
+  // dirty and a HEAD commit is known. Its node renders as a hollow ring.
+  const workingDirRow = useMemo((): Commit | null => {
+    if (status.length === 0 || headId === null) return null;
+    const noun = status.length === 1 ? "file" : "files";
+    return {
+      id: WORKING_DIR_ID,
+      parents: [headId],
+      author: EMPTY_SIGNATURE,
+      committer: EMPTY_SIGNATURE,
+      message: `Uncommitted changes (${status.length} ${noun})`,
+      timestamp: 0,
+      signature: null,
+      decorations: [],
+    };
+  }, [status.length, headId]);
+
+  // Rows actually rendered: the synthetic row (when present) above the real
+  // commits. Lane layout is computed on `commits` for stability, then augmented
+  // with the synthetic node — so paging/recompute never see it.
+  const rows = useMemo(
+    () => (workingDirRow ? [workingDirRow, ...commits] : commits),
+    [workingDirRow, commits],
+  );
+
   const rowVirtualizer = useVirtualizer({
-    count: commits.length,
+    count: rows.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 10,
@@ -230,41 +289,55 @@ export function CommitsPanel() {
     return result;
   }, [commits, lockMap, refsAt]);
 
+  // Augment the lane result with the synthetic node: pin it to HEAD's lane and
+  // add a same-lane edge down to HEAD, so a clean vertical connector joins them.
+  const { assignments, edges: allEdges } = useMemo((): LaneResult => {
+    if (!workingDirRow || headId === null) return laneResult;
+    const headLane = laneResult.assignments.get(headId) ?? 0;
+    const assignments = new Map(laneResult.assignments);
+    assignments.set(WORKING_DIR_ID, headLane);
+    const edges: LaneEdge[] = [
+      ...laneResult.edges,
+      { fromCommitId: WORKING_DIR_ID, toCommitId: headId, fromLane: headLane, toLane: headLane },
+    ];
+    return { assignments, edges, maxLane: Math.max(laneResult.maxLane, headLane) };
+  }, [laneResult, workingDirRow, headId]);
+
   // Outgoing edge lookup: edges originating at each commit (child → parent).
   const edgesByCommit = useMemo(() => {
     const map = new Map<string, LaneEdge[]>();
-    for (const edge of laneResult.edges) {
+    for (const edge of allEdges) {
       const arr = map.get(edge.fromCommitId) ?? [];
       arr.push(edge);
       map.set(edge.fromCommitId, arr);
     }
     return map;
-  }, [laneResult]);
+  }, [allEdges]);
 
   // Incoming edge lookup: all edges arriving at each commit as parent.
   // GraphCell derives the top stub and jog arcs from these.
   const incomingEdgesByCommit = useMemo(() => {
     const map = new Map<string, LaneEdge[]>();
-    for (const edge of laneResult.edges) {
+    for (const edge of allEdges) {
       const arr = map.get(edge.toCommitId) ?? [];
       arr.push(edge);
       map.set(edge.toCommitId, arr);
     }
     return map;
-  }, [laneResult]);
+  }, [allEdges]);
 
 
   // Maps commitId → row index. Used to convert edges into row-span records.
   const commitIndexById = useMemo(
-    () => new Map(commits.map((c, i) => [c.id, i])),
-    [commits],
+    () => new Map(rows.map((c, i) => [c.id, i])),
+    [rows],
   );
 
   // Edge spans: for each edge, the lane that is "active" (waiting for the
   // parent commit) for the rows strictly between the two commit rows.
   const edgeSpans = useMemo(
-    () => computeEdgeSpans(laneResult.edges, commitIndexById, commits.length),
-    [laneResult, commitIndexById, commits.length],
+    () => computeEdgeSpans(allEdges, commitIndexById, rows.length),
+    [allEdges, commitIndexById, rows.length],
   );
 
   // Dynamic column width. getVirtualItems() always returns a new array
@@ -283,17 +356,17 @@ export function CommitsPanel() {
   // renders, the last row is no longer in view, so it won't auto-page forever.
   const lastVisibleIndex = visibleItems[visibleItems.length - 1]?.index ?? 0;
   useEffect(() => {
-    if (hasMore && !isFetching && lastVisibleIndex >= commits.length - 1) {
+    if (hasMore && !isFetching && lastVisibleIndex >= rows.length - 1) {
       setExtraPages((n) => n + 1);
     }
-  }, [hasMore, isFetching, lastVisibleIndex, commits.length]);
+  }, [hasMore, isFetching, lastVisibleIndex, rows.length]);
 
   let maxVisibleLane = 0;
   for (const vItem of visibleItems) {
     const rowIndex = vItem.index;
-    const c = commits[rowIndex];
+    const c = rows[rowIndex];
     if (!c) continue;
-    const lane = laneResult.assignments.get(c.id) ?? 0;
+    const lane = assignments.get(c.id) ?? 0;
     if (lane > maxVisibleLane) maxVisibleLane = lane;
     for (const span of edgeSpans) {
       if (span.fromRow < rowIndex && rowIndex < span.toRow && span.lane > maxVisibleLane) {
@@ -305,6 +378,9 @@ export function CommitsPanel() {
   const handleRowClick = useCallback(
     (commit: Commit) => {
       setSelectedId(commit.id);
+      // The synthetic working-dir row is not a real commit — select it for
+      // highlight but don't summon commit-details (there's nothing to fetch).
+      if (commit.id === WORKING_DIR_ID) return;
       useSummonStore.getState().summon("commit-details", commit.id);
     },
     []
@@ -475,9 +551,10 @@ export function CommitsPanel() {
         >
           {visibleItems.map((vItem) => {
             const rowIndex = vItem.index;
-            const commit = commits[rowIndex];
+            const commit = rows[rowIndex];
             const isSelected = commit.id === selectedId;
-            const commitLane = laneResult.assignments.get(commit.id) ?? 0;
+            const isWorkingDir = commit.id === WORKING_DIR_ID;
+            const commitLane = assignments.get(commit.id) ?? 0;
             const edges = edgesByCommit.get(commit.id) ?? [];
 
             // Active lanes at this row: the commit's own lane plus every lane
@@ -556,6 +633,7 @@ export function CommitsPanel() {
                             dotRadius={DOT_RADIUS}
                             lineWidth={LINE_WIDTH}
                             ownLanePassThrough={ownLanePassThrough}
+                            hollow={isWorkingDir}
                           />
                         </div>
                       );
@@ -585,7 +663,7 @@ export function CommitsPanel() {
                             whiteSpace: "nowrap",
                           }}
                         >
-                          {formatRelative(commit.timestamp)}
+                          {isWorkingDir ? "" : formatRelative(commit.timestamp)}
                         </span>
                       );
                     case "author":
@@ -600,7 +678,7 @@ export function CommitsPanel() {
                             whiteSpace: "nowrap",
                           }}
                         >
-                          {commit.author.name}
+                          {isWorkingDir ? "" : commit.author.name}
                         </span>
                       );
                     case "sha":
@@ -616,7 +694,7 @@ export function CommitsPanel() {
                             whiteSpace: "nowrap",
                           }}
                         >
-                          {commit.id.slice(0, 8)}
+                          {isWorkingDir ? "" : commit.id.slice(0, 8)}
                         </span>
                       );
                     default:

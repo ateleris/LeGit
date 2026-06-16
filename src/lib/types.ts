@@ -143,6 +143,26 @@ export interface LineEndingsView {
 
 export type CommitId = string;
 
+/** Working-tree / index state of a single path (matches legit-core `FileState`). */
+export type FileState =
+  | "Modified"
+  | "Added"
+  | "Deleted"
+  | "Renamed"
+  | "Copied"
+  | "Untracked"
+  | "Ignored"
+  | "Conflicted"
+  | "SubmoduleChanged";
+
+/** A single changed path in the working tree (matches legit-core `FileStatus`). */
+export interface FileStatus {
+  path: string;
+  state: FileState;
+  /** True when the change is staged (in the index); false for working-tree-only changes. */
+  staged: boolean;
+}
+
 export type RefDecoration =
   | { type: "head" }
   | { type: "headOf"; value: string }

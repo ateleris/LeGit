@@ -40,7 +40,21 @@ impl GitCliBackend {
 #[async_trait]
 impl GitBackend for GitCliBackend {
     async fn status(&self) -> Result<Vec<FileStatus>, GitError> {
-        Err(GitError::NotYet)
+        let runner = self.runner().await;
+
+        let output = runner
+            .run(&parsers::status::STATUS_ARGS)
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+
+        if !output.success {
+            return Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr,
+            });
+        }
+
+        Ok(parsers::status::parse_status(&output.stdout))
     }
 
     async fn log(&self, opts: LogOptions) -> Result<Vec<Commit>, GitError> {

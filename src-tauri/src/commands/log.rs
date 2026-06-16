@@ -2,7 +2,7 @@
 
 use crate::error::AppError;
 use crate::state::AppState;
-use legit_core::types::{Branch, Commit, CommitDetails, CommitId, LogOptions};
+use legit_core::types::{Branch, Commit, CommitDetails, CommitId, FileStatus, LogOptions};
 
 /// Fetch the log for the active repo.
 ///
@@ -38,6 +38,18 @@ pub async fn repo_branches(
 ) -> Result<Vec<Branch>, AppError> {
     let session = state.get_session(&repo_id).await?;
     session.backend.branches().await.map_err(AppError::Git)
+}
+
+/// Working-tree status for the active repo: every staged, unstaged, and
+/// untracked change. Drives the Commits panel's "uncommitted changes" row.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_status(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<Vec<FileStatus>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.status().await.map_err(AppError::Git)
 }
 
 /// Fetch full details for a single commit.

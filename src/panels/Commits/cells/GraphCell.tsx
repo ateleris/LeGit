@@ -49,6 +49,11 @@ interface GraphCellProps {
    * stubs must stand in for the transiting line and be drawn full height.
    */
   ownLanePassThrough?: boolean;
+  /**
+   * Draw the node as a hollow ring instead of a filled dot. Used for the
+   * synthetic "uncommitted changes" row to signal it is not a real commit.
+   */
+  hollow?: boolean;
 }
 
 export function laneColor(lane: LaneIndex): string {
@@ -100,6 +105,7 @@ export function GraphCell({
   dotRadius,
   lineWidth,
   ownLanePassThrough = false,
+  hollow = false,
 }: GraphCellProps) {
   const halfRow = rowHeight / 2;
   const width = (totalLanes + 1) * laneSpacing;
@@ -237,8 +243,19 @@ export function GraphCell({
         );
       })}
 
-      {/* 4. Commit dot — rendered last so it sits on top of all lines. */}
-      <circle cx={dotX} cy={halfRow} r={dotRadius} fill={dotColor} />
+      {/* 4. Commit node — rendered last so it sits on top of all lines. A
+          hollow ring (filled with the panel background so lane lines don't
+          show through its centre) marks the synthetic working-directory row. */}
+      {hollow ? (
+        <circle
+          cx={dotX} cy={halfRow} r={dotRadius}
+          fill="var(--panel-bg, #1e1e1e)"
+          stroke={dotColor}
+          strokeWidth={lineWidth}
+        />
+      ) : (
+        <circle cx={dotX} cy={halfRow} r={dotRadius} fill={dotColor} />
+      )}
     </svg>
   );
 }

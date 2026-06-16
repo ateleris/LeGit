@@ -13,6 +13,7 @@ import type {
   LaneLock,
   RepoSettings,
   ConsoleExecHandle,
+  FileStatus,
   GitStatus,
   RepoSummary,
   RestoreResult,
@@ -124,6 +125,9 @@ export const globalWriteLineEndings = (
 
 export const repoLog = (repoId: string, maxCount?: number, skip?: number) =>
   invoke<Commit[]>("repo_log", { repoId, maxCount: maxCount ?? null, skip: skip ?? null });
+
+export const repoStatus = (repoId: string) =>
+  invoke<FileStatus[]>("repo_status", { repoId });
 
 export const repoCommitDetails = (repoId: string, commitId: string) =>
   invoke<CommitDetails>("repo_commit_details", { repoId, commitId });
