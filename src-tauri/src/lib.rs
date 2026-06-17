@@ -52,11 +52,16 @@ pub fn run() {
         commands::repo_branches,
         commands::repo_commit_details,
         commands::repo_commit_files,
+        commands::repo_stage,
+        commands::repo_unstage,
+        commands::repo_discard,
+        commands::repo_commit,
         commands::list_lane_locks,
         commands::set_lane_lock,
         commands::unset_lane_lock,
         commands::save_column_preferences,
         commands::save_changed_files_view_mode,
+        commands::save_ui_font_size,
         commands::save_commits_graph_metrics,
     ]);
 

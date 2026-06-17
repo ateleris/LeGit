@@ -303,7 +303,7 @@ export function ThemeEditorPanel() {
                   }}
                   title={t.documentation}
                 >
-                  <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 12 }}>
+                  <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "var(--fz-md)" }}>
                     {t.name}
                   </span>
                   <select
@@ -467,7 +467,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
     <div
       style={{
-        fontSize: 11,
+        fontSize: "var(--fz-sm)",
         textTransform: "uppercase",
         letterSpacing: 0.5,
         color: "var(--subtle-fg)",

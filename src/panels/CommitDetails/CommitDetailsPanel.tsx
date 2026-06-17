@@ -46,12 +46,12 @@ export function CommitDetailsPanel() {
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
       {isFetching && (
         <div className="legit-panel__toolbar">
-          <span className="legit-subtle" style={{ fontSize: 11 }}>Loading…</span>
+          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>Loading…</span>
         </div>
       )}
 
       {isError && (
-        <pre className="legit-error" style={{ margin: "8px 12px", fontSize: 12 }}>
+        <pre className="legit-error" style={{ margin: "8px 12px", fontSize: "var(--fz-md)" }}>
           {formatAppError(error)}
         </pre>
       )}
@@ -71,7 +71,7 @@ function CommitView({ details }: { details: CommitDetails }) {
     : null;
 
   return (
-    <div className="legit-panel__body" style={{ overflowY: "auto", fontSize: 12 }}>
+    <div className="legit-panel__body" style={{ overflowY: "auto", fontSize: "var(--fz-md)" }}>
       <Section title="SHA">
         <code style={{ userSelect: "all", wordBreak: "break-all" }}>{commit.id}</code>
       </Section>
@@ -79,7 +79,7 @@ function CommitView({ details }: { details: CommitDetails }) {
       {commit.parents.length > 0 && (
         <Section title={commit.parents.length === 1 ? "Parent" : "Parents"}>
           {commit.parents.map((p) => (
-            <div key={p}><code style={{ fontSize: 11 }}>{p}</code></div>
+            <div key={p}><code style={{ fontSize: "var(--fz-sm)" }}>{p}</code></div>
           ))}
         </Section>
       )}
@@ -99,7 +99,7 @@ function CommitView({ details }: { details: CommitDetails }) {
       <Section title="Message">
         <div style={{ fontWeight: 600, marginBottom: body ? 6 : 0 }}>{subject}</div>
         {body && (
-          <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 12, lineHeight: 1.5 }}>
+          <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "var(--fz-md)", lineHeight: 1.5 }}>
             {body}
           </pre>
         )}
@@ -112,11 +112,11 @@ function CommitView({ details }: { details: CommitDetails }) {
       )}
 
       <Section title="">
-        <button onClick={() => setShowRaw((s) => !s)} style={{ fontSize: 11 }}>
+        <button onClick={() => setShowRaw((s) => !s)} style={{ fontSize: "var(--fz-sm)" }}>
           {showRaw ? "Hide raw object" : "Show raw object"}
         </button>
         {showRaw && (
-          <pre style={{ marginTop: 8, fontSize: 10, whiteSpace: "pre-wrap", wordBreak: "break-all", overflowX: "auto", background: "var(--input-bg)", padding: 8, borderRadius: 4 }}>
+          <pre style={{ marginTop: 8, fontSize: "var(--fz-xs)", whiteSpace: "pre-wrap", wordBreak: "break-all", overflowX: "auto", background: "var(--input-bg)", padding: 8, borderRadius: 4 }}>
             {raw_object}
           </pre>
         )}
@@ -146,7 +146,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   return (
     <div style={{ marginBottom: 14 }}>
       {title && (
-        <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: 4 }}>
+        <div style={{ fontSize: "var(--fz-xs)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: 4 }}>
           {title}
         </div>
       )}

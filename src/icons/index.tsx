@@ -16,7 +16,11 @@ import {
   Cloud,
   GitBranch,
   Lock,
+  Minus,
+  Plus,
+  RotateCcw,
   Tag,
+  Trash2,
   TriangleAlert,
   type LucideIcon,
   type LucideProps,
@@ -51,6 +55,11 @@ export const TagIcon = withDefaults(Tag, "TagIcon");
 export const LockIcon = withDefaults(Lock, "LockIcon");
 export const CheckIcon = withDefaults(Check, "CheckIcon");
 export const WarningIcon = withDefaults(TriangleAlert, "WarningIcon");
+// Working Changes row actions.
+export const StageIcon = withDefaults(Plus, "StageIcon");
+export const UnstageIcon = withDefaults(Minus, "UnstageIcon");
+export const DiscardIcon = withDefaults(RotateCcw, "DiscardIcon");
+export const TrashIcon = withDefaults(Trash2, "TrashIcon");
 
 // Custom (non-lucide) icons follow the same conventions: `size` defaults to
 // `1em`, the glyph fills with `currentColor`, and the keyhole is punched out

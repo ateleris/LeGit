@@ -162,7 +162,7 @@ function MenuShell({
         padding: "4px 0",
         zIndex: 9999,
         boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
-        fontSize: 13,
+        fontSize: "var(--fz-lg)",
         color: "var(--fg, #ccc)",
         userSelect: "none",
       }}

@@ -49,7 +49,7 @@ export function SectionLabel({ children }: { children: React.ReactNode }) {
     <div
       style={{
         padding: "4px 14px",
-        fontSize: 11,
+        fontSize: "var(--fz-sm)",
         color: "var(--subtle-fg, #888)",
         textTransform: "uppercase",
         letterSpacing: "0.04em",

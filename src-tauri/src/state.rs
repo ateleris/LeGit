@@ -84,6 +84,12 @@ pub fn default_commits_text_size() -> f64 {
     12.0
 }
 
+/// Default global UI font size (px) — the base all panels derive their text
+/// sizes (and the panel min-size constraints) from.
+pub fn default_ui_font_size() -> f64 {
+    12.0
+}
+
 /// Largest sensible text size for a given row height — text taller than this
 /// would not sit comfortably within the line.
 pub fn max_commits_text_size(row_height: f64) -> f64 {
@@ -152,6 +158,10 @@ pub struct GlobalSettings {
     /// `None` until the user first toggles it.
     #[serde(default)]
     pub changed_files_view_mode: Option<String>,
+    /// Global UI font size (px). Base for every panel's text scale and for the
+    /// panel min-size constraints.
+    #[serde(default = "default_ui_font_size")]
+    pub ui_font_size: f64,
 }
 
 impl Default for GlobalSettings {
@@ -176,6 +186,7 @@ impl Default for GlobalSettings {
             commits_line_width: default_commits_line_width(),
             commits_text_size: default_commits_text_size(),
             changed_files_view_mode: None,
+            ui_font_size: default_ui_font_size(),
         }
     }
 }

@@ -83,7 +83,7 @@ export function RepoSettingsPanel() {
         <span
           className="legit-subtle"
           title={activeRepo.path}
-          style={{ fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+          style={{ fontSize: "var(--fz-sm)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
         >
           {activeRepo.path}
         </span>
@@ -124,7 +124,7 @@ export function RepoSettingsPanel() {
           </div>
           {error && <pre className="legit-error" style={{ marginTop: 6 }}>{error}</pre>}
           {successMsg && (
-            <div className="legit-success" style={{ marginTop: 6, fontSize: 12 }}>
+            <div className="legit-success" style={{ marginTop: 6, fontSize: "var(--fz-md)" }}>
               {successMsg}
             </div>
           )}
@@ -181,7 +181,7 @@ function MixedEndingRepoSection({
                 disabled={saving}
                 onChange={() => setOverride(opt === "inherit" ? null : opt === "on")}
               />
-              <span style={{ fontSize: 13 }}>
+              <span style={{ fontSize: "var(--fz-lg)" }}>
                 {opt === "inherit"
                   ? `Inherit from global (currently ${globalWarn ? "on" : "off"})`
                   : opt === "on" ? "On" : "Off"}
@@ -189,7 +189,7 @@ function MixedEndingRepoSection({
             </label>
           );
         })}
-        <div style={{ fontSize: 11, color: "var(--subtle-fg)", marginTop: 2 }}>
+        <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: 2 }}>
           Effective: <strong>{effective ? "on" : "off"}</strong>
         </div>
       </div>
@@ -269,7 +269,7 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
       <FieldNote>writes to: .git/config (this repo only)</FieldNote>
 
       {coversAll && (
-        <div style={{ marginTop: 8, padding: "6px 8px", background: "var(--button-hover-bg)", borderRadius: 4, fontSize: 12 }}>
+        <div style={{ marginTop: 8, padding: "6px 8px", background: "var(--button-hover-bg)", borderRadius: 4, fontSize: "var(--fz-md)" }}>
           A <code>*</code> pattern in <code>.gitattributes</code> sets text/eol for all files —{" "}
           <code>core.autocrlf</code> and <code>core.eol</code> are overridden by it.
           Current <code>git config</code> values are shown below for reference.
@@ -277,7 +277,7 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
       )}
 
       {hasPartialRules && (
-        <div style={{ marginTop: 8, padding: "6px 8px", background: "var(--button-hover-bg)", borderRadius: 4, fontSize: 12 }}>
+        <div style={{ marginTop: 8, padding: "6px 8px", background: "var(--button-hover-bg)", borderRadius: 4, fontSize: "var(--fz-md)" }}>
           This repo's <code>.gitattributes</code> covers some files (see below);{" "}
           <code>core.autocrlf</code> and <code>core.eol</code> apply to the rest.
         </div>
@@ -316,14 +316,14 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
           <div style={{ fontWeight: 600, marginBottom: 6 }}>
             Save line-ending changes to this repo's .git/config?
           </div>
-          <div style={{ marginBottom: 8, fontSize: 12 }}>
+          <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
             {changes.map((c) => (
               <div key={c.key} style={{ fontFamily: "monospace" }}>
                 <code>{c.key}</code>: <code>{c.before ?? "unset"}</code> → <code>{c.after ?? "unset"}</code>
               </div>
             ))}
           </div>
-          <div style={{ fontSize: 12, color: "var(--subtle-fg)", marginBottom: 10 }}>
+          <div style={{ fontSize: "var(--fz-md)", color: "var(--subtle-fg)", marginBottom: 10 }}>
             These writes affect only this repo. Your global Git config and other repos are not affected.
           </div>
           <div style={{ display: "flex", gap: 6 }}>
@@ -348,10 +348,10 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
 
       {view.gitattributes.length > 0 && (
         <div style={{ marginTop: 14 }}>
-          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: 6 }}>
+          <div style={{ fontSize: "var(--fz-sm)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: 6 }}>
             .gitattributes rules
           </div>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--fz-md)" }}>
             <thead>
               <tr>
                 {["pattern", "text", "eol"].map((h) => (
@@ -372,12 +372,12 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
 
       {view.mixed_ending_files.length > 0 && (
         <div style={{ marginTop: 14 }}>
-          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--error-fg)", marginBottom: 6 }}>
+          <div style={{ fontSize: "var(--fz-sm)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--error-fg)", marginBottom: 6 }}>
             Files with mixed CRLF+LF ({view.mixed_ending_files.length})
           </div>
           <div style={{ maxHeight: 120, overflowY: "auto" }}>
             {view.mixed_ending_files.map((f) => (
-              <div key={f} style={{ fontFamily: "monospace", fontSize: 11, padding: "1px 0" }}>{f}</div>
+              <div key={f} style={{ fontFamily: "monospace", fontSize: "var(--fz-sm)", padding: "1px 0" }}>{f}</div>
             ))}
           </div>
         </div>
@@ -467,7 +467,7 @@ function RadioGroup({
             onChange={() => onChange(opt.value)}
             disabled={disabled}
           />
-          <code style={{ fontSize: 12 }}>{opt.label}</code>
+          <code style={{ fontSize: "var(--fz-md)" }}>{opt.label}</code>
         </label>
       ))}
     </div>
@@ -477,7 +477,7 @@ function RadioGroup({
 function ConfigRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: 12, fontFamily: "monospace", color: "var(--subtle-fg)", marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: "var(--fz-md)", fontFamily: "monospace", color: "var(--subtle-fg)", marginBottom: 4 }}>{label}</div>
       <div style={{ paddingLeft: 8 }}>{children}</div>
     </div>
   );
@@ -498,7 +498,7 @@ function ResolvedBadge({
   const sl = scopeLabel(source);
   const fromLabel = sl ? ` (from ${sl})` : "";
   return (
-    <div style={{ marginTop: 4, fontSize: 11, color: isResolved ? "var(--success-fg)" : "var(--subtle-fg)" }}>
+    <div style={{ marginTop: 4, fontSize: "var(--fz-sm)", color: isResolved ? "var(--success-fg)" : "var(--subtle-fg)" }}>
       {label}: <code>{value}</code>{isResolved ? fromLabel : ""}
     </div>
   );
@@ -507,7 +507,7 @@ function ResolvedBadge({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 16 }}>
-      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: 8 }}>
+      <div style={{ fontSize: "var(--fz-sm)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: 8 }}>
         {title}
       </div>
       {children}
@@ -526,7 +526,7 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 
 function FieldNote({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ fontSize: 11, color: "var(--subtle-fg)", marginTop: 4 }}>
+    <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: 4 }}>
       {children}
     </div>
   );

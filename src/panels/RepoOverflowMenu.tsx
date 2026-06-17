@@ -54,7 +54,7 @@ export function RepoOverflowMenu() {
             padding: 4,
           }}
         >
-          <div style={{ padding: "4px 8px", color: "var(--subtle-fg)", fontSize: 11 }}>
+          <div style={{ padding: "4px 8px", color: "var(--subtle-fg)", fontSize: "var(--fz-sm)" }}>
             Open repositories
           </div>
           {repos.map((r) => {
@@ -88,7 +88,7 @@ export function RepoOverflowMenu() {
                   <div
                     className="legit-subtle"
                     style={{
-                      fontSize: 11,
+                      fontSize: "var(--fz-sm)",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",

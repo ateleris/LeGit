@@ -1,6 +1,12 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import { getGlobalSettings, saveChangedFilesViewMode, saveCommitsGraphMetrics } from "../lib/commands";
+import {
+  getGlobalSettings,
+  saveChangedFilesViewMode,
+  saveCommitsGraphMetrics,
+  saveUiFontSize,
+} from "../lib/commands";
+import { reapplyPanelConstraints } from "./dockview";
 import type { GlobalSettings, RegionPlacement } from "../lib/types";
 
 /** Defaults + bounds for the Commits-panel graph metrics. Mirror the backend
@@ -17,6 +23,18 @@ export const COMMITS_DOT_RADIUS_MIN = 1;
 export const COMMITS_LINE_WIDTH_MIN = 1;
 export const COMMITS_TEXT_SIZE_DEFAULT = 12;
 export const COMMITS_TEXT_SIZE_MIN = 8;
+
+/** Global UI font size (px) — base for the panel text scale and min sizes.
+ * Mirror the backend clamp in `save_ui_font_size`. */
+export const UI_FONT_SIZE_DEFAULT = 12;
+export const UI_FONT_SIZE_MIN = 8;
+export const UI_FONT_SIZE_MAX = 24;
+
+/** Write the base font size to the `--ui-font-size` CSS var; the `--fz-*` scale
+ * and the font-derived panel min sizes cascade from it. */
+export function applyUiFontSize(size: number, root: HTMLElement = document.documentElement) {
+  root.style.setProperty("--ui-font-size", `${size}px`);
+}
 
 /** Largest dot radius that fits a cell of the given height/width without
  * overflowing vertically or overlapping the neighbouring lane. Mirrors the
@@ -50,6 +68,7 @@ interface SettingsStore {
     textSize: number
   ) => Promise<void>;
   setChangedFilesViewMode: (mode: "tree" | "flat") => Promise<void>;
+  setUiFontSize: (size: number) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
@@ -58,6 +77,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   async init() {
     if (get().settings) return;
     const settings = await getGlobalSettings();
+    applyUiFontSize(settings.ui_font_size ?? UI_FONT_SIZE_DEFAULT);
     set({ settings });
   },
 
@@ -105,6 +125,20 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const s = get().settings;
     if (s) {
       set({ settings: { ...s, changed_files_view_mode: mode } });
+    }
+  },
+
+  async setUiFontSize(size) {
+    const clamped = clamp(size, UI_FONT_SIZE_MIN, UI_FONT_SIZE_MAX);
+    // Apply immediately for a live preview, then persist (backend re-clamps).
+    applyUiFontSize(clamped);
+    reapplyPanelConstraints();
+    const stored = await saveUiFontSize(clamped);
+    applyUiFontSize(stored);
+    reapplyPanelConstraints();
+    const s = get().settings;
+    if (s) {
+      set({ settings: { ...s, ui_font_size: stored } });
     }
   },
 }));

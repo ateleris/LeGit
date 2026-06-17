@@ -63,7 +63,7 @@ export function LaneLockIndicator({
           left: x,
           top: "50%",
           transform: "translate(-50%, -50%)",
-          fontSize: 13,
+          fontSize: "var(--fz-lg)",
           lineHeight: 1,
           display: "inline-flex",
           color,
@@ -140,7 +140,7 @@ function LockMenu({
         padding: "4px 0",
         zIndex: 9999,
         boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
-        fontSize: 13,
+        fontSize: "var(--fz-lg)",
         color: "var(--fg, #ccc)",
         userSelect: "none",
       }}
@@ -148,7 +148,7 @@ function LockMenu({
       <div
         style={{
           padding: "4px 14px",
-          fontSize: 11,
+          fontSize: "var(--fz-sm)",
           color: "var(--subtle-fg, #888)",
           whiteSpace: "nowrap",
           cursor: "default",

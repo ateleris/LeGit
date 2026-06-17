@@ -8,7 +8,8 @@ import { repoCommitDetails, repoCommitFiles } from "../../lib/commands";
 import type { CommitDetails, CommitFileChange, CommitId } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { FileTree } from "../shared/FileTree/FileTree";
-import type { ViewMode } from "../shared/FileTree/buildTree";
+import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
+import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
 
 /**
  * Changed Files panel — receives a CommitId via the summon mechanism and shows
@@ -25,6 +26,9 @@ export function ChangedFilesPanel() {
   const viewMode: ViewMode =
     useSettingsStore((s) => s.settings?.changed_files_view_mode) === "tree" ? "tree" : "flat";
   const setViewMode = useSettingsStore((s) => s.setChangedFilesViewMode);
+
+  // Row height and icons scale with the global UI font size.
+  const { rowHeight, iconSize } = useFileRowMetrics();
 
   useEffect(() => {
     setSelectedId(null);
@@ -74,7 +78,7 @@ export function ChangedFilesPanel() {
   }, [files]);
 
   const handleSelect = useCallback(
-    (file: CommitFileChange) => {
+    (file: FileTreeEntry) => {
       setSelectedPath(file.path);
       if (!repo || !selectedId) return;
       // No-op until the Diff panel exists ("diff" isn't a registered panel yet).
@@ -113,7 +117,7 @@ export function ChangedFilesPanel() {
         </div>
         <span
           className="legit-subtle"
-          style={{ fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}
+          style={{ fontSize: "var(--fz-sm)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}
         >
           {files.length} file{files.length === 1 ? "" : "s"}
           {totals.add > 0 && (
@@ -127,14 +131,14 @@ export function ChangedFilesPanel() {
           <code>{selectedId.slice(0, 8)}</code>
         </span>
         {isFetching && (
-          <span className="legit-subtle" style={{ fontSize: 11, marginLeft: "auto" }}>
+          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", marginLeft: "auto" }}>
             Loading…
           </span>
         )}
       </div>
 
       {isError && (
-        <pre className="legit-error" style={{ margin: "8px 12px", fontSize: 12 }}>
+        <pre className="legit-error" style={{ margin: "8px 12px", fontSize: "var(--fz-md)" }}>
           {formatAppError(error)}
         </pre>
       )}
@@ -146,7 +150,7 @@ export function ChangedFilesPanel() {
       )}
 
       {files.length > 0 && (
-        <FileTree files={files} viewMode={viewMode} selectedPath={selectedPath} onSelect={handleSelect} />
+        <FileTree files={files} viewMode={viewMode} selectedPath={selectedPath} onSelect={handleSelect} rowHeight={rowHeight} iconSize={iconSize} />
       )}
     </div>
   );
@@ -154,7 +158,7 @@ export function ChangedFilesPanel() {
 
 function segStyle(active: boolean, side: "left" | "right"): React.CSSProperties {
   return {
-    fontSize: 11,
+    fontSize: "var(--fz-sm)",
     padding: "2px 8px",
     border: "1px solid var(--panel-border)",
     borderRadius: side === "left" ? "3px 0 0 3px" : "0 3px 3px 0",

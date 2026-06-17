@@ -25,6 +25,12 @@ interface SummonStore {
   capturePlacement: (panelId: string, groupId: string) => void;
   captureFallback: (panelId: string, pos: FallbackPosition) => void;
   summon: (targetId: string, payload?: unknown) => void;
+  /**
+   * Show `showId` in place of `hideId`: if `showId` isn't open, it opens in the
+   * hidden sibling's group (taking over its spot); then `hideId` is closed. Used
+   * so Changed Files and Working Changes share one side-region slot, one at a time.
+   */
+  swapSummon: (showId: string, hideId: string, payload?: unknown) => void;
 }
 
 export const useSummonStore = create<SummonStore>((set, get) => ({
@@ -129,6 +135,44 @@ export const useSummonStore = create<SummonStore>((set, get) => ({
     } else {
       api.addPanel({ id: targetId, component: targetId, title: desc.title });
     }
+  },
+
+  swapSummon(showId, hideId, payload) {
+    const api = useDockviewStore.getState().repoApi;
+    if (!api) return;
+    const desc = REPO_PANELS.find((p) => p.id === showId);
+    if (!desc) return;
+
+    const sibling = api.getPanel(hideId);
+    const existing = api.getPanel(showId);
+
+    if (existing) {
+      existing.focus();
+      if (payload !== undefined) {
+        const cb = get().callbacks[showId];
+        if (cb) cb(payload);
+        else set((s) => ({ payloadQueue: { ...s.payloadQueue, [showId]: payload } }));
+      }
+    } else if (sibling?.group) {
+      // Take over the sibling's group so the new panel lands in the same spot.
+      // Queue the payload so it's delivered when the freshly-added panel mounts.
+      if (payload !== undefined) {
+        set((s) => ({ payloadQueue: { ...s.payloadQueue, [showId]: payload } }));
+      }
+      api.addPanel({
+        id: showId,
+        component: showId,
+        title: desc.title,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        position: { referenceGroup: sibling.group.id as any, direction: "within" },
+      });
+    } else {
+      // No sibling open — fall back to normal placement (memory / default).
+      get().summon(showId, payload);
+    }
+
+    // Close the sibling so only one panel occupies the shared spot.
+    sibling?.api.close();
   },
 }));
 

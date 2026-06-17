@@ -12,6 +12,7 @@ use crate::types::{
     LogOptions, SubmoduleInfo,
 };
 use async_trait::async_trait;
+use std::path::PathBuf;
 
 #[async_trait]
 pub trait GitBackend: Send + Sync {
@@ -30,6 +31,17 @@ pub trait GitBackend: Send + Sync {
     async fn diff(&self, from: &CommitId, to: &CommitId) -> Result<Diff, GitError>;
 
     async fn commit(&self, opts: CommitOptions) -> Result<CommitId, GitError>;
+
+    /// Stage the given paths (`git add`).
+    async fn stage(&self, paths: &[PathBuf]) -> Result<(), GitError>;
+
+    /// Unstage the given paths (`git restore --staged`).
+    async fn unstage(&self, paths: &[PathBuf]) -> Result<(), GitError>;
+
+    /// Discard working-tree changes for the given paths: tracked paths are
+    /// reverted (`git restore --worktree`), untracked paths are removed
+    /// (`git clean -f`).
+    async fn discard(&self, paths: &[PathBuf]) -> Result<(), GitError>;
 
     async fn submodules(&self) -> Result<Vec<SubmoduleInfo>, GitError>;
 }

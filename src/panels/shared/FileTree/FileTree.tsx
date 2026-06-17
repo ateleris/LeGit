@@ -19,23 +19,32 @@ import {
   TriangleAlert,
   Trash2,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
-import type { CommitFileChange, FileState } from "../../../lib/types";
-import { baseName, flatten, type Row, type ViewMode } from "./buildTree";
+import type { FileState } from "../../../lib/types";
+import { baseName, flatten, type FileTreeEntry, type Row, type ViewMode } from "./buildTree";
 
 interface FileTreeProps {
-  files: CommitFileChange[];
+  files: FileTreeEntry[];
   viewMode: ViewMode;
   selectedPath: string | null;
-  onSelect: (file: CommitFileChange) => void;
+  /** Optional — clicking a file row selects it (e.g. to open a diff). */
+  onSelect?: (file: FileTreeEntry) => void;
+  /** Optional per-file action buttons, revealed on row hover/focus (right edge). */
+  renderActions?: (file: FileTreeEntry) => ReactNode;
+  /** Optional right-click handler for a file row (e.g. a context menu). */
+  onContextMenu?: (file: FileTreeEntry, event: React.MouseEvent) => void;
   /** Row height in px. */
   rowHeight?: number;
+  /** Status/chevron icon size in px. */
+  iconSize?: number;
 }
 
 const ROW_HEIGHT_DEFAULT = 22;
+const ICON_SIZE_DEFAULT = 14;
 
 /** Hover tooltip for a file row: the path, plus the rename source when present. */
-function fileTitle(file: CommitFileChange): string {
+function fileTitle(file: FileTreeEntry): string {
   return file.old_path ? `${file.path}\n(renamed from ${file.old_path})` : file.path;
 }
 
@@ -58,10 +67,21 @@ export function FileTree({
   viewMode,
   selectedPath,
   onSelect,
+  renderActions,
+  onContextMenu,
   rowHeight = ROW_HEIGHT_DEFAULT,
+  iconSize = ICON_SIZE_DEFAULT,
 }: FileTreeProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
-  const [focusedIndex, setFocusedIndex] = useState(0);
+  // Keyboard cursor tracked by row path, not index: staging/unstaging mutates
+  // the row set, and a stale numeric index would point at whatever file slid
+  // into that slot — lighting up a second, wrong row. A path that's no longer
+  // present simply resolves to -1 (no cursor) until the user moves again.
+  const [focusedPath, setFocusedPath] = useState<string | null>(null);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  // The keyboard-focus tint shows only while this tree actually holds focus, so
+  // a panel with multiple trees never shows a focused row in more than one.
+  const [hasFocus, setHasFocus] = useState(false);
   const parentRef = useRef<HTMLDivElement>(null);
 
   const rows = useMemo(
@@ -69,10 +89,10 @@ export function FileTree({
     [files, viewMode, collapsed],
   );
 
-  // Keep focus in range when the row set shrinks (collapse, view switch).
-  useEffect(() => {
-    setFocusedIndex((i) => Math.min(i, Math.max(0, rows.length - 1)));
-  }, [rows.length]);
+  const focusedIndex = useMemo(
+    () => (focusedPath == null ? -1 : rows.findIndex((r) => r.path === focusedPath)),
+    [rows, focusedPath],
+  );
 
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -97,7 +117,7 @@ export function FileTree({
   const activateRow = useCallback(
     (row: Row) => {
       if (row.kind === "dir") toggleDir(row.path);
-      else onSelect(row.file);
+      else onSelect?.(row.file);
     },
     [toggleDir, onSelect],
   );
@@ -105,30 +125,33 @@ export function FileTree({
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (rows.length === 0) return;
-      const row = rows[focusedIndex];
+      const row = focusedIndex >= 0 ? rows[focusedIndex] : undefined;
+      // With no cursor yet (-1), the first key lands on row 0; otherwise step
+      // from the current row. Cursor is stored by path so it survives mutation.
+      const from = focusedIndex < 0 ? -1 : focusedIndex;
       const move = (idx: number) => {
         const clamped = Math.max(0, Math.min(rows.length - 1, idx));
-        setFocusedIndex(clamped);
+        setFocusedPath(rows[clamped]?.path ?? null);
         rowVirtualizer.scrollToIndex(clamped);
       };
       switch (e.key) {
         case "ArrowDown":
           e.preventDefault();
-          move(focusedIndex + 1);
+          move(from + 1);
           break;
         case "ArrowUp":
           e.preventDefault();
-          move(focusedIndex - 1);
+          move(from - 1);
           break;
         case "ArrowRight":
           e.preventDefault();
           if (row?.kind === "dir" && row.collapsed) toggleDir(row.path);
-          else move(focusedIndex + 1);
+          else move(from + 1);
           break;
         case "ArrowLeft":
           e.preventDefault();
           if (row?.kind === "dir" && !row.collapsed) toggleDir(row.path);
-          else move(focusedIndex - 1);
+          else move(from - 1);
           break;
         case "Enter":
         case " ":
@@ -145,21 +168,41 @@ export function FileTree({
       ref={parentRef}
       tabIndex={0}
       onKeyDown={onKeyDown}
+      onFocus={() => setHasFocus(true)}
+      onBlur={() => setHasFocus(false)}
       style={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none", position: "relative" }}
     >
       <div style={{ height: rowVirtualizer.getTotalSize(), width: "100%", position: "relative" }}>
         {rowVirtualizer.getVirtualItems().map((vItem) => {
           const row = rows[vItem.index];
-          const isFocused = vItem.index === focusedIndex;
+          // Focus tint only while this tree holds focus; actions appear on hover
+          // or on the focused row — both must clear when focus/hover moves away
+          // (incl. to the other tree in a multi-tree panel).
+          const isFocused = hasFocus && row.path === focusedPath;
+          const isHovered = vItem.index === hoveredIndex;
           const isSelected = row.kind === "file" && row.path === selectedPath;
           return (
             <div
               key={vItem.key}
               data-index={vItem.index}
-              onClick={() => {
-                setFocusedIndex(vItem.index);
+              // Activate on mousedown (not click) so selection switches atomically
+              // with focus — otherwise the old selection lingers for a frame until
+              // mouseup. Ignore non-primary buttons (right-click opens the menu).
+              onMouseDown={(e) => {
+                if (e.button !== 0) return;
+                setFocusedPath(row.path);
                 activateRow(row);
               }}
+              onMouseEnter={() => setHoveredIndex(vItem.index)}
+              onMouseLeave={() => setHoveredIndex((i) => (i === vItem.index ? null : i))}
+              onContextMenu={
+                row.kind === "file" && onContextMenu
+                  ? (e) => {
+                      setFocusedPath(row.path);
+                      onContextMenu(row.file, e);
+                    }
+                  : undefined
+              }
               title={row.kind === "file" ? fileTitle(row.file) : row.label}
               style={{
                 position: "absolute",
@@ -174,7 +217,7 @@ export function FileTree({
                 paddingLeft: 8 + row.depth * 14,
                 paddingRight: 8,
                 cursor: "pointer",
-                fontSize: 12,
+                fontSize: "var(--fz-md)",
                 whiteSpace: "nowrap",
                 background: isSelected
                   ? "var(--graph-row-selected-bg, rgba(255,255,255,0.10))"
@@ -184,9 +227,14 @@ export function FileTree({
               }}
             >
               {row.kind === "dir" ? (
-                <DirRowView label={row.label} fileCount={row.fileCount} collapsed={row.collapsed} />
+                <DirRowView label={row.label} fileCount={row.fileCount} collapsed={row.collapsed} iconSize={iconSize} />
               ) : (
-                <FileRowView file={row.file} viewMode={viewMode} />
+                <FileRowView
+                  file={row.file}
+                  viewMode={viewMode}
+                  iconSize={iconSize}
+                  actions={renderActions && (isHovered || isFocused) ? renderActions(row.file) : null}
+                />
               )}
             </div>
           );
@@ -200,39 +248,53 @@ function DirRowView({
   label,
   fileCount,
   collapsed,
+  iconSize,
 }: {
   label: string;
   fileCount: number;
   collapsed: boolean;
+  iconSize: number;
 }) {
   const Chevron = collapsed ? ChevronRight : ChevronDown;
   return (
     <>
-      <Chevron size={14} style={{ flexShrink: 0, color: "var(--subtle-fg)" }} aria-hidden />
+      <Chevron size={iconSize} style={{ flexShrink: 0, color: "var(--subtle-fg)" }} aria-hidden />
       <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
         {label}
       </span>
-      <span className="legit-subtle" style={{ flexShrink: 0, paddingLeft: 6, fontSize: 11 }}>
+      <span className="legit-subtle" style={{ flexShrink: 0, paddingLeft: 6, fontSize: "var(--fz-sm)" }}>
         {fileCount}
       </span>
     </>
   );
 }
 
-function FileRowView({ file, viewMode }: { file: CommitFileChange; viewMode: ViewMode }) {
+function FileRowView({
+  file,
+  viewMode,
+  iconSize,
+  actions,
+}: {
+  file: FileTreeEntry;
+  viewMode: ViewMode;
+  iconSize: number;
+  actions?: ReactNode;
+}) {
   const meta = STATUS_META[file.change];
   const Icon = meta.Icon;
   const name = baseName(file.path);
   const dir = file.path.slice(0, file.path.length - name.length);
+  const additions = file.additions ?? 0;
+  const deletions = file.deletions ?? 0;
 
   return (
     <>
       <span
         aria-label={file.change}
         title={file.change}
-        style={{ flexShrink: 0, width: 14, display: "flex", justifyContent: "center" }}
+        style={{ flexShrink: 0, width: iconSize, display: "flex", justifyContent: "center" }}
       >
-        <Icon size={14} color={meta.color} />
+        <Icon size={iconSize} color={meta.color} />
       </span>
 
       {viewMode === "flat" ? (
@@ -258,7 +320,7 @@ function FileRowView({ file, viewMode }: { file: CommitFileChange; viewMode: Vie
         <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {name}
           {file.old_path && (
-            <span className="legit-subtle" style={{ marginLeft: 6, fontSize: 11 }}>
+            <span className="legit-subtle" style={{ marginLeft: 6, fontSize: "var(--fz-sm)" }}>
               ← {baseName(file.old_path)}
             </span>
           )}
@@ -270,23 +332,35 @@ function FileRowView({ file, viewMode }: { file: CommitFileChange; viewMode: Vie
           marginLeft: "auto",
           flexShrink: 0,
           fontFamily: "monospace",
-          fontSize: 11,
+          fontSize: "var(--fz-sm)",
         }}
       >
         {file.binary ? (
           <span className="legit-subtle">bin</span>
         ) : (
           <>
-            {file.additions > 0 && (
-              <span style={{ color: "var(--status-added)" }}>+{file.additions}</span>
-            )}
-            {file.additions > 0 && file.deletions > 0 && " "}
-            {file.deletions > 0 && (
-              <span style={{ color: "var(--status-deleted)" }}>−{file.deletions}</span>
-            )}
+            {additions > 0 && <span style={{ color: "var(--status-added)" }}>+{additions}</span>}
+            {additions > 0 && deletions > 0 && " "}
+            {deletions > 0 && <span style={{ color: "var(--status-deleted)" }}>−{deletions}</span>}
           </>
         )}
       </span>
+
+      {actions && (
+        // Stop row activation (select/diff, which fires on mousedown) from
+        // triggering when an action button is pressed. preventDefault keeps the
+        // button from taking DOM focus — otherwise, when the button unmounts
+        // (e.g. a staged file leaves this list), the WebView restores focus to
+        // the next tabbable element (the sibling tree), spuriously tinting a row
+        // there. The onClick still fires, so the action runs.
+        <span
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+          onClick={(e) => e.stopPropagation()}
+          style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 2, paddingLeft: 4 }}
+        >
+          {actions}
+        </span>
+      )}
     </>
   );
 }

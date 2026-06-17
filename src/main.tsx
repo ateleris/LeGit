@@ -11,7 +11,10 @@ const queryClient = new QueryClient({
     queries: {
       staleTime: 30_000,
       retry: 1,
-      refetchOnWindowFocus: false,
+      // Re-read git state when the window regains focus, so changes made in a
+      // terminal/editor while the app was in the background show up. staleTime
+      // throttles this — only queries older than their staleTime actually refetch.
+      refetchOnWindowFocus: true,
     },
   },
 });

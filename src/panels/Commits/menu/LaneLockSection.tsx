@@ -98,7 +98,7 @@ export function LaneLockSection({ refName, locks, repoId }: LaneLockSectionProps
           alignItems: "center",
         }}
       >
-        <span style={{ fontSize: 12, whiteSpace: "nowrap" }}>Lock branch to lane:</span>
+        <span style={{ fontSize: "var(--fz-md)", whiteSpace: "nowrap" }}>Lock branch to lane:</span>
         <input
           type="number"
           min={1}
@@ -114,7 +114,7 @@ export function LaneLockSection({ refName, locks, repoId }: LaneLockSectionProps
           }}
           style={{
             width: 64,
-            fontSize: 12,
+            fontSize: "var(--fz-md)",
             padding: "2px 6px",
             background: "var(--input-bg, #2a2a2a)",
             border: "1px solid var(--input-border, rgba(255,255,255,0.2))",
@@ -126,7 +126,7 @@ export function LaneLockSection({ refName, locks, repoId }: LaneLockSectionProps
           // clicking the input.
           onMouseDown={(e) => e.stopPropagation()}
         />
-        <button onClick={handleCustomLock} style={{ fontSize: 12, padding: "2px 8px" }}>
+        <button onClick={handleCustomLock} style={{ fontSize: "var(--fz-md)", padding: "2px 8px" }}>
           Lock
         </button>
       </div>
@@ -134,7 +134,7 @@ export function LaneLockSection({ refName, locks, repoId }: LaneLockSectionProps
         <div
           style={{
             padding: "2px 14px 6px",
-            fontSize: 11,
+            fontSize: "var(--fz-sm)",
             color: "var(--error-fg, #e87060)",
           }}
         >

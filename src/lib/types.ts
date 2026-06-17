@@ -37,6 +37,8 @@ export interface GlobalSettings {
   commits_text_size: number;
   /** Remembered Changed Files panel view mode ("tree" | "flat"). */
   changed_files_view_mode?: string | null;
+  /** Global UI font size (px) — base for the panel text scale and min sizes. */
+  ui_font_size?: number;
 }
 
 export interface RepoSettings {

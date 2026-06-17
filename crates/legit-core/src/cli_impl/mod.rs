@@ -8,14 +8,15 @@ use crate::backend::GitBackend;
 use crate::error::GitError;
 use crate::runner::GitRunner;
 use crate::types::{
-    Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, Diff, FileStatus,
-    LogOptions, RefSelector, SubmoduleInfo,
+    Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, Diff, FileState,
+    FileStatus, LogOptions, RefSelector, SignMode, SubmoduleInfo,
 };
 
 /// Git's well-known empty-tree object id, used as the "before" side when
 /// diffing a root commit (which has no parent).
 const EMPTY_TREE_OID: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 use async_trait::async_trait;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -38,6 +39,29 @@ impl GitCliBackend {
     /// Snapshot the current runner without holding the lock during I/O.
     pub async fn runner(&self) -> Arc<GitRunner> {
         self.runner.read().await.clone()
+    }
+
+    /// Run a git subcommand (`prefix`) followed by a list of pathspecs. Paths
+    /// are passed after the prefix verbatim; the prefix should end with `--` so
+    /// they are always treated as pathspecs. Errors on a non-zero exit.
+    async fn run_pathspec(&self, prefix: &[&str], paths: &[PathBuf]) -> Result<(), GitError> {
+        let runner = self.runner().await;
+        let mut args: Vec<String> = prefix.iter().map(|s| s.to_string()).collect();
+        for p in paths {
+            args.push(p.to_string_lossy().into_owned());
+        }
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let output = runner
+            .run(&arg_refs)
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !output.success {
+            return Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr,
+            });
+        }
+        Ok(())
     }
 }
 
@@ -220,8 +244,89 @@ impl GitBackend for GitCliBackend {
         Err(GitError::NotYet)
     }
 
-    async fn commit(&self, _opts: CommitOptions) -> Result<CommitId, GitError> {
-        Err(GitError::NotYet)
+    async fn commit(&self, opts: CommitOptions) -> Result<CommitId, GitError> {
+        let runner = self.runner().await;
+
+        let mut args: Vec<String> = vec!["commit".into(), "-m".into(), opts.message.clone()];
+        if opts.amend {
+            args.push("--amend".into());
+        }
+        if opts.allow_empty {
+            args.push("--allow-empty".into());
+        }
+        match &opts.sign {
+            SignMode::None => args.push("--no-gpg-sign".into()),
+            SignMode::WithKey(key) => args.push(format!("-S{}", key.0)),
+            SignMode::Default => {}
+        }
+
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let output = runner
+            .run(&arg_refs)
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !output.success {
+            return Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr,
+            });
+        }
+
+        // Resolve the resulting commit id.
+        let head = runner
+            .run(&["rev-parse", "HEAD"])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !head.success {
+            return Err(GitError::CommandFailed {
+                exit_code: head.exit_code.unwrap_or(-1),
+                stderr: head.stderr,
+            });
+        }
+        Ok(CommitId::new(head.stdout.trim().to_string()))
+    }
+
+    async fn stage(&self, paths: &[PathBuf]) -> Result<(), GitError> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        self.run_pathspec(&["add", "--"], paths).await
+    }
+
+    async fn unstage(&self, paths: &[PathBuf]) -> Result<(), GitError> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        self.run_pathspec(&["restore", "--staged", "--"], paths).await
+    }
+
+    async fn discard(&self, paths: &[PathBuf]) -> Result<(), GitError> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        // Classify paths: untracked ones must be removed with `clean`, tracked
+        // ones reverted with `restore --worktree` (restore errors on untracked).
+        let status = self.status().await?;
+        let untracked: std::collections::HashSet<&std::path::Path> = status
+            .iter()
+            .filter(|f| f.state == FileState::Untracked)
+            .map(|f| f.path.as_path())
+            .collect();
+
+        let (untracked_paths, tracked_paths): (Vec<PathBuf>, Vec<PathBuf>) = paths
+            .iter()
+            .cloned()
+            .partition(|p| untracked.contains(p.as_path()));
+
+        if !tracked_paths.is_empty() {
+            self.run_pathspec(&["restore", "--worktree", "--"], &tracked_paths)
+                .await?;
+        }
+        if !untracked_paths.is_empty() {
+            self.run_pathspec(&["clean", "-f", "--"], &untracked_paths)
+                .await?;
+        }
+        Ok(())
     }
 
     async fn submodules(&self) -> Result<Vec<SubmoduleInfo>, GitError> {

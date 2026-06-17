@@ -66,7 +66,7 @@ export function SettingsPanel() {
                 }
               />
               <div style={{ marginTop: 12 }}>
-                <label style={{ fontSize: 11, color: "var(--subtle-fg)" }}>
+                <label style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)" }}>
                   Override path (leave blank for auto-detect)
                 </label>
                 <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
@@ -108,7 +108,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     <div style={{ marginBottom: 16 }}>
       <div
         style={{
-          fontSize: 11,
+          fontSize: "var(--fz-sm)",
           textTransform: "uppercase",
           letterSpacing: 0.5,
           color: "var(--subtle-fg)",

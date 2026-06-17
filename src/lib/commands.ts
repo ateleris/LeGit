@@ -136,6 +136,20 @@ export const repoCommitDetails = (repoId: string, commitId: string) =>
 export const repoCommitFiles = (repoId: string, commitId: string) =>
   invoke<CommitFileChange[]>("repo_commit_files", { repoId, commitId });
 
+// --- working-tree write operations ---
+
+export const repoStage = (repoId: string, paths: string[]) =>
+  invoke<null>("repo_stage", { repoId, paths });
+
+export const repoUnstage = (repoId: string, paths: string[]) =>
+  invoke<null>("repo_unstage", { repoId, paths });
+
+export const repoDiscard = (repoId: string, paths: string[]) =>
+  invoke<null>("repo_discard", { repoId, paths });
+
+export const repoCommit = (repoId: string, message: string) =>
+  invoke<string>("repo_commit", { repoId, message });
+
 export const repoBranches = (repoId: string) =>
   invoke<Branch[]>("repo_branches", { repoId });
 
@@ -157,6 +171,10 @@ export const saveColumnPreferences = (prefs: unknown) =>
 
 export const saveChangedFilesViewMode = (mode: string) =>
   invoke<null>("save_changed_files_view_mode", { mode });
+
+/** Persists the global UI font size (px); returns the clamped value. */
+export const saveUiFontSize = (size: number) =>
+  invoke<number>("save_ui_font_size", { size });
 
 // --- commits graph metrics ---
 

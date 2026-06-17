@@ -20,6 +20,9 @@ import {
   COMMITS_LINE_WIDTH_MIN,
   COMMITS_TEXT_SIZE_DEFAULT,
   COMMITS_TEXT_SIZE_MIN,
+  UI_FONT_SIZE_DEFAULT,
+  UI_FONT_SIZE_MIN,
+  UI_FONT_SIZE_MAX,
   maxCommitsDotRadius,
   maxCommitsLineWidth,
   maxCommitsTextSize,
@@ -118,6 +121,7 @@ export function GlobalSettingsPanel() {
         </Section>
 
         <LayoutOrientationSection />
+        <AppearanceSection />
         <CommitsGraphSection />
         <MixedEndingDetectionSection />
         <LineEndingsGlobalSection />
@@ -160,6 +164,44 @@ function LayoutOrientationSection() {
           Left / Right
         </button>
       </div>
+    </Section>
+  );
+}
+
+function AppearanceSection() {
+  const fontSize = useSettingsStore((s) => s.settings?.ui_font_size ?? UI_FONT_SIZE_DEFAULT);
+  const setUiFontSize = useSettingsStore((s) => s.setUiFontSize);
+  const [saving, setSaving] = useState(false);
+
+  const save = async (v: number) => {
+    setSaving(true);
+    try {
+      await setUiFontSize(v);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Appearance">
+      <FieldNote>writes to: global settings — base text size for all panels (other sizes scale from it)</FieldNote>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginTop: 8 }}>
+        <NumberField
+          label="UI font size"
+          value={fontSize}
+          min={UI_FONT_SIZE_MIN}
+          max={UI_FONT_SIZE_MAX}
+          disabled={saving}
+          onCommit={save}
+        />
+      </div>
+      {fontSize !== UI_FONT_SIZE_DEFAULT && (
+        <div style={{ marginTop: 10 }}>
+          <button disabled={saving} onClick={() => save(UI_FONT_SIZE_DEFAULT)}>
+            Reset to default
+          </button>
+        </div>
+      )}
     </Section>
   );
 }
@@ -332,7 +374,7 @@ function NumberField({
   }, []);
 
   return (
-    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fz-lg)" }}>
       <span className="legit-subtle">{label}</span>
       <input
         ref={inputRef}
@@ -348,7 +390,7 @@ function NumberField({
           if (e.key === "Enter") (e.target as HTMLInputElement).blur();
         }}
       />
-      <span className="legit-subtle" style={{ fontSize: 11 }}>
+      <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
         px ({min}–{max})
       </span>
     </label>
@@ -382,7 +424,7 @@ function MixedEndingDetectionSection() {
           onChange={toggle}
           disabled={saving}
         />
-        <label htmlFor="global-warn-mixed" style={{ fontSize: 13, cursor: "pointer" }}>
+        <label htmlFor="global-warn-mixed" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
           Detect files with mixed CRLF+LF line endings (shown in Repo Settings)
         </label>
       </div>
@@ -485,14 +527,14 @@ function LineEndingsGlobalSection() {
           <div style={{ fontWeight: 600, marginBottom: 6, color: "var(--error-fg)", display: "flex", alignItems: "center", gap: 6 }}>
             <WarningIcon /> Save line-ending changes to your global Git config (~/.gitconfig)?
           </div>
-          <div style={{ marginBottom: 8, fontSize: 12 }}>
+          <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
             {changes.map((c) => (
               <div key={c.key} style={{ fontFamily: "monospace" }}>
                 <code>{c.key}</code>: <code>{c.before ?? "unset"}</code> → <code>{c.after ?? "unset"}</code>
               </div>
             ))}
           </div>
-          <div style={{ fontSize: 12, color: "var(--subtle-fg)", marginBottom: 10 }}>
+          <div style={{ fontSize: "var(--fz-md)", color: "var(--subtle-fg)", marginBottom: 10 }}>
             These changes affect every Git repository on this machine that doesn't override these values locally,
             and every tool that reads your global Git config — terminal git, other GUIs, CI scripts, IDE integrations.
             If you only want this for one repo, cancel and edit that repo's settings instead.
@@ -587,7 +629,7 @@ function RadioGroup({
             onChange={() => onChange(opt.value)}
             disabled={disabled}
           />
-          <code style={{ fontSize: 12 }}>{opt.label}</code>
+          <code style={{ fontSize: "var(--fz-md)" }}>{opt.label}</code>
         </label>
       ))}
     </div>
@@ -597,7 +639,7 @@ function RadioGroup({
 function ConfigRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: 12, fontFamily: "monospace", color: "var(--subtle-fg)", marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: "var(--fz-md)", fontFamily: "monospace", color: "var(--subtle-fg)", marginBottom: 4 }}>{label}</div>
       <div style={{ paddingLeft: 8 }}>{children}</div>
     </div>
   );
@@ -617,7 +659,7 @@ function ResolvedBadge({
   if (!value) return null;
   const fromLabel = source !== "unset" ? ` (from ${scopeLabel(source)})` : "";
   return (
-    <div style={{ marginTop: 4, fontSize: 11, color: isResolved ? "var(--success-fg)" : "var(--subtle-fg)" }}>
+    <div style={{ marginTop: 4, fontSize: "var(--fz-sm)", color: isResolved ? "var(--success-fg)" : "var(--subtle-fg)" }}>
       {label}: <code>{value}</code>{fromLabel}
     </div>
   );
@@ -626,7 +668,7 @@ function ResolvedBadge({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 16 }}>
-      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: 8 }}>
+      <div style={{ fontSize: "var(--fz-sm)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: 8 }}>
         {title}
       </div>
       {children}
@@ -645,7 +687,7 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 
 function FieldNote({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ fontSize: 11, color: "var(--subtle-fg)", marginTop: 4 }}>
+    <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: 4 }}>
       {children}
     </div>
   );

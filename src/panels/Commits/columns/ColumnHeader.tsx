@@ -255,7 +255,7 @@ export function ColumnHeader({
     >
       <span
         style={{
-          fontSize: 11,
+          fontSize: "var(--fz-sm)",
           fontWeight: 600,
           color: "var(--subtle-fg)",
           textTransform: "uppercase",

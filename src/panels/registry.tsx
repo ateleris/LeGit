@@ -4,6 +4,7 @@ import { ConsolePanel } from "./Console/ConsolePanel";
 import { CommitsPanel } from "./Commits/CommitsPanel";
 import { CommitDetailsPanel } from "./CommitDetails/CommitDetailsPanel";
 import { ChangedFilesPanel } from "./ChangedFiles/ChangedFilesPanel";
+import { WorkingChangesPanel } from "./WorkingChanges/WorkingChangesPanel";
 import { RepositoriesPanel } from "./Repositories/RepositoriesPanel";
 import { ThemeEditorPanel } from "./ThemeEditor/ThemeEditorPanel";
 import { GlobalSettingsPanel } from "./Settings/GlobalSettingsPanel";
@@ -42,7 +43,7 @@ export const REPO_PANELS: PanelDescriptor[] = [
     id: "log",
     title: "Commits",
     scope: "repo",
-    summons: ["commit-details", "changed-files"],
+    summons: ["commit-details", "changed-files", "working-changes"],
   },
   {
     id: "commit-details",
@@ -55,6 +56,13 @@ export const REPO_PANELS: PanelDescriptor[] = [
     title: "Changed Files",
     scope: "repo",
     summons: ["diff"],
+    defaultPlacement: { direction: "below", referencePanel: "commit-details" },
+  },
+  {
+    id: "working-changes",
+    title: "Working Changes",
+    scope: "repo",
+    // Same slot as Changed Files — the two swap in/out of this spot.
     defaultPlacement: { direction: "below", referencePanel: "commit-details" },
   },
 ];
@@ -99,4 +107,5 @@ export const REPO_DOCKVIEW_COMPONENTS: Record<
   log: wrap(CommitsPanel),
   "commit-details": wrap(CommitDetailsPanel),
   "changed-files": wrap(ChangedFilesPanel),
+  "working-changes": wrap(WorkingChangesPanel),
 };

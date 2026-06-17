@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { useSettingsStore } from "../store/settings";
+import { useSettingsStore, UI_FONT_SIZE_DEFAULT } from "../store/settings";
 import type { RegionPlacement } from "../lib/types";
 import { GlobalDock } from "./GlobalDock";
 import { RepoDock } from "./RepoDock";
@@ -8,7 +8,16 @@ import { RepoTabBar } from "./RepoTabBar";
 
 const DEFAULT_SIZE_TOP = 240;
 const DEFAULT_SIZE_LEFT = 280;
-const MIN_SIZE = 500;
+/** Region size floors (px at the default font; scaled by the font size below).
+ *
+ * In Left/Right mode the divider splits WIDTH, so both the global strip and the
+ * repo area get a 500px floor — neither can be squeezed narrow. In Top/Bottom
+ * mode the divider splits HEIGHT; the floor there is small so the global strip
+ * stays compact (a large height floor would force it open and push the main
+ * repo region off-screen — that was the earlier breakage). Top-mode width is
+ * the full window, so the 500px width requirement is satisfied automatically. */
+const REGION_MIN_WIDTH_BASE = 500;
+const REGION_MIN_HEIGHT_BASE = 60;
 const DIVIDER_SIZE = 12;
 const TAB_BAR_HEIGHT = 32;
 
@@ -37,6 +46,12 @@ export function AppLayout() {
   const [sizeTop, setSizeTop] = useState(DEFAULT_SIZE_TOP);
   const [sizeLeft, setSizeLeft] = useState(DEFAULT_SIZE_LEFT);
 
+  // Region size floors, scaled by the global font size. Width floor (left mode)
+  // and height floor (top mode) are separate — see the constants above.
+  const fontScale = (settings?.ui_font_size ?? UI_FONT_SIZE_DEFAULT) / UI_FONT_SIZE_DEFAULT;
+  const MIN_WIDTH = Math.round(REGION_MIN_WIDTH_BASE * fontScale);
+  const MIN_HEIGHT = Math.round(REGION_MIN_HEIGHT_BASE * fontScale);
+
   // Load sizes + collapsed from settings once (drag state — don't re-apply later).
   const settingsLoaded = useRef(false);
   useEffect(() => {
@@ -58,10 +73,14 @@ export function AppLayout() {
   const sizeLeftRef = useRef(sizeLeft);
   const placementRef = useRef(placement);
   const collapsedRef = useRef(collapsed);
+  const minWidthRef = useRef(MIN_WIDTH);
+  const minHeightRef = useRef(MIN_HEIGHT);
   useEffect(() => { sizeTopRef.current = sizeTop; }, [sizeTop]);
   useEffect(() => { sizeLeftRef.current = sizeLeft; }, [sizeLeft]);
   useEffect(() => { placementRef.current = placement; }, [placement]);
   useEffect(() => { collapsedRef.current = collapsed; }, [collapsed]);
+  useEffect(() => { minWidthRef.current = MIN_WIDTH; }, [MIN_WIDTH]);
+  useEffect(() => { minHeightRef.current = MIN_HEIGHT; }, [MIN_HEIGHT]);
 
   const heightBeforeCollapse = useRef(DEFAULT_SIZE_TOP);
 
@@ -122,8 +141,9 @@ export function AppLayout() {
           ? (isTopMode ? container.clientHeight : container.clientWidth)
           : 0;
         const overhead = isTopMode ? DIVIDER_SIZE + TAB_BAR_HEIGHT : DIVIDER_SIZE;
-        const maxSize = totalSize > 0 ? totalSize - overhead - MIN_SIZE : Infinity;
-        const next = Math.min(maxSize, Math.max(MIN_SIZE, dragStartSize.current + coord - dragStart.current));
+        const minSize = isTopMode ? minHeightRef.current : minWidthRef.current;
+        const maxSize = totalSize > 0 ? totalSize - overhead - minSize : Infinity;
+        const next = Math.min(maxSize, Math.max(minSize, dragStartSize.current + coord - dragStart.current));
         if (isTopMode) {
           setSizeTop(next);
           debouncedPersist(next, sizeLeftRef.current);
@@ -165,7 +185,7 @@ export function AppLayout() {
           {!collapsed && (
             <div
               className="legit-global-region"
-              style={{ width: sizeLeft, minWidth: MIN_SIZE, flexShrink: 0 }}
+              style={{ width: sizeLeft, minWidth: MIN_WIDTH, flexShrink: 0 }}
             >
               <GlobalDock />
             </div>
@@ -176,7 +196,7 @@ export function AppLayout() {
           >
             {dividerControls}
           </div>
-          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+          <div style={{ flex: 1, minWidth: collapsed ? 0 : MIN_WIDTH, display: "flex", flexDirection: "column" }}>
             <RepoTabBar />
             <div className="legit-repo-region" style={{ flex: 1, minHeight: 0 }}>
               <RepoDock />
@@ -193,7 +213,7 @@ export function AppLayout() {
       {!collapsed && (
         <div
           className="legit-global-region"
-          style={{ height: sizeTop, minHeight: MIN_SIZE }}
+          style={{ height: sizeTop, minHeight: MIN_HEIGHT }}
         >
           <GlobalDock />
         </div>

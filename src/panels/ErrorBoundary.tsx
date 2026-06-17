@@ -35,14 +35,14 @@ export class ErrorBoundary extends Component<Props, State> {
           fontFamily: "monospace",
           color: "var(--error-fg, #f87171)",
         }}>
-          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
+          <div style={{ fontSize: "var(--fz-xl)", fontWeight: 600, marginBottom: 12 }}>
             Something went wrong
           </div>
           <pre style={{
             maxWidth: 640,
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
-            fontSize: 12,
+            fontSize: "var(--fz-md)",
             color: "var(--subtle-fg, #888)",
           }}>
             {this.state.error.message}

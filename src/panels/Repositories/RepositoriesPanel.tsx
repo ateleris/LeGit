@@ -74,7 +74,7 @@ export function RepositoriesPanel() {
               </button>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600 }}>{r.name}</div>
-                <div className="legit-subtle" style={{ fontSize: 11 }}>
+                <div className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
                   {r.path}
                 </div>
               </div>
@@ -119,7 +119,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     <div style={{ marginBottom: 16 }}>
       <div
         style={{
-          fontSize: 11,
+          fontSize: "var(--fz-sm)",
           textTransform: "uppercase",
           letterSpacing: 0.5,
           color: "var(--subtle-fg)",

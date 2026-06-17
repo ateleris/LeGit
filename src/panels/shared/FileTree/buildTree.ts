@@ -4,9 +4,22 @@
 // directory tree (single-child folder chains compressed, VS Code style) or a
 // flat path list. Kept free of React/DOM so it can be unit-tested and reused.
 
-import type { CommitFileChange } from "../../../lib/types";
+import type { FileState } from "../../../lib/types";
 
 export type ViewMode = "tree" | "flat";
+
+/**
+ * Minimal shape `FileTree` renders. `CommitFileChange` satisfies it; the
+ * Working Changes panel maps `FileStatus` into it (line counts omitted).
+ */
+export interface FileTreeEntry {
+  path: string;
+  change: FileState;
+  old_path?: string | null;
+  additions?: number;
+  deletions?: number;
+  binary?: boolean;
+}
 
 export interface DirRow {
   kind: "dir";
@@ -24,7 +37,7 @@ export interface FileRow {
   kind: "file";
   path: string;
   depth: number;
-  file: CommitFileChange;
+  file: FileTreeEntry;
 }
 
 export type Row = DirRow | FileRow;
@@ -32,7 +45,7 @@ export type Row = DirRow | FileRow;
 interface DirNode {
   name: string;
   children: Map<string, DirNode>;
-  files: CommitFileChange[];
+  files: FileTreeEntry[];
 }
 
 function makeDir(name: string): DirNode {
@@ -45,7 +58,7 @@ export function baseName(path: string): string {
 }
 
 /** Build a nested directory tree from the changed files (by their new path). */
-function buildDirTree(files: CommitFileChange[]): DirNode {
+function buildDirTree(files: FileTreeEntry[]): DirNode {
   const root = makeDir("");
   for (const f of files) {
     const parts = f.path.split("/");
@@ -120,7 +133,7 @@ function emitChildren(
 
 /** Flatten files into render rows for the given view mode and collapse state. */
 export function flatten(
-  files: CommitFileChange[],
+  files: FileTreeEntry[],
   viewMode: ViewMode,
   collapsed: ReadonlySet<string>,
 ): Row[] {

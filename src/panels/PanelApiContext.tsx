@@ -41,3 +41,22 @@ export function usePanelFocusEffect(callback: () => void) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api]);
 }
+
+/**
+ * Run `callback` every time this panel becomes the active panel in its group.
+ * Unlike focus, this fires when a panel is swapped/summoned into a visible slot
+ * without keyboard focus moving to it — so a summoned panel refreshes its data
+ * as soon as it's shown, not only when explicitly clicked into.
+ */
+export function usePanelActiveEffect(callback: () => void) {
+  const api = useContext(PanelApiContext);
+  useEffect(() => {
+    if (!api) return;
+    const disposable = api.onDidActiveChange((e) => {
+      if (e.isActive) callback();
+    });
+    return () => disposable.dispose();
+    // callback identity is intentionally excluded — callers should memoize if needed
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api]);
+}

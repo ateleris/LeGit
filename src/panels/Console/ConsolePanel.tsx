@@ -148,7 +148,7 @@ export function ConsolePanel() {
         style={{
           fontFamily:
             'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", monospace',
-          fontSize: 12,
+          fontSize: "var(--fz-md)",
           color: "var(--console-fg)",
         }}
       >

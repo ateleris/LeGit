@@ -65,14 +65,14 @@ export function LogPanel() {
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
       <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <strong>Log</strong>
-        {isFetching && <span className="legit-subtle" style={{ fontSize: 11 }}>Loading…</span>}
+        {isFetching && <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>Loading…</span>}
         <button style={{ marginLeft: "auto" }} onClick={refetch} disabled={isFetching}>
           Refresh
         </button>
       </div>
 
       {isError && (
-        <pre className="legit-error" style={{ margin: "8px 12px", fontSize: 12 }}>
+        <pre className="legit-error" style={{ margin: "8px 12px", fontSize: "var(--fz-md)" }}>
           {formatAppError(error)}
         </pre>
       )}
@@ -115,16 +115,16 @@ export function LogPanel() {
                   alignItems: "center",
                 }}
               >
-                <code style={{ fontSize: 11, color: "var(--subtle-fg)", whiteSpace: "nowrap" }}>
+                <code style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", whiteSpace: "nowrap" }}>
                   {commit.id.slice(0, 7)}
                 </code>
-                <span style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <span style={{ fontSize: "var(--fz-md)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {subjectOf(commit.message)}
                 </span>
-                <span style={{ fontSize: 11, color: "var(--subtle-fg)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <span style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {commit.author.name}
                 </span>
-                <span style={{ fontSize: 11, color: "var(--subtle-fg)", textAlign: "right", whiteSpace: "nowrap" }}>
+                <span style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", textAlign: "right", whiteSpace: "nowrap" }}>
                   {formatRelative(commit.timestamp)}
                 </span>
               </div>

@@ -378,13 +378,16 @@ export function CommitsPanel() {
   const handleRowClick = useCallback(
     (commit: Commit) => {
       setSelectedId(commit.id);
-      // The synthetic working-dir row is not a real commit — select it for
-      // highlight but don't summon commit views (there's nothing to fetch).
-      if (commit.id === WORKING_DIR_ID) return;
-      // Summon Changed Files last so it's the active tab when the two stack in
-      // one group.
-      useSummonStore.getState().summon("commit-details", commit.id);
-      useSummonStore.getState().summon("changed-files", commit.id);
+      const summon = useSummonStore.getState();
+      if (commit.id === WORKING_DIR_ID) {
+        // Working-dir row → show the staging/commit panel in the shared side
+        // slot (swapping out Changed Files). No commit-details for the index.
+        summon.swapSummon("working-changes", "changed-files");
+        return;
+      }
+      summon.summon("commit-details", commit.id);
+      // Show Changed Files in the shared slot (swapping out Working Changes).
+      summon.swapSummon("changed-files", "working-changes", commit.id);
     },
     []
   );
@@ -454,11 +457,11 @@ export function CommitsPanel() {
       {/* Toolbar — shows the loading indicator while fetching. Refresh now
           lives in the panel context menu (baseline entry). */}
       <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        {isFetching && <span className="legit-subtle" style={{ fontSize: 11 }}>Loading…</span>}
+        {isFetching && <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>Loading…</span>}
       </div>
 
       {isError && (
-        <pre className="legit-error" style={{ margin: "8px 12px", fontSize: 12 }}>
+        <pre className="legit-error" style={{ margin: "8px 12px", fontSize: "var(--fz-md)" }}>
           {formatAppError(error)}
         </pre>
       )}
@@ -724,7 +727,7 @@ export function CommitsPanel() {
           }}
         >
           <span className="legit-spinner" aria-hidden="true" />
-          <span className="legit-subtle" style={{ fontSize: 11 }}>
+          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
             Loading more…
           </span>
         </div>

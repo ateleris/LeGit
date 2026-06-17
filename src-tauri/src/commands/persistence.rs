@@ -122,6 +122,22 @@ pub async fn save_changed_files_view_mode(
     state.persist_global_settings().await
 }
 
+/// Persist the global UI font size (px), clamped to a sane range.
+#[tauri::command]
+#[specta::specta]
+pub async fn save_ui_font_size(
+    state: tauri::State<'_, AppState>,
+    size: f64,
+) -> Result<f64, AppError> {
+    let clamped = size.clamp(8.0, 24.0);
+    {
+        let mut s = state.global_settings.write().await;
+        s.ui_font_size = clamped;
+    }
+    state.persist_global_settings().await?;
+    Ok(clamped)
+}
+
 /// Persist the Commits-panel graph metrics (row/line height, per-lane width,
 /// commit-dot radius, connector line width, and column text size). Clamps each
 /// value to sane px bounds before storing; the dot radius and line width are

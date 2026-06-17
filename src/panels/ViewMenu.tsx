@@ -88,7 +88,7 @@ export function ViewMenu() {
             padding: 4,
           }}
         >
-          <div style={{ padding: "4px 8px", color: "var(--subtle-fg)", fontSize: 11 }}>
+          <div style={{ padding: "4px 8px", color: "var(--subtle-fg)", fontSize: "var(--fz-sm)" }}>
             Global panels
           </div>
           {GLOBAL_PANELS.map((p) =>
@@ -98,7 +98,7 @@ export function ViewMenu() {
             })
           )}
           <div style={{ borderTop: "1px solid var(--panel-border)", margin: "4px 0" }} />
-          <div style={{ padding: "4px 8px", color: "var(--subtle-fg)", fontSize: 11 }}>
+          <div style={{ padding: "4px 8px", color: "var(--subtle-fg)", fontSize: "var(--fz-sm)" }}>
             Repo panels
           </div>
           {REPO_PANELS.map((p) =>
