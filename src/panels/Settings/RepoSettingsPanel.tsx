@@ -7,6 +7,8 @@ import { setRepoGitPath, repoLineEndingsView, repoWriteLineEndings, updateRepoSe
 import { useGitStatusStore } from "../../store/git-status";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
+import { SigningSettings } from "./SigningSettings";
+import { RepoProfileSection } from "./RepoProfileSection";
 
 /**
  * Repo Settings panel — edits repo-scope settings for the active repo.
@@ -130,8 +132,10 @@ export function RepoSettingsPanel() {
           )}
         </Section>
 
+        <RepoProfileSection repoId={activeRepo.id} />
         <MixedEndingRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
         <LineEndingsRepoSection repoId={activeRepo.id} />
+        <SigningSettings scope="repo" repoId={activeRepo.id} />
       </div>
     </div>
   );

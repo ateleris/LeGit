@@ -6,6 +6,8 @@ import { formatAppError } from "../../lib/types";
 import type { ConfigScope, LineEndingsView, RegionPlacement } from "../../lib/types";
 import { globalLineEndingsView, globalWriteLineEndings, setWarnOnMixedEndings } from "../../lib/commands";
 import { useGitStatusStore } from "../../store/git-status";
+import { SigningSettings } from "./SigningSettings";
+import { GlobalProfilesSection } from "./GlobalProfilesSection";
 import {
   useSettingsStore,
   COMMITS_ROW_HEIGHT_DEFAULT,
@@ -127,6 +129,8 @@ export function GlobalSettingsPanel() {
         <ConfirmDiscardSection />
         <MixedEndingDetectionSection />
         <LineEndingsGlobalSection />
+        <SigningSettings scope="global" />
+        <GlobalProfilesSection />
       </div>
     </div>
   );

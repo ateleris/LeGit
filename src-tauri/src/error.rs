@@ -45,6 +45,9 @@ pub enum AppError {
 
     #[error("operation not found: {0}")]
     OperationNotFound(String),
+
+    #[error("unknown git profile id: {0}")]
+    UnknownProfile(String),
 }
 
 impl From<GitError> for AppError {

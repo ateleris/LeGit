@@ -20,6 +20,7 @@ import type { Branch, Commit, CommitId, FileStatus, Signature } from "../../lib/
 import { formatAppError } from "../../lib/types";
 import { formatRelative } from "../../lib/time";
 import { RefsCell } from "./cells/RefsCell";
+import { SignatureBadge } from "./cells/SignatureBadge";
 import { GraphCell, laneColor } from "./cells/GraphCell";
 import { computeLanes } from "./graph/lanes";
 import { computeEdgeSpans } from "./graph/spans";
@@ -646,14 +647,26 @@ export function CommitsPanel() {
                         <span
                           key="subject"
                           style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 5,
                             fontSize: TEXT_SIZE,
                             fontStyle: isWorkingDir ? "italic" : undefined,
                             overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
                           }}
                         >
-                          {subjectOf(commit.message)}
+                          {!isWorkingDir && (
+                            <SignatureBadge signature={commit.signature} size={TEXT_SIZE} />
+                          )}
+                          <span
+                            style={{
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {subjectOf(commit.message)}
+                          </span>
                         </span>
                       );
                     case "date":

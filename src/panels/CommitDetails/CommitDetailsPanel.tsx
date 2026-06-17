@@ -8,6 +8,7 @@ import { repoCommitDetails } from "../../lib/commands";
 import { formatFull, formatRelative } from "../../lib/time";
 import type { CommitDetails, CommitId, SignatureVerification } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
+import { signaturePresentation } from "../../lib/signature";
 
 /** Commit Details panel — receives a CommitId payload from the summon mechanism. */
 export function CommitDetailsPanel() {
@@ -123,16 +124,11 @@ function CommitView({ details }: { details: CommitDetails }) {
 }
 
 function SignatureView({ sig }: { sig: SignatureVerification }) {
-  const statusColor =
-    sig.status === "Good"
-      ? "var(--success-fg)"
-      : sig.status === "NoSignature"
-      ? "var(--subtle-fg)"
-      : "var(--error-fg)";
+  const { color, title } = signaturePresentation(sig.status);
 
   return (
     <div>
-      <span style={{ color: statusColor, fontWeight: 600 }}>{sig.status}</span>
+      <span style={{ color, fontWeight: 600 }} title={title}>{sig.status}</span>
       {sig.signer && <span className="legit-subtle" style={{ marginLeft: 8 }}>{sig.signer}</span>}
       {sig.key_id && <div className="legit-subtle"><code>{sig.key_id}</code></div>}
     </div>

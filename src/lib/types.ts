@@ -43,11 +43,15 @@ export interface GlobalSettings {
   watcher_enabled?: boolean;
   /** Whether discarding changes asks for confirmation first (default true). */
   confirm_discard?: boolean;
+  /** User-defined git identity profiles (camelCase key — serde rename). */
+  gitProfiles?: GitProfilesDoc;
 }
 
 export interface RepoSettings {
   git_path_override: string | null;
   warn_on_mixed_endings: boolean | null;
+  /** Selected git profile id (null = none / inherit). Intent hint only. */
+  git_profile_id?: string | null;
 }
 
 export interface RestoreResult {
@@ -156,6 +160,81 @@ export interface LineEndingsView {
   gitattributes: GitAttrRule[];
   gitattributes_covers_all: boolean;
   mixed_ending_files: string[];
+}
+
+// --- Signing config types (matches src-tauri/src/commands/signing.rs) ---
+
+/** A single git-config key resolved across all scopes. */
+export interface ScopedConfig {
+  local: ConfigValue;
+  global: ConfigValue;
+  system: ConfigValue;
+  resolved: ConfigValue;
+}
+
+export interface SigningView {
+  /** `commit.gpgsign` — whether commits are signed by default. */
+  gpgsign: ScopedConfig;
+  /** `gpg.format` — "openpgp" (default), "ssh", or "x509". */
+  format: ScopedConfig;
+  /** `user.signingkey` — key id (GPG) or key path / literal key (SSH). */
+  signing_key: ScopedConfig;
+  /** `gpg.ssh.allowedSignersFile` — required for SSH signatures to verify as trusted. */
+  allowed_signers: ScopedConfig;
+}
+
+// --- Git identity profiles (matches state.rs GitProfile + commands/profiles.rs) ---
+
+/** A named identity/signing/auth bundle. Field casing is camelCase (the Rust
+ *  struct uses `rename_all = "camelCase"`). Each field: value = set on apply,
+ *  null = unset that key. */
+export interface GitProfile {
+  id: string;
+  name: string;
+  userName: string | null;
+  userEmail: string | null;
+  gpgFormat: string | null;
+  signingKey: string | null;
+  commitGpgsign: string | null;
+  allowedSignersFile: string | null;
+  /** Path to the auth SSH key; synthesized into core.sshCommand. */
+  authSshKey: string | null;
+}
+
+export interface GitProfilesDoc {
+  format: string;
+  formatVersion: number;
+  profiles: GitProfile[];
+}
+
+/** Live local value of each managed key (null = unset locally). */
+export interface ManagedKeys {
+  user_name: string | null;
+  user_email: string | null;
+  gpg_format: string | null;
+  signing_key: string | null;
+  commit_gpgsign: string | null;
+  allowed_signers_file: string | null;
+  /** Parsed key path from core.sshCommand (or raw command if unparseable). */
+  auth_ssh_key: string | null;
+}
+
+export interface KeyDiff {
+  key: string;
+  local: string | null;
+  profile: string | null;
+}
+
+export type ProfileMatch =
+  | { kind: "inherit" }
+  | { kind: "active"; profile_id: string }
+  | { kind: "drift"; profile_id: string; diffs: KeyDiff[] }
+  | { kind: "unmanaged" };
+
+export interface ProfileStatus {
+  local: ManagedKeys;
+  stored_profile_id: string | null;
+  match: ProfileMatch;
 }
 
 // --- Git log / commit types (matches legit-core/src/types.rs) ---

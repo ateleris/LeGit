@@ -21,6 +21,10 @@ import type {
   ThemeEntry,
   ThemeDocument,
   LineEndingsView,
+  SigningView,
+  GitProfile,
+  ProfileStatus,
+  KeyDiff,
 } from "./types";
 
 // --- repo ---
@@ -127,6 +131,71 @@ export const globalWriteLineEndings = (
   autocrlf: string | null,
   eol: string | null
 ) => invoke<LineEndingsView>("global_write_line_endings", { autocrlf, eol });
+
+// --- commit signing ---
+
+export const repoSigningConfig = (repoId: string) =>
+  invoke<SigningView>("repo_signing_config", { repoId });
+
+export const globalSigningConfig = () =>
+  invoke<SigningView>("global_signing_config");
+
+export const repoWriteSigning = (
+  repoId: string,
+  gpgsign: string | null,
+  format: string | null,
+  signingKey: string | null,
+  allowedSigners: string | null
+) =>
+  invoke<SigningView>("repo_write_signing", {
+    repoId,
+    gpgsign,
+    format,
+    signingKey,
+    allowedSigners,
+  });
+
+export const globalWriteSigning = (
+  gpgsign: string | null,
+  format: string | null,
+  signingKey: string | null,
+  allowedSigners: string | null
+) =>
+  invoke<SigningView>("global_write_signing", {
+    gpgsign,
+    format,
+    signingKey,
+    allowedSigners,
+  });
+
+// --- git identity profiles ---
+
+export const listGitProfiles = () =>
+  invoke<GitProfile[]>("list_git_profiles");
+
+export const createGitProfile = (profile: GitProfile) =>
+  invoke<GitProfile>("create_git_profile", { profile });
+
+export const updateGitProfile = (profile: GitProfile) =>
+  invoke<null>("update_git_profile", { profile });
+
+export const deleteGitProfile = (profileId: string) =>
+  invoke<null>("delete_git_profile", { profileId });
+
+export const detectActiveProfileForRepo = (repoId: string) =>
+  invoke<ProfileStatus>("detect_active_profile_for_repo", { repoId });
+
+export const previewApplyProfile = (repoId: string, profileId: string) =>
+  invoke<KeyDiff[]>("preview_apply_profile", { repoId, profileId });
+
+export const applyProfileToRepo = (repoId: string, profileId: string) =>
+  invoke<ProfileStatus>("apply_profile_to_repo", { repoId, profileId });
+
+export const clearRepoProfile = (repoId: string) =>
+  invoke<ProfileStatus>("clear_repo_profile", { repoId });
+
+export const createProfileFromRepo = (repoId: string, name: string) =>
+  invoke<GitProfile>("create_profile_from_repo", { repoId, name });
 
 // --- log / commit details ---
 

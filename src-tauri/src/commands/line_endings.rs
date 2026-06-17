@@ -6,9 +6,12 @@
 //!
 //! All reads/writes go through `GitRunner`.  System scope is read-only.
 
+use crate::commands::config_util::{
+    read_config_all_scopes, write_config_global, write_config_local, ConfigValue,
+};
 use crate::error::AppError;
 use crate::state::AppState;
-use legit_core::{GitError, GitRunner};
+use legit_core::GitRunner;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::{Path, PathBuf};
@@ -16,31 +19,6 @@ use std::path::{Path, PathBuf};
 // ---------------------------------------------------------------------------
 // Types exposed to the frontend
 // ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum ConfigScope {
-    Local,
-    Global,
-    System,
-    Unset,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct ConfigValue {
-    /// `None` means the key is not set at this scope.
-    pub value: Option<String>,
-    pub source: ConfigScope,
-}
-
-impl ConfigValue {
-    fn unset() -> Self {
-        Self { value: None, source: ConfigScope::Unset }
-    }
-    fn from_git(value: Option<String>, scope: ConfigScope) -> Self {
-        Self { value, source: scope }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct GitAttrRule {
@@ -216,94 +194,6 @@ pub async fn global_write_line_endings(
         gitattributes_covers_all: false,
         mixed_ending_files: vec![],
     })
-}
-
-// ---------------------------------------------------------------------------
-// git config read/write helpers
-// ---------------------------------------------------------------------------
-
-struct ConfigAtAllScopes {
-    local: ConfigValue,
-    global: ConfigValue,
-    system: ConfigValue,
-    resolved: ConfigValue,
-}
-
-async fn read_config_all_scopes(runner: &GitRunner, key: &str) -> ConfigAtAllScopes {
-    let local = read_config_scope(runner, key, &["--local"]).await;
-    let global = read_config_scope(runner, key, &["--global"]).await;
-    let system = read_config_scope(runner, key, &["--system"]).await;
-
-    // Resolved = repo > global > system (what git actually uses).
-    let resolved = if local.value.is_some() {
-        ConfigValue::from_git(local.value.clone(), ConfigScope::Local)
-    } else if global.value.is_some() {
-        ConfigValue::from_git(global.value.clone(), ConfigScope::Global)
-    } else if system.value.is_some() {
-        ConfigValue::from_git(system.value.clone(), ConfigScope::System)
-    } else {
-        ConfigValue::unset()
-    };
-
-    ConfigAtAllScopes { local, global, system, resolved }
-}
-
-async fn read_config_scope(runner: &GitRunner, key: &str, flags: &[&str]) -> ConfigValue {
-    let mut args = vec!["config"];
-    args.extend_from_slice(flags);
-    args.extend_from_slice(&["--get", key]);
-
-    match runner.run(&args).await {
-        Ok(out) if out.success => {
-            let value = out.stdout.trim().to_string();
-            let scope = match flags {
-                f if f.contains(&"--local") => ConfigScope::Local,
-                f if f.contains(&"--global") => ConfigScope::Global,
-                f if f.contains(&"--system") => ConfigScope::System,
-                _ => ConfigScope::Unset,
-            };
-            ConfigValue::from_git(if value.is_empty() { None } else { Some(value) }, scope)
-        }
-        // exit 1 = key not found at this scope; not an error.
-        _ => ConfigValue::unset(),
-    }
-}
-
-async fn write_config_local(
-    runner: &GitRunner,
-    key: &str,
-    value: Option<&str>,
-) -> Result<(), AppError> {
-    let out = match value {
-        Some(v) => runner.run(&["config", "--local", key, v]).await?,
-        None => runner.run(&["config", "--local", "--unset", key]).await?,
-    };
-    // exit 5 from --unset means key was already absent — not an error for us.
-    if !out.success && out.exit_code != Some(5) {
-        return Err(AppError::Git(GitError::CommandFailed {
-            exit_code: out.exit_code.unwrap_or(-1),
-            stderr: out.stderr.trim().to_string(),
-        }));
-    }
-    Ok(())
-}
-
-async fn write_config_global(
-    runner: &GitRunner,
-    key: &str,
-    value: Option<&str>,
-) -> Result<(), AppError> {
-    let out = match value {
-        Some(v) => runner.run(&["config", "--global", key, v]).await?,
-        None => runner.run(&["config", "--global", "--unset", key]).await?,
-    };
-    if !out.success && out.exit_code != Some(5) {
-        return Err(AppError::Git(GitError::CommandFailed {
-            exit_code: out.exit_code.unwrap_or(-1),
-            stderr: out.stderr.trim().to_string(),
-        }));
-    }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------

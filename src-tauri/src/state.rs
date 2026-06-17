@@ -108,6 +108,50 @@ pub fn max_commits_dot_radius(row_height: f64, lane_width: f64) -> f64 {
     row_height.min(lane_width) / 2.0
 }
 
+/// A named git-identity profile, defined once globally and selectable per repo.
+/// Bundles identity + signing + auth-key config that is written to a repo's
+/// LOCAL `.git/config` when applied. Definitions live in `GlobalSettings`; the
+/// per-repo selection lives in `RepoSettings::git_profile_id`.
+///
+/// Fields are `Option<String>`: `Some` sets the key on apply, `None` unsets it
+/// (a profile is a *complete* identity — see `commands/profiles.rs`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GitProfile {
+    /// Stable opaque id (UUID v4); survives renames and field edits.
+    pub id: String,
+    /// Human label shown in the UI.
+    pub name: String,
+    pub user_name: Option<String>,
+    pub user_email: Option<String>,
+    pub gpg_format: Option<String>,
+    pub signing_key: Option<String>,
+    pub commit_gpgsign: Option<String>,
+    pub allowed_signers_file: Option<String>,
+    /// Path to the auth SSH private key; synthesized into `core.sshCommand`
+    /// on apply and parsed back on read (see `commands/profiles.rs`).
+    pub auth_ssh_key: Option<String>,
+}
+
+/// Versioned on-disk envelope for the profile list (mirrors `LaneLocksDoc`).
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GitProfilesDoc {
+    pub format: String,
+    pub format_version: u32,
+    pub profiles: Vec<GitProfile>,
+}
+
+impl Default for GitProfilesDoc {
+    fn default() -> Self {
+        GitProfilesDoc {
+            format: "legit-git-profiles".to_string(),
+            format_version: 1,
+            profiles: vec![],
+        }
+    }
+}
+
 /// User-level settings shared across all repos. On disk as
 /// `<app-data>/global-settings.json`. See DESIGN-v0.2.md §G.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -176,6 +220,9 @@ pub struct GlobalSettings {
     /// actions run immediately.
     #[serde(default = "default_true")]
     pub confirm_discard: bool,
+    /// User-defined git identity profiles (versioned envelope).
+    #[serde(default, rename = "gitProfiles")]
+    pub git_profiles_doc: GitProfilesDoc,
 }
 
 impl Default for GlobalSettings {
@@ -203,6 +250,7 @@ impl Default for GlobalSettings {
             ui_font_size: default_ui_font_size(),
             watcher_enabled: true,
             confirm_discard: true,
+            git_profiles_doc: GitProfilesDoc::default(),
         }
     }
 }
@@ -251,6 +299,11 @@ pub struct RepoSettings {
     /// Lane locks: pin specific refs to fixed lane indices (versioned envelope).
     #[serde(default, rename = "laneLocks")]
     pub lane_locks_doc: LaneLocksDoc,
+    /// Selected git profile id (None = no profile selected / inherit global).
+    /// A *hint* about intent, not the source of truth — the active profile is
+    /// recomputed from live local config (see `commands/profiles.rs`).
+    #[serde(default)]
+    pub git_profile_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
