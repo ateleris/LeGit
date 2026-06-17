@@ -7,6 +7,7 @@ import { usePanelFocusEffect } from "../PanelApiContext";
 import { repoCommitDetails, repoCommitFiles } from "../../lib/commands";
 import type { CommitDetails, CommitFileChange, CommitId } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
+import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { FileTree } from "../shared/FileTree/FileTree";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
@@ -106,6 +107,7 @@ export function ChangedFilesPanel() {
 
   return (
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
+      <PanelLoadingBar active={isFetching} />
       <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <div style={{ display: "flex" }}>
           <button onClick={() => setViewMode("tree")} aria-pressed={viewMode === "tree"} style={segStyle(viewMode === "tree", "left")}>
@@ -130,11 +132,6 @@ export function ChangedFilesPanel() {
           {" · "}
           <code>{selectedId.slice(0, 8)}</code>
         </span>
-        {isFetching && (
-          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", marginLeft: "auto" }}>
-            Loading…
-          </span>
-        )}
       </div>
 
       {isError && (

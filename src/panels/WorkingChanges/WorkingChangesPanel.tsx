@@ -12,6 +12,8 @@ import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
 import { StageIcon, UnstageIcon } from "../../icons";
 import { PanelContextMenuProvider, type BaselineEntry } from "../Commits/menu/PanelContextMenu";
 import { MenuItem } from "../Commits/menu/primitives";
+import { PanelLoadingBar } from "../shared/PanelLoadingBar";
+import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 
 const toEntry = (s: FileStatus): FileTreeEntry => ({ path: s.path, change: s.state });
 
@@ -147,9 +149,9 @@ export function WorkingChangesPanel() {
 
   const refresh = useCallback(() => {
     if (!repo) return;
-    queryClient.invalidateQueries({ queryKey: [repo.id, "status"] });
-    queryClient.invalidateQueries({ queryKey: [repo.id, "log"] });
-    queryClient.invalidateQueries({ queryKey: [repo.id, "branches"] });
+    // Fires immediately (instant feedback) and records the time so the
+    // filesystem watcher's redundant follow-up for the same action is dropped.
+    invalidateRepoDomains(queryClient, repo.id, ["status", "log", "branches"]);
   }, [repo, queryClient]);
 
   const run = useCallback(
@@ -242,6 +244,7 @@ export function WorkingChangesPanel() {
           style={{ display: "flex", flexDirection: "column" }}
           onContextMenu={(e) => openMenu(e)}
         >
+      <PanelLoadingBar active={isFetching} />
       <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <div style={{ display: "flex" }}>
           <button onClick={() => setViewMode("tree")} aria-pressed={viewMode === "tree"} style={segStyle(viewMode === "tree", "left")}>
@@ -252,9 +255,6 @@ export function WorkingChangesPanel() {
           </button>
         </div>
         <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>Working changes</span>
-        {isFetching && (
-          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", marginLeft: "auto" }}>Loading…</span>
-        )}
       </div>
 
       {(isError || actionError) && (

@@ -76,6 +76,7 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "panel.border", group: "Panel", documentation: "Panel borders and dividers." },
   { name: "panel.header.bg", group: "Panel", documentation: "Panel header background." },
   { name: "panel.header.fg", group: "Panel", documentation: "Panel header text." },
+  { name: "progress.bar.bg", group: "Panel", documentation: "Indeterminate loading bar pinned to a panel's top edge." },
 
   { name: "tab.bg", group: "Repo Tabs", documentation: "Inactive repository tab background." },
   { name: "tab.fg", group: "Repo Tabs", documentation: "Inactive repository tab text." },

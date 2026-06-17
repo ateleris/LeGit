@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { onRepoChanged } from "./events";
+import { invalidateRepoDomains } from "./repoInvalidation";
 
 /**
  * Subscribe to filesystem-watcher events and invalidate the affected react-query
@@ -17,10 +18,11 @@ export function useRepoChangeListener() {
     let unlisten: (() => void) | undefined;
     let disposed = false;
     onRepoChanged((payload) => {
-      for (const domain of payload.domains) {
-        // domain ∈ "status" | "log" | "branches" — matches the query-key suffixes.
-        queryClient.invalidateQueries({ queryKey: [payload.repo_id, domain] });
-      }
+      // domains ∈ "status" | "log" | "branches" — matches the query-key suffixes.
+      // Coalescing backstop: skip any domain a manual refresh (or an earlier
+      // emission of this same change) already invalidated within the window, so
+      // one action triggers one refetch. See repoInvalidation.ts.
+      invalidateRepoDomains(queryClient, payload.repo_id, payload.domains, { coalesce: true });
     }).then((fn) => {
       // The async listen() may resolve after unmount (StrictMode double-run).
       if (disposed) fn();

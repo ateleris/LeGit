@@ -13,6 +13,8 @@ import {
 import { useLaneLocks, useLaneLocksStore } from "../../store/laneLocks";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { useSummonStore } from "../../store/summon";
+import { PanelLoadingBar } from "../shared/PanelLoadingBar";
+import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { repoBranches, repoLog, repoStatus } from "../../lib/commands";
 import type { Branch, Commit, CommitId, FileStatus, Signature } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
@@ -175,9 +177,7 @@ export function CommitsPanel() {
 
   const refetch = useCallback(() => {
     if (repo) {
-      queryClient.invalidateQueries({ queryKey: [repo.id, "log"] });
-      queryClient.invalidateQueries({ queryKey: [repo.id, "branches"] });
-      queryClient.invalidateQueries({ queryKey: [repo.id, "status"] });
+      invalidateRepoDomains(queryClient, repo.id, ["log", "branches", "status"]);
     }
   }, [repo, queryClient]);
 
@@ -454,11 +454,9 @@ export function CommitsPanel() {
           // suppresses the native browser menu.
           onContextMenu={(e) => openMenu(e)}
         >
-      {/* Toolbar — shows the loading indicator while fetching. Refresh now
-          lives in the panel context menu (baseline entry). */}
-      <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        {isFetching && <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>Loading…</span>}
-      </div>
+      {/* Loading indicator — thin top-edge bar, no layout shift. Refresh lives
+          in the panel context menu (baseline entry). */}
+      <PanelLoadingBar active={isFetching} />
 
       {isError && (
         <pre className="legit-error" style={{ margin: "8px 12px", fontSize: "var(--fz-md)" }}>

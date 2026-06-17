@@ -218,6 +218,8 @@ button.legit-region-divider__mode:hover {
   height: 100%;
   background: var(--panel-bg);
   color: var(--panel-fg);
+  /* Positioning anchor for the top-edge <PanelLoadingBar/>. */
+  position: relative;
 }
 .legit-panel__body {
   flex: 1;
@@ -400,6 +402,36 @@ button.legit-tab__close:hover {
 @keyframes legit-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+/* Indeterminate top-edge progress bar — pinned to the positioned `.legit-panel`
+ * root to signal background fetches/reloads without affecting layout (no shift).
+ * Render via <PanelLoadingBar/>. */
+.legit-progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  overflow: hidden;
+  z-index: 2; /* above sticky column headers (z-index 1) and panel toolbars */
+  pointer-events: none;
+}
+.legit-progress::before {
+  content: "";
+  position: absolute;
+  height: 100%;
+  width: 40%;
+  background: var(--progress-bar-bg);
+  animation: legit-progress-slide 1.1s ease-in-out infinite;
+}
+@keyframes legit-progress-slide {
+  0% {
+    left: -40%;
+  }
+  100% {
+    left: 100%;
   }
 }
 

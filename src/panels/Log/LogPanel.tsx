@@ -4,6 +4,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { useSummonStore } from "../../store/summon";
+import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { repoLog } from "../../lib/commands";
 import type { Commit, CommitId } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
@@ -63,9 +64,9 @@ export function LogPanel() {
 
   return (
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
+      <PanelLoadingBar active={isFetching} />
       <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <strong>Log</strong>
-        {isFetching && <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>Loading…</span>}
         <button style={{ marginLeft: "auto" }} onClick={refetch} disabled={isFetching}>
           Refresh
         </button>

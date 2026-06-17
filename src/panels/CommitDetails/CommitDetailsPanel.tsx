@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
+import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { repoCommitDetails } from "../../lib/commands";
 import { formatFull, formatRelative } from "../../lib/time";
 import type { CommitDetails, CommitId, SignatureVerification } from "../../lib/types";
@@ -44,11 +45,7 @@ export function CommitDetailsPanel() {
 
   return (
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
-      {isFetching && (
-        <div className="legit-panel__toolbar">
-          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>Loading…</span>
-        </div>
-      )}
+      <PanelLoadingBar active={isFetching} />
 
       {isError && (
         <pre className="legit-error" style={{ margin: "8px 12px", fontSize: "var(--fz-md)" }}>
