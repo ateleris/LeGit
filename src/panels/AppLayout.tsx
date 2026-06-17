@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useSettingsStore, UI_FONT_SIZE_DEFAULT } from "../store/settings";
+import { useRepoChangeListener } from "../lib/useRepoChangeListener";
 import type { RegionPlacement } from "../lib/types";
 import { GlobalDock } from "./GlobalDock";
 import { RepoDock } from "./RepoDock";
@@ -40,6 +41,9 @@ function saveRegionState(
  */
 export function AppLayout() {
   const settings = useSettingsStore((s) => s.settings);
+
+  // Live refresh from the backend filesystem watcher (primary refresh path).
+  useRepoChangeListener();
 
   const [placement, setPlacementState] = useState<RegionPlacement>("top");
   const [collapsed, setCollapsed] = useState(false);

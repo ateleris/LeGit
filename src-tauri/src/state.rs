@@ -3,13 +3,14 @@
 //! See DESIGN-v0.2.md §B and §D.
 
 use crate::error::AppError;
+use crate::watcher::RepoWatcher;
 use legit_core::{GitBackend, GitCliBackend, GitRunner};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use specta::Type;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -56,6 +57,11 @@ pub enum RegionPlacement {
 }
 
 fn default_warn_on_mixed_endings() -> bool {
+    true
+}
+
+/// Default for the filesystem-watcher toggle: on.
+fn default_true() -> bool {
     true
 }
 
@@ -162,6 +168,14 @@ pub struct GlobalSettings {
     /// panel min-size constraints.
     #[serde(default = "default_ui_font_size")]
     pub ui_font_size: f64,
+    /// Whether the filesystem watcher auto-refreshes the UI on disk changes.
+    /// When off, refresh falls back to window/panel focus only.
+    #[serde(default = "default_true")]
+    pub watcher_enabled: bool,
+    /// Whether discarding changes asks for confirmation first. When off, discard
+    /// actions run immediately.
+    #[serde(default = "default_true")]
+    pub confirm_discard: bool,
 }
 
 impl Default for GlobalSettings {
@@ -187,6 +201,8 @@ impl Default for GlobalSettings {
             commits_text_size: default_commits_text_size(),
             changed_files_view_mode: None,
             ui_font_size: default_ui_font_size(),
+            watcher_enabled: true,
+            confirm_discard: true,
         }
     }
 }
@@ -302,6 +318,10 @@ pub struct RepoSummary {
 
 pub struct AppState {
     pub repos: RwLock<HashMap<RepoId, Arc<RepoSession>>>,
+    /// Live filesystem watchers, one per open repo (keyed by `RepoId`). Dropping
+    /// an entry stops its watch thread. `std::sync::Mutex` (not async) so close
+    /// and teardown stay trivial. See `crate::watcher`.
+    pub watchers: Mutex<HashMap<RepoId, RepoWatcher>>,
     pub global_settings: Arc<RwLock<GlobalSettings>>,
     /// Resolved git binary path the runner uses *right now*.
     pub git_path: RwLock<PathBuf>,
@@ -326,6 +346,7 @@ impl AppState {
     ) -> Self {
         Self {
             repos: RwLock::new(HashMap::new()),
+            watchers: Mutex::new(HashMap::new()),
             global_settings: Arc::new(RwLock::new(global_settings)),
             git_path: RwLock::new(git_path),
             global_settings_path,

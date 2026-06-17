@@ -41,6 +41,9 @@ shlex = "1"
 which = "6"
 dirs = "5"
 sha2 = "0.10"
+notify = { workspace = true }
+notify-debouncer-full = { workspace = true }
+ignore = { workspace = true }
 
 [features]
 # Used by tauri-build to emit cfg flags.

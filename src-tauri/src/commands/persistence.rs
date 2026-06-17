@@ -185,6 +185,19 @@ pub async fn set_warn_on_mixed_endings(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn set_confirm_discard(
+    state: tauri::State<'_, AppState>,
+    confirm: bool,
+) -> Result<(), AppError> {
+    {
+        let mut s = state.global_settings.write().await;
+        s.confirm_discard = confirm;
+    }
+    state.persist_global_settings().await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn list_themes(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<ThemeEntry>, AppError> {

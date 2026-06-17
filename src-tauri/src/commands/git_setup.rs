@@ -58,6 +58,7 @@ pub async fn set_git_path(
 #[specta::specta]
 pub async fn set_repo_git_path(
     state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
     repo_id: String,
     path: Option<String>,
 ) -> Result<RepoSummary, AppError> {
@@ -83,10 +84,12 @@ pub async fn set_repo_git_path(
     let (repo_dir, settings_path) = state.repo_data_paths(&repo_path);
     persist_repo_settings(&candidate_settings, &repo_dir, &settings_path, &repo_path).await?;
 
-    // Tear down the old session and open a fresh one. The new session picks up
-    // the persisted settings and builds runner + backend from them.
+    // Tear down the old session (and its watcher) and open a fresh one. The new
+    // session picks up the persisted settings and builds runner + backend from
+    // them; open_session starts a new watcher for it.
     state.repos.write().await.remove(&repo_id);
-    let summary = open_session(&state, global_git_path, repo_path).await;
+    state.watchers.lock().unwrap().remove(&repo_id);
+    let summary = open_session(&state, &app, global_git_path, repo_path).await;
     Ok(summary)
 }
 

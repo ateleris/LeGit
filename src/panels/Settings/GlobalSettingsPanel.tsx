@@ -123,6 +123,8 @@ export function GlobalSettingsPanel() {
         <LayoutOrientationSection />
         <AppearanceSection />
         <CommitsGraphSection />
+        <AutoRefreshSection />
+        <ConfirmDiscardSection />
         <MixedEndingDetectionSection />
         <LineEndingsGlobalSection />
       </div>
@@ -394,6 +396,78 @@ function NumberField({
         px ({min}–{max})
       </span>
     </label>
+  );
+}
+
+function AutoRefreshSection() {
+  const enabled = useSettingsStore((s) => s.settings?.watcher_enabled ?? true);
+  const setWatcherEnabled = useSettingsStore((s) => s.setWatcherEnabled);
+  const [saving, setSaving] = useState(false);
+
+  const toggle = async () => {
+    setSaving(true);
+    try {
+      await setWatcherEnabled(!enabled);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Auto-refresh">
+      <FieldNote>writes to: global settings — applies to all open repos immediately</FieldNote>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <input
+          type="checkbox"
+          id="global-watcher-enabled"
+          checked={enabled}
+          onChange={toggle}
+          disabled={saving}
+        />
+        <label htmlFor="global-watcher-enabled" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
+          Watch the filesystem and refresh automatically on changes
+        </label>
+      </div>
+      <FieldNote>
+        When off, the UI refreshes only when a panel or the window regains focus.
+      </FieldNote>
+    </Section>
+  );
+}
+
+function ConfirmDiscardSection() {
+  const confirm = useSettingsStore((s) => s.settings?.confirm_discard ?? true);
+  const setConfirmDiscard = useSettingsStore((s) => s.setConfirmDiscard);
+  const [saving, setSaving] = useState(false);
+
+  const toggle = async () => {
+    setSaving(true);
+    try {
+      await setConfirmDiscard(!confirm);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Discard confirmation">
+      <FieldNote>writes to: global settings — applies to all repos</FieldNote>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <input
+          type="checkbox"
+          id="global-confirm-discard"
+          checked={confirm}
+          onChange={toggle}
+          disabled={saving}
+        />
+        <label htmlFor="global-confirm-discard" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
+          Ask for confirmation before discarding changes
+        </label>
+      </div>
+      <FieldNote>
+        When off, discard actions run immediately without a prompt.
+      </FieldNote>
+    </Section>
   );
 }
 

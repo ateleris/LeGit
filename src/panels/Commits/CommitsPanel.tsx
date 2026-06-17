@@ -649,6 +649,7 @@ export function CommitsPanel() {
                           key="subject"
                           style={{
                             fontSize: TEXT_SIZE,
+                            fontStyle: isWorkingDir ? "italic" : undefined,
                             overflow: "hidden",
                             textOverflow: "ellipsis",
                             whiteSpace: "nowrap",

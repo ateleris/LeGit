@@ -39,6 +39,10 @@ export interface GlobalSettings {
   changed_files_view_mode?: string | null;
   /** Global UI font size (px) — base for the panel text scale and min sizes. */
   ui_font_size?: number;
+  /** Whether the filesystem watcher auto-refreshes the UI on disk changes. */
+  watcher_enabled?: boolean;
+  /** Whether discarding changes asks for confirmation first (default true). */
+  confirm_discard?: boolean;
 }
 
 export interface RepoSettings {
@@ -64,6 +68,17 @@ export interface ConsoleEventPayload {
 export interface ConsoleExecHandle {
   op_id: string;
   argv: string[];
+}
+
+/** Query domain affected by a filesystem change. Matches the react-query key
+ *  suffixes `[repoId, "status"|"log"|"branches"]` and the Rust `ChangeDomain`
+ *  enum in `src-tauri/src/watcher.rs`. */
+export type ChangeDomain = "status" | "log" | "branches";
+
+/** Payload of the `legit://repo-changed` event emitted by the FS watcher. */
+export interface RepoChangedPayload {
+  repo_id: string;
+  domains: ChangeDomain[];
 }
 
 export interface GitVersion {

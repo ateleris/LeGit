@@ -3,28 +3,59 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
 import { usePanelActiveEffect, usePanelFocusEffect } from "../PanelApiContext";
-import { repoCommit, repoDiscard, repoStage, repoStatus, repoUnstage } from "../../lib/commands";
-import type { FileStatus } from "../../lib/types";
+import { repoCommit, repoDiscard, repoLog, repoStage, repoStatus, repoUnstage } from "../../lib/commands";
+import type { Commit, FileStatus } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { FileTree } from "../shared/FileTree/FileTree";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
-import { StageIcon, UnstageIcon, TrashIcon } from "../../icons";
+import { StageIcon, UnstageIcon } from "../../icons";
 import { PanelContextMenuProvider, type BaselineEntry } from "../Commits/menu/PanelContextMenu";
 import { MenuItem } from "../Commits/menu/primitives";
 
 const toEntry = (s: FileStatus): FileTreeEntry => ({ path: s.path, change: s.state });
 
+/** "1 file" / "3 files" for menu labels. */
+const fileCountLabel = (n: number): string => `${n} ${n === 1 ? "file" : "files"}`;
+
 /**
- * Which list a selection lives in. A partially-staged file appears in BOTH
- * sections with the same path, so a path alone can't identify one entry —
- * selection is keyed by (section, path). Exactly one entry is selected across
- * both lists. (Ctrl/Shift multi-select would later widen this to a set.)
+ * Selection follow-through when `paths` move from one section to another (e.g.
+ * staging). Generalises the single-select rule to a set: if none of the
+ * selection moved, leave it; if all of it moved, follow it into `to`; if only
+ * some moved, keep the not-moved paths in `from` (selection lives in one list).
+ */
+function moveSelection(
+  sel: Selection | null,
+  from: Section,
+  to: Section,
+  paths: string[],
+): Selection | null {
+  if (sel?.section !== from) return sel;
+  const remaining = sel.paths.filter((p) => !paths.includes(p));
+  if (remaining.length === sel.paths.length) return sel;
+  if (remaining.length === 0) return { section: to, paths: sel.paths };
+  return { section: from, paths: remaining };
+}
+
+/** Drop discarded `paths` from an unstaged selection; empty clears it. */
+function dropSelection(sel: Selection | null, paths: string[]): Selection | null {
+  if (sel?.section !== "unstaged") return sel;
+  const remaining = sel.paths.filter((p) => !paths.includes(p));
+  return remaining.length ? { section: "unstaged", paths: remaining } : null;
+}
+
+/**
+ * Which list the selection lives in, plus the set of selected paths within it.
+ * A partially-staged file appears in BOTH sections under the same path, so a
+ * path alone can't identify an entry — the selection is scoped to one section.
+ * Multi-select (Ctrl/Shift) is confined to a single list: selecting in one
+ * section replaces any selection in the other, so the two lists never highlight
+ * simultaneously.
  */
 type Section = "staged" | "unstaged";
 interface Selection {
   section: Section;
-  path: string;
+  paths: string[];
 }
 
 /** A pending discard confirmation: which paths and a human label. */
@@ -44,13 +75,18 @@ export function WorkingChangesPanel() {
 
   const viewMode: ViewMode =
     useSettingsStore((s) => s.settings?.changed_files_view_mode) === "tree" ? "tree" : "flat";
+  // Whether discard actions prompt first (global setting, default on).
+  const confirmDiscardEnabled = useSettingsStore((s) => s.settings?.confirm_discard ?? true);
   const setViewMode = useSettingsStore((s) => s.setChangedFilesViewMode);
   const { rowHeight, iconSize } = useFileRowMetrics();
 
   const [message, setMessage] = useState("");
-  // The single selected entry across both sections (the future diff target).
-  // Keyed by (section, path) so a partially-staged file — present in both
-  // lists under one path — is only ever highlighted in one of them.
+  // When set, the commit rewrites HEAD (`git commit --amend`) instead of
+  // creating a new commit. Reset after each successful commit.
+  const [amend, setAmend] = useState(false);
+  // The selected files, scoped to one section so the two lists never highlight
+  // at once (a partially-staged file shares its path across both). Drives both
+  // row highlighting and the bulk context-menu actions.
   const [selected, setSelected] = useState<Selection | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -69,6 +105,17 @@ export function WorkingChangesPanel() {
     staleTime: 5_000,
   });
 
+  // The latest commit — drives amend message prefill and the "has commits"
+  // guard (amend is impossible on an unborn branch). Kept fresh because
+  // refresh() invalidates the [repo.id, "log"] key after each commit.
+  const { data: headLog = [] } = useQuery<Commit[]>({
+    queryKey: [repo?.id, "log", "head1"],
+    queryFn: () => repoLog(repo!.id, 1),
+    enabled: !!repo,
+    staleTime: 5_000,
+  });
+  const head = headLog[0] ?? null;
+
   // Refresh whenever the panel is focused or swapped/summoned into view, so the
   // working tree is re-read after edits made while it wasn't the shown panel.
   const reload = useCallback(() => { refetch(); }, [refetch]);
@@ -77,6 +124,26 @@ export function WorkingChangesPanel() {
 
   const staged = useMemo(() => status.filter((s) => s.staged).map(toEntry), [status]);
   const unstaged = useMemo(() => status.filter((s) => !s.staged).map(toEntry), [status]);
+
+  // The highlighted set for each list — non-empty only for the active section.
+  const unstagedSelected = useMemo(
+    () => new Set(selected?.section === "unstaged" ? selected.paths : []),
+    [selected],
+  );
+  const stagedSelected = useMemo(
+    () => new Set(selected?.section === "staged" ? selected.paths : []),
+    [selected],
+  );
+
+  // Resolve the targets for a right-click and align the selection like Windows
+  // Explorer: right-clicking inside the current selection acts on the whole set
+  // and leaves it intact; right-clicking outside it selects just that row
+  // (deselecting the rest), then acts on it.
+  const selectForMenu = (section: Section, path: string): string[] => {
+    if (selected?.section === section && selected.paths.includes(path)) return selected.paths;
+    setSelected({ section, paths: [path] });
+    return [path];
+  };
 
   const refresh = useCallback(() => {
     if (!repo) return;
@@ -102,42 +169,48 @@ export function WorkingChangesPanel() {
     [repo, refresh],
   );
 
-  // Staging/unstaging moves a file between the two lists; keep it selected by
-  // flipping the selection's section to follow it. Discarding removes the file
-  // outright, so the selection (if it pointed there) is cleared.
+  // Staging/unstaging moves files between the two lists; the selection follows
+  // them (see moveSelection). Discarding removes them outright, so they're
+  // dropped from the selection.
   const stage = (paths: string[]) =>
     run(async () => {
       await repoStage(repo!.id, paths);
-      setSelected((sel) =>
-        sel?.section === "unstaged" && paths.includes(sel.path)
-          ? { section: "staged", path: sel.path }
-          : sel,
-      );
+      setSelected((sel) => moveSelection(sel, "unstaged", "staged", paths));
     });
   const unstage = (paths: string[]) =>
     run(async () => {
       await repoUnstage(repo!.id, paths);
-      setSelected((sel) =>
-        sel?.section === "staged" && paths.includes(sel.path)
-          ? { section: "unstaged", path: sel.path }
-          : sel,
-      );
+      setSelected((sel) => moveSelection(sel, "staged", "unstaged", paths));
     });
   const doDiscard = (paths: string[]) =>
     run(async () => {
       await repoDiscard(repo!.id, paths);
-      setSelected((sel) =>
-        sel?.section === "unstaged" && paths.includes(sel.path) ? null : sel,
-      );
+      setSelected((sel) => dropSelection(sel, paths));
     });
   const commit = () =>
     run(async () => {
-      await repoCommit(repo!.id, message);
+      await repoCommit(repo!.id, message, amend);
       setMessage("");
+      setAmend(false);
     });
 
-  // Confirm before discarding (destructive); then run it.
-  const requestDiscard = (paths: string[], label: string) => setConfirm({ paths, label });
+  // Prefill HEAD's message when turning amend on, but only if the box is empty
+  // so typed-but-uncommitted text is never clobbered.
+  const toggleAmend = (next: boolean) => {
+    setAmend(next);
+    if (next && head && message.trim().length === 0) setMessage(head.message);
+  };
+
+  // Confirm before discarding (destructive); then run it. The label defaults to
+  // the lone path, or "N files" for a bulk discard. When the confirmation
+  // setting is off, discard runs immediately.
+  const requestDiscard = (paths: string[], label?: string) => {
+    if (!confirmDiscardEnabled) {
+      doDiscard(paths);
+      return;
+    }
+    setConfirm({ paths, label: label ?? (paths.length === 1 ? paths[0] : `${paths.length} files`) });
+  };
   const confirmDiscard = () => {
     if (confirm) doDiscard(confirm.paths);
     setConfirm(null);
@@ -153,7 +226,11 @@ export function WorkingChangesPanel() {
     );
   }
 
-  const canCommit = staged.length > 0 && message.trim().length > 0 && !busy;
+  // Amend allows a message-only commit (no staged files required), but needs an
+  // existing HEAD to rewrite.
+  const canCommit = amend
+    ? !!head && message.trim().length > 0 && !busy
+    : staged.length > 0 && message.trim().length > 0 && !busy;
 
   const baseline: BaselineEntry[] = [{ label: "Refresh", onClick: refresh, disabled: busy }];
 
@@ -206,12 +283,13 @@ export function WorkingChangesPanel() {
         </div>
       )}
 
-      {status.length === 0 ? (
-        <div className="legit-panel__body">
-          <span className="legit-subtle">No changes.</span>
-        </div>
-      ) : (
-        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        {status.length === 0 ? (
+          <div className="legit-panel__body">
+            <span className="legit-subtle">No changes.</span>
+          </div>
+        ) : (
+        <>
           <Section
             title="Unstaged"
             count={unstaged.length}
@@ -231,37 +309,56 @@ export function WorkingChangesPanel() {
             <FileTree
               files={unstaged}
               viewMode={viewMode}
-              selectedPath={selected?.section === "unstaged" ? selected.path : null}
-              onSelect={(f) => setSelected({ section: "unstaged", path: f.path })}
+              selectedPath={null}
+              multiSelect
+              selectedPaths={unstagedSelected}
+              onSelectionChange={(paths) => setSelected({ section: "unstaged", paths })}
               rowHeight={rowHeight}
               iconSize={iconSize}
-              onContextMenu={(f, e) =>
+              onContextMenu={(f, e) => {
+                const targets = selectForMenu("unstaged", f.path);
+                const many = targets.length > 1;
                 openMenu(
                   e,
                   <>
-                    <MenuItem onClick={() => { stage([f.path]); closeMenu(); }}>Stage</MenuItem>
+                    <MenuItem onClick={() => { stage(targets); closeMenu(); }}>
+                      {many ? `Stage ${targets.length} selected` : "Stage"}
+                    </MenuItem>
                     <MenuItem
-                      onClick={() => { requestDiscard([f.path], f.path); closeMenu(); }}
+                      onClick={() => { requestDiscard(targets); closeMenu(); }}
                     >
-                      {f.change === "Untracked" ? "Delete file" : "Discard changes"}
+                      {many
+                        ? `Discard ${targets.length} selected`
+                        : f.change === "Untracked"
+                        ? "Delete file"
+                        : "Discard changes"}
+                    </MenuItem>
+                  </>,
+                );
+              }}
+              renderActions={(f) => (
+                <IconButton title="Stage" disabled={busy} onClick={() => stage([f.path])}>
+                  <StageIcon />
+                </IconButton>
+              )}
+              renderDirActions={(paths) => (
+                <IconButton title={`Stage folder (${fileCountLabel(paths.length)})`} disabled={busy} onClick={() => stage(paths)}>
+                  <StageIcon />
+                </IconButton>
+              )}
+              onDirContextMenu={(paths, dir, e) =>
+                openMenu(
+                  e,
+                  <>
+                    <MenuItem onClick={() => { stage(paths); closeMenu(); }}>
+                      Stage folder ({fileCountLabel(paths.length)})
+                    </MenuItem>
+                    <MenuItem onClick={() => { requestDiscard(paths, dir); closeMenu(); }}>
+                      Discard folder ({fileCountLabel(paths.length)})
                     </MenuItem>
                   </>,
                 )
               }
-              renderActions={(f) => (
-                <>
-                  <IconButton
-                    title={f.change === "Untracked" ? "Delete file" : "Discard changes"}
-                    disabled={busy}
-                    onClick={() => requestDiscard([f.path], f.path)}
-                  >
-                    <TrashIcon />
-                  </IconButton>
-                  <IconButton title="Stage" disabled={busy} onClick={() => stage([f.path])}>
-                    <StageIcon />
-                  </IconButton>
-                </>
-              )}
             />
           </Section>
 
@@ -279,38 +376,63 @@ export function WorkingChangesPanel() {
             <FileTree
               files={staged}
               viewMode={viewMode}
-              selectedPath={selected?.section === "staged" ? selected.path : null}
-              onSelect={(f) => setSelected({ section: "staged", path: f.path })}
+              selectedPath={null}
+              multiSelect
+              selectedPaths={stagedSelected}
+              onSelectionChange={(paths) => setSelected({ section: "staged", paths })}
               rowHeight={rowHeight}
               iconSize={iconSize}
-              onContextMenu={(f, e) =>
+              onContextMenu={(f, e) => {
+                const targets = selectForMenu("staged", f.path);
                 openMenu(
                   e,
-                  <MenuItem onClick={() => { unstage([f.path]); closeMenu(); }}>Unstage</MenuItem>,
-                )
-              }
+                  <MenuItem onClick={() => { unstage(targets); closeMenu(); }}>
+                    {targets.length > 1 ? `Unstage ${targets.length} selected` : "Unstage"}
+                  </MenuItem>,
+                );
+              }}
               renderActions={(f) => (
                 <IconButton title="Unstage" disabled={busy} onClick={() => unstage([f.path])}>
                   <UnstageIcon />
                 </IconButton>
               )}
+              renderDirActions={(paths) => (
+                <IconButton title={`Unstage folder (${fileCountLabel(paths.length)})`} disabled={busy} onClick={() => unstage(paths)}>
+                  <UnstageIcon />
+                </IconButton>
+              )}
+              onDirContextMenu={(paths, _dir, e) =>
+                openMenu(
+                  e,
+                  <MenuItem onClick={() => { unstage(paths); closeMenu(); }}>
+                    Unstage folder ({fileCountLabel(paths.length)})
+                  </MenuItem>,
+                )
+              }
             />
           </Section>
+        </>
+        )}
 
-          <div style={{ flexShrink: 0, borderTop: "1px solid var(--panel-border)", padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-            <textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              placeholder="Commit message"
-              rows={3}
-              style={{ resize: "vertical", fontFamily: "inherit", fontSize: "var(--fz-md)" }}
-            />
-            <button className="primary" disabled={!canCommit} onClick={commit} style={{ alignSelf: "flex-start" }}>
-              Commit {staged.length > 0 ? `(${staged.length})` : ""}
+        <div style={{ flexShrink: 0, borderTop: "1px solid var(--panel-border)", padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+          <textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            placeholder="Commit message"
+            rows={3}
+            style={{ resize: "vertical", fontFamily: "inherit", fontSize: "var(--fz-md)" }}
+          />
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fz-sm)", color: "var(--subtle-fg)" }}>
+              <input type="checkbox" checked={amend} disabled={!head || busy} onChange={(e) => toggleAmend(e.target.checked)} />
+              Amend last commit
+            </label>
+            <button className="primary" disabled={!canCommit} onClick={commit} style={{ marginLeft: "auto" }}>
+              {amend ? "Amend" : "Commit"} {!amend && staged.length > 0 ? `(${staged.length})` : ""}
             </button>
           </div>
         </div>
-      )}
+      </div>
         </div>
       )}
     </PanelContextMenuProvider>

@@ -35,9 +35,11 @@ pub fn resolve_repo_git_path(
 }
 
 /// Open (or reuse) a session for `toplevel`, loading its `RepoSettings`
-/// and resolving the git binary through the scope hierarchy.
+/// and resolving the git binary through the scope hierarchy. Starts a
+/// filesystem watcher for the new session when watching is enabled.
 pub async fn open_session(
     state: &AppState,
+    app: &tauri::AppHandle,
     global_git_path: PathBuf,
     toplevel: PathBuf,
 ) -> RepoSummary {
@@ -52,8 +54,37 @@ pub async fn open_session(
         .repos
         .write()
         .await
-        .insert(session.id.clone(), session);
+        .insert(session.id.clone(), session.clone());
+    start_repo_watcher(state, app, &session).await;
     summary
+}
+
+/// Start (and register) a filesystem watcher for `session`, unless watching is
+/// disabled in global settings. Resolves the git dir so linked worktrees /
+/// submodules (where `.git` is a file pointing elsewhere) are watched correctly.
+/// Best-effort: a failure is logged, never fatal to opening the repo.
+async fn start_repo_watcher(state: &AppState, app: &tauri::AppHandle, session: &Arc<RepoSession>) {
+    if !state.global_settings.read().await.watcher_enabled {
+        return;
+    }
+    let runner = session.runner.read().await.clone();
+    let git_dir = match runner.run(&["rev-parse", "--absolute-git-dir"]).await {
+        Ok(out) if out.success => PathBuf::from(out.stdout.trim()),
+        _ => session.path.join(".git"),
+    };
+    match crate::watcher::RepoWatcher::start(
+        app.clone(),
+        session.id.clone(),
+        session.path.clone(),
+        git_dir,
+    ) {
+        Ok(w) => {
+            state.watchers.lock().unwrap().insert(session.id.clone(), w);
+        }
+        Err(e) => {
+            tracing::warn!(repo_id = %session.id, err = %e, "failed to start repo watcher");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -64,6 +95,7 @@ pub async fn open_session(
 #[specta::specta]
 pub async fn open_repo(
     state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
     path: String,
 ) -> Result<RepoSummary, AppError> {
     let path = PathBuf::from(path);
@@ -97,7 +129,7 @@ pub async fn open_repo(
         tracing::info!(path = %toplevel.display(), id = %s.id, "open_repo: reusing existing session");
         s
     } else {
-        open_session(&state, git_path, toplevel).await
+        open_session(&state, &app, git_path, toplevel).await
     };
 
     {
@@ -128,6 +160,9 @@ pub async fn close_repo(
         .await
         .remove(&repo_id)
         .map(|s| s.path.to_string_lossy().to_string());
+
+    // Stop and drop the repo's watcher (no-op if watching was disabled).
+    state.watchers.lock().unwrap().remove(&repo_id);
 
     if let Some(path) = path {
         let mut settings = state.global_settings.write().await;
@@ -164,6 +199,37 @@ pub async fn set_active_repo(
     Ok(())
 }
 
+/// Toggle the filesystem watcher globally and apply it live: start watchers for
+/// all open repos when enabling, drop them all when disabling. Persisted so the
+/// choice survives restart.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_watcher_enabled(
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+    enabled: bool,
+) -> Result<(), AppError> {
+    {
+        let mut s = state.global_settings.write().await;
+        s.watcher_enabled = enabled;
+    }
+    state.persist_global_settings().await.ok();
+
+    if enabled {
+        let sessions: Vec<Arc<RepoSession>> =
+            state.repos.read().await.values().cloned().collect();
+        for session in sessions {
+            let already = state.watchers.lock().unwrap().contains_key(&session.id);
+            if !already {
+                start_repo_watcher(&state, &app, &session).await;
+            }
+        }
+    } else {
+        state.watchers.lock().unwrap().clear();
+    }
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn list_repos(
@@ -194,6 +260,7 @@ pub struct RestoreResult {
 #[specta::specta]
 pub async fn restore_open_repos(
     state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> Result<RestoreResult, AppError> {
     let (paths, persisted_active) = {
         let s = state.global_settings.read().await;
@@ -232,7 +299,7 @@ pub async fn restore_open_repos(
         let summary = if let Some(s) = existing {
             s
         } else {
-            open_session(&state, git_path.clone(), toplevel.clone()).await
+            open_session(&state, &app, git_path.clone(), toplevel.clone()).await
         };
         still_valid.push(summary.path.clone());
         if persisted_active.as_deref() == Some(summary.path.as_str()) {

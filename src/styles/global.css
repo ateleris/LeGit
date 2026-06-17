@@ -367,6 +367,13 @@ button.legit-tab__close:hover {
   flex: 0 1 auto;
   text-align: center;
 }
+/* Scale the panel tab close "X" with the UI font size, matching the repo tab
+   close button (.legit-tab__close svg). Dockview renders the svg at a fixed
+   11x11 via inline attributes, so CSS width/height override them. */
+.dv-dockview .dv-default-tab-action .dv-svg {
+  width: calc(var(--ui-font-size) - 1px);
+  height: calc(var(--ui-font-size) - 1px);
+}
 
 .legit-error {
   color: var(--error-fg);

@@ -8,6 +8,7 @@ mod commands;
 mod error;
 mod git_resolve;
 mod state;
+mod watcher;
 
 use std::path::PathBuf;
 
@@ -26,6 +27,7 @@ pub fn run() {
         commands::recent_repos,
         commands::restore_open_repos,
         commands::set_active_repo,
+        commands::set_watcher_enabled,
         commands::console_exec,
         commands::console_cancel,
         commands::git_status_check,
@@ -47,6 +49,7 @@ pub fn run() {
         commands::repo_write_line_endings,
         commands::global_write_line_endings,
         commands::set_warn_on_mixed_endings,
+        commands::set_confirm_discard,
         commands::repo_log,
         commands::repo_status,
         commands::repo_branches,

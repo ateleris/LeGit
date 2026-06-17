@@ -30,10 +30,30 @@ interface FileTreeProps {
   selectedPath: string | null;
   /** Optional — clicking a file row selects it (e.g. to open a diff). */
   onSelect?: (file: FileTreeEntry) => void;
+  /**
+   * Opt into Ctrl/Cmd + Shift multi-select. When enabled, `selectedPaths` drives
+   * highlighting and `onSelectionChange` reports the full new set; `selectedPath`/
+   * `onSelect` are ignored. Default false keeps the single-select behaviour.
+   */
+  multiSelect?: boolean;
+  /** Highlighted set in multi-select mode. */
+  selectedPaths?: ReadonlySet<string>;
+  /** Reports the full new selection (multi-select mode only). */
+  onSelectionChange?: (paths: string[]) => void;
   /** Optional per-file action buttons, revealed on row hover/focus (right edge). */
   renderActions?: (file: FileTreeEntry) => ReactNode;
+  /**
+   * Optional per-folder action buttons (tree view), revealed on row hover.
+   * Receives every file path under the folder, for bulk stage/unstage.
+   */
+  renderDirActions?: (filePaths: string[], dirPath: string) => ReactNode;
   /** Optional right-click handler for a file row (e.g. a context menu). */
   onContextMenu?: (file: FileTreeEntry, event: React.MouseEvent) => void;
+  /**
+   * Optional right-click handler for a folder row (tree view). Receives every
+   * file path under the folder, for bulk stage/unstage/discard.
+   */
+  onDirContextMenu?: (filePaths: string[], dirPath: string, event: React.MouseEvent) => void;
   /** Row height in px. */
   rowHeight?: number;
   /** Status/chevron icon size in px. */
@@ -67,8 +87,13 @@ export function FileTree({
   viewMode,
   selectedPath,
   onSelect,
+  multiSelect = false,
+  selectedPaths,
+  onSelectionChange,
   renderActions,
+  renderDirActions,
   onContextMenu,
+  onDirContextMenu,
   rowHeight = ROW_HEIGHT_DEFAULT,
   iconSize = ICON_SIZE_DEFAULT,
 }: FileTreeProps) {
@@ -82,6 +107,9 @@ export function FileTree({
   // The keyboard-focus tint shows only while this tree actually holds focus, so
   // a panel with multiple trees never shows a focused row in more than one.
   const [hasFocus, setHasFocus] = useState(false);
+  // Anchor for Shift-range selection (multi-select mode): the last file picked
+  // without Shift. Held in a ref since it never needs to trigger a re-render.
+  const anchorRef = useRef<string | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
 
   const rows = useMemo(
@@ -114,12 +142,48 @@ export function FileTree({
     });
   }, []);
 
+  // Multi-select click resolution. Reduces to single-select when no modifier is
+  // held. Shift extends the visible range from the anchor (folders in the span
+  // are skipped — only files are selectable); Ctrl/Cmd toggles one file.
+  const selectFile = useCallback(
+    (path: string, mods: { toggle: boolean; range: boolean }) => {
+      if (mods.range) {
+        const anchor = anchorRef.current ?? path;
+        const a = rows.findIndex((r) => r.path === anchor);
+        const b = rows.findIndex((r) => r.path === path);
+        if (a < 0 || b < 0) {
+          anchorRef.current = path;
+          onSelectionChange?.([path]);
+          return;
+        }
+        const [lo, hi] = a <= b ? [a, b] : [b, a];
+        const range = rows
+          .slice(lo, hi + 1)
+          .filter((r) => r.kind === "file")
+          .map((r) => r.path);
+        onSelectionChange?.(range);
+        return;
+      }
+      anchorRef.current = path;
+      if (mods.toggle) {
+        const next = new Set(selectedPaths ?? []);
+        if (next.has(path)) next.delete(path);
+        else next.add(path);
+        onSelectionChange?.([...next]);
+        return;
+      }
+      onSelectionChange?.([path]);
+    },
+    [rows, selectedPaths, onSelectionChange],
+  );
+
   const activateRow = useCallback(
     (row: Row) => {
       if (row.kind === "dir") toggleDir(row.path);
+      else if (multiSelect) selectFile(row.file.path, { toggle: false, range: false });
       else onSelect?.(row.file);
     },
-    [toggleDir, onSelect],
+    [toggleDir, multiSelect, selectFile, onSelect],
   );
 
   const onKeyDown = useCallback(
@@ -170,7 +234,7 @@ export function FileTree({
       onKeyDown={onKeyDown}
       onFocus={() => setHasFocus(true)}
       onBlur={() => setHasFocus(false)}
-      style={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none", position: "relative" }}
+      style={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none", position: "relative", userSelect: "none" }}
     >
       <div style={{ height: rowVirtualizer.getTotalSize(), width: "100%", position: "relative" }}>
         {rowVirtualizer.getVirtualItems().map((vItem) => {
@@ -178,9 +242,13 @@ export function FileTree({
           // Focus tint only while this tree holds focus; actions appear on hover
           // or on the focused row — both must clear when focus/hover moves away
           // (incl. to the other tree in a multi-tree panel).
-          const isFocused = hasFocus && row.path === focusedPath;
+          // Folders aren't selectable, so they never get the selection/focus
+          // tint — only file rows do.
+          const isFocused = hasFocus && row.kind === "file" && row.path === focusedPath;
           const isHovered = vItem.index === hoveredIndex;
-          const isSelected = row.kind === "file" && row.path === selectedPath;
+          const isSelected =
+            row.kind === "file" &&
+            (multiSelect ? !!selectedPaths?.has(row.path) : row.path === selectedPath);
           return (
             <div
               key={vItem.key}
@@ -191,16 +259,35 @@ export function FileTree({
               onMouseDown={(e) => {
                 if (e.button !== 0) return;
                 setFocusedPath(row.path);
-                activateRow(row);
+                if (multiSelect && row.kind === "file") {
+                  selectFile(row.path, {
+                    toggle: e.ctrlKey || e.metaKey,
+                    range: e.shiftKey,
+                  });
+                } else {
+                  activateRow(row);
+                }
               }}
               onMouseEnter={() => setHoveredIndex(vItem.index)}
               onMouseLeave={() => setHoveredIndex((i) => (i === vItem.index ? null : i))}
               onContextMenu={
-                row.kind === "file" && onContextMenu
-                  ? (e) => {
-                      setFocusedPath(row.path);
-                      onContextMenu(row.file, e);
-                    }
+                row.kind === "file"
+                  ? onContextMenu
+                    ? (e) => {
+                        setFocusedPath(row.path);
+                        // Right-click realigns the shift anchor, so a following
+                        // Shift-click ranges from the row the menu acted on.
+                        if (multiSelect) anchorRef.current = row.path;
+                        onContextMenu(row.file, e);
+                      }
+                    : undefined
+                  : onDirContextMenu
+                  ? (e) =>
+                      onDirContextMenu(
+                        files.filter((f) => f.path.startsWith(`${row.path}/`)).map((f) => f.path),
+                        row.path,
+                        e,
+                      )
                   : undefined
               }
               title={row.kind === "file" ? fileTitle(row.file) : row.label}
@@ -227,7 +314,22 @@ export function FileTree({
               }}
             >
               {row.kind === "dir" ? (
-                <DirRowView label={row.label} fileCount={row.fileCount} collapsed={row.collapsed} iconSize={iconSize} />
+                <DirRowView
+                  label={row.label}
+                  collapsed={row.collapsed}
+                  iconSize={iconSize}
+                  // Rendered always (so its width is reserved and the file-count
+                  // badge never shifts), revealed only on hover.
+                  actions={
+                    renderDirActions
+                      ? renderDirActions(
+                          files.filter((f) => f.path.startsWith(`${row.path}/`)).map((f) => f.path),
+                          row.path,
+                        )
+                      : null
+                  }
+                  actionsVisible={isHovered}
+                />
               ) : (
                 <FileRowView
                   file={row.file}
@@ -246,14 +348,16 @@ export function FileTree({
 
 function DirRowView({
   label,
-  fileCount,
   collapsed,
   iconSize,
+  actions,
+  actionsVisible,
 }: {
   label: string;
-  fileCount: number;
   collapsed: boolean;
   iconSize: number;
+  actions?: ReactNode;
+  actionsVisible?: boolean;
 }) {
   const Chevron = collapsed ? ChevronRight : ChevronDown;
   return (
@@ -262,9 +366,25 @@ function DirRowView({
       <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
         {label}
       </span>
-      <span className="legit-subtle" style={{ flexShrink: 0, paddingLeft: 6, fontSize: "var(--fz-sm)" }}>
-        {fileCount}
-      </span>
+      {actions && (
+        // Always mounted (width reserved so the count never shifts), only shown
+        // on hover. Stop the click from toggling the folder when pressed;
+        // preventDefault keeps the button from stealing DOM focus.
+        <span
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            gap: 2,
+            paddingLeft: 4,
+            visibility: actionsVisible ? "visible" : "hidden",
+          }}
+        >
+          {actions}
+        </span>
+      )}
     </>
   );
 }

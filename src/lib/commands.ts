@@ -40,6 +40,9 @@ export const restoreOpenRepos = () => invoke<RestoreResult>("restore_open_repos"
 export const setActiveRepo = (repoId: string | null) =>
   invoke<null>("set_active_repo", { repoId });
 
+export const setWatcherEnabled = (enabled: boolean) =>
+  invoke<null>("set_watcher_enabled", { enabled });
+
 // --- console ---
 
 export const consoleExec = (repoId: string, command: string) =>
@@ -73,6 +76,9 @@ export const getGlobalSettings = () =>
 
 export const setWarnOnMixedEndings = (warn: boolean) =>
   invoke<null>("set_warn_on_mixed_endings", { warn });
+
+export const setConfirmDiscard = (confirm: boolean) =>
+  invoke<null>("set_confirm_discard", { confirm });
 
 export const setActiveTheme = (name: string) =>
   invoke<null>("set_active_theme", { name });
@@ -147,8 +153,8 @@ export const repoUnstage = (repoId: string, paths: string[]) =>
 export const repoDiscard = (repoId: string, paths: string[]) =>
   invoke<null>("repo_discard", { repoId, paths });
 
-export const repoCommit = (repoId: string, message: string) =>
-  invoke<string>("repo_commit", { repoId, message });
+export const repoCommit = (repoId: string, message: string, amend = false) =>
+  invoke<string>("repo_commit", { repoId, message, amend });
 
 export const repoBranches = (repoId: string) =>
   invoke<Branch[]>("repo_branches", { repoId });

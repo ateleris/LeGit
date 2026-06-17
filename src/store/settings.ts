@@ -5,6 +5,8 @@ import {
   saveChangedFilesViewMode,
   saveCommitsGraphMetrics,
   saveUiFontSize,
+  setWatcherEnabled,
+  setConfirmDiscard,
 } from "../lib/commands";
 import { reapplyPanelConstraints } from "./dockview";
 import type { GlobalSettings, RegionPlacement } from "../lib/types";
@@ -69,6 +71,8 @@ interface SettingsStore {
   ) => Promise<void>;
   setChangedFilesViewMode: (mode: "tree" | "flat") => Promise<void>;
   setUiFontSize: (size: number) => Promise<void>;
+  setWatcherEnabled: (enabled: boolean) => Promise<void>;
+  setConfirmDiscard: (confirm: boolean) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
@@ -125,6 +129,22 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const s = get().settings;
     if (s) {
       set({ settings: { ...s, changed_files_view_mode: mode } });
+    }
+  },
+
+  async setWatcherEnabled(enabled) {
+    await setWatcherEnabled(enabled);
+    const s = get().settings;
+    if (s) {
+      set({ settings: { ...s, watcher_enabled: enabled } });
+    }
+  },
+
+  async setConfirmDiscard(confirm) {
+    await setConfirmDiscard(confirm);
+    const s = get().settings;
+    if (s) {
+      set({ settings: { ...s, confirm_discard: confirm } });
     }
   },
 

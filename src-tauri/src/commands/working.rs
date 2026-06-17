@@ -59,16 +59,19 @@ pub async fn repo_discard(
 }
 
 /// Commit the staged changes with the given message; returns the new commit id.
+/// When `amend` is set, rewrites HEAD instead of creating a new commit.
 #[tauri::command]
 #[specta::specta]
 pub async fn repo_commit(
     state: tauri::State<'_, AppState>,
     repo_id: String,
     message: String,
+    amend: bool,
 ) -> Result<CommitId, AppError> {
     let session = state.get_session(&repo_id).await?;
     let opts = CommitOptions {
         message,
+        amend,
         ..Default::default()
     };
     session.backend.commit(opts).await.map_err(AppError::Git)
