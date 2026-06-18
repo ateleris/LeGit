@@ -6,6 +6,17 @@ import "./styles/theme.css";
 import "./styles/global.css";
 import "dockview-react/dist/styles/dockview.css";
 
+// Suppress the webview's native context menu (Inspect, Save as…) everywhere.
+// Our own context menus open from their React onContextMenu handlers, which set
+// state independently of the native menu, so blanket-preventing the default here
+// leaves only the entries we add. Allow it inside editable fields so text inputs
+// keep their cut/copy/paste menu.
+document.addEventListener("contextmenu", (e) => {
+  const target = e.target as HTMLElement | null;
+  if (target?.closest("input, textarea, [contenteditable='true']")) return;
+  e.preventDefault();
+});
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useSummonTarget } from "../../store/summon";
@@ -15,7 +15,15 @@ export function CommitDetailsPanel() {
   const repo = useActiveRepo();
   const [selectedId, setSelectedId] = useState<CommitId | null>(null);
 
-  useEffect(() => { setSelectedId(null); }, [repo?.id]);
+  // Reset only on an actual repo change, not on first mount — otherwise
+  // StrictMode's second effect pass clobbers an already-delivered summon
+  // payload back to null (see ChangedFilesPanel for the full rationale).
+  const prevRepoId = useRef(repo?.id);
+  useEffect(() => {
+    if (prevRepoId.current === repo?.id) return;
+    prevRepoId.current = repo?.id;
+    setSelectedId(null);
+  }, [repo?.id]);
 
   const onReceive = useCallback((id: unknown) => {
     if (typeof id === "string") setSelectedId(id as CommitId);

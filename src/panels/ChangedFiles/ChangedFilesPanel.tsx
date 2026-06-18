@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
@@ -31,7 +31,14 @@ export function ChangedFilesPanel() {
   // Row height and icons scale with the global UI font size.
   const { rowHeight, iconSize } = useFileRowMetrics();
 
+  // Clear the selection only when the repo actually changes — NOT on first
+  // mount, where selectedId already starts null. A blind reset here would, under
+  // StrictMode's double-invoked effects, run after a queued summon payload has
+  // already been delivered and clobber it back to null (placeholder shown).
+  const prevRepoId = useRef(repo?.id);
   useEffect(() => {
+    if (prevRepoId.current === repo?.id) return;
+    prevRepoId.current = repo?.id;
     setSelectedId(null);
     setSelectedPath(null);
   }, [repo?.id]);
