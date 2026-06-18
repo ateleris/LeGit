@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRepoStore } from "../../store/repos";
 import { useSummonTarget } from "../../store/summon";
 import {
   repoDiff,
   repoDiscardHunk,
+  repoDiscardLines,
   repoStageHunk,
+  repoStageLines,
   repoUnstageHunk,
+  repoUnstageLines,
 } from "../../lib/commands";
 import type { DiffEntry, DiffRequest } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
@@ -17,13 +20,24 @@ import {
   usePanelContextMenu,
   type BaselineEntry,
 } from "../Commits/menu/PanelContextMenu";
-import { MenuItem } from "../Commits/menu/primitives";
-import { DiffEditor, type DiffViewMode, type HunkAction } from "./DiffEditor";
+import { MenuItem, Separator } from "../Commits/menu/primitives";
+import {
+  DiffEditor,
+  type DiffViewMode,
+  type HunkAction,
+  type LineActionOp,
+} from "./DiffEditor";
 
 const ACTION_TITLE: Record<HunkAction, string> = {
   stage: "Stage chunk",
   unstage: "Unstage chunk",
   discard: "Discard chunk",
+};
+
+const LINE_LABEL: Record<HunkAction, string> = {
+  stage: "Stage line",
+  unstage: "Unstage line",
+  discard: "Discard line",
 };
 
 type ContextMode = "chunked" | "full";
@@ -98,23 +112,52 @@ export function DiffPanel() {
     staleTime: 5_000,
   });
 
-  const actions = actionsForSource(request);
+  const actions = useMemo(() => actionsForSource(request), [request?.source.kind]);
 
+  // The per-line hover affordance: stage a line in an unstaged diff, unstage one
+  // in a staged diff, nothing for read-only commit diffs.
+  const lineActionOp: LineActionOp = useMemo(() => {
+    switch (request?.source.kind) {
+      case "working_unstaged":
+        return "stage";
+      case "working_staged":
+        return "unstage";
+      default:
+        return null;
+    }
+  }, [request?.source.kind]);
+
+  // Whole-hunk stage/unstage/discard (header buttons + context menu).
   const onAction = useCallback(
     async (hunkIndex: number, action: HunkAction) => {
       if (!request) return;
       setActionError(null);
+      const { repoId, path } = request;
       try {
-        if (action === "stage") {
-          await repoStageHunk(request.repoId, request.path, hunkIndex);
-        } else if (action === "unstage") {
-          await repoUnstageHunk(request.repoId, request.path, hunkIndex);
-        } else {
-          await repoDiscardHunk(request.repoId, request.path, hunkIndex);
-        }
-        // Refresh the working-tree views and this diff so the hunk's new state
-        // is reflected immediately.
-        invalidateRepoDomains(queryClient, request.repoId, ["status", "log", "diff"]);
+        if (action === "stage") await repoStageHunk(repoId, path, hunkIndex);
+        else if (action === "unstage") await repoUnstageHunk(repoId, path, hunkIndex);
+        else await repoDiscardHunk(repoId, path, hunkIndex);
+        // Refresh the working-tree views and this diff so the new state shows.
+        invalidateRepoDomains(queryClient, repoId, ["status", "log", "diff"]);
+      } catch (e) {
+        setActionError(formatAppError(e));
+      }
+    },
+    [request, queryClient]
+  );
+
+  // Per-line stage/unstage/discard (hover affordance + context menu).
+  const onLineAction = useCallback(
+    async (hunkIndex: number, lineIndex: number, action: HunkAction) => {
+      if (!request) return;
+      setActionError(null);
+      const { repoId, path } = request;
+      const lines = [lineIndex];
+      try {
+        if (action === "stage") await repoStageLines(repoId, path, hunkIndex, lines);
+        else if (action === "unstage") await repoUnstageLines(repoId, path, hunkIndex, lines);
+        else await repoDiscardLines(repoId, path, hunkIndex, lines);
+        invalidateRepoDomains(queryClient, repoId, ["status", "log", "diff"]);
       } catch (e) {
         setActionError(formatAppError(e));
       }
@@ -194,7 +237,15 @@ export function DiffPanel() {
       )}
 
       <div style={{ flex: 1, minHeight: 0 }}>
-        <DiffBody data={data} mode={mode} actions={actions} onAction={onAction} request={request} />
+        <DiffBody
+          data={data}
+          mode={mode}
+          actions={actions}
+          onAction={onAction}
+          request={request}
+          lineActionOp={lineActionOp}
+          onLineAction={onLineAction}
+        />
       </div>
     </div>
     </PanelContextMenuProvider>
@@ -207,18 +258,36 @@ function DiffBody({
   actions,
   onAction,
   request,
+  lineActionOp,
+  onLineAction,
 }: {
   data: DiffEntry | undefined;
   mode: DiffViewMode;
   actions: HunkAction[];
   onAction: (hunkIndex: number, action: HunkAction) => void;
   request: DiffRequest;
+  lineActionOp: LineActionOp;
+  onLineAction: (hunkIndex: number, lineIndex: number, action: HunkAction) => void;
 }) {
   const { openMenu, closeMenu } = usePanelContextMenu();
-  const onHunkContextMenu = useCallback(
-    (hunkIndex: number, event: MouseEvent) => {
+  const onContextMenu = useCallback(
+    (hunkIndex: number, lineIndex: number | null, event: MouseEvent) => {
       const section = (
         <>
+          {/* Line actions — only when a changed line was clicked. */}
+          {lineIndex != null &&
+            actions.map((a) => (
+              <MenuItem
+                key={`line-${a}`}
+                onClick={() => {
+                  onLineAction(hunkIndex, lineIndex, a);
+                  closeMenu();
+                }}
+              >
+                {LINE_LABEL[a]}
+              </MenuItem>
+            ))}
+          {lineIndex != null && <Separator />}
           {actions.map((a) => (
             <MenuItem
               key={a}
@@ -234,7 +303,7 @@ function DiffBody({
       );
       openMenu(event as unknown as React.MouseEvent, section);
     },
-    [actions, onAction, openMenu, closeMenu]
+    [actions, onAction, onLineAction, openMenu, closeMenu]
   );
 
   if (!data) return null;
@@ -270,13 +339,22 @@ function DiffBody({
     );
   }
 
+  // Identity of the shown file/source: scroll is preserved across content
+  // refetches (e.g. after staging) but reset when this changes.
+  const scrollResetKey = `${request.repoId}|${request.path}|${request.source.kind}|${
+    request.source.kind === "commit" ? request.source.commit_id : ""
+  }`;
+
   return (
     <DiffEditor
       diff={text}
       mode={mode}
       actions={actions}
       onAction={onAction}
-      onHunkContextMenu={onHunkContextMenu}
+      onContextMenu={onContextMenu}
+      lineActionOp={lineActionOp}
+      onLineAction={onLineAction}
+      scrollResetKey={scrollResetKey}
     />
   );
 }

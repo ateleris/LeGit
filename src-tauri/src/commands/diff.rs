@@ -80,3 +80,62 @@ pub async fn repo_discard_hunk(
         .await
         .map_err(AppError::Git)
 }
+
+fn to_indices(line_indices: Vec<u32>) -> Vec<usize> {
+    line_indices.into_iter().map(|i| i as usize).collect()
+}
+
+/// Stage a subset of a hunk's lines (`line_indices` index into the hunk's diff
+/// lines, context included).
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_stage_lines(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    path: String,
+    hunk_index: u32,
+    line_indices: Vec<u32>,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .apply_lines(&PathBuf::from(path), hunk_index as usize, &to_indices(line_indices), HunkOp::Stage)
+        .await
+        .map_err(AppError::Git)
+}
+
+/// Unstage a subset of a hunk's lines.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_unstage_lines(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    path: String,
+    hunk_index: u32,
+    line_indices: Vec<u32>,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .apply_lines(&PathBuf::from(path), hunk_index as usize, &to_indices(line_indices), HunkOp::Unstage)
+        .await
+        .map_err(AppError::Git)
+}
+
+/// Discard a subset of a hunk's lines from the working tree.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_discard_lines(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    path: String,
+    hunk_index: u32,
+    line_indices: Vec<u32>,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .apply_lines(&PathBuf::from(path), hunk_index as usize, &to_indices(line_indices), HunkOp::Discard)
+        .await
+        .map_err(AppError::Git)
+}

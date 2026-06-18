@@ -233,6 +233,16 @@ export const repoUnstageHunk = (repoId: string, path: string, hunkIndex: number)
 export const repoDiscardHunk = (repoId: string, path: string, hunkIndex: number) =>
   invoke<null>("repo_discard_hunk", { repoId, path, hunkIndex });
 
+/** Line-level staging — `lineIndices` index into the hunk's diff lines. */
+export const repoStageLines = (repoId: string, path: string, hunkIndex: number, lineIndices: number[]) =>
+  invoke<null>("repo_stage_lines", { repoId, path, hunkIndex, lineIndices });
+
+export const repoUnstageLines = (repoId: string, path: string, hunkIndex: number, lineIndices: number[]) =>
+  invoke<null>("repo_unstage_lines", { repoId, path, hunkIndex, lineIndices });
+
+export const repoDiscardLines = (repoId: string, path: string, hunkIndex: number, lineIndices: number[]) =>
+  invoke<null>("repo_discard_lines", { repoId, path, hunkIndex, lineIndices });
+
 // --- working-tree write operations ---
 
 export const repoStage = (repoId: string, paths: string[]) =>

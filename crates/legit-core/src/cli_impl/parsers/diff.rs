@@ -155,6 +155,97 @@ pub fn build_hunk_patch(raw_diff: &str, hunk_index: usize) -> Option<String> {
     Some(patch)
 }
 
+/// Build a patch for a SUBSET of one hunk's changed lines, for line-level
+/// staging. `selected` holds indices into the hunk's diff lines (context
+/// included, in `git diff` order — matching `TextDiff` hunk `lines`). `reverse`
+/// is true when the patch will be applied with `-R` (unstage / discard) and
+/// false for a forward apply (stage); it flips how UNSELECTED changed lines are
+/// treated:
+///   - forward: unselected `+` dropped, unselected `-` kept as context.
+///   - reverse: unselected `-` dropped, unselected `+` kept as context.
+/// Selected lines and context keep their role. `\ No newline` markers are kept
+/// iff the line they annotate was kept. Apply with `--recount` (the hunk header
+/// counts are left untouched). Returns `None` if `hunk_index` is out of range.
+pub fn build_line_patch(
+    raw_diff: &str,
+    hunk_index: usize,
+    selected: &std::collections::HashSet<usize>,
+    reverse: bool,
+) -> Option<String> {
+    let mut preamble: Vec<&str> = Vec::new();
+    let mut hunks: Vec<Vec<&str>> = Vec::new();
+    for line in raw_diff.lines() {
+        if line.starts_with("@@") {
+            hunks.push(vec![line]);
+        } else if let Some(current) = hunks.last_mut() {
+            current.push(line);
+        } else {
+            preamble.push(line);
+        }
+    }
+    let hunk = hunks.get(hunk_index)?;
+
+    let mut out = String::new();
+    for line in &preamble {
+        out.push_str(line);
+        out.push('\n');
+    }
+    // hunk[0] is the `@@ … @@` header — kept verbatim; `--recount` fixes counts.
+    out.push_str(hunk[0]);
+    out.push('\n');
+
+    let mut idx = 0usize; // index among context/+/- lines (matches hunk `lines`)
+    let mut last_kept = false; // was the previous content line emitted?
+    let keep = |s: &str, out: &mut String| {
+        out.push_str(s);
+        out.push('\n');
+    };
+    // `+`/`-` line emitted as context: replace the leading marker with a space.
+    let as_context = |s: &str| format!(" {}", &s[1..]);
+
+    for line in &hunk[1..] {
+        match line.as_bytes().first().copied() {
+            Some(b' ') => {
+                keep(line, &mut out);
+                last_kept = true;
+                idx += 1;
+            }
+            Some(b'+') => {
+                if selected.contains(&idx) {
+                    keep(line, &mut out);
+                    last_kept = true;
+                } else if reverse {
+                    keep(&as_context(line), &mut out);
+                    last_kept = true;
+                } else {
+                    last_kept = false; // forward: drop
+                }
+                idx += 1;
+            }
+            Some(b'-') => {
+                if selected.contains(&idx) {
+                    keep(line, &mut out);
+                    last_kept = true;
+                } else if reverse {
+                    last_kept = false; // reverse: drop
+                } else {
+                    keep(&as_context(line), &mut out);
+                    last_kept = true;
+                }
+                idx += 1;
+            }
+            // `\ No newline at end of file` — keep only if its line was kept.
+            Some(b'\\') => {
+                if last_kept {
+                    keep(line, &mut out);
+                }
+            }
+            _ => {} // blank / unknown — skip
+        }
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,5 +487,109 @@ diff --git a/n.txt b/n.txt
 ";
         let patch = build_hunk_patch(diff, 0).unwrap();
         assert!(patch.contains("\\ No newline at end of file"));
+    }
+
+    // ---- build_line_patch -------------------------------------------------
+
+    fn sel(indices: &[usize]) -> std::collections::HashSet<usize> {
+        indices.iter().copied().collect()
+    }
+
+    // hunk lines (indices): 0 Context "keep", 1 Removed "old1",
+    // 2 Added "new1", 3 Added "new2", 4 Context "tail".
+    const MIXED_DIFF: &str = "\
+diff --git a/f.txt b/f.txt
+index 1111111..2222222 100644
+--- a/f.txt
++++ b/f.txt
+@@ -1,4 +1,5 @@
+ keep
+-old1
++new1
++new2
+ tail
+";
+
+    #[test]
+    fn line_patch_forward_stages_only_selected_add() {
+        // Select only "new1" (index 2). Forward: unselected "+new2" dropped,
+        // unselected "-old1" becomes context.
+        let patch = build_line_patch(MIXED_DIFF, 0, &sel(&[2]), false).unwrap();
+        assert_eq!(
+            patch,
+            "\
+diff --git a/f.txt b/f.txt
+index 1111111..2222222 100644
+--- a/f.txt
++++ b/f.txt
+@@ -1,4 +1,5 @@
+ keep
+ old1
++new1
+ tail
+"
+        );
+    }
+
+    #[test]
+    fn line_patch_reverse_keeps_unselected_adds_as_context() {
+        // Select only "old1" (index 1). Reverse: unselected "+new1"/"+new2"
+        // become context, the selected "-old1" stays removed.
+        let patch = build_line_patch(MIXED_DIFF, 0, &sel(&[1]), true).unwrap();
+        assert_eq!(
+            patch,
+            "\
+diff --git a/f.txt b/f.txt
+index 1111111..2222222 100644
+--- a/f.txt
++++ b/f.txt
+@@ -1,4 +1,5 @@
+ keep
+-old1
+ new1
+ new2
+ tail
+"
+        );
+    }
+
+    #[test]
+    fn line_patch_select_all_equals_full_hunk() {
+        let all = build_line_patch(MIXED_DIFF, 0, &sel(&[1, 2, 3]), false).unwrap();
+        assert_eq!(all, build_hunk_patch(MIXED_DIFF, 0).unwrap());
+    }
+
+    const NL_DIFF: &str = "\
+diff --git a/n.txt b/n.txt
+--- a/n.txt
++++ b/n.txt
+@@ -1 +1 @@
+-old
+\\ No newline at end of file
++new
+\\ No newline at end of file
+";
+
+    #[test]
+    fn line_patch_keeps_no_newline_marker_for_kept_line_drops_for_dropped() {
+        // Select "-old" (index 0). Forward: "+new" (index 1) is dropped along
+        // with its trailing no-newline marker; the selected "-old" keeps its own.
+        let patch = build_line_patch(NL_DIFF, 0, &sel(&[0]), false).unwrap();
+        assert_eq!(
+            patch,
+            "\
+diff --git a/n.txt b/n.txt
+--- a/n.txt
++++ b/n.txt
+@@ -1 +1 @@
+-old
+\\ No newline at end of file
+"
+        );
+    }
+
+    #[test]
+    fn line_patch_out_of_range_hunk_is_none() {
+        assert!(build_line_patch(MIXED_DIFF, 5, &sel(&[1]), false).is_none());
     }
 }

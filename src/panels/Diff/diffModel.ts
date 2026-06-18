@@ -23,6 +23,8 @@ export interface DiffRow {
   newNo: number | null;
   /** Index of the hunk this row belongs to (hunk header rows included). */
   hunkIndex: number;
+  /** Index within the hunk's `lines` (for line-level staging); -1 for headers. */
+  lineIndex: number;
   /** Changed character ranges, for a modified (paired) added/removed line. */
   segments?: Segment[];
 }
@@ -36,6 +38,8 @@ export interface SplitRow {
   no: number | null;
   /** Index of the hunk this row belongs to. */
   hunkIndex: number;
+  /** Index within the hunk's `lines` (for line-level staging); -1 for filler/header. */
+  lineIndex: number;
   /** Changed character ranges, for a modified (paired) added/removed line. */
   segments?: Segment[];
 }
@@ -43,6 +47,7 @@ export interface SplitRow {
 interface Pending {
   text: string;
   no: number;
+  lineIndex: number;
 }
 
 /**
@@ -151,7 +156,14 @@ function blockSegments(dels: Pending[], adds: Pending[]): { del: Segment[][]; ad
 export function buildRows(diff: TextDiff): DiffRow[] {
   const rows: DiffRow[] = [];
   diff.hunks.forEach((hunk, hunkIndex) => {
-    rows.push({ kind: "Hunk", text: hunkHeaderLabel(hunk.header), oldNo: null, newNo: null, hunkIndex });
+    rows.push({
+      kind: "Hunk",
+      text: hunkHeaderLabel(hunk.header),
+      oldNo: null,
+      newNo: null,
+      hunkIndex,
+      lineIndex: -1,
+    });
 
     let oldNo = hunk.old_start;
     let newNo = hunk.new_start;
@@ -167,6 +179,7 @@ export function buildRows(diff: TextDiff): DiffRow[] {
           oldNo: d.no,
           newNo: null,
           hunkIndex,
+          lineIndex: d.lineIndex,
           segments: del[i],
         })
       );
@@ -177,6 +190,7 @@ export function buildRows(diff: TextDiff): DiffRow[] {
           oldNo: null,
           newNo: a.no,
           hunkIndex,
+          lineIndex: a.lineIndex,
           segments: add[i],
         })
       );
@@ -184,16 +198,23 @@ export function buildRows(diff: TextDiff): DiffRow[] {
       adds = [];
     };
 
-    for (const line of hunk.lines) {
+    hunk.lines.forEach((line, lineIndex) => {
       if (line.kind === "Context") {
         flush();
-        rows.push({ kind: "Context", text: line.content, oldNo: oldNo++, newNo: newNo++, hunkIndex });
+        rows.push({
+          kind: "Context",
+          text: line.content,
+          oldNo: oldNo++,
+          newNo: newNo++,
+          hunkIndex,
+          lineIndex,
+        });
       } else if (line.kind === "Added") {
-        adds.push({ text: line.content, no: newNo++ });
+        adds.push({ text: line.content, no: newNo++, lineIndex });
       } else {
-        dels.push({ text: line.content, no: oldNo++ });
+        dels.push({ text: line.content, no: oldNo++, lineIndex });
       }
-    }
+    });
     flush();
   });
   return rows;
@@ -213,8 +234,8 @@ export function buildSplitRows(diff: TextDiff): { left: SplitRow[]; right: Split
   diff.hunks.forEach((hunk, hunkIndex) => {
     // The `@@` header spans both sides (kept aligned), mirroring the inline view.
     const label = hunkHeaderLabel(hunk.header);
-    left.push({ kind: "Hunk", text: label, no: null, hunkIndex });
-    right.push({ kind: "Hunk", text: label, no: null, hunkIndex });
+    left.push({ kind: "Hunk", text: label, no: null, hunkIndex, lineIndex: -1 });
+    right.push({ kind: "Hunk", text: label, no: null, hunkIndex, lineIndex: -1 });
 
     let oldNo = hunk.old_start;
     let newNo = hunk.new_start;
@@ -227,30 +248,30 @@ export function buildSplitRows(diff: TextDiff): { left: SplitRow[]; right: Split
       for (let i = 0; i < n; i++) {
         left.push(
           dels[i]
-            ? { kind: "Removed", text: dels[i].text, no: dels[i].no, hunkIndex, segments: del[i] }
-            : { kind: "Filler", text: "", no: null, hunkIndex }
+            ? { kind: "Removed", text: dels[i].text, no: dels[i].no, hunkIndex, lineIndex: dels[i].lineIndex, segments: del[i] }
+            : { kind: "Filler", text: "", no: null, hunkIndex, lineIndex: -1 }
         );
         right.push(
           adds[i]
-            ? { kind: "Added", text: adds[i].text, no: adds[i].no, hunkIndex, segments: add[i] }
-            : { kind: "Filler", text: "", no: null, hunkIndex }
+            ? { kind: "Added", text: adds[i].text, no: adds[i].no, hunkIndex, lineIndex: adds[i].lineIndex, segments: add[i] }
+            : { kind: "Filler", text: "", no: null, hunkIndex, lineIndex: -1 }
         );
       }
       dels = [];
       adds = [];
     };
 
-    for (const line of hunk.lines) {
+    hunk.lines.forEach((line, lineIndex) => {
       if (line.kind === "Context") {
         flush();
-        left.push({ kind: "Context", text: line.content, no: oldNo++, hunkIndex });
-        right.push({ kind: "Context", text: line.content, no: newNo++, hunkIndex });
+        left.push({ kind: "Context", text: line.content, no: oldNo++, hunkIndex, lineIndex });
+        right.push({ kind: "Context", text: line.content, no: newNo++, hunkIndex, lineIndex });
       } else if (line.kind === "Added") {
-        adds.push({ text: line.content, no: newNo++ });
+        adds.push({ text: line.content, no: newNo++, lineIndex });
       } else {
-        dels.push({ text: line.content, no: oldNo++ });
+        dels.push({ text: line.content, no: oldNo++, lineIndex });
       }
-    }
+    });
     flush();
   });
 

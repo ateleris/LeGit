@@ -150,6 +150,37 @@ impl GitCliBackend {
             .unwrap_or(EMPTY_TREE_OID)
             .to_string())
     }
+
+    /// Which diff a working-tree operation reads from: staging/discarding act on
+    /// the unstaged diff (index → worktree), unstaging on the staged diff.
+    fn source_for_op(op: HunkOp) -> DiffSource {
+        match op {
+            HunkOp::Stage | HunkOp::Discard => DiffSource::WorkingUnstaged,
+            HunkOp::Unstage => DiffSource::WorkingStaged,
+        }
+    }
+
+    /// Apply a prepared patch to the index/worktree per `op`. `--recount` lets a
+    /// sliced/edited patch apply despite its untouched `@@` header counts.
+    async fn apply_op_patch(&self, op: HunkOp, patch: &str) -> Result<(), GitError> {
+        let args: &[&str] = match op {
+            HunkOp::Stage => &["apply", "--cached", "--recount"],
+            HunkOp::Unstage => &["apply", "--cached", "-R", "--recount"],
+            HunkOp::Discard => &["apply", "-R", "--recount"],
+        };
+        let runner = self.runner().await;
+        let output = runner
+            .run_with_stdin(args, patch)
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !output.success {
+            return Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr,
+            });
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -348,43 +379,42 @@ impl GitBackend for GitCliBackend {
         hunk_index: usize,
         op: HunkOp,
     ) -> Result<(), GitError> {
-        // The diff to slice the hunk from depends on the operation: staging and
-        // discarding act on the unstaged diff (index → worktree), unstaging on
-        // the staged diff (HEAD → index). Always use 3 lines of context — the
-        // panel's whole-file view doesn't change which hunk an index refers to.
-        let source = match op {
-            HunkOp::Stage | HunkOp::Discard => DiffSource::WorkingUnstaged,
-            HunkOp::Unstage => DiffSource::WorkingStaged,
-        };
-        let raw = self.run_diff_text(&source, path, None, 3).await?;
+        // Always 3 lines of context — the panel's whole-file view doesn't change
+        // which hunk an index refers to.
+        let raw = self
+            .run_diff_text(&Self::source_for_op(op), path, None, 3)
+            .await?;
         let patch = parsers::diff::build_hunk_patch(&raw, hunk_index).ok_or_else(|| {
-            GitError::Internal(format!(
-                "no hunk at index {hunk_index} for {}",
-                path.display()
-            ))
+            GitError::Internal(format!("no hunk at index {hunk_index} for {}", path.display()))
         })?;
+        self.apply_op_patch(op, &patch).await
+    }
 
-        // `--recount` lets git fix up the hunk's line counts, so a single
-        // sliced hunk applies even though its `@@` header counts describe the
-        // full multi-hunk diff.
-        let args: &[&str] = match op {
-            HunkOp::Stage => &["apply", "--cached", "--recount"],
-            HunkOp::Unstage => &["apply", "--cached", "-R", "--recount"],
-            HunkOp::Discard => &["apply", "-R", "--recount"],
-        };
-
-        let runner = self.runner().await;
-        let output = runner
-            .run_with_stdin(args, &patch)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !output.success {
-            return Err(GitError::CommandFailed {
-                exit_code: output.exit_code.unwrap_or(-1),
-                stderr: output.stderr,
-            });
+    async fn apply_lines(
+        &self,
+        path: &Path,
+        hunk_index: usize,
+        line_indices: &[usize],
+        op: HunkOp,
+    ) -> Result<(), GitError> {
+        if line_indices.is_empty() {
+            return Ok(());
         }
-        Ok(())
+        let raw = self
+            .run_diff_text(&Self::source_for_op(op), path, None, 3)
+            .await?;
+        // Unstage/discard apply with `-R`, which flips how unselected +/- lines
+        // are treated when building the partial patch.
+        let reverse = !matches!(op, HunkOp::Stage);
+        let selected: std::collections::HashSet<usize> = line_indices.iter().copied().collect();
+        let patch = parsers::diff::build_line_patch(&raw, hunk_index, &selected, reverse)
+            .ok_or_else(|| {
+                GitError::Internal(format!(
+                    "no hunk at index {hunk_index} for {}",
+                    path.display()
+                ))
+            })?;
+        self.apply_op_patch(op, &patch).await
     }
 
     async fn commit(&self, opts: CommitOptions) -> Result<CommitId, GitError> {

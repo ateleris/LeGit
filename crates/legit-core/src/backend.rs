@@ -55,6 +55,17 @@ pub trait GitBackend: Send + Sync {
         op: HunkOp,
     ) -> Result<(), GitError>;
 
+    /// Like `apply_hunk`, but for a subset of a hunk's changed lines.
+    /// `line_indices` index into the hunk's diff lines (context included), in
+    /// `git diff` order. A no-op if `line_indices` is empty.
+    async fn apply_lines(
+        &self,
+        path: &Path,
+        hunk_index: usize,
+        line_indices: &[usize],
+        op: HunkOp,
+    ) -> Result<(), GitError>;
+
     async fn commit(&self, opts: CommitOptions) -> Result<CommitId, GitError>;
 
     /// Stage the given paths (`git add`).

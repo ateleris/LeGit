@@ -4,7 +4,7 @@
 // identical — same decoration classes, same real-line-number gutters, same
 // theme. The only difference is the row source:
 //   - inline: one editor over interleaved rows (buildRows), two number gutters
-//     (old + new) and an action gutter for per-hunk staging.
+//     (old + new).
 //   - split: two editors over the aligned left/right rows (buildSplitRows),
 //     each with one number gutter; the panes are scroll-synced.
 //
@@ -33,6 +33,8 @@ import {
 
 export type HunkAction = "stage" | "unstage" | "discard";
 export type DiffViewMode = "inline" | "split";
+/** Per-line action offered for a working-tree diff (null = read-only commit). */
+export type LineActionOp = "stage" | "unstage" | null;
 
 interface DiffEditorProps {
   diff: TextDiff;
@@ -40,8 +42,15 @@ interface DiffEditorProps {
   /** Which per-hunk actions to offer; empty for read-only (commit) diffs. */
   actions: HunkAction[];
   onAction?: (hunkIndex: number, action: HunkAction) => void;
-  /** Right-click on a hunk (inline mode, working-tree diffs). */
-  onHunkContextMenu?: (hunkIndex: number, event: MouseEvent) => void;
+  /** Right-click on a hunk; `lineIndex` is the clicked changed line, else null. */
+  onContextMenu?: (hunkIndex: number, lineIndex: number | null, event: MouseEvent) => void;
+  /** Op for the hover per-line affordance ("stage"/"unstage"), or null. */
+  lineActionOp: LineActionOp;
+  /** Apply an action to a single changed line. */
+  onLineAction?: (hunkIndex: number, lineIndex: number, action: HunkAction) => void;
+  /** Identity of the shown file/source. Scroll is preserved across diff content
+   *  refetches but reset to top when this changes (a different file). */
+  scrollResetKey: string;
 }
 
 const ACTION_LABEL: Record<HunkAction, string> = {
@@ -112,7 +121,7 @@ class ActionWidget extends WidgetType {
       btn.textContent = ACTION_LABEL[action];
       btn.title = `${ACTION_LABEL[action]} this hunk`;
       btn.addEventListener("mousedown", (e) => {
-        // mousedown (not click) so focus changes don't swallow it.
+        if (e.button !== 0) return; // left only; let right-click open the menu
         e.preventDefault();
         e.stopPropagation();
         this.onAction?.(this.hunkIndex, action);
@@ -122,8 +131,76 @@ class ActionWidget extends WidgetType {
     return wrap;
   }
   ignoreEvent() {
-    return true; // let the buttons' own handlers run; not editor input
+    return true;
   }
+}
+
+// A fixed-width column at the start of every (non-header) line, between the
+// number gutters and the code. On a changed line it holds a +/− button that
+// stages/unstages just that line, revealed on row hover; on a context/filler
+// line it is an empty spacer so the code stays aligned.
+class LineLeadWidget extends WidgetType {
+  constructor(
+    private readonly op: LineActionOp,
+    private readonly hunkIndex: number,
+    private readonly lineIndex: number,
+    private readonly onLineAction?: (hunkIndex: number, lineIndex: number, action: HunkAction) => void
+  ) {
+    super();
+  }
+  eq(other: LineLeadWidget) {
+    return (
+      other.op === this.op &&
+      other.hunkIndex === this.hunkIndex &&
+      other.lineIndex === this.lineIndex
+    );
+  }
+  toDOM() {
+    const wrap = document.createElement("span");
+    wrap.className = "cm-diff-line-col";
+    // Actionable line (op set and a real changed line) → hover button.
+    if (this.op && this.lineIndex >= 0) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "cm-diff-line-action";
+      btn.title = this.op === "stage" ? "Stage this line" : "Unstage this line";
+      btn.appendChild(plusMinusIcon(this.op === "stage"));
+      const op = this.op;
+      btn.addEventListener("mousedown", (e) => {
+        if (e.button !== 0) return; // left only; let right-click open the menu
+        e.preventDefault();
+        e.stopPropagation();
+        if (op) this.onLineAction?.(this.hunkIndex, this.lineIndex, op);
+      });
+      wrap.appendChild(btn);
+    }
+    return wrap;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
+/** A lucide-style plus (stage) or minus (unstage) icon, stroked in currentColor
+ *  so it follows the button's `diff.action.*` colour. */
+function plusMinusIcon(plus: boolean): SVGSVGElement {
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2.5");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  const horizontal = document.createElementNS(NS, "path");
+  horizontal.setAttribute("d", "M5 12h14");
+  svg.appendChild(horizontal);
+  if (plus) {
+    const vertical = document.createElementNS(NS, "path");
+    vertical.setAttribute("d", "M12 5v14");
+    svg.appendChild(vertical);
+  }
+  return svg;
 }
 
 /** A line-number gutter driven by a per-row number lookup. */
@@ -143,14 +220,16 @@ interface LineDeco {
   /** Changed-character background class (stronger), applied over `segments`. */
   wordCls: string | null;
   segments?: Segment[];
-  /** Optional inline widget rendered at the start of the line (e.g. hunk actions). */
+  /** Inline widget at the line end (hunk action buttons). */
   widget?: () => WidgetType;
+  /** Inline widget at the line start (per-line action column / spacer). */
+  lead?: () => WidgetType;
 }
 
 /**
- * Line-background decorations plus intra-line (changed-character) mark
- * decorations, driven by a per-row lookup. A modified line gets the light
- * full-line background AND a stronger background on just its changed ranges.
+ * Line-background + intra-line mark decorations, an optional leading per-line
+ * action column, and an optional trailing hunk-action widget — all driven by a
+ * per-row lookup.
  */
 function decorationField(getLine: (i: number) => LineDeco | null): StateField<DecorationSet> {
   const build = (state: EditorState): DecorationSet => {
@@ -161,11 +240,12 @@ function decorationField(getLine: (i: number) => LineDeco | null): StateField<De
       if (!info) continue;
       const line = state.doc.line(i + 1);
       if (info.cls) ranges.push(Decoration.line({ class: info.cls }).range(line.from));
+      if (info.lead) {
+        ranges.push(Decoration.widget({ widget: info.lead(), side: -1 }).range(line.from));
+      }
       if (info.widget) {
         // At the line end so flex order is [text … actions]; pushed right via CSS.
-        ranges.push(
-          Decoration.widget({ widget: info.widget(), side: 1 }).range(line.to)
-        );
+        ranges.push(Decoration.widget({ widget: info.widget(), side: 1 }).range(line.to));
       }
       if (info.wordCls && info.segments) {
         for (const s of info.segments) {
@@ -211,13 +291,8 @@ const baseTheme = EditorView.theme({
     backgroundColor: "var(--diff-hunk-header-bg)",
     color: "var(--diff-hunk-header-fg)",
     fontStyle: "italic",
-    // Flex row: `@@` text vertically centred on the left, action buttons pushed
-    // to the right. The taller band also separates one chunk from the next.
     display: "flex",
     alignItems: "center",
-    // FIXED height (independent of whether this pane carries the action buttons)
-    // so the header is identical on both split panes and the two sides stay
-    // row-aligned. Sized to comfortably hold the normal-size buttons.
     boxSizing: "border-box",
     height: "calc(var(--fz-lg) * 1.5 + 16px)",
     padding: "0 8px",
@@ -235,18 +310,46 @@ const baseTheme = EditorView.theme({
     minWidth: "2.5ch",
     textAlign: "right",
   },
+  // Per-line action column (between the number gutters and the code). Reserves a
+  // fixed width on every line so the code stays aligned; the +/− button is
+  // hidden until the line is hovered.
+  // A symmetric column spanning the line height (line-height 1.5), centring its
+  // content both ways so the button sits centred (no asymmetric margin).
+  ".cm-diff-line-col": {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "1.8em",
+    height: "1.5em",
+    verticalAlign: "top",
+    userSelect: "none",
+  },
+  ".cm-diff-line-action": {
+    opacity: "0",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    height: "100%",
+    padding: "0",
+    border: "none",
+    borderRadius: "0",
+    background: "transparent",
+    // Same colours as the stage/unstage buttons (icon strokes currentColor).
+    color: "var(--diff-action-fg)",
+    cursor: "pointer",
+  },
+  // Icon nearly the full line height; `block` + auto margins keep it centred and
+  // remove the inline baseline gap.
+  ".cm-diff-line-action svg": { display: "block", margin: "auto", width: "1.3em", height: "1.3em" },
+  ".cm-line:hover .cm-diff-line-action": { opacity: "1" },
+  ".cm-diff-line-action:hover": { color: "var(--diff-action-hover-fg)" },
   // Per-hunk action buttons, rendered inline just left of the `@@` header text.
-  // The buttons themselves inherit the app's normal <button> styling (global
-  // CSS); only layout and a compact size are set here.
   ".cm-diff-hunk-actions": {
-    marginLeft: "auto", // push to the right edge of the flex row
+    marginLeft: "auto",
     display: "inline-flex",
     gap: "4px",
   },
-  // Normal app-button look (matches the commit button): app font, not the
-  // editor's monospace; default size/padding from the global button rule.
-  // Colours come from configurable diff.action.* tokens (default to the normal
-  // button palette).
   ".cm-diff-hunk-actions button": {
     fontFamily:
       '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, "Helvetica Neue", sans-serif',
@@ -255,12 +358,10 @@ const baseTheme = EditorView.theme({
     background: "var(--diff-action-bg)",
     color: "var(--diff-action-fg)",
   },
-  // `:not(:disabled)` to outrank the global `button:hover:not(:disabled)` rule.
   ".cm-diff-hunk-actions button:hover:not(:disabled)": {
     background: "var(--diff-action-hover-bg)",
     color: "var(--diff-action-hover-fg)",
   },
-  // The destructive discard button gets its own (danger) colours.
   ".cm-diff-hunk-actions button.cm-diff-discard": {
     background: "var(--diff-discard-bg)",
     color: "var(--diff-discard-fg)",
@@ -274,12 +375,12 @@ const baseTheme = EditorView.theme({
 const readOnly = [EditorState.readOnly.of(true), EditorView.editable.of(false)];
 
 // ACTION PARITY INVARIANT: the inline and split views must offer the SAME hunk
-// actions. Both wire their per-hunk capabilities through the two shared helpers
-// below — `hunkActionWidget` (header buttons) and `contextMenuExtension`
-// (right-click menu) — and both mount functions take the same
-// (actions, onAction, onHunkContextMenu) parameters. Any NEW hunk-level
-// capability must be added via a shared helper and applied in BOTH
-// mountInline and mountSplit; never wire one view only.
+// and per-line actions. Both wire their capabilities through the shared helpers
+// below — `hunkActionWidget` (header buttons), `lineLeadWidget` (per-line column)
+// and `contextMenuExtension` (right-click menu) — and both mount functions take
+// the same (actions, onAction, onContextMenu, lineActionOp, onLineAction)
+// parameters. Any NEW hunk/line capability must be added via a shared helper and
+// applied in BOTH mountInline and mountSplit; never wire one view only.
 
 /** The hunk-action button widget for a header row, or undefined when N/A. */
 function hunkActionWidget(
@@ -292,10 +393,31 @@ function hunkActionWidget(
   return () => new ActionWidget(hunkIndex, actions, onAction);
 }
 
-/** A `contextmenu` handler that maps the clicked position to its row's hunk. */
+/** The leading per-line action column for a row, or undefined (no column). */
+function lineLeadWidget(
+  kind: string,
+  hunkIndex: number,
+  lineIndex: number,
+  lineActionOp: LineActionOp,
+  onLineAction?: (hunkIndex: number, lineIndex: number, action: HunkAction) => void
+): (() => WidgetType) | undefined {
+  if (!lineActionOp || kind === "Hunk") return undefined;
+  const actionable = kind === "Added" || kind === "Removed";
+  // Changed line → button; context/filler → spacer (op passed as null to spacer).
+  return () =>
+    new LineLeadWidget(
+      actionable ? lineActionOp : null,
+      hunkIndex,
+      actionable ? lineIndex : -1,
+      onLineAction
+    );
+}
+
+/** A `contextmenu` handler that maps the clicked position to its row's hunk and,
+ *  if the row is a changed line, that line's index. */
 function contextMenuExtension(
-  rows: { hunkIndex: number }[],
-  onHunkContextMenu: (hunkIndex: number, event: MouseEvent) => void
+  rows: { hunkIndex: number; lineIndex: number; kind: string }[],
+  onContextMenu: (hunkIndex: number, lineIndex: number | null, event: MouseEvent) => void
 ) {
   return EditorView.domEventHandlers({
     contextmenu(e, view) {
@@ -304,19 +426,58 @@ function contextMenuExtension(
       const row = rows[view.state.doc.lineAt(pos).number - 1];
       if (!row) return false;
       e.preventDefault();
-      onHunkContextMenu(row.hunkIndex, e);
+      const lineIndex =
+        row.lineIndex >= 0 && (row.kind === "Added" || row.kind === "Removed")
+          ? row.lineIndex
+          : null;
+      onContextMenu(row.hunkIndex, lineIndex, e);
       return true;
     },
   });
 }
 
 /** Build the inline (single, interleaved) editor. */
+// Scroll anchor carried across view recreations. We anchor on the top visible
+// *line* (not a pixel offset): after a stage/unstage the content shrinks, and a
+// pixel offset would clamp against CodeMirror's estimated height and jump —
+// whereas re-scrolling the same line to the top via the editor's own
+// scrollIntoView is measurement-accurate and keeps the unchanged region put.
+interface ScrollAnchor {
+  /** 1-based document line shown at the top of the viewport. */
+  line: number;
+  /** Horizontal scroll offset (px). */
+  left: number;
+}
+
+/** Restore `anchor` in `view`, then keep it updated as the view scrolls.
+ *  Returns a cleanup that detaches the listener. */
+function restoreAndTrack(view: EditorView, anchor: ScrollAnchor): () => void {
+  const scroller = view.scrollDOM;
+  const lineCount = view.state.doc.lines;
+  const lineNo = Math.min(Math.max(anchor.line, 1), lineCount);
+  view.dispatch({
+    effects: EditorView.scrollIntoView(view.state.doc.line(lineNo).from, { y: "start" }),
+  });
+  scroller.scrollLeft = anchor.left;
+
+  const onScroll = () => {
+    const block = view.lineBlockAtHeight(scroller.scrollTop);
+    anchor.line = view.state.doc.lineAt(block.from).number;
+    anchor.left = scroller.scrollLeft;
+  };
+  scroller.addEventListener("scroll", onScroll);
+  return () => scroller.removeEventListener("scroll", onScroll);
+}
+
 function mountInline(
   host: HTMLElement,
   diff: TextDiff,
   actions: HunkAction[],
-  onAction?: (hunkIndex: number, action: HunkAction) => void,
-  onHunkContextMenu?: (hunkIndex: number, event: MouseEvent) => void
+  onAction: ((hunkIndex: number, action: HunkAction) => void) | undefined,
+  onContextMenu: ((hunkIndex: number, lineIndex: number | null, event: MouseEvent) => void) | undefined,
+  lineActionOp: LineActionOp,
+  onLineAction: ((hunkIndex: number, lineIndex: number, action: HunkAction) => void) | undefined,
+  anchor: ScrollAnchor
 ): () => void {
   const rows = buildRows(diff);
   const doc = rows.map((r) => r.text).join("\n");
@@ -333,17 +494,22 @@ function mountInline(
         wordCls: wordClassFor(r.kind),
         segments: r.segments,
         widget: hunkActionWidget(r.hunkIndex, r.kind, actions, onAction),
+        lead: lineLeadWidget(r.kind, r.hunkIndex, r.lineIndex, lineActionOp, onLineAction),
       };
     }),
   ];
-  if (actions.length > 0 && onHunkContextMenu) {
-    extensions.push(contextMenuExtension(rows, onHunkContextMenu));
+  if (actions.length > 0 && onContextMenu) {
+    extensions.push(contextMenuExtension(rows, onContextMenu));
   }
   const view = new EditorView({
     state: EditorState.create({ doc, extensions }),
     parent: host,
   });
-  return () => view.destroy();
+  const untrack = restoreAndTrack(view, anchor);
+  return () => {
+    untrack();
+    view.destroy();
+  };
 }
 
 /** Build the split (two-pane, aligned) editors and sync their scrolling. */
@@ -351,8 +517,11 @@ function mountSplit(
   host: HTMLElement,
   diff: TextDiff,
   actions: HunkAction[],
-  onAction?: (hunkIndex: number, action: HunkAction) => void,
-  onHunkContextMenu?: (hunkIndex: number, event: MouseEvent) => void
+  onAction: ((hunkIndex: number, action: HunkAction) => void) | undefined,
+  onContextMenu: ((hunkIndex: number, lineIndex: number | null, event: MouseEvent) => void) | undefined,
+  lineActionOp: LineActionOp,
+  onLineAction: ((hunkIndex: number, lineIndex: number, action: HunkAction) => void) | undefined,
+  anchor: ScrollAnchor
 ): () => void {
   const { left, right } = buildSplitRows(diff);
 
@@ -381,15 +550,20 @@ function mountSplit(
       decorationField((i) => {
         const r = rows[i];
         if (!r) return null;
-        const widget = withActions
-          ? hunkActionWidget(r.hunkIndex, r.kind, actions, onAction)
-          : undefined;
-        return { cls: SPLIT_CLASS[r.kind], wordCls: wordClassFor(r.kind), segments: r.segments, widget };
+        return {
+          cls: SPLIT_CLASS[r.kind],
+          wordCls: wordClassFor(r.kind),
+          segments: r.segments,
+          widget: withActions
+            ? hunkActionWidget(r.hunkIndex, r.kind, actions, onAction)
+            : undefined,
+          lead: lineLeadWidget(r.kind, r.hunkIndex, r.lineIndex, lineActionOp, onLineAction),
+        };
       }),
     ];
-    // Right-click → hunk menu works from either pane.
-    if (actions.length > 0 && onHunkContextMenu) {
-      extensions.push(contextMenuExtension(rows, onHunkContextMenu));
+    // Right-click → menu works from either pane.
+    if (actions.length > 0 && onContextMenu) {
+      extensions.push(contextMenuExtension(rows, onContextMenu));
     }
     return new EditorView({
       state: EditorState.create({ doc: rows.map((r) => r.text).join("\n"), extensions }),
@@ -414,25 +588,46 @@ function mountSplit(
   leftView.scrollDOM.addEventListener("scroll", onLeft);
   rightView.scrollDOM.addEventListener("scroll", onRight);
 
+  // The panes stay scroll-synced, so anchor/track on the left; restoring it
+  // mirrors to the right via the sync listener above.
+  const untrack = restoreAndTrack(leftView, anchor);
+
   return () => {
     leftView.scrollDOM.removeEventListener("scroll", onLeft);
     rightView.scrollDOM.removeEventListener("scroll", onRight);
+    untrack();
     leftView.destroy();
     rightView.destroy();
     wrap.remove();
   };
 }
 
-export function DiffEditor({ diff, mode, actions, onAction, onHunkContextMenu }: DiffEditorProps) {
+export function DiffEditor({
+  diff,
+  mode,
+  actions,
+  onAction,
+  onContextMenu,
+  lineActionOp,
+  onLineAction,
+  scrollResetKey,
+}: DiffEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  // Scroll anchor carried across view recreations (e.g. after a stage/unstage
+  // refetch). Reset to the top when the shown file changes.
+  const anchorRef = useRef<ScrollAnchor>({ line: 1, left: 0 });
+  useEffect(() => {
+    anchorRef.current = { line: 1, left: 0 };
+  }, [scrollResetKey]);
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    const anchor = anchorRef.current;
     return mode === "split"
-      ? mountSplit(host, diff, actions, onAction, onHunkContextMenu)
-      : mountInline(host, diff, actions, onAction, onHunkContextMenu);
-  }, [diff, mode, actions, onAction, onHunkContextMenu]);
+      ? mountSplit(host, diff, actions, onAction, onContextMenu, lineActionOp, onLineAction, anchor)
+      : mountInline(host, diff, actions, onAction, onContextMenu, lineActionOp, onLineAction, anchor);
+  }, [diff, mode, actions, onAction, onContextMenu, lineActionOp, onLineAction]);
 
   return <div ref={hostRef} style={{ height: "100%", overflow: "auto" }} />;
 }
