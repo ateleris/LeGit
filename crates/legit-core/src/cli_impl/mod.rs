@@ -110,7 +110,7 @@ impl GitCliBackend {
                 args.push(old.clone());
             }
         }
-        args.push(path_str);
+        args.push(path_str.clone());
 
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let output = runner
@@ -123,7 +123,57 @@ impl GitCliBackend {
                 stderr: output.stderr,
             });
         }
+        // Untracked files don't appear in `git diff` at all (empty output), so a
+        // working-tree diff of one would read as "no changes". Show the whole
+        // file as added by diffing it against the empty side instead.
+        if output.stdout.trim().is_empty()
+            && matches!(source, DiffSource::WorkingUnstaged)
+            && self.is_untracked(&runner, &path_str).await?
+        {
+            return self.diff_no_index(&runner, &path_str, context).await;
+        }
         Ok(output.stdout)
+    }
+
+    /// True when `path` is not tracked by git (so `git diff` shows nothing).
+    async fn is_untracked(&self, runner: &GitRunner, path: &str) -> Result<bool, GitError> {
+        let out = runner
+            .run(&["ls-files", "-z", "--", path])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        Ok(out.stdout.is_empty())
+    }
+
+    /// Diff an untracked file against the empty side (all lines added).
+    /// `git diff --no-index` exits 1 when the inputs differ — success for us.
+    async fn diff_no_index(
+        &self,
+        runner: &GitRunner,
+        path: &str,
+        context: u32,
+    ) -> Result<String, GitError> {
+        let unified = format!("-U{context}");
+        let args = [
+            "diff",
+            "--no-index",
+            "--no-color",
+            "--no-ext-diff",
+            unified.as_str(),
+            "--",
+            "/dev/null",
+            path,
+        ];
+        let out = runner
+            .run(&args)
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        match out.exit_code {
+            Some(0) | Some(1) => Ok(out.stdout),
+            _ => Err(GitError::CommandFailed {
+                exit_code: out.exit_code.unwrap_or(-1),
+                stderr: out.stderr,
+            }),
+        }
     }
 
     /// Resolve a commit's first parent for diffing, falling back to git's

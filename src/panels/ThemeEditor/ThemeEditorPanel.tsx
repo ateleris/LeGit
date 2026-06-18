@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { formatAppError } from "../../lib/types";
 import { useThemeStore } from "../../store/themes";
 import { contrastRatio, wcagBadge } from "../../theme/contrast";
-import { CONTRAST_PAIRS, PALETTE_CONTRACT, TOKEN_CONTRACT } from "../../theme/tokens";
+import { CONTRAST_PAIRS, TOKEN_CONTRACT } from "../../theme/tokens";
 import { validateTheme } from "../../theme/validate";
 import type { ThemeDocument } from "../../lib/types";
 
@@ -70,9 +70,12 @@ export function ThemeEditorPanel() {
   };
 
   const removePaletteEntry = (name: string) => {
-    if (!draft) startEditing();
     const current = (draft ?? activeDoc)!;
-    const palette = { ...current.palette };
+    // Guard: never remove a palette entry a token still references (it would
+    // leave the binding dangling). The UI also disables the button.
+    if (Object.values(current.tokens).includes(name)) return;
+    if (!draft) startEditing();
+    const palette = { ...(draft ?? activeDoc)!.palette };
     delete palette[name];
     updateDraftPalette(palette);
   };
@@ -276,7 +279,7 @@ export function ThemeEditorPanel() {
         <SectionTitle>Palette</SectionTitle>
         <PaletteEditor
           palette={working.palette}
-          contractNames={new Set(PALETTE_CONTRACT.map((p) => p.name))}
+          usedNames={new Set(Object.values(working.tokens))}
           disabled={!editing}
           onChange={setPaletteValue}
           onRename={renamePaletteEntry}
@@ -340,7 +343,8 @@ export function ThemeEditorPanel() {
 
 interface PaletteEditorProps {
   palette: Record<string, string>;
-  contractNames: Set<string>;
+  /** Palette entries currently referenced by a token (not removable). */
+  usedNames: Set<string>;
   disabled: boolean;
   onChange: (name: string, value: string) => void;
   onRename: (oldName: string, newName: string) => void;
@@ -356,7 +360,7 @@ function PaletteEditor(p: PaletteEditorProps) {
           key={name}
           name={name}
           value={value}
-          contract={p.contractNames.has(name)}
+          inUse={p.usedNames.has(name)}
           disabled={p.disabled}
           onChange={p.onChange}
           onRename={p.onRename}
@@ -373,7 +377,7 @@ function PaletteEditor(p: PaletteEditorProps) {
 interface PaletteRowProps {
   name: string;
   value: string;
-  contract: boolean;
+  inUse: boolean;
   disabled: boolean;
   onChange: (name: string, value: string) => void;
   onRename: (oldName: string, newName: string) => void;
@@ -413,7 +417,8 @@ function PaletteRow(p: PaletteRowProps) {
       <input
         className="palette-row__name"
         value={rename}
-        disabled={p.disabled || p.contract}
+        disabled={p.disabled}
+        title="Rename — token bindings update automatically"
         onChange={(e) => setRename(e.target.value)}
         onBlur={() => {
           if (rename !== p.name && rename.trim().length > 0) p.onRename(p.name, rename.trim());
@@ -436,8 +441,8 @@ function PaletteRow(p: PaletteRowProps) {
       />
       <button
         className="palette-row__delete"
-        disabled={p.disabled || p.contract}
-        title={p.contract ? "Required palette entry — cannot remove" : "Remove palette colour"}
+        disabled={p.disabled || p.inUse}
+        title={p.inUse ? "In use by a token — cannot remove" : "Remove palette colour"}
         aria-label="Remove palette colour"
         onClick={() => p.onRemove(p.name)}
       >
