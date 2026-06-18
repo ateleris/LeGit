@@ -26,6 +26,7 @@ pub fn run() {
         commands::list_repos,
         commands::recent_repos,
         commands::restore_open_repos,
+        commands::set_open_repos_order,
         commands::set_active_repo,
         commands::set_watcher_enabled,
         commands::console_exec,

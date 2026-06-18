@@ -37,6 +37,7 @@
   --panel-header-bg: var(--palette-panel-bg);
   --panel-header-fg: var(--palette-main-fg);
   --progress-bar-bg: var(--palette-accent);
+  --tab-strip-bg: var(--palette-panel-bg);
   --tab-bg: var(--palette-panel-bg);
   --tab-fg: var(--palette-subtle-fg);
   --tab-active-bg: var(--palette-accent);

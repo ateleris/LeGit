@@ -46,6 +46,9 @@ export const restoreOpenRepos = () => invoke<RestoreResult>("restore_open_repos"
 export const setActiveRepo = (repoId: string | null) =>
   invoke<null>("set_active_repo", { repoId });
 
+export const setOpenReposOrder = (repoIds: string[]) =>
+  invoke<null>("set_open_repos_order", { repoIds });
+
 export const setWatcherEnabled = (enabled: boolean) =>
   invoke<null>("set_watcher_enabled", { enabled });
 

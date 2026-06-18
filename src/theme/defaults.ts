@@ -66,6 +66,7 @@ export const DEFAULT_THEME: ThemeDocument = {
     "panel.header.bg": "panel-bg",
     "panel.header.fg": "main-fg",
     "progress.bar.bg": "accent",
+    "tab.strip.bg": "panel-bg",
     "tab.bg": "panel-bg",
     "tab.fg": "subtle-fg",
     "tab.active.bg": "accent",

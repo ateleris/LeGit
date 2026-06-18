@@ -5,6 +5,7 @@ import {
   openRepo as openRepoCmd,
   restoreOpenRepos,
   setActiveRepo as setActiveRepoCmd,
+  setOpenReposOrder as setOpenReposOrderCmd,
   getRepoSettings as getRepoSettingsCmd,
   updateRepoSettings as updateRepoSettingsCmd,
 } from "../lib/commands";
@@ -24,6 +25,8 @@ interface RepoStore {
   openRepo: (path: string) => Promise<RepoSummary>;
   closeRepo: (id: RepoId) => Promise<void>;
   setActive: (id: RepoId | null) => void;
+  /** Reorder the open-repo tabs to `orderedIds` and persist the order. */
+  reorderRepos: (orderedIds: RepoId[]) => void;
 
   /** Fetch and cache repo settings for the given repo. */
   loadRepoSettings: (id: RepoId) => Promise<void>;
@@ -62,15 +65,47 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
 
   async refresh() {
     const open = await listRepos();
-    set((s) => ({
-      openRepos: open,
-      // Keep active id if still present; otherwise pick the first repo.
-      activeRepoId:
-        s.activeRepoId && open.some((r) => r.id === s.activeRepoId)
-          ? s.activeRepoId
-          : open[0]?.id ?? null,
-      initialized: true,
-    }));
+    set((s) => {
+      // `listRepos` returns name-sorted; preserve the user's current tab order
+      // for repos that remain and append any newly-opened ones at the end.
+      const present = new Map(open.map((r) => [r.id, r] as const));
+      const ordered: RepoSummary[] = [];
+      for (const r of s.openRepos) {
+        const cur = present.get(r.id);
+        if (cur) {
+          ordered.push(cur);
+          present.delete(r.id);
+        }
+      }
+      for (const r of open) if (present.has(r.id)) ordered.push(r);
+      return {
+        openRepos: ordered,
+        // Keep active id if still present; otherwise pick the first repo.
+        activeRepoId:
+          s.activeRepoId && ordered.some((r) => r.id === s.activeRepoId)
+            ? s.activeRepoId
+            : ordered[0]?.id ?? null,
+        initialized: true,
+      };
+    });
+  },
+
+  reorderRepos(orderedIds) {
+    set((s) => {
+      const byId = new Map(s.openRepos.map((r) => [r.id, r] as const));
+      const next: RepoSummary[] = [];
+      for (const id of orderedIds) {
+        const r = byId.get(id);
+        if (r) {
+          next.push(r);
+          byId.delete(id);
+        }
+      }
+      // Safety: keep any repo not named in `orderedIds`.
+      for (const r of s.openRepos) if (byId.has(r.id)) next.push(r);
+      return { openRepos: next };
+    });
+    setOpenReposOrderCmd(orderedIds).catch((e) => console.warn("persist repo order failed", e));
   },
 
   async openRepo(path: string) {

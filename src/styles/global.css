@@ -246,7 +246,7 @@ button.legit-region-divider__mode:hover {
   display: flex;
   align-items: stretch;
   border-bottom: 1px solid var(--tab-border);
-  background: var(--tab-bg);
+  background: var(--tab-strip-bg);
   /* Repository tab text inherits the scaling body font size; the row height
      scales with it too (32px at the default 12px base) so it never clips. */
   font-size: var(--fz-lg);
@@ -267,7 +267,7 @@ button.legit-region-divider__mode:hover {
   gap: 6px;
   padding: 0 6px;
   border-left: 1px solid var(--panel-border);
-  background: var(--tab-bg);
+  background: var(--tab-strip-bg);
 }
 .legit-tabs__icon {
   background: transparent;
@@ -291,6 +291,7 @@ button.legit-region-divider__mode:hover {
   max-width: 220px;
   min-width: 80px;
   color: var(--tab-fg);
+  background: var(--tab-bg);
   border-right: 1px solid var(--tab-border);
   cursor: pointer;
   user-select: none;

@@ -330,6 +330,36 @@ pub async fn restore_open_repos(
     })
 }
 
+/// Persist the repository tab order: reorder `currently_open` (paths) to match
+/// the given repo-id order. Ids that aren't open are ignored; any open repo
+/// missing from the list is kept at the end. Drives tab order on restore.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_open_repos_order(
+    state: tauri::State<'_, AppState>,
+    repo_ids: Vec<String>,
+) -> Result<(), AppError> {
+    let ordered_paths: Vec<String> = {
+        let repos = state.repos.read().await;
+        repo_ids
+            .iter()
+            .filter_map(|id| repos.get(id).map(|s| s.summary().path))
+            .collect()
+    };
+    {
+        let mut settings = state.global_settings.write().await;
+        let mut next = ordered_paths;
+        for p in &settings.currently_open {
+            if !next.contains(p) {
+                next.push(p.clone());
+            }
+        }
+        settings.currently_open = next;
+    }
+    state.persist_global_settings().await.ok();
+    Ok(())
+}
+
 /// Read the repo-scoped settings for an open repo.
 #[tauri::command]
 #[specta::specta]

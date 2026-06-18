@@ -108,6 +108,7 @@
     "tab.active.bg": "accent",
     "tab.active.fg": "accent-fg",
     "tab.bg": "panel-bg",
+    "tab.strip.bg": "panel-bg",
     "tab.border": "panel-border",
     "tab.fg": "subtle-fg",
     "warning.fg": "warning",
