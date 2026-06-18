@@ -25,6 +25,8 @@ import type {
   GitProfile,
   ProfileStatus,
   KeyDiff,
+  DiffEntry,
+  DiffSource,
 } from "./types";
 
 // --- repo ---
@@ -210,6 +212,26 @@ export const repoCommitDetails = (repoId: string, commitId: string) =>
 
 export const repoCommitFiles = (repoId: string, commitId: string) =>
   invoke<CommitFileChange[]>("repo_commit_files", { repoId, commitId });
+
+// --- diffs ---
+
+/** A file's diff from `source`, with `context` lines of surrounding context. */
+export const repoDiff = (
+  repoId: string,
+  source: DiffSource,
+  path: string,
+  oldPath: string | null,
+  context: number
+) => invoke<DiffEntry>("repo_diff", { repoId, source, path, oldPath, context });
+
+export const repoStageHunk = (repoId: string, path: string, hunkIndex: number) =>
+  invoke<null>("repo_stage_hunk", { repoId, path, hunkIndex });
+
+export const repoUnstageHunk = (repoId: string, path: string, hunkIndex: number) =>
+  invoke<null>("repo_unstage_hunk", { repoId, path, hunkIndex });
+
+export const repoDiscardHunk = (repoId: string, path: string, hunkIndex: number) =>
+  invoke<null>("repo_discard_hunk", { repoId, path, hunkIndex });
 
 // --- working-tree write operations ---
 

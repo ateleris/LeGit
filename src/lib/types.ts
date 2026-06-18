@@ -276,6 +276,66 @@ export interface CommitFileChange {
   binary: boolean;
 }
 
+// --- diffs (mirror legit-core `Diff*` types; see bindings.ts) ---
+
+export type DiffLineKind = "Context" | "Added" | "Removed";
+
+export interface DiffLine {
+  kind: DiffLineKind;
+  content: string;
+}
+
+export interface DiffHunk {
+  old_start: number;
+  old_lines: number;
+  new_start: number;
+  new_lines: number;
+  /** The raw `@@ -.. +.. @@ <section>` header line, kept verbatim. */
+  header: string;
+  lines: DiffLine[];
+}
+
+export interface TextDiff {
+  old_path: string | null;
+  new_path: string | null;
+  hunks: DiffHunk[];
+}
+
+export interface BinaryDiff {
+  old_path: string | null;
+  new_path: string | null;
+  old_size: number | null;
+  new_size: number | null;
+}
+
+export interface SubmoduleChange {
+  path: string;
+  old_sha: string | null;
+  new_sha: string | null;
+}
+
+export type DiffEntry =
+  | { Text: TextDiff }
+  | { Binary: BinaryDiff }
+  | { Submodule: SubmoduleChange };
+
+/** Which two sides the Diff panel compares for a file (matches `DiffSource`). */
+export type DiffSource =
+  | { kind: "working_unstaged" }
+  | { kind: "working_staged" }
+  | { kind: "commit"; commit_id: string };
+
+/** Summon payload delivered to the Diff panel when a file is selected. */
+export interface DiffRequest {
+  repoId: string;
+  path: string;
+  source: DiffSource;
+  /** Change kind, when known — used to short-circuit renames (no content diff). */
+  change?: FileState;
+  /** Original path for a rename/copy, when known. */
+  oldPath?: string | null;
+}
+
 export type RefDecoration =
   | { type: "head" }
   | { type: "headOf"; value: string }

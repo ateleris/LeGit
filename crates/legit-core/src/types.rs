@@ -241,6 +241,29 @@ pub struct Diff {
     pub entries: Vec<DiffEntry>,
 }
 
+/// What two sides the Diff panel is comparing for a single file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DiffSource {
+    /// Index vs working tree (`git diff`).
+    WorkingUnstaged,
+    /// HEAD vs index (`git diff --cached`).
+    WorkingStaged,
+    /// A commit vs its first parent (`git diff <parent> <sha>`).
+    Commit { commit_id: CommitId },
+}
+
+/// A working-tree operation applied to a single hunk (or line subset).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HunkOp {
+    /// Add the hunk to the index (`git apply --cached`).
+    Stage,
+    /// Remove the hunk from the index (`git apply --cached -R`).
+    Unstage,
+    /// Drop the hunk from the working tree (`git apply -R`).
+    Discard,
+}
+
 /// A local or remote branch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct Branch {

@@ -8,11 +8,11 @@
 
 use crate::error::GitError;
 use crate::types::{
-    Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, Diff, FileStatus,
-    LogOptions, SubmoduleInfo,
+    Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, Diff, DiffEntry,
+    DiffSource, FileStatus, HunkOp, LogOptions, SubmoduleInfo,
 };
 use async_trait::async_trait;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[async_trait]
 pub trait GitBackend: Send + Sync {
@@ -29,6 +29,31 @@ pub trait GitBackend: Send + Sync {
     async fn branches(&self) -> Result<Vec<Branch>, GitError>;
 
     async fn diff(&self, from: &CommitId, to: &CommitId) -> Result<Diff, GitError>;
+
+    /// The diff for a single file from one of the comparison sources, with
+    /// `context` lines of surrounding context (small for chunked view, very
+    /// large for whole-file view). Backs the Diff panel.
+    /// `old_path` is the original path for a rename/copy (else `None`), so the
+    /// diff pairs both sides: real content hunks for a modified rename, an empty
+    /// diff for a pure rename.
+    async fn file_diff(
+        &self,
+        source: &DiffSource,
+        path: &Path,
+        old_path: Option<&Path>,
+        context: u32,
+    ) -> Result<DiffEntry, GitError>;
+
+    /// Apply a single hunk of a file's working-tree diff to the index or
+    /// working tree (stage / unstage / discard). `hunk_index` indexes the hunks
+    /// of the relevant source diff (unstaged for stage/discard, staged for
+    /// unstage), in the order `file_diff` returns them.
+    async fn apply_hunk(
+        &self,
+        path: &Path,
+        hunk_index: usize,
+        op: HunkOp,
+    ) -> Result<(), GitError>;
 
     async fn commit(&self, opts: CommitOptions) -> Result<CommitId, GitError>;
 

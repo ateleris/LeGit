@@ -26,6 +26,12 @@ interface SummonStore {
   captureFallback: (panelId: string, pos: FallbackPosition) => void;
   summon: (targetId: string, payload?: unknown) => void;
   /**
+   * Deliver `payload` to a panel ONLY if it is currently mounted — never opens
+   * or queues. Used to push state into an already-open panel (e.g. clearing the
+   * Diff panel when the file selection is reset) without summoning it into view.
+   */
+  notifyIfOpen: (targetId: string, payload?: unknown) => void;
+  /**
    * Show `showId` in place of `hideId`: if `showId` isn't open, it opens in the
    * hidden sibling's group (taking over its spot); then `hideId` is closed. Used
    * so Changed Files and Working Changes share one side-region slot, one at a time.
@@ -67,6 +73,11 @@ export const useSummonStore = create<SummonStore>((set, get) => ({
 
   captureFallback(panelId, pos) {
     set((s) => ({ fallbackPositions: { ...s.fallbackPositions, [panelId]: pos } }));
+  },
+
+  notifyIfOpen(targetId, payload) {
+    const cb = get().callbacks[targetId];
+    if (cb) cb(payload);
   },
 
   summon(targetId, payload) {

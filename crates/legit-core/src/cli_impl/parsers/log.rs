@@ -7,9 +7,7 @@
 //! not produced by any standard tool.
 
 use crate::error::ParseError;
-use crate::types::{
-    Commit, CommitId, RefDecoration, Signature, SignatureStatus, SignatureVerification,
-};
+use crate::types::{Commit, CommitId, RefDecoration, Signature};
 use chrono::DateTime;
 
 /// Format string to pass to `git log --format=`.
@@ -23,20 +21,21 @@ use chrono::DateTime;
 ///   6: committer email (%ce)
 ///   7: committer date, strict ISO 8601 (%cI)
 ///   8: decoration (%d) — e.g. " (HEAD -> refs/heads/main, refs/tags/v1.0)"
-///   9: signature status (%G?) — single char; see `parse_sig_status`
-///  10: subject line (%s)
-///  11: body (%b) — may contain newlines; captured by splitn (must stay last)
+///   9: subject line (%s)
+///  10: body (%b) — may contain newlines; captured by splitn (must stay last)
 /// Record terminator: ASCII RS (0x1E) via %x1e.
 ///
-/// `%G?` makes git verify each commit's signature during the log walk. This is
-/// a single git process (far cheaper than per-commit `verify-commit`) and only
-/// yields a status char here; full signer/key detail still comes from
-/// `commit_details`.
+/// NOTE: we deliberately omit `%G?` (per-commit signature status). That field
+/// makes git verify EVERY commit's signature during the walk — spawning the
+/// gpg/ssh verifier once per signed commit — which is very slow on large or
+/// heavily-signed histories (seconds to tens of seconds). The commit list shows
+/// no per-row signature; full verification is done on demand in `commit_details`
+/// (`git verify-commit`).
 pub const LOG_FORMAT: &str =
-    "%H%n%P%n%an%n%ae%n%aI%n%cn%n%ce%n%cI%n%d%n%G?%n%s%n%b%x1e";
+    "%H%n%P%n%an%n%ae%n%aI%n%cn%n%ce%n%cI%n%d%n%s%n%b%x1e";
 
 const RECORD_SEP: char = '\x1e';
-const FIELD_COUNT: usize = 12;
+const FIELD_COUNT: usize = 11;
 
 /// Parse the stdout of `git log --format=LOG_FORMAT` into `Vec<Commit>`.
 ///
@@ -73,10 +72,9 @@ fn parse_record(record: &str) -> Result<Commit, ParseError> {
     let committer_email = parts[6].trim();
     let committer_iso = parts[7].trim();
     let decoration_raw = parts[8];
-    let sig_field = parts[9];
-    let subject = parts[10].trim_end_matches('\n').to_string();
-    // Body: everything after the 11th newline; strip trailing newline git appends.
-    let body = parts[11].trim_end_matches('\n').to_string();
+    let subject = parts[9].trim_end_matches('\n').to_string();
+    // Body: everything after the 10th newline; strip trailing newline git appends.
+    let body = parts[10].trim_end_matches('\n').to_string();
 
     let (author_ts, author_tz) = parse_iso_timestamp(author_iso)?;
     let (committer_ts, committer_tz) = parse_iso_timestamp(committer_iso)?;
@@ -115,31 +113,11 @@ fn parse_record(record: &str) -> Result<Commit, ParseError> {
         },
         message,
         timestamp: author_ts,
-        signature: parse_sig_status(sig_field),
+        // The commit list does not verify signatures (too slow per-row); the
+        // signature is populated on demand by `commit_details`.
+        signature: None,
         decorations,
     })
-}
-
-/// Map the single-char `%G?` signature-status field to a `SignatureVerification`.
-///
-/// `%G?` values (git docs): `G` good, `B` bad, `U` good w/ unknown validity,
-/// `X` good but expired, `Y` good but key expired, `R` good but key revoked,
-/// `E` cannot be checked (e.g. missing key), `N` no signature.
-///
-/// Only `status` is populated here; `signer`/`key_id`/`raw` require the fuller
-/// `git verify-commit` parse done in `commit_details`. `N` (and anything
-/// unrecognized) yields `None` — an unsigned commit.
-fn parse_sig_status(field: &str) -> Option<SignatureVerification> {
-    let status = match field.trim() {
-        "G" => SignatureStatus::Good,
-        "B" => SignatureStatus::BadSignature,
-        "U" => SignatureStatus::Untrusted,
-        "X" | "Y" => SignatureStatus::Expired,
-        "R" => SignatureStatus::Revoked,
-        "E" => SignatureStatus::UnknownKey,
-        _ => return None,
-    };
-    Some(SignatureVerification { status, signer: None, key_id: None, raw: None })
 }
 
 /// Parse a strict ISO 8601 timestamp (e.g. `2023-01-15T10:30:00+02:00`) into
@@ -201,18 +179,9 @@ fn classify_ref(part: &str) -> RefDecoration {
 mod tests {
     use super::*;
 
-    /// Build a record from the 11 logical fields (H,P,an,ae,aI,cn,ce,cI,d,s,b),
-    /// inserting an unsigned (`N`) `%G?` status before the subject so existing
-    /// tests need not carry a signature field.
+    /// Build a record from the 11 fields (H,P,an,ae,aI,cn,ce,cI,d,s,b).
     fn single(fields: [&str; 11]) -> String {
-        let [h, p, an, ae, ai, cn, ce, ci, d, s, b] = fields;
-        [h, p, an, ae, ai, cn, ce, ci, d, "N", s, b].join("\n") + "\x1e"
-    }
-
-    /// Like `single` but with an explicit `%G?` status char.
-    fn single_sig(fields: [&str; 11], sig: &str) -> String {
-        let [h, p, an, ae, ai, cn, ce, ci, d, s, b] = fields;
-        [h, p, an, ae, ai, cn, ce, ci, d, sig, s, b].join("\n") + "\x1e"
+        fields.join("\n") + "\x1e"
     }
 
     const SHA1: &str = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
@@ -239,52 +208,8 @@ mod tests {
         assert_eq!(c.author.email, "alice@example.com");
         assert_eq!(c.author.tz_offset_minutes, 0);
         assert_eq!(c.message, "Initial commit");
-        // `N` status → unsigned.
+        // The commit list never carries a signature (verified on demand instead).
         assert!(c.signature.is_none());
-    }
-
-    #[test]
-    fn good_signature_status() {
-        let raw = single_sig(
-            [SHA1, "", "Alice", "a@b.com", TS_UTC, "Alice", "a@b.com", TS_UTC, "", "Signed", ""],
-            "G",
-        );
-        let commits = parse_log(&raw).unwrap();
-        let sig = commits[0].signature.as_ref().expect("signed");
-        assert_eq!(sig.status, SignatureStatus::Good);
-        // Log only carries the status; detail comes from commit_details.
-        assert!(sig.signer.is_none());
-        assert!(sig.key_id.is_none());
-    }
-
-    #[test]
-    fn signature_status_variants() {
-        let cases = [
-            ("B", SignatureStatus::BadSignature),
-            ("U", SignatureStatus::Untrusted),
-            ("X", SignatureStatus::Expired),
-            ("Y", SignatureStatus::Expired),
-            ("R", SignatureStatus::Revoked),
-            ("E", SignatureStatus::UnknownKey),
-        ];
-        for (ch, expected) in cases {
-            let raw = single_sig(
-                [SHA1, "", "A", "a@b.com", TS_UTC, "A", "a@b.com", TS_UTC, "", "s", ""],
-                ch,
-            );
-            let commits = parse_log(&raw).unwrap();
-            assert_eq!(commits[0].signature.as_ref().unwrap().status, expected, "char {ch}");
-        }
-    }
-
-    #[test]
-    fn no_signature_status_is_none() {
-        let raw = single_sig(
-            [SHA1, "", "A", "a@b.com", TS_UTC, "A", "a@b.com", TS_UTC, "", "s", ""],
-            "N",
-        );
-        let commits = parse_log(&raw).unwrap();
-        assert!(commits[0].signature.is_none());
     }
 
     #[test]

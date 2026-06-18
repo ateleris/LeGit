@@ -5,7 +5,7 @@ import { useSettingsStore } from "../../store/settings";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { repoCommitDetails, repoCommitFiles } from "../../lib/commands";
-import type { CommitDetails, CommitFileChange, CommitId } from "../../lib/types";
+import type { CommitDetails, CommitFileChange, CommitId, DiffRequest } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { FileTree } from "../shared/FileTree/FileTree";
@@ -47,6 +47,9 @@ export function ChangedFilesPanel() {
     if (typeof id === "string") {
       setSelectedId(id as CommitId);
       setSelectedPath(null);
+      // No file is selected for the new commit yet — clear the Diff panel
+      // (only if it's open). The diff is always tied to a file selection.
+      useSummonStore.getState().notifyIfOpen("diff", null);
     }
   }, []);
   useSummonTarget("changed-files", onReceive);
@@ -89,13 +92,13 @@ export function ChangedFilesPanel() {
     (file: FileTreeEntry) => {
       setSelectedPath(file.path);
       if (!repo || !selectedId) return;
-      // No-op until the Diff panel exists ("diff" isn't a registered panel yet).
       useSummonStore.getState().summon("diff", {
         repoId: repo.id,
-        commitId: selectedId,
         path: file.path,
+        source: { kind: "commit", commit_id: selectedId },
+        change: file.change,
         oldPath: file.old_path,
-      });
+      } satisfies DiffRequest);
     },
     [repo, selectedId],
   );

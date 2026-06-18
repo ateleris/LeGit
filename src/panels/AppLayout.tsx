@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useSettingsStore, UI_FONT_SIZE_DEFAULT } from "../store/settings";
+import { useRepoStore } from "../store/repos";
+import { useSummonStore } from "../store/summon";
 import { useRepoChangeListener } from "../lib/useRepoChangeListener";
 import type { RegionPlacement } from "../lib/types";
 import { GlobalDock } from "./GlobalDock";
@@ -44,6 +46,23 @@ export function AppLayout() {
 
   // Live refresh from the backend filesystem watcher (primary refresh path).
   useRepoChangeListener();
+
+  // When the user switches to a different repository, surface the Commits
+  // panel. Other panels react on their own: query-driven panels (Commits,
+  // Working Changes) refetch via their repo-keyed query keys, and selection
+  // panels (Changed Files, Commit Details, Diff) clear their stale state.
+  const activeRepoId = useRepoStore((s) => s.activeRepoId);
+  const prevActiveRepo = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      prevActiveRepo.current !== null &&
+      activeRepoId &&
+      activeRepoId !== prevActiveRepo.current
+    ) {
+      useSummonStore.getState().summon("log");
+    }
+    prevActiveRepo.current = activeRepoId;
+  }, [activeRepoId]);
 
   const [placement, setPlacementState] = useState<RegionPlacement>("top");
   const [collapsed, setCollapsed] = useState(false);

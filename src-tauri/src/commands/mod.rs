@@ -1,5 +1,6 @@
 pub mod config_util;
 pub mod console;
+pub mod diff;
 pub mod git_setup;
 pub mod line_endings;
 pub mod log;
@@ -10,6 +11,7 @@ pub mod signing;
 pub mod working;
 
 pub use console::*;
+pub use diff::*;
 pub use git_setup::*;
 pub use line_endings::*;
 pub use log::*;

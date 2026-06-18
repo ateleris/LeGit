@@ -24,6 +24,9 @@
   --palette-input-bg: #2d2d30;
   --palette-console-bg: #1a1a1a;
   --palette-stderr-fg: #e58e26;
+  --palette-diff-added-line: #3498db33;
+  --palette-diff-removed-line: #e58e2633;
+  --palette-diff-hunk-header: #4a9eff24;
 
   /* Tokens */
   --app-bg: var(--palette-main-bg);
@@ -71,10 +74,25 @@
   --error-fg: var(--palette-danger);
   --success-fg: var(--palette-success);
   --warning-fg: var(--palette-warning);
-  --diff-added-bg: var(--palette-success);
+  --diff-added-bg: var(--palette-diff-added-line);
   --diff-added-fg: var(--palette-main-fg);
-  --diff-removed-bg: var(--palette-danger);
+  --diff-added-word-bg: var(--palette-success);
+  --diff-removed-bg: var(--palette-diff-removed-line);
   --diff-removed-fg: var(--palette-main-fg);
+  --diff-removed-word-bg: var(--palette-danger);
+  --diff-gutter-bg: var(--palette-panel-bg);
+  --diff-gutter-fg: var(--palette-subtle-fg);
+  --diff-hunk-header-bg: var(--palette-diff-hunk-header);
+  --diff-hunk-header-fg: var(--palette-subtle-fg);
+  --diff-line-selected-bg: var(--palette-row-selected-bg);
+  --diff-action-bg: var(--palette-panel-bg);
+  --diff-action-fg: var(--palette-main-fg);
+  --diff-action-hover-bg: var(--palette-input-bg);
+  --diff-action-hover-fg: var(--palette-main-fg);
+  --diff-discard-bg: var(--palette-danger);
+  --diff-discard-fg: var(--palette-main-bg);
+  --diff-discard-hover-bg: var(--palette-danger-hover);
+  --diff-discard-hover-fg: var(--palette-main-bg);
   --branch-current-fg: var(--palette-accent);
   --commit-signed-indicator: var(--palette-success);
 }

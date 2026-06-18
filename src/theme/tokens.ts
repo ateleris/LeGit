@@ -65,6 +65,11 @@ export const PALETTE_CONTRACT: readonly PaletteDescriptor[] = [
   { name: "status-modified", documentation: "Modified-file indicator." },
   { name: "status-deleted", documentation: "Deleted-file indicator (icon and −N count)." },
   { name: "status-renamed", documentation: "Renamed/copied-file indicator." },
+  // Diff line-background tints (lighter than the full success/danger used for
+  // changed characters). Use an alpha so the line reads as a wash.
+  { name: "diff-added-line", documentation: "Whole-line background for an added/modified diff line (light tint)." },
+  { name: "diff-removed-line", documentation: "Whole-line background for a removed/modified diff line (light tint)." },
+  { name: "diff-hunk-header", documentation: "Background band behind a diff hunk's `@@` header row." },
 ] as const;
 
 export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
@@ -123,10 +128,25 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "success.fg", group: "Text", documentation: "Success text." },
   { name: "warning.fg", group: "Text", documentation: "Warning text." },
 
-  { name: "diff.added.bg", group: "Diff", documentation: "Background for added lines." },
+  { name: "diff.added.bg", group: "Diff", documentation: "Whole-line background for added lines (light tint)." },
   { name: "diff.added.fg", group: "Diff", documentation: "Foreground for added lines." },
-  { name: "diff.removed.bg", group: "Diff", documentation: "Background for removed lines." },
+  { name: "diff.added.word.bg", group: "Diff", documentation: "Background for the changed characters within a modified added line (stronger)." },
+  { name: "diff.removed.bg", group: "Diff", documentation: "Whole-line background for removed lines (light tint)." },
   { name: "diff.removed.fg", group: "Diff", documentation: "Foreground for removed lines." },
+  { name: "diff.removed.word.bg", group: "Diff", documentation: "Background for the changed characters within a modified removed line (stronger)." },
+  { name: "diff.gutter.bg", group: "Diff", documentation: "Line-number gutter background in the Diff panel." },
+  { name: "diff.gutter.fg", group: "Diff", documentation: "Line-number gutter text in the Diff panel." },
+  { name: "diff.hunk.header.bg", group: "Diff", documentation: "Background of a hunk's `@@` header row." },
+  { name: "diff.hunk.header.fg", group: "Diff", documentation: "Text of a hunk's `@@` header row." },
+  { name: "diff.line.selected.bg", group: "Diff", documentation: "Background of lines selected for line-level staging." },
+  { name: "diff.action.bg", group: "Diff", documentation: "Background of the hunk stage/unstage buttons." },
+  { name: "diff.action.fg", group: "Diff", documentation: "Text of the hunk stage/unstage buttons." },
+  { name: "diff.action.hover.bg", group: "Diff", documentation: "Background of the hunk stage/unstage buttons on hover." },
+  { name: "diff.action.hover.fg", group: "Diff", documentation: "Text of the hunk stage/unstage buttons on hover." },
+  { name: "diff.discard.bg", group: "Diff", documentation: "Background of the hunk discard button (destructive)." },
+  { name: "diff.discard.fg", group: "Diff", documentation: "Text of the hunk discard button." },
+  { name: "diff.discard.hover.bg", group: "Diff", documentation: "Background of the hunk discard button on hover." },
+  { name: "diff.discard.hover.fg", group: "Diff", documentation: "Text of the hunk discard button on hover." },
 
   { name: "branch.current.fg", group: "Refs", documentation: "Colour of the current branch label." },
   { name: "commit.signed.indicator", group: "Refs", documentation: "Signed-commit indicator colour." },

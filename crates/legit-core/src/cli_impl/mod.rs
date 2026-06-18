@@ -8,15 +8,15 @@ use crate::backend::GitBackend;
 use crate::error::GitError;
 use crate::runner::GitRunner;
 use crate::types::{
-    Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, Diff, FileState,
-    FileStatus, LogOptions, RefSelector, SignMode, SubmoduleInfo,
+    Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, Diff, DiffEntry,
+    DiffSource, FileState, FileStatus, HunkOp, LogOptions, RefSelector, SignMode, SubmoduleInfo,
 };
 
 /// Git's well-known empty-tree object id, used as the "before" side when
 /// diffing a root commit (which has no parent).
 const EMPTY_TREE_OID: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 use async_trait::async_trait;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -62,6 +62,93 @@ impl GitCliBackend {
             });
         }
         Ok(())
+    }
+
+    /// Run `git diff` for a single file from `source` and return its raw stdout.
+    /// `context` becomes `-U<context>` (whole-file view passes a very large
+    /// value). For a `Commit` source the comparison is against the commit's
+    /// first parent (the empty tree for a root commit).
+    async fn run_diff_text(
+        &self,
+        source: &DiffSource,
+        path: &Path,
+        old_path: Option<&Path>,
+        context: u32,
+    ) -> Result<String, GitError> {
+        let runner = self.runner().await;
+        let unified = format!("-U{context}");
+        let path_str = path.to_string_lossy().into_owned();
+
+        // Common flags: no color/ANSI, no external diff drivers — we need git's
+        // own deterministic unified output for the parser.
+        let mut args: Vec<String> = vec![
+            "diff".into(),
+            "--no-color".into(),
+            "--no-ext-diff".into(),
+            unified,
+        ];
+
+        match source {
+            DiffSource::WorkingUnstaged => {}
+            DiffSource::WorkingStaged => args.push("--cached".into()),
+            DiffSource::Commit { commit_id } => {
+                let from = self.first_parent(&runner, commit_id.as_str()).await?;
+                args.push(from);
+                args.push(commit_id.as_str().to_string());
+            }
+        }
+        // For a rename/copy, pass BOTH paths with rename detection so git pairs
+        // them: a modified rename yields real content hunks, a pure rename yields
+        // an empty diff.
+        let old_str = old_path.map(|p| p.to_string_lossy().into_owned());
+        if old_str.as_deref().is_some_and(|o| o != path_str) {
+            args.push("--find-renames".into());
+        }
+        args.push("--".into());
+        if let Some(old) = &old_str {
+            if *old != path_str {
+                args.push(old.clone());
+            }
+        }
+        args.push(path_str);
+
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let output = runner
+            .run(&arg_refs)
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !output.success {
+            return Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr,
+            });
+        }
+        Ok(output.stdout)
+    }
+
+    /// Resolve a commit's first parent for diffing, falling back to git's
+    /// empty-tree object for a root commit. Mirrors `commit_files`.
+    async fn first_parent(
+        &self,
+        runner: &GitRunner,
+        sha: &str,
+    ) -> Result<String, GitError> {
+        let rev = runner
+            .run(&["rev-list", "--parents", "-n", "1", sha])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !rev.success {
+            return Err(GitError::CommandFailed {
+                exit_code: rev.exit_code.unwrap_or(-1),
+                stderr: rev.stderr,
+            });
+        }
+        Ok(rev
+            .stdout
+            .split_whitespace()
+            .nth(1)
+            .unwrap_or(EMPTY_TREE_OID)
+            .to_string())
     }
 }
 
@@ -242,6 +329,62 @@ impl GitBackend for GitCliBackend {
 
     async fn diff(&self, _from: &CommitId, _to: &CommitId) -> Result<Diff, GitError> {
         Err(GitError::NotYet)
+    }
+
+    async fn file_diff(
+        &self,
+        source: &DiffSource,
+        path: &Path,
+        old_path: Option<&Path>,
+        context: u32,
+    ) -> Result<DiffEntry, GitError> {
+        let raw = self.run_diff_text(source, path, old_path, context).await?;
+        Ok(parsers::diff::parse_file_diff(&raw))
+    }
+
+    async fn apply_hunk(
+        &self,
+        path: &Path,
+        hunk_index: usize,
+        op: HunkOp,
+    ) -> Result<(), GitError> {
+        // The diff to slice the hunk from depends on the operation: staging and
+        // discarding act on the unstaged diff (index → worktree), unstaging on
+        // the staged diff (HEAD → index). Always use 3 lines of context — the
+        // panel's whole-file view doesn't change which hunk an index refers to.
+        let source = match op {
+            HunkOp::Stage | HunkOp::Discard => DiffSource::WorkingUnstaged,
+            HunkOp::Unstage => DiffSource::WorkingStaged,
+        };
+        let raw = self.run_diff_text(&source, path, None, 3).await?;
+        let patch = parsers::diff::build_hunk_patch(&raw, hunk_index).ok_or_else(|| {
+            GitError::Internal(format!(
+                "no hunk at index {hunk_index} for {}",
+                path.display()
+            ))
+        })?;
+
+        // `--recount` lets git fix up the hunk's line counts, so a single
+        // sliced hunk applies even though its `@@` header counts describe the
+        // full multi-hunk diff.
+        let args: &[&str] = match op {
+            HunkOp::Stage => &["apply", "--cached", "--recount"],
+            HunkOp::Unstage => &["apply", "--cached", "-R", "--recount"],
+            HunkOp::Discard => &["apply", "-R", "--recount"],
+        };
+
+        let runner = self.runner().await;
+        let output = runner
+            .run_with_stdin(args, &patch)
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !output.success {
+            return Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr,
+            });
+        }
+        Ok(())
     }
 
     async fn commit(&self, opts: CommitOptions) -> Result<CommitId, GitError> {

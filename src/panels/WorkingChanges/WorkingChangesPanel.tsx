@@ -4,8 +4,9 @@ import { useActiveRepo } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
 import { usePanelActiveEffect, usePanelFocusEffect } from "../PanelApiContext";
 import { repoCommit, repoDiscard, repoLog, repoStage, repoStatus, repoUnstage } from "../../lib/commands";
-import type { Commit, FileStatus } from "../../lib/types";
+import type { Commit, DiffRequest, DiffSource, FileStatus } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
+import { useSummonStore } from "../../store/summon";
 import { FileTree } from "../shared/FileTree/FileTree";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
@@ -141,6 +142,58 @@ export function WorkingChangesPanel() {
   // Explorer: right-clicking inside the current selection acts on the whole set
   // and leaves it intact; right-clicking outside it selects just that row
   // (deselecting the rest), then acts on it.
+  // Open a file's diff in the Diff panel; the source side depends on which
+  // section the row lives in.
+  const openDiff = useCallback(
+    (section: Section, path: string) => {
+      if (!repo) return;
+      const source: DiffSource =
+        section === "staged" ? { kind: "working_staged" } : { kind: "working_unstaged" };
+      const change = status.find((s) => s.path === path)?.state;
+      useSummonStore
+        .getState()
+        .summon("diff", { repoId: repo.id, path, source, change } satisfies DiffRequest);
+    },
+    [repo, status],
+  );
+
+  // Track the selection and, when exactly one file is selected, show its diff.
+  const onSelectSection = useCallback(
+    (section: Section, paths: string[]) => {
+      setSelected({ section, paths });
+      if (paths.length === 1) openDiff(section, paths[0]);
+    },
+    [openDiff],
+  );
+
+  // After a stage/unstage/discard, keep an ALREADY-OPEN diff viewer in sync with
+  // the resulting selection (without forcing it open). If a single file is
+  // selected after the op, show its diff in the new section (e.g. staging flips
+  // it from the unstaged to the staged diff). If a previously single-selected
+  // file is now gone (discarded), clear the viewer. Otherwise leave it alone.
+  const syncOpenDiff = useCallback(
+    (prev: Selection | null, next: Selection | null) => {
+      if (!repo) return;
+      const store = useSummonStore.getState();
+      if (next && next.paths.length === 1) {
+        const source: DiffSource =
+          next.section === "staged" ? { kind: "working_staged" } : { kind: "working_unstaged" };
+        const change = status.find((s) => s.path === next.paths[0])?.state;
+        store.notifyIfOpen("diff", {
+          repoId: repo.id,
+          path: next.paths[0],
+          source,
+          change,
+        } satisfies DiffRequest);
+        return;
+      }
+      if (prev && prev.paths.length === 1 && !next?.paths.includes(prev.paths[0])) {
+        store.notifyIfOpen("diff", null);
+      }
+    },
+    [repo, status],
+  );
+
   const selectForMenu = (section: Section, path: string): string[] => {
     if (selected?.section === section && selected.paths.includes(path)) return selected.paths;
     setSelected({ section, paths: [path] });
@@ -151,7 +204,9 @@ export function WorkingChangesPanel() {
     if (!repo) return;
     // Fires immediately (instant feedback) and records the time so the
     // filesystem watcher's redundant follow-up for the same action is dropped.
-    invalidateRepoDomains(queryClient, repo.id, ["status", "log", "branches"]);
+    // "diff" is included so an open Diff panel re-fetches: staging/unstaging a
+    // file here changes which hunks appear in its working-tree diff.
+    invalidateRepoDomains(queryClient, repo.id, ["status", "log", "branches", "diff"]);
   }, [repo, queryClient]);
 
   const run = useCallback(
@@ -177,17 +232,23 @@ export function WorkingChangesPanel() {
   const stage = (paths: string[]) =>
     run(async () => {
       await repoStage(repo!.id, paths);
-      setSelected((sel) => moveSelection(sel, "unstaged", "staged", paths));
+      const next = moveSelection(selected, "unstaged", "staged", paths);
+      setSelected(next);
+      syncOpenDiff(selected, next);
     });
   const unstage = (paths: string[]) =>
     run(async () => {
       await repoUnstage(repo!.id, paths);
-      setSelected((sel) => moveSelection(sel, "staged", "unstaged", paths));
+      const next = moveSelection(selected, "staged", "unstaged", paths);
+      setSelected(next);
+      syncOpenDiff(selected, next);
     });
   const doDiscard = (paths: string[]) =>
     run(async () => {
       await repoDiscard(repo!.id, paths);
-      setSelected((sel) => dropSelection(sel, paths));
+      const next = dropSelection(selected, paths);
+      setSelected(next);
+      syncOpenDiff(selected, next);
     });
   const commit = () =>
     run(async () => {
@@ -312,7 +373,7 @@ export function WorkingChangesPanel() {
               selectedPath={null}
               multiSelect
               selectedPaths={unstagedSelected}
-              onSelectionChange={(paths) => setSelected({ section: "unstaged", paths })}
+              onSelectionChange={(paths) => onSelectSection("unstaged", paths)}
               rowHeight={rowHeight}
               iconSize={iconSize}
               onContextMenu={(f, e) => {
@@ -379,7 +440,7 @@ export function WorkingChangesPanel() {
               selectedPath={null}
               multiSelect
               selectedPaths={stagedSelected}
-              onSelectionChange={(paths) => setSelected({ section: "staged", paths })}
+              onSelectionChange={(paths) => onSelectSection("staged", paths)}
               rowHeight={rowHeight}
               iconSize={iconSize}
               onContextMenu={(f, e) => {

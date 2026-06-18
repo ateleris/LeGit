@@ -210,6 +210,60 @@ impl GitRunner {
         })
     }
 
+    /// Run a one-shot `git` invocation, feeding `stdin_data` to its standard
+    /// input (used by `git apply`, which reads the patch from stdin). Readers
+    /// are spawned before the write so a large patch can't deadlock against a
+    /// child that starts emitting output before consuming all of its input.
+    pub async fn run_with_stdin(
+        &self,
+        args: &[&str],
+        stdin_data: &str,
+    ) -> Result<RunOutput, RunnerError> {
+        use tokio::io::AsyncWriteExt;
+
+        let started = Instant::now();
+        let mut cmd = self.build_command(args);
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let mut child = cmd.spawn().map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                RunnerError::GitNotFound(self.git_path.clone())
+            } else {
+                RunnerError::Spawn(e)
+            }
+        })?;
+
+        let mut stdin = child.stdin.take().expect("stdin piped");
+        let stdout = child.stdout.take().expect("stdout piped");
+        let stderr = child.stderr.take().expect("stderr piped");
+
+        let stdout_task = tokio::spawn(read_to_string(stdout));
+        let stderr_task = tokio::spawn(read_to_string(stderr));
+
+        stdin
+            .write_all(stdin_data.as_bytes())
+            .await
+            .map_err(RunnerError::Io)?;
+        // Close stdin so git sees EOF and proceeds.
+        drop(stdin);
+
+        let status = child.wait().await.map_err(RunnerError::Io)?;
+        let stdout = stdout_task.await.unwrap_or_default();
+        let stderr = stderr_task.await.unwrap_or_default();
+
+        log_invocation(args, started, status.code(), status.success(), &stderr);
+
+        Ok(RunOutput {
+            stdout,
+            stderr,
+            exit_code: status.code(),
+            success: status.success(),
+            duration_ms: started.elapsed().as_millis() as u64,
+        })
+    }
+
     /// Stream stdout/stderr line-by-line through `events_tx`.
     ///
     /// Sends `RunnerEvent::Finished` exactly once before returning.
