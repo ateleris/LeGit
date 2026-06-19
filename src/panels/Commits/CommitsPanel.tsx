@@ -15,9 +15,20 @@ import { usePanelFocusEffect } from "../PanelApiContext";
 import { useSummonStore } from "../../store/summon";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
-import { repoBranches, repoLog, repoStatus } from "../../lib/commands";
-import type { Branch, Commit, CommitId, FileStatus, Signature } from "../../lib/types";
-import { formatAppError } from "../../lib/types";
+import {
+  consoleCancel,
+  repoBranches,
+  repoFetch,
+  repoLog,
+  repoPull,
+  repoPush,
+  repoStatus,
+  repoTrackingStatus,
+} from "../../lib/commands";
+import type { Branch, Commit, CommitId, FileStatus, PushOptions, Signature, TrackingStatus } from "../../lib/types";
+import { formatAppError, gitErrorKind } from "../../lib/types";
+import { notify } from "../../store/notifications";
+import { FetchIcon, PullIcon, PushIcon, ChevronDownIcon } from "../../icons";
 import { formatRelative } from "../../lib/time";
 import { RefsCell } from "./cells/RefsCell";
 import { SignatureBadge } from "./cells/SignatureBadge";
@@ -178,7 +189,7 @@ export function CommitsPanel() {
 
   const refetch = useCallback(() => {
     if (repo) {
-      invalidateRepoDomains(queryClient, repo.id, ["log", "branches", "status"]);
+      invalidateRepoDomains(queryClient, repo.id, ["log", "branches", "status", "tracking"]);
     }
   }, [repo, queryClient]);
 
@@ -458,6 +469,11 @@ export function CommitsPanel() {
       {/* Loading indicator — thin top-edge bar, no layout shift. Refresh lives
           in the panel context menu (baseline entry). */}
       <PanelLoadingBar active={isFetching} />
+
+      {/* Remote sync toolbar — fetch / pull / push + ahead-behind for the
+          current branch. Self-contained; reuses the already-fetched branches. */}
+      <RemoteSyncToolbar repoId={repo.id} branches={branches} />
+
 
       {isError && (
         <pre className="legit-error" style={{ margin: "8px 12px", fontSize: "var(--fz-md)" }}>
@@ -756,4 +772,314 @@ export function CommitsPanel() {
 
 function subjectOf(message: string): string {
   return message.split("\n")[0] ?? "";
+}
+
+// ---------------------------------------------------------------------------
+// Remote sync toolbar
+// ---------------------------------------------------------------------------
+
+type SyncOp = "fetch" | "pull" | "push";
+
+/**
+ * Fetch / Pull / Push controls plus an ahead/behind indicator for the current
+ * branch. Auth is driven entirely by the repo's local git config (the active
+ * git profile's SSH command + credential helper) — these calls add nothing
+ * auth-specific; failures are classified by the backend and surfaced as toasts.
+ *
+ * Long-running ops are cancellable: the frontend mints the `op_id`, passes it
+ * into the sync command, and cancels via `consoleCancel` (the same shared
+ * GitRunner). A user-cancelled op suppresses its error toast.
+ */
+function RemoteSyncToolbar({ repoId, branches }: { repoId: string; branches: Branch[] }) {
+  const queryClient = useQueryClient();
+
+  const { data: tracking } = useQuery<TrackingStatus | null>({
+    queryKey: [repoId, "tracking"],
+    queryFn: () => repoTrackingStatus(repoId),
+    enabled: !!repoId,
+    staleTime: 5_000,
+  });
+
+  const [busyOp, setBusyOp] = useState<SyncOp | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const opIdRef = useRef<string | null>(null);
+  const cancelRequestedRef = useRef(false);
+
+  // The checked-out local branch (none when detached / unborn).
+  const currentBranch = useMemo(
+    () => branches.find((b) => b.is_current && !b.is_remote) ?? null,
+    [branches],
+  );
+  const hasUpstream = !!currentBranch?.upstream;
+
+  // The remote to push/publish to: parsed from the upstream when set, else the
+  // single distinct remote among remote-tracking branches, else "origin"
+  // (null only when the repo has no remotes at all).
+  const remoteName = useMemo((): string | null => {
+    const up = currentBranch?.upstream; // e.g. "refs/remotes/origin/main"
+    if (up) {
+      const parts = up.split("/");
+      if (parts[0] === "refs" && parts[1] === "remotes" && parts.length >= 4) return parts[2];
+    }
+    const remotes = new Set<string>();
+    for (const b of branches) {
+      if (b.is_remote) {
+        const r = b.name.split("/")[0];
+        if (r) remotes.add(r);
+      }
+    }
+    if (remotes.size === 0) return null;
+    if (remotes.size === 1) return [...remotes][0];
+    return "origin";
+  }, [branches, currentBranch]);
+
+  const runSync = useCallback(
+    async (kind: SyncOp, fn: (opId: string) => Promise<unknown>, successMsg: string) => {
+      const opId = crypto.randomUUID();
+      opIdRef.current = opId;
+      cancelRequestedRef.current = false;
+      setBusyOp(kind);
+      try {
+        await fn(opId);
+        notify.success(successMsg);
+        invalidateRepoDomains(queryClient, repoId, ["log", "branches", "status", "tracking"]);
+      } catch (e) {
+        if (cancelRequestedRef.current) {
+          // User cancelled — the failure is expected, no toast.
+        } else {
+          const kindErr = gitErrorKind(e);
+          if (kindErr === "AuthFailed") {
+            notify.error(
+              "Authentication failed. Check this repo's git profile credentials " +
+                "(SSH key / credential helper) — a profile may need to be applied.",
+            );
+          } else if (kindErr === "PushRejected") {
+            notify.error(
+              "Push rejected — the remote has commits you don't have. Pull first, " +
+                "or use Force-push (with lease).",
+            );
+          } else {
+            notify.error(formatAppError(e));
+          }
+        }
+      } finally {
+        setBusyOp(null);
+        opIdRef.current = null;
+      }
+    },
+    [queryClient, repoId],
+  );
+
+  const cancelSync = useCallback(() => {
+    if (opIdRef.current) {
+      cancelRequestedRef.current = true;
+      void consoleCancel(repoId, opIdRef.current);
+    }
+  }, [repoId]);
+
+  const doFetch = () =>
+    runSync("fetch", (opId) => repoFetch(repoId, { all: true, prune: true, remote: null }, opId), "Fetched");
+
+  const doPull = () =>
+    runSync("pull", (opId) => repoPull(repoId, { strategy: "Default" }, opId), "Pulled");
+
+  const doPush = (forceWithLease: boolean) => {
+    setMenuOpen(false);
+    if (!currentBranch || !remoteName) return;
+    const opts: PushOptions = {
+      remote: remoteName,
+      branch: currentBranch.name,
+      set_upstream: !hasUpstream,
+      force_with_lease: forceWithLease,
+    };
+    return runSync(
+      "push",
+      (opId) => repoPush(repoId, opts, opId),
+      hasUpstream ? "Pushed" : "Published branch",
+    );
+  };
+
+  const busy = busyOp !== null;
+  const pushLabel = hasUpstream ? "Push" : "Publish";
+
+  return (
+    <div
+      className="legit-panel__toolbar"
+      style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 8px" }}
+    >
+      <SyncButton
+        title="Fetch all remotes (prune)"
+        disabled={busy || !remoteName}
+        loading={busyOp === "fetch"}
+        icon={<FetchIcon />}
+        label="Fetch"
+        onClick={doFetch}
+      />
+      <SyncButton
+        title={hasUpstream ? `Pull from ${tracking?.upstream ?? "upstream"}` : "No upstream for the current branch"}
+        disabled={busy || !hasUpstream}
+        loading={busyOp === "pull"}
+        icon={<PullIcon />}
+        label="Pull"
+        onClick={doPull}
+      />
+
+      {/* Push / Publish with a caret menu for force-push (with lease). */}
+      <div style={{ position: "relative", display: "flex" }}>
+        <SyncButton
+          title={
+            !currentBranch
+              ? "Detached HEAD — no branch to push"
+              : !remoteName
+              ? "No remote configured"
+              : hasUpstream
+              ? `Push to ${remoteName}`
+              : `Publish branch to ${remoteName} (sets upstream)`
+          }
+          disabled={busy || !currentBranch || !remoteName}
+          loading={busyOp === "push"}
+          icon={<PushIcon />}
+          label={pushLabel}
+          onClick={() => doPush(false)}
+          rounded="left"
+        />
+        <button
+          type="button"
+          title="More push options"
+          disabled={busy || !currentBranch || !remoteName}
+          onClick={() => setMenuOpen((o) => !o)}
+          style={{ ...syncBtnStyle(busy || !currentBranch || !remoteName), padding: "2px 4px", borderRadius: "0 3px 3px 0", marginLeft: -1 }}
+        >
+          <ChevronDownIcon />
+        </button>
+        {menuOpen && (
+          <>
+            {/* Click-away overlay. */}
+            <div
+              style={{ position: "fixed", inset: 0, zIndex: 10 }}
+              onClick={() => setMenuOpen(false)}
+            />
+            <div
+              style={{
+                position: "absolute",
+                top: "100%",
+                right: 0,
+                marginTop: 2,
+                zIndex: 11,
+                background: "var(--panel-bg, #222)",
+                border: "1px solid var(--panel-border)",
+                borderRadius: 4,
+                boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => doPush(true)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  textAlign: "left",
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--panel-fg)",
+                  cursor: "pointer",
+                  fontSize: "var(--fz-sm)",
+                  padding: "6px 10px",
+                }}
+              >
+                Force-push (with lease)
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {busy && (
+        <button
+          type="button"
+          onClick={cancelSync}
+          style={{ ...syncBtnStyle(false), fontSize: "var(--fz-sm)" }}
+        >
+          Cancel
+        </button>
+      )}
+
+      {/* Ahead/behind indicator for the current branch. */}
+      {tracking && (
+        <span
+          title={`${tracking.ahead} ahead, ${tracking.behind} behind ${tracking.upstream}`}
+          style={{
+            marginLeft: "auto",
+            fontSize: "var(--fz-sm)",
+            color: "var(--subtle-fg)",
+            fontFamily: "monospace",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          {tracking.ahead === 0 && tracking.behind === 0 ? (
+            <span>in sync</span>
+          ) : (
+            <>
+              <span>↑{tracking.ahead}</span>
+              <span>↓{tracking.behind}</span>
+            </>
+          )}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Shared style for the sync toolbar buttons. */
+function syncBtnStyle(disabled: boolean): React.CSSProperties {
+  return {
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+    fontSize: "var(--fz-sm)",
+    padding: "2px 8px",
+    border: "1px solid var(--panel-border)",
+    borderRadius: 3,
+    background: "transparent",
+    color: "var(--panel-fg)",
+    cursor: disabled ? "default" : "pointer",
+    opacity: disabled ? 0.5 : 1,
+  };
+}
+
+function SyncButton({
+  title,
+  label,
+  icon,
+  loading,
+  disabled,
+  onClick,
+  rounded,
+}: {
+  title: string;
+  label: string;
+  icon: React.ReactNode;
+  loading: boolean;
+  disabled: boolean;
+  onClick: () => void;
+  rounded?: "left";
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        ...syncBtnStyle(disabled),
+        borderRadius: rounded === "left" ? "3px 0 0 3px" : 3,
+      }}
+    >
+      {loading ? <span className="legit-spinner" aria-hidden="true" /> : icon}
+      <span>{label}</span>
+    </button>
+  );
 }

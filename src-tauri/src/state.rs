@@ -131,6 +131,10 @@ pub struct GitProfile {
     /// Path to the auth SSH private key; synthesized into `core.sshCommand`
     /// on apply and parsed back on read (see `commands/profiles.rs`).
     pub auth_ssh_key: Option<String>,
+    /// HTTPS credential helper (e.g. `manager`, `store`, `osxkeychain`), written
+    /// to local `credential.helper` on apply. LeGit stores no secrets — the
+    /// helper holds them (see `commands/profiles.rs`).
+    pub credential_helper: Option<String>,
 }
 
 /// Versioned on-disk envelope for the profile list (mirrors `LaneLocksDoc`).

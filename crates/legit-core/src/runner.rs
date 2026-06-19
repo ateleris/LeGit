@@ -397,23 +397,32 @@ impl GitRunner {
         if let Some(cwd) = &self.cwd {
             cmd.current_dir(cwd);
         }
+        // Inherit the OS environment, scrub the variables that would harm
+        // determinism or correctness, then force our hardened overrides. We do
+        // NOT nuke the whole environment: Git for Windows' HTTPS transport needs
+        // OS vars such as `SystemRoot`/`WINDIR` to initialize winsock — without
+        // them libcurl can't spawn its resolver thread and fails with
+        // "getaddrinfo() thread failed to start". Inheriting also lets proxy
+        // config (`http_proxy`, …) and ssh-agent (`SSH_AUTH_SOCK`) work.
+        //
+        // Scrubbed: every `GIT_*` var (so a stray inherited `GIT_DIR`/`GIT_CONFIG`/
+        // `GIT_SSH_COMMAND`/… can't override the repo we target or change git's
+        // behavior) and the locale vars (`LANG`/`LANGUAGE`/`LC_*`), which we pin
+        // to `C.UTF-8` below for deterministic, ASCII-parseable output.
         cmd.env_clear();
-        // Preserve a minimal PATH so credential helpers etc. resolve.
-        if let Ok(path) = std::env::var("PATH") {
-            cmd.env("PATH", path);
+        for (k, v) in std::env::vars_os() {
+            let upper = k.to_string_lossy().to_ascii_uppercase();
+            if upper.starts_with("GIT_")
+                || upper == "LANG"
+                || upper == "LANGUAGE"
+                || upper.starts_with("LC_")
+            {
+                continue;
+            }
+            cmd.env(&k, &v);
         }
-        if let Ok(home) = std::env::var("HOME") {
-            cmd.env("HOME", home);
-        }
-        if let Ok(user) = std::env::var("USER") {
-            cmd.env("USER", user);
-        }
-        if let Ok(userprofile) = std::env::var("USERPROFILE") {
-            cmd.env("USERPROFILE", userprofile);
-        }
-        if let Ok(appdata) = std::env::var("APPDATA") {
-            cmd.env("APPDATA", appdata);
-        }
+        // Hardened overrides: no prompts/editor, deterministic locale. These win
+        // over anything inherited above (GIT_* were already scrubbed).
         for (k, v) in self.base_env.iter() {
             cmd.env(k, v);
         }
@@ -577,5 +586,41 @@ mod tests {
     fn rejects_junk() {
         assert!(GitVersion::parse("hello").is_none());
         assert!(GitVersion::parse("git version xyz").is_none());
+    }
+
+    /// The runner must inherit OS environment variables (e.g. Windows'
+    /// `SystemRoot`, needed for libcurl to start its DNS-resolver thread) while
+    /// scrubbing `GIT_*` and locale vars and forcing the hardened locale.
+    /// Regression test for "getaddrinfo() thread failed to start".
+    #[test]
+    fn build_command_inherits_os_env_but_scrubs_git_and_locale() {
+        // Unique stand-in for an OS var like SystemRoot, plus vars that must be
+        // scrubbed regardless of what the parent process has set.
+        std::env::set_var("LEGIT_TEST_OS_VAR", "os-value");
+        std::env::set_var("GIT_DIR", "/should/be/scrubbed");
+        std::env::set_var("LC_ALL", "de_DE.UTF-8");
+
+        let runner = GitRunner::unbound("git");
+        let cmd = runner.build_command(&["status"]);
+        let envs: std::collections::HashMap<String, String> = cmd
+            .as_std()
+            .get_envs()
+            .filter_map(|(k, v)| {
+                v.map(|v| (k.to_string_lossy().into_owned(), v.to_string_lossy().into_owned()))
+            })
+            .collect();
+
+        // Arbitrary OS var is preserved (the actual fix).
+        assert_eq!(envs.get("LEGIT_TEST_OS_VAR").map(String::as_str), Some("os-value"));
+        // GIT_* scrubbed so it can't override the repo / behavior.
+        assert!(!envs.contains_key("GIT_DIR"));
+        // Locale forced to C.UTF-8 regardless of the inherited value.
+        assert_eq!(envs.get("LC_ALL").map(String::as_str), Some("C.UTF-8"));
+        // Hardening present.
+        assert_eq!(envs.get("GIT_TERMINAL_PROMPT").map(String::as_str), Some("0"));
+
+        std::env::remove_var("LEGIT_TEST_OS_VAR");
+        std::env::remove_var("GIT_DIR");
+        std::env::remove_var("LC_ALL");
     }
 }

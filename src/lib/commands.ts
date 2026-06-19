@@ -27,6 +27,10 @@ import type {
   KeyDiff,
   DiffEntry,
   DiffSource,
+  FetchOptions,
+  PullOptions,
+  PushOptions,
+  TrackingStatus,
 } from "./types";
 
 // --- repo ---
@@ -262,6 +266,24 @@ export const repoCommit = (repoId: string, message: string, amend = false) =>
 
 export const repoBranches = (repoId: string) =>
   invoke<Branch[]>("repo_branches", { repoId });
+
+// --- remote sync (fetch / pull / push) ---
+//
+// fetch/pull/push take a frontend-generated `opId` so the op can be cancelled
+// via `consoleCancel(repoId, opId)` while it runs. Auth is driven by the repo's
+// local git config (the active profile's SSH command + credential helper).
+
+export const repoFetch = (repoId: string, opts: FetchOptions, opId: string) =>
+  invoke<null>("repo_fetch", { repoId, opts, opId });
+
+export const repoPull = (repoId: string, opts: PullOptions, opId: string) =>
+  invoke<null>("repo_pull", { repoId, opts, opId });
+
+export const repoPush = (repoId: string, opts: PushOptions, opId: string) =>
+  invoke<null>("repo_push", { repoId, opts, opId });
+
+export const repoTrackingStatus = (repoId: string) =>
+  invoke<TrackingStatus | null>("repo_tracking_status", { repoId });
 
 // --- lane locks ---
 

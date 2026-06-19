@@ -144,6 +144,19 @@ export function formatAppError(e: unknown): string {
   return String(e);
 }
 
+/** Inner `GitError` kind for an `AppError`, if it is a `Git` variant (e.g.
+ *  "AuthFailed", "PushRejected", "CommandFailed"). Lets the UI react to specific
+ *  remote-op failures. Returns null for non-git errors. */
+export function gitErrorKind(e: unknown): string | null {
+  if (e && typeof e === "object" && "kind" in e) {
+    const ae = e as AppError;
+    if (ae.kind === "Git" && ae.details && typeof ae.details === "object" && "kind" in ae.details) {
+      return (ae.details as { kind: string }).kind;
+    }
+  }
+  return null;
+}
+
 // --- Line endings types (matches §H of DESIGN-v0.2.md) ---
 
 export type ConfigScope = "local" | "global" | "system" | "unset";
@@ -210,6 +223,9 @@ export interface GitProfile {
   allowedSignersFile: string | null;
   /** Path to the auth SSH key; synthesized into core.sshCommand. */
   authSshKey: string | null;
+  /** HTTPS credential helper (e.g. "manager", "store", "osxkeychain"); written
+   *  to local credential.helper. LeGit stores no secrets — the helper does. */
+  credentialHelper: string | null;
 }
 
 export interface GitProfilesDoc {
@@ -228,6 +244,8 @@ export interface ManagedKeys {
   allowed_signers_file: string | null;
   /** Parsed key path from core.sshCommand (or raw command if unparseable). */
   auth_ssh_key: string | null;
+  /** Live local `credential.helper` value. */
+  credential_helper: string | null;
 }
 
 export interface KeyDiff {
@@ -372,6 +390,41 @@ export interface Signature {
   email: string;
   timestamp: number; // Unix seconds UTC
   tz_offset_minutes: number;
+}
+
+// --- remote sync (matches legit-core/src/types.rs) ---
+
+export interface FetchOptions {
+  /** Fetch from all remotes (--all) rather than `remote`. */
+  all: boolean;
+  /** Prune deleted remote-tracking refs (--prune). */
+  prune: boolean;
+  /** Remote to fetch when `all` is false; ignored when `all` is true. */
+  remote: string | null;
+}
+
+/** How `git pull` integrates fetched changes (serialized variant names). */
+export type PullStrategy = "Default" | "Rebase" | "Merge" | "FfOnly";
+
+export interface PullOptions {
+  strategy: PullStrategy;
+}
+
+export interface PushOptions {
+  remote: string;
+  branch: string;
+  /** Set the pushed branch as upstream (--set-upstream) — publish a new branch. */
+  set_upstream: boolean;
+  /** Force-push without clobbering unseen remote commits (--force-with-lease). */
+  force_with_lease: boolean;
+}
+
+/** Ahead/behind of the current branch vs its upstream (null = detached / no upstream). */
+export interface TrackingStatus {
+  branch: string;
+  upstream: string;
+  ahead: number;
+  behind: number;
 }
 
 export type SignatureStatus =

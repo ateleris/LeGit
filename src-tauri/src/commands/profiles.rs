@@ -14,7 +14,7 @@ use crate::commands::config_util::{read_config_scope, write_config_local};
 use crate::commands::signing;
 use crate::error::AppError;
 use crate::state::{persist_repo_settings, AppState, GitProfile};
-use legit_core::GitRunner;
+use legit_core::{GitError, GitRunner};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use uuid::Uuid;
@@ -22,12 +22,13 @@ use uuid::Uuid;
 const KEY_USER_NAME: &str = "user.name";
 const KEY_USER_EMAIL: &str = "user.email";
 const KEY_SSH_COMMAND: &str = "core.sshCommand";
+const KEY_CREDENTIAL_HELPER: &str = "credential.helper";
 
 // ---------------------------------------------------------------------------
 // Types exposed to the frontend
 // ---------------------------------------------------------------------------
 
-/// The seven managed git-config keys, projected to plain values. For the auth
+/// The eight managed git-config keys, projected to plain values. For the auth
 /// key this holds the *key path* (parsed out of `core.sshCommand`), not the
 /// full command.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -39,6 +40,7 @@ pub struct ManagedKeys {
     pub commit_gpgsign: Option<String>,
     pub allowed_signers_file: Option<String>,
     pub auth_ssh_key: Option<String>,
+    pub credential_helper: Option<String>,
 }
 
 /// One differing key between the repo's local config and a profile.
@@ -96,10 +98,11 @@ fn projection(p: &GitProfile) -> ManagedKeys {
         commit_gpgsign: clean(&p.commit_gpgsign),
         allowed_signers_file: clean(&p.allowed_signers_file),
         auth_ssh_key: clean(&p.auth_ssh_key).map(|p| normalize_key_path(&p)),
+        credential_helper: clean(&p.credential_helper),
     }
 }
 
-/// Read the seven managed keys at LOCAL scope. For `core.sshCommand`, parse out
+/// Read the eight managed keys at LOCAL scope. For `core.sshCommand`, parse out
 /// the key path; if it isn't a LeGit-shaped `ssh -i …` command, keep the raw
 /// command string (so it shows as a mismatch rather than a false match).
 async fn read_local_managed(runner: &GitRunner) -> ManagedKeys {
@@ -119,7 +122,67 @@ async fn read_local_managed(runner: &GitRunner) -> ManagedKeys {
                 .map(|p| normalize_key_path(&p))
                 .unwrap_or(cmd)
         }),
+        credential_helper: read_local_credential_helper(runner).await,
     }
+}
+
+/// Read the effective local `credential.helper`: the LAST non-empty value among
+/// the local entries, or `None` when none is set. Uses `--get-all` (not `--get`)
+/// because the reset-then-set we write leaves TWO local entries — an empty reset
+/// followed by the helper — and `--get` errors on multiple values.
+async fn read_local_credential_helper(runner: &GitRunner) -> Option<String> {
+    let out = runner
+        .run(&["config", "--local", "--get-all", KEY_CREDENTIAL_HELPER])
+        .await
+        .ok()?;
+    if !out.success {
+        return None;
+    }
+    out.stdout
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .last()
+        .map(|s| s.to_string())
+}
+
+/// Write the local `credential.helper`, making it authoritative for this repo.
+///
+/// `credential.helper` is multi-valued and **accumulates across config scopes**,
+/// so a single local value wouldn't override a (possibly broken) global/system
+/// helper — git would still run that one first. So we reset the local list and,
+/// when setting, prepend an **empty value**, which clears all inherited helpers,
+/// before adding ours. `None` removes our local entries entirely (back to
+/// inheriting the global/system helper).
+///
+/// Note: the value must be a form the git CLI can run via `sh -c` — a short name
+/// like `manager`, not a path containing spaces (which `sh` would word-split).
+async fn write_credential_helper(runner: &GitRunner, value: Option<&str>) -> Result<(), AppError> {
+    // Drop any existing local entries first (exit 5 = none set — fine).
+    let unset = runner
+        .run(&["config", "--local", "--unset-all", KEY_CREDENTIAL_HELPER])
+        .await?;
+    if !unset.success && unset.exit_code != Some(5) {
+        return Err(AppError::Git(GitError::CommandFailed {
+            exit_code: unset.exit_code.unwrap_or(-1),
+            stderr: unset.stderr.trim().to_string(),
+        }));
+    }
+    if let Some(v) = value {
+        // Empty reset entry clears inherited helpers; then our helper.
+        for arg in ["", v] {
+            let out = runner
+                .run(&["config", "--local", "--add", KEY_CREDENTIAL_HELPER, arg])
+                .await?;
+            if !out.success {
+                return Err(AppError::Git(GitError::CommandFailed {
+                    exit_code: out.exit_code.unwrap_or(-1),
+                    stderr: out.stderr.trim().to_string(),
+                }));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Write a managed-key set to LOCAL config. `None` for a field unsets it. The
@@ -133,12 +196,13 @@ async fn write_managed(runner: &GitRunner, mk: &ManagedKeys) -> Result<(), AppEr
     write_config_local(runner, signing::KEY_ALLOWED_SIGNERS, mk.allowed_signers_file.as_deref()).await?;
     let ssh = mk.auth_ssh_key.as_ref().map(|p| synth_ssh_command(p));
     write_config_local(runner, KEY_SSH_COMMAND, ssh.as_deref()).await?;
+    write_credential_helper(runner, mk.credential_helper.as_deref()).await?;
     Ok(())
 }
 
 /// Labeled (git key, local, profile) tuples for diffing/display, in a stable order.
 fn diff_keys(local: &ManagedKeys, proj: &ManagedKeys) -> Vec<KeyDiff> {
-    let pairs: [(&str, &Option<String>, &Option<String>); 7] = [
+    let pairs: [(&str, &Option<String>, &Option<String>); 8] = [
         (KEY_USER_NAME, &local.user_name, &proj.user_name),
         (KEY_USER_EMAIL, &local.user_email, &proj.user_email),
         (signing::KEY_FORMAT, &local.gpg_format, &proj.gpg_format),
@@ -146,6 +210,7 @@ fn diff_keys(local: &ManagedKeys, proj: &ManagedKeys) -> Vec<KeyDiff> {
         (signing::KEY_GPGSIGN, &local.commit_gpgsign, &proj.commit_gpgsign),
         (signing::KEY_ALLOWED_SIGNERS, &local.allowed_signers_file, &proj.allowed_signers_file),
         (KEY_SSH_COMMAND, &local.auth_ssh_key, &proj.auth_ssh_key),
+        (KEY_CREDENTIAL_HELPER, &local.credential_helper, &proj.credential_helper),
     ];
     pairs
         .into_iter()
@@ -162,6 +227,7 @@ fn is_all_unset(mk: &ManagedKeys) -> bool {
         && mk.commit_gpgsign.is_none()
         && mk.allowed_signers_file.is_none()
         && mk.auth_ssh_key.is_none()
+        && mk.credential_helper.is_none()
 }
 
 /// Compute the active/drift/unmanaged/inherit relationship (pure; unit-tested).
@@ -398,7 +464,7 @@ pub async fn preview_apply_profile(
     Ok(diff_keys(&local, &projection(&profile)))
 }
 
-/// Apply a profile: write all 7 managed keys to local config and record the
+/// Apply a profile: write all 8 managed keys to local config and record the
 /// selection. Returns the refreshed status (should be `Active`).
 #[tauri::command]
 #[specta::specta]
@@ -425,7 +491,7 @@ pub async fn apply_profile_to_repo(
     Ok(status_for(&state, &runner, stored).await)
 }
 
-/// Clear the repo's profile: unset all 7 managed keys locally and drop the
+/// Clear the repo's profile: unset all 8 managed keys locally and drop the
 /// stored selection (back to `Inherit`).
 #[tauri::command]
 #[specta::specta]
@@ -469,6 +535,7 @@ pub async fn create_profile_from_repo(
         commit_gpgsign: local.commit_gpgsign.clone(),
         allowed_signers_file: local.allowed_signers_file.clone(),
         auth_ssh_key,
+        credential_helper: local.credential_helper.clone(),
     };
     {
         let mut s = state.global_settings.write().await;
@@ -489,6 +556,7 @@ impl ManagedKeys {
             commit_gpgsign: None,
             allowed_signers_file: None,
             auth_ssh_key: None,
+            credential_helper: None,
         }
     }
 }
@@ -512,6 +580,7 @@ mod tests {
             commit_gpgsign: None,
             allowed_signers_file: None,
             auth_ssh_key: None,
+            credential_helper: None,
         }
     }
 
@@ -561,6 +630,18 @@ mod tests {
 
     fn email_only_local(email: Option<&str>) -> ManagedKeys {
         ManagedKeys { user_email: email.map(String::from), ..ManagedKeys::all_unset() }
+    }
+
+    #[test]
+    fn credential_helper_projects_and_diffs() {
+        let p = GitProfile { credential_helper: Some("manager".into()), ..profile("p1", "p1") };
+        // projection carries it through (trimmed).
+        assert_eq!(projection(&p).credential_helper.as_deref(), Some("manager"));
+        // a local config without it shows the key as a diff.
+        let diffs = diff_keys(&ManagedKeys::all_unset(), &projection(&p));
+        let d = diffs.iter().find(|d| d.key == KEY_CREDENTIAL_HELPER).expect("helper diff");
+        assert_eq!(d.local, None);
+        assert_eq!(d.profile.as_deref(), Some("manager"));
     }
 
     #[test]

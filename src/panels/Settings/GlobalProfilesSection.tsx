@@ -28,6 +28,7 @@ function emptyProfile(): GitProfile {
     commitGpgsign: null,
     allowedSignersFile: null,
     authSshKey: null,
+    credentialHelper: null,
   };
 }
 
@@ -198,6 +199,15 @@ function ProfileEditor({
       )}
       <Field label="Auth SSH key (core.sshCommand)">
         <WithBrowse value={p.authSshKey ?? ""} onChange={setStr("authSshKey")} onBrowse={() => browseInto("authSshKey")} placeholder="Path to SSH private key (for push/pull)" />
+      </Field>
+      <Field label="credential.helper (HTTPS)">
+        <input value={p.credentialHelper ?? ""} onChange={(e) => setStr("credentialHelper")(e.target.value)} placeholder="short name e.g. manager (not a full path)" />
+        <FieldNote>
+          Use a short helper name like <code>manager</code> — LeGit runs git via the
+          CLI, which executes the helper through a shell, so a full path with spaces
+          (e.g. <code>C:/Program Files/…</code>) would break. Applying overrides any
+          inherited (global/system) helper for this repo.
+        </FieldNote>
       </Field>
 
       <div style={{ display: "flex", gap: 6, marginTop: 4 }}>

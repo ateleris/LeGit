@@ -6,10 +6,11 @@
 
 use crate::backend::GitBackend;
 use crate::error::GitError;
-use crate::runner::GitRunner;
+use crate::runner::{GitRunner, OperationId};
 use crate::types::{
     Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, Diff, DiffEntry,
-    DiffSource, FileState, FileStatus, HunkOp, LogOptions, RefSelector, SignMode, SubmoduleInfo,
+    DiffSource, FetchOptions, FileState, FileStatus, HunkOp, LogOptions, PullOptions, PullStrategy,
+    PushOptions, RefSelector, SignMode, SubmoduleInfo, TrackingStatus,
 };
 
 /// Git's well-known empty-tree object id, used as the "before" side when
@@ -228,6 +229,30 @@ impl GitCliBackend {
                 exit_code: output.exit_code.unwrap_or(-1),
                 stderr: output.stderr,
             });
+        }
+        Ok(())
+    }
+
+    /// Run a cancellable remote operation (fetch/pull/push) and map a non-zero
+    /// exit through `classify_remote_error` so auth/rejection failures surface as
+    /// specific `GitError` variants. A user-cancelled op also returns a non-zero
+    /// `RunOutput` (the frontend, which initiated the cancel, suppresses its toast).
+    async fn run_remote(
+        &self,
+        runner: &GitRunner,
+        args: &[String],
+        op_id: OperationId,
+    ) -> Result<(), GitError> {
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let output = runner
+            .run_with_op(&arg_refs, op_id)
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !output.success {
+            return Err(classify_remote_error(
+                output.exit_code.unwrap_or(-1),
+                &output.stderr,
+            ));
         }
         Ok(())
     }
@@ -554,5 +579,208 @@ impl GitBackend for GitCliBackend {
 
     async fn submodules(&self) -> Result<Vec<SubmoduleInfo>, GitError> {
         Err(GitError::NotYet)
+    }
+
+    async fn fetch(&self, opts: FetchOptions, op_id: OperationId) -> Result<(), GitError> {
+        let runner = self.runner().await;
+        let mut args: Vec<String> = vec!["fetch".into()];
+        if opts.prune {
+            args.push("--prune".into());
+        }
+        if opts.all {
+            args.push("--all".into());
+        } else if let Some(remote) = opts.remote.as_deref().filter(|r| !r.is_empty()) {
+            args.push(remote.to_string());
+        }
+        self.run_remote(&runner, &args, op_id).await
+    }
+
+    async fn pull(&self, opts: PullOptions, op_id: OperationId) -> Result<(), GitError> {
+        let runner = self.runner().await;
+        let mut args: Vec<String> = vec!["pull".into()];
+        match opts.strategy {
+            PullStrategy::Default => {}
+            PullStrategy::Rebase => args.push("--rebase".into()),
+            PullStrategy::Merge => args.push("--no-rebase".into()),
+            PullStrategy::FfOnly => args.push("--ff-only".into()),
+        }
+        self.run_remote(&runner, &args, op_id).await
+    }
+
+    async fn push(&self, opts: PushOptions, op_id: OperationId) -> Result<(), GitError> {
+        let runner = self.runner().await;
+        let args = build_push_args(&opts);
+        self.run_remote(&runner, &args, op_id).await
+    }
+
+    async fn tracking_status(&self) -> Result<Option<TrackingStatus>, GitError> {
+        let runner = self.runner().await;
+
+        // Current branch (short). A detached HEAD makes symbolic-ref fail → None.
+        let br = runner
+            .run(&["symbolic-ref", "--quiet", "--short", "HEAD"])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !br.success {
+            return Ok(None);
+        }
+        let branch = br.stdout.trim().to_string();
+        if branch.is_empty() {
+            return Ok(None);
+        }
+
+        // Upstream short ref. No upstream configured → rev-parse fails → None.
+        let up = runner
+            .run(&[
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{upstream}",
+            ])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !up.success {
+            return Ok(None);
+        }
+        let upstream = up.stdout.trim().to_string();
+        if upstream.is_empty() {
+            return Ok(None);
+        }
+
+        // Ahead/behind counts: left = behind (upstream-only), right = ahead.
+        let range = format!("{upstream}...HEAD");
+        let counts = runner
+            .run(&["rev-list", "--left-right", "--count", &range])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !counts.success {
+            return Err(GitError::CommandFailed {
+                exit_code: counts.exit_code.unwrap_or(-1),
+                stderr: counts.stderr,
+            });
+        }
+        let (behind, ahead) =
+            parsers::tracking::parse_rev_list_counts(&counts.stdout).unwrap_or((0, 0));
+
+        Ok(Some(TrackingStatus {
+            branch,
+            upstream,
+            ahead,
+            behind,
+        }))
+    }
+}
+
+/// Build the argument vector for `git push`. The remote and branch are always
+/// passed explicitly so the push doesn't depend on `push.default`.
+fn build_push_args(opts: &PushOptions) -> Vec<String> {
+    let mut args: Vec<String> = vec!["push".into()];
+    if opts.force_with_lease {
+        args.push("--force-with-lease".into());
+    }
+    if opts.set_upstream {
+        args.push("--set-upstream".into());
+    }
+    args.push(opts.remote.clone());
+    args.push(opts.branch.clone());
+    args
+}
+
+/// Map a failed remote op's stderr to a specific `GitError`: authentication
+/// problems → `AuthFailed`, non-fast-forward/rejected pushes → `PushRejected`,
+/// everything else → `CommandFailed`.
+fn classify_remote_error(exit_code: i32, stderr: &str) -> GitError {
+    let lc = stderr.to_lowercase();
+    const AUTH: [&str; 6] = [
+        "authentication failed",
+        "permission denied (publickey)",
+        "could not read username",
+        "could not read password",
+        "terminal prompts disabled",
+        "access denied",
+    ];
+    if AUTH.iter().any(|p| lc.contains(p)) {
+        return GitError::AuthFailed(stderr.trim().to_string());
+    }
+    const REJECTED: [&str; 5] = [
+        "[rejected]",
+        "non-fast-forward",
+        "fetch first",
+        "stale info",
+        "failed to push some refs",
+    ];
+    if REJECTED.iter().any(|p| lc.contains(p)) {
+        return GitError::PushRejected {
+            stderr: stderr.trim().to_string(),
+        };
+    }
+    GitError::CommandFailed {
+        exit_code,
+        stderr: stderr.trim().to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn push_opts(set_upstream: bool, force_with_lease: bool) -> PushOptions {
+        PushOptions {
+            remote: "origin".into(),
+            branch: "main".into(),
+            set_upstream,
+            force_with_lease,
+        }
+    }
+
+    #[test]
+    fn push_args_plain() {
+        assert_eq!(
+            build_push_args(&push_opts(false, false)),
+            vec!["push", "origin", "main"]
+        );
+    }
+
+    #[test]
+    fn push_args_set_upstream() {
+        assert_eq!(
+            build_push_args(&push_opts(true, false)),
+            vec!["push", "--set-upstream", "origin", "main"]
+        );
+    }
+
+    #[test]
+    fn push_args_force_with_lease_then_upstream() {
+        assert_eq!(
+            build_push_args(&push_opts(true, true)),
+            vec!["push", "--force-with-lease", "--set-upstream", "origin", "main"]
+        );
+    }
+
+    #[test]
+    fn classify_auth_failure() {
+        let e = classify_remote_error(128, "fatal: Authentication failed for 'https://x/y'");
+        assert!(matches!(e, GitError::AuthFailed(_)));
+    }
+
+    #[test]
+    fn classify_publickey_denied() {
+        let e = classify_remote_error(128, "git@github.com: Permission denied (publickey).");
+        assert!(matches!(e, GitError::AuthFailed(_)));
+    }
+
+    #[test]
+    fn classify_non_fast_forward() {
+        let e = classify_remote_error(
+            1,
+            " ! [rejected]        main -> main (non-fast-forward)\nerror: failed to push some refs",
+        );
+        assert!(matches!(e, GitError::PushRejected { .. }));
+    }
+
+    #[test]
+    fn classify_other_failure() {
+        let e = classify_remote_error(1, "fatal: could not create work tree dir");
+        assert!(matches!(e, GitError::CommandFailed { exit_code: 1, .. }));
     }
 }

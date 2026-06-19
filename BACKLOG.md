@@ -72,12 +72,46 @@ returns data) → Tauri command (registered in `lib.rs`) → wrapper in
 `lib/commands.ts` + type in `lib/types.ts` → UI. Roughly priority-ordered.
 
 ### 1. Remotes & sync (biggest gap)
-- **fetch / pull / push** (incl. push to set upstream, force-with-lease).
-- Manage **remotes** (add / remove / rename / set-url) + a remote-settings UI.
-- **Upstream/tracking**: set/clear upstream, show ahead/behind counts.
-- Needs progress + cancellation (use `GitRunner::stream` + `OperationId`) and
-  credential/auth handling (the runner already disables prompts — design how
-  creds/SSH are provided).
+- ~~**fetch / pull / push** (incl. push to set upstream, force-with-lease).~~
+  Done — `fetch`/`pull`/`push` backend methods (`run_with_op`, cancellable via
+  the existing `console_cancel`), `repo_*` commands, and a sync toolbar in the
+  Commits panel (Fetch / Pull / Publish-or-Push + force-with-lease menu, busy +
+  Cancel, ahead/behind chip). **Auth is driven by the active git profile**: SSH
+  via `core.sshCommand` (existing) + a new `credential.helper` managed key for
+  HTTPS (LeGit stores no secrets). Auth/rejection failures are classified
+  (`AuthFailed` / `PushRejected`) and surfaced as toasts.
+- **Upstream/tracking — show ahead/behind**: done (current branch only, via
+  `tracking_status` → `git rev-list --left-right --count`). Still TODO: **set /
+  clear upstream** explicitly (beyond push `--set-upstream`).
+- Still TODO: manage **remotes** (add / remove / rename / set-url) + a
+  remote-settings UI; a **pull-strategy picker** in the UI (rebase / merge /
+  ff-only — the `PullStrategy` enum exists but the UI always uses `Default`);
+  **streaming progress** (currently busy-state + Cancel, no progress bar);
+  storing HTTPS tokens in LeGit (kept out by design — rely on the credential
+  helper).
+
+#### In-app credential prompt (`GIT_ASKPASS` / custom helper)
+
+**What:** Let LeGit itself prompt for credentials and feed them to git, instead
+of depending on a system credential helper being installed and correctly
+configured. This is the CLI-client equivalent of how GitKraken (own engine) and
+Gitnuro (JGit `CredentialsProvider`) do auth — they prompt in-app and inject
+credentials, never relying on the git CLI's `sh -c` helper invocation.
+
+**Why deferred / why it matters:** the profile's `credential.helper` works, but
+it depends on the user having a working helper (e.g. Git Credential Manager) and
+referencing it correctly — notably **a short name like `manager`, NOT a full
+path with spaces**, because the git CLI runs helpers via `sh -c` (a full path
+word-splits → `C:/Program: No such file or directory`). LeGit now writes the
+helper as a reset-then-set so the profile is authoritative, but the dependency
+on an external helper remains.
+
+**Rough approach:** ship a tiny askpass shim (or a `git credential` helper) that
+LeGit points git at via `GIT_ASKPASS`/`SSH_ASKPASS`/`core.askPass` (or
+`-c credential.helper=…`), opening a prompt in the LeGit UI and returning the
+entered secret to git over a local IPC channel. Decide secret handling (prefer
+the OS keychain via the `keyring` crate; never plaintext in settings).
+Cross-platform care: the shim must be invocable by Git for Windows' shell.
 
 ### 2. Branch operations (write)
 - **Create**, **checkout/switch** (incl. detached, checkout a remote branch),

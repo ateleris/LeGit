@@ -274,6 +274,62 @@ pub struct Branch {
     pub head: Option<CommitId>,
 }
 
+/// Options for `git fetch`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct FetchOptions {
+    /// Fetch from all remotes (`--all`) rather than a single named remote.
+    pub all: bool,
+    /// Prune remote-tracking refs that no longer exist on the remote (`--prune`).
+    pub prune: bool,
+    /// The remote to fetch when `all` is false; ignored when `all` is true.
+    pub remote: Option<String>,
+}
+
+/// How `git pull` should integrate fetched changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum PullStrategy {
+    /// Honor the repo's `pull.rebase` config (pass no integration flag).
+    Default,
+    /// `--rebase`.
+    Rebase,
+    /// `--no-rebase` (merge).
+    Merge,
+    /// `--ff-only`.
+    FfOnly,
+}
+
+/// Options for `git pull`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct PullOptions {
+    pub strategy: PullStrategy,
+}
+
+/// Options for `git push`. The remote and branch are always passed explicitly to
+/// avoid `push.default` surprises.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct PushOptions {
+    pub remote: String,
+    pub branch: String,
+    /// Set the pushed branch as upstream (`--set-upstream`) — used to publish a
+    /// branch that has no tracking configuration yet.
+    pub set_upstream: bool,
+    /// Force-push but refuse to clobber unseen remote commits (`--force-with-lease`).
+    pub force_with_lease: bool,
+}
+
+/// Ahead/behind tracking status for the current branch relative to its upstream.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct TrackingStatus {
+    /// The current local branch (short name).
+    pub branch: String,
+    /// The upstream ref it tracks (e.g. `origin/main`).
+    pub upstream: String,
+    /// Commits on the local branch not yet on the upstream.
+    pub ahead: u32,
+    /// Commits on the upstream not yet on the local branch.
+    pub behind: u32,
+}
+
 /// Detailed information for a single commit (Commit Details panel).
 ///
 /// `commit.signature` is populated from `git verify-commit --raw` when the

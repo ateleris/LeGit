@@ -12,12 +12,16 @@
 
 import { forwardRef, type SVGProps } from "react";
 import {
+  ArrowDownToLine,
+  ArrowUpToLine,
   Check,
+  ChevronDown,
   Cloud,
   GitBranch,
   Lock,
   Minus,
   Plus,
+  RefreshCw,
   RotateCcw,
   Tag,
   Trash2,
@@ -60,6 +64,11 @@ export const StageIcon = withDefaults(Plus, "StageIcon");
 export const UnstageIcon = withDefaults(Minus, "UnstageIcon");
 export const DiscardIcon = withDefaults(RotateCcw, "DiscardIcon");
 export const TrashIcon = withDefaults(Trash2, "TrashIcon");
+// Remote sync (Commits panel toolbar).
+export const FetchIcon = withDefaults(RefreshCw, "FetchIcon");
+export const PullIcon = withDefaults(ArrowDownToLine, "PullIcon");
+export const PushIcon = withDefaults(ArrowUpToLine, "PushIcon");
+export const ChevronDownIcon = withDefaults(ChevronDown, "ChevronDownIcon");
 
 // Custom (non-lucide) icons follow the same conventions: `size` defaults to
 // `1em`, the glyph fills with `currentColor`, and the keyhole is punched out

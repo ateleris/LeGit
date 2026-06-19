@@ -22,6 +22,9 @@ pub enum GitError {
     #[error("authentication failed: {0}")]
     AuthFailed(String),
 
+    #[error("push rejected: {stderr}")]
+    PushRejected { stderr: String },
+
     #[error("operation cancelled")]
     Cancelled,
 

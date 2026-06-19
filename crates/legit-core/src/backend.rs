@@ -7,9 +7,11 @@
 //! parsing is added.
 
 use crate::error::GitError;
+use crate::runner::OperationId;
 use crate::types::{
     Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, Diff, DiffEntry,
-    DiffSource, FileStatus, HunkOp, LogOptions, SubmoduleInfo,
+    DiffSource, FetchOptions, FileStatus, HunkOp, LogOptions, PullOptions, PushOptions,
+    SubmoduleInfo, TrackingStatus,
 };
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
@@ -80,4 +82,17 @@ pub trait GitBackend: Send + Sync {
     async fn discard(&self, paths: &[PathBuf]) -> Result<(), GitError>;
 
     async fn submodules(&self) -> Result<Vec<SubmoduleInfo>, GitError>;
+
+    /// Fetch from remote(s). Cancellable via `op_id`.
+    async fn fetch(&self, opts: FetchOptions, op_id: OperationId) -> Result<(), GitError>;
+
+    /// Pull (fetch + integrate) for the current branch. Cancellable via `op_id`.
+    async fn pull(&self, opts: PullOptions, op_id: OperationId) -> Result<(), GitError>;
+
+    /// Push the current branch to its remote. Cancellable via `op_id`.
+    async fn push(&self, opts: PushOptions, op_id: OperationId) -> Result<(), GitError>;
+
+    /// Ahead/behind status of the current branch vs its upstream. `None` when
+    /// HEAD is detached or the current branch has no upstream configured.
+    async fn tracking_status(&self) -> Result<Option<TrackingStatus>, GitError>;
 }
