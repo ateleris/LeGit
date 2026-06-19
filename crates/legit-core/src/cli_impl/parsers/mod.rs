@@ -11,3 +11,4 @@ pub mod status;
 pub mod commit_files;
 pub mod diff;
 pub mod tracking;
+pub mod remotes;

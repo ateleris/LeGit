@@ -9,7 +9,7 @@
 
 use crate::error::AppError;
 use crate::state::AppState;
-use legit_core::types::{FetchOptions, PullOptions, PushOptions, TrackingStatus};
+use legit_core::types::{FetchOptions, PullOptions, PushOptions, Remote, TrackingStatus};
 use legit_core::OperationId;
 
 /// Fetch from remote(s). Cancellable via `op_id` (see `console_cancel`).
@@ -75,6 +75,104 @@ pub async fn repo_tracking_status(
     session
         .backend
         .tracking_status()
+        .await
+        .map_err(AppError::Git)
+}
+
+// --- remote management -----------------------------------------------------
+
+/// List the configured remotes with their fetch/push URLs.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_list_remotes(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<Vec<Remote>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.list_remotes().await.map_err(AppError::Git)
+}
+
+/// Add a remote (`git remote add`).
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_add_remote(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    name: String,
+    url: String,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .add_remote(&name, &url)
+        .await
+        .map_err(AppError::Git)
+}
+
+/// Remove a remote and its tracking refs (`git remote remove`).
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_remove_remote(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    name: String,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .remove_remote(&name)
+        .await
+        .map_err(AppError::Git)
+}
+
+/// Rename a remote (`git remote rename`).
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_rename_remote(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    old_name: String,
+    new_name: String,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .rename_remote(&old_name, &new_name)
+        .await
+        .map_err(AppError::Git)
+}
+
+/// Set a remote's fetch or push URL (`git remote set-url [--push]`).
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_set_remote_url(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    name: String,
+    url: String,
+    push: bool,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .set_remote_url(&name, &url, push)
+        .await
+        .map_err(AppError::Git)
+}
+
+/// Prune stale remote-tracking refs (`git remote prune`). Cancellable via `op_id`.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_prune_remote(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    name: String,
+    op_id: String,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .prune_remote(&name, OperationId(op_id))
         .await
         .map_err(AppError::Git)
 }

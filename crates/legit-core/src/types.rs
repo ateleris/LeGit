@@ -330,6 +330,15 @@ pub struct TrackingStatus {
     pub behind: u32,
 }
 
+/// A configured git remote. `git remote -v` always lists a fetch and a push URL
+/// per remote; they're equal unless a separate push URL was set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct Remote {
+    pub name: String,
+    pub fetch_url: String,
+    pub push_url: String,
+}
+
 /// Detailed information for a single commit (Commit Details panel).
 ///
 /// `commit.signature` is populated from `git verify-commit --raw` when the

@@ -10,7 +10,7 @@ use crate::runner::{GitRunner, OperationId};
 use crate::types::{
     Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, Diff, DiffEntry,
     DiffSource, FetchOptions, FileState, FileStatus, HunkOp, LogOptions, PullOptions, PullStrategy,
-    PushOptions, RefSelector, SignMode, SubmoduleInfo, TrackingStatus,
+    PushOptions, RefSelector, Remote, SignMode, SubmoduleInfo, TrackingStatus,
 };
 
 /// Git's well-known empty-tree object id, used as the "before" side when
@@ -253,6 +253,23 @@ impl GitCliBackend {
                 output.exit_code.unwrap_or(-1),
                 &output.stderr,
             ));
+        }
+        Ok(())
+    }
+
+    /// Run a non-network git invocation and map a non-zero exit to
+    /// `CommandFailed` (used by the remote-management mutations).
+    async fn run_simple(&self, args: &[&str]) -> Result<(), GitError> {
+        let runner = self.runner().await;
+        let output = runner
+            .run(args)
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !output.success {
+            return Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr,
+            });
         }
         Ok(())
     }
@@ -669,6 +686,44 @@ impl GitBackend for GitCliBackend {
             behind,
         }))
     }
+
+    async fn list_remotes(&self) -> Result<Vec<Remote>, GitError> {
+        let runner = self.runner().await;
+        let output = runner
+            .run(&parsers::remotes::REMOTE_LIST_ARGS)
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !output.success {
+            return Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr,
+            });
+        }
+        Ok(parsers::remotes::parse_remotes(&output.stdout))
+    }
+
+    async fn add_remote(&self, name: &str, url: &str) -> Result<(), GitError> {
+        self.run_simple(&["remote", "add", name, url]).await
+    }
+
+    async fn remove_remote(&self, name: &str) -> Result<(), GitError> {
+        self.run_simple(&["remote", "remove", name]).await
+    }
+
+    async fn rename_remote(&self, old: &str, new: &str) -> Result<(), GitError> {
+        self.run_simple(&["remote", "rename", old, new]).await
+    }
+
+    async fn set_remote_url(&self, name: &str, url: &str, push: bool) -> Result<(), GitError> {
+        self.run_simple(&build_set_url_args(name, url, push)).await
+    }
+
+    async fn prune_remote(&self, name: &str, op_id: OperationId) -> Result<(), GitError> {
+        // Network op (contacts the remote) → cancellable + remote-error mapping.
+        let runner = self.runner().await;
+        let args = vec!["remote".to_string(), "prune".to_string(), name.to_string()];
+        self.run_remote(&runner, &args, op_id).await
+    }
 }
 
 /// Build the argument vector for `git push`. The remote and branch are always
@@ -683,6 +738,18 @@ fn build_push_args(opts: &PushOptions) -> Vec<String> {
     }
     args.push(opts.remote.clone());
     args.push(opts.branch.clone());
+    args
+}
+
+/// Build the argument vector for `git remote set-url`, adding `--push` to target
+/// the push URL instead of the fetch URL.
+fn build_set_url_args<'a>(name: &'a str, url: &'a str, push: bool) -> Vec<&'a str> {
+    let mut args = vec!["remote", "set-url"];
+    if push {
+        args.push("--push");
+    }
+    args.push(name);
+    args.push(url);
     args
 }
 
@@ -782,5 +849,21 @@ mod tests {
     fn classify_other_failure() {
         let e = classify_remote_error(1, "fatal: could not create work tree dir");
         assert!(matches!(e, GitError::CommandFailed { exit_code: 1, .. }));
+    }
+
+    #[test]
+    fn set_url_args_fetch() {
+        assert_eq!(
+            build_set_url_args("origin", "https://x/y.git", false),
+            vec!["remote", "set-url", "origin", "https://x/y.git"]
+        );
+    }
+
+    #[test]
+    fn set_url_args_push() {
+        assert_eq!(
+            build_set_url_args("origin", "git@x:y.git", true),
+            vec!["remote", "set-url", "--push", "origin", "git@x:y.git"]
+        );
     }
 }

@@ -10,7 +10,7 @@ use crate::error::GitError;
 use crate::runner::OperationId;
 use crate::types::{
     Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, Diff, DiffEntry,
-    DiffSource, FetchOptions, FileStatus, HunkOp, LogOptions, PullOptions, PushOptions,
+    DiffSource, FetchOptions, FileStatus, HunkOp, LogOptions, PullOptions, PushOptions, Remote,
     SubmoduleInfo, TrackingStatus,
 };
 use async_trait::async_trait;
@@ -95,4 +95,23 @@ pub trait GitBackend: Send + Sync {
     /// Ahead/behind status of the current branch vs its upstream. `None` when
     /// HEAD is detached or the current branch has no upstream configured.
     async fn tracking_status(&self) -> Result<Option<TrackingStatus>, GitError>;
+
+    /// List the configured remotes with their fetch/push URLs (`git remote -v`).
+    async fn list_remotes(&self) -> Result<Vec<Remote>, GitError>;
+
+    /// Add a remote (`git remote add <name> <url>`).
+    async fn add_remote(&self, name: &str, url: &str) -> Result<(), GitError>;
+
+    /// Remove a remote and its tracking refs (`git remote remove <name>`).
+    async fn remove_remote(&self, name: &str) -> Result<(), GitError>;
+
+    /// Rename a remote (`git remote rename <old> <new>`).
+    async fn rename_remote(&self, old: &str, new: &str) -> Result<(), GitError>;
+
+    /// Set a remote's URL (`git remote set-url [--push] <name> <url>`).
+    async fn set_remote_url(&self, name: &str, url: &str, push: bool) -> Result<(), GitError>;
+
+    /// Prune stale remote-tracking refs (`git remote prune <name>`). Network op,
+    /// cancellable via `op_id`.
+    async fn prune_remote(&self, name: &str, op_id: OperationId) -> Result<(), GitError>;
 }

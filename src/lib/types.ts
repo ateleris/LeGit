@@ -427,6 +427,13 @@ export interface TrackingStatus {
   behind: number;
 }
 
+/** A configured git remote with its fetch/push URLs (matches legit-core `Remote`). */
+export interface Remote {
+  name: string;
+  fetch_url: string;
+  push_url: string;
+}
+
 export type SignatureStatus =
   | "Good"
   | "BadSignature"

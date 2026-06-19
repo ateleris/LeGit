@@ -7,6 +7,7 @@ import { ChangedFilesPanel } from "./ChangedFiles/ChangedFilesPanel";
 import { WorkingChangesPanel } from "./WorkingChanges/WorkingChangesPanel";
 import { DiffPanel } from "./Diff/DiffPanel";
 import { GitLogPanel } from "./GitLog/GitLogPanel";
+import { RemotesPanel } from "./Remotes/RemotesPanel";
 import { RepositoriesPanel } from "./Repositories/RepositoriesPanel";
 import { ThemeEditorPanel } from "./ThemeEditor/ThemeEditorPanel";
 import { GlobalSettingsPanel } from "./Settings/GlobalSettingsPanel";
@@ -47,6 +48,7 @@ export const REPO_PANELS: PanelDescriptor[] = [
     defaultPlacement: { direction: "below", referencePanel: "log" },
   },
   { id: "repo-settings", title: "Repo Settings", scope: "repo" },
+  { id: "remotes", title: "Remotes", scope: "repo" },
   {
     id: "log",
     title: "Commits",
@@ -120,6 +122,7 @@ export const REPO_DOCKVIEW_COMPONENTS: Record<
   console: wrap(ConsolePanel),
   "git-log": wrap(GitLogPanel),
   "repo-settings": wrap(RepoSettingsPanel),
+  remotes: wrap(RemotesPanel),
   log: wrap(CommitsPanel),
   "commit-details": wrap(CommitDetailsPanel),
   "changed-files": wrap(ChangedFilesPanel),

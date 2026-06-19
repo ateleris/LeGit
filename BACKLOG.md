@@ -83,12 +83,17 @@ returns data) → Tauri command (registered in `lib.rs`) → wrapper in
 - **Upstream/tracking — show ahead/behind**: done (current branch only, via
   `tracking_status` → `git rev-list --left-right --count`). Still TODO: **set /
   clear upstream** explicitly (beyond push `--set-upstream`).
-- Still TODO: manage **remotes** (add / remove / rename / set-url) + a
-  remote-settings UI; a **pull-strategy picker** in the UI (rebase / merge /
-  ff-only — the `PullStrategy` enum exists but the UI always uses `Default`);
-  **streaming progress** (currently busy-state + Cancel, no progress bar);
-  storing HTTPS tokens in LeGit (kept out by design — rely on the credential
-  helper).
+- ~~Manage **remotes** (add / remove / rename / set-url).~~ Done — a dedicated
+  **Remotes panel** (`src/panels/Remotes/`, registry id `remotes`) lists remotes
+  with fetch/push URLs and does add / remove / rename / set-url + per-remote
+  fetch / prune (`GitBackend::{list_remotes,add_remote,remove_remote,
+  rename_remote,set_remote_url,prune_remote}` + `parsers/remotes.rs`). Mutations
+  invalidate `remotes/branches/tracking/log` so the sync toolbar stays correct.
+- Still TODO: a **pull-strategy picker** in the UI (rebase / merge / ff-only —
+  the `PullStrategy` enum exists but the UI always uses `Default`); **streaming
+  progress** (currently busy-state + Cancel, no progress bar); storing HTTPS
+  tokens in LeGit (kept out by design — rely on the credential helper); a
+  push-remote picker in the sync toolbar; per-remote tracked-branch view.
 
 #### In-app credential prompt (`GIT_ASKPASS` / custom helper)
 

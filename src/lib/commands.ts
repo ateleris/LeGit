@@ -31,6 +31,7 @@ import type {
   PullOptions,
   PushOptions,
   TrackingStatus,
+  Remote,
 } from "./types";
 
 // --- repo ---
@@ -284,6 +285,26 @@ export const repoPush = (repoId: string, opts: PushOptions, opId: string) =>
 
 export const repoTrackingStatus = (repoId: string) =>
   invoke<TrackingStatus | null>("repo_tracking_status", { repoId });
+
+// --- remote management ---
+
+export const repoListRemotes = (repoId: string) =>
+  invoke<Remote[]>("repo_list_remotes", { repoId });
+
+export const repoAddRemote = (repoId: string, name: string, url: string) =>
+  invoke<null>("repo_add_remote", { repoId, name, url });
+
+export const repoRemoveRemote = (repoId: string, name: string) =>
+  invoke<null>("repo_remove_remote", { repoId, name });
+
+export const repoRenameRemote = (repoId: string, oldName: string, newName: string) =>
+  invoke<null>("repo_rename_remote", { repoId, oldName, newName });
+
+export const repoSetRemoteUrl = (repoId: string, name: string, url: string, push: boolean) =>
+  invoke<null>("repo_set_remote_url", { repoId, name, url, push });
+
+export const repoPruneRemote = (repoId: string, name: string, opId: string) =>
+  invoke<null>("repo_prune_remote", { repoId, name, opId });
 
 // --- lane locks ---
 
