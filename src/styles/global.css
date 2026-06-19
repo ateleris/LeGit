@@ -494,3 +494,67 @@ button.legit-tab__close:hover {
   opacity: 0.3;
   cursor: default;
 }
+
+/* Transient notifications (toasts) — fixed overlay, bottom-right, newest last. */
+.legit-toasts {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 380px;
+}
+.legit-toast {
+  display: flex;
+  align-items: flex-start;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-left: 3px solid var(--panel-border);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  color: var(--panel-fg);
+  font-size: var(--fz-md);
+  overflow: hidden;
+}
+.legit-toast--error {
+  border-left-color: var(--error-fg);
+}
+.legit-toast--success {
+  border-left-color: var(--success-fg);
+}
+.legit-toast__body {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 8px 10px;
+  /* clamp long stderr; full detail lives in the Git Log */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.legit-toast__body:hover {
+  background: var(--button-hover-bg);
+}
+.legit-toast__close {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--subtle-fg);
+  cursor: pointer;
+  padding: 6px 8px;
+  font-size: var(--fz-lg);
+  line-height: 1;
+}
+.legit-toast__close:hover {
+  color: var(--panel-fg);
+}

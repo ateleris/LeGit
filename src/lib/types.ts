@@ -85,6 +85,17 @@ export interface RepoChangedPayload {
   domains: ChangeDomain[];
 }
 
+/** A completed git invocation reported by the backend (matches legit-core
+ *  `GitInvocation`). Drives the Git Log panel. */
+export interface GitInvocation {
+  args: string[];
+  cwd: string | null;
+  exit_code: number | null;
+  success: boolean;
+  duration_ms: number;
+  stderr: string;
+}
+
 export interface GitVersion {
   raw: string;
   major: number;

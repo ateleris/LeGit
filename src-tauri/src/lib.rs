@@ -13,7 +13,7 @@ mod watcher;
 use std::path::PathBuf;
 
 use state::{GlobalSettings, AppState};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_specta::{collect_commands, Builder};
 use tracing_subscriber::EnvFilter;
 
@@ -135,6 +135,12 @@ pub fn run() {
                 builtin_themes_dir,
             );
             app.manage(state);
+
+            // Forward every git invocation to the UI as a live command log.
+            let handle = app.handle().clone();
+            legit_core::runner::set_invocation_observer(std::sync::Arc::new(move |inv| {
+                let _ = handle.emit("git_invocation", inv);
+            }));
             Ok(())
         })
         .run(tauri::generate_context!())

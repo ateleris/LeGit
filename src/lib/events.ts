@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import type { ConsoleEventPayload, RepoChangedPayload } from "./types";
+import type { ConsoleEventPayload, GitInvocation, RepoChangedPayload } from "./types";
 
 /** Tauri event channel used by `console_exec`. Matches the constant in
  *  `src-tauri/src/commands/console.rs`. */
@@ -26,6 +26,21 @@ export async function onRepoChanged(
 ): Promise<() => void> {
   const unlisten = await listen<RepoChangedPayload>(
     REPO_CHANGED_EVENT,
+    (event) => handler(event.payload)
+  );
+  return unlisten;
+}
+
+/** Tauri event channel for the git command log. Matches the event name emitted
+ *  by the invocation observer in `src-tauri/src/lib.rs`. */
+export const GIT_INVOCATION_EVENT = "git_invocation";
+
+/** Subscribe to git-invocation events. Returns an unsubscribe function. */
+export async function onGitInvocation(
+  handler: (payload: GitInvocation) => void
+): Promise<() => void> {
+  const unlisten = await listen<GitInvocation>(
+    GIT_INVOCATION_EVENT,
     (event) => handler(event.payload)
   );
   return unlisten;

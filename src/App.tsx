@@ -6,6 +6,7 @@ import { useRepoStore } from "./store/repos";
 import { GitSetupGate } from "./panels/Setup/GitSetupGate";
 import { AppLayout } from "./panels/AppLayout";
 import { ErrorBoundary } from "./panels/ErrorBoundary";
+import { Toasts } from "./panels/Toasts";
 
 export function App() {
   const initThemes = useThemeStore((s) => s.init);
@@ -35,6 +36,7 @@ export function App() {
       <GitSetupGate status={gitStatus}>
         <AppLayout />
       </GitSetupGate>
+      <Toasts />
     </ErrorBoundary>
   );
 }

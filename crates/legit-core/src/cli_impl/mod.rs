@@ -167,12 +167,12 @@ impl GitCliBackend {
             .run(&args)
             .await
             .map_err(|e| GitError::Internal(e.to_string()))?;
+        // `--no-index` exits 0 (identical) or 1 (differ). Anything else (e.g.
+        // the path no longer exists / belongs to another repo) is treated as
+        // "no diff" rather than a hard error — this is a best-effort fallback.
         match out.exit_code {
             Some(0) | Some(1) => Ok(out.stdout),
-            _ => Err(GitError::CommandFailed {
-                exit_code: out.exit_code.unwrap_or(-1),
-                stderr: out.stderr,
-            }),
+            _ => Ok(String::new()),
         }
     }
 

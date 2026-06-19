@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
@@ -7,6 +7,7 @@ import { repoCommit, repoDiscard, repoLog, repoStage, repoStatus, repoUnstage } 
 import type { Commit, DiffRequest, DiffSource, FileStatus } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { useSummonStore } from "../../store/summon";
+import { notify } from "../../store/notifications";
 import { FileTree } from "../shared/FileTree/FileTree";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
@@ -92,8 +93,16 @@ export function WorkingChangesPanel() {
   // row highlighting and the bulk context-menu actions.
   const [selected, setSelected] = useState<Selection | null>(null);
   const [busy, setBusy] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<DiscardRequest | null>(null);
+
+  // Clear the selection when the repo changes — a stale path from the previous
+  // repo must not leak into actions or a diff summon for the new repo.
+  const prevRepoId = useRef(repo?.id);
+  useEffect(() => {
+    if (prevRepoId.current === repo?.id) return;
+    prevRepoId.current = repo?.id;
+    setSelected(null);
+  }, [repo?.id]);
 
   const {
     data: status = [],
@@ -213,12 +222,11 @@ export function WorkingChangesPanel() {
     async (fn: () => Promise<unknown>) => {
       if (!repo) return;
       setBusy(true);
-      setActionError(null);
       try {
         await fn();
         refresh();
       } catch (e) {
-        setActionError(formatAppError(e));
+        notify.error(formatAppError(e));
       } finally {
         setBusy(false);
       }
@@ -318,9 +326,9 @@ export function WorkingChangesPanel() {
         <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>Working changes</span>
       </div>
 
-      {(isError || actionError) && (
+      {isError && (
         <pre className="legit-error" style={{ margin: "8px 12px", fontSize: "var(--fz-md)" }}>
-          {actionError ?? formatAppError(error)}
+          {formatAppError(error)}
         </pre>
       )}
 

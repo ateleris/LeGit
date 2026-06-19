@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { useSettingsStore, UI_FONT_SIZE_DEFAULT } from "../store/settings";
 import { useRepoStore } from "../store/repos";
 import { useSummonStore } from "../store/summon";
+import { useGitLogStore } from "../store/gitLog";
+import { onGitInvocation } from "../lib/events";
 import { useRepoChangeListener } from "../lib/useRepoChangeListener";
 import type { RegionPlacement } from "../lib/types";
 import { GlobalDock } from "./GlobalDock";
@@ -46,6 +48,20 @@ export function AppLayout() {
 
   // Live refresh from the backend filesystem watcher (primary refresh path).
   useRepoChangeListener();
+
+  // Feed the Git Log panel with every git invocation the backend reports.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    onGitInvocation((inv) => useGitLogStore.getState().add(inv)).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   // When the user switches to a different repository, surface the Commits
   // panel. Other panels react on their own: query-driven panels (Commits,

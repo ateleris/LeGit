@@ -52,14 +52,12 @@ theme-token set.
   actions do). Add `diff` to the watcher's domains in the Rust side.
 - **Diff viewer: full-fidelity (multi-line) syntax highlighting.** See the
   caveat above — only if the per-line approximation proves insufficient.
-- **Git command log panel.** A panel that logs *every* git command the app
-  sends to the git executable (args, cwd, duration, exit code, maybe stderr) —
-  a passive audit/observability view, distinct from the existing interactive
-  Git Console (where the user types commands). `GitRunner` already `tracing`s
-  each invocation; surface those: have the runner push an invocation record to a
-  ring buffer and/or emit a Tauri event, then a new repo panel subscribes and
-  renders the stream (newest last, filterable). Useful for debugging slow/odd
-  git behaviour (e.g. the `%G?` signature-verification issue).
+- ~~**Git command log panel.**~~ Done — `GitRunner` reports every invocation via
+  a process-wide observer → `git_invocation` Tauri event → `useGitLogStore` →
+  the **Git Log** panel. Central error toasts (`useNotificationsStore` +
+  `Toasts`) surface command failures; clicking a toast summons the Git Log.
+  Possible follow-ups: filter/search the log, copy a command, jump a toast to
+  its specific log entry (currently it just opens the panel).
 
 ---
 
@@ -90,6 +88,13 @@ returns data) → Tauri command (registered in `lib.rs`) → wrapper in
 ### 3. Stash
 - save (incl. keep-index / include-untracked), list, show, apply, pop, drop,
   branch-from-stash.
+
+### Commit safety: detached-HEAD warning
+- Before committing on a **detached HEAD**, warn the user with a confirmation
+  (commit stays possible, but they must confirm — a detached-HEAD commit is
+  easily lost). Detect via the current ref (e.g. `git symbolic-ref -q HEAD`
+  fails / the status reports no branch); show a confirm in the Working Changes
+  commit flow, similar to the existing discard-confirmation.
 
 ### 4. Undo & history rewriting
 - **reset** (soft / mixed / hard) to a commit.

@@ -14,6 +14,7 @@ import {
 import type { DiffEntry, DiffRequest } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
+import { notify } from "../../store/notifications";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import {
   PanelContextMenuProvider,
@@ -78,12 +79,9 @@ export function DiffPanel() {
   const [contextMode, setContextMode] = useState<ContextMode>(() =>
     loadPref(CONTEXT_KEY, "chunked")
   );
-  const [actionError, setActionError] = useState<string | null>(null);
-
   // A null payload means "no file selected" — reset to the placeholder.
   const onReceive = useCallback((payload: DiffRequest | null) => {
     setRequest(payload);
-    setActionError(null);
   }, []);
   useSummonTarget<DiffRequest | null>("diff", onReceive);
 
@@ -92,7 +90,6 @@ export function DiffPanel() {
   const activeRepoId = useRepoStore((s) => s.activeRepoId);
   useEffect(() => {
     setRequest((req) => (req && req.repoId !== activeRepoId ? null : req));
-    setActionError(null);
   }, [activeRepoId]);
 
   const context = contextMode === "full" ? FULL_FILE_CONTEXT : CHUNKED_CONTEXT;
@@ -108,7 +105,10 @@ export function DiffPanel() {
     queryKey: [request?.repoId, "diff", request?.source, request?.path, request?.oldPath, context],
     queryFn: () =>
       repoDiff(request!.repoId, request!.source, request!.path, request!.oldPath ?? null, context),
-    enabled: !!request,
+    // Only diff the ACTIVE repo: a request left over from the previous repo must
+    // never query (its path doesn't exist in the new repo). The effect above
+    // also clears it; this guards the render before that runs.
+    enabled: !!request && request.repoId === activeRepoId,
     staleTime: 5_000,
   });
 
@@ -131,7 +131,6 @@ export function DiffPanel() {
   const onAction = useCallback(
     async (hunkIndex: number, action: HunkAction) => {
       if (!request) return;
-      setActionError(null);
       const { repoId, path } = request;
       try {
         if (action === "stage") await repoStageHunk(repoId, path, hunkIndex);
@@ -140,7 +139,7 @@ export function DiffPanel() {
         // Refresh the working-tree views and this diff so the new state shows.
         invalidateRepoDomains(queryClient, repoId, ["status", "log", "diff"]);
       } catch (e) {
-        setActionError(formatAppError(e));
+        notify.error(formatAppError(e));
       }
     },
     [request, queryClient]
@@ -150,7 +149,6 @@ export function DiffPanel() {
   const onLineAction = useCallback(
     async (hunkIndex: number, lineIndex: number, action: HunkAction) => {
       if (!request) return;
-      setActionError(null);
       const { repoId, path } = request;
       const lines = [lineIndex];
       try {
@@ -159,7 +157,7 @@ export function DiffPanel() {
         else await repoDiscardLines(repoId, path, hunkIndex, lines);
         invalidateRepoDomains(queryClient, repoId, ["status", "log", "diff"]);
       } catch (e) {
-        setActionError(formatAppError(e));
+        notify.error(formatAppError(e));
       }
     },
     [request, queryClient]
@@ -230,9 +228,9 @@ export function DiffPanel() {
         </span>
       </div>
 
-      {(isError || actionError) && (
+      {isError && (
         <pre className="legit-error" style={{ margin: "8px 12px", fontSize: "var(--fz-md)" }}>
-          {actionError ?? formatAppError(error)}
+          {formatAppError(error)}
         </pre>
       )}
 
