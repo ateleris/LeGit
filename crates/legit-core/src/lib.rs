@@ -11,7 +11,7 @@ pub mod runner;
 pub mod types;
 
 pub use backend::GitBackend;
-pub use cli_impl::GitCliBackend;
+pub use cli_impl::{classify_remote_error, GitCliBackend};
 pub use error::{GitError, ParseError};
 pub use runner::{
     GitRunner, GitVersion, OperationId, RunOutput, RunnerError, RunnerEvent,

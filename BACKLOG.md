@@ -141,7 +141,15 @@ Cross-platform care: the shim must be invocable by Git for Windows' shell.
 - Interactive rebase / squash / reword; **reflog** view + restore.
 
 ### 5. Getting a repo
-- **clone** (with progress/auth), **init** a new repo.
+- ~~**clone** / **init** a new repo.~~ Done — inline Clone / Init forms in the
+  Repositories panel (`repo_clone` / `repo_init` / `cancel_clone` in
+  `commands/repo.rs`, sharing the extracted `register_open_repo`). Clone is
+  cancellable (busy + Cancel via the `AppState.transient_ops` registry). Both
+  take an optional **profile** (a "Use global config" sentinel default): the
+  profile's auth is injected into the clone via `git -c …` and then applied to
+  the new repo (sets `git_profile_id`, so it shows as active in Repo Settings).
+  Remaining: streaming clone progress (%), clone options (`--depth`/`--branch`/
+  submodules), `git init --bare` / initial-branch name.
 
 ### 6. Conflict resolution
 - Detect conflicted state; per-file resolve UI (ours / theirs / manual via the

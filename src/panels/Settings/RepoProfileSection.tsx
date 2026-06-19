@@ -126,7 +126,7 @@ export function RepoProfileSection({ repoId }: { repoId: string }) {
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
         <span className="legit-subtle" style={{ fontSize: "var(--fz-md)" }}>Use profile:</span>
         <select value={dropdownValue} disabled={busy} onChange={(e) => handleSelect(e.target.value)}>
-          <option value={INHERIT}>Inherit (no profile)</option>
+          <option value={INHERIT}>Use global config</option>
           {profiles.map((p) => (
             <option key={p.id} value={p.id}>{p.name || "(unnamed)"}</option>
           ))}

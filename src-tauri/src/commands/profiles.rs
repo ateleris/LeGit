@@ -280,6 +280,53 @@ fn synth_ssh_command(key_path: &str) -> String {
     format!("ssh -i {} -o IdentitiesOnly=yes", quote_ssh_path(key_path))
 }
 
+/// The git-level `-c key=value` overrides that authenticate a `git clone` with a
+/// profile's auth: the SSH command (from the auth key) and the credential helper
+/// (reset-then-set so an inherited global helper can't interfere). Returned as
+/// flat `["-c", "k=v", ...]` tokens to splice before `clone`. These are
+/// process-scoped (not written into the new repo) — the profile is applied to the
+/// repo separately after the clone, which persists the same settings properly.
+pub fn clone_auth_config_args(profile: &GitProfile) -> Vec<String> {
+    let mk = projection(profile);
+    let mut args = Vec::new();
+    if let Some(key) = mk.auth_ssh_key.as_deref() {
+        args.push("-c".to_string());
+        args.push(format!("core.sshCommand={}", synth_ssh_command(key)));
+    }
+    if let Some(helper) = mk.credential_helper.as_deref() {
+        args.push("-c".to_string());
+        args.push("credential.helper=".to_string());
+        args.push("-c".to_string());
+        args.push(format!("credential.helper={helper}"));
+    }
+    args
+}
+
+/// Apply a profile to an open session: write its managed keys to local config and
+/// record it as the repo's selected profile (`git_profile_id`). Shared by
+/// `apply_profile_to_repo` and the clone/init flows so a freshly created repo
+/// shows the chosen profile as active in Repo Settings.
+pub async fn apply_profile_core(
+    state: &AppState,
+    session: &crate::state::RepoSession,
+    profile_id: &str,
+) -> Result<(), AppError> {
+    let runner = session.runner.read().await.clone();
+    let profile = state
+        .global_settings
+        .read()
+        .await
+        .git_profiles_doc
+        .profiles
+        .iter()
+        .find(|p| p.id == profile_id)
+        .cloned()
+        .ok_or_else(|| AppError::UnknownProfile(profile_id.to_string()))?;
+    write_managed(&runner, &projection(&profile)).await?;
+    set_repo_profile_id(state, session, Some(profile_id.to_string())).await?;
+    Ok(())
+}
+
 /// Quote-aware tokenizer for a `core.sshCommand` string.
 fn tokenize(cmd: &str) -> Vec<String> {
     let mut tokens = Vec::new();
@@ -474,19 +521,8 @@ pub async fn apply_profile_to_repo(
     profile_id: String,
 ) -> Result<ProfileStatus, AppError> {
     let session = state.get_session(&repo_id).await?;
+    apply_profile_core(&state, &session, &profile_id).await?;
     let runner = session.runner.read().await.clone();
-    let profile = state
-        .global_settings
-        .read()
-        .await
-        .git_profiles_doc
-        .profiles
-        .iter()
-        .find(|p| p.id == profile_id)
-        .cloned()
-        .ok_or_else(|| AppError::UnknownProfile(profile_id.clone()))?;
-    write_managed(&runner, &projection(&profile)).await?;
-    set_repo_profile_id(&state, &session, Some(profile_id)).await?;
     let stored = session.settings.read().await.git_profile_id.clone();
     Ok(status_for(&state, &runner, stored).await)
 }
@@ -642,6 +678,43 @@ mod tests {
         let d = diffs.iter().find(|d| d.key == KEY_CREDENTIAL_HELPER).expect("helper diff");
         assert_eq!(d.local, None);
         assert_eq!(d.profile.as_deref(), Some("manager"));
+    }
+
+    #[test]
+    fn clone_auth_args_none_when_no_auth() {
+        assert!(clone_auth_config_args(&profile("p1", "p1")).is_empty());
+    }
+
+    #[test]
+    fn clone_auth_args_ssh_only() {
+        let p = GitProfile { auth_ssh_key: Some("/home/u/.ssh/id".into()), ..profile("p1", "p1") };
+        let args = clone_auth_config_args(&p);
+        assert_eq!(args[0], "-c");
+        assert_eq!(args[1], "core.sshCommand=ssh -i \"/home/u/.ssh/id\" -o IdentitiesOnly=yes");
+        assert_eq!(args.len(), 2);
+    }
+
+    #[test]
+    fn clone_auth_args_helper_resets_then_sets() {
+        let p = GitProfile { credential_helper: Some("manager".into()), ..profile("p1", "p1") };
+        assert_eq!(
+            clone_auth_config_args(&p),
+            vec!["-c", "credential.helper=", "-c", "credential.helper=manager"]
+        );
+    }
+
+    #[test]
+    fn clone_auth_args_ssh_and_helper() {
+        let p = GitProfile {
+            auth_ssh_key: Some("/k".into()),
+            credential_helper: Some("store".into()),
+            ..profile("p1", "p1")
+        };
+        let args = clone_auth_config_args(&p);
+        // ssh first, then the helper reset+set.
+        assert_eq!(args[0], "-c");
+        assert!(args[1].starts_with("core.sshCommand=ssh -i"));
+        assert_eq!(&args[2..], &["-c", "credential.helper=", "-c", "credential.helper=store"]);
     }
 
     #[test]

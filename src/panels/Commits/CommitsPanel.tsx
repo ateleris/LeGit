@@ -19,13 +19,14 @@ import {
   consoleCancel,
   repoBranches,
   repoFetch,
+  repoListRemotes,
   repoLog,
   repoPull,
   repoPush,
   repoStatus,
   repoTrackingStatus,
 } from "../../lib/commands";
-import type { Branch, Commit, CommitId, FileStatus, PushOptions, Signature, TrackingStatus } from "../../lib/types";
+import type { Branch, Commit, CommitId, FileStatus, PushOptions, Remote, Signature, TrackingStatus } from "../../lib/types";
 import { formatAppError, gitErrorKind } from "../../lib/types";
 import { notify } from "../../store/notifications";
 import { FetchIcon, PullIcon, PushIcon, ChevronDownIcon } from "../../icons";
@@ -800,6 +801,15 @@ function RemoteSyncToolbar({ repoId, branches }: { repoId: string; branches: Bra
     staleTime: 5_000,
   });
 
+  // Configured remotes (not just fetched ones) — so Publish works the moment a
+  // remote is added, before any fetch creates remote-tracking branches.
+  const { data: remotes = [] } = useQuery<Remote[]>({
+    queryKey: [repoId, "remotes"],
+    queryFn: () => repoListRemotes(repoId),
+    enabled: !!repoId,
+    staleTime: 5_000,
+  });
+
   const [busyOp, setBusyOp] = useState<SyncOp | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const opIdRef = useRef<string | null>(null);
@@ -812,26 +822,19 @@ function RemoteSyncToolbar({ repoId, branches }: { repoId: string; branches: Bra
   );
   const hasUpstream = !!currentBranch?.upstream;
 
-  // The remote to push/publish to: parsed from the upstream when set, else the
-  // single distinct remote among remote-tracking branches, else "origin"
-  // (null only when the repo has no remotes at all).
+  // The remote to push/publish to: the upstream's remote when set, else a
+  // configured remote (prefer "origin", else the first). Null only when the repo
+  // has no remotes configured at all.
   const remoteName = useMemo((): string | null => {
     const up = currentBranch?.upstream; // e.g. "refs/remotes/origin/main"
     if (up) {
       const parts = up.split("/");
       if (parts[0] === "refs" && parts[1] === "remotes" && parts.length >= 4) return parts[2];
     }
-    const remotes = new Set<string>();
-    for (const b of branches) {
-      if (b.is_remote) {
-        const r = b.name.split("/")[0];
-        if (r) remotes.add(r);
-      }
-    }
-    if (remotes.size === 0) return null;
-    if (remotes.size === 1) return [...remotes][0];
-    return "origin";
-  }, [branches, currentBranch]);
+    if (remotes.length === 0) return null;
+    const names = remotes.map((r) => r.name);
+    return names.includes("origin") ? "origin" : names[0];
+  }, [remotes, currentBranch]);
 
   const runSync = useCallback(
     async (kind: SyncOp, fn: (opId: string) => Promise<unknown>, successMsg: string) => {

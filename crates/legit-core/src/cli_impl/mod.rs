@@ -755,8 +755,9 @@ fn build_set_url_args<'a>(name: &'a str, url: &'a str, push: bool) -> Vec<&'a st
 
 /// Map a failed remote op's stderr to a specific `GitError`: authentication
 /// problems → `AuthFailed`, non-fast-forward/rejected pushes → `PushRejected`,
-/// everything else → `CommandFailed`.
-fn classify_remote_error(exit_code: i32, stderr: &str) -> GitError {
+/// everything else → `CommandFailed`. Public so session-less callers (e.g. the
+/// `git clone` command) can classify failures the same way.
+pub fn classify_remote_error(exit_code: i32, stderr: &str) -> GitError {
     let lc = stderr.to_lowercase();
     const AUTH: [&str; 6] = [
         "authentication failed",

@@ -4,7 +4,7 @@
 
 use crate::error::AppError;
 use crate::watcher::RepoWatcher;
-use legit_core::{GitBackend, GitCliBackend, GitRunner};
+use legit_core::{GitBackend, GitCliBackend, GitRunner, OperationId};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use specta::Type;
@@ -390,6 +390,10 @@ pub struct AppState {
     pub user_themes_dir: PathBuf,
     /// On-disk location for built-in themes (read-only).
     pub builtin_themes_dir: PathBuf,
+    /// In-flight session-less git operations (currently `git clone`), keyed by
+    /// `OperationId`, so a separate cancel command can reach the runner. Entries
+    /// are inserted for the op's duration and removed when it finishes.
+    pub transient_ops: Mutex<HashMap<OperationId, Arc<GitRunner>>>,
 }
 
 impl AppState {
@@ -410,6 +414,7 @@ impl AppState {
             repos_data_dir,
             user_themes_dir,
             builtin_themes_dir,
+            transient_ops: Mutex::new(HashMap::new()),
         }
     }
 

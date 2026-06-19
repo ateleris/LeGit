@@ -3,6 +3,8 @@ import {
   closeRepo as closeRepoCmd,
   listRepos,
   openRepo as openRepoCmd,
+  repoInit as repoInitCmd,
+  repoClone as repoCloneCmd,
   restoreOpenRepos,
   setActiveRepo as setActiveRepoCmd,
   setOpenReposOrder as setOpenReposOrderCmd,
@@ -23,6 +25,16 @@ interface RepoStore {
   init: () => Promise<void>;
   refresh: () => Promise<void>;
   openRepo: (path: string) => Promise<RepoSummary>;
+  /** Init a new repo at `path`, open it, optionally apply a profile. */
+  initRepo: (path: string, profileId: string | null) => Promise<RepoSummary>;
+  /** Clone `url` into `parentDir/name`, open it, optionally apply a profile. */
+  cloneRepo: (
+    url: string,
+    parentDir: string,
+    name: string,
+    profileId: string | null,
+    opId: string
+  ) => Promise<RepoSummary>;
   closeRepo: (id: RepoId) => Promise<void>;
   setActive: (id: RepoId | null) => void;
   /** Reorder the open-repo tabs to `orderedIds` and persist the order. */
@@ -114,6 +126,24 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
     set({ activeRepoId: summary.id });
     setActiveRepoCmd(summary.id).catch((e) => console.warn("persist active failed", e));
     // Pre-load repo settings so the Repo Settings panel is ready.
+    get().loadRepoSettings(summary.id);
+    return summary;
+  },
+
+  async initRepo(path, profileId) {
+    const summary = await repoInitCmd(path, profileId);
+    await get().refresh();
+    set({ activeRepoId: summary.id });
+    setActiveRepoCmd(summary.id).catch((e) => console.warn("persist active failed", e));
+    get().loadRepoSettings(summary.id);
+    return summary;
+  },
+
+  async cloneRepo(url, parentDir, name, profileId, opId) {
+    const summary = await repoCloneCmd(url, parentDir, name, profileId, opId);
+    await get().refresh();
+    set({ activeRepoId: summary.id });
+    setActiveRepoCmd(summary.id).catch((e) => console.warn("persist active failed", e));
     get().loadRepoSettings(summary.id);
     return summary;
   },

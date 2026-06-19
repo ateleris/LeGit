@@ -7,7 +7,7 @@ use crate::state::{
     load_repo_settings_sync, persist_repo_settings, AppState, LaneLock, RepoSession, RepoSettings,
     RepoSummary,
 };
-use legit_core::GitRunner;
+use legit_core::{classify_remote_error, GitError, GitRunner, OperationId};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -91,22 +91,16 @@ async fn start_repo_watcher(state: &AppState, app: &tauri::AppHandle, session: &
 // Commands
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
-#[specta::specta]
-pub async fn open_repo(
-    state: tauri::State<'_, AppState>,
-    app: tauri::AppHandle,
-    path: String,
+/// Probe `probe_path` for its repo top-level, reuse-or-open a session for it, and
+/// update the recent/open/active bookkeeping. Shared by `open_repo`, `repo_init`,
+/// and `repo_clone`.
+async fn register_open_repo(
+    state: &AppState,
+    app: &tauri::AppHandle,
+    git_path: PathBuf,
+    probe_path: PathBuf,
 ) -> Result<RepoSummary, AppError> {
-    let path = PathBuf::from(path);
-    if !path.exists() {
-        return Err(AppError::NotARepo(format!(
-            "path does not exist: {}",
-            path.display()
-        )));
-    }
-    let git_path = state.git_path.read().await.clone();
-    let probe_runner = GitRunner::for_repo(git_path.clone(), &path);
+    let probe_runner = GitRunner::for_repo(git_path.clone(), &probe_path);
     let out = probe_runner
         .run(&["rev-parse", "--show-toplevel"])
         .await
@@ -126,10 +120,10 @@ pub async fn open_repo(
     };
 
     let summary = if let Some(s) = existing_summary {
-        tracing::info!(path = %toplevel.display(), id = %s.id, "open_repo: reusing existing session");
+        tracing::info!(path = %toplevel.display(), id = %s.id, "open: reusing existing session");
         s
     } else {
-        open_session(&state, &app, git_path, toplevel).await
+        open_session(state, app, git_path, toplevel).await
     };
 
     {
@@ -146,6 +140,144 @@ pub async fn open_repo(
     state.persist_global_settings().await.ok();
 
     Ok(summary)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn open_repo(
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<RepoSummary, AppError> {
+    let path = PathBuf::from(path);
+    if !path.exists() {
+        return Err(AppError::NotARepo(format!(
+            "path does not exist: {}",
+            path.display()
+        )));
+    }
+    let git_path = state.git_path.read().await.clone();
+    register_open_repo(&state, &app, git_path, path).await
+}
+
+/// Initialize a new repository in `path` (`git init`), open it, and optionally
+/// apply (and select) a profile. `path` must be an existing directory.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_init(
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+    path: String,
+    profile_id: Option<String>,
+) -> Result<RepoSummary, AppError> {
+    let dir = PathBuf::from(&path);
+    if !dir.exists() {
+        return Err(AppError::NotARepo(format!(
+            "path does not exist: {}",
+            dir.display()
+        )));
+    }
+    let git_path = state.git_path.read().await.clone();
+    let runner = GitRunner::for_repo(git_path.clone(), &dir);
+    let out = runner.run(&["init"]).await.map_err(AppError::from)?;
+    if !out.success {
+        return Err(AppError::Git(GitError::CommandFailed {
+            exit_code: out.exit_code.unwrap_or(-1),
+            stderr: out.stderr.trim().to_string(),
+        }));
+    }
+    let summary = register_open_repo(&state, &app, git_path, dir).await?;
+    if let Some(pid) = profile_id {
+        let session = state.get_session(&summary.id).await?;
+        crate::commands::profiles::apply_profile_core(&state, &session, &pid).await?;
+    }
+    Ok(summary)
+}
+
+/// Clone `url` into `parent_dir/name`, open it, and optionally apply (and select)
+/// a profile. When a profile is given its auth is injected into the clone via
+/// `-c` (so the clone authenticates with that identity) and then applied to the
+/// new repo. Cancellable via `cancel_clone(op_id)`.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_clone(
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+    url: String,
+    parent_dir: String,
+    name: String,
+    profile_id: Option<String>,
+    op_id: String,
+) -> Result<RepoSummary, AppError> {
+    let parent = PathBuf::from(&parent_dir);
+    if !parent.exists() {
+        return Err(AppError::NotARepo(format!(
+            "directory does not exist: {}",
+            parent.display()
+        )));
+    }
+    let git_path = state.git_path.read().await.clone();
+
+    // git-level `-c` auth overrides from the optional profile, then `clone`.
+    let mut args: Vec<String> = Vec::new();
+    if let Some(pid) = &profile_id {
+        let profile = state
+            .global_settings
+            .read()
+            .await
+            .git_profiles_doc
+            .profiles
+            .iter()
+            .find(|p| p.id == *pid)
+            .cloned()
+            .ok_or_else(|| AppError::UnknownProfile(pid.clone()))?;
+        args.extend(crate::commands::profiles::clone_auth_config_args(&profile));
+    }
+    args.push("clone".into());
+    args.push(url.clone());
+    args.push(name.clone());
+
+    // Run on a transient runner registered for the op so cancel_clone can reach it.
+    let oid = OperationId(op_id);
+    let runner = Arc::new(GitRunner::for_repo(git_path.clone(), &parent));
+    state
+        .transient_ops
+        .lock()
+        .unwrap()
+        .insert(oid.clone(), runner.clone());
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let result = runner.run_with_op(&arg_refs, oid.clone()).await;
+    state.transient_ops.lock().unwrap().remove(&oid);
+
+    let out = result.map_err(AppError::from)?;
+    if !out.success {
+        return Err(AppError::Git(classify_remote_error(
+            out.exit_code.unwrap_or(-1),
+            &out.stderr,
+        )));
+    }
+
+    let summary = register_open_repo(&state, &app, git_path, parent.join(&name)).await?;
+    if let Some(pid) = profile_id {
+        let session = state.get_session(&summary.id).await?;
+        crate::commands::profiles::apply_profile_core(&state, &session, &pid).await?;
+    }
+    Ok(summary)
+}
+
+/// Cancel an in-flight `repo_clone` by its `op_id`. Returns whether the op was found.
+#[tauri::command]
+#[specta::specta]
+pub async fn cancel_clone(
+    state: tauri::State<'_, AppState>,
+    op_id: String,
+) -> Result<bool, AppError> {
+    let oid = OperationId(op_id);
+    let runner = state.transient_ops.lock().unwrap().get(&oid).cloned();
+    Ok(match runner {
+        Some(r) => r.cancel(&oid),
+        None => false,
+    })
 }
 
 #[tauri::command]

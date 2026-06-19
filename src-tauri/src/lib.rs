@@ -22,6 +22,9 @@ pub fn run() {
 
     let specta_builder = Builder::<tauri::Wry>::new().commands(collect_commands![
         commands::open_repo,
+        commands::repo_init,
+        commands::repo_clone,
+        commands::cancel_clone,
         commands::close_repo,
         commands::list_repos,
         commands::recent_repos,

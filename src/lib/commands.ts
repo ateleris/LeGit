@@ -51,6 +51,22 @@ export const restoreOpenRepos = () => invoke<RestoreResult>("restore_open_repos"
 export const setActiveRepo = (repoId: string | null) =>
   invoke<null>("set_active_repo", { repoId });
 
+/** Init a new repo at `path`; optionally apply a profile (id, or null for global config). */
+export const repoInit = (path: string, profileId: string | null) =>
+  invoke<RepoSummary>("repo_init", { path, profileId });
+
+/** Clone `url` into `parentDir/name`; optional profile; cancellable via `opId`. */
+export const repoClone = (
+  url: string,
+  parentDir: string,
+  name: string,
+  profileId: string | null,
+  opId: string
+) => invoke<RepoSummary>("repo_clone", { url, parentDir, name, profileId, opId });
+
+export const cancelClone = (opId: string) =>
+  invoke<boolean>("cancel_clone", { opId });
+
 export const setOpenReposOrder = (repoIds: string[]) =>
   invoke<null>("set_open_repos_order", { repoIds });
 
