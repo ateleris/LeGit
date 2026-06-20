@@ -11,7 +11,7 @@ use crate::runner::OperationId;
 use crate::types::{
     Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, Diff, DiffEntry,
     DiffSource, FetchOptions, FileStatus, HunkOp, LogOptions, PullOptions, PushOptions, Remote,
-    SubmoduleInfo, TrackingStatus,
+    SubmoduleInfo, SwitchOutcome, TrackingStatus,
 };
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
@@ -114,4 +114,19 @@ pub trait GitBackend: Send + Sync {
     /// Prune stale remote-tracking refs (`git remote prune <name>`). Network op,
     /// cancellable via `op_id`.
     async fn prune_remote(&self, name: &str, op_id: OperationId) -> Result<(), GitError>;
+
+    /// Create a local branch. `start_point` is a branch name, tag, or commit SHA;
+    /// `None` creates from the current HEAD.
+    async fn create_branch(&self, name: &str, start_point: Option<&str>) -> Result<(), GitError>;
+
+    /// Switch to a branch. With `auto_stash = true`, stashes uncommitted changes
+    /// first and pops them after switching. A failed pop returns `StashPopFailed`
+    /// (not `Err`) because the switch itself succeeded.
+    async fn switch_branch(&self, name: &str, auto_stash: bool) -> Result<SwitchOutcome, GitError>;
+
+    /// Delete a local branch. `force = true` maps to `-D`; `false` uses `-d`.
+    async fn delete_branch(&self, name: &str, force: bool) -> Result<(), GitError>;
+
+    /// Rename a local branch (`git branch -m <old> <new>`).
+    async fn rename_branch(&self, old_name: &str, new_name: &str) -> Result<(), GitError>;
 }

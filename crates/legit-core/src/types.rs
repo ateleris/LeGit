@@ -274,6 +274,21 @@ pub struct Branch {
     pub head: Option<CommitId>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SwitchOutcome {
+    Clean,
+    StashPopFailed { message: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SwitchDirtyBehavior {
+    #[default]
+    TryDirectly,
+    AutoStash,
+}
+
 /// Options for `git fetch`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct FetchOptions {
