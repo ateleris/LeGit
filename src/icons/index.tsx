@@ -21,6 +21,7 @@ import {
   Lock,
   Minus,
   Plus,
+  Archive,
   RefreshCw,
   RotateCcw,
   Tag,
@@ -56,6 +57,7 @@ function withDefaults(Base: LucideIcon, displayName: string) {
 export const BranchIcon = withDefaults(GitBranch, "BranchIcon");
 export const RemoteIcon = withDefaults(Cloud, "RemoteIcon");
 export const TagIcon = withDefaults(Tag, "TagIcon");
+export const StashIcon = withDefaults(Archive, "StashIcon");
 export const LockIcon = withDefaults(Lock, "LockIcon");
 export const CheckIcon = withDefaults(Check, "CheckIcon");
 export const WarningIcon = withDefaults(TriangleAlert, "WarningIcon");

@@ -11,7 +11,8 @@ use crate::runner::OperationId;
 use crate::types::{
     Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, Diff, DiffEntry,
     DiffSource, FetchOptions, FileStatus, HunkOp, LogOptions, PullOptions, PushOptions, Remote,
-    SubmoduleInfo, SwitchOutcome, TrackingStatus,
+    StashApplyOutcome, StashEntry, StashOutcome, SubmoduleInfo, SwitchDirtyBehavior, SwitchOutcome,
+    TrackingStatus,
 };
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
@@ -70,6 +71,14 @@ pub trait GitBackend: Send + Sync {
 
     async fn commit(&self, opts: CommitOptions) -> Result<CommitId, GitError>;
 
+    /// Reword (rename) a commit's message, returning the new commit id.
+    ///
+    /// v1 supports rewording **HEAD only** (`RewordNotHead` otherwise) and
+    /// **refuses** a commit already reachable from a remote-tracking ref
+    /// (`RewordPushed`), since rewording rewrites history. The original author
+    /// and staged changes are preserved (`git commit --amend --only`).
+    async fn reword_commit(&self, id: &CommitId, message: &str) -> Result<CommitId, GitError>;
+
     /// Stage the given paths (`git add`).
     async fn stage(&self, paths: &[PathBuf]) -> Result<(), GitError>;
 
@@ -119,14 +128,49 @@ pub trait GitBackend: Send + Sync {
     /// `None` creates from the current HEAD.
     async fn create_branch(&self, name: &str, start_point: Option<&str>) -> Result<(), GitError>;
 
-    /// Switch to a branch. With `auto_stash = true`, stashes uncommitted changes
+    /// Switch to a branch. With `behavior = AutoStash`, stashes uncommitted changes
     /// first and pops them after switching. A failed pop returns `StashPopFailed`
-    /// (not `Err`) because the switch itself succeeded.
-    async fn switch_branch(&self, name: &str, auto_stash: bool) -> Result<SwitchOutcome, GitError>;
+    /// (not `Err`) because the switch itself succeeded. A clean working tree with
+    /// `AutoStash` is handled correctly (no error if there is nothing to stash).
+    async fn switch_branch(&self, name: &str, behavior: SwitchDirtyBehavior) -> Result<SwitchOutcome, GitError>;
+
+    /// Check out a remote-tracking branch by creating a local tracking branch.
+    /// Equivalent to `git switch --track <remote_ref>` (e.g. `origin/feature-x`).
+    /// Fails if a local branch with the derived name already exists.
+    async fn checkout_remote_branch(&self, remote_ref: &str) -> Result<(), GitError>;
 
     /// Delete a local branch. `force = true` maps to `-D`; `false` uses `-d`.
     async fn delete_branch(&self, name: &str, force: bool) -> Result<(), GitError>;
 
     /// Rename a local branch (`git branch -m <old> <new>`).
     async fn rename_branch(&self, old_name: &str, new_name: &str) -> Result<(), GitError>;
+
+    /// Check out a commit by SHA, entering detached HEAD.
+    /// Respects `behavior` for dirty-tree handling identically to `switch_branch`.
+    async fn checkout_commit(&self, sha: &str, behavior: SwitchDirtyBehavior) -> Result<SwitchOutcome, GitError>;
+
+    /// List the stash entries (`git stash list`), most recent first.
+    async fn stashes(&self) -> Result<Vec<StashEntry>, GitError>;
+
+    /// Stash the working tree (`git stash push`). `include_untracked` adds
+    /// `--include-untracked`. A clean working tree returns `NothingToStash`
+    /// (not `Err`).
+    async fn create_stash(&self, message: Option<&str>, include_untracked: bool) -> Result<StashOutcome, GitError>;
+
+    /// Apply a stash without removing it (`git stash apply <selector>`). A merge
+    /// conflict returns `Conflicts` (not `Err`).
+    async fn apply_stash(&self, selector: &str) -> Result<StashApplyOutcome, GitError>;
+
+    /// Apply a stash and remove it on success (`git stash pop <selector>`). On
+    /// conflict the stash is retained (git's behavior) and `Conflicts` is returned.
+    async fn pop_stash(&self, selector: &str) -> Result<StashApplyOutcome, GitError>;
+
+    /// Drop a stash (`git stash drop <selector>`).
+    async fn drop_stash(&self, selector: &str) -> Result<(), GitError>;
+
+    /// Rename a stash's message. Git has no in-place rename, so this captures the
+    /// stash's commit, drops the entry, and re-stores it under `new_message`
+    /// (`git stash store`). Because `store` prepends, the renamed stash becomes
+    /// `stash@{0}` — renaming an older stash reorders it to the top.
+    async fn rename_stash(&self, selector: &str, new_message: &str) -> Result<(), GitError>;
 }

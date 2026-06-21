@@ -10,7 +10,8 @@ use crate::runner::{GitRunner, OperationId};
 use crate::types::{
     Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, Diff, DiffEntry,
     DiffSource, FetchOptions, FileState, FileStatus, HunkOp, LogOptions, PullOptions, PullStrategy,
-    PushOptions, RefSelector, Remote, SignMode, SubmoduleInfo, TrackingStatus,
+    PushOptions, RefDecoration, RefSelector, Remote, SignMode, StashApplyOutcome, StashEntry,
+    StashOutcome, SubmoduleInfo, SwitchDirtyBehavior, SwitchOutcome, TrackingStatus,
 };
 
 /// Git's well-known empty-tree object id, used as the "before" side when
@@ -125,13 +126,25 @@ impl GitCliBackend {
             });
         }
         // Untracked files don't appear in `git diff` at all (empty output), so a
-        // working-tree diff of one would read as "no changes". Show the whole
-        // file as added by diffing it against the empty side instead.
-        if output.stdout.trim().is_empty()
-            && matches!(source, DiffSource::WorkingUnstaged)
-            && self.is_untracked(&runner, &path_str).await?
-        {
-            return self.diff_no_index(&runner, &path_str, context).await;
+        // diff of one would read as "no changes". Show the whole file as added by
+        // diffing it against the empty side instead. Two cases produce this:
+        if output.stdout.trim().is_empty() {
+            // 1. A working-tree untracked file (`git diff` ignores it).
+            if matches!(source, DiffSource::WorkingUnstaged)
+                && self.is_untracked(&runner, &path_str).await?
+            {
+                return self.diff_no_index(&runner, &path_str, context).await;
+            }
+            // 2. A file stashed via --include-untracked: it lives in the stash's
+            //    untracked parent, not the stash commit's tree, so base..stash is
+            //    empty for it. Diff that parent against the empty tree.
+            if let DiffSource::Commit { commit_id } = source {
+                if let Some(u) = self.stash_untracked_parent(&runner, commit_id.as_str()).await? {
+                    return self
+                        .diff_tree_file(&runner, EMPTY_TREE_OID, &u, &path_str, context)
+                        .await;
+                }
+            }
         }
         Ok(output.stdout)
     }
@@ -177,6 +190,41 @@ impl GitCliBackend {
         }
     }
 
+    /// Diff a single file between two tree-ish revisions (all lines added when
+    /// `from` is the empty tree). Used to surface a stash's untracked files,
+    /// which live in a separate parent commit rather than the stash's own tree.
+    async fn diff_tree_file(
+        &self,
+        runner: &GitRunner,
+        from: &str,
+        to: &str,
+        path: &str,
+        context: u32,
+    ) -> Result<String, GitError> {
+        let unified = format!("-U{context}");
+        let args = [
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            unified.as_str(),
+            from,
+            to,
+            "--",
+            path,
+        ];
+        let out = runner
+            .run(&args)
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !out.success {
+            return Err(GitError::CommandFailed {
+                exit_code: out.exit_code.unwrap_or(-1),
+                stderr: out.stderr,
+            });
+        }
+        Ok(out.stdout)
+    }
+
     /// Resolve a commit's first parent for diffing, falling back to git's
     /// empty-tree object for a root commit. Mirrors `commit_files`.
     async fn first_parent(
@@ -200,6 +248,46 @@ impl GitCliBackend {
             .nth(1)
             .unwrap_or(EMPTY_TREE_OID)
             .to_string())
+    }
+
+    /// If `sha` is a stash with untracked files, return that untracked-files
+    /// commit (the stash's 3rd parent). `git stash push --include-untracked`
+    /// stores untracked files in a 3rd parent whose tree holds ONLY those files;
+    /// they are absent from the stash commit's own tree, so a `base..stash` diff
+    /// never shows them.
+    ///
+    /// Returns `None` for anything that isn't an untracked-bearing stash. The
+    /// 3-parent shape alone is ambiguous (an octopus merge has it too), so we
+    /// confirm `sha` is actually in `git stash list` before treating its 3rd
+    /// parent as untracked content. Cheap: the stash-list call only runs for
+    /// commits that have a 3rd parent in the first place.
+    async fn stash_untracked_parent(
+        &self,
+        runner: &GitRunner,
+        sha: &str,
+    ) -> Result<Option<String>, GitError> {
+        let rev = runner
+            .run(&["rev-list", "--parents", "-n", "1", sha])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !rev.success {
+            return Ok(None);
+        }
+        // tokens: <sha> <base> <index> <untracked>; the untracked parent is 4th.
+        let untracked = match rev.stdout.split_whitespace().nth(3) {
+            Some(p) => p.to_string(),
+            None => return Ok(None),
+        };
+
+        let list = runner
+            .run(&["stash", "list", "--format=%H"])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !list.success {
+            return Ok(None);
+        }
+        let is_stash = list.stdout.lines().any(|l| l.trim() == sha);
+        Ok(is_stash.then_some(untracked))
     }
 
     /// Which diff a working-tree operation reads from: staging/discarding act on
@@ -273,6 +361,82 @@ impl GitCliBackend {
         }
         Ok(())
     }
+
+    /// Run a `git stash apply`/`pop`, mapping a merge conflict (non-zero exit
+    /// whose output mentions a conflict) to `Conflicts` rather than `Err` — the
+    /// apply partially succeeded and the user must resolve the working tree. Any
+    /// other failure (e.g. a bad selector) is a real `CommandFailed`.
+    async fn run_stash_apply(&self, args: &[&str]) -> Result<StashApplyOutcome, GitError> {
+        let runner = self.runner().await;
+        let output = runner
+            .run(args)
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if output.success {
+            return Ok(StashApplyOutcome::Clean);
+        }
+        let combined = format!("{}\n{}", output.stdout, output.stderr);
+        if combined.to_lowercase().contains("conflict") {
+            Ok(StashApplyOutcome::Conflicts {
+                message: combined.trim().to_string(),
+            })
+        } else {
+            Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr,
+            })
+        }
+    }
+
+    /// Shared auto-stash logic used by `switch_branch` and `checkout_commit`.
+    /// `switch_args` are the git arguments after `git` itself, e.g. `&["switch", "main"]`
+    /// or `&["switch", "--detach", "abc123"]`.
+    async fn run_with_auto_stash(
+        &self,
+        behavior: SwitchDirtyBehavior,
+        switch_args: &[&str],
+    ) -> Result<SwitchOutcome, GitError> {
+        if behavior == SwitchDirtyBehavior::AutoStash {
+            let target = switch_args.last().copied().unwrap_or("?");
+            let msg = format!("legit: auto-stash before switching to {}", target);
+            let did_stash = match self
+                .run_simple(&["stash", "push", "--include-untracked", "-m", &msg])
+                .await
+            {
+                Ok(()) => true,
+                Err(GitError::CommandFailed { stderr, .. })
+                    if stderr.contains("No local changes to save") =>
+                {
+                    false
+                }
+                Err(e) => return Err(e),
+            };
+            match self.run_simple(switch_args).await {
+                Ok(()) => {}
+                Err(e) => {
+                    if did_stash {
+                        let _ = self.run_simple(&["stash", "pop"]).await;
+                    }
+                    return Err(e);
+                }
+            }
+            if !did_stash {
+                return Ok(SwitchOutcome::Clean);
+            }
+            match self.run_simple(&["stash", "pop"]).await {
+                Ok(()) => Ok(SwitchOutcome::Clean),
+                Err(GitError::CommandFailed { stderr, .. }) => {
+                    Ok(SwitchOutcome::StashPopFailed { message: stderr })
+                }
+                Err(e) => Ok(SwitchOutcome::StashPopFailed {
+                    message: e.to_string(),
+                }),
+            }
+        } else {
+            self.run_simple(switch_args).await?;
+            Ok(SwitchOutcome::Clean)
+        }
+    }
 }
 
 #[async_trait]
@@ -308,11 +472,12 @@ impl GitBackend for GitCliBackend {
             args.push(&skip_arg);
         }
 
-        let refs_flag;
         match opts.refs {
             RefSelector::AllLocalBranches => {
-                refs_flag = "--branches";
-                args.push(refs_flag);
+                // Always include HEAD so a detached HEAD commit appears even
+                // when it isn't reachable from any local branch.
+                args.push("HEAD");
+                args.push("--branches");
             }
             RefSelector::Head => {}
         }
@@ -330,7 +495,18 @@ impl GitBackend for GitCliBackend {
             });
         }
 
-        parsers::log::parse_log(&output.stdout).map_err(GitError::from)
+        let mut commits = parsers::log::parse_log(&output.stdout).map_err(GitError::from)?;
+
+        // Inject stashes as synthetic nodes so they appear in the graph. Only for
+        // the full-graph view, and best-effort: a stash-list failure must never
+        // break the commit log itself.
+        if matches!(opts.refs, RefSelector::AllLocalBranches) {
+            if let Ok(stashes) = self.stashes().await {
+                inject_stashes(&mut commits, stashes);
+            }
+        }
+
+        Ok(commits)
     }
 
     async fn commit_details(&self, id: &CommitId) -> Result<CommitDetails, GitError> {
@@ -378,30 +554,14 @@ impl GitBackend for GitCliBackend {
         // we diff against the empty tree. Using an explicit `<from> <to>` pair
         // (rather than a bare commit) makes the diff first-parent for merges
         // and avoids diff-tree's empty default output for merge commits.
-        let rev = runner
-            .run(&["rev-list", "--parents", "-n", "1", id.as_str()])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !rev.success {
-            return Err(GitError::CommandFailed {
-                exit_code: rev.exit_code.unwrap_or(-1),
-                stderr: rev.stderr,
-            });
-        }
-        let from = rev
-            .stdout
-            .split_whitespace()
-            .nth(1)
-            .unwrap_or(EMPTY_TREE_OID)
-            .to_string();
+        let from = self.first_parent(&runner, id.as_str()).await?;
+        let to = id.as_str().to_string();
 
         let flags = parsers::commit_files::DIFF_TREE_FLAGS;
-        let to = id.as_str();
 
-        let run_diff = |kind: &'static str| {
+        // diff-tree <from> <to> for a given output kind (--name-status / --numstat).
+        let run_diff = |from: String, to: String, kind: &'static str| {
             let runner = runner.clone();
-            let from = from.clone();
-            let to = to.to_string();
             async move {
                 let mut args = vec!["diff-tree"];
                 args.extend_from_slice(&flags);
@@ -422,8 +582,19 @@ impl GitBackend for GitCliBackend {
             }
         };
 
-        let name_status = run_diff("--name-status").await?;
-        let numstat = run_diff("--numstat").await?;
+        let mut name_status = run_diff(from.clone(), to.clone(), "--name-status").await?;
+        let mut numstat = run_diff(from, to.clone(), "--numstat").await?;
+
+        // A stash created with --include-untracked keeps its untracked files in a
+        // separate 3rd-parent commit, NOT in the stash commit's own tree — so the
+        // diff above misses them entirely. Append them as additions (empty tree →
+        // untracked parent) so the stash's full contents show. Ordinary commits
+        // and octopus merges have no untracked parent and are unaffected.
+        if let Some(untracked) = self.stash_untracked_parent(&runner, &to).await? {
+            let u_from = EMPTY_TREE_OID.to_string();
+            name_status.push_str(&run_diff(u_from.clone(), untracked.clone(), "--name-status").await?);
+            numstat.push_str(&run_diff(u_from, untracked, "--numstat").await?);
+        }
 
         Ok(parsers::commit_files::parse_commit_files(
             &name_status,
@@ -549,6 +720,68 @@ impl GitBackend for GitCliBackend {
             });
         }
         Ok(CommitId::new(head.stdout.trim().to_string()))
+    }
+
+    async fn reword_commit(&self, id: &CommitId, message: &str) -> Result<CommitId, GitError> {
+        let runner = self.runner().await;
+
+        // v1 rewords HEAD only — resolve the tip and reject anything else.
+        let head = runner
+            .run(&["rev-parse", "HEAD"])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !head.success {
+            return Err(GitError::CommandFailed {
+                exit_code: head.exit_code.unwrap_or(-1),
+                stderr: head.stderr,
+            });
+        }
+        if head.stdout.trim() != id.0 {
+            return Err(GitError::RewordNotHead);
+        }
+
+        // Hard-block rewording published history. `rev-list -n 1 <id> --not
+        // --remotes` prints the sha iff it is NOT reachable from any
+        // remote-tracking ref; empty output means the commit is already pushed.
+        let pushed = runner
+            .run(&["rev-list", "-n", "1", &id.0, "--not", "--remotes"])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !pushed.success {
+            return Err(GitError::CommandFailed {
+                exit_code: pushed.exit_code.unwrap_or(-1),
+                stderr: pushed.stderr,
+            });
+        }
+        if pushed.stdout.trim().is_empty() {
+            return Err(GitError::RewordPushed);
+        }
+
+        // `--amend --only` with no pathspec rewrites HEAD's message without
+        // folding any staged changes, preserving the original author.
+        let output = runner
+            .run(&["commit", "--amend", "--only", "-m", message])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !output.success {
+            return Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr,
+            });
+        }
+
+        // Resolve the rewritten commit's new id.
+        let new_head = runner
+            .run(&["rev-parse", "HEAD"])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !new_head.success {
+            return Err(GitError::CommandFailed {
+                exit_code: new_head.exit_code.unwrap_or(-1),
+                stderr: new_head.stderr,
+            });
+        }
+        Ok(CommitId::new(new_head.stdout.trim().to_string()))
     }
 
     async fn stage(&self, paths: &[PathBuf]) -> Result<(), GitError> {
@@ -723,6 +956,150 @@ impl GitBackend for GitCliBackend {
         let runner = self.runner().await;
         let args = vec!["remote".to_string(), "prune".to_string(), name.to_string()];
         self.run_remote(&runner, &args, op_id).await
+    }
+
+    async fn create_branch(&self, name: &str, start_point: Option<&str>) -> Result<(), GitError> {
+        let mut args = vec!["branch", name];
+        if let Some(sp) = start_point {
+            args.push(sp);
+        }
+        self.run_simple(&args).await
+    }
+
+    async fn switch_branch(&self, name: &str, behavior: SwitchDirtyBehavior) -> Result<SwitchOutcome, GitError> {
+        self.run_with_auto_stash(behavior, &["switch", name]).await
+    }
+
+    async fn checkout_commit(&self, sha: &str, behavior: SwitchDirtyBehavior) -> Result<SwitchOutcome, GitError> {
+        self.run_with_auto_stash(behavior, &["switch", "--detach", sha]).await
+    }
+
+    async fn checkout_remote_branch(&self, remote_ref: &str) -> Result<(), GitError> {
+        self.run_simple(&["switch", "--track", remote_ref]).await
+    }
+
+    async fn delete_branch(&self, name: &str, force: bool) -> Result<(), GitError> {
+        let flag = if force { "-D" } else { "-d" };
+        self.run_simple(&["branch", flag, name]).await
+    }
+
+    async fn rename_branch(&self, old_name: &str, new_name: &str) -> Result<(), GitError> {
+        self.run_simple(&["branch", "-m", old_name, new_name]).await
+    }
+
+    async fn stashes(&self) -> Result<Vec<StashEntry>, GitError> {
+        let runner = self.runner().await;
+        let fmt_arg = format!("--format={}", parsers::stash::STASH_FORMAT);
+
+        let output = runner
+            .run(&["stash", "list", &fmt_arg])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+
+        if !output.success {
+            return Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr,
+            });
+        }
+
+        Ok(parsers::stash::parse_stashes(&output.stdout))
+    }
+
+    async fn create_stash(
+        &self,
+        message: Option<&str>,
+        include_untracked: bool,
+    ) -> Result<StashOutcome, GitError> {
+        let mut args = vec!["stash", "push"];
+        if include_untracked {
+            args.push("--include-untracked");
+        }
+        if let Some(msg) = message.filter(|m| !m.is_empty()) {
+            args.push("-m");
+            args.push(msg);
+        }
+        match self.run_simple(&args).await {
+            Ok(()) => Ok(StashOutcome::Created),
+            Err(GitError::CommandFailed { stderr, .. })
+                if stderr.contains("No local changes to save") =>
+            {
+                Ok(StashOutcome::NothingToStash)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn apply_stash(&self, selector: &str) -> Result<StashApplyOutcome, GitError> {
+        self.run_stash_apply(&["stash", "apply", selector]).await
+    }
+
+    async fn pop_stash(&self, selector: &str) -> Result<StashApplyOutcome, GitError> {
+        self.run_stash_apply(&["stash", "pop", selector]).await
+    }
+
+    async fn drop_stash(&self, selector: &str) -> Result<(), GitError> {
+        self.run_simple(&["stash", "drop", selector]).await
+    }
+
+    async fn rename_stash(&self, selector: &str, new_message: &str) -> Result<(), GitError> {
+        // Capture the stash's commit object before we drop the entry, so the
+        // content survives even if the re-store step fails (it stays reachable
+        // via the reflog / fsck).
+        let runner = self.runner().await;
+        let out = runner
+            .run(&["rev-parse", selector])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !out.success {
+            return Err(GitError::CommandFailed {
+                exit_code: out.exit_code.unwrap_or(-1),
+                stderr: out.stderr,
+            });
+        }
+        let sha = out.stdout.trim().to_string();
+
+        // Drop the old entry, then re-store the same commit under the new
+        // message. `git stash store` prepends, so the result lands at stash@{0}.
+        self.run_simple(&["stash", "drop", selector]).await?;
+        self.run_simple(&["stash", "store", "-m", new_message, &sha]).await
+    }
+}
+
+/// Build a synthetic graph node for a stash entry. The real stash object is a
+/// 2–3-parent merge (base, index, optional untracked); we keep ONLY the base as
+/// the parent so the lane graph hangs it cleanly off its base instead of drawing
+/// edges into git-internal index/untracked blobs.
+fn stash_commit(entry: &StashEntry) -> Commit {
+    Commit {
+        id: entry.stash_sha.clone(),
+        parents: vec![entry.base_sha.clone()],
+        author: entry.author.clone(),
+        committer: entry.author.clone(),
+        message: entry.message.clone(),
+        timestamp: entry.timestamp,
+        signature: None,
+        decorations: vec![RefDecoration::Stash(entry.selector.clone())],
+    }
+}
+
+/// Insert synthetic stash nodes into a log result so they render in the graph.
+///
+/// Every stash is positioned purely by its author timestamp in the newest-first
+/// list — stashes interleave with commits by time, regardless of where their base
+/// sits. Real commits are never reordered; we only splice stash nodes in. A
+/// stash's base is always older than the stash, so it still appears later in the
+/// list and the stash's first-parent edge draws downward into it (just not
+/// necessarily adjacent). `git stash list` is most-recent first, so inserting in
+/// that order keeps `stash@{0}` highest when several stashes share a timestamp.
+fn inject_stashes(commits: &mut Vec<Commit>, stashes: Vec<StashEntry>) {
+    for entry in &stashes {
+        let node = stash_commit(entry);
+        let pos = commits
+            .iter()
+            .position(|c| c.timestamp < node.timestamp)
+            .unwrap_or(commits.len());
+        commits.insert(pos, node);
     }
 }
 

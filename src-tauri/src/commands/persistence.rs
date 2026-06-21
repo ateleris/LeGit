@@ -7,6 +7,7 @@
 
 use crate::error::AppError;
 use crate::state::{max_commits_dot_radius, max_commits_text_size, GlobalSettings, RegionPlacement, AppState};
+use legit_core::SwitchDirtyBehavior;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::PathBuf;
@@ -192,6 +193,19 @@ pub async fn set_confirm_discard(
     {
         let mut s = state.global_settings.write().await;
         s.confirm_discard = confirm;
+    }
+    state.persist_global_settings().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn save_switch_dirty_behavior(
+    state: tauri::State<'_, AppState>,
+    behavior: SwitchDirtyBehavior,
+) -> Result<(), AppError> {
+    {
+        let mut s = state.global_settings.write().await;
+        s.switch_dirty_behavior = Some(behavior);
     }
     state.persist_global_settings().await
 }

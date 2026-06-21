@@ -16,6 +16,7 @@ export type ChipDescriptor =
   | { kind: "branch"; value: string }
   | { kind: "remote"; value: string }
   | { kind: "tag"; value: string }
+  | { kind: "stash"; value: string }
   | { kind: "other"; value: string };
 
 /**
@@ -104,6 +105,9 @@ export function buildChips(
       case "tag":
         descriptors.push({ kind: "tag", value: dec.value });
         break;
+      case "stash":
+        descriptors.push({ kind: "stash", value: dec.value });
+        break;
       case "other":
         descriptors.push({ kind: "other", value: dec.value });
         break;
@@ -123,8 +127,10 @@ export function buildChips(
         return 2;
       case "tag":
         return 3;
-      case "other":
+      case "stash":
         return 4;
+      case "other":
+        return 5;
     }
   };
 

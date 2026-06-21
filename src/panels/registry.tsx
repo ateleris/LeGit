@@ -8,6 +8,8 @@ import { WorkingChangesPanel } from "./WorkingChanges/WorkingChangesPanel";
 import { DiffPanel } from "./Diff/DiffPanel";
 import { GitLogPanel } from "./GitLog/GitLogPanel";
 import { RemotesPanel } from "./Remotes/RemotesPanel";
+import { BranchesPanel } from "./Branches/BranchesPanel";
+import { StashesPanel } from "./Stashes/StashesPanel";
 import { RepositoriesPanel } from "./Repositories/RepositoriesPanel";
 import { ThemeEditorPanel } from "./ThemeEditor/ThemeEditorPanel";
 import { GlobalSettingsPanel } from "./Settings/GlobalSettingsPanel";
@@ -49,6 +51,13 @@ export const REPO_PANELS: PanelDescriptor[] = [
   },
   { id: "repo-settings", title: "Repo Settings", scope: "repo" },
   { id: "remotes", title: "Remotes", scope: "repo" },
+  { id: "branches", title: "Branches", scope: "repo" },
+  {
+    id: "stashes",
+    title: "Stashes",
+    scope: "repo",
+    summons: ["commit-details", "changed-files", "working-changes"],
+  },
   {
     id: "log",
     title: "Commits",
@@ -123,6 +132,8 @@ export const REPO_DOCKVIEW_COMPONENTS: Record<
   "git-log": wrap(GitLogPanel),
   "repo-settings": wrap(RepoSettingsPanel),
   remotes: wrap(RemotesPanel),
+  branches: wrap(BranchesPanel),
+  stashes: wrap(StashesPanel),
   log: wrap(CommitsPanel),
   "commit-details": wrap(CommitDetailsPanel),
   "changed-files": wrap(ChangedFilesPanel),

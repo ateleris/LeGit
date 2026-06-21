@@ -9,8 +9,11 @@ use crate::types::{FileState, FileStatus};
 use std::path::PathBuf;
 
 /// Arguments for the status command, in order. `-z` is required for the NUL
-/// framing this parser assumes.
-pub const STATUS_ARGS: [&str; 3] = ["status", "--porcelain=v1", "-z"];
+/// framing this parser assumes. `--untracked-files=all` lists each untracked
+/// file individually; without it git collapses an entirely-untracked directory
+/// into a single `dir/` entry, which the UI can't stage/diff per file.
+pub const STATUS_ARGS: [&str; 4] =
+    ["status", "--porcelain=v1", "-z", "--untracked-files=all"];
 
 /// Parse the stdout of `git status --porcelain=v1 -z`.
 ///

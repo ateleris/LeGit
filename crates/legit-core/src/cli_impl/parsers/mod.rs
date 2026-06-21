@@ -12,3 +12,4 @@ pub mod commit_files;
 pub mod diff;
 pub mod tracking;
 pub mod remotes;
+pub mod stash;

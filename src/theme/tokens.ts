@@ -60,6 +60,10 @@ export const PALETTE_CONTRACT: readonly PaletteDescriptor[] = [
   { name: "ref-head-bg", documentation: "HEAD chip fill." },
   { name: "ref-head-border", documentation: "HEAD chip border." },
   { name: "ref-head-fg", documentation: "HEAD chip / HEAD→ indicator text." },
+  { name: "ref-stash-bg", documentation: "Stash chip fill." },
+  { name: "ref-stash-border", documentation: "Stash chip border." },
+  { name: "ref-stash-fg", documentation: "Stash chip text." },
+  { name: "graph-stash-dot", documentation: "Stash node (diamond) fill in the commit graph." },
   // File-status indicator colours (Changed Files panel icons + line counts).
   { name: "status-added", documentation: "Added-file indicator (icon and +N count)." },
   { name: "status-modified", documentation: "Modified-file indicator." },
@@ -167,6 +171,9 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "ref.head.bg", group: "Refs", documentation: "HEAD chip fill." },
   { name: "ref.head.border", group: "Refs", documentation: "HEAD chip border." },
   { name: "ref.head.fg", group: "Refs", documentation: "HEAD chip and HEAD→ indicator text." },
+  { name: "ref.stash.bg", group: "Refs", documentation: "Stash chip fill." },
+  { name: "ref.stash.border", group: "Refs", documentation: "Stash chip border." },
+  { name: "ref.stash.fg", group: "Refs", documentation: "Stash chip text." },
 
   { name: "graph.lane.0", group: "Graph", documentation: "Lane 0 colour (main branch by convention)." },
   { name: "graph.lane.1", group: "Graph", documentation: "Lane 1 colour." },
@@ -175,6 +182,7 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "graph.lane.4", group: "Graph", documentation: "Lane 4 colour." },
   { name: "graph.lane.5", group: "Graph", documentation: "Lane 5 colour." },
   { name: "graph.lane.fallback", group: "Graph", documentation: "Fallback colour for lanes beyond index 5." },
+  { name: "graph.stash.dot", group: "Graph", documentation: "Stash node (diamond) fill in the commit graph." },
   { name: "graph.row.selected.bg", group: "Graph", documentation: "Background of the selected commit row." },
 
   { name: "status.added", group: "File Status", documentation: "Added-file icon and +N line count (Changed Files panel)." },

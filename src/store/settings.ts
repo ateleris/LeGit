@@ -7,9 +7,10 @@ import {
   saveUiFontSize,
   setWatcherEnabled,
   setConfirmDiscard,
+  saveSwitchDirtyBehavior,
 } from "../lib/commands";
 import { reapplyPanelConstraints } from "./dockview";
-import type { GlobalSettings, RegionPlacement } from "../lib/types";
+import type { GlobalSettings, RegionPlacement, SwitchDirtyBehavior } from "../lib/types";
 
 /** Defaults + bounds for the Commits-panel graph metrics. Mirror the backend
  * clamps in `save_commits_graph_metrics`. */
@@ -73,6 +74,7 @@ interface SettingsStore {
   setUiFontSize: (size: number) => Promise<void>;
   setWatcherEnabled: (enabled: boolean) => Promise<void>;
   setConfirmDiscard: (confirm: boolean) => Promise<void>;
+  setSwitchDirtyBehavior: (behavior: SwitchDirtyBehavior) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
@@ -146,6 +148,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     if (s) {
       set({ settings: { ...s, confirm_discard: confirm } });
     }
+  },
+
+  async setSwitchDirtyBehavior(behavior) {
+    await saveSwitchDirtyBehavior(behavior);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, switch_dirty_behavior: behavior } });
   },
 
   async setUiFontSize(size) {

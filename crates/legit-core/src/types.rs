@@ -140,6 +140,9 @@ pub enum RefDecoration {
     Tag(String),
     /// A remote-tracking branch ref, e.g. `refs/remotes/origin/main`.
     Remote(String),
+    /// A stash entry, carrying its reflog selector (e.g. `stash@{0}`). Synthesized
+    /// for the commit-graph display; not produced by `git log --decorate`.
+    Stash(String),
     /// Any other ref (notes, stash, …).
     Other(String),
 }
@@ -287,6 +290,45 @@ pub enum SwitchDirtyBehavior {
     #[default]
     TryDirectly,
     AutoStash,
+}
+
+/// A single entry from `git stash list`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct StashEntry {
+    /// The `N` in `stash@{N}` (0 is the most recent).
+    pub index: u32,
+    /// The reflog selector, e.g. `stash@{0}`. Use this to address the stash in
+    /// apply/pop/drop — it is positional and shifts as stashes are added/removed.
+    pub selector: String,
+    /// The reflog subject, e.g. `On main: my message` or `WIP on main: 1a2b3c …`.
+    pub message: String,
+    /// The stash's own commit SHA (a real git object — usable as a commit id,
+    /// e.g. for showing its diff).
+    pub stash_sha: CommitId,
+    /// The base commit the stash was created from (its first parent).
+    pub base_sha: CommitId,
+    pub author: Signature,
+    /// Author timestamp (Unix seconds).
+    pub timestamp: i64,
+}
+
+/// Outcome of `git stash push`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum StashOutcome {
+    Created,
+    /// The working tree was clean — nothing to stash.
+    NothingToStash,
+}
+
+/// Outcome of `git stash apply` / `git stash pop`. A merge conflict is reported
+/// as `Conflicts` (not `Err`) because the apply itself partially succeeded and
+/// the user must resolve the working tree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum StashApplyOutcome {
+    Clean,
+    Conflicts { message: String },
 }
 
 /// Options for `git fetch`.

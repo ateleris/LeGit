@@ -43,6 +43,8 @@ export interface GlobalSettings {
   watcher_enabled?: boolean;
   /** Whether discarding changes asks for confirmation first (default true). */
   confirm_discard?: boolean;
+  /** How to handle uncommitted changes when switching branches (null = try_directly). */
+  switch_dirty_behavior?: SwitchDirtyBehavior | null;
   /** User-defined git identity profiles (camelCase key — serde rename). */
   gitProfiles?: GitProfilesDoc;
 }
@@ -371,6 +373,7 @@ export type RefDecoration =
   | { type: "branch"; value: string }
   | { type: "tag"; value: string }
   | { type: "remote"; value: string }
+  | { type: "stash"; value: string }
   | { type: "other"; value: string };
 
 export type LaneLock = { refName: string; laneIndex: number };
@@ -384,6 +387,35 @@ export interface Branch {
   upstream: string | null;
   head: CommitId | null;
 }
+
+export type SwitchOutcome =
+  | { kind: "clean" }
+  | { kind: "stash_pop_failed"; message: string };
+
+export type SwitchDirtyBehavior = "try_directly" | "auto_stash";
+
+/** A single entry from `git stash list` (matches legit-core `StashEntry`). */
+export interface StashEntry {
+  /** The `N` in `stash@{N}` (0 is the most recent). */
+  index: number;
+  /** Reflog selector, e.g. "stash@{0}" — used to address the stash; positional. */
+  selector: string;
+  /** Reflog subject, e.g. "On main: my message". */
+  message: string;
+  /** The stash's own commit SHA (a real git object, usable as a commit id). */
+  stash_sha: CommitId;
+  /** The base commit the stash was created from (its first parent). */
+  base_sha: CommitId;
+  author: Signature;
+  /** Author timestamp (Unix seconds). */
+  timestamp: number;
+}
+
+export type StashOutcome = { kind: "created" } | { kind: "nothing_to_stash" };
+
+export type StashApplyOutcome =
+  | { kind: "clean" }
+  | { kind: "conflicts"; message: string };
 
 export interface Signature {
   name: string;

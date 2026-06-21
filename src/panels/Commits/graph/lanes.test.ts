@@ -376,6 +376,45 @@ describe("computeLanes", () => {
     expect(branchOff).toBeDefined();
   });
 
+  test("jog lane not reused for merge parent on same commit", () => {
+    // A commit C is simultaneously a jog convergence (lane 1 dies here)
+    // and a merge commit (has a second parent P2). P2 must NOT be
+    // assigned to lane 1 (the just-freed jog lane) — that would produce
+    // a child arc going down on the same lane as the jog arc going up,
+    // painting over the jog and hiding the "horizontal → arc → up" shape.
+    //
+    //   A ── lane 0
+    //   F ── lane 1 (dies at C)
+    //   C ── merge commit (lane 0), jog from lane 1 + second parent P2
+    //   P2, BASE
+    const commits = makeCommits([
+      ["A", "C"],
+      ["F", "C"],
+      ["C", "BASE", "P2"],
+      ["P2", "BASE"],
+      ["BASE"],
+    ]);
+    const result = computeLanes(commits, {}, noRefs());
+
+    expect(result.assignments.get("C")).toBe(0);
+    const p2Lane = result.assignments.get("P2")!;
+    // P2 must NOT be on lane 1 (the lane freed by the jog at C).
+    expect(p2Lane).not.toBe(1);
+    // The jog edge from lane 1 → lane 0 must exist at C.
+    const jog = result.edges.find(
+      (e) => e.fromCommitId === "C" && e.toCommitId === "C" &&
+        e.fromLane === 1 && e.toLane === 0,
+    );
+    expect(jog).toBeDefined();
+    // The merge edge from C to P2 must go to P2's actual lane.
+    const mergeEdge = result.edges.find(
+      (e) => e.fromCommitId === "C" && e.toCommitId === "P2",
+    );
+    expect(mergeEdge).toBeDefined();
+    expect(mergeEdge!.toLane).toBe(p2Lane);
+    expect(mergeEdge!.toLane).not.toBe(1);
+  });
+
   test("empty input", () => {
     const result = computeLanes([], {}, noRefs());
     expect(result.assignments.size).toBe(0);

@@ -46,6 +46,10 @@
     "ref-head-bg": "#dc26261f",
     "ref-head-border": "#dc262666",
     "ref-head-fg": "#dc2626",
+    "ref-stash-bg": "#0d94881f",
+    "ref-stash-border": "#0d948866",
+    "ref-stash-fg": "#0d9488",
+    "graph-stash-dot": "#0d9488",
     "diff-added-line": "#0369a12e",
     "diff-removed-line": "#b453092e",
     "diff-hunk-header": "#1d4ed81f"
@@ -119,6 +123,7 @@
     "graph.lane.4": "graph-lane-4",
     "graph.lane.5": "graph-lane-5",
     "graph.lane.fallback": "graph-lane-fallback",
+    "graph.stash.dot": "graph-stash-dot",
     "graph.row.selected.bg": "row-selected-bg",
     "ref.branch.bg": "ref-branch-bg",
     "ref.branch.border": "ref-branch-border",
@@ -134,6 +139,9 @@
     "ref.tag.fg": "ref-tag-fg",
     "ref.head.bg": "ref-head-bg",
     "ref.head.border": "ref-head-border",
-    "ref.head.fg": "ref-head-fg"
+    "ref.head.fg": "ref-head-fg",
+    "ref.stash.bg": "ref-stash-bg",
+    "ref.stash.border": "ref-stash-border",
+    "ref.stash.fg": "ref-stash-fg"
   }
 }

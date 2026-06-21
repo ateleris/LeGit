@@ -76,3 +76,21 @@ pub async fn repo_commit(
     };
     session.backend.commit(opts).await.map_err(AppError::Git)
 }
+
+/// Reword (rename) a commit's message; returns the new commit id. v1 rewords
+/// HEAD only and refuses commits already reachable from a remote (pushed).
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_reword_commit(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    commit_id: String,
+    message: String,
+) -> Result<CommitId, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .reword_commit(&CommitId::new(commit_id), &message)
+        .await
+        .map_err(AppError::Git)
+}

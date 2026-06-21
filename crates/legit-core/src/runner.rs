@@ -453,6 +453,17 @@ fn default_base_env() -> Vec<(String, String)> {
         ("GIT_ASKPASS".to_string(), "echo".to_string()),
         ("LANG".to_string(), "C.UTF-8".to_string()),
         ("LC_ALL".to_string(), "C.UTF-8".to_string()),
+        // Don't take *optional* index locks. Read-mostly commands (`status`,
+        // `log`, …) otherwise grab `.git/index.lock` just to refresh the stat
+        // cache. Because LeGit runs many git invocations concurrently (React
+        // Query + the filesystem watcher), such a refresh can race a real
+        // mutation (`stash`/`commit`/`add`) for the index lock — and on
+        // Windows-backed filesystems (WSL `/mnt/c`, v9fs/DrvFs, where an open
+        // handle blocks rename-over) the mutation fails with "Unable to create
+        // index.lock" or "could not write index". Disabling optional locks makes
+        // readers lock-free; commands that *require* an index write still take
+        // the lock normally, so correctness is unaffected.
+        ("GIT_OPTIONAL_LOCKS".to_string(), "0".to_string()),
     ]
 }
 
@@ -618,6 +629,9 @@ mod tests {
         assert_eq!(envs.get("LC_ALL").map(String::as_str), Some("C.UTF-8"));
         // Hardening present.
         assert_eq!(envs.get("GIT_TERMINAL_PROMPT").map(String::as_str), Some("0"));
+        // Optional index locks disabled so concurrent readers don't race a
+        // mutation for `.git/index.lock` (see default_base_env).
+        assert_eq!(envs.get("GIT_OPTIONAL_LOCKS").map(String::as_str), Some("0"));
 
         std::env::remove_var("LEGIT_TEST_OS_VAR");
         std::env::remove_var("GIT_DIR");

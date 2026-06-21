@@ -32,6 +32,11 @@ import type {
   PushOptions,
   TrackingStatus,
   Remote,
+  SwitchOutcome,
+  SwitchDirtyBehavior,
+  StashEntry,
+  StashOutcome,
+  StashApplyOutcome,
 } from "./types";
 
 // --- repo ---
@@ -281,8 +286,70 @@ export const repoDiscard = (repoId: string, paths: string[]) =>
 export const repoCommit = (repoId: string, message: string, amend = false) =>
   invoke<string>("repo_commit", { repoId, message, amend });
 
+/// Reword (rename) a commit's message; returns the new commit id. v1 rewords
+/// HEAD only and refuses commits already pushed to a remote.
+export const repoRewordCommit = (repoId: string, commitId: string, message: string) =>
+  invoke<string>("repo_reword_commit", { repoId, commitId, message });
+
 export const repoBranches = (repoId: string) =>
   invoke<Branch[]>("repo_branches", { repoId });
+
+export const repoCreateBranch = (
+  repoId: string,
+  name: string,
+  startPoint?: string,
+) =>
+  invoke<void>("repo_create_branch", {
+    repoId,
+    name,
+    startPoint: startPoint ?? null,
+  });
+
+export const repoSwitchBranch = (repoId: string, name: string) =>
+  invoke<SwitchOutcome>("repo_switch_branch", { repoId, name });
+
+export const repoDeleteBranch = (repoId: string, name: string, force: boolean) =>
+  invoke<void>("repo_delete_branch", { repoId, name, force });
+
+export const repoRenameBranch = (repoId: string, oldName: string, newName: string) =>
+  invoke<void>("repo_rename_branch", { repoId, oldName, newName });
+
+export const repoCheckoutRemoteBranch = (repoId: string, remoteRef: string) =>
+  invoke<void>("repo_checkout_remote_branch", { repoId, remoteRef });
+
+export const repoCheckoutCommit = (repoId: string, sha: string) =>
+  invoke<SwitchOutcome>("repo_checkout_commit", { repoId, sha });
+
+// --- stashes ---
+
+export const repoStashes = (repoId: string) =>
+  invoke<StashEntry[]>("repo_stashes", { repoId });
+
+export const repoCreateStash = (
+  repoId: string,
+  message: string | undefined,
+  includeUntracked: boolean,
+) =>
+  invoke<StashOutcome>("repo_create_stash", {
+    repoId,
+    message: message ?? null,
+    includeUntracked,
+  });
+
+export const repoApplyStash = (repoId: string, selector: string) =>
+  invoke<StashApplyOutcome>("repo_apply_stash", { repoId, selector });
+
+export const repoPopStash = (repoId: string, selector: string) =>
+  invoke<StashApplyOutcome>("repo_pop_stash", { repoId, selector });
+
+export const repoDropStash = (repoId: string, selector: string) =>
+  invoke<void>("repo_drop_stash", { repoId, selector });
+
+export const repoRenameStash = (repoId: string, selector: string, message: string) =>
+  invoke<void>("repo_rename_stash", { repoId, selector, message });
+
+export const saveSwitchDirtyBehavior = (behavior: SwitchDirtyBehavior) =>
+  invoke<void>("save_switch_dirty_behavior", { behavior });
 
 // --- remote sync (fetch / pull / push) ---
 //

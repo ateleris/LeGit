@@ -1,3 +1,4 @@
+pub mod branches;
 pub mod config_util;
 pub mod console;
 pub mod diff;
@@ -9,8 +10,10 @@ pub mod profiles;
 pub mod remote;
 pub mod repo;
 pub mod signing;
+pub mod stashes;
 pub mod working;
 
+pub use branches::*;
 pub use console::*;
 pub use diff::*;
 pub use git_setup::*;
@@ -21,4 +24,5 @@ pub use profiles::*;
 pub use remote::*;
 pub use repo::*;
 pub use signing::*;
+pub use stashes::*;
 pub use working::*;

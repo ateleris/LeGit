@@ -6,6 +6,7 @@ const branch = (value: string): RefDecoration => ({ type: "branch", value });
 const tag = (value: string): RefDecoration => ({ type: "tag", value });
 const remote = (value: string): RefDecoration => ({ type: "remote", value });
 const other = (value: string): RefDecoration => ({ type: "other", value });
+const stash = (value: string): RefDecoration => ({ type: "stash", value });
 const headOf = (value: string): RefDecoration => ({ type: "headOf", value });
 
 const NO_UPSTREAM = new Map<string, string>();
@@ -81,12 +82,13 @@ describe("buildChips", () => {
     ]);
   });
 
-  it("orders: HEAD pair, branches, remotes, tags, other", () => {
+  it("orders: HEAD pair, branches, remotes, tags, stash, other", () => {
     const out = buildChips(
       [
         tag("refs/tags/v1.0"),
         remote("refs/remotes/origin/release"),
-        other("refs/stash"),
+        other("refs/notes/commits"),
+        stash("stash@{0}"),
         branch("refs/heads/dev"),
         headOf("refs/heads/main"),
       ],
@@ -98,8 +100,14 @@ describe("buildChips", () => {
       { kind: "branch", value: "refs/heads/dev" },
       { kind: "remote", value: "refs/remotes/origin/release" },
       { kind: "tag", value: "refs/tags/v1.0" },
-      { kind: "other", value: "refs/stash" },
+      { kind: "stash", value: "stash@{0}" },
+      { kind: "other", value: "refs/notes/commits" },
     ]);
+  });
+
+  it("renders a stash decoration as a stash chip carrying its selector", () => {
+    const out = buildChips([stash("stash@{2}")], NO_UPSTREAM);
+    expect(out).toEqual([{ kind: "stash", value: "stash@{2}" }]);
   });
 
   it("keeps a detached HEAD chip first", () => {

@@ -344,9 +344,14 @@ export function computeLanes(
 
     // Step 4 — set up parent slots.
     const parents = c.parentIds;
-    // Reserve any lanes assigned to additional parents within this step
-    // so the first-parent path doesn't accidentally take them.
+    // Reserve cLane and the just-freed jog lanes so additional parents can't
+    // immediately reclaim a lane whose arc is already drawn going up in this
+    // row — that would produce a child arc going down on the same lane,
+    // painting over the jog arc and hiding the "horizontal → arc → up" shape.
     const reservedThisStep = new Set<LaneIndex>([cLane]);
+    for (const lane of waiting) {
+      if (lane !== cLane) reservedThisStep.add(lane);
+    }
 
     if (parents.length === 0) {
       // Root commit — C's lane terminates here.

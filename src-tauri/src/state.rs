@@ -4,7 +4,7 @@
 
 use crate::error::AppError;
 use crate::watcher::RepoWatcher;
-use legit_core::{GitBackend, GitCliBackend, GitRunner, OperationId};
+use legit_core::{GitBackend, GitCliBackend, GitRunner, OperationId, SwitchDirtyBehavior};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use specta::Type;
@@ -224,6 +224,8 @@ pub struct GlobalSettings {
     /// actions run immediately.
     #[serde(default = "default_true")]
     pub confirm_discard: bool,
+    /// How to handle uncommitted changes when switching branches. `None` = `TryDirectly`.
+    pub switch_dirty_behavior: Option<SwitchDirtyBehavior>,
     /// User-defined git identity profiles (versioned envelope).
     #[serde(default, rename = "gitProfiles")]
     pub git_profiles_doc: GitProfilesDoc,
@@ -254,6 +256,7 @@ impl Default for GlobalSettings {
             ui_font_size: default_ui_font_size(),
             watcher_enabled: true,
             confirm_discard: true,
+            switch_dirty_behavior: None,
             git_profiles_doc: GitProfilesDoc::default(),
         }
     }

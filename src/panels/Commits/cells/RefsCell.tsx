@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { BranchIcon, RemoteIcon, TagIcon } from "../../../icons";
+import { BranchIcon, RemoteIcon, StashIcon, TagIcon } from "../../../icons";
 import type { LaneLock, RefDecoration } from "../../../lib/types";
 import { usePanelContextMenu } from "../menu/PanelContextMenu";
 import { LaneLockSection } from "../menu/LaneLockSection";
+import { MenuItem, Separator, SectionLabel } from "../menu/primitives";
 import { buildChips, computeVisibleCount } from "./refChips";
 import type { ChipDescriptor } from "./refChips";
 
@@ -17,13 +18,24 @@ interface RefsCellProps {
   upstreamMap: Map<string, string>;
   /** Chip font size in px (user-configurable, shared with the text columns). */
   textSize: number;
+  onBranchCheckout?: (name: string) => void;
+  onBranchRename?: (name: string) => void;
+  onBranchDelete?: (name: string, force: boolean) => void;
+  /** Called when checking out a remote-tracking branch (passes the full remote ref, e.g. `origin/feature-x`). */
+  onRemoteCheckout?: (remoteRef: string) => void;
+  /** Stash actions — each receives the reflog selector (e.g. `stash@{0}`). */
+  onStashApply?: (selector: string) => void;
+  onStashPop?: (selector: string) => void;
+  onStashDrop?: (selector: string) => void;
+  onStashRename?: (selector: string) => void;
+  onStashViewDiff?: (selector: string) => void;
 }
 
 const CHIP_GAP = 3;
 
 /** Renders ref decoration chips for a commit row. */
-export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize }: RefsCellProps) {
-  const { openMenu } = usePanelContextMenu();
+export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, onBranchCheckout, onBranchRename, onBranchDelete, onRemoteCheckout, onStashApply, onStashPop, onStashDrop, onStashRename, onStashViewDiff }: RefsCellProps) {
+  const { openMenu, closeMenu } = usePanelContextMenu();
   const [visibleCount, setVisibleCount] = useState(Number.MAX_SAFE_INTEGER);
   const [popover, setPopover] = useState<{ x: number; y: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -104,27 +116,85 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize }: 
   const headOfTarget = headOfDec && headOfDec.type === "headOf" ? headOfDec.value : null;
 
   const renderChip = (chip: ChipDescriptor, key: React.Key) => {
-    // Branch and fused chips lock on the local branch ref; others don't lock.
     const refName =
       chip.kind === "branch"
         ? chip.value
         : chip.kind === "fusedBranch"
           ? chip.local
           : null;
+
+    const buildBranchSection = (): React.ReactNode => {
+      if (
+        chip.kind === "branch" ||
+        chip.kind === "headOf" ||
+        chip.kind === "fusedBranch"
+      ) {
+        const localRef =
+          chip.kind === "fusedBranch"
+            ? chip.local
+            : chip.value;
+        const localName = localRef.replace(/^refs\/heads\//, "");
+        const isCurrent =
+          chip.kind === "headOf" ||
+          (chip.kind === "branch" && headOfTarget === localRef) ||
+          (chip.kind === "fusedBranch" && headOfTarget === chip.local);
+
+        return (
+          <BranchChipSection
+            name={localName}
+            isCurrent={isCurrent}
+            onCheckout={() => { closeMenu(); onBranchCheckout?.(localName); }}
+            onRename={() => { closeMenu(); onBranchRename?.(localName); }}
+            onDelete={(force) => { closeMenu(); onBranchDelete?.(localName, force); }}
+          />
+        );
+      }
+      if (chip.kind === "remote") {
+        const remoteName = chip.value.replace(/^refs\/remotes\//, "");
+        return (
+          <RemoteChipSection
+            remoteName={remoteName}
+            onCheckout={() => { closeMenu(); onRemoteCheckout?.(remoteName); }}
+          />
+        );
+      }
+      if (chip.kind === "stash") {
+        const selector = chip.value;
+        return (
+          <StashChipSection
+            selector={selector}
+            onViewDiff={() => { closeMenu(); onStashViewDiff?.(selector); }}
+            onApply={() => { closeMenu(); onStashApply?.(selector); }}
+            onPop={() => { closeMenu(); onStashPop?.(selector); }}
+            onRename={() => { closeMenu(); onStashRename?.(selector); }}
+            onDrop={() => { closeMenu(); onStashDrop?.(selector); }}
+          />
+        );
+      }
+      return undefined;
+    };
+
+    const branchSection = buildBranchSection();
+    const lockSection = refName
+      ? <LaneLockSection refName={refName} locks={locks} repoId={repoId} />
+      : undefined;
+
+    const menuSection =
+      branchSection || lockSection ? (
+        <>
+          {branchSection}
+          {branchSection && lockSection && <Separator />}
+          {lockSection}
+        </>
+      ) : undefined;
+
     return (
       <Chip
         key={key}
         chip={chip}
         headOfTarget={headOfTarget}
         textSize={textSize}
-        onContextMenu={(e) => {
-          // Lockable chips contribute the lane-lock section; other chips open
-          // the baseline-only menu (still suppresses the native menu).
-          openMenu(
-            e,
-            refName ? <LaneLockSection refName={refName} locks={locks} repoId={repoId} /> : undefined,
-          );
-        }}
+        onContextMenu={(e) => openMenu(e, menuSection)}
       />
     );
   };
@@ -193,6 +263,111 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize }: 
           document.body
         )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Branch / remote chip context-menu sections
+// ---------------------------------------------------------------------------
+
+function BranchChipSection({
+  name,
+  isCurrent,
+  onCheckout,
+  onRename,
+  onDelete,
+}: {
+  name: string;
+  isCurrent: boolean;
+  onCheckout: () => void;
+  onRename: () => void;
+  onDelete: (force: boolean) => void;
+}) {
+  const [confirming, setConfirming] = useState<"safe" | "force" | null>(null);
+
+  if (confirming) {
+    return (
+      <>
+        <SectionLabel>Delete branch '{name}'?</SectionLabel>
+        <MenuItem
+          onClick={() => {
+            onDelete(confirming === "force");
+            setConfirming(null);
+          }}
+        >
+          Confirm
+        </MenuItem>
+        <MenuItem onClick={() => setConfirming(null)}>Cancel</MenuItem>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <SectionLabel>{name}</SectionLabel>
+      <MenuItem onClick={onCheckout} disabled={isCurrent}>
+        {isCurrent ? "Checkout branch (current)" : "Checkout branch"}
+      </MenuItem>
+      <MenuItem onClick={onRename}>Rename branch…</MenuItem>
+      <Separator />
+      <MenuItem onClick={() => setConfirming("safe")}>Delete branch…</MenuItem>
+      <MenuItem onClick={() => setConfirming("force")}>Force delete branch…</MenuItem>
+    </>
+  );
+}
+
+function RemoteChipSection({
+  remoteName,
+  onCheckout,
+}: {
+  remoteName: string;
+  onCheckout: () => void;
+}) {
+  return (
+    <>
+      <SectionLabel>{remoteName}</SectionLabel>
+      <MenuItem onClick={onCheckout}>Checkout branch</MenuItem>
+    </>
+  );
+}
+
+function StashChipSection({
+  selector,
+  onViewDiff,
+  onApply,
+  onPop,
+  onRename,
+  onDrop,
+}: {
+  selector: string;
+  onViewDiff: () => void;
+  onApply: () => void;
+  onPop: () => void;
+  onRename: () => void;
+  onDrop: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+
+  if (confirming) {
+    return (
+      <>
+        <SectionLabel>Drop {selector}?</SectionLabel>
+        <MenuItem onClick={() => { onDrop(); setConfirming(false); }}>Confirm</MenuItem>
+        <MenuItem onClick={() => setConfirming(false)}>Cancel</MenuItem>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <SectionLabel>{selector}</SectionLabel>
+      <MenuItem onClick={onViewDiff}>View stash diff</MenuItem>
+      <MenuItem onClick={onApply}>Apply stash</MenuItem>
+      <MenuItem onClick={onPop}>Pop stash</MenuItem>
+      <MenuItem onClick={onRename}>Rename stash…</MenuItem>
+      <Separator />
+      <MenuItem onClick={() => setConfirming(true)}>Drop stash…</MenuItem>
+    </>
   );
 }
 
@@ -299,6 +474,19 @@ function Chip({ chip, headOfTarget, textSize, onContextMenu }: ChipProps) {
           title={chip.value}
         >
           <TagIcon /> {chip.value.replace(/^refs\/tags\//, "")}
+        </span>
+      );
+
+    case "stash":
+      // The chip label is just "stash"; the row's Subject already shows the
+      // stash message, and the full `stash@{N}` selector lives in the tooltip.
+      return (
+        <span
+          onContextMenu={handleContextMenu}
+          style={chipStyle({ variant: "stash", textSize })}
+          title={chip.value}
+        >
+          <StashIcon /> stash
         </span>
       );
 
@@ -422,6 +610,7 @@ type ChipVariant =
   | "branch"
   | "remote"
   | "tag"
+  | "stash"
   | "head"
   | "head-indicator"
   | "other";
@@ -469,6 +658,15 @@ function chipStyle({
         border: "1px solid var(--ref-tag-border, rgba(220, 170, 60, 0.45))",
         color: "var(--ref-tag-fg, rgb(220, 170, 60))",
         borderRadius: 3, // flag shape — slightly square
+      };
+
+    case "stash":
+      return {
+        ...base,
+        background: "var(--ref-stash-bg, rgba(43, 183, 166, 0.15))",
+        border: "1px solid var(--ref-stash-border, rgba(43, 183, 166, 0.45))",
+        color: "var(--ref-stash-fg, rgb(95, 211, 196))",
+        borderRadius: 3, // box shape, like an archived snapshot
       };
 
     case "head":

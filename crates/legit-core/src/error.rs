@@ -43,6 +43,12 @@ pub enum GitError {
     #[error("operation not yet implemented in v0.1")]
     NotYet,
 
+    #[error("only the latest commit (HEAD) can be reworded")]
+    RewordNotHead,
+
+    #[error("this commit has already been pushed; rewording would rewrite published history")]
+    RewordPushed,
+
     #[error("internal error: {0}")]
     Internal(String),
 }

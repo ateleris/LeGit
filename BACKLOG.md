@@ -7,6 +7,41 @@ be picked up cleanly.
 
 ---
 
+## Reword commit: extend beyond HEAD
+
+**What:** Reword (rename) the message of any **local** commit, not just HEAD.
+
+**Status:** Deferred 2026-06-21. v1 ships HEAD-only reword (`GitBackend::reword_commit`
+via `git commit --amend --only`, with a hard block on pushed commits and an inline
+editor in the Commits panel). Older commits need history replay.
+
+**Approach (plumbing, fully non-interactive — fits the CLI/no-temp-script model):**
+- Forge a reworded commit object preserving the tree and parents:
+  `git commit-tree <C>^{tree} -p <parent…> -m <msg>`. `commit-tree` has no
+  `--author` flag, so preserve the original author via `GIT_AUTHOR_NAME/EMAIL/DATE`
+  env — this requires a **minimal `GitRunner::run_with_env`** (factor
+  `build_command` into `build_command_with_env`, apply caller env *after* the
+  base env/GIT_* scrub so overrides win; see [[project-runner-env-inherit]]).
+- Replay descendants onto the new commit: `git rebase --onto <new> <C> <branch>`.
+  Because the reworded commit keeps an **identical tree**, the replay is
+  conflict-free. Use `--rebase-merges` when merges sit in the `<C>..<branch>`
+  range (chosen behavior) so topology survives.
+- Preconditions: refuse unless `git merge-base --is-ancestor <C> HEAD` (v1 rewrites
+  only the current branch); reuse the existing pushed check
+  (`git rev-list -n 1 <C> --not --remotes`).
+- Dirty tree: auto-stash (reuse `run_with_auto_stash`); on failure
+  `git rebase --abort` + `git stash pop`. Add a `RewordOutcome`
+  (`Clean` / `StashPopFailed`) mirroring `SwitchOutcome`.
+- Signing: route through `SignMode` (`-S` / `--no-gpg-sign`); old signatures are
+  necessarily discarded and re-signed — see [[project-commit-log-no-sig-verify]].
+
+**Also deferred:**
+- Rewording a **pushed** commit behind an explicit force-push confirmation
+  (currently hard-blocked).
+- Reword editor affordances: a modal/full editor option and signing-key selection.
+
+---
+
 ## Diff viewer: syntax highlighting
 
 **What:** Syntax-highlight the code shown in the diff panel (inline + split).

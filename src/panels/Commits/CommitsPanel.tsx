@@ -18,15 +18,27 @@ import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import {
   consoleCancel,
   repoBranches,
+  repoCheckoutCommit,
+  repoCheckoutRemoteBranch,
+  repoDeleteBranch,
   repoFetch,
   repoListRemotes,
   repoLog,
   repoPull,
   repoPush,
+  repoRewordCommit,
   repoStatus,
+  repoSwitchBranch,
   repoTrackingStatus,
+  repoStashes,
+  repoCreateStash,
+  repoApplyStash,
+  repoPopStash,
+  repoDropStash,
 } from "../../lib/commands";
-import type { Branch, Commit, CommitId, FileStatus, PushOptions, Remote, Signature, TrackingStatus } from "../../lib/types";
+import { openStashDiff } from "../Stashes/StashesPanel";
+import { InlineEditor } from "../shared/InlineEditor";
+import type { Branch, Commit, CommitId, FileStatus, PushOptions, Remote, Signature, StashEntry, TrackingStatus } from "../../lib/types";
 import { formatAppError, gitErrorKind } from "../../lib/types";
 import { notify } from "../../store/notifications";
 import { FetchIcon, PullIcon, PushIcon, ChevronDownIcon } from "../../icons";
@@ -41,6 +53,7 @@ import { useColumnState } from "./columns/useColumnState";
 import { ColumnHeader } from "./columns/ColumnHeader";
 import { LaneLockIndicator } from "./LaneLockIndicator";
 import { PanelContextMenuProvider, type BaselineEntry } from "./menu/PanelContextMenu";
+import { MenuItem, SectionLabel } from "./menu/primitives";
 import {
   DEFAULT_WIDTHS,
   NON_HIDEABLE,
@@ -110,6 +123,12 @@ export function CommitsPanel() {
   const [extraPages, setExtraPages] = useState(0);
   const parentRef = useRef<HTMLDivElement>(null);
 
+  // Inline reword (rename) editor state — set to the commit id being edited.
+  const [rewordingId, setRewordingId] = useState<string | null>(null);
+  const [rewordDraft, setRewordDraft] = useState("");
+  const [rewordBusy, setRewordBusy] = useState(false);
+  const [rewordError, setRewordError] = useState<string | null>(null);
+
   // Column ordering, hiding, and widths — read from global settings on mount
   // and persisted (debounced) via `save_column_preferences`.
   const { state: colState, setOrder, setHidden, setWidth } = useColumnState();
@@ -169,6 +188,16 @@ export function CommitsPanel() {
     staleTime: 5_000,
   });
 
+  // Ahead/behind vs upstream — used to gate "Reword message…" (the tip commit
+  // is only rewordable while it is local / not yet pushed). `null` when HEAD is
+  // detached or the branch has no upstream.
+  const { data: tracking } = useQuery<TrackingStatus | null>({
+    queryKey: [repo?.id, "tracking"],
+    queryFn: () => repoTrackingStatus(repo!.id),
+    enabled: !!repo,
+    staleTime: 5_000,
+  });
+
   // Working-tree status — drives the synthetic "uncommitted changes" row.
   const { data: status = [] } = useQuery<FileStatus[]>({
     queryKey: [repo?.id, "status"],
@@ -188,9 +217,182 @@ export function CommitsPanel() {
     return map;
   }, [branches]);
 
+  const BRANCH_DOMAINS = ["branches", "log", "status", "tracking"] as const;
+
+  const handleBranchCheckout = useCallback(async (name: string) => {
+    if (!repo) return;
+    try {
+      const outcome = await repoSwitchBranch(repo.id, name);
+      invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
+      if (outcome.kind === "stash_pop_failed") {
+        notify.info(
+          `Switched to '${name}'. The auto-stash could not be applied — run \`git stash pop\` to apply it manually.`,
+        );
+      }
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
+  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleBranchRename = useCallback((name: string) => {
+    useSummonStore.getState().summon("branches", { action: "rename", branch: name });
+  }, []);
+
+  const handleBranchDelete = useCallback(async (name: string, force: boolean) => {
+    if (!repo) return;
+    try {
+      await repoDeleteBranch(repo.id, name, force);
+      invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
+  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleRemoteCheckout = useCallback(async (remoteRef: string) => {
+    if (!repo) return;
+    try {
+      await repoCheckoutRemoteBranch(repo.id, remoteRef);
+      invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
+  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleCommitCheckout = useCallback(async (sha: string) => {
+    if (!repo) return;
+    try {
+      const outcome = await repoCheckoutCommit(repo.id, sha);
+      invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
+      if (outcome.kind === "stash_pop_failed") {
+        notify.info(
+          `Checked out ${sha.slice(0, 8)}. The auto-stash could not be applied — run \`git stash pop\` to apply it manually.`,
+        );
+      }
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
+  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The current local branch and its tip — v1 rewords HEAD only.
+  const currentBranch = useMemo(
+    () => branches.find((b) => b.is_current && !b.is_remote) ?? null,
+    [branches],
+  );
+  const headSha = currentBranch?.head ?? null;
+  // The tip is rewordable while it is local: no upstream at all, or ahead of the
+  // upstream. Hidden once pushed (upstream exists and ahead === 0). The backend
+  // enforces this authoritatively; this gate just avoids offering a doomed action.
+  const headIsRewordable = useMemo(() => {
+    if (!headSha) return false; // detached / unborn — unsupported in v1
+    if (currentBranch?.upstream && tracking && tracking.ahead === 0) return false;
+    return true;
+  }, [headSha, currentBranch, tracking]);
+
+  const handleRewordStart = useCallback((commit: Commit) => {
+    setRewordingId(commit.id);
+    setRewordDraft(commit.message);
+    setRewordError(null);
+    setRewordBusy(false);
+  }, []);
+
+  const handleRewordCancel = useCallback(() => {
+    setRewordingId(null);
+    setRewordDraft("");
+    setRewordError(null);
+    setRewordBusy(false);
+  }, []);
+
+  const handleRewordSave = useCallback(async (commit: Commit) => {
+    if (!repo) return;
+    if (rewordDraft.trim().length === 0) {
+      setRewordError("Commit message cannot be empty.");
+      return;
+    }
+    if (rewordDraft === commit.message) {
+      handleRewordCancel();
+      return;
+    }
+    setRewordBusy(true);
+    setRewordError(null);
+    try {
+      await repoRewordCommit(repo.id, commit.id, rewordDraft);
+      invalidateRepoDomains(queryClient, repo.id, ["log", "branches", "tracking"]);
+      setRewordingId(null);
+      setRewordDraft("");
+    } catch (e) {
+      setRewordError(formatAppError(e));
+    } finally {
+      setRewordBusy(false);
+    }
+  }, [repo, rewordDraft, queryClient, handleRewordCancel]);
+
+  // Stash list — shared cache with the Stashes panel (same query key), so this
+  // is effectively free. Drives the stash context-menu actions on stash nodes.
+  const { data: stashes = [] } = useQuery<StashEntry[]>({
+    queryKey: [repo?.id, "stashes"],
+    queryFn: () => repoStashes(repo!.id),
+    enabled: !!repo,
+    staleTime: 5_000,
+  });
+
+  const STASH_DOMAINS = ["stashes", "log", "status"] as const;
+
+  const handleStashApply = useCallback(async (selector: string) => {
+    if (!repo) return;
+    try {
+      const outcome = await repoApplyStash(repo.id, selector);
+      invalidateRepoDomains(queryClient, repo.id, STASH_DOMAINS);
+      if (outcome.kind === "conflicts") {
+        notify.info(`Applying ${selector} produced conflicts — resolve them in your working tree.`);
+      }
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
+  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleStashPop = useCallback(async (selector: string) => {
+    if (!repo) return;
+    try {
+      const outcome = await repoPopStash(repo.id, selector);
+      invalidateRepoDomains(queryClient, repo.id, STASH_DOMAINS);
+      if (outcome.kind === "conflicts") {
+        notify.info(`Popping ${selector} produced conflicts — the stash was kept; resolve them in your working tree.`);
+      }
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
+  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleStashDrop = useCallback(async (selector: string) => {
+    if (!repo) return;
+    try {
+      await repoDropStash(repo.id, selector);
+      invalidateRepoDomains(queryClient, repo.id, STASH_DOMAINS);
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
+  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleStashRename = useCallback((selector: string) => {
+    useSummonStore.getState().summon("stashes", { action: "rename", selector });
+  }, []);
+
+  const handleCreateStash = useCallback(async (includeUntracked: boolean) => {
+    if (!repo) return;
+    try {
+      const outcome = await repoCreateStash(repo.id, undefined, includeUntracked);
+      invalidateRepoDomains(queryClient, repo.id, STASH_DOMAINS);
+      if (outcome.kind === "nothing_to_stash") {
+        notify.info("Nothing to stash — the working tree is clean.");
+      }
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
+  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const refetch = useCallback(() => {
     if (repo) {
-      invalidateRepoDomains(queryClient, repo.id, ["log", "branches", "status", "tracking"]);
+      invalidateRepoDomains(queryClient, repo.id, ["log", "branches", "status", "tracking", "stashes"]);
     }
   }, [repo, queryClient]);
 
@@ -232,8 +434,10 @@ export function CommitsPanel() {
     };
   }, [status.length, headId]);
 
-  // Rows actually rendered: the synthetic row (when present) above the real
-  // commits. Lane layout is computed on `commits` for stability, then augmented
+  // Rows actually rendered: the synthetic row (when present) pinned at the top,
+  // above all real commits. The graph edge connecting it to HEAD may span many
+  // rows when HEAD is not the newest commit (e.g. detached HEAD, behind a
+  // branch). Lane layout is computed on `commits` for stability, then augmented
   // with the synthetic node — so paging/recompute never see it.
   const rows = useMemo(
     () => (workingDirRow ? [workingDirRow, ...commits] : commits),
@@ -271,50 +475,75 @@ export function CommitsPanel() {
     return map;
   }, [commits]);
 
-  // Stability refs for load-more. previousAssignments are only passed to
-  // computeLanes when the commit window GREW (load-more) — never on a
-  // same-size recompute (refresh, lock change, etc.). Passing them on a
-  // recompute of the same commits would set firstNewIndex = commits.length,
-  // causing the walk to skip all commits and produce zero edges.
+  // Stash nodes (synthetic commits the backend injects into the log). Maps the
+  // stash's commit id → its reflog selector (e.g. "stash@{0}"), driving the
+  // distinct diamond dot and the stash context-menu actions.
+  const stashSelectorById = useMemo((): Map<string, string> => {
+    const map = new Map<string, string>();
+    for (const commit of commits) {
+      for (const dec of commit.decorations ?? []) {
+        if (dec.type === "stash") map.set(commit.id, dec.value);
+      }
+    }
+    return map;
+  }, [commits]);
+
+  // Reflog selector → stash commit SHA, for the chip menu's "View diff" (the
+  // chip carries the selector, but the diff path needs the real object id).
+  const stashShaBySelector = useMemo((): Map<string, string> => {
+    const map = new Map<string, string>();
+    for (const s of stashes) map.set(s.selector, s.stash_sha);
+    return map;
+  }, [stashes]);
+
+  const handleStashViewDiff = useCallback((selector: string) => {
+    const sha = stashShaBySelector.get(selector);
+    if (sha) openStashDiff(sha);
+  }, [stashShaBySelector]);
+
+  // Stability refs for load-more. previousAssignments are reused ONLY when the
+  // new rows are a pure bottom-append of the previous ones (pagination): i.e.
+  // the previous row ids are still an exact prefix. Any other change — a stash
+  // created/dropped, the working-dir row appearing/disappearing, a branch op —
+  // fails the prefix test and triggers a full recompute. (A length-only check
+  // would misread a synthetic-node insertion as load-more and corrupt the
+  // walk: firstNewIndex would jump to the inserted node, skipping the commits
+  // after it and dropping their edges.)
   const prevAssignmentsRef = useRef<Map<string, number> | undefined>(undefined);
-  const prevCommitLengthRef = useRef(0);
+  const prevRowIdsRef = useRef<string[] | undefined>(undefined);
 
   const resetPrevAssignments = () => {
     prevAssignmentsRef.current = undefined;
-    prevCommitLengthRef.current = 0;
+    prevRowIdsRef.current = undefined;
   };
 
   // Reset on repo or lock change — a full recompute is needed in both cases.
   useEffect(() => { resetPrevAssignments(); }, [repo?.id]);    // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { resetPrevAssignments(); }, [rawLocks]);    // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Compute lane assignments + edges. The persisted lock map for the active
-  // repo feeds lane reservation; the lookahead algorithm handles the rest.
-  const laneResult = useMemo((): LaneResult => {
-    const forGraph = commits.map((c) => ({ id: c.id, parentIds: c.parents }));
-    // Only use previous assignments on genuine load-more (commit count grew).
-    const isLoadMore =
-      commits.length > prevCommitLengthRef.current &&
-      prevAssignmentsRef.current !== undefined;
-    const result = computeLanes(forGraph, lockMap, refsAt, isLoadMore ? prevAssignmentsRef.current : undefined);
-    prevAssignmentsRef.current = result.assignments;
-    prevCommitLengthRef.current = commits.length;
-    return result;
-  }, [commits, lockMap, refsAt]);
-
-  // Augment the lane result with the synthetic node: pin it to HEAD's lane and
-  // add a same-lane edge down to HEAD, so a clean vertical connector joins them.
+  // Lane assignments + edges for EVERY row — real commits, injected stash nodes,
+  // and the synthetic working-dir row alike. Nothing is special-cased out of the
+  // graph: each node's parents drive its lane and edges through the one
+  // algorithm. The working-dir row hangs off HEAD and a stash hangs off its base
+  // exactly as any childless commit would.
   const { assignments, edges: allEdges } = useMemo((): LaneResult => {
-    if (!workingDirRow || headId === null) return laneResult;
-    const headLane = laneResult.assignments.get(headId) ?? 0;
-    const assignments = new Map(laneResult.assignments);
-    assignments.set(WORKING_DIR_ID, headLane);
-    const edges: LaneEdge[] = [
-      ...laneResult.edges,
-      { fromCommitId: WORKING_DIR_ID, toCommitId: headId, fromLane: headLane, toLane: headLane },
-    ];
-    return { assignments, edges, maxLane: Math.max(laneResult.maxLane, headLane) };
-  }, [laneResult, workingDirRow, headId]);
+    const forGraph = rows.map((c) => ({ id: c.id, parentIds: c.parents }));
+    const prevIds = prevRowIdsRef.current;
+    const isPrefixAppend =
+      prevIds !== undefined &&
+      prevAssignmentsRef.current !== undefined &&
+      forGraph.length > prevIds.length &&
+      prevIds.every((id, i) => id === forGraph[i].id);
+    const result = computeLanes(
+      forGraph,
+      lockMap,
+      refsAt,
+      isPrefixAppend ? prevAssignmentsRef.current : undefined,
+    );
+    prevAssignmentsRef.current = result.assignments;
+    prevRowIdsRef.current = forGraph.map((c) => c.id);
+    return result;
+  }, [rows, lockMap, refsAt]);
 
   // Outgoing edge lookup: edges originating at each commit (child → parent).
   const edgesByCommit = useMemo(() => {
@@ -458,7 +687,7 @@ export function CommitsPanel() {
 
   return (
     <PanelContextMenuProvider baseline={baseline}>
-      {({ openMenu }) => (
+      {({ openMenu, closeMenu }) => (
         <div
           className="legit-panel"
           style={{ display: "flex", flexDirection: "column" }}
@@ -593,12 +822,143 @@ export function CommitsPanel() {
                 if (span.lane === commitLane) ownLanePassThrough = true;
               }
             }
+            // Inline reword editor: this row grows to host a multi-line message
+            // editor (the virtualizer measures it via measureElement and shifts
+            // rows below down). Replaces the normal grid for the edited commit.
+            if (commit.id === rewordingId) {
+              return (
+                <div
+                  key={vItem.key}
+                  data-index={vItem.index}
+                  ref={rowVirtualizer.measureElement}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    transform: `translateY(${vItem.start}px)`,
+                    padding: "8px 12px",
+                    boxSizing: "border-box",
+                    background:
+                      "var(--graph-row-selected-bg, rgba(255,255,255,0.08))",
+                  }}
+                >
+                  <InlineEditor
+                    label={`Reword commit ${commit.id.slice(0, 8)}`}
+                    disabled={rewordBusy}
+                    onSave={() => void handleRewordSave(commit)}
+                    onCancel={handleRewordCancel}
+                  >
+                    <textarea
+                      autoFocus
+                      value={rewordDraft}
+                      disabled={rewordBusy}
+                      onChange={(e) => setRewordDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                          e.preventDefault();
+                          void handleRewordSave(commit);
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          handleRewordCancel();
+                        }
+                      }}
+                      rows={Math.min(
+                        10,
+                        Math.max(3, rewordDraft.split("\n").length + 1),
+                      )}
+                      style={{
+                        width: "100%",
+                        resize: "vertical",
+                        fontFamily: "inherit",
+                        fontSize: TEXT_SIZE,
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  </InlineEditor>
+                  <div
+                    style={{
+                      fontSize: "var(--fz-xs)",
+                      color: "var(--subtle-fg)",
+                      marginTop: 4,
+                    }}
+                  >
+                    Ctrl/Cmd+Enter to save · Esc to cancel
+                  </div>
+                  {rewordError && (
+                    <div
+                      style={{
+                        fontSize: "var(--fz-sm)",
+                        color: "var(--error-fg)",
+                        marginTop: 4,
+                      }}
+                    >
+                      {rewordError}
+                    </div>
+                  )}
+                </div>
+              );
+            }
             return (
               <div
                 key={vItem.key}
                 data-index={vItem.index}
                 ref={rowVirtualizer.measureElement}
                 onClick={() => handleRowClick(commit)}
+                onContextMenu={(e) => {
+                  if (commit.id === WORKING_DIR_ID) {
+                    openMenu(
+                      e,
+                      <>
+                        <SectionLabel>Uncommitted changes</SectionLabel>
+                        <MenuItem onClick={() => { closeMenu(); handleCreateStash(false); }}>
+                          Stash changes
+                        </MenuItem>
+                        <MenuItem onClick={() => { closeMenu(); handleCreateStash(true); }}>
+                          Stash changes (incl. untracked)
+                        </MenuItem>
+                      </>,
+                    );
+                    return;
+                  }
+                  const stashSelector = stashSelectorById.get(commit.id);
+                  openMenu(
+                    e,
+                    stashSelector ? (
+                      <>
+                        <SectionLabel>{stashSelector}</SectionLabel>
+                        <MenuItem onClick={() => { closeMenu(); openStashDiff(commit.id); }}>
+                          View stash diff
+                        </MenuItem>
+                        <MenuItem onClick={() => { closeMenu(); handleStashApply(stashSelector); }}>
+                          Apply stash
+                        </MenuItem>
+                        <MenuItem onClick={() => { closeMenu(); handleStashPop(stashSelector); }}>
+                          Pop stash
+                        </MenuItem>
+                        <MenuItem onClick={() => { closeMenu(); handleStashRename(stashSelector); }}>
+                          Rename stash…
+                        </MenuItem>
+                        <MenuItem onClick={() => { closeMenu(); handleStashDrop(stashSelector); }}>
+                          Drop stash
+                        </MenuItem>
+                      </>
+                    ) : (
+                      <>
+                        <SectionLabel>{commit.id.slice(0, 8)}</SectionLabel>
+                        <MenuItem onClick={() => { closeMenu(); handleCommitCheckout(commit.id); }}>
+                          Checkout commit
+                        </MenuItem>
+                        {commit.id === headSha && headIsRewordable && (
+                          <MenuItem onClick={() => { closeMenu(); handleRewordStart(commit); }}>
+                            Reword message…
+                          </MenuItem>
+                        )}
+                      </>
+                    ),
+                  );
+                }}
                 style={{
                   position: "absolute",
                   top: 0,
@@ -629,6 +989,15 @@ export function CommitsPanel() {
                             repoId={repo.id}
                             upstreamMap={upstreamMap}
                             textSize={TEXT_SIZE}
+                            onBranchCheckout={handleBranchCheckout}
+                            onBranchRename={handleBranchRename}
+                            onBranchDelete={handleBranchDelete}
+                            onRemoteCheckout={handleRemoteCheckout}
+                            onStashApply={handleStashApply}
+                            onStashPop={handleStashPop}
+                            onStashDrop={handleStashDrop}
+                            onStashRename={handleStashRename}
+                            onStashViewDiff={handleStashViewDiff}
                           />
                         </div>
                       );
@@ -656,6 +1025,7 @@ export function CommitsPanel() {
                             lineWidth={LINE_WIDTH}
                             ownLanePassThrough={ownLanePassThrough}
                             hollow={isWorkingDir}
+                            isStash={stashSelectorById.has(commit.id)}
                           />
                         </div>
                       );

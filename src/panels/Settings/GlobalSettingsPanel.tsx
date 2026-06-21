@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
 import { WarningIcon } from "../../icons";
 import { formatAppError } from "../../lib/types";
-import type { ConfigScope, LineEndingsView, RegionPlacement } from "../../lib/types";
+import type { ConfigScope, LineEndingsView, RegionPlacement, SwitchDirtyBehavior } from "../../lib/types";
 import { globalLineEndingsView, globalWriteLineEndings, setWarnOnMixedEndings } from "../../lib/commands";
 import { useGitStatusStore } from "../../store/git-status";
 import { SigningSettings } from "./SigningSettings";
@@ -127,6 +127,7 @@ export function GlobalSettingsPanel() {
         <CommitsGraphSection />
         <AutoRefreshSection />
         <ConfirmDiscardSection />
+        <BranchSwitchingSection />
         <MixedEndingDetectionSection />
         <LineEndingsGlobalSection />
         <SigningSettings scope="global" />
@@ -471,6 +472,70 @@ function ConfirmDiscardSection() {
       <FieldNote>
         When off, discard actions run immediately without a prompt.
       </FieldNote>
+    </Section>
+  );
+}
+
+function BranchSwitchingSection() {
+  const behavior = useSettingsStore(
+    (s) => s.settings?.switch_dirty_behavior ?? "try_directly",
+  );
+  const setSwitchDirtyBehavior = useSettingsStore((s) => s.setSwitchDirtyBehavior);
+  const [saving, setSaving] = useState(false);
+
+  const select = async (b: SwitchDirtyBehavior) => {
+    if (b === behavior || saving) return;
+    setSaving(true);
+    try {
+      await setSwitchDirtyBehavior(b);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Branch switching">
+      <FieldNote>writes to: global settings — applies to all repos</FieldNote>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            cursor: saving ? "default" : "pointer",
+          }}
+        >
+          <input
+            type="radio"
+            checked={behavior === "try_directly"}
+            onChange={() => select("try_directly")}
+            disabled={saving}
+          />
+          <span style={{ fontSize: "var(--fz-lg)" }}>Try switching directly</span>
+          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
+            — git decides; fails with an error if the working tree conflicts
+          </span>
+        </label>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            cursor: saving ? "default" : "pointer",
+          }}
+        >
+          <input
+            type="radio"
+            checked={behavior === "auto_stash"}
+            onChange={() => select("auto_stash")}
+            disabled={saving}
+          />
+          <span style={{ fontSize: "var(--fz-lg)" }}>Auto-stash, then switch</span>
+          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
+            — stashes changes, switches branch, then pops the stash
+          </span>
+        </label>
+      </div>
     </Section>
   );
 }
