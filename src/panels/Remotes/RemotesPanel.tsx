@@ -17,6 +17,7 @@ import type { Remote } from "../../lib/types";
 import { formatAppError, gitErrorKind } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { InlineEditor } from "../shared/InlineEditor";
+import { useConfirmDestructive } from "../../store/settings";
 import { FetchIcon } from "../../icons";
 
 // Domains to refresh after any remote change: the remotes list itself, plus
@@ -40,6 +41,7 @@ type EditState =
 export function RemotesSection() {
   const repo = useActiveRepo();
   const queryClient = useQueryClient();
+  const confirmDestructive = useConfirmDestructive();
 
   const { data: remotes = [], isFetching, refetch } = useQuery<Remote[]>({
     queryKey: [repo?.id, "remotes"],
@@ -278,7 +280,10 @@ export function RemotesSection() {
                         disabled={blocked}
                         onClick={() => {
                           setError(null);
-                          setEdit({ name: r.name, mode: "remove" });
+                          // Global destructive-confirmation setting: when off,
+                          // remove runs immediately.
+                          if (confirmDestructive) setEdit({ name: r.name, mode: "remove" });
+                          else void doRemove(r.name);
                         }}
                       >
                         Remove

@@ -15,6 +15,7 @@ export function InlineRenameInput({
   disabled = false,
   style,
   title,
+  placeholder,
 }: {
   initialValue: string;
   onSave: (value: string) => void;
@@ -23,6 +24,8 @@ export function InlineRenameInput({
   /** Merged over the base input style (font size, width, chip look, …). */
   style?: React.CSSProperties;
   title?: string;
+  /** Hint shown while empty (e.g. "branch name…" for a create-new input). */
+  placeholder?: string;
 }) {
   const [draft, setDraft] = useState(initialValue);
 
@@ -41,6 +44,7 @@ export function InlineRenameInput({
       value={draft}
       disabled={disabled}
       title={title}
+      placeholder={placeholder}
       onChange={(e) => setDraft(e.target.value)}
       onFocus={(e) => e.currentTarget.select()}
       // The row/chip underneath handles click (select row, open menus) — an

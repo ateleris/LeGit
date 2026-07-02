@@ -12,6 +12,7 @@ import {
   repoCheckoutRemoteBranch,
 } from "../../lib/commands";
 import { notifySwitchOutcome, formatSwitchError } from "../../lib/switchFeedback";
+import { useConfirmDestructive } from "../../store/settings";
 import type { Branch } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
@@ -99,8 +100,15 @@ export function BranchesSection() {
     if (await runMut(() => repoRenameBranch(repo!.id, name, next))) setEdit(null);
   };
 
+  // With destructive confirmations off, Delete runs a safe delete
+  // immediately (force delete stays reachable via the ref-chip menu).
+  const confirmDestructive = useConfirmDestructive();
   const openDelete = (b: Branch) => {
     setError(null);
+    if (!confirmDestructive) {
+      void doDelete(b.name, false);
+      return;
+    }
     setEdit({ name: b.name, mode: "delete" });
   };
 

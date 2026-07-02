@@ -21,6 +21,7 @@ import {
   repoBranches,
   repoCheckoutCommit,
   repoCheckoutRemoteBranch,
+  repoCreateBranch,
   repoDeleteBranch,
   repoFetch,
   repoListRemotes,
@@ -43,7 +44,7 @@ import { notifySwitchOutcome, notifySwitchError } from "../../lib/switchFeedback
 import type { Branch, Commit, CommitId, FileStatus, PushOptions, Remote, Signature, TrackingStatus } from "../../lib/types";
 import { formatAppError, gitErrorKind } from "../../lib/types";
 import { notify } from "../../store/notifications";
-import { FetchIcon, PullIcon, PushIcon, ChevronDownIcon } from "../../icons";
+import { BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon } from "../../icons";
 import { formatFull, formatRelative } from "../../lib/time";
 import { RefsCell } from "./cells/RefsCell";
 import { InlineRenameInput } from "./cells/InlineRenameInput";
@@ -156,6 +157,15 @@ export function CommitsPanel() {
   // across the repo — at most one chip matches).
   const [renamingBranch, setRenamingBranch] = useState<string | null>(null);
 
+  // Create-new-branch mode: shows an empty branch-name input on `rowId`'s ref
+  // cell; the branch is only created when a name is confirmed. From the
+  // toolbar the input sits on the HEAD row and `startPoint` is undefined
+  // (git branches at HEAD proper); from a row's context menu the clicked
+  // commit's SHA is the explicit start point.
+  const [branchCreation, setBranchCreation] = useState<
+    { rowId: CommitId; startPoint?: string } | null
+  >(null);
+
   // Column ordering, hiding, and widths — read from global settings on mount
   // and persisted (debounced) via `save_column_preferences`.
   const { state: colState, setOrder, setHidden, setWidth } = useColumnState();
@@ -173,6 +183,7 @@ export function CommitsPanel() {
   useEffect(() => {
     setSubjectEdit(null);
     setRenamingBranch(null);
+    setBranchCreation(null);
   }, [repo?.id]);
 
   // Raw lock list from the store; used by the Refs context menu UI.
@@ -488,6 +499,34 @@ export function CommitsPanel() {
     rowVirtualizer.measure();
   }, [ROW_HEIGHT, rowVirtualizer]);
 
+  // Create-new-branch flow: scroll the target row into view and show the
+  // empty branch-name input there; the branch is only created when a name is
+  // confirmed (Esc leaves no trace). No `startPoint` = branch at HEAD proper
+  // (the toolbar button); a commit SHA = branch from that commit (row menu).
+  const handleCreateBranchStart = useCallback((startPoint?: string) => {
+    const rowId = startPoint ?? headId;
+    if (rowId === null) return; // empty repo — nothing to branch from
+    setBranchCreation({ rowId, startPoint });
+    const idx = rows.findIndex((c) => c.id === rowId);
+    if (idx >= 0) rowVirtualizer.scrollToIndex(idx);
+  }, [headId, rows, rowVirtualizer]);
+
+  const handleCreateBranchSave = useCallback(async (name: string) => {
+    const creation = branchCreation;
+    setBranchCreation(null);
+    if (!repo || !creation) return;
+    try {
+      await repoCreateBranch(repo.id, name, creation.startPoint);
+      invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
+  }, [repo, branchCreation, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleCreateBranchCancel = useCallback(() => {
+    setBranchCreation(null);
+  }, []);
+
   // Build the refsAt map (commitId -> [refName,...]) from log decorations.
   // Branch and tag refs feed the lane algorithm (via §H locks in Phase 6).
   const refsAt = useMemo((): RefsAtCommit => {
@@ -722,7 +761,11 @@ export function CommitsPanel() {
 
       {/* Remote sync toolbar — fetch / pull / push + ahead-behind for the
           current branch. Self-contained; reuses the already-fetched branches. */}
-      <RemoteSyncToolbar repoId={repo.id} branches={branches} />
+      <RemoteSyncToolbar
+        repoId={repo.id}
+        branches={branches}
+        onCreateBranch={handleCreateBranchStart}
+      />
 
 
       {isError && (
@@ -898,6 +941,9 @@ export function CommitsPanel() {
                         <MenuItem onClick={() => { closeMenu(); handleCommitCheckout(commit.id); }}>
                           Checkout commit
                         </MenuItem>
+                        <MenuItem onClick={() => { closeMenu(); handleCreateBranchStart(commit.id); }}>
+                          Create branch here…
+                        </MenuItem>
                         {commit.id === headSha && headIsRewordable && (
                           <MenuItem onClick={() => { closeMenu(); handleRewordStart(commit); }}>
                             Reword message…
@@ -958,6 +1004,9 @@ export function CommitsPanel() {
                             renamingBranch={renamingBranch}
                             onBranchRenameSave={handleBranchRenameSave}
                             onBranchRenameCancel={handleBranchRenameCancel}
+                            creatingBranch={branchCreation?.rowId === commit.id}
+                            onCreateBranchSave={handleCreateBranchSave}
+                            onCreateBranchCancel={handleCreateBranchCancel}
                             onBranchCheckout={handleBranchCheckout}
                             onBranchRename={handleBranchRename}
                             onBranchDelete={handleBranchDelete}
@@ -1163,7 +1212,16 @@ type SyncOp = "fetch" | "pull" | "push";
  * into the sync command, and cancels via `consoleCancel` (the same shared
  * GitRunner). A user-cancelled op suppresses its error toast.
  */
-function RemoteSyncToolbar({ repoId, branches }: { repoId: string; branches: Branch[] }) {
+function RemoteSyncToolbar({
+  repoId,
+  branches,
+  onCreateBranch,
+}: {
+  repoId: string;
+  branches: Branch[];
+  /** Opens the create-new-branch input on the HEAD row (see CommitsPanel). */
+  onCreateBranch: () => void;
+}) {
   const queryClient = useQueryClient();
 
   const { data: tracking } = useQuery<TrackingStatus | null>({
@@ -1369,6 +1427,19 @@ function RemoteSyncToolbar({ repoId, branches }: { repoId: string; branches: Bra
           </>
         )}
       </div>
+
+      {/* Create a new branch at HEAD — opens an inline name input on the
+          HEAD row's ref chips (local op; independent of the sync busy state). */}
+      <SyncButton
+        title="Create a new branch at HEAD"
+        disabled={false}
+        loading={false}
+        icon={<BranchPlusIcon />}
+        label="Branch"
+        // Explicitly argument-free: the DOM click event must not leak into
+        // the handler's optional startPoint parameter.
+        onClick={() => onCreateBranch()}
+      />
 
       {busy && (
         <button

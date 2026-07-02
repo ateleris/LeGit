@@ -28,6 +28,14 @@ interface RefsCellProps {
   renamingBranch?: string | null;
   onBranchRenameSave?: (oldName: string, newName: string) => void;
   onBranchRenameCancel?: () => void;
+  /**
+   * Show an empty branch-name input (create-new mode, from the toolbar's
+   * New-branch button). Only the HEAD row's cell receives `true`. The branch
+   * is created on Enter — Esc discards without creating anything.
+   */
+  creatingBranch?: boolean;
+  onCreateBranchSave?: (name: string) => void;
+  onCreateBranchCancel?: () => void;
   onBranchCheckout?: (name: string) => void;
   onBranchRename?: (name: string) => void;
   onBranchDelete?: (name: string, force: boolean) => void;
@@ -38,7 +46,7 @@ interface RefsCellProps {
 const CHIP_GAP = 3;
 
 /** Renders ref decoration chips for a commit row. */
-export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, renamingBranch, onBranchRenameSave, onBranchRenameCancel, onBranchCheckout, onBranchRename, onBranchDelete, onRemoteCheckout }: RefsCellProps) {
+export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, renamingBranch, onBranchRenameSave, onBranchRenameCancel, creatingBranch, onCreateBranchSave, onCreateBranchCancel, onBranchCheckout, onBranchRename, onBranchDelete, onRemoteCheckout }: RefsCellProps) {
   const { openMenu, closeMenu } = usePanelContextMenu();
   const [visibleCount, setVisibleCount] = useState(Number.MAX_SAFE_INTEGER);
   const [popover, setPopover] = useState<{ x: number; y: number } | null>(null);
@@ -113,7 +121,7 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
     return () => observer.disconnect();
   }, [remeasure]);
 
-  if (decorations.length === 0) return null;
+  if (decorations.length === 0 && !creatingBranch) return null;
 
   // Find HeadOf target so we can mark the matching branch chip as "checked out"
   const headOfDec = decorations.find((d) => d.type === "headOf");
@@ -262,6 +270,25 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
         {chips.map((chip, i) => renderChip(chip, i, true))}
         <span style={overflowChipStyle}>+99</span>
       </div>
+
+      {/* Create-new-branch input (toolbar's New-branch button): an empty
+          chip-styled input; the branch only exists once a name is confirmed. */}
+      {creatingBranch && (
+        <InlineRenameInput
+          initialValue=""
+          placeholder="branch name…"
+          title="Enter to create · Esc to cancel"
+          onSave={(name) => onCreateBranchSave?.(name)}
+          onCancel={() => onCreateBranchCancel?.()}
+          style={{
+            fontSize: textSize,
+            padding: "1px 5px",
+            borderRadius: 10,
+            width: "16ch",
+            flexShrink: 0,
+          }}
+        />
+      )}
 
       {visibleChips.map((dec, i) => renderChip(dec, i))}
 

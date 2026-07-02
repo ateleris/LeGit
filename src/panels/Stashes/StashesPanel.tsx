@@ -13,6 +13,7 @@ import {
 } from "../../lib/commands";
 import { notify } from "../../store/notifications";
 import { useSummonStore } from "../../store/summon";
+import { useConfirmDestructive } from "../../store/settings";
 import type { StashEntry } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { formatRelative } from "../../lib/time";
@@ -64,6 +65,7 @@ export function StashesSection() {
   // Default on: a stash should capture the full working state, untracked files
   // included. Users can still opt out per-stash.
   const [includeUntracked, setIncludeUntracked] = useState(true);
+  const confirmDestructive = useConfirmDestructive();
   const [confirmDrop, setConfirmDrop] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draftMsg, setDraftMsg] = useState("");
@@ -212,7 +214,12 @@ export function StashesSection() {
                 onOpenRename={() => openRename(s)}
                 onSaveRename={() => doRename(s.stash_sha)}
                 onCancelEdit={() => setRenaming(null)}
-                onOpenDrop={() => { setError(null); setConfirmDrop(s.stash_sha); }}
+                onOpenDrop={() => {
+                  setError(null);
+                  // Global destructive-confirmation setting: when off, drop runs immediately.
+                  if (confirmDestructive) setConfirmDrop(s.stash_sha);
+                  else void doDrop(s.stash_sha);
+                }}
                 onConfirmDrop={() => doDrop(s.stash_sha)}
                 onCancelDrop={() => setConfirmDrop(null)}
               />

@@ -21,7 +21,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import { MenuItem, Separator } from "./primitives";
+import { MenuItem, SectionLabel, Separator } from "./primitives";
 
 export interface BaselineEntry {
   label: string;
@@ -37,6 +37,13 @@ export interface PanelContextMenuApi {
    */
   openMenu: (e: React.MouseEvent, section?: React.ReactNode) => void;
   closeMenu: () => void;
+  /**
+   * Confirmation takeover: while set, the menu renders ONLY this content — no
+   * contextual section, no baseline — so a destructive confirmation offers
+   * nothing but Confirm/Cancel (no mis-click surface). Pass `null` to return
+   * to the normal menu. Prefer the `useMenuConfirm` helper.
+   */
+  requestConfirm: (content: React.ReactNode | null) => void;
 }
 
 interface MenuState {
@@ -65,18 +72,31 @@ interface ProviderProps {
 
 export function PanelContextMenuProvider({ baseline, children }: ProviderProps) {
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // Confirmation takeover content (see PanelContextMenuApi.requestConfirm).
+  const [confirm, setConfirm] = useState<React.ReactNode | null>(null);
 
   const openMenu = useCallback((e: React.MouseEvent, section?: React.ReactNode) => {
     // Kill the native menu and stop the event from bubbling to an outer
     // (less-specific) handler — the innermost target wins.
     e.preventDefault();
     e.stopPropagation();
+    setConfirm(null);
     setMenu({ x: e.clientX, y: e.clientY, section: section ?? null });
   }, []);
 
-  const closeMenu = useCallback(() => setMenu(null), []);
+  const closeMenu = useCallback(() => {
+    setMenu(null);
+    setConfirm(null);
+  }, []);
 
-  const api = useMemo<PanelContextMenuApi>(() => ({ openMenu, closeMenu }), [openMenu, closeMenu]);
+  const requestConfirm = useCallback((content: React.ReactNode | null) => {
+    setConfirm(content);
+  }, []);
+
+  const api = useMemo<PanelContextMenuApi>(
+    () => ({ openMenu, closeMenu, requestConfirm }),
+    [openMenu, closeMenu, requestConfirm],
+  );
 
   return (
     <Ctx.Provider value={api}>
@@ -84,24 +104,54 @@ export function PanelContextMenuProvider({ baseline, children }: ProviderProps) 
       {menu &&
         createPortal(
           <MenuShell x={menu.x} y={menu.y} onClose={closeMenu}>
-            {menu.section}
-            {menu.section != null && baseline.length > 0 && <Separator />}
-            {baseline.map((b, i) => (
-              <MenuItem
-                key={i}
-                disabled={b.disabled}
-                onClick={() => {
-                  b.onClick();
-                  closeMenu();
-                }}
-              >
-                {b.label}
-              </MenuItem>
-            ))}
+            {confirm != null ? (
+              // Takeover: the confirmation is the entire menu.
+              confirm
+            ) : (
+              <>
+                {menu.section}
+                {menu.section != null && baseline.length > 0 && <Separator />}
+                {baseline.map((b, i) => (
+                  <MenuItem
+                    key={i}
+                    disabled={b.disabled}
+                    onClick={() => {
+                      b.onClick();
+                      closeMenu();
+                    }}
+                  >
+                    {b.label}
+                  </MenuItem>
+                ))}
+              </>
+            )}
           </MenuShell>,
           document.body
         )}
     </Ctx.Provider>
+  );
+}
+
+/**
+ * Standard destructive-confirmation takeover: replaces the whole menu with a
+ * question plus Confirm/Cancel. Cancel returns to the normal menu. Callers are
+ * expected to have already consulted the global destructive-confirmation
+ * setting (`useConfirmDestructive`) and to skip straight to the action when
+ * it is off.
+ */
+export function useMenuConfirm() {
+  const { requestConfirm } = usePanelContextMenu();
+  return useCallback(
+    (question: string, onConfirm: () => void) => {
+      requestConfirm(
+        <>
+          <SectionLabel>{question}</SectionLabel>
+          <MenuItem onClick={onConfirm}>Confirm</MenuItem>
+          <MenuItem onClick={() => requestConfirm(null)}>Cancel</MenuItem>
+        </>,
+      );
+    },
+    [requestConfirm],
   );
 }
 

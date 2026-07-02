@@ -60,6 +60,15 @@ export const minCommitsRowHeight = (fontSize: number) =>
 const clamp = (v: number, min: number, max: number) =>
   Math.min(max, Math.max(min, v));
 
+/**
+ * Whether destructive actions ask for confirmation first (`confirm_discard`,
+ * default on). Applies to ALL destructive actions — discarding changes,
+ * deleting branches, dropping stashes, removing remotes/themes — so every
+ * confirm-before-destroy UI must consult this one hook.
+ */
+export const useConfirmDestructive = () =>
+  useSettingsStore((s) => s.settings?.confirm_discard ?? true);
+
 interface SettingsStore {
   settings: GlobalSettings | null;
   init: () => Promise<void>;

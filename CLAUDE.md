@@ -154,7 +154,10 @@ project memory for details.
 - **Destructive actions confirm inline in every menu that offers them** (drop
   stash, delete branch). Share the menu section component
   (e.g. `StashMenuSection`) between the row menu and the chip menu so the
-  confirm step can't drift out of parity.
+  confirm step can't drift out of parity. Every such confirmation is gated by
+  the global "Destructive action confirmation" setting — consult
+  `useConfirmDestructive()` (store/settings) and run the action immediately
+  when it is off; never hardcode a confirm step.
 - **Renames edit in place**: an input appears where the text is (subject cell,
   ref chip), Enter approves, Esc discards (`InlineRenameInput`). Don't summon
   another panel for a rename.

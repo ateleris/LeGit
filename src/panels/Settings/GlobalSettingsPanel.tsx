@@ -501,7 +501,7 @@ function ConfirmDiscardSection() {
   };
 
   return (
-    <Section title="Discard confirmation">
+    <Section title="Destructive action confirmation">
       <FieldNote>writes to: global settings — applies to all repos</FieldNote>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
         <input
@@ -512,11 +512,13 @@ function ConfirmDiscardSection() {
           disabled={saving}
         />
         <label htmlFor="global-confirm-discard" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
-          Ask for confirmation before discarding changes
+          Ask for confirmation before destructive actions
         </label>
       </div>
       <FieldNote>
-        When off, discard actions run immediately without a prompt.
+        Covers discarding changes, deleting branches, dropping stashes, and
+        removing remotes or themes. When off, these run immediately without a
+        prompt.
       </FieldNote>
     </Section>
   );

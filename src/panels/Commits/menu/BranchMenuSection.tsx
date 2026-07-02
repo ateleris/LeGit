@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useConfirmDestructive } from "../../../store/settings";
+import { useMenuConfirm } from "./PanelContextMenu";
 import { MenuItem, Separator, SectionLabel } from "./primitives";
 
 /**
  * Shared context-menu section for a local branch. Used by both the branch
  * chip's menu and the commit row's menu (Commits panel) so the two stay in
- * parity — in particular, Delete (destructive) is gated behind an inline
- * Confirm step in both places.
+ * parity. Delete is destructive: gated by the global destructive-confirmation
+ * setting, and when confirming, the confirmation takes over the whole menu
+ * (no other entries to mis-click).
  */
 export function BranchMenuSection({
   name,
@@ -20,24 +22,19 @@ export function BranchMenuSection({
   onRename: () => void;
   onDelete: (force: boolean) => void;
 }) {
-  const [confirming, setConfirming] = useState<"safe" | "force" | null>(null);
+  const confirmDestructive = useConfirmDestructive();
+  const menuConfirm = useMenuConfirm();
 
-  if (confirming) {
-    return (
-      <>
-        <SectionLabel>Delete branch '{name}'?</SectionLabel>
-        <MenuItem
-          onClick={() => {
-            onDelete(confirming === "force");
-            setConfirming(null);
-          }}
-        >
-          Confirm
-        </MenuItem>
-        <MenuItem onClick={() => setConfirming(null)}>Cancel</MenuItem>
-      </>
+  const requestDelete = (force: boolean) => {
+    if (!confirmDestructive) {
+      onDelete(force);
+      return;
+    }
+    menuConfirm(
+      force ? `Force delete branch '${name}'?` : `Delete branch '${name}'?`,
+      () => onDelete(force),
     );
-  }
+  };
 
   return (
     <>
@@ -47,8 +44,12 @@ export function BranchMenuSection({
       </MenuItem>
       <MenuItem onClick={onRename}>Rename branch…</MenuItem>
       <Separator />
-      <MenuItem onClick={() => setConfirming("safe")}>Delete branch…</MenuItem>
-      <MenuItem onClick={() => setConfirming("force")}>Force delete branch…</MenuItem>
+      <MenuItem onClick={() => requestDelete(false)}>
+        {confirmDestructive ? "Delete branch…" : "Delete branch"}
+      </MenuItem>
+      <MenuItem onClick={() => requestDelete(true)}>
+        {confirmDestructive ? "Force delete branch…" : "Force delete branch"}
+      </MenuItem>
     </>
   );
 }

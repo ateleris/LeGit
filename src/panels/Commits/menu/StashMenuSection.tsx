@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useConfirmDestructive } from "../../../store/settings";
+import { useMenuConfirm } from "./PanelContextMenu";
 import { MenuItem, Separator, SectionLabel } from "./primitives";
 
 /**
  * Shared context-menu section for a stash entry. Used by both the stash row's
  * menu and the stash chip's menu in the Commits panel so the two stay in
- * parity — in particular, Drop (destructive, hard to undo) is gated behind an
- * inline Confirm step in both places.
+ * parity. Drop is destructive: gated by the global destructive-confirmation
+ * setting, and when confirming, the confirmation takes over the whole menu
+ * (no other entries to mis-click).
  *
  * `selector` is display-only (the section label); the action callbacks are
  * expected to address the stash by its commit SHA, wired by the caller.
@@ -25,17 +27,16 @@ export function StashMenuSection({
   onRename: () => void;
   onDrop: () => void;
 }) {
-  const [confirming, setConfirming] = useState(false);
+  const confirmDestructive = useConfirmDestructive();
+  const menuConfirm = useMenuConfirm();
 
-  if (confirming) {
-    return (
-      <>
-        <SectionLabel>Drop {selector}?</SectionLabel>
-        <MenuItem onClick={() => { onDrop(); setConfirming(false); }}>Confirm</MenuItem>
-        <MenuItem onClick={() => setConfirming(false)}>Cancel</MenuItem>
-      </>
-    );
-  }
+  const requestDrop = () => {
+    if (!confirmDestructive) {
+      onDrop();
+      return;
+    }
+    menuConfirm(`Drop ${selector}?`, onDrop);
+  };
 
   return (
     <>
@@ -45,7 +46,9 @@ export function StashMenuSection({
       <MenuItem onClick={onPop}>Pop stash</MenuItem>
       <MenuItem onClick={onRename}>Rename stash…</MenuItem>
       <Separator />
-      <MenuItem onClick={() => setConfirming(true)}>Drop stash…</MenuItem>
+      <MenuItem onClick={requestDrop}>
+        {confirmDestructive ? "Drop stash…" : "Drop stash"}
+      </MenuItem>
     </>
   );
 }
