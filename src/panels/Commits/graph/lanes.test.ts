@@ -376,12 +376,13 @@ describe("computeLanes", () => {
     expect(branchOff).toBeDefined();
   });
 
-  test("jog lane not reused for merge parent on same commit", () => {
+  test("jog lane is reused for a merge parent on the same commit", () => {
     // A commit C is simultaneously a jog convergence (lane 1 dies here)
-    // and a merge commit (has a second parent P2). P2 must NOT be
-    // assigned to lane 1 (the just-freed jog lane) — that would produce
-    // a child arc going down on the same lane as the jog arc going up,
-    // painting over the jog and hiding the "horizontal → arc → up" shape.
+    // and a merge commit (has a second parent P2). P2 reuses lane 1 — the
+    // lane its predecessor just vacated — keeping the graph compact. The
+    // jog arc (up into C's dot) and the new child arc (down out of it)
+    // occupy different halves of the row, rendering as the lane pinching
+    // through the merge dot.
     //
     //   A ── lane 0
     //   F ── lane 1 (dies at C)
@@ -397,22 +398,41 @@ describe("computeLanes", () => {
     const result = computeLanes(commits, {}, noRefs());
 
     expect(result.assignments.get("C")).toBe(0);
-    const p2Lane = result.assignments.get("P2")!;
-    // P2 must NOT be on lane 1 (the lane freed by the jog at C).
-    expect(p2Lane).not.toBe(1);
+    // P2 reuses the just-freed jog lane.
+    expect(result.assignments.get("P2")).toBe(1);
     // The jog edge from lane 1 → lane 0 must exist at C.
     const jog = result.edges.find(
       (e) => e.fromCommitId === "C" && e.toCommitId === "C" &&
         e.fromLane === 1 && e.toLane === 0,
     );
     expect(jog).toBeDefined();
-    // The merge edge from C to P2 must go to P2's actual lane.
+    // The merge edge from C to P2 goes to the reused lane.
     const mergeEdge = result.edges.find(
       (e) => e.fromCommitId === "C" && e.toCommitId === "P2",
     );
     expect(mergeEdge).toBeDefined();
-    expect(mergeEdge!.toLane).toBe(p2Lane);
-    expect(mergeEdge!.toLane).not.toBe(1);
+    expect(mergeEdge!.toLane).toBe(1);
+  });
+
+  test("sequential PR merges share one feature lane (no rightward drift)", () => {
+    // KingCost-style history: every PR branches off develop and merges
+    // straight back. Each next feature must reuse the lane the previous
+    // one vacated — features never coexist, so the graph needs only two
+    // lanes, not an alternating third.
+    const commits = makeCommits([
+      ["M1", "M2", "F1"],
+      ["F1", "M2"],
+      ["M2", "M3", "F2"],
+      ["F2", "M3"],
+      ["M3", "M4", "F3"],
+      ["F3", "M4"],
+      ["M4"],
+    ]);
+    const result = computeLanes(commits, {}, noRefs());
+    expect(result.assignments.get("F1")).toBe(1);
+    expect(result.assignments.get("F2")).toBe(1);
+    expect(result.assignments.get("F3")).toBe(1);
+    expect(result.maxLane).toBe(1);
   });
 
   test("empty input", () => {

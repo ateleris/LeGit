@@ -83,7 +83,7 @@ describe("buildChips", () => {
     ]);
   });
 
-  it("orders: checked-out branch, branches, remotes, tags, stash, other", () => {
+  it("orders: checked-out branch, branches, remotes, tags, other", () => {
     const out = buildChips(
       [
         tag("refs/tags/v1.0"),
@@ -100,14 +100,13 @@ describe("buildChips", () => {
       { kind: "branch", value: "refs/heads/dev" },
       { kind: "remote", value: "refs/remotes/origin/release" },
       { kind: "tag", value: "refs/tags/v1.0" },
-      { kind: "stash", value: "stash@{0}" },
       { kind: "other", value: "refs/notes/commits" },
     ]);
   });
 
-  it("renders a stash decoration as a stash chip carrying its selector", () => {
+  it("emits no chip for a stash decoration (the graph node marks the stash)", () => {
     const out = buildChips([stash("stash@{2}")], NO_UPSTREAM);
-    expect(out).toEqual([{ kind: "stash", value: "stash@{2}" }]);
+    expect(out).toEqual([]);
   });
 
   it("keeps a detached HEAD chip first", () => {

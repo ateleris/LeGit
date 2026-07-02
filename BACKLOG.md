@@ -76,6 +76,20 @@ theme-token set.
 
 ---
 
+## ~~Theme completeness: retheme dockview + literal-colour audit~~
+
+Done 2026-07-02. The `.dv-dockview` override block in `global.css` (extended
+to also match `.dockview-theme-abyss`, covering the Refs paneview) now maps
+every visible dockview colour var to LeGit tokens — including sash, scrollbar,
+paneview header border, floating shadow, and the drag-over overlay (new tokens
+`shadow.color` + `dnd.overlay.bg`). The abyss class remains only as a
+structural fallback. All residual literal colours (menu/popover/toast
+box-shadows) were tokenized. Enforced by `src/theme/noLiteralColors.test.ts`:
+any colour literal outside `theme.css`, `defaults.ts`, the Theme Editor's
+colour-data values, or a `var(--token, …)` fallback fails the suite.
+
+---
+
 ## Other deferred ideas
 
 - **Diff viewer: inline editing.** The original reason CodeMirror was chosen —

@@ -1,19 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { BranchIcon, RemoteIcon, StashIcon, TagIcon } from "../../../icons";
+import { BranchIcon, RemoteIcon, TagIcon } from "../../../icons";
 import type { LaneLock, RefDecoration } from "../../../lib/types";
 import { usePanelContextMenu } from "../menu/PanelContextMenu";
 import { LaneLockSection } from "../menu/LaneLockSection";
 import { Separator } from "../menu/primitives";
-import { StashMenuSection } from "../menu/StashMenuSection";
 import { BranchMenuSection, RemoteBranchMenuSection } from "../menu/BranchMenuSection";
 import { InlineRenameInput } from "./InlineRenameInput";
 import { buildChips, computeVisibleCount } from "./refChips";
 import type { ChipDescriptor } from "./refChips";
 
 interface RefsCellProps {
-  /** The row's commit id. For a stash row this is the stash's commit SHA. */
-  commitId: string;
   decorations: RefDecoration[];
   /** Current locks for the active repo. */
   locks: LaneLock[];
@@ -36,23 +33,12 @@ interface RefsCellProps {
   onBranchDelete?: (name: string, force: boolean) => void;
   /** Called when checking out a remote-tracking branch (passes the full remote ref, e.g. `origin/feature-x`). */
   onRemoteCheckout?: (remoteRef: string) => void;
-  /**
-   * Stash actions — each receives the stash's commit SHA (the row's commit id;
-   * a stash chip only ever decorates its own stash node). The SHA is stable,
-   * unlike the positional `stash@{N}` selector, so a stale list can never
-   * target the wrong stash. The selector on the chip is display-only.
-   */
-  onStashApply?: (sha: string) => void;
-  onStashPop?: (sha: string) => void;
-  onStashDrop?: (sha: string) => void;
-  onStashRename?: (sha: string) => void;
-  onStashViewDiff?: (sha: string) => void;
 }
 
 const CHIP_GAP = 3;
 
 /** Renders ref decoration chips for a commit row. */
-export function RefsCell({ commitId, decorations, locks, repoId, upstreamMap, textSize, renamingBranch, onBranchRenameSave, onBranchRenameCancel, onBranchCheckout, onBranchRename, onBranchDelete, onRemoteCheckout, onStashApply, onStashPop, onStashDrop, onStashRename, onStashViewDiff }: RefsCellProps) {
+export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, renamingBranch, onBranchRenameSave, onBranchRenameCancel, onBranchCheckout, onBranchRename, onBranchDelete, onRemoteCheckout }: RefsCellProps) {
   const { openMenu, closeMenu } = usePanelContextMenu();
   const [visibleCount, setVisibleCount] = useState(Number.MAX_SAFE_INTEGER);
   const [popover, setPopover] = useState<{ x: number; y: number } | null>(null);
@@ -192,20 +178,6 @@ export function RefsCell({ commitId, decorations, locks, repoId, upstreamMap, te
           <RemoteBranchMenuSection
             remoteName={remoteName}
             onCheckout={() => { closeMenu(); onRemoteCheckout?.(remoteName); }}
-          />
-        );
-      }
-      if (chip.kind === "stash") {
-        // The chip's selector is display-only; actions use the row's commit id
-        // (= the stash SHA — a stash chip only decorates its own stash node).
-        return (
-          <StashMenuSection
-            selector={chip.value}
-            onViewDiff={() => { closeMenu(); onStashViewDiff?.(commitId); }}
-            onApply={() => { closeMenu(); onStashApply?.(commitId); }}
-            onPop={() => { closeMenu(); onStashPop?.(commitId); }}
-            onRename={() => { closeMenu(); onStashRename?.(commitId); }}
-            onDrop={() => { closeMenu(); onStashDrop?.(commitId); }}
           />
         );
       }
@@ -394,12 +366,15 @@ function Chip({ chip, headOfTarget, textSize, onContextMenu, onDoubleClickAction
 
   switch (chip.kind) {
     case "head":
+      // Detached HEAD is what's checked out — it carries the same dot marker
+      // as the checked-out branch chip.
       return (
         <span
           onContextMenu={handleContextMenu}
           style={chipStyle({ variant: "head", textSize })}
-          title="Detached HEAD"
+          title="Detached HEAD — checked out"
         >
+          <CurrentDot />
           HEAD
         </span>
       );
@@ -456,19 +431,6 @@ function Chip({ chip, headOfTarget, textSize, onContextMenu, onDoubleClickAction
           title={chip.value}
         >
           <TagIcon /> {chip.value.replace(/^refs\/tags\//, "")}
-        </span>
-      );
-
-    case "stash":
-      // The chip label is just "stash"; the row's Subject already shows the
-      // stash message, and the full `stash@{N}` selector lives in the tooltip.
-      return (
-        <span
-          onContextMenu={handleContextMenu}
-          style={chipStyle({ variant: "stash", textSize })}
-          title={chip.value}
-        >
-          <StashIcon /> stash
         </span>
       );
 
@@ -545,7 +507,7 @@ function OverflowPopover({
         borderRadius: 4,
         padding: 8,
         zIndex: 9999,
-        boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+        boxShadow: "0 4px 12px var(--shadow-color)",
         display: "flex",
         flexWrap: "wrap",
         gap: 4,
@@ -592,7 +554,6 @@ type ChipVariant =
   | "branch"
   | "remote"
   | "tag"
-  | "stash"
   | "head"
   | "other";
 
@@ -639,15 +600,6 @@ function chipStyle({
         border: "1px solid var(--ref-tag-border, rgba(220, 170, 60, 0.45))",
         color: "var(--ref-tag-fg, rgb(220, 170, 60))",
         borderRadius: 3, // flag shape — slightly square
-      };
-
-    case "stash":
-      return {
-        ...base,
-        background: "var(--ref-stash-bg, rgba(43, 183, 166, 0.15))",
-        border: "1px solid var(--ref-stash-border, rgba(43, 183, 166, 0.45))",
-        color: "var(--ref-stash-fg, rgb(95, 211, 196))",
-        borderRadius: 3, // box shape, like an archived snapshot
       };
 
     case "head":

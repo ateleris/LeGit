@@ -32,10 +32,12 @@ type EditState =
   | null;
 
 /**
- * Remotes panel — manage the active repo's git remotes: list with fetch/push
+ * Remotes section — manage the active repo's git remotes: list with fetch/push
  * URLs, add / remove / rename / set-url, and per-remote fetch / prune.
+ * Rendered as a pane inside the combined Refs panel (see `Refs/RefsPanel`),
+ * which supplies the header — this component is body-only.
  */
-export function RemotesPanel() {
+export function RemotesSection() {
   const repo = useActiveRepo();
   const queryClient = useQueryClient();
 
@@ -161,9 +163,6 @@ export function RemotesPanel() {
   if (!repo) {
     return (
       <div className="legit-panel">
-        <div className="legit-panel__toolbar">
-          <strong>Remotes</strong>
-        </div>
         <div className="legit-panel__body">
           <span className="legit-subtle">No repository open.</span>
         </div>
@@ -176,10 +175,6 @@ export function RemotesPanel() {
   return (
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
       <PanelLoadingBar active={isFetching} />
-      <div className="legit-panel__toolbar">
-        <strong>Remotes — {repo.name}</strong>
-      </div>
-
       <div className="legit-panel__body" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {error && (
           <pre className="legit-error" style={{ margin: 0, fontSize: "var(--fz-md)" }}>

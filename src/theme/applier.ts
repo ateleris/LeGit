@@ -2,9 +2,10 @@
 // properties (DESIGN.md §6.2). No JavaScript is involved in the actual
 // re-paint — the browser cascades.
 
-import type { ThemeDocument } from "../lib/types";
+import type { ThemeDocument, ThemeTokenBinding } from "../lib/types";
 import { DEFAULT_THEME } from "./defaults";
 import { TOKEN_CONTRACT } from "./tokens";
+import { bindingCssValue, bindingRef } from "./filters";
 
 /** Replace `.` with `-` so a token like `panel.header.bg` becomes `panel-header-bg`. */
 function tokenToVar(name: string): string {
@@ -35,7 +36,7 @@ export function resolveTheme(doc: ThemeDocument): ThemeDocument {
   // entry, fall back to the default's binding.
   for (const t of TOKEN_CONTRACT) {
     const bound = merged.tokens[t.name];
-    if (!bound || !merged.palette[bound]) {
+    if (!bound || !merged.palette[bindingRef(bound)]) {
       merged.tokens[t.name] = DEFAULT_THEME.tokens[t.name];
     }
   }
@@ -51,16 +52,23 @@ export function applyTheme(doc: ThemeDocument, root: HTMLElement = document.docu
     root.style.setProperty(paletteVar(name), color);
   }
 
-  for (const [tokenName, paletteRef] of Object.entries(resolved.tokens)) {
-    root.style.setProperty(tokenToVar(tokenName), `var(${paletteVar(paletteRef)})`);
+  for (const [tokenName, binding] of Object.entries(resolved.tokens)) {
+    root.style.setProperty(tokenToVar(tokenName), tokenCssValue(binding));
   }
 
   root.dataset.legitTheme = resolved.name;
 }
 
+/** The CSS value a binding resolves to: the palette entry's variable,
+ *  possibly wrapped in the filter's `color-mix()` so palette edits still
+ *  cascade live. */
+function tokenCssValue(binding: ThemeTokenBinding): string {
+  return bindingCssValue(binding, `var(${paletteVar(bindingRef(binding))})`);
+}
+
 /** Useful in the Theme Editor for live previews. */
-export function applyOverride(token: string, paletteRef: string, root: HTMLElement = document.documentElement) {
-  root.style.setProperty(tokenToVar(token), `var(${paletteVar(paletteRef)})`);
+export function applyOverride(token: string, binding: ThemeTokenBinding, root: HTMLElement = document.documentElement) {
+  root.style.setProperty(tokenToVar(token), tokenCssValue(binding));
 }
 
 export function applyPaletteValue(name: string, color: string, root: HTMLElement = document.documentElement) {

@@ -18,7 +18,9 @@ import {
   ChevronDown,
   Cloud,
   GitBranch,
+  Link2,
   Lock,
+  Unlink2,
   Minus,
   Plus,
   Archive,
@@ -58,6 +60,8 @@ export const BranchIcon = withDefaults(GitBranch, "BranchIcon");
 export const RemoteIcon = withDefaults(Cloud, "RemoteIcon");
 export const TagIcon = withDefaults(Tag, "TagIcon");
 export const StashIcon = withDefaults(Archive, "StashIcon");
+export const LinkIcon = withDefaults(Link2, "LinkIcon");
+export const UnlinkIcon = withDefaults(Unlink2, "UnlinkIcon");
 export const LockIcon = withDefaults(Lock, "LockIcon");
 export const CheckIcon = withDefaults(Check, "CheckIcon");
 export const WarningIcon = withDefaults(TriangleAlert, "WarningIcon");

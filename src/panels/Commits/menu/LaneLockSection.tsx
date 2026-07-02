@@ -119,7 +119,7 @@ export function LaneLockSection({ refName, locks, repoId }: LaneLockSectionProps
             background: "var(--input-bg, #2a2a2a)",
             border: "1px solid var(--input-border, rgba(255,255,255,0.2))",
             borderRadius: 3,
-            color: "var(--fg, #ccc)",
+            color: "var(--panel-fg, #ccc)",
             outline: "none",
           }}
           // Prevent the menu's outside-click handler from closing it when

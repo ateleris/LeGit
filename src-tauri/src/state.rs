@@ -85,21 +85,18 @@ pub fn default_commits_line_width() -> f64 {
     1.5
 }
 
-/// Default text size (font size) for the Commits panel columns, in px.
-pub fn default_commits_text_size() -> f64 {
-    12.0
-}
-
 /// Default global UI font size (px) — the base all panels derive their text
 /// sizes (and the panel min-size constraints) from.
 pub fn default_ui_font_size() -> f64 {
     12.0
 }
 
-/// Largest sensible text size for a given row height — text taller than this
-/// would not sit comfortably within the line.
-pub fn max_commits_text_size(row_height: f64) -> f64 {
-    row_height * 0.7
+/// Minimum Commits-panel row height for a given UI font size. A ref chip is
+/// `font * 1.3` (line-height) + 2px padding + 2px border tall; rows must be
+/// 2px taller so chips on adjacent rows never touch. Mirrors the frontend
+/// `minCommitsRowHeight`.
+pub fn min_commits_row_height(ui_font_size: f64) -> f64 {
+    ((ui_font_size * 1.3).ceil() + 6.0).max(16.0)
 }
 
 /// Largest commit-dot radius that fits a cell of the given row height and lane
@@ -205,9 +202,6 @@ pub struct GlobalSettings {
     /// Stroke width for the Commits graph connector lines/arcs, in px.
     #[serde(default = "default_commits_line_width")]
     pub commits_line_width: f64,
-    /// Text size (font size) for the Commits panel columns, in px.
-    #[serde(default = "default_commits_text_size")]
-    pub commits_text_size: f64,
     /// Remembered view mode for the Changed Files panel (`"tree"` | `"flat"`).
     /// `None` until the user first toggles it.
     #[serde(default)]
@@ -251,7 +245,6 @@ impl Default for GlobalSettings {
             commits_lane_width: default_commits_lane_width(),
             commits_dot_radius: default_commits_dot_radius(),
             commits_line_width: default_commits_line_width(),
-            commits_text_size: default_commits_text_size(),
             changed_files_view_mode: None,
             ui_font_size: default_ui_font_size(),
             watcher_enabled: true,

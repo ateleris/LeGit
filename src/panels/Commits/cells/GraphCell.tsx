@@ -22,6 +22,7 @@
 // Lane colours are read from CSS custom properties written by the theme
 // applier (see src/theme/applier.ts — `graph.lane.N` -> `--graph-lane-N`).
 
+import { StashIcon } from "../../../icons";
 import type { LaneEdge, LaneIndex } from "../graph/types";
 
 interface GraphCellProps {
@@ -59,6 +60,48 @@ interface GraphCellProps {
    * entry so it reads as special at a glance. Takes precedence over `hollow`.
    */
   isStash?: boolean;
+}
+
+/**
+ * Stash node glyph: a lane-coloured square (side = the commit dot's diameter,
+ * so stash nodes and commit dots read as the same visual weight) with the
+ * stash chip's lucide `Archive` icon knocked out of it in the panel
+ * background colour (a "negative"). The graph node and the chip share one
+ * metaphor while the node's colour stays consistent with the edge running
+ * into it; everything scales with the user's dot-radius setting.
+ */
+function StashNode({
+  cx,
+  cy,
+  dotRadius,
+  color,
+}: {
+  cx: number;
+  cy: number;
+  dotRadius: number;
+  color: string;
+}) {
+  const side = dotRadius * 2;
+  const iconSize = side * 0.8;
+  return (
+    <g>
+      <rect
+        x={cx - dotRadius}
+        y={cy - dotRadius}
+        width={side}
+        height={side}
+        rx={Math.max(0.5, side * 0.15)}
+        fill={color}
+      />
+      <StashIcon
+        x={cx - iconSize / 2}
+        y={cy - iconSize / 2}
+        size={iconSize}
+        color="var(--panel-bg, #1e1e1e)"
+        strokeWidth={2.75}
+      />
+    </g>
+  );
 }
 
 export function laneColor(lane: LaneIndex): string {
@@ -250,19 +293,13 @@ export function GraphCell({
       })}
 
       {/* 4. Commit node — rendered last so it sits on top of all lines. A stash
-          shows as a diamond in its LANE colour (the shape alone marks it as a
-          stash — matching how GitKraken et al. colour stash nodes, and keeping
-          the node consistent with the edge that runs into it); a hollow ring
-          (filled with the panel background so lane lines don't show through
-          its centre) marks the synthetic working-directory row; otherwise a
-          filled lane-coloured dot. */}
+          shows as a lane-coloured square (dot-sized) with the Archive icon
+          punched out of it (see StashNode); a hollow ring (filled with the
+          panel background so lane lines don't show through its centre) marks
+          the synthetic working-directory row; otherwise a filled lane-coloured
+          dot. */}
       {isStash ? (
-        <path
-          d={`M ${dotX} ${halfRow - dotRadius} L ${dotX + dotRadius} ${halfRow} L ${dotX} ${halfRow + dotRadius} L ${dotX - dotRadius} ${halfRow} Z`}
-          fill={dotColor}
-          stroke={dotColor}
-          strokeWidth={lineWidth}
-        />
+        <StashNode cx={dotX} cy={halfRow} dotRadius={dotRadius} color={dotColor} />
       ) : hollow ? (
         <circle
           cx={dotX} cy={halfRow} r={dotRadius}

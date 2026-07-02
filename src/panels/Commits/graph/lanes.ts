@@ -344,14 +344,17 @@ export function computeLanes(
 
     // Step 4 — set up parent slots.
     const parents = c.parentIds;
-    // Reserve cLane and the just-freed jog lanes so additional parents can't
-    // immediately reclaim a lane whose arc is already drawn going up in this
-    // row — that would produce a child arc going down on the same lane,
-    // painting over the jog arc and hiding the "horizontal → arc → up" shape.
+    // Reserve only the lanes already spoken for in this step: the commit's
+    // own lane (plus each additional parent's lane as it is claimed, below).
+    // Lanes just freed by jogs are deliberately NOT reserved — a merge's
+    // second parent reuses the lane its first-parent history just vacated,
+    // so sequential PR branches all share one lane instead of alternating
+    // rightward. Visually the jog arc (up into the dot) and the new child
+    // arc (down out of the dot) occupy different halves of the row and share
+    // only the horizontal stem at the dot: the lane reads as pinching
+    // through the merge dot, the same compaction GitKraken and
+    // `git log --graph` use.
     const reservedThisStep = new Set<LaneIndex>([cLane]);
-    for (const lane of waiting) {
-      if (lane !== cLane) reservedThisStep.add(lane);
-    }
 
     if (parents.length === 0) {
       // Root commit — C's lane terminates here.

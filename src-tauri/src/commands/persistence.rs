@@ -6,7 +6,9 @@
 //! validation rules from §6.5 live next to `save_theme`.
 
 use crate::error::AppError;
-use crate::state::{max_commits_dot_radius, max_commits_text_size, GlobalSettings, RegionPlacement, AppState};
+use crate::state::{
+    max_commits_dot_radius, min_commits_row_height, AppState, GlobalSettings, RegionPlacement,
+};
 use legit_core::SwitchDirtyBehavior;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -140,11 +142,11 @@ pub async fn save_ui_font_size(
 }
 
 /// Persist the Commits-panel graph metrics (row/line height, per-lane width,
-/// commit-dot radius, connector line width, and column text size). Clamps each
-/// value to sane px bounds before storing; the dot radius and line width are
-/// capped to half the smaller cell dimension so they can never overflow the
-/// cell or overlap a neighbouring lane, and the text size is capped relative
-/// to the row height.
+/// commit-dot radius, and connector line width). Clamps each value to sane px
+/// bounds before storing; the dot radius and line width are capped to half the
+/// smaller cell dimension so they can never overflow the cell or overlap a
+/// neighbouring lane. Text has no per-panel size — it follows the global UI
+/// font size.
 #[tauri::command]
 #[specta::specta]
 pub async fn save_commits_graph_metrics(
@@ -153,20 +155,20 @@ pub async fn save_commits_graph_metrics(
     lane_width: f64,
     dot_radius: f64,
     line_width: f64,
-    text_size: f64,
 ) -> Result<(), AppError> {
     {
         let mut s = state.global_settings.write().await;
-        let rh = row_height.clamp(16.0, 120.0);
-        let lw = lane_width.clamp(12.0, 120.0);
+        // The row must clear a ref chip, which scales with the UI font size;
+        // lane width shares the same font-derived floor.
+        let min_rh = min_commits_row_height(s.ui_font_size);
+        let rh = row_height.clamp(min_rh, 120.0);
+        let lw = lane_width.clamp(min_rh, 120.0);
         s.commits_row_height = rh;
         s.commits_lane_width = lw;
         s.commits_dot_radius = dot_radius.clamp(1.0, max_commits_dot_radius(rh, lw));
         // Line width can't exceed half the smaller cell dimension or the stroke
         // would overflow the cell / neighbouring lane — same bound as the dot.
         s.commits_line_width = line_width.clamp(1.0, max_commits_dot_radius(rh, lw));
-        // Text size scales with the row height so it stays within the line.
-        s.commits_text_size = text_size.clamp(8.0, max_commits_text_size(rh));
     }
     state.persist_global_settings().await
 }
@@ -347,10 +349,30 @@ fn validate_theme(value: &serde_json::Value) -> Result<(), AppError> {
         .get("tokens")
         .and_then(|v| v.as_object())
         .ok_or_else(|| AppError::InvalidTheme("missing `tokens` object".into()))?;
+    // Filter ids for derived-colour bindings — mirror `TOKEN_FILTERS` in
+    // `src/theme/filters.ts`.
+    const KNOWN_FILTERS: [&str; 4] = ["lighter", "darker", "faded", "subtle"];
     for (k, v) in tokens {
-        let reference = v
-            .as_str()
-            .ok_or_else(|| AppError::InvalidTheme(format!("tokens.{k} must be a string")))?;
+        // A binding is a bare palette name, or { ref, filter } for derived colours.
+        let reference = if let Some(s) = v.as_str() {
+            s
+        } else if let Some(obj) = v.as_object() {
+            let filter = obj.get("filter").and_then(|f| f.as_str()).ok_or_else(|| {
+                AppError::InvalidTheme(format!("tokens.{k}: missing `filter` string"))
+            })?;
+            if !KNOWN_FILTERS.contains(&filter) {
+                return Err(AppError::InvalidTheme(format!(
+                    "tokens.{k}: unknown filter '{filter}'"
+                )));
+            }
+            obj.get("ref").and_then(|r| r.as_str()).ok_or_else(|| {
+                AppError::InvalidTheme(format!("tokens.{k}: missing `ref` string"))
+            })?
+        } else {
+            return Err(AppError::InvalidTheme(format!(
+                "tokens.{k} must be a palette name or {{ ref, filter }}"
+            )));
+        };
         if !palette.contains_key(reference) {
             return Err(AppError::InvalidTheme(format!(
                 "tokens.{k} references undefined palette name '{reference}'"
@@ -401,17 +423,34 @@ pub fn resolve_dirs(app: &tauri::AppHandle) -> (PathBuf, PathBuf, PathBuf, PathB
     let global_settings_path = data.join("global-settings.json");
     let repos_data_dir = data.join("repos");
     let user_themes_dir = data.join("themes");
-    let builtin_themes_dir = app
-        .path()
-        .resource_dir()
-        .ok()
-        .map(|p| p.join("themes"))
-        .or_else(|| {
-            std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|d| d.join("themes")))
-        })
-        .unwrap_or_else(|| PathBuf::from("themes"));
+    // Bundled themes: the resources map in tauri.conf.json places them at
+    // `<resource_dir>/themes`. Older builds (array-form resources) put
+    // `../`-relative files under a literal `_up_/` — check that too, plus the
+    // exe dir as a last resort, and take the first candidate that exists.
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(res) = app.path().resource_dir() {
+        candidates.push(res.join("themes"));
+        candidates.push(res.join("_up_").join("themes"));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("themes"));
+        }
+    }
+    let builtin_themes_dir = candidates
+        .iter()
+        .find(|p| p.is_dir())
+        .cloned()
+        .unwrap_or_else(|| {
+            tracing::warn!(
+                ?candidates,
+                "no builtin themes directory found — the theme list will only show user themes"
+            );
+            candidates
+                .first()
+                .cloned()
+                .unwrap_or_else(|| PathBuf::from("themes"))
+        });
     (global_settings_path, repos_data_dir, user_themes_dir, builtin_themes_dir)
 }
 

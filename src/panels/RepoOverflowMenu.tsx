@@ -49,7 +49,7 @@ export function RepoOverflowMenu() {
             color: "var(--panel-fg)",
             border: "1px solid var(--panel-border)",
             borderRadius: 4,
-            boxShadow: "0 4px 10px rgba(0,0,0,0.25)",
+            boxShadow: "0 4px 10px var(--shadow-color)",
             zIndex: 1000,
             padding: 4,
           }}

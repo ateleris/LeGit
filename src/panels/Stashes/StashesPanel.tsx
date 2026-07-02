@@ -39,7 +39,12 @@ export function openStashDiff(stashSha: string) {
   summon.swapSummon("changed-files", "working-changes", stashSha);
 }
 
-export function StashesPanel() {
+/**
+ * Stashes section — stash list with apply / pop / rename / drop and a
+ * create-stash form. Rendered as a pane inside the combined Refs panel
+ * (see `Refs/RefsPanel`), which supplies the header — body-only.
+ */
+export function StashesSection() {
   const repo = useActiveRepo();
   const queryClient = useQueryClient();
 
@@ -163,7 +168,6 @@ export function StashesPanel() {
   if (!repo) {
     return (
       <div className="legit-panel">
-        <div className="legit-panel__toolbar"><strong>Stashes</strong></div>
         <div className="legit-panel__body">
           <span className="legit-subtle">No repository open.</span>
         </div>
@@ -174,9 +178,6 @@ export function StashesPanel() {
   return (
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
       <PanelLoadingBar active={isFetching} />
-      <div className="legit-panel__toolbar">
-        <strong>Stashes — {repo.name}</strong>
-      </div>
       <div
         className="legit-panel__body"
         style={{ display: "flex", flexDirection: "column", gap: 10 }}

@@ -8,7 +8,8 @@ import {
   COMMITS_LANE_WIDTH_DEFAULT,
   COMMITS_DOT_RADIUS_DEFAULT,
   COMMITS_LINE_WIDTH_DEFAULT,
-  COMMITS_TEXT_SIZE_DEFAULT,
+  UI_FONT_SIZE_DEFAULT,
+  minCommitsRowHeight,
 } from "../../store/settings";
 import { useLaneLocks, useLaneLocksStore } from "../../store/laneLocks";
 import { usePanelFocusEffect } from "../PanelApiContext";
@@ -43,7 +44,7 @@ import type { Branch, Commit, CommitId, FileStatus, PushOptions, Remote, Signatu
 import { formatAppError, gitErrorKind } from "../../lib/types";
 import { notify } from "../../store/notifications";
 import { FetchIcon, PullIcon, PushIcon, ChevronDownIcon } from "../../icons";
-import { formatRelative } from "../../lib/time";
+import { formatFull, formatRelative } from "../../lib/time";
 import { RefsCell } from "./cells/RefsCell";
 import { InlineRenameInput } from "./cells/InlineRenameInput";
 import { SignatureBadge } from "./cells/SignatureBadge";
@@ -110,10 +111,10 @@ export function CommitsPanel() {
 
   // User-configurable graph metrics (Global Settings). Fall back to defaults
   // until the settings store has loaded.
-  const ROW_HEIGHT = useSettingsStore(
+  const storedRowHeight = useSettingsStore(
     (s) => s.settings?.commits_row_height ?? COMMITS_ROW_HEIGHT_DEFAULT,
   );
-  const LANE_SPACING = useSettingsStore(
+  const storedLaneWidth = useSettingsStore(
     (s) => s.settings?.commits_lane_width ?? COMMITS_LANE_WIDTH_DEFAULT,
   );
   const DOT_RADIUS = useSettingsStore(
@@ -122,9 +123,22 @@ export function CommitsPanel() {
   const LINE_WIDTH = useSettingsStore(
     (s) => s.settings?.commits_line_width ?? COMMITS_LINE_WIDTH_DEFAULT,
   );
+  // Column/chip text follows the global UI font size — the panel has no text
+  // size of its own (CLAUDE.md: everything scales with `--ui-font-size`). It
+  // stays a px *number* (not a CSS var) because the chip-overflow measurement
+  // and the inline editors need the concrete value.
   const TEXT_SIZE = useSettingsStore(
-    (s) => s.settings?.commits_text_size ?? COMMITS_TEXT_SIZE_DEFAULT,
+    (s) => s.settings?.ui_font_size ?? UI_FONT_SIZE_DEFAULT,
   );
+
+  // Render-time floors (the settings clamps only run on save): rows must
+  // always clear a ref chip by 2px so chips on adjacent rows never touch —
+  // even when the font size was raised *after* the values were saved. Lane
+  // width shares the same font-derived floor (but not the row height itself;
+  // the two are independent above it).
+  const metricsFloor = minCommitsRowHeight(TEXT_SIZE);
+  const ROW_HEIGHT = Math.max(storedRowHeight, metricsFloor);
+  const LANE_SPACING = Math.max(storedLaneWidth, metricsFloor);
 
   const [selectedId, setSelectedId] = useState<CommitId | null>(null);
   const [extraPages, setExtraPages] = useState(0);
@@ -840,6 +854,9 @@ export function CommitsPanel() {
                 key={vItem.key}
                 data-index={vItem.index}
                 ref={rowVirtualizer.measureElement}
+                // Hover + selection backgrounds live in global.css (classes,
+                // because :hover can't be expressed in inline styles).
+                className={`legit-commit-row${isSelected ? " legit-commit-row--selected" : ""}`}
                 onClick={() => handleRowClick(commit)}
                 onContextMenu={(e) => {
                   if (commit.id === WORKING_DIR_ID) {
@@ -920,9 +937,6 @@ export function CommitsPanel() {
                   paddingLeft: 12,
                   paddingRight: 12,
                   cursor: "pointer",
-                  background: isSelected
-                    ? "var(--graph-row-selected-bg, rgba(255,255,255,0.08))"
-                    : "transparent",
                   display: "grid",
                   gridTemplateColumns: GRID_COLUMNS,
                   gap: `0 ${COLUMN_GAP}px`,
@@ -936,7 +950,6 @@ export function CommitsPanel() {
                       return (
                         <div key="refs" style={{ overflow: "hidden" }}>
                           <RefsCell
-                            commitId={commit.id}
                             decorations={commit.decorations ?? []}
                             locks={rawLocks}
                             repoId={repo.id}
@@ -949,11 +962,6 @@ export function CommitsPanel() {
                             onBranchRename={handleBranchRename}
                             onBranchDelete={handleBranchDelete}
                             onRemoteCheckout={handleRemoteCheckout}
-                            onStashApply={handleStashApply}
-                            onStashPop={handleStashPop}
-                            onStashDrop={handleStashDrop}
-                            onStashRename={handleStashRename}
-                            onStashViewDiff={openStashDiff}
                           />
                         </div>
                       );
@@ -1047,6 +1055,13 @@ export function CommitsPanel() {
                       return (
                         <span
                           key="date"
+                          // Exact author datetime (author's timezone) on hover;
+                          // the cell itself keeps the compact relative form.
+                          title={
+                            isWorkingDir
+                              ? undefined
+                              : formatFull(commit.timestamp, commit.author.tz_offset_minutes)
+                          }
                           style={{
                             fontSize: TEXT_SIZE,
                             color: "var(--subtle-fg)",
@@ -1329,7 +1344,7 @@ function RemoteSyncToolbar({ repoId, branches }: { repoId: string; branches: Bra
                 background: "var(--panel-bg, #222)",
                 border: "1px solid var(--panel-border)",
                 borderRadius: 4,
-                boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
+                boxShadow: "0 2px 8px var(--shadow-color)",
                 whiteSpace: "nowrap",
               }}
             >

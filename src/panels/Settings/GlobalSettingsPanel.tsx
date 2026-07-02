@@ -1,7 +1,10 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
-import { WarningIcon } from "../../icons";
+import { LinkIcon, UnlinkIcon, WarningIcon } from "../../icons";
+
+/** localStorage key for the line-height ↔ lane-width link toggle (default on). */
+const LANE_LINK_KEY = "legit.commits-lane-link";
 import { formatAppError } from "../../lib/types";
 import type { ConfigScope, LineEndingsView, RegionPlacement, SwitchDirtyBehavior } from "../../lib/types";
 import { globalLineEndingsView, globalWriteLineEndings, setWarnOnMixedEndings } from "../../lib/commands";
@@ -14,20 +17,16 @@ import {
   COMMITS_LANE_WIDTH_DEFAULT,
   COMMITS_DOT_RADIUS_DEFAULT,
   COMMITS_LINE_WIDTH_DEFAULT,
-  COMMITS_ROW_HEIGHT_MIN,
   COMMITS_ROW_HEIGHT_MAX,
-  COMMITS_LANE_WIDTH_MIN,
   COMMITS_LANE_WIDTH_MAX,
   COMMITS_DOT_RADIUS_MIN,
   COMMITS_LINE_WIDTH_MIN,
-  COMMITS_TEXT_SIZE_DEFAULT,
-  COMMITS_TEXT_SIZE_MIN,
   UI_FONT_SIZE_DEFAULT,
   UI_FONT_SIZE_MIN,
   UI_FONT_SIZE_MAX,
   maxCommitsDotRadius,
   maxCommitsLineWidth,
-  maxCommitsTextSize,
+  minCommitsRowHeight,
 } from "../../store/settings";
 
 /** Global Settings panel — edits global-scope settings (DESIGN-v0.2.md §F.6). */
@@ -217,6 +216,16 @@ function CommitsGraphSection() {
   const rowHeight = useSettingsStore(
     (s) => s.settings?.commits_row_height ?? COMMITS_ROW_HEIGHT_DEFAULT,
   );
+  // The minimum row height clears a ref chip (chips scale with the UI font).
+  const uiFontSize = useSettingsStore(
+    (s) => s.settings?.ui_font_size ?? UI_FONT_SIZE_DEFAULT,
+  );
+  const rowHeightMin = minCommitsRowHeight(uiFontSize);
+  // The stored value can sit below the font-derived floor (the font size may
+  // have been raised after it was saved); the panel — like the Commits panel
+  // itself — works with the effective (floored) value, so the lane-width
+  // minimum tracks font-size changes too.
+  const effectiveRowHeight = Math.max(rowHeight, rowHeightMin);
   const laneWidth = useSettingsStore(
     (s) => s.settings?.commits_lane_width ?? COMMITS_LANE_WIDTH_DEFAULT,
   );
@@ -226,9 +235,6 @@ function CommitsGraphSection() {
   const lineWidth = useSettingsStore(
     (s) => s.settings?.commits_line_width ?? COMMITS_LINE_WIDTH_DEFAULT,
   );
-  const textSize = useSettingsStore(
-    (s) => s.settings?.commits_text_size ?? COMMITS_TEXT_SIZE_DEFAULT,
-  );
   const setMetrics = useSettingsStore((s) => s.setCommitsGraphMetrics);
   const [saving, setSaving] = useState(false);
 
@@ -237,49 +243,95 @@ function CommitsGraphSection() {
     nextLane: number,
     nextDot: number,
     nextLine: number,
-    nextText: number,
   ) => {
     setSaving(true);
     try {
-      await setMetrics(nextRow, nextLane, nextDot, nextLine, nextText);
+      await setMetrics(nextRow, nextLane, nextDot, nextLine);
     } finally {
       setSaving(false);
     }
   };
 
-  // The dot and the line width can't exceed half the smaller cell dimension,
-  // and the text size scales with the row height; bound the fields accordingly
-  // so they reflect the current height/width.
-  const dotMax = maxCommitsDotRadius(rowHeight, laneWidth);
-  const lineMax = maxCommitsLineWidth(rowHeight, laneWidth);
-  const textMax = maxCommitsTextSize(rowHeight);
+  // Lane width shares the row height's font-derived floor.
+  const effectiveLaneWidth = Math.max(laneWidth, rowHeightMin);
+
+  // Photoshop-style link between line height and lane width: while linked
+  // (the default) the lane width mirrors the line height and can't be edited;
+  // unlink to set it separately. Frontend-only preference, like the layouts.
+  const [linked, setLinked] = useState(
+    () => localStorage.getItem(LANE_LINK_KEY) !== "0",
+  );
+  const toggleLink = () => {
+    const next = !linked;
+    setLinked(next);
+    try { localStorage.setItem(LANE_LINK_KEY, next ? "1" : "0"); } catch { /* quota */ }
+    // Re-linking applies the constraint immediately (like Photoshop).
+    if (next && effectiveLaneWidth !== effectiveRowHeight) {
+      void save(effectiveRowHeight, effectiveRowHeight, dotRadius, lineWidth);
+    }
+  };
+  const shownLaneWidth = linked ? effectiveRowHeight : effectiveLaneWidth;
+
+  // The dot and the line width can't exceed half the smaller cell dimension;
+  // bound the fields accordingly so they reflect the current height/width.
+  const dotMax = maxCommitsDotRadius(effectiveRowHeight, effectiveLaneWidth);
+  const lineMax = maxCommitsLineWidth(effectiveRowHeight, effectiveLaneWidth);
 
   const isDefault =
     rowHeight === COMMITS_ROW_HEIGHT_DEFAULT &&
     laneWidth === COMMITS_LANE_WIDTH_DEFAULT &&
     dotRadius === COMMITS_DOT_RADIUS_DEFAULT &&
-    lineWidth === COMMITS_LINE_WIDTH_DEFAULT &&
-    textSize === COMMITS_TEXT_SIZE_DEFAULT;
+    lineWidth === COMMITS_LINE_WIDTH_DEFAULT;
 
   return (
     <Section title="Commits graph">
       <FieldNote>writes to: global settings — affects the Commits panel for all repos</FieldNote>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginTop: 8 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 16, marginTop: 8 }}>
         <NumberField
           label="Line height"
-          value={rowHeight}
-          min={COMMITS_ROW_HEIGHT_MIN}
+          value={effectiveRowHeight}
+          min={rowHeightMin}
           max={COMMITS_ROW_HEIGHT_MAX}
           disabled={saving}
-          onCommit={(v) => save(v, laneWidth, dotRadius, lineWidth, textSize)}
+          onCommit={(v) => save(v, linked ? v : effectiveLaneWidth, dotRadius, lineWidth)}
         />
+        <button
+          type="button"
+          aria-pressed={linked}
+          title={
+            linked
+              ? "Linked: lane width follows line height — click to set it separately"
+              : "Unlinked: lane width is set separately — click to link it to line height"
+          }
+          onClick={toggleLink}
+          disabled={saving}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            // Fixed box (scales with the font) so the two states can never
+            // differ in size — only the fill/colour changes.
+            width: "1.9em",
+            height: "1.7em",
+            padding: 0,
+            marginLeft: -8,
+            marginRight: -8,
+            background: linked ? "var(--accent)" : "transparent",
+            color: linked ? "var(--accent-fg)" : "var(--subtle-fg)",
+            // Transparent (not none) when unlinked so toggling doesn't shift layout.
+            border: `1px solid ${linked ? "var(--accent)" : "transparent"}`,
+          }}
+        >
+          {linked ? <LinkIcon /> : <UnlinkIcon />}
+        </button>
         <NumberField
           label="Graph lane width"
-          value={laneWidth}
-          min={COMMITS_LANE_WIDTH_MIN}
+          value={shownLaneWidth}
+          // Same font-derived floor as the line height.
+          min={rowHeightMin}
           max={COMMITS_LANE_WIDTH_MAX}
-          disabled={saving}
-          onCommit={(v) => save(rowHeight, v, dotRadius, lineWidth, textSize)}
+          disabled={saving || linked}
+          onCommit={(v) => save(effectiveRowHeight, v, dotRadius, lineWidth)}
         />
         <NumberField
           label="Commit dot radius"
@@ -287,7 +339,7 @@ function CommitsGraphSection() {
           min={COMMITS_DOT_RADIUS_MIN}
           max={dotMax}
           disabled={saving}
-          onCommit={(v) => save(rowHeight, laneWidth, v, lineWidth, textSize)}
+          onCommit={(v) => save(effectiveRowHeight, effectiveLaneWidth, v, lineWidth)}
         />
         <NumberField
           label="Line width"
@@ -296,17 +348,12 @@ function CommitsGraphSection() {
           max={lineMax}
           step={0.5}
           disabled={saving}
-          onCommit={(v) => save(rowHeight, laneWidth, dotRadius, v, textSize)}
-        />
-        <NumberField
-          label="Text size"
-          value={textSize}
-          min={COMMITS_TEXT_SIZE_MIN}
-          max={textMax}
-          disabled={saving}
-          onCommit={(v) => save(rowHeight, laneWidth, dotRadius, lineWidth, v)}
+          onCommit={(v) => save(effectiveRowHeight, effectiveLaneWidth, dotRadius, v)}
         />
       </div>
+      <FieldNote>
+        Text size follows the global UI font size (see "UI font size" above).
+      </FieldNote>
       <div style={{ marginTop: 10 }}>
         <button
           disabled={saving || isDefault}
@@ -316,7 +363,6 @@ function CommitsGraphSection() {
               COMMITS_LANE_WIDTH_DEFAULT,
               COMMITS_DOT_RADIUS_DEFAULT,
               COMMITS_LINE_WIDTH_DEFAULT,
-              COMMITS_TEXT_SIZE_DEFAULT,
             )
           }
         >

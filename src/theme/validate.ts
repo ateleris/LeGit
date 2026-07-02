@@ -4,6 +4,7 @@
 // backend (DESIGN.md §6.5).
 
 import type { ThemeDocument } from "../lib/types";
+import { isTokenFilterId, TOKEN_FILTER_IDS } from "./filters";
 
 export interface ValidationError {
   field: string;
@@ -72,13 +73,31 @@ export function validateTheme(value: unknown, knownFormatVersion = 1): Validatio
     return { ok: errors.length === 0, errors, warnings };
   }
   const paletteKeys = new Set(Object.keys(palette as Record<string, unknown>));
-  for (const [token, paletteRef] of Object.entries(tokens as Record<string, unknown>)) {
-    if (typeof paletteRef !== "string") {
-      push(`tokens.${token}`, `Token must reference a palette name (string)`);
+  for (const [token, binding] of Object.entries(tokens as Record<string, unknown>)) {
+    // A binding is a bare palette name, or { ref, filter } for derived colours.
+    let ref: unknown;
+    if (typeof binding === "string") {
+      ref = binding;
+    } else if (binding !== null && typeof binding === "object" && !Array.isArray(binding)) {
+      const b = binding as Record<string, unknown>;
+      ref = b.ref;
+      if (typeof b.ref !== "string") {
+        push(`tokens.${token}`, "`ref` must be a palette name (string)");
+        continue;
+      }
+      if (!isTokenFilterId(b.filter)) {
+        push(
+          `tokens.${token}`,
+          `Unknown filter ${JSON.stringify(b.filter)} (expected one of: ${TOKEN_FILTER_IDS.join(", ")})`,
+        );
+        continue;
+      }
+    } else {
+      push(`tokens.${token}`, "Token must be a palette name or { ref, filter }");
       continue;
     }
-    if (!paletteKeys.has(paletteRef)) {
-      push(`tokens.${token}`, `References undefined palette name '${paletteRef}'`);
+    if (!paletteKeys.has(ref as string)) {
+      push(`tokens.${token}`, `References undefined palette name '${ref}'`);
     }
   }
 

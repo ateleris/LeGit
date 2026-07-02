@@ -15,7 +15,6 @@ export type ChipDescriptor =
   | { kind: "branch"; value: string }
   | { kind: "remote"; value: string }
   | { kind: "tag"; value: string }
-  | { kind: "stash"; value: string }
   | { kind: "other"; value: string };
 
 /**
@@ -35,6 +34,8 @@ export type ChipDescriptor =
  *   2. remote branches
  *   3. tags
  *   4. everything else
+ * Stash decorations emit no chip — the graph node marks a stash, and the
+ * stash actions live in the row's context menu.
  *
  * When HEAD points at a branch, git folds the branch into `HEAD ->
  * refs/heads/x` and does not list it separately — we synthesize the branch so
@@ -108,7 +109,9 @@ export function buildChips(
         descriptors.push({ kind: "tag", value: dec.value });
         break;
       case "stash":
-        descriptors.push({ kind: "stash", value: dec.value });
+        // No chip: the graph node (lane-coloured square with the Archive
+        // icon) already marks the row as a stash, and the stash actions live
+        // in the row's context menu.
         break;
       case "other":
         descriptors.push({ kind: "other", value: dec.value });
@@ -128,10 +131,8 @@ export function buildChips(
         return 2;
       case "tag":
         return 3;
-      case "stash":
-        return 4;
       case "other":
-        return 5;
+        return 4;
     }
   };
 

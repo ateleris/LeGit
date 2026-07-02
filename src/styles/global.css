@@ -105,6 +105,25 @@ select:focus {
   border-color: var(--input-focus-border);
 }
 
+/* Native toggles (checkboxes + radios — Settings, Working Changes, Stashes)
+ * scale with the global UI font size and take the theme accent instead of the
+ * browser default. The generic input chrome above (padding) is reset — it
+ * would inflate the native control's box. */
+input[type="checkbox"],
+input[type="radio"] {
+  width: calc(var(--ui-font-size) + 2px);
+  height: calc(var(--ui-font-size) + 2px);
+  padding: 0;
+  margin: 0;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+input[type="checkbox"]:disabled,
+input[type="radio"]:disabled {
+  cursor: default;
+}
+
 .legit-app-root {
   display: flex;
   flex-direction: column;
@@ -331,10 +350,14 @@ button.legit-tab__close:hover {
   background: transparent;
 }
 
-/* Dockview customization. Drive dockview's own CSS variables so the
- * tabs-and-actions container provides the *only* tab-row background;
- * individual tabs are transparent unless they're the active one. */
-.dv-dockview {
+/* Dockview customization. Drive dockview's own CSS variables so every visible
+ * dockview colour resolves from a LeGit theme token (CLAUDE.md: a user theme
+ * must be able to render the app fully white or fully black). The
+ * `dockview-theme-abyss` class on the components remains only as a structural
+ * fallback — every colour it would contribute is overridden here. The second
+ * selector covers the Refs paneview, whose wrapper carries the theme class. */
+.dv-dockview,
+.dockview-theme-abyss {
   --dv-tabs-and-actions-container-background-color: var(--panel-tab-bg);
   /* Panel tab (header) text + row height scale with the global UI font size
      (13px / 26px at the default 12px base). */
@@ -356,9 +379,14 @@ button.legit-tab__close:hover {
   --dv-separator-border: var(--panel-border);
   --dv-group-view-background-color: var(--panel-bg);
   --dv-paneview-active-outline-color: var(--accent);
-  --dv-drag-over-background-color: rgba(74, 158, 255, 0.22);
+  --dv-paneview-header-border-color: var(--pane-header-border);
+  --dv-drag-over-background-color: var(--dnd-overlay-bg);
   --dv-drag-over-border-color: var(--accent);
   --dv-icon-hover-background-color: var(--button-hover-bg);
+  --dv-scrollbar-background-color: var(--scrollbar-thumb);
+  --dv-sash-color: transparent;
+  --dv-active-sash-color: var(--accent);
+  --dv-floating-box-shadow: 0 4px 12px var(--shadow-color);
 }
 
 /* Centre tab content (title + close action stay together, centred as a pair). */
@@ -376,6 +404,16 @@ button.legit-tab__close:hover {
 .dv-dockview .dv-default-tab-action .dv-svg {
   width: calc(var(--ui-font-size) - 1px);
   height: calc(var(--ui-font-size) - 1px);
+}
+
+/* Commit-panel rows: hover wash + selection highlight (classes rather than
+ * inline styles because :hover can't be expressed inline). The :not() guard
+ * keeps the selected background stable while hovered. */
+.legit-commit-row:not(.legit-commit-row--selected):hover {
+  background: var(--graph-row-hover-bg);
+}
+.legit-commit-row--selected {
+  background: var(--graph-row-selected-bg);
 }
 
 .legit-error {
@@ -513,7 +551,7 @@ button.legit-tab__close:hover {
   border: 1px solid var(--panel-border);
   border-left: 3px solid var(--panel-border);
   border-radius: 4px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 12px var(--shadow-color);
   color: var(--panel-fg);
   font-size: var(--fz-md);
   overflow: hidden;

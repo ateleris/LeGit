@@ -7,9 +7,7 @@ import { ChangedFilesPanel } from "./ChangedFiles/ChangedFilesPanel";
 import { WorkingChangesPanel } from "./WorkingChanges/WorkingChangesPanel";
 import { DiffPanel } from "./Diff/DiffPanel";
 import { GitLogPanel } from "./GitLog/GitLogPanel";
-import { RemotesPanel } from "./Remotes/RemotesPanel";
-import { BranchesPanel } from "./Branches/BranchesPanel";
-import { StashesPanel } from "./Stashes/StashesPanel";
+import { RefsPanel } from "./Refs/RefsPanel";
 import { RepositoriesPanel } from "./Repositories/RepositoriesPanel";
 import { ThemeEditorPanel } from "./ThemeEditor/ThemeEditorPanel";
 import { GlobalSettingsPanel } from "./Settings/GlobalSettingsPanel";
@@ -50,13 +48,15 @@ export const REPO_PANELS: PanelDescriptor[] = [
     defaultPlacement: { direction: "below", referencePanel: "log" },
   },
   { id: "repo-settings", title: "Repo Settings", scope: "repo" },
-  { id: "remotes", title: "Remotes", scope: "repo" },
-  { id: "branches", title: "Branches", scope: "repo" },
   {
-    id: "stashes",
-    title: "Stashes",
+    // Branches + Remotes + Stashes combined as a vertical accordion
+    // (Paneview) — see Refs/RefsPanel. The Stashes pane's "View diff"
+    // summons the commit-details/changed-files slot.
+    id: "refs",
+    title: "Refs",
     scope: "repo",
     summons: ["commit-details", "changed-files", "working-changes"],
+    defaultPlacement: { direction: "left", referencePanel: "log" },
   },
   {
     id: "log",
@@ -131,9 +131,7 @@ export const REPO_DOCKVIEW_COMPONENTS: Record<
   console: wrap(ConsolePanel),
   "git-log": wrap(GitLogPanel),
   "repo-settings": wrap(RepoSettingsPanel),
-  remotes: wrap(RemotesPanel),
-  branches: wrap(BranchesPanel),
-  stashes: wrap(StashesPanel),
+  refs: wrap(RefsPanel),
   log: wrap(CommitsPanel),
   "commit-details": wrap(CommitDetailsPanel),
   "changed-files": wrap(ChangedFilesPanel),

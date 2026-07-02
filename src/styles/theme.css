@@ -21,6 +21,7 @@
   --palette-success: #3498db;
   --palette-warning: #f1fa8c;
   --palette-subtle-fg: #888888;
+  --palette-shadow: #00000066;
   --palette-input-bg: #2d2d30;
   --palette-console-bg: #1a1a1a;
   --palette-stderr-fg: #e58e26;
@@ -35,7 +36,6 @@
   --palette-graph-lane-4: #9B4CE8;
   --palette-graph-lane-5: #4CE8E0;
   --palette-graph-lane-fallback: #888888;
-  --palette-graph-stash-dot: #2bb7a6;
   --palette-status-added: #3FB950;
   --palette-status-modified: #D29922;
   --palette-status-deleted: #F85149;
@@ -55,8 +55,6 @@
   --palette-ref-head-bg: #f064642e;
   --palette-ref-head-border: #f064648c;
   --palette-ref-head-fg: #f08282;
-  --palette-ref-stash-bg: #2bb7a626;
-  --palette-ref-stash-border: #2bb7a673;
   --palette-ref-stash-fg: #5fd3c4;
   --palette-ref-overflow-bg: #ffffff14;
   --palette-ref-overflow-border: #ffffff40;
@@ -66,11 +64,18 @@
   /* Tokens */
   --app-bg: var(--palette-main-bg);
   --app-fg: var(--palette-main-fg);
+  --accent: var(--palette-accent);
+  --accent-fg: var(--palette-accent-fg);
   --panel-bg: var(--palette-panel-bg);
   --panel-fg: var(--palette-main-fg);
   --panel-border: var(--palette-panel-border);
   --panel-header-bg: var(--palette-panel-bg);
   --panel-header-fg: var(--palette-main-fg);
+  --pane-header-bg: var(--palette-panel-bg);
+  --pane-header-fg: var(--palette-subtle-fg);
+  --pane-header-border: var(--palette-panel-border);
+  --shadow-color: var(--palette-shadow);
+  --dnd-overlay-bg: var(--palette-row-selected-bg);
   --progress-bar-bg: var(--palette-accent);
   --tab-strip-bg: var(--palette-panel-bg);
   --tab-bg: var(--palette-panel-bg);
@@ -92,6 +97,8 @@
   --button-danger-bg: var(--palette-danger);
   --button-danger-hover-bg: var(--palette-danger-hover);
   --button-danger-fg: var(--palette-main-bg);
+  /* Mirrors the "subtle" token filter over the accent. */
+  --button-active-bg: color-mix(in srgb, var(--palette-accent), transparent 85%);
   --input-bg: var(--palette-input-bg);
   --input-fg: var(--palette-main-fg);
   --input-border: var(--palette-panel-border);
@@ -146,8 +153,6 @@
   --ref-head-bg: var(--palette-ref-head-bg);
   --ref-head-border: var(--palette-ref-head-border);
   --ref-head-fg: var(--palette-ref-head-fg);
-  --ref-stash-bg: var(--palette-ref-stash-bg);
-  --ref-stash-border: var(--palette-ref-stash-border);
   --ref-stash-fg: var(--palette-ref-stash-fg);
   --ref-overflow-bg: var(--palette-ref-overflow-bg);
   --ref-overflow-border: var(--palette-ref-overflow-border);
@@ -162,8 +167,11 @@
   --graph-lane-4: var(--palette-graph-lane-4);
   --graph-lane-5: var(--palette-graph-lane-5);
   --graph-lane-fallback: var(--palette-graph-lane-fallback);
-  --graph-stash-dot: var(--palette-graph-stash-dot);
   --graph-row-selected-bg: var(--palette-row-selected-bg);
+  /* Mirrors the "faded" token filter over the selection colour. */
+  --graph-row-hover-bg: color-mix(in srgb, var(--palette-row-selected-bg), transparent 55%);
+  /* Mirrors the "subtle" token filter over the accent. */
+  --menu-hover-bg: color-mix(in srgb, var(--palette-accent), transparent 85%);
   --status-added: var(--palette-status-added);
   --status-modified: var(--palette-status-modified);
   --status-deleted: var(--palette-status-deleted);

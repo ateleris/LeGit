@@ -422,6 +422,5 @@ export const saveCommitsGraphMetrics = (
   rowHeight: number,
   laneWidth: number,
   dotRadius: number,
-  lineWidth: number,
-  textSize: number
-) => invoke<null>("save_commits_graph_metrics", { rowHeight, laneWidth, dotRadius, lineWidth, textSize });
+  lineWidth: number
+) => invoke<null>("save_commits_graph_metrics", { rowHeight, laneWidth, dotRadius, lineWidth });

@@ -139,9 +139,9 @@ function LockMenu({
         borderRadius: 4,
         padding: "4px 0",
         zIndex: 9999,
-        boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+        boxShadow: "0 4px 12px var(--shadow-color)",
         fontSize: "var(--fz-lg)",
-        color: "var(--fg, #ccc)",
+        color: "var(--panel-fg, #ccc)",
         userSelect: "none",
       }}
     >
@@ -164,7 +164,7 @@ function LockMenu({
           padding: "6px 14px",
           cursor: "pointer",
           whiteSpace: "nowrap",
-          color: "var(--fg, #ccc)",
+          color: "var(--panel-fg, #ccc)",
           background: hover ? "var(--tab-active-bg, rgba(255,255,255,0.08))" : "",
         }}
       >

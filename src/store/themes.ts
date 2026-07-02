@@ -20,14 +20,21 @@ interface ThemeStore {
   draft: ThemeDocument | null;
   /** `true` when `draft` has unsaved changes vs `activeDocument`. */
   draftDirty: boolean;
+  /** Name of the user theme the draft was started from (null for a new
+   *  theme). Saving under a different name renames — the origin file is
+   *  removed — rather than duplicating (duplication is `startNewTheme`). */
+  draftOrigin: string | null;
 
   init: () => Promise<void>;
   refreshList: () => Promise<void>;
   setActive: (name: string) => Promise<void>;
   startEditing: () => void;
+  /** Start a new theme: a draft copied from the active document under a fresh
+   *  name, immediately in editing mode (dirty, so Save is available). */
+  startNewTheme: () => void;
   cancelEditing: () => void;
   updateDraftPalette: (palette: Record<string, string>) => void;
-  updateDraftTokens: (tokens: Record<string, string>) => void;
+  updateDraftTokens: (tokens: ThemeDocument["tokens"]) => void;
   updateDraftMeta: (patch: Partial<Pick<ThemeDocument, "name" | "description" | "author">>) => void;
   saveDraftAs: (name: string) => Promise<void>;
   deleteUserTheme: (name: string) => Promise<void>;
@@ -40,6 +47,7 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
   activeDocument: null,
   draft: null,
   draftDirty: false,
+  draftOrigin: null,
 
   async init() {
     await get().refreshList();
@@ -74,7 +82,7 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
       doc = DEFAULT_THEME;
     }
     applyTheme(doc);
-    set({ activeThemeName: name, activeDocument: doc, draft: null, draftDirty: false });
+    set({ activeThemeName: name, activeDocument: doc, draft: null, draftDirty: false, draftOrigin: null });
     try {
       await setActiveThemeCmd(name);
     } catch (e) {
@@ -88,13 +96,27 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
     set({
       draft: { ...active, palette: { ...active.palette }, tokens: { ...active.tokens } },
       draftDirty: false,
+      draftOrigin: get().activeThemeName,
+    });
+  },
+
+  startNewTheme() {
+    const base = get().activeDocument ?? DEFAULT_THEME;
+    const taken = new Set(get().themes.map((t) => t.name));
+    let name = "New Theme";
+    let i = 1;
+    while (taken.has(name)) name = `New Theme ${++i}`;
+    set({
+      draft: { ...base, name, palette: { ...base.palette }, tokens: { ...base.tokens } },
+      draftDirty: true,
+      draftOrigin: null,
     });
   },
 
   cancelEditing() {
     const active = get().activeDocument;
     if (active) applyTheme(active);
-    set({ draft: null, draftDirty: false });
+    set({ draft: null, draftDirty: false, draftOrigin: null });
   },
 
   updateDraftPalette(palette) {
@@ -128,6 +150,17 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
       throw new Error(result.errors.map((e) => `${e.field}: ${e.message}`).join("; "));
     }
     const entry = await saveThemeCmd(name, doc);
+    // A changed name is a RENAME of the origin theme, not a copy — remove the
+    // old file (duplication is `startNewTheme`'s job). Only ever deletes user
+    // themes; built-ins aren't editable and are guarded again here.
+    const origin = get().draftOrigin;
+    if (
+      origin &&
+      origin !== entry.name &&
+      get().themes.some((t) => t.name === origin && t.source === "user")
+    ) {
+      await deleteThemeCmd(origin);
+    }
     await get().refreshList();
     await get().setActive(entry.name);
   },

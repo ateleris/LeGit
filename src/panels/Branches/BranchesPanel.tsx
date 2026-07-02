@@ -30,7 +30,12 @@ const monoInput: React.CSSProperties = {
   fontFamily: "monospace",
 };
 
-export function BranchesPanel() {
+/**
+ * Branches section — local + remote branch lists with checkout / rename /
+ * delete / create. Rendered as a pane inside the combined Refs panel
+ * (see `Refs/RefsPanel`), which supplies the header — body-only.
+ */
+export function BranchesSection() {
   const repo = useActiveRepo();
   const queryClient = useQueryClient();
 
@@ -146,7 +151,6 @@ export function BranchesPanel() {
   if (!repo) {
     return (
       <div className="legit-panel">
-        <div className="legit-panel__toolbar"><strong>Branches</strong></div>
         <div className="legit-panel__body">
           <span className="legit-subtle">No repository open.</span>
         </div>
@@ -157,9 +161,6 @@ export function BranchesPanel() {
   return (
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
       <PanelLoadingBar active={isFetching} />
-      <div className="legit-panel__toolbar">
-        <strong>Branches — {repo.name}</strong>
-      </div>
       <div
         className="legit-panel__body"
         style={{ display: "flex", flexDirection: "column", gap: 10 }}

@@ -36,6 +36,7 @@ export const PALETTE_CONTRACT: readonly PaletteDescriptor[] = [
   },
   { name: "warning", documentation: "Non-fatal warnings." },
   { name: "subtle-fg", documentation: "Muted text: timestamps, hints, inactive labels." },
+  { name: "shadow", documentation: "Drop-shadow colour for floating surfaces (menus, popovers, toasts). Usually black with alpha." },
   { name: "input-bg", documentation: "Background of text inputs." },
   {
     name: "row-selected-bg",
@@ -60,14 +61,11 @@ export const PALETTE_CONTRACT: readonly PaletteDescriptor[] = [
   { name: "ref-head-bg", documentation: "HEAD chip fill." },
   { name: "ref-head-border", documentation: "HEAD chip border." },
   { name: "ref-head-fg", documentation: "HEAD chip / HEAD→ indicator text." },
-  { name: "ref-stash-bg", documentation: "Stash chip fill." },
-  { name: "ref-stash-border", documentation: "Stash chip border." },
-  { name: "ref-stash-fg", documentation: "Stash chip text." },
+  { name: "ref-stash-fg", documentation: "Stash accent (e.g. the stash icon in the Stashes panel)." },
   { name: "ref-overflow-bg", documentation: "\"+N\" overflow chip fill (refs that don't fit on the row)." },
   { name: "ref-overflow-border", documentation: "\"+N\" overflow chip border." },
   { name: "ref-other-bg", documentation: "Chip fill for unrecognised ref types." },
   { name: "ref-other-border", documentation: "Chip border for unrecognised ref types." },
-  { name: "graph-stash-dot", documentation: "Unused since stash nodes follow their lane colour; kept for theme compatibility." },
   // File-status indicator colours (Changed Files panel icons + line counts).
   { name: "status-added", documentation: "Added-file indicator (icon and +N count)." },
   { name: "status-modified", documentation: "Modified-file indicator." },
@@ -83,13 +81,20 @@ export const PALETTE_CONTRACT: readonly PaletteDescriptor[] = [
 export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "app.bg", group: "App", documentation: "Top-level app background." },
   { name: "app.fg", group: "App", documentation: "Top-level default text." },
+  { name: "accent", group: "App", documentation: "General accent: focus rings, active markers, highlighted icons." },
+  { name: "accent.fg", group: "App", documentation: "Text/icons drawn on accent-coloured surfaces." },
 
   { name: "panel.bg", group: "Panel", documentation: "Panel body background." },
   { name: "panel.fg", group: "Panel", documentation: "Panel body text." },
   { name: "panel.border", group: "Panel", documentation: "Panel borders and dividers." },
   { name: "panel.header.bg", group: "Panel", documentation: "Panel header background." },
   { name: "panel.header.fg", group: "Panel", documentation: "Panel header text." },
+  { name: "pane.header.bg", group: "Panel", documentation: "Accordion section header background (e.g. the Refs panel's Branches/Remotes/Stashes headers)." },
+  { name: "pane.header.fg", group: "Panel", documentation: "Accordion section header text." },
+  { name: "pane.header.border", group: "Panel", documentation: "Accordion section header bottom border." },
   { name: "progress.bar.bg", group: "Panel", documentation: "Indeterminate loading bar pinned to a panel's top edge." },
+  { name: "shadow.color", group: "Panel", documentation: "Drop-shadow colour for floating surfaces (menus, popovers, toasts, floating groups)." },
+  { name: "dnd.overlay.bg", group: "Panel", documentation: "Translucent wash shown over a drop target while dragging panels/tabs." },
 
   { name: "tab.strip.bg", group: "Repo Tabs", documentation: "Background of the repository tab strip (the bar behind the tabs)." },
   { name: "tab.bg", group: "Repo Tabs", documentation: "Inactive repository tab background." },
@@ -113,6 +118,7 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "button.danger.bg", group: "Controls", documentation: "Destructive action button background." },
   { name: "button.danger.hover.bg", group: "Controls", documentation: "Destructive action button hover background." },
   { name: "button.danger.fg", group: "Controls", documentation: "Destructive action button text." },
+  { name: "button.active.bg", group: "Controls", documentation: "Background of an active/selected toggle button (e.g. view-mode switches)." },
 
   { name: "input.bg", group: "Controls", documentation: "Text input background." },
   { name: "input.fg", group: "Controls", documentation: "Text input text." },
@@ -157,6 +163,8 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "diff.discard.hover.bg", group: "Diff", documentation: "Background of the hunk discard button on hover." },
   { name: "diff.discard.hover.fg", group: "Diff", documentation: "Text of the hunk discard button on hover." },
 
+  { name: "menu.hover.bg", group: "Menus", documentation: "Background of a hovered context-menu item." },
+
   { name: "branch.current.fg", group: "Refs", documentation: "Colour of the current branch label." },
   { name: "commit.signed.indicator", group: "Refs", documentation: "Signed-commit indicator colour." },
 
@@ -175,9 +183,7 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "ref.head.bg", group: "Refs", documentation: "HEAD chip fill." },
   { name: "ref.head.border", group: "Refs", documentation: "HEAD chip border." },
   { name: "ref.head.fg", group: "Refs", documentation: "HEAD chip and HEAD→ indicator text." },
-  { name: "ref.stash.bg", group: "Refs", documentation: "Stash chip fill." },
-  { name: "ref.stash.border", group: "Refs", documentation: "Stash chip border." },
-  { name: "ref.stash.fg", group: "Refs", documentation: "Stash chip text." },
+  { name: "ref.stash.fg", group: "Refs", documentation: "Stash accent (e.g. the stash icon in the Stashes panel)." },
   { name: "ref.overflow.bg", group: "Refs", documentation: "\"+N\" overflow chip fill (refs that don't fit on the row)." },
   { name: "ref.overflow.border", group: "Refs", documentation: "\"+N\" overflow chip border." },
   { name: "ref.overflow.fg", group: "Refs", documentation: "\"+N\" overflow chip text." },
@@ -192,8 +198,8 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "graph.lane.4", group: "Graph", documentation: "Lane 4 colour." },
   { name: "graph.lane.5", group: "Graph", documentation: "Lane 5 colour." },
   { name: "graph.lane.fallback", group: "Graph", documentation: "Fallback colour for lanes beyond index 5." },
-  { name: "graph.stash.dot", group: "Graph", documentation: "Unused since stash nodes follow their lane colour (the diamond shape marks a stash); kept for theme compatibility." },
   { name: "graph.row.selected.bg", group: "Graph", documentation: "Background of the selected commit row." },
+  { name: "graph.row.hover.bg", group: "Graph", documentation: "Background of a hovered commit row." },
 
   { name: "status.added", group: "File Status", documentation: "Added-file icon and +N line count (Changed Files panel)." },
   { name: "status.modified", group: "File Status", documentation: "Modified-file icon." },

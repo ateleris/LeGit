@@ -111,9 +111,43 @@ project memory for details.
 ## Conventions
 
 - **Never commit or push without the user's explicit command.**
-- New UI colours → theme tokens (4 places), never literals. Enforced by
-  `src/theme/contract.test.ts` — a token missing from defaults, `theme.css`,
-  or either bundled theme fails the suite.
+- **Every colour anywhere in the UI must resolve from a theme token — no
+  exceptions.** The litmus test: a user theme must be able to turn the entire
+  app fully white or fully black. Concretely:
+  - No literal colours in CSS files, inline styles, SVG fills/strokes,
+    gradients, borders, or box-shadows — always `var(--token)`. This includes
+    "neutral" values like `rgba(0,0,0,0.4)` shadows and `#fff` text.
+  - Inline fallbacks (`var(--token, #123456)`) are permitted only as
+    pre-theme-load safety nets and must mirror the built-in Dark theme value —
+    they must never be the primary source of a colour.
+  - Icons inherit `currentColor` (never per-call-site colours); canvas/SVG
+    code reads tokens via CSS custom properties.
+  - Third-party chrome must be restyled through tokens too — dockview's
+    `--dv-*` variables are mapped to LeGit tokens in `global.css` (the
+    `abyss` class remains only as a structural fallback); extend that block
+    when new dockview surfaces appear.
+  - New tokens go in 4 places (`tokens.ts`, `defaults.ts`,
+    `styles/theme.css`, both bundled themes) — enforced by
+    `src/theme/contract.test.ts`; a token missing from any place fails the
+    suite. Literal colours are enforced by
+    `src/theme/noLiteralColors.test.ts`, which fails on any colour literal
+    outside the theme system or a `var()` fallback.
+- **Every UI dimension scales with the global UI font size — no fixed-px
+  chrome.** `--ui-font-size` is the single base; changing it must resize the
+  whole app coherently. Concretely:
+  - Text uses the `--fz-*` scale (or the concrete `ui_font_size` value from
+    the settings store when a px *number* is required, e.g. for measurement).
+  - Heights, paddings, and icon boxes derive from the font size: `em` units,
+    `calc(var(--ui-font-size) * X)` in CSS, or `Math.round(uiFontSize * X)`
+    in JS. Fixed px is acceptable only for hairlines (1px borders) and true
+    geometric constants.
+  - Panels must NOT grow their own text-size settings — the Commits panel's
+    was removed for exactly this reason; text follows the global size.
+  - When a third-party component takes pixel sizes as JS numbers (dockview's
+    paneview `headerSize`, tab heights), compute them from `ui_font_size`
+    and re-initialise on change — see `RefsPanel` (keyed `PaneviewReact`,
+    patches the persisted layout's `headerSize` on restore) and the
+    `--dv-tabs-and-actions-container-height` mapping in `global.css`.
 - Follow existing panel/store/parser patterns; keep files focused.
 - The diff viewer's inline and split views must keep **action parity** (wire new
   per-hunk/per-line capabilities through the shared helpers, apply to both).

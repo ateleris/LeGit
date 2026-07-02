@@ -22,8 +22,8 @@ export function MenuItem({
         padding: "6px 14px",
         cursor: disabled ? "default" : "pointer",
         whiteSpace: "nowrap",
-        color: disabled ? "var(--subtle-fg, #777)" : "var(--fg, #ccc)",
-        background: hover && !disabled ? "var(--tab-active-bg, rgba(255,255,255,0.08))" : "",
+        color: disabled ? "var(--subtle-fg, #777)" : "var(--panel-fg, #ccc)",
+        background: hover && !disabled ? "var(--menu-hover-bg, rgba(255,255,255,0.08))" : "",
         opacity: disabled ? 0.6 : 1,
       }}
     >

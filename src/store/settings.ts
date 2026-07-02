@@ -20,12 +20,11 @@ export const COMMITS_DOT_RADIUS_DEFAULT = 5;
 export const COMMITS_LINE_WIDTH_DEFAULT = 1.5;
 export const COMMITS_ROW_HEIGHT_MIN = 16;
 export const COMMITS_ROW_HEIGHT_MAX = 120;
-export const COMMITS_LANE_WIDTH_MIN = 12;
+// Lane width has no fixed minimum — it shares the row height's font-derived
+// floor (`minCommitsRowHeight`).
 export const COMMITS_LANE_WIDTH_MAX = 120;
 export const COMMITS_DOT_RADIUS_MIN = 1;
 export const COMMITS_LINE_WIDTH_MIN = 1;
-export const COMMITS_TEXT_SIZE_DEFAULT = 12;
-export const COMMITS_TEXT_SIZE_MIN = 8;
 
 /** Global UI font size (px) — base for the panel text scale and min sizes.
  * Mirror the backend clamp in `save_ui_font_size`. */
@@ -51,10 +50,12 @@ export const maxCommitsDotRadius = (rowHeight: number, laneWidth: number) =>
 export const maxCommitsLineWidth = (rowHeight: number, laneWidth: number) =>
   Math.min(rowHeight, laneWidth) / 2;
 
-/** Largest sensible text size for a given row height — text taller than this
- * wouldn't sit comfortably within the line. Mirrors the backend clamp. */
-export const maxCommitsTextSize = (rowHeight: number) =>
-  Math.round(rowHeight * 0.7);
+/** Minimum Commits-panel row height for a given UI font size. A ref chip is
+ * `fontSize * 1.3` (line-height) + 2px padding + 2px border tall (see
+ * `BASE_CHIP` in RefsCell); rows must be 2px taller so chips on adjacent rows
+ * never touch. Mirrors the backend `min_commits_row_height`. */
+export const minCommitsRowHeight = (fontSize: number) =>
+  Math.max(COMMITS_ROW_HEIGHT_MIN, Math.ceil(fontSize * 1.3) + 6);
 
 const clamp = (v: number, min: number, max: number) =>
   Math.min(max, Math.max(min, v));
@@ -67,8 +68,7 @@ interface SettingsStore {
     rowHeight: number,
     laneWidth: number,
     dotRadius: number,
-    lineWidth: number,
-    textSize: number
+    lineWidth: number
   ) => Promise<void>;
   setChangedFilesViewMode: (mode: "tree" | "flat") => Promise<void>;
   setUiFontSize: (size: number) => Promise<void>;
@@ -100,17 +100,19 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
   },
 
-  async setCommitsGraphMetrics(rowHeight, laneWidth, dotRadius, lineWidth, textSize) {
-    const rh = clamp(rowHeight, COMMITS_ROW_HEIGHT_MIN, COMMITS_ROW_HEIGHT_MAX);
-    const lw = clamp(laneWidth, COMMITS_LANE_WIDTH_MIN, COMMITS_LANE_WIDTH_MAX);
+  async setCommitsGraphMetrics(rowHeight, laneWidth, dotRadius, lineWidth) {
+    // The row must clear a ref chip (which scales with the UI font size).
+    const font = get().settings?.ui_font_size ?? UI_FONT_SIZE_DEFAULT;
+    const rh = clamp(rowHeight, minCommitsRowHeight(font), COMMITS_ROW_HEIGHT_MAX);
+    // Lane width shares the row height's font-derived floor (not the current
+    // row height — the two are adjustable independently above it).
+    const lw = clamp(laneWidth, minCommitsRowHeight(font), COMMITS_LANE_WIDTH_MAX);
     // Dot radius is bounded by the (clamped) cell dimensions — keep it in range
     // even when the height/width shrink below the current radius.
     const dr = clamp(dotRadius, COMMITS_DOT_RADIUS_MIN, maxCommitsDotRadius(rh, lw));
     // Line width, like the dot, is bounded by the (clamped) cell dimensions.
     const lwd = clamp(lineWidth, COMMITS_LINE_WIDTH_MIN, maxCommitsLineWidth(rh, lw));
-    // Text size is bounded relative to the (clamped) row height.
-    const ts = clamp(textSize, COMMITS_TEXT_SIZE_MIN, maxCommitsTextSize(rh));
-    await saveCommitsGraphMetrics(rh, lw, dr, lwd, ts);
+    await saveCommitsGraphMetrics(rh, lw, dr, lwd);
     const s = get().settings;
     if (s) {
       set({
@@ -120,7 +122,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
           commits_lane_width: lw,
           commits_dot_radius: dr,
           commits_line_width: lwd,
-          commits_text_size: ts,
         },
       });
     }

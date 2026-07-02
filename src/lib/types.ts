@@ -34,7 +34,6 @@ export interface GlobalSettings {
   commits_lane_width: number;
   commits_dot_radius: number;
   commits_line_width: number;
-  commits_text_size: number;
   /** Remembered Changed Files panel view mode ("tree" | "flat"). */
   changed_files_view_mode?: string | null;
   /** Global UI font size (px) — base for the panel text scale and min sizes. */
@@ -534,6 +533,16 @@ export interface CommitDetails {
 
 // --- Theme document shape (matches DESIGN.md §6.3) ---
 
+/** Derived-colour filter applied to a token's palette reference. */
+export type TokenFilterId = "lighter" | "darker" | "faded" | "subtle";
+
+/**
+ * A token's binding: either a bare palette name (no filter — the classic
+ * form, kept for backward compatibility) or a palette reference plus a
+ * filter deriving a variant colour (e.g. the hover shade of a button).
+ */
+export type ThemeTokenBinding = string | { ref: string; filter: TokenFilterId };
+
 export interface ThemeDocument {
   $schema?: string;
   format: "legit-theme";
@@ -542,5 +551,5 @@ export interface ThemeDocument {
   author?: string;
   description?: string;
   palette: Record<string, string>;
-  tokens: Record<string, string>;
+  tokens: Record<string, ThemeTokenBinding>;
 }

@@ -4,9 +4,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { formatAppError } from "../../lib/types";
 import { useThemeStore } from "../../store/themes";
 import { contrastRatio, wcagBadge } from "../../theme/contrast";
+import { DEFAULT_THEME } from "../../theme/defaults";
 import { CONTRAST_PAIRS, TOKEN_CONTRACT } from "../../theme/tokens";
+import {
+  bindingFilter,
+  bindingRef,
+  makeBinding,
+  resolveBindingColor,
+  TOKEN_FILTERS,
+  withRef,
+} from "../../theme/filters";
 import { validateTheme } from "../../theme/validate";
-import type { ThemeDocument } from "../../lib/types";
+import type { ThemeDocument, TokenFilterId } from "../../lib/types";
 
 export function ThemeEditorPanel() {
   const themes = useThemeStore((s) => s.themes);
@@ -16,6 +25,7 @@ export function ThemeEditorPanel() {
   const draftDirty = useThemeStore((s) => s.draftDirty);
   const setActive = useThemeStore((s) => s.setActive);
   const startEditing = useThemeStore((s) => s.startEditing);
+  const startNewTheme = useThemeStore((s) => s.startNewTheme);
   const cancelEditing = useThemeStore((s) => s.cancelEditing);
   const updateDraftPalette = useThemeStore((s) => s.updateDraftPalette);
   const updateDraftTokens = useThemeStore((s) => s.updateDraftTokens);
@@ -25,7 +35,6 @@ export function ThemeEditorPanel() {
   const importThemeFromJson = useThemeStore((s) => s.importThemeFromJson);
 
   const [error, setError] = useState<string | null>(null);
-  const [saveName, setSaveName] = useState("");
 
   const editing = draft != null;
   const working = (draft ?? activeDoc) as ThemeDocument | null;
@@ -62,8 +71,8 @@ export function ThemeEditorPanel() {
     palette[newName] = palette[oldName];
     delete palette[oldName];
     const tokens = { ...current.tokens };
-    for (const [tk, ref] of Object.entries(tokens)) {
-      if (ref === oldName) tokens[tk] = newName;
+    for (const [tk, binding] of Object.entries(tokens)) {
+      if (bindingRef(binding) === oldName) tokens[tk] = withRef(binding, newName);
     }
     updateDraftPalette(palette);
     updateDraftTokens(tokens);
@@ -73,7 +82,7 @@ export function ThemeEditorPanel() {
     const current = (draft ?? activeDoc)!;
     // Guard: never remove a palette entry a token still references (it would
     // leave the binding dangling). The UI also disables the button.
-    if (Object.values(current.tokens).includes(name)) return;
+    if (Object.values(current.tokens).some((b) => bindingRef(b) === name)) return;
     if (!draft) startEditing();
     const palette = { ...(draft ?? activeDoc)!.palette };
     delete palette[name];
@@ -89,18 +98,25 @@ export function ThemeEditorPanel() {
     updateDraftPalette({ ...current.palette, [base]: "#000000" });
   };
 
-  const setTokenBinding = (token: string, paletteRef: string) => {
+  const setTokenBinding = (token: string, paletteRef: string, filter: TokenFilterId | null) => {
     if (!draft) startEditing();
     const current = (draft ?? activeDoc)!;
-    updateDraftTokens({ ...current.tokens, [token]: paletteRef });
+    updateDraftTokens({ ...current.tokens, [token]: makeBinding(paletteRef, filter) });
   };
 
+  // Saves under the draft's name — rename via the Metadata "Name" field.
   const onSave = async () => {
     setError(null);
     if (!draft) return;
-    const name = saveName.trim() || draft.name;
+    const name = draft.name.trim();
     if (!name) {
       setError("Theme name is required");
+      return;
+    }
+    // Built-ins are read-only; a user theme under the same name would shadow
+    // (or ambiguously duplicate) the shipped one.
+    if (themes.some((t) => t.name === name && t.source === "builtin")) {
+      setError(`"${name}" is a built-in theme — choose a different name.`);
       return;
     }
     const result = validateTheme({ ...draft, name });
@@ -110,7 +126,6 @@ export function ThemeEditorPanel() {
     }
     try {
       await saveDraftAs(name);
-      setSaveName("");
     } catch (e) {
       setError(formatAppError(e));
     }
@@ -171,15 +186,33 @@ export function ThemeEditorPanel() {
           <select value={activeName ?? ""} onChange={(e) => setActive(e.target.value)}>
             {themes.map((t) => (
               <option key={`${t.source}:${t.name}`} value={t.name}>
-                {t.name}
+                {t.source === "builtin" ? `${t.name} (built-in)` : t.name}
               </option>
             ))}
           </select>
         </label>
         {!editing ? (
-          <button onClick={startEditing}>Edit</button>
+          <>
+            {/* Built-in themes are read-only — duplicate via New to customise. */}
+            {activeName && isUserTheme(activeName) ? (
+              <button onClick={startEditing}>Edit</button>
+            ) : (
+              <button
+                disabled
+                title="Built-in themes can't be edited — use New to create an editable copy"
+              >
+                Edit
+              </button>
+            )}
+            <button onClick={startNewTheme}>New</button>
+          </>
         ) : (
-          <button onClick={cancelEditing}>Cancel</button>
+          <>
+            <button className="primary" onClick={onSave} disabled={!draftDirty}>
+              Save
+            </button>
+            <button onClick={cancelEditing}>Cancel</button>
+          </>
         )}
         <button onClick={onImport}>Import…</button>
         <button onClick={onExport}>Export…</button>
@@ -191,29 +224,6 @@ export function ThemeEditorPanel() {
       </div>
       <div className="legit-panel__body">
         {error && <pre className="legit-error">{error}</pre>}
-
-        {editing && (
-          <div
-            style={{
-              display: "flex",
-              gap: 6,
-              alignItems: "center",
-              padding: "6px 0",
-              marginBottom: 12,
-              borderBottom: "1px solid var(--panel-border)",
-            }}
-          >
-            <input
-              value={saveName}
-              onChange={(e) => setSaveName(e.target.value)}
-              placeholder={`Save as… (default: ${draft?.name ?? ""})`}
-              style={{ flex: 1 }}
-            />
-            <button className="primary" onClick={onSave} disabled={!draftDirty && !saveName.trim()}>
-              Save
-            </button>
-          </div>
-        )}
 
         <SectionTitle>Metadata</SectionTitle>
         <div style={{ display: "grid", gap: 6, gridTemplateColumns: "120px 1fr", marginBottom: 12 }}>
@@ -240,10 +250,19 @@ export function ThemeEditorPanel() {
         <SectionTitle>Contrast (WCAG)</SectionTitle>
         <div style={{ marginBottom: 12 }}>
           {CONTRAST_PAIRS.map((pair) => {
-            const fgPal = working.tokens[pair.fg];
-            const bgPal = working.tokens[pair.bg];
-            const fg = fgPal && working.palette[fgPal];
-            const bg = bgPal && working.palette[bgPal];
+            // Effective bindings (theme value or built-in fallback), resolved
+            // against the merged palette — mirrors what actually renders.
+            const mergedPalette = { ...DEFAULT_THEME.palette, ...working.palette };
+            const effective = (name: string) => {
+              const b = working.tokens[name];
+              return b !== undefined && working.palette[bindingRef(b)] !== undefined
+                ? b
+                : DEFAULT_THEME.tokens[name];
+            };
+            const fgBinding = effective(pair.fg);
+            const bgBinding = effective(pair.bg);
+            const fg = fgBinding && resolveBindingColor(fgBinding, mergedPalette);
+            const bg = bgBinding && resolveBindingColor(bgBinding, mergedPalette);
             const ratio = fg && bg ? contrastRatio(fg, bg) : null;
             const badge = wcagBadge(ratio);
             return (
@@ -279,7 +298,7 @@ export function ThemeEditorPanel() {
         <SectionTitle>Palette</SectionTitle>
         <PaletteEditor
           palette={working.palette}
-          usedNames={new Set(Object.values(working.tokens))}
+          usedNames={new Set(Object.values(working.tokens).map(bindingRef))}
           disabled={!editing}
           onChange={setPaletteValue}
           onRename={renamePaletteEntry}
@@ -292,31 +311,78 @@ export function ThemeEditorPanel() {
           <div key={group} style={{ marginBottom: 12 }}>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>{group}</div>
             {tokens.map((t) => {
-              const current = working.tokens[t.name];
-              const color = current ? working.palette[current] : undefined;
+              // Show the *effective* binding, mirroring resolveTheme: a token
+              // missing from this theme (or pointing at a missing palette
+              // entry) renders with the built-in default's binding — the
+              // dropdown must say so instead of defaulting to its first
+              // option, which silently misreads as an explicit choice.
+              const bound = working.tokens[t.name];
+              const boundValid =
+                bound !== undefined && working.palette[bindingRef(bound)] !== undefined;
+              const current = boundValid ? bound : DEFAULT_THEME.tokens[t.name];
+              const isFallback = !boundValid;
+              const currentRef = current ? bindingRef(current) : "";
+              const currentFilter = current ? bindingFilter(current) : null;
+              const color = current
+                ? resolveBindingColor(current, { ...DEFAULT_THEME.palette, ...working.palette })
+                : undefined;
               return (
                 <div
                   key={t.name}
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "1fr 1fr 24px",
+                    gridTemplateColumns: "1fr 1fr 0.6fr 24px",
                     alignItems: "center",
                     gap: 6,
                     padding: "2px 0",
+                    // Dimmed while the theme has no explicit binding — the
+                    // shown value is the built-in default fallback. Picking
+                    // anything makes it explicit.
+                    opacity: isFallback ? 0.65 : 1,
                   }}
-                  title={t.documentation}
+                  title={
+                    isFallback
+                      ? `${t.documentation}\n\nNot set in this theme — showing the built-in default. Selecting a value binds it explicitly.`
+                      : t.documentation
+                  }
                 >
                   <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "var(--fz-md)" }}>
                     {t.name}
                   </span>
                   <select
-                    value={current ?? ""}
-                    onChange={(e) => setTokenBinding(t.name, e.target.value)}
+                    value={currentRef}
+                    onChange={(e) => setTokenBinding(t.name, e.target.value, currentFilter)}
                     disabled={!editing}
                   >
+                    {!working.palette[currentRef] && (
+                      // The default binding references a palette entry this
+                      // theme doesn't define — representable but not pickable.
+                      <option value={currentRef} disabled>
+                        {currentRef} (built-in)
+                      </option>
+                    )}
                     {Object.keys(working.palette).map((p) => (
                       <option key={p} value={p}>
                         {p}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={currentFilter ?? ""}
+                    title="Derive a variant of the palette colour (e.g. a hover shade) instead of adding another palette entry"
+                    onChange={(e) =>
+                      setTokenBinding(
+                        t.name,
+                        currentRef,
+                        (e.target.value || null) as TokenFilterId | null,
+                      )
+                    }
+                    disabled={!editing || !currentRef}
+                  >
+                    <option value="">No filter</option>
+                    {TOKEN_FILTERS.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.label}
                       </option>
                     ))}
                   </select>
