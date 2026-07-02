@@ -117,6 +117,9 @@ export const setWarnOnMixedEndings = (warn: boolean) =>
 export const setConfirmDiscard = (confirm: boolean) =>
   invoke<null>("set_confirm_discard", { confirm });
 
+export const setCommitAvatars = (enabled: boolean) =>
+  invoke<null>("set_commit_avatars", { enabled });
+
 export const setActiveTheme = (name: string) =>
   invoke<null>("set_active_theme", { name });
 

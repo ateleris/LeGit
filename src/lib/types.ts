@@ -44,6 +44,9 @@ export interface GlobalSettings {
   confirm_discard?: boolean;
   /** How to handle uncommitted changes when switching branches (null = try_directly). */
   switch_dirty_behavior?: SwitchDirtyBehavior | null;
+  /** Show author Gravatars in the commit graph. OFF by default — enabling it
+   * sends hashed author emails to gravatar.com. */
+  commit_avatars?: boolean;
   /** User-defined git identity profiles (camelCase key — serde rename). */
   gitProfiles?: GitProfilesDoc;
 }

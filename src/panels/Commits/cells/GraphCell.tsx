@@ -23,6 +23,7 @@
 // applier (see src/theme/applier.ts — `graph.lane.N` -> `--graph-lane-N`).
 
 import { StashIcon } from "../../../icons";
+import { useAvatar } from "../../../lib/avatars";
 import type { LaneEdge, LaneIndex } from "../graph/types";
 
 interface GraphCellProps {
@@ -60,6 +61,14 @@ interface GraphCellProps {
    * entry so it reads as special at a glance. Takes precedence over `hollow`.
    */
   isStash?: boolean;
+  /**
+   * Resolved avatar image URL (opt-in `commit_avatars` setting): when set,
+   * the dot renders as the avatar clipped to a circle with a lane-coloured
+   * ring; `null` falls back to the plain dot. Resolved from the author email
+   * by `GraphCellWithAvatar` — this prop keeps GraphCell itself a pure
+   * function (the geometry tests call it directly, outside React).
+   */
+  avatarUrl?: string | null;
 }
 
 /**
@@ -155,6 +164,7 @@ export function GraphCell({
   ownLanePassThrough = false,
   hollow = false,
   isStash = false,
+  avatarUrl = null,
 }: GraphCellProps) {
   const halfRow = rowHeight / 2;
   const width = (totalLanes + 1) * laneSpacing;
@@ -307,9 +317,48 @@ export function GraphCell({
           stroke={dotColor}
           strokeWidth={lineWidth}
         />
+      ) : avatarUrl ? (
+        // Author avatar clipped to the dot circle, with a lane-coloured ring
+        // so the node keeps its lane identity. Scales with the configured dot
+        // radius — no minimum size.
+        <g>
+          <clipPath id={`av-${idPrefix}`}>
+            <circle cx={dotX} cy={halfRow} r={dotRadius} />
+          </clipPath>
+          <image
+            href={avatarUrl}
+            x={dotX - dotRadius}
+            y={halfRow - dotRadius}
+            width={dotRadius * 2}
+            height={dotRadius * 2}
+            clipPath={`url(#av-${idPrefix})`}
+            preserveAspectRatio="xMidYMid slice"
+          />
+          <circle
+            cx={dotX} cy={halfRow} r={dotRadius}
+            fill="none"
+            stroke={dotColor}
+            strokeWidth={Math.max(1.5, lineWidth)}
+          />
+        </g>
       ) : (
         <circle cx={dotX} cy={halfRow} r={dotRadius} fill={dotColor} />
       )}
     </svg>
   );
+}
+
+/**
+ * GraphCell plus Gravatar lookup: resolves `avatarEmail` to an image URL via
+ * the avatar cache and renders the plain GraphCell with it. Split out so
+ * GraphCell stays a pure hook-free function (its geometry tests call it
+ * directly). Pass `avatarEmail: null` for stash/working-dir nodes and while
+ * the `commit_avatars` setting is off — no lookup happens then.
+ */
+export function GraphCellWithAvatar({
+  avatarEmail,
+  ...props
+}: Omit<GraphCellProps, "avatarUrl"> & { avatarEmail: string | null }) {
+  const avatarUrl = useAvatar(avatarEmail, avatarEmail != null);
+  return <GraphCell {...props} avatarUrl={avatarUrl} />;
 }

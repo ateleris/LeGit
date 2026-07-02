@@ -427,6 +427,13 @@ impl GitRunner {
             cmd.env(k, v);
         }
         cmd.kill_on_drop(true);
+        // Release builds are a GUI app (`windows_subsystem = "windows"`), so the
+        // spawned git.exe has no console to inherit and Windows creates a fresh
+        // one per invocation — a visible flash on every git call. CREATE_NO_WINDOW
+        // suppresses that. Dev builds never flashed only because they run
+        // attached to the dev terminal, which children inherit.
+        #[cfg(windows)]
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         cmd
     }
 

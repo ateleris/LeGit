@@ -201,6 +201,19 @@ pub async fn set_confirm_discard(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn set_commit_avatars(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    {
+        let mut s = state.global_settings.write().await;
+        s.commit_avatars = enabled;
+    }
+    state.persist_global_settings().await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn save_switch_dirty_behavior(
     state: tauri::State<'_, AppState>,
     behavior: SwitchDirtyBehavior,

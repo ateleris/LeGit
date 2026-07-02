@@ -220,6 +220,11 @@ pub struct GlobalSettings {
     pub confirm_discard: bool,
     /// How to handle uncommitted changes when switching branches. `None` = `TryDirectly`.
     pub switch_dirty_behavior: Option<SwitchDirtyBehavior>,
+    /// Show author avatars (Gravatar) in the commit graph. OFF by default —
+    /// enabling it sends hashed author emails to gravatar.com (privacy
+    /// opt-in; see BACKLOG/settings copy).
+    #[serde(default)]
+    pub commit_avatars: bool,
     /// User-defined git identity profiles (versioned envelope).
     #[serde(default, rename = "gitProfiles")]
     pub git_profiles_doc: GitProfilesDoc,
@@ -250,6 +255,7 @@ impl Default for GlobalSettings {
             watcher_enabled: true,
             confirm_discard: true,
             switch_dirty_behavior: None,
+            commit_avatars: false,
             git_profiles_doc: GitProfilesDoc::default(),
         }
     }

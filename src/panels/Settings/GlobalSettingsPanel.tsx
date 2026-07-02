@@ -238,6 +238,20 @@ function CommitsGraphSection() {
   const setMetrics = useSettingsStore((s) => s.setCommitsGraphMetrics);
   const [saving, setSaving] = useState(false);
 
+  // Author avatars are strictly opt-in: off by default, because fetching one
+  // sends the hashed author email to gravatar.com.
+  const avatars = useSettingsStore((s) => s.settings?.commit_avatars ?? false);
+  const setCommitAvatars = useSettingsStore((s) => s.setCommitAvatars);
+  const [savingAvatars, setSavingAvatars] = useState(false);
+  const toggleAvatars = async () => {
+    setSavingAvatars(true);
+    try {
+      await setCommitAvatars(!avatars);
+    } finally {
+      setSavingAvatars(false);
+    }
+  };
+
   const save = async (
     nextRow: number,
     nextLane: number,
@@ -353,6 +367,22 @@ function CommitsGraphSection() {
       </div>
       <FieldNote>
         Text size follows the global UI font size (see "UI font size" above).
+      </FieldNote>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
+        <input
+          type="checkbox"
+          id="global-commit-avatars"
+          checked={avatars}
+          onChange={toggleAvatars}
+          disabled={savingAvatars}
+        />
+        <label htmlFor="global-commit-avatars" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
+          Show author avatars (Gravatar) in the commit dots
+        </label>
+      </div>
+      <FieldNote>
+        Privacy: when enabled, a hash of each author's email address is sent to
+        gravatar.com to look up their avatar. Nothing is sent while this is off.
       </FieldNote>
       <div style={{ marginTop: 10 }}>
         <button

@@ -68,6 +68,7 @@ pub fn run() {
         commands::set_warn_on_mixed_endings,
         commands::set_confirm_discard,
         commands::save_switch_dirty_behavior,
+        commands::set_commit_avatars,
         commands::repo_log,
         commands::repo_status,
         commands::repo_branches,

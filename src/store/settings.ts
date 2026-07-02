@@ -7,6 +7,7 @@ import {
   saveUiFontSize,
   setWatcherEnabled,
   setConfirmDiscard,
+  setCommitAvatars,
   saveSwitchDirtyBehavior,
 } from "../lib/commands";
 import { reapplyPanelConstraints } from "./dockview";
@@ -83,6 +84,7 @@ interface SettingsStore {
   setUiFontSize: (size: number) => Promise<void>;
   setWatcherEnabled: (enabled: boolean) => Promise<void>;
   setConfirmDiscard: (confirm: boolean) => Promise<void>;
+  setCommitAvatars: (enabled: boolean) => Promise<void>;
   setSwitchDirtyBehavior: (behavior: SwitchDirtyBehavior) => Promise<void>;
 }
 
@@ -158,6 +160,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     if (s) {
       set({ settings: { ...s, confirm_discard: confirm } });
     }
+  },
+
+  async setCommitAvatars(enabled) {
+    await setCommitAvatars(enabled);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, commit_avatars: enabled } });
   },
 
   async setSwitchDirtyBehavior(behavior) {

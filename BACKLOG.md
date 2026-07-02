@@ -120,7 +120,50 @@ destructive text-buttons the danger colour while at it.
 
 ---
 
+## Backend review: test coverage + git executor isolation
+
+**What:** A dedicated review pass over `legit-core` focused on (1) missing
+tests and (2) isolating the git executor so backend *logic* is testable
+without a real git binary.
+
+**Status:** Deferred 2026-07-02. Pure parsers and decision helpers are well
+covered (`parsers/*`, `stash_created`, `classify_*`, …), but the composed
+flows are not: `run_with_auto_stash`'s full sequencing, `create_tag` arg
+assembly, `checkout_remote_branch`'s exists-check branch, rename flows, etc.
+run only against a live `GitRunner`, so nothing asserts which git commands
+they actually issue or how they react to failures mid-sequence.
+
+**Rough approach:**
+- Introduce a runner abstraction (`trait CommandExecutor` or similar) that
+  `GitCliBackend` holds instead of the concrete `GitRunner`; production keeps
+  `GitRunner`, tests inject a scripted fake (queue of expected args →
+  canned `RunOutput`s). Then unit-test the composed flows: auto-stash
+  rollback on switch failure, pop-conflict classification, tag/branch arg
+  construction, remote-error paths.
+- Alternatively (or additionally) a small integration-test harness that
+  builds throwaway repos in a tempdir with the real git — good for the
+  happy paths the fake can't validate (actual git behaviour drift, e.g.
+  the `stash push` exit-0 discovery).
+- While reviewing: sweep for silent `let _ =` results, unclassified stderr
+  paths, and methods missing from the audit-tests entirely.
+
+---
+
 ## Other deferred ideas
+
+- ~~**Author avatars in the commit graph nodes.**~~ Done — opt-in
+  `commit_avatars` global setting (off by default; checkbox in the
+  "Commits graph" settings section with a privacy note). `src/lib/avatars.ts`
+  hashes the author email (SHA-256) and probes Gravatar with `d=404`, caching
+  one result per email in a zustand store; `GraphCellWithAvatar` resolves the
+  URL and the pure `GraphCell` renders it as an `<image>` clipped to the dot
+  circle with a lane-coloured ring, falling back to the plain dot. Avatars
+  scale to the configured dot radius with no minimum; stash squares and the
+  working-dir ring never get one.
+- ~~**Commits toolbar: Cancel button placement.**~~ Done — the pressed
+  button itself becomes the Cancel button while its op runs (spinner +
+  "Cancel", still enabled, `onClick` → `cancelSync`); the standalone Cancel
+  at the end of the toolbar is gone.
 
 - **Diff viewer: inline editing.** The original reason CodeMirror was chosen —
   let users fix small things directly in the diff pane. Needs an editable

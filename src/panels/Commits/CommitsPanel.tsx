@@ -57,7 +57,7 @@ import { formatFull, formatRelative } from "../../lib/time";
 import { RefsCell } from "./cells/RefsCell";
 import { InlineRenameInput } from "./cells/InlineRenameInput";
 import { SignatureBadge } from "./cells/SignatureBadge";
-import { GraphCell, laneColor } from "./cells/GraphCell";
+import { GraphCellWithAvatar, laneColor } from "./cells/GraphCell";
 import { computeLanes } from "./graph/lanes";
 import { computeEdgeSpans } from "./graph/spans";
 import { pickHeadCommitId } from "./headId";
@@ -140,6 +140,9 @@ export function CommitsPanel() {
   const TEXT_SIZE = useSettingsStore(
     (s) => s.settings?.ui_font_size ?? UI_FONT_SIZE_DEFAULT,
   );
+  // Opt-in author avatars in the commit dots (off by default — no Gravatar
+  // request leaves the app unless the user enabled the setting).
+  const AVATARS_ENABLED = useSettingsStore((s) => s.settings?.commit_avatars ?? false);
 
   // Render-time floors (the settings clamps only run on save): rows must
   // always clear a ref chip by 2px so chips on adjacent rows never touch —
@@ -1150,7 +1153,7 @@ export function CommitsPanel() {
                             alignItems: "stretch",
                           }}
                         >
-                          <GraphCell
+                          <GraphCellWithAvatar
                             commitId={commit.id}
                             commitLane={commitLane}
                             totalLanes={maxVisibleLane + 1}
@@ -1164,6 +1167,16 @@ export function CommitsPanel() {
                             ownLanePassThrough={ownLanePassThrough}
                             hollow={isWorkingDir}
                             isStash={stashSelectorById.has(commit.id)}
+                            avatarEmail={
+                              // Only regular commit dots carry an avatar — not
+                              // the working-dir ring or stash squares.
+                              AVATARS_ENABLED &&
+                              !isWorkingDir &&
+                              !stashSelectorById.has(commit.id) &&
+                              commit.author.email
+                                ? commit.author.email
+                                : null
+                            }
                           />
                         </div>
                       );
@@ -1465,28 +1478,39 @@ function RemoteSyncToolbar({
       className="legit-panel__toolbar"
       style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 8px" }}
     >
+      {/* While an op runs, ITS button becomes the Cancel button (spinner +
+          "Cancel", still enabled) — the cancel affordance sits exactly where
+          the user just clicked. The other buttons disable as before. */}
       <ToolbarButton
-        title="Fetch all remotes (prune)"
-        disabled={busy || !remoteName}
+        title={busyOp === "fetch" ? "Cancel fetch" : "Fetch all remotes (prune)"}
+        disabled={busyOp === "fetch" ? false : busy || !remoteName}
         loading={busyOp === "fetch"}
         icon={<FetchIcon />}
-        label="Fetch"
-        onClick={doFetch}
+        label={busyOp === "fetch" ? "Cancel" : "Fetch"}
+        onClick={busyOp === "fetch" ? cancelSync : doFetch}
       />
       <ToolbarButton
-        title={hasUpstream ? `Pull from ${tracking?.upstream ?? "upstream"}` : "No upstream for the current branch"}
-        disabled={busy || !hasUpstream}
+        title={
+          busyOp === "pull"
+            ? "Cancel pull"
+            : hasUpstream
+              ? `Pull from ${tracking?.upstream ?? "upstream"}`
+              : "No upstream for the current branch"
+        }
+        disabled={busyOp === "pull" ? false : busy || !hasUpstream}
         loading={busyOp === "pull"}
         icon={<PullIcon />}
-        label="Pull"
-        onClick={doPull}
+        label={busyOp === "pull" ? "Cancel" : "Pull"}
+        onClick={busyOp === "pull" ? cancelSync : doPull}
       />
 
       {/* Push / Publish with a caret menu for force-push (with lease). */}
       <div style={{ position: "relative", display: "flex" }}>
         <ToolbarButton
           title={
-            !currentBranch
+            busyOp === "push"
+              ? "Cancel push"
+              : !currentBranch
               ? "Detached HEAD — no branch to push"
               : !remoteName
               ? "No remote configured"
@@ -1494,11 +1518,11 @@ function RemoteSyncToolbar({
               ? `Push to ${remoteName}`
               : `Publish branch to ${remoteName} (sets upstream)`
           }
-          disabled={busy || !currentBranch || !remoteName}
+          disabled={busyOp === "push" ? false : busy || !currentBranch || !remoteName}
           loading={busyOp === "push"}
           icon={<PushIcon />}
-          label={pushLabel}
-          onClick={() => doPush(false)}
+          label={busyOp === "push" ? "Cancel" : pushLabel}
+          onClick={busyOp === "push" ? cancelSync : () => doPush(false)}
           rounded="left"
         />
         <button
@@ -1565,16 +1589,6 @@ function RemoteSyncToolbar({
         // the handler's optional startPoint parameter.
         onClick={() => onCreateBranch()}
       />
-
-      {busy && (
-        <button
-          type="button"
-          onClick={cancelSync}
-          style={{ ...toolbarBtnStyle(false), fontSize: "var(--fz-sm)" }}
-        >
-          Cancel
-        </button>
-      )}
 
       {/* Ahead/behind indicator for the current branch. */}
       {tracking && (
