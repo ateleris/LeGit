@@ -161,6 +161,13 @@ project memory for details.
 - **Renames edit in place**: an input appears where the text is (subject cell,
   ref chip), Enter approves, Esc discards (`InlineRenameInput`). Don't summon
   another panel for a rename.
+- **Busy/loading feedback is delayed, never instant.** Indicators appear only
+  after ~150ms so fast operations never flicker the UI: fetch signals go
+  through the shared `PanelLoadingBar` (debounced internally); visual busy
+  states around fast async actions use a 150ms timer cleared in `finally`,
+  paired with a `useRef` re-entry guard so double-clicks are still blocked
+  immediately (see `run()` in WorkingChangesPanel). Genuinely slow network
+  ops (fetch/pull/push/clone) may show busy immediately.
 - **Extract decision logic into pure functions and unit-test them** — parsers,
   error classification, and "did X actually happen" checks
   (`stash_created`, `classify_switch_error`, `find_stash_selector`,

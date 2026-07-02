@@ -15,6 +15,7 @@ import { useLaneLocks, useLaneLocksStore } from "../../store/laneLocks";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { useSummonStore } from "../../store/summon";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
+import { ToolbarButton, toolbarBtnStyle } from "../shared/ToolbarButton";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import {
   consoleCancel,
@@ -1340,7 +1341,7 @@ function RemoteSyncToolbar({
       className="legit-panel__toolbar"
       style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 8px" }}
     >
-      <SyncButton
+      <ToolbarButton
         title="Fetch all remotes (prune)"
         disabled={busy || !remoteName}
         loading={busyOp === "fetch"}
@@ -1348,7 +1349,7 @@ function RemoteSyncToolbar({
         label="Fetch"
         onClick={doFetch}
       />
-      <SyncButton
+      <ToolbarButton
         title={hasUpstream ? `Pull from ${tracking?.upstream ?? "upstream"}` : "No upstream for the current branch"}
         disabled={busy || !hasUpstream}
         loading={busyOp === "pull"}
@@ -1359,7 +1360,7 @@ function RemoteSyncToolbar({
 
       {/* Push / Publish with a caret menu for force-push (with lease). */}
       <div style={{ position: "relative", display: "flex" }}>
-        <SyncButton
+        <ToolbarButton
           title={
             !currentBranch
               ? "Detached HEAD — no branch to push"
@@ -1381,7 +1382,7 @@ function RemoteSyncToolbar({
           title="More push options"
           disabled={busy || !currentBranch || !remoteName}
           onClick={() => setMenuOpen((o) => !o)}
-          style={{ ...syncBtnStyle(busy || !currentBranch || !remoteName), padding: "2px 4px", borderRadius: "0 3px 3px 0", marginLeft: -1 }}
+          style={{ ...toolbarBtnStyle(busy || !currentBranch || !remoteName), padding: "2px 4px", borderRadius: "0 3px 3px 0", marginLeft: -1 }}
         >
           <ChevronDownIcon />
         </button>
@@ -1430,7 +1431,7 @@ function RemoteSyncToolbar({
 
       {/* Create a new branch at HEAD — opens an inline name input on the
           HEAD row's ref chips (local op; independent of the sync busy state). */}
-      <SyncButton
+      <ToolbarButton
         title="Create a new branch at HEAD"
         disabled={false}
         loading={false}
@@ -1445,7 +1446,7 @@ function RemoteSyncToolbar({
         <button
           type="button"
           onClick={cancelSync}
-          style={{ ...syncBtnStyle(false), fontSize: "var(--fz-sm)" }}
+          style={{ ...toolbarBtnStyle(false), fontSize: "var(--fz-sm)" }}
         >
           Cancel
         </button>
@@ -1479,53 +1480,3 @@ function RemoteSyncToolbar({
   );
 }
 
-/** Shared style for the sync toolbar buttons. */
-function syncBtnStyle(disabled: boolean): React.CSSProperties {
-  return {
-    display: "flex",
-    alignItems: "center",
-    gap: 4,
-    fontSize: "var(--fz-sm)",
-    padding: "2px 8px",
-    border: "1px solid var(--panel-border)",
-    borderRadius: 3,
-    background: "transparent",
-    color: "var(--panel-fg)",
-    cursor: disabled ? "default" : "pointer",
-    opacity: disabled ? 0.5 : 1,
-  };
-}
-
-function SyncButton({
-  title,
-  label,
-  icon,
-  loading,
-  disabled,
-  onClick,
-  rounded,
-}: {
-  title: string;
-  label: string;
-  icon: React.ReactNode;
-  loading: boolean;
-  disabled: boolean;
-  onClick: () => void;
-  rounded?: "left";
-}) {
-  return (
-    <button
-      type="button"
-      title={title}
-      disabled={disabled}
-      onClick={onClick}
-      style={{
-        ...syncBtnStyle(disabled),
-        borderRadius: rounded === "left" ? "3px 0 0 3px" : 3,
-      }}
-    >
-      {loading ? <span className="legit-spinner" aria-hidden="true" /> : icon}
-      <span>{label}</span>
-    </button>
-  );
-}

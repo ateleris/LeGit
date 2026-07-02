@@ -9,6 +9,7 @@ import { formatAppError } from "../../lib/types";
 import { useSummonStore } from "../../store/summon";
 import { notify } from "../../store/notifications";
 import { FileTree } from "../shared/FileTree/FileTree";
+import { ToolbarButton } from "../shared/ToolbarButton";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
 import { StageIcon, UnstageIcon } from "../../icons";
@@ -218,16 +219,26 @@ export function WorkingChangesPanel() {
     invalidateRepoDomains(queryClient, repo.id, ["status", "log", "branches", "diff"]);
   }, [repo, queryClient]);
 
+  // Re-entry guard for `run` — blocks double-clicks immediately, independent
+  // of the *visual* busy state below (which is deliberately delayed).
+  const runningRef = useRef(false);
+
   const run = useCallback(
     async (fn: () => Promise<unknown>) => {
-      if (!repo) return;
-      setBusy(true);
+      if (!repo || runningRef.current) return;
+      runningRef.current = true;
+      // Delay the visual busy state: staging/unstaging usually completes in a
+      // few dozen ms, and flipping every button to disabled-dimmed for a
+      // single frame reads as UI flicker. Slow operations still dim.
+      const busyTimer = window.setTimeout(() => setBusy(true), 150);
       try {
         await fn();
         refresh();
       } catch (e) {
         notify.error(formatAppError(e));
       } finally {
+        window.clearTimeout(busyTimer);
+        runningRef.current = false;
         setBusy(false);
       }
     },
@@ -365,12 +376,16 @@ export function WorkingChangesPanel() {
             actions={
               unstaged.length > 0 && (
                 <>
-                  <TextButton disabled={busy} onClick={() => requestDiscard(unstaged.map((f) => f.path), "all unstaged files")}>
-                    Discard all
-                  </TextButton>
-                  <TextButton disabled={busy} onClick={() => stage(unstaged.map((f) => f.path))}>
-                    Stage all
-                  </TextButton>
+                  <ToolbarButton
+                    label="Discard all"
+                    disabled={busy}
+                    onClick={() => requestDiscard(unstaged.map((f) => f.path), "all unstaged files")}
+                  />
+                  <ToolbarButton
+                    label="Stage all"
+                    disabled={busy}
+                    onClick={() => stage(unstaged.map((f) => f.path))}
+                  />
                 </>
               )
             }
@@ -436,9 +451,11 @@ export function WorkingChangesPanel() {
             count={staged.length}
             actions={
               staged.length > 0 && (
-                <TextButton disabled={busy} onClick={() => unstage(staged.map((f) => f.path))}>
-                  Unstage all
-                </TextButton>
+                <ToolbarButton
+                  label="Unstage all"
+                  disabled={busy}
+                  onClick={() => unstage(staged.map((f) => f.path))}
+                />
               )
             }
           >
@@ -543,24 +560,6 @@ function Section({
       </div>
       {children}
     </div>
-  );
-}
-
-function TextButton({ children, ...rest }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return (
-    <button
-      {...rest}
-      style={{
-        background: "transparent",
-        border: "none",
-        color: "var(--accent)",
-        cursor: "pointer",
-        fontSize: "var(--fz-sm)",
-        padding: 0,
-      }}
-    >
-      {children}
-    </button>
   );
 }
 

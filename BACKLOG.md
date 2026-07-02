@@ -90,6 +90,36 @@ colour-data values, or a `var(--token, …)` fallback fails the suite.
 
 ---
 
+## Button cleanup: consolidate the ad-hoc button variants
+
+**What:** The app has accumulated too many button styles, each hand-rolled at
+its call site. Consolidate them into a small shared set of button components
+with consistent sizing (font-relative), theming (tokens), and hover/disabled
+behaviour.
+
+**Status:** Deferred 2026-07-02. First step done: the Commits toolbar's
+button was extracted to `panels/shared/ToolbarButton.tsx` and now also serves
+the Working Changes section actions (Stage/Unstage/Discard all — the
+link-style `TextButton` is gone). Remaining inventory:
+- Global CSS `button` base + `.primary` / `.danger` classes (global.css) —
+  used by ~30 call sites (Branches/Stashes/Remotes rows, Theme Editor, forms).
+- `ToolbarButton` + `toolbarBtnStyle` (shared) — could become the "ghost"
+  variant of the final set.
+- `IconButton` in WorkingChangesPanel.
+- One-off inline-styled buttons: the settings link-toggle (Photoshop chain),
+  push-menu entry, palette-row delete "×", ViewMenu/RepoOverflowMenu entries,
+  Refs paneview header.
+
+**Rough approach:** a `src/components/buttons.tsx` (or `panels/shared/`)
+module exporting `Button` (variants: default / primary / danger / ghost /
+link / icon; sizes derived from `--ui-font-size`), backed by the existing
+button tokens (`button.*`, plus a new `button.link.fg` bound to `accent`).
+Migrate call sites incrementally — start with the inline-styled one-offs,
+then fold `SyncButton`/`TextButton`/`IconButton` into the shared set. Give
+destructive text-buttons the danger colour while at it.
+
+---
+
 ## Other deferred ideas
 
 - **Diff viewer: inline editing.** The original reason CodeMirror was chosen —
