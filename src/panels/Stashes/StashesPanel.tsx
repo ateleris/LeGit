@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
@@ -12,15 +12,13 @@ import {
   repoRenameStash,
 } from "../../lib/commands";
 import { notify } from "../../store/notifications";
-import { useSummonStore, useSummonTarget } from "../../store/summon";
+import { useSummonStore } from "../../store/summon";
 import type { StashEntry } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { formatRelative } from "../../lib/time";
 import { StashIcon } from "../../icons";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { InlineEditor } from "../shared/InlineEditor";
-
-type SummonPayload = { action: "rename"; selector: string };
 
 // A stash mutation touches the working tree, the stash list, and the graph.
 const AFFECTED_DOMAINS = ["stashes", "log", "status"];
@@ -64,8 +62,6 @@ export function StashesPanel() {
   const [confirmDrop, setConfirmDrop] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draftMsg, setDraftMsg] = useState("");
-  const [pendingRename, setPendingRename] = useState<string | null>(null);
-  const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   const invalidate = useCallback(() => {
     if (!repo) return;
@@ -76,19 +72,19 @@ export function StashesPanel() {
     setError(null);
     setConfirmDrop(null);
     setDraftMsg(s.message);
-    setRenaming(s.selector);
+    setRenaming(s.stash_sha);
   };
 
   // Rename via drop + re-store (see the backend): the stash keeps its content
   // but moves to stash@{0}. The list refetch reflects the new order.
-  const doRename = async (selector: string) => {
+  const doRename = async (sha: string) => {
     if (!repo) return;
     const next = draftMsg.trim();
     if (!next) return;
     setBusy(true);
     setError(null);
     try {
-      await repoRenameStash(repo.id, selector, next);
+      await repoRenameStash(repo.id, sha, next);
       invalidate();
       setRenaming(null);
     } catch (e) {
@@ -97,35 +93,6 @@ export function StashesPanel() {
       setBusy(false);
     }
   };
-
-  // Context-menu "Rename stash…" summons this panel with the target selector.
-  const onSummon = useCallback((payload: SummonPayload) => {
-    if (payload.action !== "rename") return;
-    const s = stashes.find((x) => x.selector === payload.selector);
-    if (s) {
-      setError(null);
-      setConfirmDrop(null);
-      setDraftMsg(s.message);
-      setRenaming(s.selector);
-      setTimeout(() => rowRefs.current.get(s.selector)?.scrollIntoView({ block: "nearest" }), 0);
-    } else {
-      setPendingRename(payload.selector);
-    }
-  }, [stashes]);
-  useSummonTarget<SummonPayload>("stashes", onSummon);
-
-  // If the panel was just opened by the summon, the list may not have loaded
-  // yet — retry the rename once stashes arrive.
-  useEffect(() => {
-    if (!pendingRename || stashes.length === 0) return;
-    const s = stashes.find((x) => x.selector === pendingRename);
-    if (!s) return;
-    setPendingRename(null);
-    setError(null);
-    setDraftMsg(s.message);
-    setRenaming(s.selector);
-    setTimeout(() => rowRefs.current.get(s.selector)?.scrollIntoView({ block: "nearest" }), 0);
-  }, [stashes, pendingRename]);
 
   const doCreate = async () => {
     if (!repo) return;
@@ -153,16 +120,18 @@ export function StashesPanel() {
 
   // Apply or pop, surfacing a merge conflict as an info toast (the op partially
   // succeeded; on a pop, git keeps the stash so it reappears after refetch).
+  // Actions address the stash by SHA; the selector is only for the toast text.
   const doApplyOrPop = async (
+    sha: string,
     selector: string,
-    fn: (repoId: string, selector: string) => Promise<{ kind: string; message?: string }>,
+    fn: (repoId: string, sha: string) => Promise<{ kind: string; message?: string }>,
     verb: string,
   ) => {
     if (!repo) return;
     setBusy(true);
     setError(null);
     try {
-      const outcome = await fn(repo.id, selector);
+      const outcome = await fn(repo.id, sha);
       invalidate();
       if (outcome.kind === "conflicts") {
         notify.info(
@@ -176,12 +145,12 @@ export function StashesPanel() {
     }
   };
 
-  const doDrop = async (selector: string) => {
+  const doDrop = async (sha: string) => {
     if (!repo) return;
     setBusy(true);
     setError(null);
     try {
-      await repoDropStash(repo.id, selector);
+      await repoDropStash(repo.id, sha);
       invalidate();
       setConfirmDrop(null);
     } catch (e) {
@@ -225,26 +194,25 @@ export function StashesPanel() {
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {stashes.map((s) => (
+              // Rows (and the per-row edit/confirm state) are keyed by the
+              // stash SHA — stable across the reordering a rename/drop causes,
+              // where positional selectors would attach state to the wrong row.
               <StashRow
-                key={s.selector}
+                key={s.stash_sha}
                 stash={s}
                 busy={busy}
-                confirmingDrop={confirmDrop === s.selector}
-                editing={renaming === s.selector}
+                confirmingDrop={confirmDrop === s.stash_sha}
+                editing={renaming === s.stash_sha}
                 draftMsg={draftMsg}
-                rowRef={(el) => {
-                  if (el) rowRefs.current.set(s.selector, el);
-                  else rowRefs.current.delete(s.selector);
-                }}
                 onDraftChange={setDraftMsg}
-                onApply={() => doApplyOrPop(s.selector, repoApplyStash, "Applying")}
-                onPop={() => doApplyOrPop(s.selector, repoPopStash, "Popping")}
+                onApply={() => doApplyOrPop(s.stash_sha, s.selector, repoApplyStash, "Applying")}
+                onPop={() => doApplyOrPop(s.stash_sha, s.selector, repoPopStash, "Popping")}
                 onViewDiff={() => openStashDiff(s.stash_sha)}
                 onOpenRename={() => openRename(s)}
-                onSaveRename={() => doRename(s.selector)}
+                onSaveRename={() => doRename(s.stash_sha)}
                 onCancelEdit={() => setRenaming(null)}
-                onOpenDrop={() => { setError(null); setConfirmDrop(s.selector); }}
-                onConfirmDrop={() => doDrop(s.selector)}
+                onOpenDrop={() => { setError(null); setConfirmDrop(s.stash_sha); }}
+                onConfirmDrop={() => doDrop(s.stash_sha)}
                 onCancelDrop={() => setConfirmDrop(null)}
               />
             ))}
@@ -320,7 +288,6 @@ function StashRow({
   confirmingDrop,
   editing,
   draftMsg,
-  rowRef,
   onDraftChange,
   onApply,
   onPop,
@@ -337,7 +304,6 @@ function StashRow({
   confirmingDrop: boolean;
   editing: boolean;
   draftMsg: string;
-  rowRef: (el: HTMLDivElement | null) => void;
   onDraftChange: (v: string) => void;
   onApply: () => void;
   onPop: () => void;
@@ -351,7 +317,6 @@ function StashRow({
 }) {
   return (
     <div
-      ref={rowRef}
       style={{
         border: "1px solid var(--panel-border)",
         borderRadius: 4,

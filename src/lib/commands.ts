@@ -315,7 +315,7 @@ export const repoRenameBranch = (repoId: string, oldName: string, newName: strin
   invoke<void>("repo_rename_branch", { repoId, oldName, newName });
 
 export const repoCheckoutRemoteBranch = (repoId: string, remoteRef: string) =>
-  invoke<void>("repo_checkout_remote_branch", { repoId, remoteRef });
+  invoke<SwitchOutcome>("repo_checkout_remote_branch", { repoId, remoteRef });
 
 export const repoCheckoutCommit = (repoId: string, sha: string) =>
   invoke<SwitchOutcome>("repo_checkout_commit", { repoId, sha });
@@ -336,17 +336,21 @@ export const repoCreateStash = (
     includeUntracked,
   });
 
-export const repoApplyStash = (repoId: string, selector: string) =>
-  invoke<StashApplyOutcome>("repo_apply_stash", { repoId, selector });
+// Stash mutations address the stash by its commit SHA (stable), not the
+// positional `stash@{N}` selector (which shifts on every create/drop/pop,
+// including ones made outside the app). The backend resolves the SHA to the
+// current selector at action time, so a stale UI can never hit the wrong stash.
+export const repoApplyStash = (repoId: string, stashSha: string) =>
+  invoke<StashApplyOutcome>("repo_apply_stash", { repoId, stashSha });
 
-export const repoPopStash = (repoId: string, selector: string) =>
-  invoke<StashApplyOutcome>("repo_pop_stash", { repoId, selector });
+export const repoPopStash = (repoId: string, stashSha: string) =>
+  invoke<StashApplyOutcome>("repo_pop_stash", { repoId, stashSha });
 
-export const repoDropStash = (repoId: string, selector: string) =>
-  invoke<void>("repo_drop_stash", { repoId, selector });
+export const repoDropStash = (repoId: string, stashSha: string) =>
+  invoke<void>("repo_drop_stash", { repoId, stashSha });
 
-export const repoRenameStash = (repoId: string, selector: string, message: string) =>
-  invoke<void>("repo_rename_stash", { repoId, selector, message });
+export const repoRenameStash = (repoId: string, stashSha: string, message: string) =>
+  invoke<void>("repo_rename_stash", { repoId, stashSha, message });
 
 export const saveSwitchDirtyBehavior = (behavior: SwitchDirtyBehavior) =>
   invoke<void>("save_switch_dirty_behavior", { behavior });

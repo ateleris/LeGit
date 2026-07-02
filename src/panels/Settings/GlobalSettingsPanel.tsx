@@ -532,7 +532,26 @@ function BranchSwitchingSection() {
           />
           <span style={{ fontSize: "var(--fz-lg)" }}>Auto-stash, then switch</span>
           <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
-            — stashes changes, switches branch, then pops the stash
+            — stashes changes, switches branch, then pops the stash (changes travel along)
+          </span>
+        </label>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            cursor: saving ? "default" : "pointer",
+          }}
+        >
+          <input
+            type="radio"
+            checked={behavior === "stash_and_keep"}
+            onChange={() => select("stash_and_keep")}
+            disabled={saving}
+          />
+          <span style={{ fontSize: "var(--fz-lg)" }}>Auto-stash and keep stashed</span>
+          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
+            — stashes changes and leaves them parked; the new branch starts clean
           </span>
         </label>
       </div>

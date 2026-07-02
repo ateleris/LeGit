@@ -118,8 +118,6 @@ export function GraphCell({
 
   const laneX = (lane: LaneIndex): number => lane * laneSpacing + laneSpacing / 2;
 
-  const STASH_COLOR = "var(--graph-stash-dot, #2bb7a6)";
-
   // Corner radius for every connector arc: half the smaller layout metric, so
   // it stays proportional when row height and lane width differ and never
   // exceeds either straight run (≤ rowHeight/2 = the dot-to-boundary reach,
@@ -252,14 +250,17 @@ export function GraphCell({
       })}
 
       {/* 4. Commit node — rendered last so it sits on top of all lines. A stash
-          shows as a diamond in the stash colour; a hollow ring (filled with the
-          panel background so lane lines don't show through its centre) marks the
-          synthetic working-directory row; otherwise a filled lane-coloured dot. */}
+          shows as a diamond in its LANE colour (the shape alone marks it as a
+          stash — matching how GitKraken et al. colour stash nodes, and keeping
+          the node consistent with the edge that runs into it); a hollow ring
+          (filled with the panel background so lane lines don't show through
+          its centre) marks the synthetic working-directory row; otherwise a
+          filled lane-coloured dot. */}
       {isStash ? (
         <path
           d={`M ${dotX} ${halfRow - dotRadius} L ${dotX + dotRadius} ${halfRow} L ${dotX} ${halfRow + dotRadius} L ${dotX - dotRadius} ${halfRow} Z`}
-          fill={STASH_COLOR}
-          stroke={STASH_COLOR}
+          fill={dotColor}
+          stroke={dotColor}
           strokeWidth={lineWidth}
         />
       ) : hollow ? (

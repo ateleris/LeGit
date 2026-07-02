@@ -11,7 +11,6 @@ import type { RefDecoration } from "../../../lib/types";
  */
 export type ChipDescriptor =
   | { kind: "head" }
-  | { kind: "headOf"; value: string }
   | { kind: "fusedBranch"; local: string; remote: string }
   | { kind: "branch"; value: string }
   | { kind: "remote"; value: string }
@@ -31,7 +30,7 @@ export type ChipDescriptor =
  * remote render as separate chips.
  *
  * Display priority (stable within a group, preserving git's order):
- *   0. HEAD (detached) / `HEAD →` indicator / the checked-out branch
+ *   0. HEAD (detached) / the checked-out branch
  *   1. local & fused branches
  *   2. remote branches
  *   3. tags
@@ -39,7 +38,9 @@ export type ChipDescriptor =
  *
  * When HEAD points at a branch, git folds the branch into `HEAD ->
  * refs/heads/x` and does not list it separately — we synthesize the branch so
- * the checked-out branch gets a real (lockable, fusable) chip.
+ * the checked-out branch gets a real (lockable, fusable) chip. No separate
+ * `HEAD →` indicator is rendered: the checked-out branch's chip carries a
+ * leading dot instead (see `RefsCell`'s `Chip`).
  */
 export function buildChips(
   decorations: RefDecoration[],
@@ -84,7 +85,8 @@ export function buildChips(
         descriptors.push({ kind: "head" });
         break;
       case "headOf":
-        descriptors.push({ kind: "headOf", value: dec.value });
+        // No chip of its own — the synthesized branch chip (above) carries
+        // the checked-out marker.
         break;
       case "branch": {
         const remote = fusedFor.get(dec.value);
@@ -117,7 +119,6 @@ export function buildChips(
   const groupOf = (d: ChipDescriptor): number => {
     switch (d.kind) {
       case "head":
-      case "headOf":
         return 0;
       case "fusedBranch":
         return d.local === headOfTarget ? 0 : 1;
@@ -139,6 +140,46 @@ export function buildChips(
     .map((d, i) => ({ d, i, group: groupOf(d) }))
     .sort((a, b) => a.group - b.group || a.i - b.i)
     .map((e) => e.d);
+}
+
+/** The branches decorating one commit, for the row context menu. */
+export interface BranchesAtCommit {
+  /** Local branches (short names) with their checked-out state. */
+  local: { name: string; isCurrent: boolean }[];
+  /** Remote-tracking branches (short names, e.g. `origin/feature-x`). */
+  remote: string[];
+}
+
+/**
+ * Derive the branches present on a commit from its decorations, for the row
+ * context menu. Mirrors `buildChips`' handling: the checked-out branch is
+ * synthesized from `HEAD -> x` (git folds it and emits no separate branch
+ * decoration), and the symbolic `refs/remotes/<remote>/HEAD` is skipped.
+ */
+export function branchesAt(decorations: RefDecoration[]): BranchesAtCommit {
+  const headOf = decorations.find((d) => d.type === "headOf");
+  const headOfTarget = headOf && headOf.type === "headOf" ? headOf.value : null;
+
+  const local: { name: string; isCurrent: boolean }[] = [];
+  const seen = new Set<string>();
+  const pushLocal = (ref: string) => {
+    if (seen.has(ref)) return;
+    seen.add(ref);
+    local.push({
+      name: ref.replace(/^refs\/heads\//, ""),
+      isCurrent: ref === headOfTarget,
+    });
+  };
+  if (headOfTarget) pushLocal(headOfTarget);
+  for (const dec of decorations) {
+    if (dec.type === "branch") pushLocal(dec.value);
+  }
+
+  const remote = decorations
+    .filter((d) => d.type === "remote" && !d.value.endsWith("/HEAD"))
+    .map((d) => (d as { value: string }).value.replace(/^refs\/remotes\//, ""));
+
+  return { local, remote };
 }
 
 /**

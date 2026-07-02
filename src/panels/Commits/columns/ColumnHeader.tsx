@@ -5,7 +5,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { usePanelContextMenu } from "../menu/PanelContextMenu";
 import { MenuItem, Separator, SectionLabel } from "../menu/primitives";
-import { MIN_COLUMN_WIDTH } from "./types";
+import { COLUMN_GAP, MIN_COLUMN_WIDTH } from "./types";
 import type { ColumnId } from "./types";
 
 interface ColumnHeaderProps {
@@ -31,6 +31,16 @@ interface ColumnHeaderProps {
    * pointermove is cheap and keeps the grid live-updating.
    */
   onResizeEnd: (colId: ColumnId, width: number) => void;
+  /**
+   * Which edge of the header carries the resize handle, and therefore which
+   * drag direction grows the column. Columns *left* of the elastic Subject
+   * filler are anchored at their left edge — handle on the right, drag right
+   * to grow. Columns *right* of the filler are anchored at their right edge
+   * (growing them expands leftward into the filler), so the handle sits on
+   * the left and dragging LEFT grows — otherwise the divider moves opposite
+   * to the pointer and the resize feels reversed.
+   */
+  resizeEdge?: "left" | "right";
   /**
    * Draw a vertical separator on the cell's right edge — a visual hint that
    * the boundary is where columns are dragged to resize. Omitted on the last
@@ -59,6 +69,7 @@ export function ColumnHeader({
   onHide,
   onShow,
   onResizeEnd,
+  resizeEdge = "right",
   showSeparator,
 }: ColumnHeaderProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -157,18 +168,23 @@ export function ColumnHeader({
     [isResizable]
   );
 
+  // A handle on the left edge grows the column when dragged LEFT (the column
+  // expands leftward, so the divider follows the pointer); on the right edge
+  // it grows when dragged right.
+  const resizeDir = resizeEdge === "left" ? -1 : 1;
+
   const handleResizePointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       const st = resizing.current;
       if (!st || e.pointerId !== st.pointerId) return;
-      const delta = e.clientX - st.startX;
+      const delta = (e.clientX - st.startX) * resizeDir;
       const next = Math.max(MIN_COLUMN_WIDTH, Math.round(st.startWidth + delta));
       // Propagate width up so the grid template re-flows live. The hook
       // debounces persistence (500 ms), so this is one cheap state update
       // per pointermove and at most one disk write per resize gesture.
       onResizeEnd(colId, next);
     },
-    [colId, onResizeEnd]
+    [colId, onResizeEnd, resizeDir]
   );
 
   const finishResize = useCallback(
@@ -180,7 +196,7 @@ export function ColumnHeader({
       } catch {
         // Already released — ignore.
       }
-      const delta = e.clientX - st.startX;
+      const delta = (e.clientX - st.startX) * resizeDir;
       const finalWidth = Math.max(
         MIN_COLUMN_WIDTH,
         Math.round(st.startWidth + delta)
@@ -188,7 +204,7 @@ export function ColumnHeader({
       resizing.current = null;
       onResizeEnd(colId, finalWidth);
     },
-    [colId, onResizeEnd]
+    [colId, onResizeEnd, resizeDir]
   );
 
   // -------------------------------------------------------------- context menu
@@ -237,7 +253,10 @@ export function ColumnHeader({
         position: "relative",
         display: "flex",
         alignItems: "center",
-        overflow: "hidden",
+        // Visible so a left-edge resize handle can reach across the grid gap
+        // to the previous column's separator line. The label truncates itself
+        // (its own overflow/ellipsis), so nothing else can spill out.
+        overflow: "visible",
         cursor: isDraggable ? "grab" : "default",
         userSelect: "none",
         // The width is controlled via the grid template — this is just a hint
@@ -279,10 +298,16 @@ export function ColumnHeader({
           onDragStart={(e) => e.preventDefault()}
           style={{
             position: "absolute",
-            right: 0,
+            // The handle sits on the divider that actually moves when this
+            // column resizes (see `resizeEdge`). The separator line is the
+            // *previous* cell's right border, one grid gap to the left of
+            // this cell — a left-edge handle spans that gap so it lies on
+            // the visible "|", not floating next to it.
+            left: resizeEdge === "left" ? -(COLUMN_GAP + 1) : undefined,
+            right: resizeEdge === "right" ? 0 : undefined,
             top: 0,
             bottom: 0,
-            width: RESIZER_W,
+            width: resizeEdge === "left" ? COLUMN_GAP + RESIZER_W : RESIZER_W,
             cursor: "col-resize",
             zIndex: 1,
             // Subtle hover hint — not visible without :hover, but keeps the

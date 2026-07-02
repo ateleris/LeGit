@@ -41,13 +41,15 @@ pub const REPO_CHANGED_EVENT: &str = "legit://repo-changed";
 const DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// A react-query data domain affected by a filesystem change. Mirrors the
-/// query-key suffixes used by the frontend (`[repoId, "status"|"log"|"branches"]`).
+/// query-key suffixes used by the frontend
+/// (`[repoId, "status"|"log"|"branches"|"stashes"]`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ChangeDomain {
     Status,
     Log,
     Branches,
+    Stashes,
 }
 
 /// Payload for [`REPO_CHANGED_EVENT`]: which repo changed and in which domains.
@@ -195,11 +197,16 @@ fn classify_git(rel: &Path, out: &mut BTreeSet<ChangeDomain>) {
         "index" => {
             out.insert(ChangeDomain::Status);
         }
-        // Ref/HEAD moves → commit graph + branch list.
+        // Ref/HEAD moves → commit graph + branch list. `refs/stash` (and
+        // `packed-refs`, which may hold it after a pack-refs) additionally
+        // drives the stash list — external `git stash` ops refresh live.
         "HEAD" | "refs" | "packed-refs" | "MERGE_HEAD" | "ORIG_HEAD" | "FETCH_HEAD"
         | "CHERRY_PICK_HEAD" | "REVERT_HEAD" => {
             out.insert(ChangeDomain::Log);
             out.insert(ChangeDomain::Branches);
+            if first == "packed-refs" || rel.starts_with("refs/stash") {
+                out.insert(ChangeDomain::Stashes);
+            }
         }
         // In-progress merge/rebase state affects all three (conflicts + refs).
         "rebase-merge" | "rebase-apply" => {
@@ -257,6 +264,37 @@ mod tests {
         classify(Path::new("/repo/.git/refs/heads/main"), wt, gd, &Gitignore::empty(), &mut out);
         let got: Vec<_> = out.into_iter().collect();
         assert!(got.contains(&ChangeDomain::Log) && got.contains(&ChangeDomain::Branches));
+    }
+
+    #[test]
+    fn stash_ref_change_includes_stashes_domain() {
+        // External `git stash` ops move `refs/stash`; the stash list must
+        // refresh live, not only via focus.
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        let mut out = BTreeSet::new();
+        classify(Path::new("/repo/.git/refs/stash"), wt, gd, &Gitignore::empty(), &mut out);
+        assert!(out.contains(&ChangeDomain::Stashes), "got {out:?}");
+        assert!(out.contains(&ChangeDomain::Log));
+    }
+
+    #[test]
+    fn branch_ref_change_does_not_include_stashes() {
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        let mut out = BTreeSet::new();
+        classify(Path::new("/repo/.git/refs/heads/main"), wt, gd, &Gitignore::empty(), &mut out);
+        assert!(!out.contains(&ChangeDomain::Stashes), "got {out:?}");
+    }
+
+    #[test]
+    fn packed_refs_change_includes_stashes_domain() {
+        // `git pack-refs` can move refs/stash into packed-refs.
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        let mut out = BTreeSet::new();
+        classify(Path::new("/repo/.git/packed-refs"), wt, gd, &Gitignore::empty(), &mut out);
+        assert!(out.contains(&ChangeDomain::Stashes), "got {out:?}");
     }
 
     #[test]

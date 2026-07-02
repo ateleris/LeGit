@@ -76,6 +76,32 @@ must **never** include `%G?` — it makes git verify every commit's signature du
 the walk (spawning gpg/ssh per signed commit; ~18s on large/heavily-signed
 repos). Signatures are verified lazily in `commit_details` (`git verify-commit`).
 
+**Stash addressing & auto-stash correctness.** `git stash push` exits **0**
+with "No local changes to save" (on *stdout*) for a clean tree — never infer
+"something was stashed" from the exit code or stderr; compare the `refs/stash`
+tip before/after (`stash_tip` / `stash_created` in `cli_impl`). Positional
+`stash@{N}` selectors are **display-only**: they shift on every
+create/drop/pop, including ones made outside the app, so every stash mutation
+addresses the entry by its **commit SHA**, resolved to the current selector at
+action time (`resolve_stash_selector`). Never run a bare `git stash pop` — pop
+the specific entry. A conflicted pop means the changes **are** applied (with
+markers; git keeps the stash): the guidance is "resolve, then drop", never
+"pop again" — which is why pop conflicts and pop failures are distinct
+outcomes. Stash nodes are injected into the log by **committer** date
+(`inject_stashes`) — `git log`'s default order is commit-date, and rebased
+commits keep old author dates.
+
+**Error surfacing.** The user must see git's message, never a JSON envelope —
+`formatAppError` unwraps nested `GitError`s (show `stderr` / the string
+payload). Classify common failures into dedicated `GitError` variants
+(`WouldOverwriteLocalChanges`, `AuthFailed`, `PushRejected`, …) so panels can
+react with actionable text (`gitErrorKind` + `src/lib/switchFeedback.ts`).
+Partial success is an **outcome, not an error** (`SwitchOutcome`,
+`StashApplyOutcome`) so it crosses IPC as data. A best-effort recovery step
+that fails must never be silent — append the fact to the primary error
+(`append_error_note`) so the user learns both what failed and where their
+data went.
+
 **Diff viewer (CodeMirror 6).** Inline + split share one rendering primitive
 (`src/panels/Diff/`); split is two scroll-synced panes built from the same hunk
 model (not `@codemirror/merge`). Hunk- and line-level stage/unstage/discard, with
@@ -85,10 +111,26 @@ project memory for details.
 ## Conventions
 
 - **Never commit or push without the user's explicit command.**
-- New UI colours → theme tokens (4 places), never literals.
+- New UI colours → theme tokens (4 places), never literals. Enforced by
+  `src/theme/contract.test.ts` — a token missing from defaults, `theme.css`,
+  or either bundled theme fails the suite.
 - Follow existing panel/store/parser patterns; keep files focused.
 - The diff viewer's inline and split views must keep **action parity** (wire new
   per-hunk/per-line capabilities through the shared helpers, apply to both).
+- **Destructive actions confirm inline in every menu that offers them** (drop
+  stash, delete branch). Share the menu section component
+  (e.g. `StashMenuSection`) between the row menu and the chip menu so the
+  confirm step can't drift out of parity.
+- **Renames edit in place**: an input appears where the text is (subject cell,
+  ref chip), Enter approves, Esc discards (`InlineRenameInput`). Don't summon
+  another panel for a rename.
+- **Extract decision logic into pure functions and unit-test them** — parsers,
+  error classification, and "did X actually happen" checks
+  (`stash_created`, `classify_switch_error`, `find_stash_selector`,
+  `pickHeadCommitId`, …). Assumptions about git's exit codes / output streams
+  must be encoded in a test, not just in a comment: the auto-stash data-loss
+  bug existed because "`stash push` fails on a clean tree" was assumed, wrong,
+  and untested.
 
 ## Backlog
 

@@ -281,15 +281,30 @@ pub struct Branch {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SwitchOutcome {
     Clean,
+    /// The switch succeeded and (per `StashAndKeep`) the uncommitted changes
+    /// were deliberately left parked in the stash.
+    ChangesStashed,
+    /// The switch succeeded and the auto-stash was reapplied, but with merge
+    /// conflicts: the changes are in the working tree with conflict markers and
+    /// the stash entry was kept (git's pop-on-conflict behavior).
+    StashPopConflicts { message: String },
+    /// The switch succeeded but the auto-stash could not be applied at all —
+    /// the changes remain parked in the stash entry.
     StashPopFailed { message: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SwitchDirtyBehavior {
+    /// Let git decide: a non-conflicting dirty tree carries over, a
+    /// conflicting one fails (`WouldOverwriteLocalChanges`).
     #[default]
     TryDirectly,
+    /// Stash, switch, pop: the changes travel to the target branch.
     AutoStash,
+    /// Stash, switch, and leave the stash entry parked: the target branch
+    /// starts clean and the WIP stays retrievable from the stash list.
+    StashAndKeep,
 }
 
 /// A single entry from `git stash list`.
@@ -297,13 +312,15 @@ pub enum SwitchDirtyBehavior {
 pub struct StashEntry {
     /// The `N` in `stash@{N}` (0 is the most recent).
     pub index: u32,
-    /// The reflog selector, e.g. `stash@{0}`. Use this to address the stash in
-    /// apply/pop/drop — it is positional and shifts as stashes are added/removed.
+    /// The reflog selector, e.g. `stash@{0}`. Display-only: it is positional
+    /// and shifts as stashes are added/removed, so apply/pop/drop/rename
+    /// address the stash by `stash_sha` instead (resolved back to the current
+    /// selector at action time).
     pub selector: String,
     /// The reflog subject, e.g. `On main: my message` or `WIP on main: 1a2b3c …`.
     pub message: String,
     /// The stash's own commit SHA (a real git object — usable as a commit id,
-    /// e.g. for showing its diff).
+    /// e.g. for showing its diff). The stable handle for stash mutations.
     pub stash_sha: CommitId,
     /// The base commit the stash was created from (its first parent).
     pub base_sha: CommitId,

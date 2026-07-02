@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
@@ -11,21 +11,19 @@ import {
   repoCreateBranch,
   repoCheckoutRemoteBranch,
 } from "../../lib/commands";
-import { notify } from "../../store/notifications";
-import { useSummonTarget } from "../../store/summon";
+import { notifySwitchOutcome, formatSwitchError } from "../../lib/switchFeedback";
 import type { Branch } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { InlineEditor } from "../shared/InlineEditor";
 
-const AFFECTED_DOMAINS = ["branches", "log", "status", "tracking"];
+// Switching can create/consume an auto-stash, so "stashes" is invalidated too.
+const AFFECTED_DOMAINS = ["branches", "log", "status", "tracking", "stashes"];
 
 type EditState =
   | { name: string; mode: "rename" }
   | { name: string; mode: "delete" }
   | null;
-
-type SummonPayload = { action: "rename"; branch: string };
 
 const monoInput: React.CSSProperties = {
   fontSize: "var(--fz-md)",
@@ -52,9 +50,6 @@ export function BranchesPanel() {
   const [draftName, setDraftName] = useState("");
   const [createName, setCreateName] = useState("");
   const [createFrom, setCreateFrom] = useState("");
-  const [pendingRename, setPendingRename] = useState<string | null>(null);
-
-  const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   const invalidate = useCallback(() => {
     if (!repo) return;
@@ -76,31 +71,6 @@ export function BranchesPanel() {
       setBusy(false);
     }
   }, [repo, invalidate]);
-
-  const onSummon = useCallback((payload: SummonPayload) => {
-    if (payload.action !== "rename") return;
-    const b = branches.find((br) => br.name === payload.branch);
-    if (b) {
-      setError(null);
-      setDraftName(b.name);
-      setEdit({ name: b.name, mode: "rename" });
-      setTimeout(() => rowRefs.current.get(b.name)?.scrollIntoView({ block: "nearest" }), 0);
-    } else {
-      setPendingRename(payload.branch);
-    }
-  }, [branches]);
-  useSummonTarget<SummonPayload>("branches", onSummon);
-
-  useEffect(() => {
-    if (!pendingRename || branches.length === 0) return;
-    const b = branches.find((br) => br.name === pendingRename);
-    if (!b) return;
-    setPendingRename(null);
-    setError(null);
-    setDraftName(b.name);
-    setEdit({ name: b.name, mode: "rename" });
-    setTimeout(() => rowRefs.current.get(b.name)?.scrollIntoView({ block: "nearest" }), 0);
-  }, [branches, pendingRename]);
 
   const localBranches = branches.filter((b) => !b.is_remote);
   const remoteBranches = branches.filter((b) => b.is_remote);
@@ -140,13 +110,9 @@ export function BranchesPanel() {
     try {
       const outcome = await repoSwitchBranch(repo.id, name);
       invalidate();
-      if (outcome.kind === "stash_pop_failed") {
-        notify.info(
-          `Switched to '${name}'. The auto-stash could not be applied — run \`git stash pop\` to apply it manually.`,
-        );
-      }
+      notifySwitchOutcome(outcome, name);
     } catch (e) {
-      setError(formatAppError(e));
+      setError(formatSwitchError(e));
     } finally {
       setBusy(false);
     }
@@ -157,10 +123,11 @@ export function BranchesPanel() {
     setBusy(true);
     setError(null);
     try {
-      await repoCheckoutRemoteBranch(repo.id, fullRef);
+      const outcome = await repoCheckoutRemoteBranch(repo.id, fullRef);
       invalidate();
+      notifySwitchOutcome(outcome, fullRef.replace(/^refs\/remotes\//, ""));
     } catch (e) {
-      setError(formatAppError(e));
+      setError(formatSwitchError(e));
     } finally {
       setBusy(false);
     }
@@ -213,10 +180,6 @@ export function BranchesPanel() {
                 edit={edit}
                 draftName={draftName}
                 busy={busy}
-                rowRef={(el) => {
-                  if (el) rowRefs.current.set(b.name, el);
-                  else rowRefs.current.delete(b.name);
-                }}
                 onDraftChange={setDraftName}
                 onOpenRename={() => openRename(b)}
                 onSaveRename={() => saveRename(b.name)}
@@ -311,7 +274,6 @@ function LocalBranchRow({
   edit,
   draftName,
   busy,
-  rowRef,
   onDraftChange,
   onOpenRename,
   onSaveRename,
@@ -324,7 +286,6 @@ function LocalBranchRow({
   edit: EditState;
   draftName: string;
   busy: boolean;
-  rowRef: (el: HTMLDivElement | null) => void;
   onDraftChange: (v: string) => void;
   onOpenRename: () => void;
   onSaveRename: () => void;
@@ -338,7 +299,6 @@ function LocalBranchRow({
 
   return (
     <div
-      ref={rowRef}
       style={{
         border: "1px solid var(--panel-border)",
         borderRadius: 4,

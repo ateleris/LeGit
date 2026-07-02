@@ -25,6 +25,9 @@ pub enum GitError {
     #[error("push rejected: {stderr}")]
     PushRejected { stderr: String },
 
+    #[error("switching would overwrite local changes: {0}")]
+    WouldOverwriteLocalChanges(String),
+
     #[error("operation cancelled")]
     Cancelled,
 

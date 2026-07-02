@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildChips, computeVisibleCount } from "./refChips";
+import { branchesAt, buildChips, computeVisibleCount } from "./refChips";
 import type { RefDecoration } from "../../../lib/types";
 
 const branch = (value: string): RefDecoration => ({ type: "branch", value });
@@ -71,18 +71,19 @@ describe("buildChips", () => {
     ]);
   });
 
-  it("expands HEAD -> into the indicator plus a (fused) branch chip", () => {
+  it("expands HEAD -> into a (fused) branch chip, with no separate indicator", () => {
+    // The checked-out state is shown as a dot inside the branch chip, not as
+    // a `HEAD →` chip of its own.
     const out = buildChips(
       [headOf("refs/heads/main"), remote("refs/remotes/origin/main")],
       upstreams({ "refs/heads/main": "refs/remotes/origin/main" }),
     );
     expect(out).toEqual([
-      { kind: "headOf", value: "refs/heads/main" },
       { kind: "fusedBranch", local: "refs/heads/main", remote: "refs/remotes/origin/main" },
     ]);
   });
 
-  it("orders: HEAD pair, branches, remotes, tags, stash, other", () => {
+  it("orders: checked-out branch, branches, remotes, tags, stash, other", () => {
     const out = buildChips(
       [
         tag("refs/tags/v1.0"),
@@ -95,7 +96,6 @@ describe("buildChips", () => {
       NO_UPSTREAM,
     );
     expect(out).toEqual([
-      { kind: "headOf", value: "refs/heads/main" },
       { kind: "branch", value: "refs/heads/main" },
       { kind: "branch", value: "refs/heads/dev" },
       { kind: "remote", value: "refs/remotes/origin/release" },
@@ -124,6 +124,50 @@ describe("buildChips", () => {
       { kind: "branch", value: "refs/heads/a" },
       { kind: "branch", value: "refs/heads/b" },
     ]);
+  });
+});
+
+describe("branchesAt", () => {
+  it("lists local branches with short names", () => {
+    const out = branchesAt([branch("refs/heads/dev"), branch("refs/heads/fix/x")]);
+    expect(out.local).toEqual([
+      { name: "dev", isCurrent: false },
+      { name: "fix/x", isCurrent: false },
+    ]);
+    expect(out.remote).toEqual([]);
+  });
+
+  it("synthesizes the checked-out branch from HEAD -> and marks it current, first", () => {
+    // git folds the current branch into `HEAD -> x` with no separate branch
+    // decoration — the menu must still offer it.
+    const out = branchesAt([branch("refs/heads/dev"), headOf("refs/heads/main")]);
+    expect(out.local).toEqual([
+      { name: "main", isCurrent: true },
+      { name: "dev", isCurrent: false },
+    ]);
+  });
+
+  it("does not duplicate the current branch when git lists it explicitly", () => {
+    const out = branchesAt([headOf("refs/heads/main"), branch("refs/heads/main")]);
+    expect(out.local).toEqual([{ name: "main", isCurrent: true }]);
+  });
+
+  it("lists remotes with short names, skipping the symbolic HEAD", () => {
+    const out = branchesAt([
+      remote("refs/remotes/origin/HEAD"),
+      remote("refs/remotes/origin/main"),
+    ]);
+    expect(out.remote).toEqual(["origin/main"]);
+  });
+
+  it("ignores tags, stashes, detached HEAD, and other refs", () => {
+    const out = branchesAt([
+      tag("refs/tags/v1"),
+      stash("stash@{0}"),
+      { type: "head" },
+      other("refs/notes/commits"),
+    ]);
+    expect(out).toEqual({ local: [], remote: [] });
   });
 });
 

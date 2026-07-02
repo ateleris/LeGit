@@ -45,11 +45,15 @@ pub async fn repo_checkout_remote_branch(
     state: tauri::State<'_, AppState>,
     repo_id: String,
     remote_ref: String,
-) -> Result<(), AppError> {
+) -> Result<SwitchOutcome, AppError> {
+    let behavior = {
+        let s = state.global_settings.read().await;
+        s.switch_dirty_behavior.unwrap_or_default()
+    };
     let session = state.get_session(&repo_id).await?;
     session
         .backend
-        .checkout_remote_branch(&remote_ref)
+        .checkout_remote_branch(&remote_ref, behavior)
         .await
         .map_err(AppError::Git)
 }

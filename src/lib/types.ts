@@ -77,9 +77,9 @@ export interface ConsoleExecHandle {
 }
 
 /** Query domain affected by a filesystem change. Matches the react-query key
- *  suffixes `[repoId, "status"|"log"|"branches"]` and the Rust `ChangeDomain`
- *  enum in `src-tauri/src/watcher.rs`. */
-export type ChangeDomain = "status" | "log" | "branches";
+ *  suffixes `[repoId, "status"|"log"|"branches"|"stashes"]` and the Rust
+ *  `ChangeDomain` enum in `src-tauri/src/watcher.rs`. */
+export type ChangeDomain = "status" | "log" | "branches" | "stashes";
 
 /** Payload of the `legit://repo-changed` event emitted by the FS watcher. */
 export interface RepoChangedPayload {
@@ -135,10 +135,33 @@ export type AppError =
   | { kind: "InvalidLockIndex"; details: number }
   | { kind: "OperationNotFound"; details: string };
 
+/** Human-readable labels for `GitError` variants that carry no message. */
+const GIT_ERROR_LABELS: Record<string, string> = {
+  Cancelled: "Operation cancelled.",
+  TimedOut: "Operation timed out.",
+  NotYet: "This operation is not implemented yet.",
+  RewordNotHead: "Only the latest commit (HEAD) can be reworded.",
+  RewordPushed:
+    "This commit has already been pushed; rewording would rewrite published history.",
+};
+
 /** Construct a short message suitable for display, regardless of variant. */
 export function formatAppError(e: unknown): string {
   if (e && typeof e === "object" && "kind" in e) {
     const ae = e as AppError;
+    // Unwrap a nested GitError ({ kind, details? }): show git's own message
+    // instead of the serialized JSON envelope.
+    if (ae.kind === "Git" && ae.details && typeof ae.details === "object") {
+      const g = ae.details as { kind?: string; details?: unknown };
+      const inner = g.details;
+      if (typeof inner === "string") return inner;
+      if (inner && typeof inner === "object") {
+        const stderr = (inner as Record<string, unknown>).stderr;
+        if (typeof stderr === "string") return stderr;
+        return `${g.kind ?? "Git error"}: ${JSON.stringify(inner)}`;
+      }
+      return GIT_ERROR_LABELS[g.kind ?? ""] ?? g.kind ?? "Git error";
+    }
     const details = typeof ae.details === "string" ? ae.details : JSON.stringify(ae.details);
     return `${ae.kind}: ${details}`;
   }
@@ -390,19 +413,30 @@ export interface Branch {
 
 export type SwitchOutcome =
   | { kind: "clean" }
+  /** `stash_and_keep`: the uncommitted changes were deliberately left parked
+   *  in the stash; the target branch starts clean. */
+  | { kind: "changes_stashed" }
+  /** Auto-stash reapplied but with merge conflicts — changes are in the
+   *  working tree with conflict markers; the stash entry was kept. */
+  | { kind: "stash_pop_conflicts"; message: string }
+  /** Auto-stash could not be applied at all — the changes remain parked in
+   *  the stash entry. */
   | { kind: "stash_pop_failed"; message: string };
 
-export type SwitchDirtyBehavior = "try_directly" | "auto_stash";
+export type SwitchDirtyBehavior = "try_directly" | "auto_stash" | "stash_and_keep";
 
 /** A single entry from `git stash list` (matches legit-core `StashEntry`). */
 export interface StashEntry {
   /** The `N` in `stash@{N}` (0 is the most recent). */
   index: number;
-  /** Reflog selector, e.g. "stash@{0}" — used to address the stash; positional. */
+  /** Reflog selector, e.g. "stash@{0}". Display-only — it is positional and
+   * shifts as stashes are added/removed; actions address the stash by
+   * `stash_sha` instead. */
   selector: string;
   /** Reflog subject, e.g. "On main: my message". */
   message: string;
-  /** The stash's own commit SHA (a real git object, usable as a commit id). */
+  /** The stash's own commit SHA (a real git object, usable as a commit id).
+   * This is the stable handle for apply/pop/drop/rename. */
   stash_sha: CommitId;
   /** The base commit the stash was created from (its first parent). */
   base_sha: CommitId;

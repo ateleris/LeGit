@@ -388,53 +388,155 @@ impl GitCliBackend {
         }
     }
 
-    /// Shared auto-stash logic used by `switch_branch` and `checkout_commit`.
-    /// `switch_args` are the git arguments after `git` itself, e.g. `&["switch", "main"]`
-    /// or `&["switch", "--detach", "abc123"]`.
+    /// Resolve a stash commit SHA to its *current* reflog selector
+    /// (`stash@{N}`). All stash mutations go through this: the UI addresses
+    /// stashes by SHA (stable), while git's stash commands want the positional
+    /// selector (which shifts on every create/drop/pop — including ones made
+    /// outside the app). Resolving at action time guarantees the operation hits
+    /// the entry the user actually clicked, or fails loudly with `RefNotFound`
+    /// if that stash no longer exists.
+    async fn resolve_stash_selector(&self, stash_sha: &str) -> Result<String, GitError> {
+        let runner = self.runner().await;
+        let output = runner
+            .run(&["stash", "list", "--format=%H %gd"])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !output.success {
+            return Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr,
+            });
+        }
+        find_stash_selector(&output.stdout, stash_sha).ok_or_else(|| {
+            GitError::RefNotFound(format!(
+                "{stash_sha} is not (or no longer) a stash entry — the stash list may have changed"
+            ))
+        })
+    }
+
+    /// The current `refs/stash` tip, or `None` when there are no stash entries.
+    /// This is how the auto-stash logic decides whether a `stash push` actually
+    /// created an entry: `git stash push` exits **0** with "No local changes to
+    /// save" (on stdout) for a clean tree, so neither the exit code nor stderr
+    /// can tell — only a changed stash tip can.
+    async fn stash_tip(&self) -> Result<Option<String>, GitError> {
+        let runner = self.runner().await;
+        let output = runner
+            .run(&["rev-parse", "-q", "--verify", "refs/stash"])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if output.success {
+            Ok(Some(output.stdout.trim().to_string()))
+        } else {
+            // `-q --verify` exits 1 for a missing ref without output.
+            Ok(None)
+        }
+    }
+
+    /// Pop a specific stash entry addressed by its commit SHA (resolved to the
+    /// current selector at call time). Conflict-aware via `run_stash_apply`.
+    async fn pop_stash_sha(&self, sha: &str) -> Result<StashApplyOutcome, GitError> {
+        let selector = self.resolve_stash_selector(sha).await?;
+        self.run_stash_apply(&["stash", "pop", &selector]).await
+    }
+
+    /// Run a `git switch`/`checkout` invocation, classifying the well-known
+    /// "your local changes would be overwritten" failure into
+    /// `WouldOverwriteLocalChanges` so the UI can respond specifically.
+    async fn run_switch(&self, args: &[&str]) -> Result<(), GitError> {
+        let runner = self.runner().await;
+        let output = runner
+            .run(args)
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !output.success {
+            return Err(classify_switch_error(
+                output.exit_code.unwrap_or(-1),
+                &output.stderr,
+            ));
+        }
+        Ok(())
+    }
+
+    /// Shared auto-stash logic used by `switch_branch`, `checkout_commit` and
+    /// `checkout_remote_branch`. `switch_args` are the git arguments after
+    /// `git` itself, e.g. `&["switch", "main"]` or `&["switch", "--detach", "abc123"]`.
+    ///
+    /// With `AutoStash` / `StashAndKeep`, "did we actually stash" is detected
+    /// by comparing the `refs/stash` tip before and after the push (see
+    /// `stash_tip`), and the created entry is addressed *by its SHA* — never a
+    /// bare `stash pop`, which would pop an unrelated pre-existing stash when
+    /// nothing was auto-stashed or when the list shifted in between. The two
+    /// modes differ only after a successful switch: `AutoStash` pops the entry
+    /// (changes travel along), `StashAndKeep` leaves it parked.
     async fn run_with_auto_stash(
         &self,
         behavior: SwitchDirtyBehavior,
         switch_args: &[&str],
     ) -> Result<SwitchOutcome, GitError> {
-        if behavior == SwitchDirtyBehavior::AutoStash {
-            let target = switch_args.last().copied().unwrap_or("?");
-            let msg = format!("legit: auto-stash before switching to {}", target);
-            let did_stash = match self
-                .run_simple(&["stash", "push", "--include-untracked", "-m", &msg])
-                .await
-            {
-                Ok(()) => true,
-                Err(GitError::CommandFailed { stderr, .. })
-                    if stderr.contains("No local changes to save") =>
-                {
-                    false
-                }
-                Err(e) => return Err(e),
-            };
-            match self.run_simple(switch_args).await {
-                Ok(()) => {}
-                Err(e) => {
-                    if did_stash {
-                        let _ = self.run_simple(&["stash", "pop"]).await;
+        if behavior == SwitchDirtyBehavior::TryDirectly {
+            self.run_switch(switch_args).await?;
+            return Ok(SwitchOutcome::Clean);
+        }
+
+        let target = switch_args.last().copied().unwrap_or("?");
+        let msg = format!("legit: auto-stash before switching to {}", target);
+        let tip_before = self.stash_tip().await?;
+        self.run_simple(&["stash", "push", "--include-untracked", "-m", &msg])
+            .await?;
+        let tip_after = self.stash_tip().await?;
+        // The SHA of the entry *we* created; `None` when the tree was clean.
+        let created = stash_created(tip_before.as_deref(), tip_after.as_deref());
+
+        if let Err(switch_err) = self.run_switch(switch_args).await {
+            // Roll back: restore the auto-stash onto the original branch. It
+            // was created from exactly this state, so it applies cleanly in
+            // practice — but a failure here must not be silent: the user's
+            // changes would sit invisibly in the stash while the tree looks
+            // clean, with only the switch failure reported.
+            if let Some(sha) = &created {
+                match self.pop_stash_sha(sha).await {
+                    Ok(StashApplyOutcome::Clean) => {}
+                    Ok(StashApplyOutcome::Conflicts { .. }) => {
+                        return Err(append_error_note(
+                            switch_err,
+                            "Additionally, restoring your auto-stashed changes produced \
+                             conflicts — resolve them in the working tree (the stash entry \
+                             was kept).",
+                        ));
                     }
-                    return Err(e);
+                    Err(pop_err) => {
+                        return Err(append_error_note(
+                            switch_err,
+                            &format!(
+                                "Additionally, your uncommitted changes were auto-stashed and \
+                                 could not be restored automatically ({pop_err}) — they are \
+                                 preserved in the stash."
+                            ),
+                        ));
+                    }
                 }
             }
-            if !did_stash {
-                return Ok(SwitchOutcome::Clean);
+            return Err(switch_err);
+        }
+
+        let Some(sha) = created else {
+            // Clean tree — nothing was stashed, nothing to restore.
+            return Ok(SwitchOutcome::Clean);
+        };
+        if behavior == SwitchDirtyBehavior::StashAndKeep {
+            // Deliberately leave the entry parked: the target branch starts
+            // clean and the WIP is retrievable from the stash list.
+            return Ok(SwitchOutcome::ChangesStashed);
+        }
+        match self.pop_stash_sha(&sha).await {
+            Ok(StashApplyOutcome::Clean) => Ok(SwitchOutcome::Clean),
+            Ok(StashApplyOutcome::Conflicts { message }) => {
+                Ok(SwitchOutcome::StashPopConflicts { message })
             }
-            match self.run_simple(&["stash", "pop"]).await {
-                Ok(()) => Ok(SwitchOutcome::Clean),
-                Err(GitError::CommandFailed { stderr, .. }) => {
-                    Ok(SwitchOutcome::StashPopFailed { message: stderr })
-                }
-                Err(e) => Ok(SwitchOutcome::StashPopFailed {
-                    message: e.to_string(),
-                }),
-            }
-        } else {
-            self.run_simple(switch_args).await?;
-            Ok(SwitchOutcome::Clean)
+            Err(e) => Ok(SwitchOutcome::StashPopFailed {
+                message: e.to_string(),
+            }),
         }
     }
 }
@@ -974,8 +1076,31 @@ impl GitBackend for GitCliBackend {
         self.run_with_auto_stash(behavior, &["switch", "--detach", sha]).await
     }
 
-    async fn checkout_remote_branch(&self, remote_ref: &str) -> Result<(), GitError> {
-        self.run_simple(&["switch", "--track", remote_ref]).await
+    async fn checkout_remote_branch(
+        &self,
+        remote_ref: &str,
+        behavior: SwitchDirtyBehavior,
+    ) -> Result<SwitchOutcome, GitError> {
+        let (short, local) = remote_ref_names(remote_ref);
+        // `switch --track` refuses when the local branch already exists — the
+        // common case of checking out a remote ref that was checked out once
+        // before. The user's intent is "get me on that branch", so check for
+        // the local counterpart first and plain-switch to it when present.
+        // (Checked up front rather than retried on failure, so the auto-stash
+        // runs exactly once.)
+        let local_ref = format!("refs/heads/{local}");
+        let runner = self.runner().await;
+        let local_exists = runner
+            .run(&["rev-parse", "-q", "--verify", &local_ref])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?
+            .success;
+        let args: &[&str] = if local_exists {
+            &["switch", local]
+        } else {
+            &["switch", "--track", short]
+        };
+        self.run_with_auto_stash(behavior, args).await
     }
 
     async fn delete_branch(&self, name: &str, force: bool) -> Result<(), GitError> {
@@ -1019,50 +1144,42 @@ impl GitBackend for GitCliBackend {
             args.push("-m");
             args.push(msg);
         }
-        match self.run_simple(&args).await {
-            Ok(()) => Ok(StashOutcome::Created),
-            Err(GitError::CommandFailed { stderr, .. })
-                if stderr.contains("No local changes to save") =>
-            {
-                Ok(StashOutcome::NothingToStash)
-            }
-            Err(e) => Err(e),
+        // `git stash push` on a clean tree exits 0 ("No local changes to save"
+        // on stdout), so the outcome is decided by whether the stash tip moved,
+        // not by the exit code (which only signals real failures).
+        let tip_before = self.stash_tip().await?;
+        self.run_simple(&args).await?;
+        let tip_after = self.stash_tip().await?;
+        if stash_created(tip_before.as_deref(), tip_after.as_deref()).is_some() {
+            Ok(StashOutcome::Created)
+        } else {
+            Ok(StashOutcome::NothingToStash)
         }
     }
 
-    async fn apply_stash(&self, selector: &str) -> Result<StashApplyOutcome, GitError> {
-        self.run_stash_apply(&["stash", "apply", selector]).await
+    async fn apply_stash(&self, stash_sha: &str) -> Result<StashApplyOutcome, GitError> {
+        let selector = self.resolve_stash_selector(stash_sha).await?;
+        self.run_stash_apply(&["stash", "apply", &selector]).await
     }
 
-    async fn pop_stash(&self, selector: &str) -> Result<StashApplyOutcome, GitError> {
-        self.run_stash_apply(&["stash", "pop", selector]).await
+    async fn pop_stash(&self, stash_sha: &str) -> Result<StashApplyOutcome, GitError> {
+        let selector = self.resolve_stash_selector(stash_sha).await?;
+        self.run_stash_apply(&["stash", "pop", &selector]).await
     }
 
-    async fn drop_stash(&self, selector: &str) -> Result<(), GitError> {
-        self.run_simple(&["stash", "drop", selector]).await
+    async fn drop_stash(&self, stash_sha: &str) -> Result<(), GitError> {
+        let selector = self.resolve_stash_selector(stash_sha).await?;
+        self.run_simple(&["stash", "drop", &selector]).await
     }
 
-    async fn rename_stash(&self, selector: &str, new_message: &str) -> Result<(), GitError> {
-        // Capture the stash's commit object before we drop the entry, so the
-        // content survives even if the re-store step fails (it stays reachable
-        // via the reflog / fsck).
-        let runner = self.runner().await;
-        let out = runner
-            .run(&["rev-parse", selector])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !out.success {
-            return Err(GitError::CommandFailed {
-                exit_code: out.exit_code.unwrap_or(-1),
-                stderr: out.stderr,
-            });
-        }
-        let sha = out.stdout.trim().to_string();
-
-        // Drop the old entry, then re-store the same commit under the new
-        // message. `git stash store` prepends, so the result lands at stash@{0}.
-        self.run_simple(&["stash", "drop", selector]).await?;
-        self.run_simple(&["stash", "store", "-m", new_message, &sha]).await
+    async fn rename_stash(&self, stash_sha: &str, new_message: &str) -> Result<(), GitError> {
+        let selector = self.resolve_stash_selector(stash_sha).await?;
+        // Drop the old entry, then re-store the same commit (we already hold its
+        // SHA, so the content survives even if the store step fails — it stays
+        // reachable via fsck). `git stash store` prepends, so the renamed stash
+        // lands at stash@{0}.
+        self.run_simple(&["stash", "drop", &selector]).await?;
+        self.run_simple(&["stash", "store", "-m", new_message, stash_sha]).await
     }
 }
 
@@ -1085,19 +1202,24 @@ fn stash_commit(entry: &StashEntry) -> Commit {
 
 /// Insert synthetic stash nodes into a log result so they render in the graph.
 ///
-/// Every stash is positioned purely by its author timestamp in the newest-first
-/// list — stashes interleave with commits by time, regardless of where their base
-/// sits. Real commits are never reordered; we only splice stash nodes in. A
-/// stash's base is always older than the stash, so it still appears later in the
-/// list and the stash's first-parent edge draws downward into it (just not
-/// necessarily adjacent). `git stash list` is most-recent first, so inserting in
-/// that order keeps `stash@{0}` highest when several stashes share a timestamp.
+/// Every stash is positioned purely by time in the newest-first list — stashes
+/// interleave with commits, regardless of where their base sits. Real commits
+/// are never reordered; we only splice stash nodes in. The comparison uses
+/// *committer* timestamps because that is what `git log`'s default ordering
+/// sorts by: rebased/cherry-picked commits keep their old author dates but sort
+/// by their new commit dates, so comparing author dates would splice a stash
+/// far from where the surrounding list actually places its neighbours. A
+/// stash's base always has an older commit date than the stash, so the base
+/// still appears later in the list and the stash's first-parent edge draws
+/// downward into it (just not necessarily adjacent). `git stash list` is
+/// most-recent first, so inserting in that order keeps `stash@{0}` highest when
+/// several stashes share a timestamp.
 fn inject_stashes(commits: &mut Vec<Commit>, stashes: Vec<StashEntry>) {
     for entry in &stashes {
         let node = stash_commit(entry);
         let pos = commits
             .iter()
-            .position(|c| c.timestamp < node.timestamp)
+            .position(|c| c.committer.timestamp < node.timestamp)
             .unwrap_or(commits.len());
         commits.insert(pos, node);
     }
@@ -1128,6 +1250,81 @@ fn build_set_url_args<'a>(name: &'a str, url: &'a str, push: bool) -> Vec<&'a st
     args.push(name);
     args.push(url);
     args
+}
+
+/// Decide whether a `git stash push` actually created an entry, given the
+/// `refs/stash` tip before and after the push. `git stash push` exits **0**
+/// with "No local changes to save" (on stdout) for a clean tree, so neither
+/// the exit code nor stderr can tell — only a moved tip can. Returns the
+/// created entry's SHA. In particular, an unchanged tip with a pre-existing
+/// stash must return `None`, or a later restore would touch the user's own
+/// stash.
+fn stash_created(tip_before: Option<&str>, tip_after: Option<&str>) -> Option<String> {
+    match tip_after {
+        Some(after) if tip_before != Some(after) => Some(after.to_string()),
+        _ => None,
+    }
+}
+
+/// Find a stash entry's current reflog selector in the output of
+/// `git stash list --format=%H %gd`, by the entry's commit SHA.
+fn find_stash_selector(list_stdout: &str, stash_sha: &str) -> Option<String> {
+    for line in list_stdout.lines() {
+        if let Some((sha, selector)) = line.trim().split_once(' ') {
+            if sha == stash_sha {
+                return Some(selector.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Split a remote-tracking ref (either `origin/x` or the full
+/// `refs/remotes/origin/x`) into the short form git commands take and the
+/// derived local branch name (the ref minus the remote-name segment).
+fn remote_ref_names(remote_ref: &str) -> (&str, &str) {
+    let short = remote_ref
+        .strip_prefix("refs/remotes/")
+        .unwrap_or(remote_ref);
+    let local = short.split_once('/').map(|(_, b)| b).unwrap_or(short);
+    (short, local)
+}
+
+/// Map a failed `git switch`/`checkout` to a specific `GitError`: the
+/// dirty-tree refusal ("your local changes … would be overwritten") →
+/// `WouldOverwriteLocalChanges`, an unknown ref → `RefNotFound`, everything
+/// else → `CommandFailed`.
+fn classify_switch_error(exit_code: i32, stderr: &str) -> GitError {
+    let lc = stderr.to_lowercase();
+    if lc.contains("would be overwritten by")
+        || lc.contains("commit your changes or stash them")
+    {
+        return GitError::WouldOverwriteLocalChanges(stderr.trim().to_string());
+    }
+    if lc.contains("invalid reference") {
+        return GitError::RefNotFound(stderr.trim().to_string());
+    }
+    GitError::CommandFailed {
+        exit_code,
+        stderr: stderr.trim().to_string(),
+    }
+}
+
+/// Append a follow-up note to an error without losing its kind (used when a
+/// best-effort recovery step after the primary failure also failed and the
+/// user must be told both facts).
+fn append_error_note(e: GitError, note: &str) -> GitError {
+    match e {
+        GitError::CommandFailed { exit_code, stderr } => GitError::CommandFailed {
+            exit_code,
+            stderr: format!("{stderr}\n\n{note}"),
+        },
+        GitError::WouldOverwriteLocalChanges(msg) => {
+            GitError::WouldOverwriteLocalChanges(format!("{msg}\n\n{note}"))
+        }
+        GitError::RefNotFound(msg) => GitError::RefNotFound(format!("{msg}\n\n{note}")),
+        other => GitError::Internal(format!("{other}\n\n{note}")),
+    }
 }
 
 /// Map a failed remote op's stderr to a specific `GitError`: authentication
@@ -1168,6 +1365,197 @@ pub fn classify_remote_error(exit_code: i32, stderr: &str) -> GitError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- auto-stash: did the push create an entry? -------------------------
+    // Regression tests for the clean-tree bug: `git stash push` exits 0 with
+    // "No local changes to save", so detection must come from the stash tip.
+
+    #[test]
+    fn stash_created_clean_tree_no_prior_stash() {
+        assert_eq!(stash_created(None, None), None);
+    }
+
+    #[test]
+    fn stash_created_clean_tree_with_prior_stash_is_none() {
+        // THE data-loss case: unchanged tip + pre-existing stash must be None,
+        // or the restore step would pop the user's own stash.
+        assert_eq!(stash_created(Some("abc"), Some("abc")), None);
+    }
+
+    #[test]
+    fn stash_created_dirty_tree_no_prior_stash() {
+        assert_eq!(stash_created(None, Some("new")), Some("new".into()));
+    }
+
+    #[test]
+    fn stash_created_dirty_tree_with_prior_stash() {
+        assert_eq!(stash_created(Some("old"), Some("new")), Some("new".into()));
+    }
+
+    // --- stash SHA → selector resolution ------------------------------------
+
+    #[test]
+    fn stash_selector_found_by_sha() {
+        let out = "aaa111 stash@{0}\nbbb222 stash@{1}\nccc333 stash@{2}\n";
+        assert_eq!(find_stash_selector(out, "bbb222"), Some("stash@{1}".into()));
+    }
+
+    #[test]
+    fn stash_selector_missing_sha_is_none() {
+        let out = "aaa111 stash@{0}\n";
+        assert_eq!(find_stash_selector(out, "zzz999"), None);
+        assert_eq!(find_stash_selector("", "zzz999"), None);
+    }
+
+    // --- remote ref normalization -------------------------------------------
+
+    #[test]
+    fn remote_ref_short_form() {
+        assert_eq!(remote_ref_names("origin/feature-x"), ("origin/feature-x", "feature-x"));
+    }
+
+    #[test]
+    fn remote_ref_full_form() {
+        assert_eq!(
+            remote_ref_names("refs/remotes/origin/feature-x"),
+            ("origin/feature-x", "feature-x")
+        );
+    }
+
+    #[test]
+    fn remote_ref_branch_name_with_slashes() {
+        assert_eq!(
+            remote_ref_names("refs/remotes/origin/feat/nested"),
+            ("origin/feat/nested", "feat/nested")
+        );
+    }
+
+    // --- stash injection into the log ---------------------------------------
+
+    use crate::Signature;
+
+    fn sig(ts: i64) -> Signature {
+        Signature {
+            name: "t".into(),
+            email: "t@t".into(),
+            timestamp: ts,
+            tz_offset_minutes: 0,
+        }
+    }
+
+    /// A commit whose author and committer timestamps can differ (rebase /
+    /// cherry-pick keep the author date but get a fresh commit date).
+    fn commit(id: &str, author_ts: i64, committer_ts: i64) -> Commit {
+        Commit {
+            id: CommitId(id.into()),
+            parents: vec![],
+            author: sig(author_ts),
+            committer: sig(committer_ts),
+            message: id.into(),
+            timestamp: author_ts,
+            signature: None,
+            decorations: vec![],
+        }
+    }
+
+    fn stash_entry(sha: &str, ts: i64) -> StashEntry {
+        StashEntry {
+            index: 0,
+            selector: "stash@{0}".into(),
+            message: "wip".into(),
+            stash_sha: CommitId(sha.into()),
+            base_sha: CommitId("base".into()),
+            author: sig(ts),
+            timestamp: ts,
+        }
+    }
+
+    fn ids(commits: &[Commit]) -> Vec<&str> {
+        commits.iter().map(|c| c.id.0.as_str()).collect()
+    }
+
+    #[test]
+    fn stash_interleaves_by_committer_date() {
+        let mut commits = vec![commit("c3", 300, 300), commit("c2", 200, 200), commit("c1", 100, 100)];
+        inject_stashes(&mut commits, vec![stash_entry("s", 250)]);
+        assert_eq!(ids(&commits), vec!["c3", "s", "c2", "c1"]);
+    }
+
+    #[test]
+    fn stash_placement_ignores_rebased_author_dates() {
+        // Regression: the list is ordered by *commit* date; a rebased commit
+        // keeps an old author date. Comparing author dates would misplace the
+        // stash above/below rebased commits.
+        // c2 was rebased: author ts 100 (old), committer ts 400 (new).
+        let mut commits = vec![commit("c2", 100, 400), commit("c1", 150, 150)];
+        // Stash from t=300: newer than c1, older than c2's *commit* date.
+        inject_stashes(&mut commits, vec![stash_entry("s", 300)]);
+        assert_eq!(ids(&commits), vec!["c2", "s", "c1"]);
+    }
+
+    #[test]
+    fn stash_older_than_window_appends_at_end() {
+        let mut commits = vec![commit("c2", 200, 200), commit("c1", 100, 100)];
+        inject_stashes(&mut commits, vec![stash_entry("s", 50)]);
+        assert_eq!(ids(&commits), vec!["c2", "c1", "s"]);
+    }
+
+    #[test]
+    fn newer_stash_stays_above_older_on_equal_timestamps() {
+        // `git stash list` is most-recent first; equal timestamps must keep
+        // stash@{0} highest.
+        let mut commits = vec![commit("c1", 100, 100)];
+        inject_stashes(
+            &mut commits,
+            vec![stash_entry("s0", 200), stash_entry("s1", 200)],
+        );
+        assert_eq!(ids(&commits), vec!["s0", "s1", "c1"]);
+    }
+
+    #[test]
+    fn switch_error_dirty_tree_is_classified() {
+        let stderr = "error: Your local changes to the following files would be overwritten by checkout:\n\tsrc/main.rs\nPlease commit your changes or stash them before you switch branches.\nAborting";
+        match classify_switch_error(1, stderr) {
+            GitError::WouldOverwriteLocalChanges(msg) => {
+                assert!(msg.contains("would be overwritten"));
+            }
+            other => panic!("expected WouldOverwriteLocalChanges, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn switch_error_unknown_ref_is_ref_not_found() {
+        let stderr = "fatal: invalid reference: no-such-branch";
+        assert!(matches!(
+            classify_switch_error(128, stderr),
+            GitError::RefNotFound(_)
+        ));
+    }
+
+    #[test]
+    fn switch_error_other_is_command_failed() {
+        let stderr = "fatal: a branch named 'x' already exists";
+        assert!(matches!(
+            classify_switch_error(128, stderr),
+            GitError::CommandFailed { exit_code: 128, .. }
+        ));
+    }
+
+    #[test]
+    fn append_note_preserves_kind_and_both_messages() {
+        let e = GitError::CommandFailed {
+            exit_code: 1,
+            stderr: "switch failed".into(),
+        };
+        match append_error_note(e, "note about the stash") {
+            GitError::CommandFailed { exit_code, stderr } => {
+                assert_eq!(exit_code, 1);
+                assert!(stderr.contains("switch failed"));
+                assert!(stderr.contains("note about the stash"));
+            }
+            other => panic!("kind changed: {other:?}"),
+        }
+    }
 
     fn push_opts(set_upstream: bool, force_with_lease: bool) -> PushOptions {
         PushOptions {

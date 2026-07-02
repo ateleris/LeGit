@@ -35,12 +35,12 @@ pub async fn repo_create_stash(
 pub async fn repo_apply_stash(
     state: tauri::State<'_, AppState>,
     repo_id: String,
-    selector: String,
+    stash_sha: String,
 ) -> Result<StashApplyOutcome, AppError> {
     let session = state.get_session(&repo_id).await?;
     session
         .backend
-        .apply_stash(&selector)
+        .apply_stash(&stash_sha)
         .await
         .map_err(AppError::Git)
 }
@@ -50,12 +50,12 @@ pub async fn repo_apply_stash(
 pub async fn repo_pop_stash(
     state: tauri::State<'_, AppState>,
     repo_id: String,
-    selector: String,
+    stash_sha: String,
 ) -> Result<StashApplyOutcome, AppError> {
     let session = state.get_session(&repo_id).await?;
     session
         .backend
-        .pop_stash(&selector)
+        .pop_stash(&stash_sha)
         .await
         .map_err(AppError::Git)
 }
@@ -65,12 +65,12 @@ pub async fn repo_pop_stash(
 pub async fn repo_drop_stash(
     state: tauri::State<'_, AppState>,
     repo_id: String,
-    selector: String,
+    stash_sha: String,
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
     session
         .backend
-        .drop_stash(&selector)
+        .drop_stash(&stash_sha)
         .await
         .map_err(AppError::Git)
 }
@@ -80,13 +80,13 @@ pub async fn repo_drop_stash(
 pub async fn repo_rename_stash(
     state: tauri::State<'_, AppState>,
     repo_id: String,
-    selector: String,
+    stash_sha: String,
     message: String,
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
     session
         .backend
-        .rename_stash(&selector, &message)
+        .rename_stash(&stash_sha, &message)
         .await
         .map_err(AppError::Git)
 }

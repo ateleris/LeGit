@@ -4,11 +4,16 @@ import { BranchIcon, RemoteIcon, StashIcon, TagIcon } from "../../../icons";
 import type { LaneLock, RefDecoration } from "../../../lib/types";
 import { usePanelContextMenu } from "../menu/PanelContextMenu";
 import { LaneLockSection } from "../menu/LaneLockSection";
-import { MenuItem, Separator, SectionLabel } from "../menu/primitives";
+import { Separator } from "../menu/primitives";
+import { StashMenuSection } from "../menu/StashMenuSection";
+import { BranchMenuSection, RemoteBranchMenuSection } from "../menu/BranchMenuSection";
+import { InlineRenameInput } from "./InlineRenameInput";
 import { buildChips, computeVisibleCount } from "./refChips";
 import type { ChipDescriptor } from "./refChips";
 
 interface RefsCellProps {
+  /** The row's commit id. For a stash row this is the stash's commit SHA. */
+  commitId: string;
   decorations: RefDecoration[];
   /** Current locks for the active repo. */
   locks: LaneLock[];
@@ -18,23 +23,36 @@ interface RefsCellProps {
   upstreamMap: Map<string, string>;
   /** Chip font size in px (user-configurable, shared with the text columns). */
   textSize: number;
+  /**
+   * Short name of the branch being renamed in place — its chip renders as an
+   * input (Enter approves, Esc discards). Branch names are unique, so at most
+   * one chip matches.
+   */
+  renamingBranch?: string | null;
+  onBranchRenameSave?: (oldName: string, newName: string) => void;
+  onBranchRenameCancel?: () => void;
   onBranchCheckout?: (name: string) => void;
   onBranchRename?: (name: string) => void;
   onBranchDelete?: (name: string, force: boolean) => void;
   /** Called when checking out a remote-tracking branch (passes the full remote ref, e.g. `origin/feature-x`). */
   onRemoteCheckout?: (remoteRef: string) => void;
-  /** Stash actions — each receives the reflog selector (e.g. `stash@{0}`). */
-  onStashApply?: (selector: string) => void;
-  onStashPop?: (selector: string) => void;
-  onStashDrop?: (selector: string) => void;
-  onStashRename?: (selector: string) => void;
-  onStashViewDiff?: (selector: string) => void;
+  /**
+   * Stash actions — each receives the stash's commit SHA (the row's commit id;
+   * a stash chip only ever decorates its own stash node). The SHA is stable,
+   * unlike the positional `stash@{N}` selector, so a stale list can never
+   * target the wrong stash. The selector on the chip is display-only.
+   */
+  onStashApply?: (sha: string) => void;
+  onStashPop?: (sha: string) => void;
+  onStashDrop?: (sha: string) => void;
+  onStashRename?: (sha: string) => void;
+  onStashViewDiff?: (sha: string) => void;
 }
 
 const CHIP_GAP = 3;
 
 /** Renders ref decoration chips for a commit row. */
-export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, onBranchCheckout, onBranchRename, onBranchDelete, onRemoteCheckout, onStashApply, onStashPop, onStashDrop, onStashRename, onStashViewDiff }: RefsCellProps) {
+export function RefsCell({ commitId, decorations, locks, repoId, upstreamMap, textSize, renamingBranch, onBranchRenameSave, onBranchRenameCancel, onBranchCheckout, onBranchRename, onBranchDelete, onRemoteCheckout, onStashApply, onStashPop, onStashDrop, onStashRename, onStashViewDiff }: RefsCellProps) {
   const { openMenu, closeMenu } = usePanelContextMenu();
   const [visibleCount, setVisibleCount] = useState(Number.MAX_SAFE_INTEGER);
   const [popover, setPopover] = useState<{ x: number; y: number } | null>(null);
@@ -115,7 +133,10 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, on
   const headOfDec = decorations.find((d) => d.type === "headOf");
   const headOfTarget = headOfDec && headOfDec.type === "headOf" ? headOfDec.value : null;
 
-  const renderChip = (chip: ChipDescriptor, key: React.Key) => {
+  // `forMeasure` renders the plain chip even mid-rename: the invisible
+  // measurement pass must never mount the editing input (a second autoFocus
+  // would steal focus from the real one).
+  const renderChip = (chip: ChipDescriptor, key: React.Key, forMeasure = false) => {
     const refName =
       chip.kind === "branch"
         ? chip.value
@@ -123,24 +144,40 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, on
           ? chip.local
           : null;
 
+    // In-place branch rename: the matching chip becomes an input.
+    if (!forMeasure && renamingBranch != null && refName !== null) {
+      const name = shortBranch(refName);
+      if (name === renamingBranch) {
+        return (
+          <InlineRenameInput
+            key={key}
+            initialValue={name}
+            onSave={(value) => onBranchRenameSave?.(name, value)}
+            onCancel={() => onBranchRenameCancel?.()}
+            title="Enter to save · Esc to cancel"
+            style={{
+              fontSize: textSize,
+              padding: "1px 5px",
+              borderRadius: 10,
+              width: `${Math.min(Math.max(name.length + 4, 12), 28)}ch`,
+              flexShrink: 0,
+            }}
+          />
+        );
+      }
+    }
+
     const buildBranchSection = (): React.ReactNode => {
-      if (
-        chip.kind === "branch" ||
-        chip.kind === "headOf" ||
-        chip.kind === "fusedBranch"
-      ) {
+      if (chip.kind === "branch" || chip.kind === "fusedBranch") {
         const localRef =
           chip.kind === "fusedBranch"
             ? chip.local
             : chip.value;
         const localName = localRef.replace(/^refs\/heads\//, "");
-        const isCurrent =
-          chip.kind === "headOf" ||
-          (chip.kind === "branch" && headOfTarget === localRef) ||
-          (chip.kind === "fusedBranch" && headOfTarget === chip.local);
+        const isCurrent = headOfTarget === localRef;
 
         return (
-          <BranchChipSection
+          <BranchMenuSection
             name={localName}
             isCurrent={isCurrent}
             onCheckout={() => { closeMenu(); onBranchCheckout?.(localName); }}
@@ -152,22 +189,23 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, on
       if (chip.kind === "remote") {
         const remoteName = chip.value.replace(/^refs\/remotes\//, "");
         return (
-          <RemoteChipSection
+          <RemoteBranchMenuSection
             remoteName={remoteName}
             onCheckout={() => { closeMenu(); onRemoteCheckout?.(remoteName); }}
           />
         );
       }
       if (chip.kind === "stash") {
-        const selector = chip.value;
+        // The chip's selector is display-only; actions use the row's commit id
+        // (= the stash SHA — a stash chip only decorates its own stash node).
         return (
-          <StashChipSection
-            selector={selector}
-            onViewDiff={() => { closeMenu(); onStashViewDiff?.(selector); }}
-            onApply={() => { closeMenu(); onStashApply?.(selector); }}
-            onPop={() => { closeMenu(); onStashPop?.(selector); }}
-            onRename={() => { closeMenu(); onStashRename?.(selector); }}
-            onDrop={() => { closeMenu(); onStashDrop?.(selector); }}
+          <StashMenuSection
+            selector={chip.value}
+            onViewDiff={() => { closeMenu(); onStashViewDiff?.(commitId); }}
+            onApply={() => { closeMenu(); onStashApply?.(commitId); }}
+            onPop={() => { closeMenu(); onStashPop?.(commitId); }}
+            onRename={() => { closeMenu(); onStashRename?.(commitId); }}
+            onDrop={() => { closeMenu(); onStashDrop?.(commitId); }}
           />
         );
       }
@@ -188,6 +226,22 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, on
         </>
       ) : undefined;
 
+    // Double-click on a branch label checks it out (no-op on the current
+    // branch); on a remote label it checks out its local tracking branch.
+    const buildDoubleClickCheckout = (): (() => void) | undefined => {
+      if (chip.kind === "branch" || chip.kind === "fusedBranch") {
+        const localRef = chip.kind === "fusedBranch" ? chip.local : chip.value;
+        if (headOfTarget === localRef) return undefined; // already checked out
+        const localName = localRef.replace(/^refs\/heads\//, "");
+        return onBranchCheckout && (() => onBranchCheckout(localName));
+      }
+      if (chip.kind === "remote") {
+        const remoteName = chip.value.replace(/^refs\/remotes\//, "");
+        return onRemoteCheckout && (() => onRemoteCheckout(remoteName));
+      }
+      return undefined;
+    };
+
     return (
       <Chip
         key={key}
@@ -195,6 +249,7 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, on
         headOfTarget={headOfTarget}
         textSize={textSize}
         onContextMenu={(e) => openMenu(e, menuSection)}
+        onDoubleClickAction={buildDoubleClickCheckout()}
       />
     );
   };
@@ -232,7 +287,7 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, on
           pointerEvents: "none",
         }}
       >
-        {chips.map((chip, i) => renderChip(chip, i))}
+        {chips.map((chip, i) => renderChip(chip, i, true))}
         <span style={overflowChipStyle}>+99</span>
       </div>
 
@@ -267,111 +322,6 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, on
 }
 
 // ---------------------------------------------------------------------------
-// Branch / remote chip context-menu sections
-// ---------------------------------------------------------------------------
-
-function BranchChipSection({
-  name,
-  isCurrent,
-  onCheckout,
-  onRename,
-  onDelete,
-}: {
-  name: string;
-  isCurrent: boolean;
-  onCheckout: () => void;
-  onRename: () => void;
-  onDelete: (force: boolean) => void;
-}) {
-  const [confirming, setConfirming] = useState<"safe" | "force" | null>(null);
-
-  if (confirming) {
-    return (
-      <>
-        <SectionLabel>Delete branch '{name}'?</SectionLabel>
-        <MenuItem
-          onClick={() => {
-            onDelete(confirming === "force");
-            setConfirming(null);
-          }}
-        >
-          Confirm
-        </MenuItem>
-        <MenuItem onClick={() => setConfirming(null)}>Cancel</MenuItem>
-      </>
-    );
-  }
-
-  return (
-    <>
-      <SectionLabel>{name}</SectionLabel>
-      <MenuItem onClick={onCheckout} disabled={isCurrent}>
-        {isCurrent ? "Checkout branch (current)" : "Checkout branch"}
-      </MenuItem>
-      <MenuItem onClick={onRename}>Rename branch…</MenuItem>
-      <Separator />
-      <MenuItem onClick={() => setConfirming("safe")}>Delete branch…</MenuItem>
-      <MenuItem onClick={() => setConfirming("force")}>Force delete branch…</MenuItem>
-    </>
-  );
-}
-
-function RemoteChipSection({
-  remoteName,
-  onCheckout,
-}: {
-  remoteName: string;
-  onCheckout: () => void;
-}) {
-  return (
-    <>
-      <SectionLabel>{remoteName}</SectionLabel>
-      <MenuItem onClick={onCheckout}>Checkout branch</MenuItem>
-    </>
-  );
-}
-
-function StashChipSection({
-  selector,
-  onViewDiff,
-  onApply,
-  onPop,
-  onRename,
-  onDrop,
-}: {
-  selector: string;
-  onViewDiff: () => void;
-  onApply: () => void;
-  onPop: () => void;
-  onRename: () => void;
-  onDrop: () => void;
-}) {
-  const [confirming, setConfirming] = useState(false);
-
-  if (confirming) {
-    return (
-      <>
-        <SectionLabel>Drop {selector}?</SectionLabel>
-        <MenuItem onClick={() => { onDrop(); setConfirming(false); }}>Confirm</MenuItem>
-        <MenuItem onClick={() => setConfirming(false)}>Cancel</MenuItem>
-      </>
-    );
-  }
-
-  return (
-    <>
-      <SectionLabel>{selector}</SectionLabel>
-      <MenuItem onClick={onViewDiff}>View stash diff</MenuItem>
-      <MenuItem onClick={onApply}>Apply stash</MenuItem>
-      <MenuItem onClick={onPop}>Pop stash</MenuItem>
-      <MenuItem onClick={onRename}>Rename stash…</MenuItem>
-      <Separator />
-      <MenuItem onClick={() => setConfirming(true)}>Drop stash…</MenuItem>
-    </>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Chip
 // ---------------------------------------------------------------------------
 
@@ -382,10 +332,39 @@ interface ChipProps {
   textSize: number;
   /** Called on right-click; the unified menu handles preventDefault. */
   onContextMenu: (e: React.MouseEvent) => void;
+  /**
+   * Checkout action fired on double-click (branch / fused / remote chips).
+   * Absent for chip kinds that have nothing to check out — and for the
+   * currently checked-out branch, where it would be a no-op.
+   */
+  onDoubleClickAction?: () => void;
 }
 
 const shortBranch = (ref: string) => ref.replace(/^refs\/heads\//, "");
 const shortRemote = (ref: string) => ref.replace(/^refs\/remotes\//, "");
+
+/**
+ * The checked-out marker: a filled dot at the left edge of the current
+ * branch's chip (the common convention in git GUIs). Inherits the chip's
+ * foreground colour; sized in em so it tracks the configured text size.
+ */
+function CurrentDot() {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        // Same box as the icons next to it (they render at 1em) so the
+        // checked-out marker is unmissable.
+        width: "1em",
+        height: "1em",
+        borderRadius: "50%",
+        background: "currentColor",
+        display: "inline-block",
+        flexShrink: 0,
+      }}
+    />
+  );
+}
 
 /**
  * The remote-tracking indicator shown on a fused chip. Inherits the chip's
@@ -400,8 +379,18 @@ function RemoteIndicator({ remoteRef }: { remoteRef: string }) {
   );
 }
 
-function Chip({ chip, headOfTarget, textSize, onContextMenu }: ChipProps) {
+function Chip({ chip, headOfTarget, textSize, onContextMenu, onDoubleClickAction }: ChipProps) {
   const handleContextMenu = onContextMenu;
+  const handleDoubleClick = onDoubleClickAction
+    ? (e: React.MouseEvent) => {
+        // Don't let the double-click bubble as row clicks (selection / details
+        // already happened on the first click; a future row dblclick handler
+        // must not also fire).
+        e.stopPropagation();
+        onDoubleClickAction();
+      }
+    : undefined;
+  const checkoutHint = onDoubleClickAction ? " — double-click to checkout" : "";
 
   switch (chip.kind) {
     case "head":
@@ -415,26 +404,16 @@ function Chip({ chip, headOfTarget, textSize, onContextMenu }: ChipProps) {
         </span>
       );
 
-    case "headOf":
-      // Render a HEAD → indicator; the branch chip that follows shows emphasis.
-      return (
-        <span
-          onContextMenu={handleContextMenu}
-          style={chipStyle({ variant: "head-indicator", textSize })}
-          title={`HEAD → ${chip.value}`}
-        >
-          HEAD →
-        </span>
-      );
-
     case "branch": {
       const isCheckedOut = headOfTarget !== null && chip.value === headOfTarget;
       return (
         <span
           onContextMenu={handleContextMenu}
+          onDoubleClick={handleDoubleClick}
           style={chipStyle({ variant: "branch", isCheckedOut, textSize })}
-          title={chip.value}
+          title={`${chip.value}${isCheckedOut ? " — checked out" : ""}${checkoutHint}`}
         >
+          {isCheckedOut && <CurrentDot />}
           <BranchIcon /> {shortBranch(chip.value)}
         </span>
       );
@@ -447,9 +426,11 @@ function Chip({ chip, headOfTarget, textSize, onContextMenu }: ChipProps) {
       return (
         <span
           onContextMenu={handleContextMenu}
+          onDoubleClick={handleDoubleClick}
           style={chipStyle({ variant: "branch", isCheckedOut, textSize })}
-          title={`${shortBranch(chip.local)} → ${shortRemote(chip.remote)}`}
+          title={`${shortBranch(chip.local)} → ${shortRemote(chip.remote)}${isCheckedOut ? " — checked out" : ""}${checkoutHint}`}
         >
+          {isCheckedOut && <CurrentDot />}
           <BranchIcon /> <RemoteIndicator remoteRef={chip.remote} /> {shortBranch(chip.local)}
         </span>
       );
@@ -459,8 +440,9 @@ function Chip({ chip, headOfTarget, textSize, onContextMenu }: ChipProps) {
       return (
         <span
           onContextMenu={handleContextMenu}
+          onDoubleClick={handleDoubleClick}
           style={chipStyle({ variant: "remote", textSize })}
-          title={chip.value}
+          title={`${chip.value}${checkoutHint}`}
         >
           <RemoteIcon /> {shortRemote(chip.value)}
         </span>
@@ -599,9 +581,9 @@ const BASE_CHIP: React.CSSProperties = {
 /** The "+N" chip collapsing refs that don't fit on the row's single line. */
 const OVERFLOW_CHIP: React.CSSProperties = {
   ...BASE_CHIP,
-  background: "rgba(255, 255, 255, 0.08)",
-  border: "1px solid rgba(255, 255, 255, 0.25)",
-  color: "var(--subtle-fg, #aaa)",
+  background: "var(--ref-overflow-bg, rgba(255, 255, 255, 0.08))",
+  border: "1px solid var(--ref-overflow-border, rgba(255, 255, 255, 0.25))",
+  color: "var(--ref-overflow-fg, #aaa)",
   cursor: "pointer",
   flexShrink: 0,
 };
@@ -612,7 +594,6 @@ type ChipVariant =
   | "tag"
   | "stash"
   | "head"
-  | "head-indicator"
   | "other";
 
 // Chip colours are theme tokens (see src/theme/tokens.ts, group "Refs"). The
@@ -678,22 +659,12 @@ function chipStyle({
         fontWeight: 600,
       };
 
-    case "head-indicator":
-      return {
-        ...base,
-        background: "transparent",
-        border: "none",
-        padding: "1px 2px",
-        color: "var(--ref-head-fg, rgb(240, 130, 130))",
-        fontWeight: 600,
-      };
-
     case "other":
       return {
         ...base,
-        background: "rgba(150, 150, 150, 0.15)",
-        border: "1px solid rgba(150, 150, 150, 0.35)",
-        color: "var(--subtle-fg, rgb(160, 160, 160))",
+        background: "var(--ref-other-bg, rgba(150, 150, 150, 0.15))",
+        border: "1px solid var(--ref-other-border, rgba(150, 150, 150, 0.35))",
+        color: "var(--ref-other-fg, rgb(160, 160, 160))",
       };
   }
 }

@@ -57,8 +57,10 @@ export const ALL_COLUMN_IDS: readonly ColumnId[] = [
 /**
  * Columns that are *not* user-resizable.
  * - Graph: width is dynamic, driven by the number of visible lanes.
+ * - Subject: always the elastic "1fr" filler — a resize handle would have no
+ *   effect (the grid ignores a px width for it).
  */
-export const NON_RESIZABLE: ColumnId[] = ["graph"];
+export const NON_RESIZABLE: ColumnId[] = ["graph", "subject"];
 
 /**
  * Columns that cannot be hidden.
@@ -68,3 +70,10 @@ export const NON_HIDEABLE: ColumnId[] = ["subject"];
 
 /** Minimum pixel width when resizing. */
 export const MIN_COLUMN_WIDTH = 40;
+
+/**
+ * Horizontal gap between grid columns (header and rows share it). The header
+ * resize handles position themselves relative to this: a left-edge handle
+ * must reach across the gap to sit on the previous column's separator line.
+ */
+export const COLUMN_GAP = 8;
