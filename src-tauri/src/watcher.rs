@@ -42,7 +42,7 @@ const DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// A react-query data domain affected by a filesystem change. Mirrors the
 /// query-key suffixes used by the frontend
-/// (`[repoId, "status"|"log"|"branches"|"stashes"]`).
+/// (`[repoId, "status"|"log"|"branches"|"stashes"|"tags"]`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ChangeDomain {
@@ -50,6 +50,7 @@ pub enum ChangeDomain {
     Log,
     Branches,
     Stashes,
+    Tags,
 }
 
 /// Payload for [`REPO_CHANGED_EVENT`]: which repo changed and in which domains.
@@ -197,15 +198,19 @@ fn classify_git(rel: &Path, out: &mut BTreeSet<ChangeDomain>) {
         "index" => {
             out.insert(ChangeDomain::Status);
         }
-        // Ref/HEAD moves → commit graph + branch list. `refs/stash` (and
-        // `packed-refs`, which may hold it after a pack-refs) additionally
-        // drives the stash list — external `git stash` ops refresh live.
+        // Ref/HEAD moves → commit graph + branch list. `refs/stash` and
+        // `refs/tags` (and `packed-refs`, which may hold either after a
+        // pack-refs) additionally drive their own lists — external `git
+        // stash`/`git tag` ops refresh live.
         "HEAD" | "refs" | "packed-refs" | "MERGE_HEAD" | "ORIG_HEAD" | "FETCH_HEAD"
         | "CHERRY_PICK_HEAD" | "REVERT_HEAD" => {
             out.insert(ChangeDomain::Log);
             out.insert(ChangeDomain::Branches);
             if first == "packed-refs" || rel.starts_with("refs/stash") {
                 out.insert(ChangeDomain::Stashes);
+            }
+            if first == "packed-refs" || rel.starts_with("refs/tags") {
+                out.insert(ChangeDomain::Tags);
             }
         }
         // In-progress merge/rebase state affects all three (conflicts + refs).
@@ -288,13 +293,26 @@ mod tests {
     }
 
     #[test]
-    fn packed_refs_change_includes_stashes_domain() {
-        // `git pack-refs` can move refs/stash into packed-refs.
+    fn packed_refs_change_includes_stashes_and_tags_domains() {
+        // `git pack-refs` can move refs/stash and refs/tags into packed-refs.
         let wt = Path::new("/repo");
         let gd = Path::new("/repo/.git");
         let mut out = BTreeSet::new();
         classify(Path::new("/repo/.git/packed-refs"), wt, gd, &Gitignore::empty(), &mut out);
         assert!(out.contains(&ChangeDomain::Stashes), "got {out:?}");
+        assert!(out.contains(&ChangeDomain::Tags), "got {out:?}");
+    }
+
+    #[test]
+    fn tag_ref_change_includes_tags_domain() {
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        let mut out = BTreeSet::new();
+        classify(Path::new("/repo/.git/refs/tags/v1.0"), wt, gd, &Gitignore::empty(), &mut out);
+        assert!(out.contains(&ChangeDomain::Tags), "got {out:?}");
+        let mut branch = BTreeSet::new();
+        classify(Path::new("/repo/.git/refs/heads/main"), wt, gd, &Gitignore::empty(), &mut branch);
+        assert!(!branch.contains(&ChangeDomain::Tags), "got {branch:?}");
     }
 
     #[test]

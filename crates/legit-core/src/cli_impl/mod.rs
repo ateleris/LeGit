@@ -10,8 +10,9 @@ use crate::runner::{GitRunner, OperationId};
 use crate::types::{
     Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, Diff, DiffEntry,
     DiffSource, FetchOptions, FileState, FileStatus, HunkOp, LogOptions, PullOptions, PullStrategy,
-    PushOptions, RefDecoration, RefSelector, Remote, SignMode, StashApplyOutcome, StashEntry,
-    StashOutcome, SubmoduleInfo, SwitchDirtyBehavior, SwitchOutcome, TrackingStatus,
+    PushOptions, RefDecoration, RefSelector, Remote, RemoteTag, SignMode, StashApplyOutcome,
+    StashEntry, StashOutcome, SubmoduleInfo, SwitchDirtyBehavior, SwitchOutcome, TagInfo,
+    TrackingStatus,
 };
 
 /// Git's well-known empty-tree object id, used as the "before" side when
@@ -1110,6 +1111,89 @@ impl GitBackend for GitCliBackend {
 
     async fn rename_branch(&self, old_name: &str, new_name: &str) -> Result<(), GitError> {
         self.run_simple(&["branch", "-m", old_name, new_name]).await
+    }
+
+    async fn tags(&self) -> Result<Vec<TagInfo>, GitError> {
+        let runner = self.runner().await;
+        let fmt_arg = format!("--format={}", parsers::tags::TAGS_FORMAT);
+        let output = runner
+            .run(&["for-each-ref", &fmt_arg, "refs/tags"])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !output.success {
+            return Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr,
+            });
+        }
+        Ok(parsers::tags::parse_tags(&output.stdout))
+    }
+
+    async fn create_tag(
+        &self,
+        name: &str,
+        target: Option<&str>,
+        message: Option<&str>,
+    ) -> Result<(), GitError> {
+        let mut args = vec!["tag"];
+        if let Some(msg) = message.filter(|m| !m.trim().is_empty()) {
+            args.push("-a");
+            args.push(name);
+            args.push("-m");
+            args.push(msg);
+        } else {
+            args.push(name);
+        }
+        if let Some(t) = target {
+            args.push(t);
+        }
+        self.run_simple(&args).await
+    }
+
+    async fn delete_tag(&self, name: &str) -> Result<(), GitError> {
+        self.run_simple(&["tag", "-d", name]).await
+    }
+
+    async fn push_tag(&self, remote: &str, name: &str, op_id: OperationId) -> Result<(), GitError> {
+        let runner = self.runner().await;
+        // The full refspec avoids any ambiguity with a same-named branch.
+        let args = vec![
+            "push".to_string(),
+            remote.to_string(),
+            format!("refs/tags/{name}"),
+        ];
+        self.run_remote(&runner, &args, op_id).await
+    }
+
+    async fn delete_remote_tag(
+        &self,
+        remote: &str,
+        name: &str,
+        op_id: OperationId,
+    ) -> Result<(), GitError> {
+        let runner = self.runner().await;
+        let args = vec![
+            "push".to_string(),
+            remote.to_string(),
+            "--delete".to_string(),
+            format!("refs/tags/{name}"),
+        ];
+        self.run_remote(&runner, &args, op_id).await
+    }
+
+    async fn remote_tags(&self, remote: &str, op_id: OperationId) -> Result<Vec<RemoteTag>, GitError> {
+        let runner = self.runner().await;
+        let output = runner
+            .run_with_op(&["ls-remote", "--tags", remote], op_id)
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !output.success {
+            return Err(classify_remote_error(
+                output.exit_code.unwrap_or(-1),
+                &output.stderr,
+            ));
+        }
+        Ok(parsers::tags::parse_remote_tags(&output.stdout))
     }
 
     async fn stashes(&self) -> Result<Vec<StashEntry>, GitError> {

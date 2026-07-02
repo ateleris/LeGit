@@ -11,6 +11,7 @@ pub mod remote;
 pub mod repo;
 pub mod signing;
 pub mod stashes;
+pub mod tags;
 pub mod working;
 
 pub use branches::*;
@@ -25,4 +26,5 @@ pub use remote::*;
 pub use repo::*;
 pub use signing::*;
 pub use stashes::*;
+pub use tags::*;
 pub use working::*;

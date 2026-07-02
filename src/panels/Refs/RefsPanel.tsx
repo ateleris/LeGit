@@ -16,6 +16,7 @@ import { useSettingsStore, UI_FONT_SIZE_DEFAULT } from "../../store/settings";
 import { BranchesSection } from "../Branches/BranchesPanel";
 import { RemotesSection } from "../Remotes/RemotesPanel";
 import { StashesSection } from "../Stashes/StashesPanel";
+import { TagsSection } from "../Tags/TagsSection";
 
 const LAYOUT_KEY = "legit.refs-paneview";
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -31,12 +32,14 @@ function persistLayout(data: unknown) {
 const DEFAULT_PANES = [
   { id: "branches", title: "Branches", isExpanded: true },
   { id: "remotes", title: "Remotes", isExpanded: false },
+  { id: "tags", title: "Tags", isExpanded: false },
   { id: "stashes", title: "Stashes", isExpanded: true },
 ] as const;
 
 const PANE_COMPONENTS: Record<string, FunctionComponent<IPaneviewPanelProps>> = {
   branches: () => <BranchesSection />,
   remotes: () => <RemotesSection />,
+  tags: () => <TagsSection />,
   stashes: () => <StashesSection />,
 };
 
@@ -139,6 +142,21 @@ export function RefsPanel() {
           isExpanded: p.isExpanded,
           headerSize,
         });
+      }
+    } else {
+      // Layouts saved before a section existed (e.g. Tags) restore without
+      // it — append any missing default panes so new sections always appear.
+      for (const p of DEFAULT_PANES) {
+        if (!api.getPanel(p.id)) {
+          api.addPanel({
+            id: p.id,
+            component: p.id,
+            headerComponent: "default",
+            title: p.title,
+            isExpanded: p.isExpanded,
+            headerSize,
+          });
+        }
       }
     }
 

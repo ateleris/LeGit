@@ -307,6 +307,28 @@ pub enum SwitchDirtyBehavior {
     StashAndKeep,
 }
 
+/// A local tag from `git for-each-ref refs/tags`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct TagInfo {
+    /// Short tag name (no `refs/tags/` prefix).
+    pub name: String,
+    /// The commit the tag points at (peeled for annotated tags).
+    pub target_sha: CommitId,
+    /// Annotated (tag object) vs lightweight (plain ref to a commit).
+    pub annotated: bool,
+    /// Annotation subject line (annotated tags only).
+    pub message: Option<String>,
+}
+
+/// A tag as it exists on a remote (`git ls-remote --tags`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct RemoteTag {
+    /// Short tag name (no `refs/tags/` prefix).
+    pub name: String,
+    /// The commit the remote tag points at (peeled when available).
+    pub target_sha: CommitId,
+}
+
 /// A single entry from `git stash list`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct StashEntry {

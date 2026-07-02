@@ -13,3 +13,4 @@ pub mod diff;
 pub mod tracking;
 pub mod remotes;
 pub mod stash;
+pub mod tags;

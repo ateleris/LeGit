@@ -241,7 +241,17 @@ Cross-platform care: the shim must be invocable by Git for Windows' shell.
 - **Search**: commits (message/author), file paths, and content (`git log -S`/`-G`).
 
 ### 8. Tags
-- create (lightweight + annotated), delete, push tags.
+- ~~create (lightweight + annotated), delete, push tags.~~ Done — Tags pane in
+  the Refs panel (list with pushed indicator, create at HEAD with optional
+  annotation message, push, delete), plus commit-row context-menu entries
+  ("Create tag here…" with the inline chip-input pattern, per-tag push/delete)
+  and a remote indicator on pushed tag chips (`pushedTagNames`: same name AND
+  same target on the remote, via a cached `ls-remote --tags`). Remote-side
+  deletion is a separate deliberate action (GitKraken-style): "Delete tag
+  from <remote>" appears on pushed tags in the menus and the Tags pane.
+  Remaining: choosing a remote other than origin/first, and creating
+  annotated tags from the graph context menu (currently lightweight only
+  there).
 
 ### 9. File-level
 - Restore/checkout a file to a specific revision; open a file at a revision.

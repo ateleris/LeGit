@@ -35,6 +35,8 @@ import type {
   SwitchOutcome,
   SwitchDirtyBehavior,
   StashEntry,
+  TagInfo,
+  RemoteTag,
   StashOutcome,
   StashApplyOutcome,
 } from "./types";
@@ -319,6 +321,35 @@ export const repoCheckoutRemoteBranch = (repoId: string, remoteRef: string) =>
 
 export const repoCheckoutCommit = (repoId: string, sha: string) =>
   invoke<SwitchOutcome>("repo_checkout_commit", { repoId, sha });
+
+// --- tags ---
+
+export const repoTags = (repoId: string) => invoke<TagInfo[]>("repo_tags", { repoId });
+
+export const repoCreateTag = (
+  repoId: string,
+  name: string,
+  target: string | undefined,
+  message: string | undefined,
+) =>
+  invoke<void>("repo_create_tag", {
+    repoId,
+    name,
+    target: target ?? null,
+    message: message ?? null,
+  });
+
+export const repoDeleteTag = (repoId: string, name: string) =>
+  invoke<void>("repo_delete_tag", { repoId, name });
+
+export const repoPushTag = (repoId: string, remote: string, name: string, opId: string) =>
+  invoke<void>("repo_push_tag", { repoId, remote, name, opId });
+
+export const repoDeleteRemoteTag = (repoId: string, remote: string, name: string, opId: string) =>
+  invoke<void>("repo_delete_remote_tag", { repoId, remote, name, opId });
+
+export const repoRemoteTags = (repoId: string, remote: string, opId: string) =>
+  invoke<RemoteTag[]>("repo_remote_tags", { repoId, remote, opId });
 
 // --- stashes ---
 

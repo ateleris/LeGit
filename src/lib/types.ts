@@ -76,9 +76,9 @@ export interface ConsoleExecHandle {
 }
 
 /** Query domain affected by a filesystem change. Matches the react-query key
- *  suffixes `[repoId, "status"|"log"|"branches"|"stashes"]` and the Rust
- *  `ChangeDomain` enum in `src-tauri/src/watcher.rs`. */
-export type ChangeDomain = "status" | "log" | "branches" | "stashes";
+ *  suffixes `[repoId, "status"|"log"|"branches"|"stashes"|"tags"]` and the
+ *  Rust `ChangeDomain` enum in `src-tauri/src/watcher.rs`. */
+export type ChangeDomain = "status" | "log" | "branches" | "stashes" | "tags";
 
 /** Payload of the `legit://repo-changed` event emitted by the FS watcher. */
 export interface RepoChangedPayload {
@@ -423,6 +423,24 @@ export type SwitchOutcome =
   | { kind: "stash_pop_failed"; message: string };
 
 export type SwitchDirtyBehavior = "try_directly" | "auto_stash" | "stash_and_keep";
+
+/** A local tag (matches legit-core `TagInfo`). */
+export interface TagInfo {
+  /** Short tag name (no refs/tags/ prefix). */
+  name: string;
+  /** The commit the tag points at (peeled for annotated tags). */
+  target_sha: CommitId;
+  /** Annotated (tag object) vs lightweight. */
+  annotated: boolean;
+  /** Annotation subject line (annotated tags only). */
+  message: string | null;
+}
+
+/** A tag as it exists on a remote (matches legit-core `RemoteTag`). */
+export interface RemoteTag {
+  name: string;
+  target_sha: CommitId;
+}
 
 /** A single entry from `git stash list` (matches legit-core `StashEntry`). */
 export interface StashEntry {

@@ -11,8 +11,8 @@ use crate::runner::OperationId;
 use crate::types::{
     Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, Diff, DiffEntry,
     DiffSource, FetchOptions, FileStatus, HunkOp, LogOptions, PullOptions, PushOptions, Remote,
-    StashApplyOutcome, StashEntry, StashOutcome, SubmoduleInfo, SwitchDirtyBehavior, SwitchOutcome,
-    TrackingStatus,
+    RemoteTag, StashApplyOutcome, StashEntry, StashOutcome, SubmoduleInfo, SwitchDirtyBehavior,
+    SwitchOutcome, TagInfo, TrackingStatus,
 };
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
@@ -156,6 +156,32 @@ pub trait GitBackend: Send + Sync {
     /// Check out a commit by SHA, entering detached HEAD.
     /// Respects `behavior` for dirty-tree handling identically to `switch_branch`.
     async fn checkout_commit(&self, sha: &str, behavior: SwitchDirtyBehavior) -> Result<SwitchOutcome, GitError>;
+
+    /// List local tags (`git for-each-ref refs/tags`), with annotated tags
+    /// peeled to the commit they tag.
+    async fn tags(&self) -> Result<Vec<TagInfo>, GitError>;
+
+    /// Create a tag at `target` (a commit-ish; `None` = HEAD). With a
+    /// `message` the tag is annotated (`-a -m`), otherwise lightweight.
+    async fn create_tag(&self, name: &str, target: Option<&str>, message: Option<&str>) -> Result<(), GitError>;
+
+    /// Delete a local tag (`git tag -d`). Does not touch remotes.
+    async fn delete_tag(&self, name: &str) -> Result<(), GitError>;
+
+    /// Push a single tag to `remote` (`git push <remote> refs/tags/<name>`).
+    /// Network op: cancellable, auth/rejection classified.
+    async fn push_tag(&self, remote: &str, name: &str, op_id: OperationId) -> Result<(), GitError>;
+
+    /// Delete a tag on `remote` (`git push <remote> --delete refs/tags/<name>`).
+    /// The local tag is untouched — local and remote deletion are separate,
+    /// deliberate actions (GitKraken-style). Network op: cancellable,
+    /// auth/rejection classified.
+    async fn delete_remote_tag(&self, remote: &str, name: &str, op_id: OperationId) -> Result<(), GitError>;
+
+    /// List the tags that exist on `remote` (`git ls-remote --tags`), peeled
+    /// to the tagged commits. Network op: cancellable, auth classified. Drives
+    /// the "pushed" indicator on tag chips/rows.
+    async fn remote_tags(&self, remote: &str, op_id: OperationId) -> Result<Vec<RemoteTag>, GitError>;
 
     /// List the stash entries (`git stash list`), most recent first.
     async fn stashes(&self) -> Result<Vec<StashEntry>, GitError>;

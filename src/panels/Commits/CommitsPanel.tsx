@@ -39,10 +39,17 @@ import {
   repoPopStash,
   repoDropStash,
   repoRenameStash,
+  repoTags,
+  repoCreateTag,
+  repoDeleteTag,
+  repoPushTag,
+  repoDeleteRemoteTag,
+  repoRemoteTags,
 } from "../../lib/commands";
+import { pushedTagNames, pickTagRemote } from "../../lib/tags";
 import { openStashDiff } from "../Stashes/StashesPanel";
 import { notifySwitchOutcome, notifySwitchError } from "../../lib/switchFeedback";
-import type { Branch, Commit, CommitId, FileStatus, PushOptions, Remote, Signature, TrackingStatus } from "../../lib/types";
+import type { Branch, Commit, CommitId, FileStatus, PushOptions, Remote, RemoteTag, Signature, TagInfo, TrackingStatus } from "../../lib/types";
 import { formatAppError, gitErrorKind } from "../../lib/types";
 import { notify } from "../../store/notifications";
 import { BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon } from "../../icons";
@@ -62,6 +69,7 @@ import { PanelContextMenuProvider, type BaselineEntry } from "./menu/PanelContex
 import { MenuItem, SectionLabel, Separator } from "./menu/primitives";
 import { StashMenuSection } from "./menu/StashMenuSection";
 import { BranchMenuSection, RemoteBranchMenuSection } from "./menu/BranchMenuSection";
+import { TagMenuSection } from "./menu/TagMenuSection";
 import { branchesAt } from "./cells/refChips";
 import {
   COLUMN_GAP,
@@ -167,6 +175,11 @@ export function CommitsPanel() {
     { rowId: CommitId; startPoint?: string } | null
   >(null);
 
+  // Create-new-tag mode (row context menu): same pattern as branchCreation;
+  // the input creates a lightweight tag at the clicked commit. Annotated tags
+  // (with a message) are created via the Refs panel's Tags section.
+  const [tagCreation, setTagCreation] = useState<{ rowId: CommitId } | null>(null);
+
   // Column ordering, hiding, and widths — read from global settings on mount
   // and persisted (debounced) via `save_column_preferences`.
   const { state: colState, setOrder, setHidden, setWidth } = useColumnState();
@@ -185,6 +198,7 @@ export function CommitsPanel() {
     setSubjectEdit(null);
     setRenamingBranch(null);
     setBranchCreation(null);
+    setTagCreation(null);
   }, [repo?.id]);
 
   // Raw lock list from the store; used by the Refs context menu UI.
@@ -380,6 +394,89 @@ export function CommitsPanel() {
     }
   }, [repo, subjectEdit, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Tags: the local list (drives the row menus), the configured remotes (to
+  // pick the tag-push target), and the remote's tags (drives the "pushed"
+  // indicator). ls-remote is a network call — long staleTime, no retry.
+  const { data: tags = [] } = useQuery<TagInfo[]>({
+    queryKey: [repo?.id, "tags"],
+    queryFn: () => repoTags(repo!.id),
+    enabled: !!repo,
+    staleTime: 5_000,
+  });
+  const { data: remotesList = [] } = useQuery<Remote[]>({
+    queryKey: [repo?.id, "remotes"],
+    queryFn: () => repoListRemotes(repo!.id),
+    enabled: !!repo,
+    staleTime: 5_000,
+  });
+  const tagRemote = useMemo(() => pickTagRemote(remotesList), [remotesList]);
+  const { data: remoteTags = [] } = useQuery<RemoteTag[]>({
+    queryKey: [repo?.id, "remote-tags", tagRemote],
+    queryFn: () => repoRemoteTags(repo!.id, tagRemote!, crypto.randomUUID()),
+    enabled: !!repo && tagRemote !== null,
+    staleTime: 300_000,
+    retry: false,
+  });
+  const pushedTags = useMemo(() => pushedTagNames(tags, remoteTags), [tags, remoteTags]);
+
+  const TAG_DOMAINS = ["tags", "log"] as const;
+
+  const handleTagPush = useCallback(async (name: string) => {
+    if (!repo || !tagRemote) return;
+    try {
+      await repoPushTag(repo.id, tagRemote, name, crypto.randomUUID());
+      notify.success(`Pushed tag '${name}' to ${tagRemote}`);
+      invalidateRepoDomains(queryClient, repo.id, ["remote-tags"]);
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
+  }, [repo, tagRemote, queryClient]);
+
+  const handleTagDelete = useCallback(async (name: string) => {
+    if (!repo) return;
+    try {
+      await repoDeleteTag(repo.id, name);
+      invalidateRepoDomains(queryClient, repo.id, TAG_DOMAINS);
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
+  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Deletes the tag ON THE REMOTE only — local/remote deletion are separate,
+  // deliberate actions (GitKraken-style).
+  const handleTagDeleteRemote = useCallback(async (name: string) => {
+    if (!repo || !tagRemote) return;
+    try {
+      await repoDeleteRemoteTag(repo.id, tagRemote, name, crypto.randomUUID());
+      notify.success(`Deleted tag '${name}' from ${tagRemote}`);
+      invalidateRepoDomains(queryClient, repo.id, ["remote-tags"]);
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
+  }, [repo, tagRemote, queryClient]);
+
+  // Create-new-tag flow: the input shows on the clicked row; the (lightweight)
+  // tag is only created when a name is confirmed.
+  const handleCreateTagStart = useCallback((commitId: CommitId) => {
+    setTagCreation({ rowId: commitId });
+  }, []);
+
+  const handleCreateTagSave = useCallback(async (name: string) => {
+    const creation = tagCreation;
+    setTagCreation(null);
+    if (!repo || !creation) return;
+    try {
+      await repoCreateTag(repo.id, name, creation.rowId, undefined);
+      invalidateRepoDomains(queryClient, repo.id, TAG_DOMAINS);
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
+  }, [repo, tagCreation, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleCreateTagCancel = useCallback(() => {
+    setTagCreation(null);
+  }, []);
+
   // Stash actions address the stash by its commit SHA (the injected node's id).
   // The SHA is stable; the backend resolves it to the current `stash@{N}` at
   // action time, so a stale list can never hit the wrong stash. Toasts use
@@ -444,7 +541,7 @@ export function CommitsPanel() {
 
   const refetch = useCallback(() => {
     if (repo) {
-      invalidateRepoDomains(queryClient, repo.id, ["log", "branches", "status", "tracking", "stashes"]);
+      invalidateRepoDomains(queryClient, repo.id, ["log", "branches", "status", "tracking", "stashes", "tags"]);
     }
   }, [repo, queryClient]);
 
@@ -945,6 +1042,9 @@ export function CommitsPanel() {
                         <MenuItem onClick={() => { closeMenu(); handleCreateBranchStart(commit.id); }}>
                           Create branch here…
                         </MenuItem>
+                        <MenuItem onClick={() => { closeMenu(); handleCreateTagStart(commit.id); }}>
+                          Create tag here…
+                        </MenuItem>
                         {commit.id === headSha && headIsRewordable && (
                           <MenuItem onClick={() => { closeMenu(); handleRewordStart(commit); }}>
                             Reword message…
@@ -971,6 +1071,22 @@ export function CommitsPanel() {
                             />
                           </Fragment>
                         ))}
+                        {(commit.decorations ?? [])
+                          .filter((d) => d.type === "tag")
+                          .map((d) => (d as { value: string }).value.replace(/^refs\/tags\//, ""))
+                          .map((name) => (
+                            <Fragment key={`tag-${name}`}>
+                              <Separator />
+                              <TagMenuSection
+                                name={name}
+                                pushed={pushedTags.has(name)}
+                                remote={tagRemote}
+                                onPush={() => { closeMenu(); handleTagPush(name); }}
+                                onDelete={() => { closeMenu(); handleTagDelete(name); }}
+                                onDeleteRemote={() => { closeMenu(); handleTagDeleteRemote(name); }}
+                              />
+                            </Fragment>
+                          ))}
                       </>
                     ),
                   );
@@ -1008,6 +1124,14 @@ export function CommitsPanel() {
                             creatingBranch={branchCreation?.rowId === commit.id}
                             onCreateBranchSave={handleCreateBranchSave}
                             onCreateBranchCancel={handleCreateBranchCancel}
+                            creatingTag={tagCreation?.rowId === commit.id}
+                            onCreateTagSave={handleCreateTagSave}
+                            onCreateTagCancel={handleCreateTagCancel}
+                            pushedTags={pushedTags}
+                            tagRemote={tagRemote}
+                            onTagPush={handleTagPush}
+                            onTagDelete={handleTagDelete}
+                            onTagDeleteRemote={handleTagDeleteRemote}
                             onBranchCheckout={handleBranchCheckout}
                             onBranchRename={handleBranchRename}
                             onBranchDelete={handleBranchDelete}

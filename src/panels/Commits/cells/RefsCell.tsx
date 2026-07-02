@@ -6,6 +6,7 @@ import { usePanelContextMenu } from "../menu/PanelContextMenu";
 import { LaneLockSection } from "../menu/LaneLockSection";
 import { Separator } from "../menu/primitives";
 import { BranchMenuSection, RemoteBranchMenuSection } from "../menu/BranchMenuSection";
+import { TagMenuSection } from "../menu/TagMenuSection";
 import { InlineRenameInput } from "./InlineRenameInput";
 import { buildChips, computeVisibleCount } from "./refChips";
 import type { ChipDescriptor } from "./refChips";
@@ -36,6 +37,19 @@ interface RefsCellProps {
   creatingBranch?: boolean;
   onCreateBranchSave?: (name: string) => void;
   onCreateBranchCancel?: () => void;
+  /** Same as `creatingBranch`, but for a (lightweight) tag on this row's commit. */
+  creatingTag?: boolean;
+  onCreateTagSave?: (name: string) => void;
+  onCreateTagCancel?: () => void;
+  /** Tag names that exist on the remote with the same target — their chips
+   *  carry the remote indicator, like fused branch chips do. */
+  pushedTags?: ReadonlySet<string>;
+  /** Remote tags are pushed to (chip menu label), or null when none exists. */
+  tagRemote?: string | null;
+  onTagPush?: (name: string) => void;
+  onTagDelete?: (name: string) => void;
+  /** Deletes the tag on the remote only (offered while pushed). */
+  onTagDeleteRemote?: (name: string) => void;
   onBranchCheckout?: (name: string) => void;
   onBranchRename?: (name: string) => void;
   onBranchDelete?: (name: string, force: boolean) => void;
@@ -46,7 +60,7 @@ interface RefsCellProps {
 const CHIP_GAP = 3;
 
 /** Renders ref decoration chips for a commit row. */
-export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, renamingBranch, onBranchRenameSave, onBranchRenameCancel, creatingBranch, onCreateBranchSave, onCreateBranchCancel, onBranchCheckout, onBranchRename, onBranchDelete, onRemoteCheckout }: RefsCellProps) {
+export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, renamingBranch, onBranchRenameSave, onBranchRenameCancel, creatingBranch, onCreateBranchSave, onCreateBranchCancel, creatingTag, onCreateTagSave, onCreateTagCancel, pushedTags, tagRemote, onTagPush, onTagDelete, onTagDeleteRemote, onBranchCheckout, onBranchRename, onBranchDelete, onRemoteCheckout }: RefsCellProps) {
   const { openMenu, closeMenu } = usePanelContextMenu();
   const [visibleCount, setVisibleCount] = useState(Number.MAX_SAFE_INTEGER);
   const [popover, setPopover] = useState<{ x: number; y: number } | null>(null);
@@ -121,7 +135,7 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
     return () => observer.disconnect();
   }, [remeasure]);
 
-  if (decorations.length === 0 && !creatingBranch) return null;
+  if (decorations.length === 0 && !creatingBranch && !creatingTag) return null;
 
   // Find HeadOf target so we can mark the matching branch chip as "checked out"
   const headOfDec = decorations.find((d) => d.type === "headOf");
@@ -189,6 +203,19 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
           />
         );
       }
+      if (chip.kind === "tag") {
+        const tagName = chip.value.replace(/^refs\/tags\//, "");
+        return (
+          <TagMenuSection
+            name={tagName}
+            pushed={pushedTags?.has(tagName) ?? false}
+            remote={tagRemote ?? null}
+            onPush={() => { closeMenu(); onTagPush?.(tagName); }}
+            onDelete={() => { closeMenu(); onTagDelete?.(tagName); }}
+            onDeleteRemote={() => { closeMenu(); onTagDeleteRemote?.(tagName); }}
+          />
+        );
+      }
       return undefined;
     };
 
@@ -222,12 +249,18 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
       return undefined;
     };
 
+    const tagPushed =
+      chip.kind === "tag" &&
+      (pushedTags?.has(chip.value.replace(/^refs\/tags\//, "")) ?? false);
+
     return (
       <Chip
         key={key}
         chip={chip}
         headOfTarget={headOfTarget}
         textSize={textSize}
+        tagPushed={tagPushed}
+        tagRemote={tagRemote ?? null}
         onContextMenu={(e) => openMenu(e, menuSection)}
         onDoubleClickAction={buildDoubleClickCheckout()}
       />
@@ -290,6 +323,24 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
         />
       )}
 
+      {/* Create-new-tag input (row context menu): same pattern, tag-shaped. */}
+      {creatingTag && (
+        <InlineRenameInput
+          initialValue=""
+          placeholder="tag name…"
+          title="Enter to create · Esc to cancel"
+          onSave={(name) => onCreateTagSave?.(name)}
+          onCancel={() => onCreateTagCancel?.()}
+          style={{
+            fontSize: textSize,
+            padding: "1px 5px",
+            borderRadius: 3, // tag chips are squarer than branch chips
+            width: "16ch",
+            flexShrink: 0,
+          }}
+        />
+      )}
+
       {visibleChips.map((dec, i) => renderChip(dec, i))}
 
       {hiddenChips.length > 0 && (
@@ -329,6 +380,10 @@ interface ChipProps {
   headOfTarget: string | null;
   /** Chip font size in px. */
   textSize: number;
+  /** Tag chips: the tag exists on the remote with the same target. */
+  tagPushed?: boolean;
+  /** Remote the pushed indicator refers to (tooltip). */
+  tagRemote?: string | null;
   /** Called on right-click; the unified menu handles preventDefault. */
   onContextMenu: (e: React.MouseEvent) => void;
   /**
@@ -378,7 +433,7 @@ function RemoteIndicator({ remoteRef }: { remoteRef: string }) {
   );
 }
 
-function Chip({ chip, headOfTarget, textSize, onContextMenu, onDoubleClickAction }: ChipProps) {
+function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = null, onContextMenu, onDoubleClickAction }: ChipProps) {
   const handleContextMenu = onContextMenu;
   const handleDoubleClick = onDoubleClickAction
     ? (e: React.MouseEvent) => {
@@ -451,13 +506,21 @@ function Chip({ chip, headOfTarget, textSize, onContextMenu, onDoubleClickAction
       );
 
     case "tag":
+      // A pushed tag (exists on the remote with the same target) carries the
+      // remote indicator, mirroring fused branch chips.
       return (
         <span
           onContextMenu={handleContextMenu}
           style={chipStyle({ variant: "tag", textSize })}
-          title={chip.value}
+          title={`${chip.value}${tagPushed ? ` — pushed to ${tagRemote ?? "remote"}` : ""}`}
         >
-          <TagIcon /> {chip.value.replace(/^refs\/tags\//, "")}
+          <TagIcon />{" "}
+          {tagPushed && (
+            <span style={{ display: "inline-flex" }}>
+              <RemoteIcon />
+            </span>
+          )}{" "}
+          {chip.value.replace(/^refs\/tags\//, "")}
         </span>
       );
 
