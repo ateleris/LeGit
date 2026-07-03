@@ -27,8 +27,8 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, FileIdMap};
+use notify::{RecommendedWatcher, RecursiveMode};
+use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, RecommendedCache};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{AppHandle, Emitter};
@@ -63,7 +63,7 @@ pub struct RepoChangedPayload {
 /// Owns the live debouncer for one repo. Dropping it stops the watch thread and
 /// all callbacks — that is the entire teardown (used on repo close / app exit).
 pub struct RepoWatcher {
-    _debouncer: Debouncer<RecommendedWatcher, FileIdMap>,
+    _debouncer: Debouncer<RecommendedWatcher, RecommendedCache>,
 }
 
 impl RepoWatcher {
@@ -114,24 +114,14 @@ impl RepoWatcher {
             },
         )?;
 
-        // Working tree (recursive). The cache root lets the debouncer track
-        // renames across the tree.
-        debouncer
-            .watcher()
-            .watch(&worktree, RecursiveMode::Recursive)?;
-        debouncer
-            .cache()
-            .add_root(&worktree, RecursiveMode::Recursive);
+        // Working tree (recursive). `Debouncer::watch` also registers the path
+        // as a cache root so renames are tracked across the tree.
+        debouncer.watch(&worktree, RecursiveMode::Recursive)?;
 
         // Watch the git dir separately only when it isn't already under the
         // working tree (the common `<toplevel>/.git` case is covered above).
         if !git_dir.starts_with(&worktree) {
-            debouncer
-                .watcher()
-                .watch(&git_dir, RecursiveMode::Recursive)?;
-            debouncer
-                .cache()
-                .add_root(&git_dir, RecursiveMode::Recursive);
+            debouncer.watch(&git_dir, RecursiveMode::Recursive)?;
         }
 
         tracing::debug!(worktree = %worktree.display(), git_dir = %git_dir.display(), "repo watcher started");

@@ -71,6 +71,7 @@ export const DEFAULT_THEME: ThemeDocument = {
     "panel.bg": "panel-bg",
     "panel.fg": "main-fg",
     "panel.border": "panel-border",
+    "panel.border.drag": "accent",
     "panel.header.bg": "panel-bg",
     "panel.header.fg": "main-fg",
     "pane.header.bg": "panel-bg",

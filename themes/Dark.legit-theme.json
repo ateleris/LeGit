@@ -136,6 +136,7 @@
     "panel-tab.fg": "subtle-fg",
     "panel.bg": "panel-bg",
     "panel.border": "panel-border",
+    "panel.border.drag": "accent",
     "panel.fg": "main-fg",
     "panel.header.bg": "panel-bg",
     "panel.header.fg": "main-fg",

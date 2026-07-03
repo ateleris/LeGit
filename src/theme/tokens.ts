@@ -87,6 +87,7 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "panel.bg", group: "Panel", documentation: "Panel body background." },
   { name: "panel.fg", group: "Panel", documentation: "Panel body text." },
   { name: "panel.border", group: "Panel", documentation: "Panel borders and dividers." },
+  { name: "panel.border.drag", group: "Panel", documentation: "Highlight of a panel divider while it is hovered/dragged for resizing." },
   { name: "panel.header.bg", group: "Panel", documentation: "Panel header background." },
   { name: "panel.header.fg", group: "Panel", documentation: "Panel header text." },
   { name: "pane.header.bg", group: "Panel", documentation: "Accordion section header background (e.g. the Refs panel's Branches/Remotes/Stashes headers)." },

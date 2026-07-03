@@ -221,6 +221,11 @@ button.legit-region-divider__mode:hover {
 .legit-splash__inner {
   text-align: center;
 }
+.legit-splash__logo {
+  width: 96px;
+  height: 96px;
+  margin-bottom: 12px;
+}
 .legit-splash__title {
   font-size: 28px;
   font-weight: 600;
@@ -385,7 +390,7 @@ button.legit-tab__close:hover {
   --dv-icon-hover-background-color: var(--button-hover-bg);
   --dv-scrollbar-background-color: var(--scrollbar-thumb);
   --dv-sash-color: transparent;
-  --dv-active-sash-color: var(--accent);
+  --dv-active-sash-color: var(--panel-border-drag);
   --dv-floating-box-shadow: 0 4px 12px var(--shadow-color);
 }
 

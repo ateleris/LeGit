@@ -69,6 +69,7 @@
   --panel-bg: var(--palette-panel-bg);
   --panel-fg: var(--palette-main-fg);
   --panel-border: var(--palette-panel-border);
+  --panel-border-drag: var(--palette-accent);
   --panel-header-bg: var(--palette-panel-bg);
   --panel-header-fg: var(--palette-main-fg);
   --pane-header-bg: var(--palette-panel-bg);

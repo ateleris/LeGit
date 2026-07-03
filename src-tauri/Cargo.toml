@@ -38,8 +38,7 @@ specta = { workspace = true }
 specta-typescript = { workspace = true }
 
 shlex = "1"
-which = "6"
-dirs = "5"
+which = "8"
 sha2 = "0.10"
 notify = { workspace = true }
 notify-debouncer-full = { workspace = true }
