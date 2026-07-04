@@ -5,7 +5,8 @@
 use crate::error::AppError;
 use crate::state::AppState;
 use legit_core::types::{
-    ConflictEntry, ConflictSide, MergeOptions, MergeOutcome, RebaseOutcome, RepoOpState,
+    ConflictEntry, ConflictFileSides, ConflictSide, MergeOptions, MergeOutcome, RebaseOutcome,
+    RebaseStep, ReflogEntry, RepoOpState, ResetMode, SequenceOutcome,
 };
 use std::path::PathBuf;
 
@@ -80,6 +81,142 @@ pub async fn repo_rebase_abort(
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
     session.backend.rebase_abort().await.map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_rebase_interactive(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    base: String,
+    plan: Vec<RebaseStep>,
+) -> Result<RebaseOutcome, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .rebase_interactive(&base, &plan)
+        .await
+        .map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_conflict_file_sides(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    path: PathBuf,
+) -> Result<ConflictFileSides, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .conflict_file_sides(&path)
+        .await
+        .map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_reset(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    target: String,
+    mode: ResetMode,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.reset(&target, mode).await.map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_revert(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    sha: String,
+) -> Result<SequenceOutcome, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.revert(&sha).await.map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_cherry_pick(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    sha: String,
+) -> Result<SequenceOutcome, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.cherry_pick(&sha).await.map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_cherry_pick_continue(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<SequenceOutcome, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.cherry_pick_continue().await.map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_cherry_pick_skip(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<SequenceOutcome, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.cherry_pick_skip().await.map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_cherry_pick_abort(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.cherry_pick_abort().await.map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_revert_continue(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<SequenceOutcome, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.revert_continue().await.map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_revert_skip(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<SequenceOutcome, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.revert_skip().await.map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_revert_abort(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.revert_abort().await.map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_reflog(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    max_count: u32,
+) -> Result<Vec<ReflogEntry>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.reflog(max_count).await.map_err(AppError::Git)
 }
 
 #[tauri::command]

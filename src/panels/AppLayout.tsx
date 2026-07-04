@@ -4,7 +4,8 @@ import { useSettingsStore, UI_FONT_SIZE_DEFAULT } from "../store/settings";
 import { useRepoStore } from "../store/repos";
 import { useSummonStore } from "../store/summon";
 import { useGitLogStore } from "../store/gitLog";
-import { onGitInvocation } from "../lib/events";
+import { useRemoteProgressStore } from "../store/remoteProgress";
+import { onGitInvocation, onRemoteProgress } from "../lib/events";
 import { useRepoChangeListener } from "../lib/useRepoChangeListener";
 import type { RegionPlacement } from "../lib/types";
 import { GlobalDock } from "./GlobalDock";
@@ -54,6 +55,22 @@ export function AppLayout() {
     let unlisten: (() => void) | undefined;
     let disposed = false;
     onGitInvocation((inv) => useGitLogStore.getState().add(inv)).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // Feed the remote-progress store (sync toolbar / clone form meters).
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    onRemoteProgress((p) =>
+      useRemoteProgressStore.getState().report(p.op_id, p.progress),
+    ).then((fn) => {
       if (disposed) fn();
       else unlisten = fn;
     });

@@ -3,7 +3,8 @@
 Deferred features and extension ideas — things intentionally postponed, not
 forgotten. When a feature is put off ("let it be for now", "later", "future"),
 add it here with: what it is, why it's deferred, and a rough approach so it can
-be picked up cleanly.
+be picked up cleanly. Completed items are removed (git history keeps the
+record); an item that is partially done keeps only its open remainder.
 
 ---
 
@@ -19,8 +20,8 @@ editor in the Commits panel). Older commits need history replay.
 - Forge a reworded commit object preserving the tree and parents:
   `git commit-tree <C>^{tree} -p <parent…> -m <msg>`. `commit-tree` has no
   `--author` flag, so preserve the original author via `GIT_AUTHOR_NAME/EMAIL/DATE`
-  env — this requires a **minimal `GitRunner::run_with_env`** (factor
-  `build_command` into `build_command_with_env`, apply caller env *after* the
+  env — **`GitRunner::run_with_env` now exists** (added 2026-07-04 by the
+  backend-review pass, exactly this shape: caller env applied *after* the
   base env/GIT_* scrub so overrides win; see [[project-runner-env-inherit]]).
 - Replay descendants onto the new commit: `git rebase --onto <new> <C> <branch>`.
   Because the reworded commit keeps an **identical tree**, the replay is
@@ -76,50 +77,6 @@ theme-token set.
 
 ---
 
-## ~~Theme completeness: retheme dockview + literal-colour audit~~
-
-Done 2026-07-02. The `.dv-dockview` override block in `global.css` (extended
-to also match `.dockview-theme-abyss`, covering the Refs paneview) now maps
-every visible dockview colour var to LeGit tokens — including sash, scrollbar,
-paneview header border, floating shadow, and the drag-over overlay (new tokens
-`shadow.color` + `dnd.overlay.bg`). The abyss class remains only as a
-structural fallback. All residual literal colours (menu/popover/toast
-box-shadows) were tokenized. Enforced by `src/theme/noLiteralColors.test.ts`:
-any colour literal outside `theme.css`, `defaults.ts`, the Theme Editor's
-colour-data values, or a `var(--token, …)` fallback fails the suite.
-
----
-
-## Button cleanup: consolidate the ad-hoc button variants
-
-**What:** The app has accumulated too many button styles, each hand-rolled at
-its call site. Consolidate them into a small shared set of button components
-with consistent sizing (font-relative), theming (tokens), and hover/disabled
-behaviour.
-
-**Status:** Deferred 2026-07-02. First step done: the Commits toolbar's
-button was extracted to `panels/shared/ToolbarButton.tsx` and now also serves
-the Working Changes section actions (Stage/Unstage/Discard all — the
-link-style `TextButton` is gone). Remaining inventory:
-- Global CSS `button` base + `.primary` / `.danger` classes (global.css) —
-  used by ~30 call sites (Branches/Stashes/Remotes rows, Theme Editor, forms).
-- `ToolbarButton` + `toolbarBtnStyle` (shared) — could become the "ghost"
-  variant of the final set.
-- `IconButton` in WorkingChangesPanel.
-- One-off inline-styled buttons: the settings link-toggle (Photoshop chain),
-  push-menu entry, palette-row delete "×", ViewMenu/RepoOverflowMenu entries,
-  Refs paneview header.
-
-**Rough approach:** a `src/components/buttons.tsx` (or `panels/shared/`)
-module exporting `Button` (variants: default / primary / danger / ghost /
-link / icon; sizes derived from `--ui-font-size`), backed by the existing
-button tokens (`button.*`, plus a new `button.link.fg` bound to `accent`).
-Migrate call sites incrementally — start with the inline-styled one-offs,
-then fold `SyncButton`/`TextButton`/`IconButton` into the shared set. Give
-destructive text-buttons the danger colour while at it.
-
----
-
 ## Dependency updates: remaining major versions (frontend)
 
 **What:** The npm majors deliberately skipped in the 2026-07-03 dependency
@@ -152,45 +109,6 @@ thiserror 2, which 8, notify 8 + notify-debouncer-full 0.7 with the
 
 ---
 
-## Backend review: test coverage + git executor isolation
-
-**What:** A dedicated review pass over `legit-core` focused on (1) missing
-tests and (2) isolating the git executor so backend *logic* is testable
-without a real git binary.
-
-**Status:** Deferred 2026-07-02. Pure parsers and decision helpers are well
-covered (`parsers/*`, `stash_created`, `classify_*`, …), but the composed
-flows are not: `run_with_auto_stash`'s full sequencing, `create_tag` arg
-assembly, `checkout_remote_branch`'s exists-check branch, rename flows, etc.
-run only against a live `GitRunner`, so nothing asserts which git commands
-they actually issue or how they react to failures mid-sequence.
-
-**Rough approach:**
-- Introduce a runner abstraction (`trait CommandExecutor` or similar) that
-  `GitCliBackend` holds instead of the concrete `GitRunner`; production keeps
-  `GitRunner`, tests inject a scripted fake (queue of expected args →
-  canned `RunOutput`s). Then unit-test the composed flows: auto-stash
-  rollback on switch failure, pop-conflict classification, tag/branch arg
-  construction, remote-error paths.
-- Alternatively (or additionally) a small integration-test harness that
-  builds throwaway repos in a tempdir with the real git — good for the
-  happy paths the fake can't validate (actual git behaviour drift, e.g.
-  the `stash push` exit-0 discovery).
-- **Merge/rebase/conflict flows are prime candidates for that harness**
-  (deferred 2026-07-03 from the merge/rebase design,
-  `docs/superpowers/specs/2026-07-03-merge-rebase-conflicts-design.md`):
-  build a repo with a real conflict, then exercise the continue/abort state
-  machine end to end — merge conflict → resolve → continue; rebase conflict
-  → skip / abort; `--autostash` pop-conflict after a completed rebase;
-  `resolve_take_side` on modify/delete conflicts; op-state detection
-  reading real `MERGE_HEAD` / `rebase-merge` contents. The unit tests
-  encode our *assumptions* about git's outputs; these validate them
-  against the real binary.
-- While reviewing: sweep for silent `let _ =` results, unclassified stderr
-  paths, and methods missing from the audit-tests entirely.
-
----
-
 ## Startup: parallelize repo-session restore
 
 **What:** `restore_open_repos` (commands/repo.rs) restores persisted repos
@@ -213,75 +131,55 @@ see the tab-ordering convention). Watch out: `open_session` takes
 
 ## Other deferred ideas
 
-- ~~**Author avatars in the commit graph nodes.**~~ Done — opt-in
-  `commit_avatars` global setting (off by default; checkbox in the
-  "Commits graph" settings section with a privacy note). `src/lib/avatars.ts`
-  hashes the author email (SHA-256) and probes Gravatar with `d=404`, caching
-  one result per email in a zustand store; `GraphCellWithAvatar` resolves the
-  URL and the pure `GraphCell` renders it as an `<image>` clipped to the dot
-  circle with a lane-coloured ring, falling back to the plain dot. Avatars
-  scale to the configured dot radius with no minimum; stash squares and the
-  working-dir ring never get one.
-- ~~**Commits toolbar: Cancel button placement.**~~ Done — the pressed
-  button itself becomes the Cancel button while its op runs (spinner +
-  "Cancel", still enabled, `onClick` → `cancelSync`); the standalone Cancel
-  at the end of the toolbar is gone.
-
-- ~~**Diff viewer: inline editing.**~~ Done (2026-07-03, Phase 1 of the
-  merge/rebase design): unstaged working-tree diffs are editable on the
-  new side (inline view + split right pane), with row-identity markers
-  (`editableState.ts`), splice write-back (`editModel.ts` +
-  `repo_write_worktree_file`), explicit save (Ctrl+S / Save button),
-  deferred refetches and disabled hunk/line actions while dirty. Staged
-  diffs (new side = index) remain read-only — extend later if wanted.
 - **Live-refresh the diff on external git changes.** The filesystem watcher's
   emitted domains (backend) don't include `diff`, so an external `git`
   stage/unstage while the app is open doesn't refresh an open diff (in-app
   actions do). Add `diff` to the watcher's domains in the Rust side.
 - **Diff viewer: full-fidelity (multi-line) syntax highlighting.** See the
-  caveat above — only if the per-line approximation proves insufficient.
-- ~~**Git command log panel.**~~ Done — `GitRunner` reports every invocation via
-  a process-wide observer → `git_invocation` Tauri event → `useGitLogStore` →
-  the **Git Log** panel. Central error toasts (`useNotificationsStore` +
-  `Toasts`) surface command failures; clicking a toast summons the Git Log.
-  Possible follow-ups: filter/search the log, copy a command, jump a toast to
-  its specific log entry (currently it just opens the panel).
+  caveat in the syntax-highlighting item — only if the per-line approximation
+  proves insufficient.
+- **Diff viewer: inline editing of staged diffs.** Unstaged working-tree
+  diffs are editable (2026-07-03); staged diffs (new side = index) remain
+  read-only — extend if wanted.
+- **Git Log panel follow-ups.** Filter/search the log, copy a command, jump
+  a toast to its specific log entry (currently it just opens the panel).
+- **Interactive rebase polish.** The panel ships (reorder via up/down,
+  pick/squash/fixup/drop, plan injected via the `printf`-redirect
+  `GIT_SEQUENCE_EDITOR`, conflicts through the normal banner). Deferred:
+  drag-to-reorder rows, reword as a plan step (needs per-commit message
+  injection — see the reword-beyond-HEAD item), and a warning when the plan
+  rewrites pushed commits.
+- **3-way view polish.** Ships as a Diff-panel toggle on conflicted files
+  (ours | editable result | theirs from the real index stages, proportional
+  scroll sync). Deferred: showing the base stage (already fetched), and
+  conflict-aligned scroll sync instead of proportional.
+- **Button set: sweep the class call sites.** The shared set ships
+  (`panels/shared/buttons.tsx`: `Button` default/primary/danger/ghost +
+  `IconButton`; `ToolbarButton` is the labeled ghost preset; menu entries
+  unified on the `primitives.tsx` `MenuItem`, now a real button). The ~36
+  `className="primary"/"danger"` call sites still use the classes directly —
+  they ARE the token-backed system underneath `Button`, so migrating them to
+  `<Button variant>` is optional, purely mechanical churn. New code should
+  use the shared components. A "link" variant was skipped (no call sites).
 
 ---
 
 ## Git functionality — missing vs a normal client
 
-Audited 2026-06-19. The **review → stage → commit** loop (incl. line-level
-staging) and **history viewing** are complete; the items below are standard
-git-client features not yet first-class (the interactive Git Console is the only
-current way to do them by hand). Each follows the same vertical slice: add a
-`GitBackend` method → implement in `cli_impl` via `GitRunner` (+ a parser if it
-returns data) → Tauri command (registered in `lib.rs`) → wrapper in
-`lib/commands.ts` + type in `lib/types.ts` → UI. Roughly priority-ordered.
+Audited 2026-06-19; done items pruned since. Each item follows the same
+vertical slice: add a `GitBackend` method → implement in `cli_impl` via
+`GitRunner` (+ a parser if it returns data) → Tauri command (registered in
+`lib.rs`) → wrapper in `lib/commands.ts` + type in `lib/types.ts` → UI.
+Roughly priority-ordered.
 
-### 1. Remotes & sync (biggest gap)
-- ~~**fetch / pull / push** (incl. push to set upstream, force-with-lease).~~
-  Done — `fetch`/`pull`/`push` backend methods (`run_with_op`, cancellable via
-  the existing `console_cancel`), `repo_*` commands, and a sync toolbar in the
-  Commits panel (Fetch / Pull / Publish-or-Push + force-with-lease menu, busy +
-  Cancel, ahead/behind chip). **Auth is driven by the active git profile**: SSH
-  via `core.sshCommand` (existing) + a new `credential.helper` managed key for
-  HTTPS (LeGit stores no secrets). Auth/rejection failures are classified
-  (`AuthFailed` / `PushRejected`) and surfaced as toasts.
-- **Upstream/tracking — show ahead/behind**: done (current branch only, via
-  `tracking_status` → `git rev-list --left-right --count`). Still TODO: **set /
-  clear upstream** explicitly (beyond push `--set-upstream`).
-- ~~Manage **remotes** (add / remove / rename / set-url).~~ Done — a dedicated
-  **Remotes panel** (`src/panels/Remotes/`, registry id `remotes`) lists remotes
-  with fetch/push URLs and does add / remove / rename / set-url + per-remote
-  fetch / prune (`GitBackend::{list_remotes,add_remote,remove_remote,
-  rename_remote,set_remote_url,prune_remote}` + `parsers/remotes.rs`). Mutations
-  invalidate `remotes/branches/tracking/log` so the sync toolbar stays correct.
-- Still TODO: a **pull-strategy picker** in the UI (rebase / merge / ff-only —
-  the `PullStrategy` enum exists but the UI always uses `Default`); **streaming
-  progress** (currently busy-state + Cancel, no progress bar); storing HTTPS
-  tokens in LeGit (kept out by design — rely on the credential helper); a
-  push-remote picker in the sync toolbar; per-remote tracked-branch view.
+### 1. Remotes & sync leftovers
+Fetch/pull/push (cancellable, profile-driven auth, classified failures,
+streaming transfer progress), the Remotes panel, ahead/behind, set/clear
+upstream, and the pull-strategy / push-remote pickers all ship. Still open:
+- **Per-remote tracked-branch view** (Branches panel groups remote branches
+  flat; a per-remote grouping with tracking info would go there).
+- (Kept out by design: storing HTTPS tokens in LeGit — rely on the credential
+  helper; see the item below.)
 
 #### In-app credential prompt (`GIT_ASKPASS` / custom helper)
 
@@ -306,80 +204,27 @@ entered secret to git over a local IPC channel. Decide secret handling (prefer
 the OS keychain via the `keyring` crate; never plaintext in settings).
 Cross-platform care: the shim must be invocable by Git for Windows' shell.
 
-### 2. Branch operations (write)
-- **Create**, **checkout/switch** (incl. detached, checkout a remote branch),
-  **delete** (safe + force), **rename**.
-- ~~**Merge** (with conflict handling) and **rebase** (onto)~~ Done
-  (2026-07-03, Phase 2 of the merge/rebase design): merge with ff-auto /
-  no-ff / ff-only / squash, rebase with `--autostash`, conflict outcomes,
-  op-state banner in Working Changes (Continue/Skip/Abort), triggers in the
-  shared branch menus + Branches pane context menu. **Interactive rebase**
-  remains future work.
-- Branch from a commit; set as current. (Branch *listing* already exists.)
-
-### 3. Stash
-- save (incl. keep-index / include-untracked), list, show, apply, pop, drop,
-  branch-from-stash.
-
-### Commit safety: detached-HEAD warning
-- Before committing on a **detached HEAD**, warn the user with a confirmation
-  (commit stays possible, but they must confirm — a detached-HEAD commit is
-  easily lost). Detect via the current ref (e.g. `git symbolic-ref -q HEAD`
-  fails / the status reports no branch); show a confirm in the Working Changes
-  commit flow, similar to the existing discard-confirmation.
-
-### 4. Undo & history rewriting
-- **reset** (soft / mixed / hard) to a commit.
-- **revert** a commit; **cherry-pick** a commit (with conflict handling).
-- Interactive rebase / squash / reword; **reflog** view + restore.
-
-### 5. Getting a repo
-- ~~**clone** / **init** a new repo.~~ Done — inline Clone / Init forms in the
-  Repositories panel (`repo_clone` / `repo_init` / `cancel_clone` in
-  `commands/repo.rs`, sharing the extracted `register_open_repo`). Clone is
-  cancellable (busy + Cancel via the `AppState.transient_ops` registry). Both
-  take an optional **profile** (a "Use global config" sentinel default): the
-  profile's auth is injected into the clone via `git -c …` and then applied to
-  the new repo (sets `git_profile_id`, so it shows as active in Repo Settings).
-  Remaining: streaming clone progress (%), clone options (`--depth`/`--branch`/
-  submodules), `git init --bare` / initial-branch name.
-
-### 6. Conflict resolution
-- ~~Detect conflicted state~~, ~~mark resolved~~, ~~continue/abort
-  merge/rebase~~, ~~whole-file ours/theirs (delete-aware)~~ Done (2026-07-03,
-  Phase 2). ~~Per-file manual resolve UI~~ Done (2026-07-03, Phase 3): the
-  Diff panel renders a conflicted file as a synthetic diff (`conflictModel.ts`,
-  classic + diff3 markers) with per-conflict Ours/Theirs/Both, editable
-  ours/theirs blocks in inline AND split view, region-based save, conflict
-  count + whole-file take-side + Mark resolved in the toolbar, and a
-  binary/non-UTF-8 fallback. Remaining: continue/abort for cherry-pick/revert
-  (state detection already ships), and a 3-way (ours | result | theirs) view
-  as a possible later upgrade.
-
-### 7. Inspection
+### 2. Inspection
 - **Diff between arbitrary commits/branches** (the `GitBackend::diff(from, to)`
   method is currently a `NotYet` stub) — compare view.
 - **Blame / annotate** a file.
 - **Search**: commits (message/author), file paths, and content (`git log -S`/`-G`).
 
-### 8. Tags
-- ~~create (lightweight + annotated), delete, push tags.~~ Done — Tags pane in
-  the Refs panel (list with pushed indicator, create at HEAD with optional
-  annotation message, push, delete), plus commit-row context-menu entries
-  ("Create tag here…" with the inline chip-input pattern, per-tag push/delete)
-  and a remote indicator on pushed tag chips (`pushedTagNames`: same name AND
-  same target on the remote, via a cached `ls-remote --tags`). Remote-side
-  deletion is a separate deliberate action (GitKraken-style): "Delete tag
-  from <remote>" appears on pushed tags in the menus and the Tags pane.
-  Remaining: choosing a remote other than origin/first, and creating
-  annotated tags from the graph context menu (currently lightweight only
-  there).
+### 3. Clone / init leftovers
+Clone / init ship (cancellable, profile-aware, streaming progress). Still open:
+- Clone options: `--depth`, `--branch`, submodules.
+- `git init --bare` / initial-branch name.
 
-### 9. File-level
+### 4. Tags leftovers
+Create/delete/push (incl. remote-side delete) ship. Still open:
+- Choosing a **remote other than origin/first** for tag push/delete.
+- Creating **annotated** tags from the graph context menu (currently
+  lightweight only there).
+
+### 5. File-level
 - Restore/checkout a file to a specific revision; open a file at a revision.
 
-### 10. Advanced
+### 6. Advanced
 - **Submodules** (the `GitBackend::submodules()` method is a `NotYet` stub) —
   list/update/sync.
 - **Worktrees** (add/list/remove), **bisect**.
-

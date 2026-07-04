@@ -17,6 +17,16 @@ use tauri::{Emitter, Manager};
 use tauri_specta::{collect_commands, Builder};
 use tracing_subscriber::EnvFilter;
 
+/// Event carrying one parsed `--progress` update for an in-flight remote op
+/// (fetch/pull/push/clone), keyed by the frontend-minted operation id.
+const REMOTE_PROGRESS_EVENT: &str = "legit://remote-progress";
+
+#[derive(Clone, serde::Serialize)]
+struct RemoteProgressPayload {
+    op_id: String,
+    progress: legit_core::RemoteProgress,
+}
+
 pub fn run() {
     init_tracing();
 
@@ -68,11 +78,13 @@ pub fn run() {
         commands::set_warn_on_mixed_endings,
         commands::set_confirm_discard,
         commands::save_switch_dirty_behavior,
+        commands::save_pull_strategy,
         commands::set_commit_avatars,
         commands::repo_log,
         commands::repo_status,
         commands::repo_branches,
         commands::repo_create_branch,
+        commands::repo_set_upstream,
         commands::repo_switch_branch,
         commands::repo_delete_branch,
         commands::repo_rename_branch,
@@ -90,6 +102,7 @@ pub fn run() {
         commands::repo_pop_stash,
         commands::repo_drop_stash,
         commands::repo_rename_stash,
+        commands::repo_stash_branch,
         commands::repo_commit_details,
         commands::repo_commit_files,
         commands::repo_diff,
@@ -111,6 +124,18 @@ pub fn run() {
         commands::repo_rebase_continue,
         commands::repo_rebase_skip,
         commands::repo_rebase_abort,
+        commands::repo_rebase_interactive,
+        commands::repo_conflict_file_sides,
+        commands::repo_reset,
+        commands::repo_revert,
+        commands::repo_cherry_pick,
+        commands::repo_cherry_pick_continue,
+        commands::repo_cherry_pick_skip,
+        commands::repo_cherry_pick_abort,
+        commands::repo_revert_continue,
+        commands::repo_revert_skip,
+        commands::repo_revert_abort,
+        commands::repo_reflog,
         commands::repo_op_state,
         commands::repo_conflict_entries,
         commands::repo_resolve_take_side,
@@ -187,6 +212,18 @@ pub fn run() {
             legit_core::runner::set_invocation_observer(std::sync::Arc::new(move |inv| {
                 let _ = handle.emit("git_invocation", inv);
             }));
+
+            // Forward parsed --progress meter updates (fetch/pull/push/clone)
+            // to the UI, keyed by the frontend-minted operation id.
+            let handle = app.handle().clone();
+            legit_core::runner::set_progress_observer(std::sync::Arc::new(
+                move |op_id, progress| {
+                    let _ = handle.emit(
+                        REMOTE_PROGRESS_EVENT,
+                        RemoteProgressPayload { op_id: op_id.0.clone(), progress },
+                    );
+                },
+            ));
             Ok(())
         })
         .run(tauri::generate_context!())

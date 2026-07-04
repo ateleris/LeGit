@@ -6,6 +6,7 @@ import { CommitDetailsPanel } from "./CommitDetails/CommitDetailsPanel";
 import { ChangedFilesPanel } from "./ChangedFiles/ChangedFilesPanel";
 import { WorkingChangesPanel } from "./WorkingChanges/WorkingChangesPanel";
 import { DiffPanel } from "./Diff/DiffPanel";
+import { InteractiveRebasePanel } from "./InteractiveRebase/InteractiveRebasePanel";
 import { GitLogPanel } from "./GitLog/GitLogPanel";
 import { RefsPanel } from "./Refs/RefsPanel";
 import { RepositoriesPanel } from "./Repositories/RepositoriesPanel";
@@ -62,7 +63,13 @@ export const REPO_PANELS: PanelDescriptor[] = [
     id: "log",
     title: "Commits",
     scope: "repo",
-    summons: ["commit-details", "changed-files", "working-changes"],
+    summons: ["commit-details", "changed-files", "working-changes", "interactive-rebase"],
+  },
+  {
+    id: "interactive-rebase",
+    title: "Interactive Rebase",
+    scope: "repo",
+    defaultPlacement: { direction: "right", referencePanel: "log" },
   },
   {
     id: "commit-details",
@@ -137,4 +144,5 @@ export const REPO_DOCKVIEW_COMPONENTS: Record<
   "changed-files": wrap(ChangedFilesPanel),
   "working-changes": wrap(WorkingChangesPanel),
   diff: wrap(DiffPanel),
+  "interactive-rebase": wrap(InteractiveRebasePanel),
 };

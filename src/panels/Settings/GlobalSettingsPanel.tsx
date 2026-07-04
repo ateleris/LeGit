@@ -2,6 +2,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
 import { LinkIcon, UnlinkIcon, WarningIcon } from "../../icons";
+import { IconButton } from "../shared/buttons";
 
 /** localStorage key for the line-height ↔ lane-width link toggle (default on). */
 const LANE_LINK_KEY = "legit.commits-lane-link";
@@ -309,8 +310,7 @@ function CommitsGraphSection() {
           disabled={saving}
           onCommit={(v) => save(v, linked ? v : effectiveLaneWidth, dotRadius, lineWidth)}
         />
-        <button
-          type="button"
+        <IconButton
           aria-pressed={linked}
           title={
             linked
@@ -320,9 +320,6 @@ function CommitsGraphSection() {
           onClick={toggleLink}
           disabled={saving}
           style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
             // Fixed box (scales with the font) so the two states can never
             // differ in size — only the fill/colour changes.
             width: "1.9em",
@@ -330,6 +327,7 @@ function CommitsGraphSection() {
             padding: 0,
             marginLeft: -8,
             marginRight: -8,
+            fontSize: "inherit",
             background: linked ? "var(--accent)" : "transparent",
             color: linked ? "var(--accent-fg)" : "var(--subtle-fg)",
             // Transparent (not none) when unlinked so toggling doesn't shift layout.
@@ -337,7 +335,7 @@ function CommitsGraphSection() {
           }}
         >
           {linked ? <LinkIcon /> : <UnlinkIcon />}
-        </button>
+        </IconButton>
         <NumberField
           label="Graph lane width"
           value={shownLaneWidth}

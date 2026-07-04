@@ -12,6 +12,7 @@ import {
   repoCheckoutRemoteBranch,
   repoMerge,
   repoRebase,
+  repoSetUpstream,
 } from "../../lib/commands";
 import { notifySwitchOutcome, formatSwitchError } from "../../lib/switchFeedback";
 import { notifyMergeOutcome, notifyOpError, notifyRebaseOutcome } from "../../lib/mergeFeedback";
@@ -152,6 +153,14 @@ export function BranchesSection() {
     }
   }, [repo, invalidate]);
 
+  const doSetUpstream = async (name: string, upstream: string | null) => {
+    await runMut(() => repoSetUpstream(repo!.id, name, upstream));
+  };
+
+  // Existing same-name remote-tracking branches a local branch could track.
+  const upstreamCandidatesFor = (name: string) =>
+    remoteBranches.filter((b) => b.name.endsWith(`/${name}`)).map((b) => b.name);
+
   const doCreate = async () => {
     const name = createName.trim();
     if (!name) return;
@@ -249,8 +258,11 @@ export function BranchesSection() {
                       isCurrent={b.is_current}
                       currentBranch={currentBranch}
                       opInProgress={opInProgress}
+                      upstream={b.upstream}
+                      upstreamCandidates={upstreamCandidatesFor(b.name)}
                       onCheckout={() => { closeMenu(); doCheckout(b.name); }}
                       onRename={() => { closeMenu(); openRename(b); }}
+                      onSetUpstream={(up) => { closeMenu(); doSetUpstream(b.name, up); }}
                       onDelete={(force) => { closeMenu(); doDelete(b.name, force); }}
                       onMerge={(options) => { closeMenu(); handleMerge(b.name, options); }}
                       onRebaseOnto={() => { closeMenu(); handleRebaseOnto(b.name); }}

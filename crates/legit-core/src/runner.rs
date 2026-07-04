@@ -91,6 +91,23 @@ fn report_invocation(inv: GitInvocation) {
     }
 }
 
+type ProgressObserver =
+    std::sync::Arc<dyn Fn(&OperationId, crate::progress::RemoteProgress) + Send + Sync>;
+static PROGRESS_OBSERVER: std::sync::OnceLock<ProgressObserver> = std::sync::OnceLock::new();
+
+/// Install a process-wide observer notified with parsed `--progress` meter
+/// updates from invocations run via `run_with_op_progress`, keyed by their
+/// `OperationId`. Set once at startup; the app forwards these to the UI.
+pub fn set_progress_observer(observer: ProgressObserver) {
+    let _ = PROGRESS_OBSERVER.set(observer);
+}
+
+fn report_progress(op_id: &OperationId, progress: crate::progress::RemoteProgress) {
+    if let Some(obs) = PROGRESS_OBSERVER.get() {
+        obs(op_id, progress);
+    }
+}
+
 /// Streaming event emitted while a `git` invocation is in flight.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -169,7 +186,7 @@ impl GitRunner {
     /// Run a one-shot `git` invocation and collect the full output.
     #[instrument(level = "info", skip(self), fields(cwd = ?self.cwd, args = ?args))]
     pub async fn run(&self, args: &[&str]) -> Result<RunOutput, RunnerError> {
-        self.run_with_op(args, OperationId::new()).await
+        self.run_inner(args, &[], OperationId::new()).await
     }
 
     /// Run a one-shot `git` invocation under a caller-supplied operation id,
@@ -179,8 +196,31 @@ impl GitRunner {
         args: &[&str],
         op_id: OperationId,
     ) -> Result<RunOutput, RunnerError> {
+        self.run_inner(args, &[], op_id).await
+    }
+
+    /// Run with per-invocation environment overrides, applied *after* the
+    /// hardened base env so they win. Needed where a single command must relax
+    /// one hardening default - e.g. `merge/rebase --continue` conclude with a
+    /// commit whose message step consults `GIT_EDITOR`; the base
+    /// `GIT_EDITOR=false` would fail it (and env beats any `-c core.editor=…`),
+    /// so those pass `GIT_EDITOR=true` to accept the prepared message.
+    pub async fn run_with_env(
+        &self,
+        args: &[&str],
+        extra_env: &[(&str, &str)],
+    ) -> Result<RunOutput, RunnerError> {
+        self.run_inner(args, extra_env, OperationId::new()).await
+    }
+
+    async fn run_inner(
+        &self,
+        args: &[&str],
+        extra_env: &[(&str, &str)],
+        op_id: OperationId,
+    ) -> Result<RunOutput, RunnerError> {
         let started = Instant::now();
-        let mut cmd = self.build_command(args);
+        let mut cmd = self.build_command_with_env(args, extra_env);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         let mut child = cmd.spawn().map_err(|e| {
@@ -199,6 +239,102 @@ impl GitRunner {
 
         let stdout_task = tokio::spawn(read_to_string(stdout));
         let stderr_task = tokio::spawn(read_to_string(stderr));
+
+        let exit_code = tokio::select! {
+            _ = kill_rx => {
+                warn!(op_id = %op_id, "git invocation cancelled — killing child");
+                let _ = child.start_kill();
+                let status = child.wait().await.map_err(RunnerError::Io)?;
+                self.remove_running(&op_id);
+                let stdout = stdout_task.await.unwrap_or_default();
+                let stderr = stderr_task.await.unwrap_or_default();
+                log_invocation(self.cwd.as_deref(), args, started, status.code(), false, &stderr);
+                return Ok(RunOutput {
+                    stdout,
+                    stderr,
+                    exit_code: status.code(),
+                    success: false,
+                    duration_ms: started.elapsed().as_millis() as u64,
+                });
+            }
+            status = child.wait() => {
+                status.map_err(RunnerError::Io)?
+            }
+        };
+
+        self.remove_running(&op_id);
+
+        let stdout = stdout_task.await.unwrap_or_default();
+        let stderr = stderr_task.await.unwrap_or_default();
+
+        log_invocation(self.cwd.as_deref(), args, started, exit_code.code(), exit_code.success(), &stderr);
+
+        Ok(RunOutput {
+            stdout,
+            stderr,
+            exit_code: exit_code.code(),
+            success: exit_code.success(),
+            duration_ms: started.elapsed().as_millis() as u64,
+        })
+    }
+
+    /// Like `run_with_op`, but reads stderr incrementally and reports parsed
+    /// `--progress` meter updates to the process-wide progress observer,
+    /// keyed by `op_id`. Git delimits meter updates with `\r` (not `\n`), so
+    /// stderr is split on both. Recognized meter segments are *excluded* from
+    /// the returned/logged stderr (they are high-volume redraw noise); every
+    /// other stderr line is kept, so error classification is unaffected.
+    /// Callers must pass `--progress` themselves — stderr is a pipe, and git
+    /// suppresses the meter on non-TTYs otherwise.
+    pub async fn run_with_op_progress(
+        &self,
+        args: &[&str],
+        op_id: OperationId,
+    ) -> Result<RunOutput, RunnerError> {
+        use tokio::io::AsyncReadExt;
+
+        let started = Instant::now();
+        let mut cmd = self.build_command(args);
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        let mut child = cmd.spawn().map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                RunnerError::GitNotFound(self.git_path.clone())
+            } else {
+                RunnerError::Spawn(e)
+            }
+        })?;
+
+        let (kill_tx, kill_rx) = oneshot::channel();
+        self.insert_running(op_id.clone(), kill_tx);
+
+        let stdout = child.stdout.take().expect("stdout piped");
+        let mut stderr = child.stderr.take().expect("stderr piped");
+
+        let stdout_task = tokio::spawn(read_to_string(stdout));
+        let op_for_reader = op_id.clone();
+        let stderr_task = tokio::spawn(async move {
+            let mut splitter = crate::progress::SegmentSplitter::default();
+            let mut kept = String::new();
+            let mut on_segment = |seg: &str| match crate::progress::parse_progress(seg) {
+                Some(p) => report_progress(&op_for_reader, p),
+                None => {
+                    if !kept.is_empty() {
+                        kept.push('\n');
+                    }
+                    kept.push_str(seg);
+                }
+            };
+            let mut chunk = [0u8; 4096];
+            loop {
+                match stderr.read(&mut chunk).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => splitter.feed(&chunk[..n], &mut on_segment),
+                }
+            }
+            splitter.finish(&mut on_segment);
+            kept
+        });
 
         let exit_code = tokio::select! {
             _ = kill_rx => {
@@ -392,6 +528,10 @@ impl GitRunner {
     }
 
     fn build_command(&self, args: &[&str]) -> Command {
+        self.build_command_with_env(args, &[])
+    }
+
+    fn build_command_with_env(&self, args: &[&str], extra_env: &[(&str, &str)]) -> Command {
         let mut cmd = Command::new(&self.git_path);
         cmd.args(args);
         if let Some(cwd) = &self.cwd {
@@ -424,6 +564,10 @@ impl GitRunner {
         // Hardened overrides: no prompts/editor, deterministic locale. These win
         // over anything inherited above (GIT_* were already scrubbed).
         for (k, v) in self.base_env.iter() {
+            cmd.env(k, v);
+        }
+        // Per-invocation overrides win over the base env (applied last).
+        for (k, v) in extra_env {
             cmd.env(k, v);
         }
         cmd.kill_on_drop(true);
@@ -643,5 +787,25 @@ mod tests {
         std::env::remove_var("LEGIT_TEST_OS_VAR");
         std::env::remove_var("GIT_DIR");
         std::env::remove_var("LC_ALL");
+    }
+
+    /// Per-invocation env overrides must be applied AFTER the hardened base
+    /// env, so a caller can relax a single default for one command (e.g.
+    /// `GIT_EDITOR=true` for `merge/rebase --continue` - the env var beats any
+    /// `-c core.editor=…`, so overriding the env is the only way).
+    #[test]
+    fn build_command_extra_env_wins_over_base_env() {
+        let runner = GitRunner::unbound("git");
+        let cmd = runner.build_command_with_env(&["merge", "--continue"], &[("GIT_EDITOR", "true")]);
+        let envs: std::collections::HashMap<String, String> = cmd
+            .as_std()
+            .get_envs()
+            .filter_map(|(k, v)| {
+                v.map(|v| (k.to_string_lossy().into_owned(), v.to_string_lossy().into_owned()))
+            })
+            .collect();
+        assert_eq!(envs.get("GIT_EDITOR").map(String::as_str), Some("true"));
+        // The rest of the hardening is untouched.
+        assert_eq!(envs.get("GIT_TERMINAL_PROMPT").map(String::as_str), Some("0"));
     }
 }

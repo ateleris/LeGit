@@ -13,22 +13,32 @@ export function MenuItem({
   disabled?: boolean;
 }) {
   const [hover, setHover] = useState(false);
+  // A real <button> (keyboard focus + Enter activation), with the global CSS
+  // button chrome (bg, border, padding) explicitly reset to menu-entry style.
   return (
-    <div
-      onClick={disabled ? undefined : onClick}
+    <button
+      type="button"
+      role="menuitem"
+      disabled={disabled}
+      onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
+        display: "block",
+        width: "100%",
+        textAlign: "left",
+        border: "none",
+        borderRadius: 0,
         padding: "6px 14px",
         cursor: disabled ? "default" : "pointer",
         whiteSpace: "nowrap",
         color: disabled ? "var(--subtle-fg, #777)" : "var(--panel-fg, #ccc)",
-        background: hover && !disabled ? "var(--menu-hover-bg, rgba(255,255,255,0.08))" : "",
+        background: hover && !disabled ? "var(--menu-hover-bg, rgba(255,255,255,0.08))" : "transparent",
         opacity: disabled ? 0.6 : 1,
       }}
     >
       {children}
-    </div>
+    </button>
   );
 }
 

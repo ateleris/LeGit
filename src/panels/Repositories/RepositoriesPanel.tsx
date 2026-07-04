@@ -4,6 +4,7 @@ import { cancelClone, listGitProfiles, recentRepos } from "../../lib/commands";
 import type { GitProfile } from "../../lib/types";
 import { formatAppError, gitErrorKind } from "../../lib/types";
 import { useRepoStore } from "../../store/repos";
+import { useRemoteProgressStore } from "../../store/remoteProgress";
 
 type Mode = "none" | "clone" | "init";
 
@@ -151,6 +152,11 @@ function CloneForm({
   const opIdRef = useRef<string | null>(null);
   const cancelRequestedRef = useRef(false);
 
+  // Live clone transfer progress (legit://remote-progress, keyed by our opId).
+  const progress = useRemoteProgressStore((s) =>
+    opIdRef.current ? s.byOp[opIdRef.current] : undefined,
+  );
+
   const browse = async () => {
     const sel = await openDialog({ directory: true, multiple: false });
     if (typeof sel === "string") setParentDir(sel);
@@ -174,6 +180,7 @@ function CloneForm({
         );
       }
     } finally {
+      useRemoteProgressStore.getState().clear(opId);
       setBusy(false);
       opIdRef.current = null;
     }
@@ -217,6 +224,15 @@ function CloneForm({
           <button onClick={onCancel}>Close</button>
         )}
         {busy && <span className="legit-spinner" aria-hidden="true" />}
+        {busy && progress && (
+          <span
+            className="legit-subtle"
+            style={{ fontSize: "var(--fz-sm)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+          >
+            {progress.phase}
+            {progress.percent != null ? ` ${progress.percent}%` : "…"}
+          </span>
+        )}
       </div>
     </FormCard>
   );

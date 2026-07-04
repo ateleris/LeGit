@@ -22,6 +22,22 @@ pub async fn repo_create_branch(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn repo_set_upstream(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    branch: String,
+    upstream: Option<String>,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .set_upstream(&branch, upstream.as_deref())
+        .await
+        .map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn repo_switch_branch(
     state: tauri::State<'_, AppState>,
     repo_id: String,

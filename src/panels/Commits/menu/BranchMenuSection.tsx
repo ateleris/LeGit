@@ -3,6 +3,12 @@ import { useMenuConfirm } from "./PanelContextMenu";
 import { MenuItem, Separator, SectionLabel } from "./primitives";
 import type { MergeOptions } from "../../../lib/types";
 
+/** Short display/command form of an upstream ref: `refs/remotes/origin/dev`
+ *  and `origin/dev` both become `origin/dev`. */
+function shortUpstream(upstream: string | null): string | null {
+  return upstream?.replace(/^refs\/remotes\//, "") ?? null;
+}
+
 /**
  * Merge/rebase entries for a target branch (local or remote-tracking),
  * shared by both sections so the two menus cannot drift. Hidden when the
@@ -59,8 +65,11 @@ export function BranchMenuSection({
   isCurrent,
   currentBranch,
   opInProgress,
+  upstream,
+  upstreamCandidates,
   onCheckout,
   onRename,
+  onSetUpstream,
   onDelete,
   onMerge,
   onRebaseOnto,
@@ -69,8 +78,15 @@ export function BranchMenuSection({
   isCurrent: boolean;
   currentBranch: string | null;
   opInProgress: boolean;
+  /** The branch's current upstream (full or short ref), null when untracked. */
+  upstream: string | null;
+  /** Existing remote-tracking branches this branch could track (short names,
+   *  e.g. "origin/feature") — same-name candidates computed by the caller. */
+  upstreamCandidates: string[];
   onCheckout: () => void;
   onRename: () => void;
+  /** Set (short remote ref) or clear (null) the branch's upstream. */
+  onSetUpstream: (upstream: string | null) => void;
   onDelete: (force: boolean) => void;
   onMerge: (options: MergeOptions) => void;
   onRebaseOnto: () => void;
@@ -96,6 +112,21 @@ export function BranchMenuSection({
         {isCurrent ? "Checkout branch (current)" : "Checkout branch"}
       </MenuItem>
       <MenuItem onClick={onRename}>Rename branch…</MenuItem>
+      {/* Upstream (tracking) management: offer the existing same-name
+          remote-tracking branches as targets; git requires the remote ref to
+          already exist, so free-form input would only add failure modes. */}
+      {upstreamCandidates
+        .filter((c) => shortUpstream(upstream) !== c)
+        .map((c) => (
+          <MenuItem key={c} onClick={() => onSetUpstream(c)}>
+            Set upstream to '{c}'
+          </MenuItem>
+        ))}
+      {upstream && (
+        <MenuItem onClick={() => onSetUpstream(null)}>
+          Unset upstream ('{shortUpstream(upstream)}')
+        </MenuItem>
+      )}
       <MergeRebaseItems
         targetLabel={name}
         currentBranch={currentBranch}

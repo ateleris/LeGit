@@ -9,7 +9,9 @@ use legit_core::types::{
 /// Fetch the log for the active repo.
 ///
 /// Returns at most `max_count` commits starting from `skip` (for load-more).
-/// Defaults: max_count = 500, skip = 0.
+/// Defaults: max_count = 500, skip = 0. With `revision_range` set (e.g.
+/// `base..HEAD` for the interactive-rebase plan) only that range is walked —
+/// no branch refs, no synthetic stash nodes.
 #[tauri::command]
 #[specta::specta]
 pub async fn repo_log(
@@ -17,14 +19,20 @@ pub async fn repo_log(
     repo_id: String,
     max_count: Option<u32>,
     skip: Option<u32>,
+    revision_range: Option<String>,
 ) -> Result<Vec<Commit>, AppError> {
     let session = state.get_session(&repo_id).await?;
+    let refs = if revision_range.is_some() {
+        legit_core::types::RefSelector::Head
+    } else {
+        legit_core::types::RefSelector::AllLocalBranches
+    };
     let opts = LogOptions {
         max_count,
         skip,
-        revision_range: None,
+        revision_range,
         paths: vec![],
-        refs: legit_core::types::RefSelector::AllLocalBranches,
+        refs,
     };
     session.backend.log(opts).await.map_err(AppError::Git)
 }

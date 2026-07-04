@@ -518,8 +518,10 @@ button.legit-tab__close:hover {
   opacity: 0.5;
 }
 .palette-row__delete {
-  width: 26px;
-  height: 26px;
+  /* Font-relative box (26px/16px at the 12px default base). */
+  font-size: calc(var(--ui-font-size) * 1.33);
+  width: 1.63em;
+  height: 1.63em;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -527,7 +529,6 @@ button.legit-tab__close:hover {
   background: transparent;
   border: 1px solid transparent;
   color: var(--subtle-fg);
-  font-size: 16px;
   line-height: 1;
   border-radius: 4px;
   cursor: pointer;

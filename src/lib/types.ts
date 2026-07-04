@@ -44,6 +44,8 @@ export interface GlobalSettings {
   confirm_discard?: boolean;
   /** How to handle uncommitted changes when switching branches (null = try_directly). */
   switch_dirty_behavior?: SwitchDirtyBehavior | null;
+  /** Pull integration strategy (null = Default: the repo's pull.rebase decides). */
+  pull_strategy?: PullStrategy | null;
   /** Show author Gravatars in the commit graph. OFF by default — enabling it
    * sends hashed author emails to gravatar.com. */
   commit_avatars?: boolean;
@@ -451,6 +453,46 @@ export type RebaseOutcome =
   /** Rebase finished, but reapplying the autostash conflicted (stash kept). */
   | { kind: "completed_with_stash_conflicts"; message: string };
 
+/** Mode for `git reset` (matches legit-core `ResetMode`). Hard is destructive. */
+export type ResetMode = "soft" | "mixed" | "hard";
+
+/** One interactive-rebase step (matches legit-core `RebaseStep`). Slice order
+ *  is the new commit order, oldest first — git's todo order. */
+export type RebaseStep =
+  | { action: "pick"; sha: CommitId }
+  | { action: "squash"; sha: CommitId }
+  | { action: "fixup"; sha: CommitId }
+  | { action: "drop"; sha: CommitId };
+
+export type RebaseAction = RebaseStep["action"];
+
+/** Index stages of a conflicted path (matches `ConflictFileSides`); a side is
+ *  null when that stage is absent (add/add, delete conflicts). */
+export interface ConflictFileSides {
+  base: string | null;
+  ours: string | null;
+  theirs: string | null;
+}
+
+/** Outcome of revert / cherry-pick and their continue/skip (matches
+ *  `SequenceOutcome`). Conflicts pause the sequencer — data, not an error. */
+export type SequenceOutcome =
+  | { kind: "completed" }
+  | { kind: "conflicts"; message: string };
+
+/** One HEAD reflog entry (matches legit-core `ReflogEntry`). */
+export interface ReflogEntry {
+  /** Positional selector, e.g. `HEAD@{0}` — display-only, shifts constantly. */
+  selector: string;
+  sha: CommitId;
+  /** Action prefix, e.g. "commit", "reset", "checkout", "rebase (finish)". */
+  action: string;
+  /** Subject after the action prefix. */
+  subject: string;
+  /** Unix seconds. */
+  timestamp: number;
+}
+
 /** Which multi-step operation the repo is in (matches `RepoOpState`). */
 export type RepoOpState =
   | { kind: "none" }
@@ -569,6 +611,20 @@ export interface Remote {
   name: string;
   fetch_url: string;
   push_url: string;
+}
+
+/** One parsed `--progress` meter update (matches legit-core `RemoteProgress`). */
+export interface RemoteProgress {
+  /** Phase label as git prints it, e.g. "Receiving objects". */
+  phase: string;
+  /** 0-100 when the phase reports a percentage. */
+  percent: number | null;
+}
+
+/** Payload of the `legit://remote-progress` event (src-tauri/src/lib.rs). */
+export interface RemoteProgressPayload {
+  op_id: string;
+  progress: RemoteProgress;
 }
 
 export type SignatureStatus =

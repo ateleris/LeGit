@@ -12,6 +12,7 @@ pub mod commit_files;
 pub mod diff;
 pub mod tracking;
 pub mod remotes;
+pub mod reflog;
 pub mod stash;
 pub mod tags;
 pub mod conflicts;

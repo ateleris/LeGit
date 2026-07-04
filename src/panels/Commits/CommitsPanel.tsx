@@ -15,7 +15,8 @@ import { useLaneLocks, useLaneLocksStore } from "../../store/laneLocks";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { useSummonStore } from "../../store/summon";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
-import { ToolbarButton, toolbarBtnStyle } from "../shared/ToolbarButton";
+import { ToolbarButton } from "../shared/ToolbarButton";
+import { Button } from "../shared/buttons";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import {
   consoleCancel,
@@ -34,6 +35,10 @@ import {
   repoStatus,
   repoMerge,
   repoRebase,
+  repoCherryPick,
+  repoReset,
+  repoRevert,
+  repoSetUpstream,
   repoSwitchBranch,
   repoTrackingStatus,
   repoCreateStash,
@@ -41,6 +46,7 @@ import {
   repoPopStash,
   repoDropStash,
   repoRenameStash,
+  repoStashBranch,
   repoTags,
   repoCreateTag,
   repoDeleteTag,
@@ -51,9 +57,10 @@ import {
 import { pushedTagNames, pickTagRemote } from "../../lib/tags";
 import { openStashDiff } from "../Stashes/StashesPanel";
 import { notifySwitchOutcome, notifySwitchError } from "../../lib/switchFeedback";
-import { notifyMergeOutcome, notifyOpError, notifyRebaseOutcome } from "../../lib/mergeFeedback";
+import { notifyMergeOutcome, notifyOpError, notifyRebaseOutcome, notifySequenceOutcome } from "../../lib/mergeFeedback";
 import { OP_DOMAINS, useOpState } from "../../lib/useOpState";
-import type { Branch, Commit, CommitId, FileStatus, MergeOptions, PushOptions, Remote, RemoteTag, Signature, TagInfo, TrackingStatus } from "../../lib/types";
+import type { Branch, Commit, CommitId, FileStatus, MergeOptions, PullStrategy, PushOptions, Remote, RemoteTag, ResetMode, Signature, TagInfo, TrackingStatus } from "../../lib/types";
+import { useRemoteProgressStore } from "../../store/remoteProgress";
 import { formatAppError, gitErrorKind } from "../../lib/types";
 import { notify } from "../../store/notifications";
 import { BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon } from "../../icons";
@@ -72,6 +79,7 @@ import { LaneLockIndicator } from "./LaneLockIndicator";
 import { PanelContextMenuProvider, type BaselineEntry } from "./menu/PanelContextMenu";
 import { MenuItem, SectionLabel, Separator } from "./menu/primitives";
 import { StashMenuSection } from "./menu/StashMenuSection";
+import { ResetMenuItems } from "./menu/ResetMenuItems";
 import { BranchMenuSection, RemoteBranchMenuSection } from "./menu/BranchMenuSection";
 import { TagMenuSection } from "./menu/TagMenuSection";
 import { branchesAt } from "./cells/refChips";
@@ -177,9 +185,11 @@ export function CommitsPanel() {
   // cell; the branch is only created when a name is confirmed. From the
   // toolbar the input sits on the HEAD row and `startPoint` is undefined
   // (git branches at HEAD proper); from a row's context menu the clicked
-  // commit's SHA is the explicit start point.
+  // commit's SHA is the explicit start point. With `stashSha` set (a stash
+  // row's "Branch from stash…"), confirming runs `git stash branch` instead:
+  // branch at the stash's base, stash applied and dropped.
   const [branchCreation, setBranchCreation] = useState<
-    { rowId: CommitId; startPoint?: string } | null
+    { rowId: CommitId; startPoint?: string; stashSha?: string } | null
   >(null);
 
   // Create-new-tag mode (row context menu): same pattern as branchCreation;
@@ -310,6 +320,46 @@ export function CommitsPanel() {
     }
   }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Cherry-pick / revert / reset (undo & history rewriting). Conflicts pause
+  // git's sequencer and surface via the Working Changes op-state banner; a
+  // failed op can still leave state behind, so refresh either way.
+  const handleCherryPick = useCallback(async (sha: string) => {
+    if (!repo) return;
+    try {
+      const outcome = await repoCherryPick(repo.id, sha);
+      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
+      notifySequenceOutcome(outcome, "cherry-pick", sha.slice(0, 8));
+    } catch (e) {
+      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
+      notifyOpError(e);
+    }
+  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleRevert = useCallback(async (sha: string) => {
+    if (!repo) return;
+    try {
+      const outcome = await repoRevert(repo.id, sha);
+      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
+      notifySequenceOutcome(outcome, "revert", sha.slice(0, 8));
+    } catch (e) {
+      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
+      notifyOpError(e);
+    }
+  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleReset = useCallback(async (sha: string, mode: ResetMode) => {
+    if (!repo) return;
+    try {
+      await repoReset(repo.id, sha, mode);
+      // Reset also moves the branch relative to its upstream.
+      invalidateRepoDomains(queryClient, repo.id, [...OP_DOMAINS, "tracking"]);
+      notify.info(`Reset (${mode}) to ${sha.slice(0, 8)}.`);
+    } catch (e) {
+      invalidateRepoDomains(queryClient, repo.id, [...OP_DOMAINS, "tracking"]);
+      notifyOpError(e);
+    }
+  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleRebaseOnto = useCallback(async (onto: string) => {
     if (!repo) return;
     try {
@@ -362,6 +412,24 @@ export function CommitsPanel() {
       notify.error(formatAppError(e));
     }
   }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSetUpstream = useCallback(async (branch: string, upstream: string | null) => {
+    if (!repo) return;
+    try {
+      await repoSetUpstream(repo.id, branch, upstream);
+      invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
+  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Existing same-name remote-tracking branches a local branch could track —
+  // the candidates offered by the "Set upstream to …" menu entries.
+  const upstreamCandidatesFor = useCallback(
+    (name: string) =>
+      branches.filter((b) => b.is_remote && b.name.endsWith(`/${name}`)).map((b) => b.name),
+    [branches],
+  );
 
   const handleRemoteCheckout = useCallback(async (remoteRef: string) => {
     if (!repo) return;
@@ -577,7 +645,7 @@ export function CommitsPanel() {
   const handleCreateStash = useCallback(async (includeUntracked: boolean) => {
     if (!repo) return;
     try {
-      const outcome = await repoCreateStash(repo.id, undefined, includeUntracked);
+      const outcome = await repoCreateStash(repo.id, undefined, includeUntracked, false);
       invalidateRepoDomains(queryClient, repo.id, STASH_DOMAINS);
       if (outcome.kind === "nothing_to_stash") {
         notify.info("Nothing to stash — the working tree is clean.");
@@ -657,15 +725,31 @@ export function CommitsPanel() {
     if (idx >= 0) rowVirtualizer.scrollToIndex(idx);
   }, [headId, rows, rowVirtualizer]);
 
+  // "Branch from stash…" — reuses the create-branch chip input on the stash's
+  // own row; the save handler routes to `git stash branch` via `stashSha`.
+  const handleStashBranchStart = useCallback((sha: string) => {
+    setBranchCreation({ rowId: sha, stashSha: sha });
+    const idx = rows.findIndex((c) => c.id === sha);
+    if (idx >= 0) rowVirtualizer.scrollToIndex(idx);
+  }, [rows, rowVirtualizer]);
+
   const handleCreateBranchSave = useCallback(async (name: string) => {
     const creation = branchCreation;
     setBranchCreation(null);
     if (!repo || !creation) return;
     try {
-      await repoCreateBranch(repo.id, name, creation.startPoint);
+      if (creation.stashSha) {
+        await repoStashBranch(repo.id, creation.stashSha, name);
+        notify.info(`Created branch '${name}' from the stash and checked it out.`);
+      } else {
+        await repoCreateBranch(repo.id, name, creation.startPoint);
+      }
       invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
     } catch (e) {
-      notify.error(formatAppError(e));
+      // stash branch checks out the new branch, so its failure mode is a
+      // switch failure (dirty tree) — use the switch messaging for it.
+      if (creation.stashSha) notifySwitchError(e);
+      else notify.error(formatAppError(e));
     }
   }, [repo, branchCreation, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1078,6 +1162,7 @@ export function CommitsPanel() {
                         onViewDiff={() => { closeMenu(); openStashDiff(commit.id); }}
                         onApply={() => { closeMenu(); handleStashApply(commit.id); }}
                         onPop={() => { closeMenu(); handleStashPop(commit.id); }}
+                        onBranch={() => { closeMenu(); handleStashBranchStart(commit.id); }}
                         onRename={() => { closeMenu(); handleStashRename(commit.id); }}
                         onDrop={() => { closeMenu(); handleStashDrop(commit.id); }}
                       />
@@ -1098,6 +1183,31 @@ export function CommitsPanel() {
                             Reword message…
                           </MenuItem>
                         )}
+                        {/* Sequencer ops are hidden while a merge/rebase/
+                            cherry-pick/revert is already in progress. */}
+                        {!opInProgress && (
+                          <>
+                            <Separator />
+                            <MenuItem onClick={() => { closeMenu(); handleCherryPick(commit.id); }}>
+                              Cherry-pick commit
+                            </MenuItem>
+                            <MenuItem onClick={() => { closeMenu(); handleRevert(commit.id); }}>
+                              Revert commit
+                            </MenuItem>
+                            <MenuItem
+                              onClick={() => {
+                                closeMenu();
+                                useSummonStore.getState().summon("interactive-rebase", commit.id);
+                              }}
+                            >
+                              Interactive rebase from here…
+                            </MenuItem>
+                            <ResetMenuItems
+                              branch={currentBranchName}
+                              onReset={(mode) => { closeMenu(); handleReset(commit.id, mode); }}
+                            />
+                          </>
+                        )}
                         {rowBranches.local.map((b) => (
                           <Fragment key={`local-${b.name}`}>
                             <Separator />
@@ -1106,8 +1216,11 @@ export function CommitsPanel() {
                               isCurrent={b.isCurrent}
                               currentBranch={currentBranchName}
                               opInProgress={opInProgress}
+                              upstream={branches.find((x) => !x.is_remote && x.name === b.name)?.upstream ?? null}
+                              upstreamCandidates={upstreamCandidatesFor(b.name)}
                               onCheckout={() => { closeMenu(); handleBranchCheckout(b.name); }}
                               onRename={() => { closeMenu(); handleBranchRename(b.name); }}
+                              onSetUpstream={(up) => { closeMenu(); handleSetUpstream(b.name, up); }}
                               onDelete={(force) => { closeMenu(); handleBranchDelete(b.name, force); }}
                               onMerge={(options) => { closeMenu(); handleMerge(b.name, options); }}
                               onRebaseOnto={() => { closeMenu(); handleRebaseOnto(b.name); }}
@@ -1192,6 +1305,8 @@ export function CommitsPanel() {
                             onTagDeleteRemote={handleTagDeleteRemote}
                             onBranchCheckout={handleBranchCheckout}
                             onBranchRename={handleBranchRename}
+                            onBranchSetUpstream={handleSetUpstream}
+                            upstreamCandidatesFor={upstreamCandidatesFor}
                             onBranchDelete={handleBranchDelete}
                             onRemoteCheckout={handleRemoteCheckout}
                             currentBranch={currentBranchName}
@@ -1409,6 +1524,45 @@ type SyncOp = "fetch" | "pull" | "push";
  * into the sync command, and cancels via `consoleCancel` (the same shared
  * GitRunner). A user-cancelled op suppresses its error toast.
  */
+const PULL_STRATEGY_LABELS: Record<PullStrategy, string> = {
+  Default: "Repo default",
+  Rebase: "Rebase",
+  Merge: "Merge",
+  FfOnly: "Fast-forward only",
+};
+
+/** Hand-rolled caret dropdown shared by the Pull and Push toolbar buttons:
+ *  a fixed click-away overlay plus a right-aligned panel under the anchor. */
+function SyncDropdown({
+  onClose,
+  children,
+}: {
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <>
+      <div style={{ position: "fixed", inset: 0, zIndex: 10 }} onClick={onClose} />
+      <div
+        style={{
+          position: "absolute",
+          top: "100%",
+          right: 0,
+          marginTop: 2,
+          zIndex: 11,
+          background: "var(--panel-bg, #222)",
+          border: "1px solid var(--panel-border)",
+          borderRadius: 4,
+          boxShadow: "0 2px 8px var(--shadow-color)",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {children}
+      </div>
+    </>
+  );
+}
+
 function RemoteSyncToolbar({
   repoId,
   branches,
@@ -1439,8 +1593,20 @@ function RemoteSyncToolbar({
 
   const [busyOp, setBusyOp] = useState<SyncOp | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [pullMenuOpen, setPullMenuOpen] = useState(false);
   const opIdRef = useRef<string | null>(null);
   const cancelRequestedRef = useRef(false);
+
+  // Persisted pull integration strategy ("Default" = the repo's pull.rebase
+  // config decides). Picking one in the caret menu changes the default for
+  // every future pull, not just the next one.
+  const pullStrategy = useSettingsStore((s) => s.settings?.pull_strategy ?? "Default");
+  const setPullStrategy = useSettingsStore((s) => s.setPullStrategy);
+
+  // Latest --progress update for the in-flight op (cleared when it settles).
+  const progress = useRemoteProgressStore((s) =>
+    opIdRef.current ? s.byOp[opIdRef.current] : undefined,
+  );
 
   // The checked-out local branch (none when detached / unborn).
   const currentBranch = useMemo(
@@ -1493,6 +1659,7 @@ function RemoteSyncToolbar({
           }
         }
       } finally {
+        useRemoteProgressStore.getState().clear(opId);
         setBusyOp(null);
         opIdRef.current = null;
       }
@@ -1511,13 +1678,14 @@ function RemoteSyncToolbar({
     runSync("fetch", (opId) => repoFetch(repoId, { all: true, prune: true, remote: null }, opId), "Fetched");
 
   const doPull = () =>
-    runSync("pull", (opId) => repoPull(repoId, { strategy: "Default" }, opId), "Pulled");
+    runSync("pull", (opId) => repoPull(repoId, { strategy: pullStrategy }, opId), "Pulled");
 
-  const doPush = (forceWithLease: boolean) => {
+  const doPush = (forceWithLease: boolean, remoteOverride?: string) => {
     setMenuOpen(false);
-    if (!currentBranch || !remoteName) return;
+    const remote = remoteOverride ?? remoteName;
+    if (!currentBranch || !remote) return;
     const opts: PushOptions = {
-      remote: remoteName,
+      remote,
       branch: currentBranch.name,
       set_upstream: !hasUpstream,
       force_with_lease: forceWithLease,
@@ -1525,7 +1693,7 @@ function RemoteSyncToolbar({
     return runSync(
       "push",
       (opId) => repoPush(repoId, opts, opId),
-      hasUpstream ? "Pushed" : "Published branch",
+      hasUpstream ? `Pushed to ${remote}` : "Published branch",
     );
   };
 
@@ -1548,20 +1716,53 @@ function RemoteSyncToolbar({
         label={busyOp === "fetch" ? "Cancel" : "Fetch"}
         onClick={busyOp === "fetch" ? cancelSync : doFetch}
       />
-      <ToolbarButton
-        title={
-          busyOp === "pull"
-            ? "Cancel pull"
-            : hasUpstream
-              ? `Pull from ${tracking?.upstream ?? "upstream"}`
-              : "No upstream for the current branch"
-        }
-        disabled={busyOp === "pull" ? false : busy || !hasUpstream}
-        loading={busyOp === "pull"}
-        icon={<PullIcon />}
-        label={busyOp === "pull" ? "Cancel" : "Pull"}
-        onClick={busyOp === "pull" ? cancelSync : doPull}
-      />
+      {/* Pull with a caret menu picking the integration strategy. */}
+      <div style={{ position: "relative", display: "flex" }}>
+        <ToolbarButton
+          title={
+            busyOp === "pull"
+              ? "Cancel pull"
+              : hasUpstream
+                ? `Pull from ${tracking?.upstream ?? "upstream"}` +
+                  (pullStrategy !== "Default" ? ` (${PULL_STRATEGY_LABELS[pullStrategy]})` : "")
+                : "No upstream for the current branch"
+          }
+          disabled={busyOp === "pull" ? false : busy || !hasUpstream}
+          loading={busyOp === "pull"}
+          icon={<PullIcon />}
+          label={busyOp === "pull" ? "Cancel" : "Pull"}
+          onClick={busyOp === "pull" ? cancelSync : doPull}
+          rounded="left"
+        />
+        <Button
+          variant="ghost"
+          rounded="right"
+          title="Pull strategy"
+          disabled={busy || !hasUpstream}
+          onClick={() => setPullMenuOpen((o) => !o)}
+          style={{ padding: "2px 4px", marginLeft: -1 }}
+        >
+          <ChevronDownIcon />
+        </Button>
+        {pullMenuOpen && (
+          <SyncDropdown onClose={() => setPullMenuOpen(false)}>
+            {(Object.keys(PULL_STRATEGY_LABELS) as PullStrategy[]).map((s) => (
+              <MenuItem
+                key={s}
+                onClick={() => {
+                  void setPullStrategy(s);
+                  setPullMenuOpen(false);
+                }}
+              >
+                <span style={{ fontWeight: s === pullStrategy ? 600 : 400 }}>
+                  {s === pullStrategy ? "✓ " : " "}
+                  {PULL_STRATEGY_LABELS[s]}
+                </span>
+              </MenuItem>
+            ))}
+          </SyncDropdown>
+        )}
+      </div>
 
       {/* Push / Publish with a caret menu for force-push (with lease). */}
       <div style={{ position: "relative", display: "flex" }}>
@@ -1584,55 +1785,34 @@ function RemoteSyncToolbar({
           onClick={busyOp === "push" ? cancelSync : () => doPush(false)}
           rounded="left"
         />
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          rounded="right"
           title="More push options"
           disabled={busy || !currentBranch || !remoteName}
           onClick={() => setMenuOpen((o) => !o)}
-          style={{ ...toolbarBtnStyle(busy || !currentBranch || !remoteName), padding: "2px 4px", borderRadius: "0 3px 3px 0", marginLeft: -1 }}
+          style={{ padding: "2px 4px", marginLeft: -1 }}
         >
           <ChevronDownIcon />
-        </button>
+        </Button>
         {menuOpen && (
-          <>
-            {/* Click-away overlay. */}
-            <div
-              style={{ position: "fixed", inset: 0, zIndex: 10 }}
-              onClick={() => setMenuOpen(false)}
-            />
-            <div
-              style={{
-                position: "absolute",
-                top: "100%",
-                right: 0,
-                marginTop: 2,
-                zIndex: 11,
-                background: "var(--panel-bg, #222)",
-                border: "1px solid var(--panel-border)",
-                borderRadius: 4,
-                boxShadow: "0 2px 8px var(--shadow-color)",
-                whiteSpace: "nowrap",
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => doPush(true)}
-                style={{
-                  display: "block",
-                  width: "100%",
-                  textAlign: "left",
-                  background: "transparent",
-                  border: "none",
-                  color: "var(--panel-fg)",
-                  cursor: "pointer",
-                  fontSize: "var(--fz-sm)",
-                  padding: "6px 10px",
-                }}
-              >
-                Force-push (with lease)
-              </button>
-            </div>
-          </>
+          <SyncDropdown onClose={() => setMenuOpen(false)}>
+            <MenuItem onClick={() => doPush(true)}>Force-push (with lease)</MenuItem>
+            {/* With several remotes, offer a one-off push to each other one
+                (the button itself targets the upstream's / default remote). */}
+            {remotes.length > 1 && (
+              <>
+                <Separator />
+                {remotes
+                  .filter((r) => r.name !== remoteName)
+                  .map((r) => (
+                    <MenuItem key={r.name} onClick={() => doPush(false, r.name)}>
+                      Push to {r.name}
+                    </MenuItem>
+                  ))}
+              </>
+            )}
+          </SyncDropdown>
         )}
       </div>
 
@@ -1649,12 +1829,57 @@ function RemoteSyncToolbar({
         onClick={() => onCreateBranch()}
       />
 
+      {/* Live transfer progress for the in-flight op (fed by the
+          legit://remote-progress event; cleared when the op settles). */}
+      {busy && progress && (
+        <span
+          title={`${progress.phase}${progress.percent != null ? ` ${progress.percent}%` : ""}`}
+          style={{
+            marginLeft: "auto",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: "var(--fz-sm)",
+            color: "var(--subtle-fg)",
+            minWidth: 0,
+          }}
+        >
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {progress.phase}
+            {progress.percent != null ? ` ${progress.percent}%` : "…"}
+          </span>
+          {progress.percent != null && (
+            <span
+              aria-hidden
+              style={{
+                width: "6em",
+                height: "0.4em",
+                borderRadius: 2,
+                background: "var(--panel-border)",
+                overflow: "hidden",
+                display: "inline-block",
+                flexShrink: 0,
+              }}
+            >
+              <span
+                style={{
+                  display: "block",
+                  height: "100%",
+                  width: `${progress.percent}%`,
+                  background: "var(--progress-bar-bg)",
+                }}
+              />
+            </span>
+          )}
+        </span>
+      )}
+
       {/* Ahead/behind indicator for the current branch. */}
       {tracking && (
         <span
           title={`${tracking.ahead} ahead, ${tracking.behind} behind ${tracking.upstream}`}
           style={{
-            marginLeft: "auto",
+            marginLeft: busy && progress ? undefined : "auto",
             fontSize: "var(--fz-sm)",
             color: "var(--subtle-fg)",
             fontFamily: "monospace",

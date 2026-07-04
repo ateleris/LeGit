@@ -4,7 +4,9 @@
 
 use crate::error::AppError;
 use crate::watcher::RepoWatcher;
-use legit_core::{GitBackend, GitCliBackend, GitRunner, OperationId, SwitchDirtyBehavior};
+use legit_core::{
+    GitBackend, GitCliBackend, GitRunner, OperationId, PullStrategy, SwitchDirtyBehavior,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use specta::Type;
@@ -220,6 +222,10 @@ pub struct GlobalSettings {
     pub confirm_discard: bool,
     /// How to handle uncommitted changes when switching branches. `None` = `TryDirectly`.
     pub switch_dirty_behavior: Option<SwitchDirtyBehavior>,
+    /// Pull integration strategy for the sync toolbar. `None` = `Default`
+    /// (the repo's `pull.rebase` config decides).
+    #[serde(default)]
+    pub pull_strategy: Option<PullStrategy>,
     /// Show author avatars (Gravatar) in the commit graph. OFF by default —
     /// enabling it sends hashed author emails to gravatar.com (privacy
     /// opt-in; see BACKLOG/settings copy).
@@ -255,6 +261,7 @@ impl Default for GlobalSettings {
             watcher_enabled: true,
             confirm_discard: true,
             switch_dirty_behavior: None,
+            pull_strategy: None,
             commit_avatars: false,
             git_profiles_doc: GitProfilesDoc::default(),
         }

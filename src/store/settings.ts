@@ -9,9 +9,15 @@ import {
   setConfirmDiscard,
   setCommitAvatars,
   saveSwitchDirtyBehavior,
+  savePullStrategy,
 } from "../lib/commands";
 import { reapplyPanelConstraints } from "./dockview";
-import type { GlobalSettings, RegionPlacement, SwitchDirtyBehavior } from "../lib/types";
+import type {
+  GlobalSettings,
+  PullStrategy,
+  RegionPlacement,
+  SwitchDirtyBehavior,
+} from "../lib/types";
 
 /** Defaults + bounds for the Commits-panel graph metrics. Mirror the backend
  * clamps in `save_commits_graph_metrics`. */
@@ -86,6 +92,7 @@ interface SettingsStore {
   setConfirmDiscard: (confirm: boolean) => Promise<void>;
   setCommitAvatars: (enabled: boolean) => Promise<void>;
   setSwitchDirtyBehavior: (behavior: SwitchDirtyBehavior) => Promise<void>;
+  setPullStrategy: (strategy: PullStrategy) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
@@ -172,6 +179,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     await saveSwitchDirtyBehavior(behavior);
     const s = get().settings;
     if (s) set({ settings: { ...s, switch_dirty_behavior: behavior } });
+  },
+
+  async setPullStrategy(strategy) {
+    await savePullStrategy(strategy);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, pull_strategy: strategy } });
   },
 
   async setUiFontSize(size) {

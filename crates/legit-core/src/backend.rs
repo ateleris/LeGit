@@ -10,10 +10,12 @@ use crate::error::GitError;
 use crate::runner::OperationId;
 use crate::types::{
     Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, ConflictEntry,
-    ConflictSide, Diff, DiffEntry, DiffSource, FetchOptions, FileStatus, HunkOp, LogOptions,
-    MergeOptions, MergeOutcome, PullOptions, PushOptions, RebaseOutcome, Remote, RemoteTag,
-    RepoOpState, StashApplyOutcome, StashEntry, StashOutcome, SubmoduleInfo,
-    SwitchDirtyBehavior, SwitchOutcome, TagInfo, TrackingStatus,
+    ConflictFileSides, ConflictSide, Diff, DiffEntry, DiffSource, FetchOptions, FileStatus,
+    HunkOp, LogOptions,
+    MergeOptions, MergeOutcome, PullOptions, PushOptions, RebaseOutcome, RebaseStep,
+    ReflogEntry, Remote, RemoteTag, RepoOpState, ResetMode, SequenceOutcome, StashApplyOutcome,
+    StashEntry, StashOutcome, SubmoduleInfo, SwitchDirtyBehavior, SwitchOutcome, TagInfo,
+    TrackingStatus,
 };
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
@@ -188,9 +190,16 @@ pub trait GitBackend: Send + Sync {
     async fn stashes(&self) -> Result<Vec<StashEntry>, GitError>;
 
     /// Stash the working tree (`git stash push`). `include_untracked` adds
-    /// `--include-untracked`. A clean working tree returns `NothingToStash`
-    /// (not `Err`).
-    async fn create_stash(&self, message: Option<&str>, include_untracked: bool) -> Result<StashOutcome, GitError>;
+    /// `--include-untracked`; `keep_index` adds `--keep-index` (the stash still
+    /// records everything, but staged changes are re-applied to the index and
+    /// worktree afterwards, so they stay staged). A clean working tree returns
+    /// `NothingToStash` (not `Err`).
+    async fn create_stash(
+        &self,
+        message: Option<&str>,
+        include_untracked: bool,
+        keep_index: bool,
+    ) -> Result<StashOutcome, GitError>;
 
     /// Apply a stash without removing it (`git stash apply`). `stash_sha` is the
     /// stash's commit SHA; it is resolved to the *current* `stash@{N}` selector at
@@ -210,6 +219,24 @@ pub trait GitBackend: Send + Sync {
     /// `apply_stash` — dropping by SHA can never remove the wrong entry when the
     /// list has shifted since the UI rendered.
     async fn drop_stash(&self, stash_sha: &str) -> Result<(), GitError>;
+
+    /// Set or clear a local branch's upstream (tracking) configuration.
+    /// `Some("origin/main")` runs `git branch --set-upstream-to=origin/main
+    /// <branch>`; `None` runs `git branch --unset-upstream <branch>` (which
+    /// fails if the branch has no upstream — callers gate on the branch's
+    /// current `upstream`). Complements push `--set-upstream`, which only
+    /// covers the publish path.
+    async fn set_upstream(&self, branch: &str, upstream: Option<&str>) -> Result<(), GitError>;
+
+    /// Create and check out `branch_name` at the commit the stash was based
+    /// on, apply the stash, and drop it on success (`git stash branch`).
+    /// Because the branch starts at the stash's own base, the apply cannot
+    /// conflict - this is the escape hatch when a plain apply would (the base
+    /// has since diverged). `stash_sha` is resolved like `apply_stash`. A
+    /// dirty-tree checkout refusal is `WouldOverwriteLocalChanges`; an
+    /// already-existing branch name is a plain `CommandFailed` (git's message
+    /// names the branch).
+    async fn stash_branch(&self, stash_sha: &str, branch_name: &str) -> Result<(), GitError>;
 
     /// Rename a stash's message. Git has no in-place rename, so this drops the
     /// entry and re-stores its commit under `new_message` (`git stash store`).
@@ -246,6 +273,58 @@ pub trait GitBackend: Send + Sync {
     /// Abort an in-progress rebase, restoring the original branch state.
     async fn rebase_abort(&self) -> Result<(), GitError>;
 
+    /// Interactive rebase of `base..HEAD` following `plan` (git todo order,
+    /// oldest first): reorder, squash/fixup, drop. The plan is injected into
+    /// git's own todo file via `GIT_SEQUENCE_EDITOR` (no temp script); squash
+    /// messages are git's auto-combined text, accepted unchanged. Always
+    /// `--autostash`. Conflicts pause the normal rebase state machine —
+    /// resolve via `rebase_continue` / `rebase_skip` / `rebase_abort`.
+    /// Invalid plans (empty, leading squash/fixup, non-hex sha) fail before
+    /// any git runs.
+    async fn rebase_interactive(
+        &self,
+        base: &str,
+        plan: &[RebaseStep],
+    ) -> Result<RebaseOutcome, GitError>;
+
+    /// `git reset --soft|--mixed|--hard <target>`. `Hard` is destructive
+    /// (discards uncommitted changes) — the UI confirms before calling.
+    async fn reset(&self, target: &str, mode: ResetMode) -> Result<(), GitError>;
+
+    /// Revert a commit (`git revert --no-edit <sha>`). Conflicts pause the
+    /// sequencer and are an outcome; conclude via `revert_continue` /
+    /// `revert_skip` / `revert_abort`. Reverting a merge commit needs `-m`
+    /// and is not supported yet — git's error is surfaced as-is.
+    async fn revert(&self, sha: &str) -> Result<SequenceOutcome, GitError>;
+
+    /// Cherry-pick a commit (`git cherry-pick <sha>`). Conflict handling
+    /// mirrors `revert`.
+    async fn cherry_pick(&self, sha: &str) -> Result<SequenceOutcome, GitError>;
+
+    /// Continue a paused cherry-pick after resolving conflicts. Runs with
+    /// `GIT_EDITOR=true` to accept the prepared message unchanged.
+    async fn cherry_pick_continue(&self) -> Result<SequenceOutcome, GitError>;
+
+    /// Skip the current commit of a paused cherry-pick (e.g. one whose
+    /// resolution turned out empty).
+    async fn cherry_pick_skip(&self) -> Result<SequenceOutcome, GitError>;
+
+    /// Abort a paused cherry-pick, restoring the pre-op state.
+    async fn cherry_pick_abort(&self) -> Result<(), GitError>;
+
+    /// Continue a paused revert after resolving conflicts.
+    async fn revert_continue(&self) -> Result<SequenceOutcome, GitError>;
+
+    /// Skip the current commit of a paused revert.
+    async fn revert_skip(&self) -> Result<SequenceOutcome, GitError>;
+
+    /// Abort a paused revert, restoring the pre-op state.
+    async fn revert_abort(&self) -> Result<(), GitError>;
+
+    /// HEAD's reflog, newest first (`git reflog`), at most `max_count`
+    /// entries. The undo safety net: every HEAD movement is here.
+    async fn reflog(&self, max_count: u32) -> Result<Vec<ReflogEntry>, GitError>;
+
     /// Which multi-step operation (merge/rebase/cherry-pick/revert) the repo
     /// is currently in. Probed from git-reported state paths
     /// (`rev-parse --git-path`), never a hardcoded `.git` layout.
@@ -254,6 +333,11 @@ pub trait GitBackend: Send + Sync {
     /// The currently conflicted paths with their conflict kinds
     /// (`git ls-files -u`).
     async fn conflict_entries(&self) -> Result<Vec<ConflictEntry>, GitError>;
+
+    /// The three index stages of a conflicted path (`git show :1/:2/:3`),
+    /// for the 3-way resolve view. A missing stage (add/add, delete
+    /// conflicts) is `None`, not an error.
+    async fn conflict_file_sides(&self, path: &Path) -> Result<ConflictFileSides, GitError>;
 
     /// Resolve a conflicted path by taking one side wholesale:
     /// `git checkout --ours|--theirs -- <path>` + `git add`; for a

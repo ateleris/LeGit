@@ -2,7 +2,7 @@
 // Working Changes panels so the messaging stays in one place (mirrors
 // switchFeedback.ts).
 
-import type { MergeOutcome, RebaseOutcome } from "./types";
+import type { MergeOutcome, RebaseOutcome, SequenceOutcome } from "./types";
 import { formatAppError, gitErrorKind } from "./types";
 import { notify } from "../store/notifications";
 
@@ -50,6 +50,30 @@ export function notifyRebaseOutcome(outcome: RebaseOutcome, onto: string) {
         `Rebased onto '${onto}', but restoring your auto-stashed changes ` +
           `produced conflicts - resolve them in the working tree. The stash ` +
           `entry was kept; drop it once resolved.`,
+      );
+      break;
+  }
+}
+
+/** Feedback for cherry-pick / revert (and their continue/skip): both drive
+ *  git's sequencer, so they share one outcome shape. */
+export function notifySequenceOutcome(
+  outcome: SequenceOutcome,
+  verb: "cherry-pick" | "revert",
+  target: string,
+) {
+  switch (outcome.kind) {
+    case "completed":
+      notify.info(
+        verb === "cherry-pick"
+          ? `Cherry-picked ${target}.`
+          : `Reverted ${target}.`,
+      );
+      break;
+    case "conflicts":
+      notify.info(
+        `The ${verb} of ${target} hit conflicts (or came up empty). Resolve ` +
+          `in Working Changes, then Continue - or Skip the commit, or Abort.`,
       );
       break;
   }

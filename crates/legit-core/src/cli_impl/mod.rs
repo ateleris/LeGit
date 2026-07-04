@@ -6,14 +6,16 @@
 
 use crate::backend::GitBackend;
 use crate::error::GitError;
+use crate::executor::GitExecutor;
 use crate::runner::{GitRunner, OperationId};
 use crate::types::{
     Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, ConflictEntry,
-    ConflictSide, Diff, DiffEntry, DiffSource, FetchOptions, FfMode, FileState, FileStatus,
+    ConflictFileSides, ConflictSide, Diff, DiffEntry, DiffSource, FetchOptions, FfMode,
+    FileState, FileStatus,
     HunkOp, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullStrategy, PushOptions,
-    RebaseOutcome, RefDecoration, RefSelector, Remote, RemoteTag, RepoOpState, SignMode,
-    StashApplyOutcome, StashEntry, StashOutcome, SubmoduleInfo, SwitchDirtyBehavior,
-    SwitchOutcome, TagInfo, TrackingStatus,
+    RebaseOutcome, RebaseStep, RefDecoration, RefSelector, ReflogEntry, Remote, RemoteTag,
+    RepoOpState, ResetMode, SequenceOutcome, SignMode, StashApplyOutcome, StashEntry,
+    StashOutcome, SubmoduleInfo, SwitchDirtyBehavior, SwitchOutcome, TagInfo, TrackingStatus,
 };
 
 /// Git's well-known empty-tree object id, used as the "before" side when
@@ -26,22 +28,28 @@ use tokio::sync::RwLock;
 
 pub mod parsers;
 
+#[cfg(test)]
+mod flow_tests;
+
 /// The CLI-backed implementation of `GitBackend`. Holds a shared
-/// `Arc<RwLock<Arc<GitRunner>>>` so the runner can be hot-swapped by
+/// `Arc<RwLock<Arc<E>>>` so the runner can be hot-swapped by
 /// `RepoSession` (e.g. on per-repo git-path override) without disrupting
 /// in-flight operations. Each method snapshots the current runner by locking,
 /// cloning the inner `Arc`, then releasing before use (DESIGN-v0.3.md §C.5/F.3).
-pub struct GitCliBackend {
-    runner: Arc<RwLock<Arc<GitRunner>>>,
+///
+/// Generic over `GitExecutor` so composed flows are testable with a scripted
+/// fake; production code uses the default `GitRunner` and is unaffected.
+pub struct GitCliBackend<E: GitExecutor = GitRunner> {
+    runner: Arc<RwLock<Arc<E>>>,
 }
 
-impl GitCliBackend {
-    pub fn new(runner: Arc<RwLock<Arc<GitRunner>>>) -> Self {
+impl<E: GitExecutor> GitCliBackend<E> {
+    pub fn new(runner: Arc<RwLock<Arc<E>>>) -> Self {
         Self { runner }
     }
 
     /// Snapshot the current runner without holding the lock during I/O.
-    pub async fn runner(&self) -> Arc<GitRunner> {
+    pub async fn runner(&self) -> Arc<E> {
         self.runner.read().await.clone()
     }
 
@@ -152,7 +160,7 @@ impl GitCliBackend {
     }
 
     /// True when `path` is not tracked by git (so `git diff` shows nothing).
-    async fn is_untracked(&self, runner: &GitRunner, path: &str) -> Result<bool, GitError> {
+    async fn is_untracked(&self, runner: &E, path: &str) -> Result<bool, GitError> {
         let out = runner
             .run(&["ls-files", "-z", "--", path])
             .await
@@ -164,7 +172,7 @@ impl GitCliBackend {
     /// `git diff --no-index` exits 1 when the inputs differ — success for us.
     async fn diff_no_index(
         &self,
-        runner: &GitRunner,
+        runner: &E,
         path: &str,
         context: u32,
     ) -> Result<String, GitError> {
@@ -197,7 +205,7 @@ impl GitCliBackend {
     /// which live in a separate parent commit rather than the stash's own tree.
     async fn diff_tree_file(
         &self,
-        runner: &GitRunner,
+        runner: &E,
         from: &str,
         to: &str,
         path: &str,
@@ -231,7 +239,7 @@ impl GitCliBackend {
     /// empty-tree object for a root commit. Mirrors `commit_files`.
     async fn first_parent(
         &self,
-        runner: &GitRunner,
+        runner: &E,
         sha: &str,
     ) -> Result<String, GitError> {
         let rev = runner
@@ -265,7 +273,7 @@ impl GitCliBackend {
     /// commits that have a 3rd parent in the first place.
     async fn stash_untracked_parent(
         &self,
-        runner: &GitRunner,
+        runner: &E,
         sha: &str,
     ) -> Result<Option<String>, GitError> {
         let rev = runner
@@ -329,13 +337,13 @@ impl GitCliBackend {
     /// `RunOutput` (the frontend, which initiated the cancel, suppresses its toast).
     async fn run_remote(
         &self,
-        runner: &GitRunner,
+        runner: &E,
         args: &[String],
         op_id: OperationId,
     ) -> Result<(), GitError> {
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let output = runner
-            .run_with_op(&arg_refs, op_id)
+            .run_with_op_progress(&arg_refs, op_id)
             .await
             .map_err(|e| GitError::Internal(e.to_string()))?;
         if !output.success {
@@ -356,6 +364,22 @@ impl GitCliBackend {
         let runner = self.runner().await;
         let out = runner
             .run(args)
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        let code = if out.success { 0 } else { out.exit_code.unwrap_or(-1) };
+        Ok((code, out.stdout, out.stderr))
+    }
+
+    /// Like `run_classified`, but with per-invocation env overrides (see
+    /// `EDITOR_ACCEPT_ENV`).
+    async fn run_classified_env(
+        &self,
+        args: &[&str],
+        extra_env: &[(&str, &str)],
+    ) -> Result<(i32, String, String), GitError> {
+        let runner = self.runner().await;
+        let out = runner
+            .run_with_env(args, extra_env)
             .await
             .map_err(|e| GitError::Internal(e.to_string()))?;
         let code = if out.success { 0 } else { out.exit_code.unwrap_or(-1) };
@@ -557,7 +581,7 @@ impl GitCliBackend {
 }
 
 #[async_trait]
-impl GitBackend for GitCliBackend {
+impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
     async fn status(&self) -> Result<Vec<FileStatus>, GitError> {
         let runner = self.runner().await;
 
@@ -589,14 +613,20 @@ impl GitBackend for GitCliBackend {
             args.push(&skip_arg);
         }
 
-        match opts.refs {
-            RefSelector::AllLocalBranches => {
-                // Always include HEAD so a detached HEAD commit appears even
-                // when it isn't reachable from any local branch.
-                args.push("HEAD");
-                args.push("--branches");
+        // An explicit revision range (e.g. `base..HEAD` for the interactive
+        // rebase plan) wins over the ref selector.
+        if let Some(range) = opts.revision_range.as_deref().filter(|r| !r.is_empty()) {
+            args.push(range);
+        } else {
+            match opts.refs {
+                RefSelector::AllLocalBranches => {
+                    // Always include HEAD so a detached HEAD commit appears even
+                    // when it isn't reachable from any local branch.
+                    args.push("HEAD");
+                    args.push("--branches");
+                }
+                RefSelector::Head => {}
             }
-            RefSelector::Head => {}
         }
         args.push("--decorate=full");
 
@@ -800,19 +830,7 @@ impl GitBackend for GitCliBackend {
     async fn commit(&self, opts: CommitOptions) -> Result<CommitId, GitError> {
         let runner = self.runner().await;
 
-        let mut args: Vec<String> = vec!["commit".into(), "-m".into(), opts.message.clone()];
-        if opts.amend {
-            args.push("--amend".into());
-        }
-        if opts.allow_empty {
-            args.push("--allow-empty".into());
-        }
-        match &opts.sign {
-            SignMode::None => args.push("--no-gpg-sign".into()),
-            SignMode::WithKey(key) => args.push(format!("-S{}", key.0)),
-            SignMode::Default => {}
-        }
-
+        let args = build_commit_args(&opts);
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let output = runner
             .run(&arg_refs)
@@ -950,27 +968,13 @@ impl GitBackend for GitCliBackend {
 
     async fn fetch(&self, opts: FetchOptions, op_id: OperationId) -> Result<(), GitError> {
         let runner = self.runner().await;
-        let mut args: Vec<String> = vec!["fetch".into()];
-        if opts.prune {
-            args.push("--prune".into());
-        }
-        if opts.all {
-            args.push("--all".into());
-        } else if let Some(remote) = opts.remote.as_deref().filter(|r| !r.is_empty()) {
-            args.push(remote.to_string());
-        }
+        let args = build_fetch_args(&opts);
         self.run_remote(&runner, &args, op_id).await
     }
 
     async fn pull(&self, opts: PullOptions, op_id: OperationId) -> Result<(), GitError> {
         let runner = self.runner().await;
-        let mut args: Vec<String> = vec!["pull".into()];
-        match opts.strategy {
-            PullStrategy::Default => {}
-            PullStrategy::Rebase => args.push("--rebase".into()),
-            PullStrategy::Merge => args.push("--no-rebase".into()),
-            PullStrategy::FfOnly => args.push("--ff-only".into()),
-        }
+        let args = build_pull_args(&opts);
         self.run_remote(&runner, &args, op_id).await
     }
 
@@ -1164,19 +1168,7 @@ impl GitBackend for GitCliBackend {
         target: Option<&str>,
         message: Option<&str>,
     ) -> Result<(), GitError> {
-        let mut args = vec!["tag"];
-        if let Some(msg) = message.filter(|m| !m.trim().is_empty()) {
-            args.push("-a");
-            args.push(name);
-            args.push("-m");
-            args.push(msg);
-        } else {
-            args.push(name);
-        }
-        if let Some(t) = target {
-            args.push(t);
-        }
-        self.run_simple(&args).await
+        self.run_simple(&build_tag_args(name, target, message)).await
     }
 
     async fn delete_tag(&self, name: &str) -> Result<(), GitError> {
@@ -1248,10 +1240,14 @@ impl GitBackend for GitCliBackend {
         &self,
         message: Option<&str>,
         include_untracked: bool,
+        keep_index: bool,
     ) -> Result<StashOutcome, GitError> {
         let mut args = vec!["stash", "push"];
         if include_untracked {
             args.push("--include-untracked");
+        }
+        if keep_index {
+            args.push("--keep-index");
         }
         if let Some(msg) = message.filter(|m| !m.is_empty()) {
             args.push("-m");
@@ -1285,6 +1281,23 @@ impl GitBackend for GitCliBackend {
         self.run_simple(&["stash", "drop", &selector]).await
     }
 
+    async fn set_upstream(&self, branch: &str, upstream: Option<&str>) -> Result<(), GitError> {
+        match upstream {
+            Some(up) => {
+                let arg = format!("--set-upstream-to={up}");
+                self.run_simple(&["branch", &arg, branch]).await
+            }
+            None => self.run_simple(&["branch", "--unset-upstream", branch]).await,
+        }
+    }
+
+    async fn stash_branch(&self, stash_sha: &str, branch_name: &str) -> Result<(), GitError> {
+        let selector = self.resolve_stash_selector(stash_sha).await?;
+        // `stash branch` is checkout -b at the stash base + apply + drop; its
+        // failure mode is the checkout's, so classify like a switch.
+        self.run_switch(&["stash", "branch", branch_name, &selector]).await
+    }
+
     async fn rename_stash(&self, stash_sha: &str, new_message: &str) -> Result<(), GitError> {
         let selector = self.resolve_stash_selector(stash_sha).await?;
         // Drop the old entry, then re-store the same commit (we already hold its
@@ -1303,7 +1316,9 @@ impl GitBackend for GitCliBackend {
     }
 
     async fn merge_continue(&self) -> Result<MergeOutcome, GitError> {
-        let (code, stdout, stderr) = self.run_classified(&MERGE_CONTINUE_ARGS).await?;
+        let (code, stdout, stderr) = self
+            .run_classified_env(&MERGE_CONTINUE_ARGS, EDITOR_ACCEPT_ENV)
+            .await?;
         classify_merge_output(code, &stdout, &stderr, false)
     }
 
@@ -1319,17 +1334,132 @@ impl GitBackend for GitCliBackend {
     }
 
     async fn rebase_continue(&self) -> Result<RebaseOutcome, GitError> {
-        let (code, stdout, stderr) = self.run_classified(&REBASE_CONTINUE_ARGS).await?;
+        let (code, stdout, stderr) = self
+            .run_classified_env(&REBASE_CONTINUE_ARGS, EDITOR_ACCEPT_ENV)
+            .await?;
         classify_rebase_output(code, &stdout, &stderr)
     }
 
     async fn rebase_skip(&self) -> Result<RebaseOutcome, GitError> {
-        let (code, stdout, stderr) = self.run_classified(&REBASE_SKIP_ARGS).await?;
+        let (code, stdout, stderr) = self
+            .run_classified_env(&REBASE_SKIP_ARGS, EDITOR_ACCEPT_ENV)
+            .await?;
         classify_rebase_output(code, &stdout, &stderr)
     }
 
     async fn rebase_abort(&self) -> Result<(), GitError> {
         self.run_simple(&REBASE_ABORT_ARGS).await
+    }
+
+    async fn conflict_file_sides(&self, path: &Path) -> Result<ConflictFileSides, GitError> {
+        // `git show :N:<path>` per stage; a missing stage exits non-zero and
+        // means "no content on that side" (add/add, delete conflicts).
+        let runner = self.runner().await;
+        let mut sides = [None, None, None];
+        for (i, stage) in ["1", "2", "3"].iter().enumerate() {
+            let spec = format!(":{stage}:{}", path.to_string_lossy());
+            let output = runner
+                .run(&["show", &spec])
+                .await
+                .map_err(|e| GitError::Internal(e.to_string()))?;
+            if output.success {
+                sides[i] = Some(output.stdout);
+            }
+        }
+        let [base, ours, theirs] = sides;
+        Ok(ConflictFileSides { base, ours, theirs })
+    }
+
+    async fn rebase_interactive(
+        &self,
+        base: &str,
+        plan: &[RebaseStep],
+    ) -> Result<RebaseOutcome, GitError> {
+        let todo = build_rebase_todo(plan)?;
+        // No temp script: sh completes `printf '<todo>' >` with the todo path
+        // git appends, writing the plan straight into git's own todo file.
+        // Safe to interpolate: `build_rebase_todo` rejects non-hex shas, so
+        // the single-quoted printf format can never be broken out of.
+        let editor = format!("printf '{todo}' >");
+        let env = [("GIT_SEQUENCE_EDITOR", editor.as_str()), ("GIT_EDITOR", "true")];
+        let (code, stdout, stderr) = self
+            .run_classified_env(&["rebase", "-i", "--autostash", base], &env)
+            .await?;
+        classify_rebase_output(code, &stdout, &stderr)
+    }
+
+    async fn reset(&self, target: &str, mode: ResetMode) -> Result<(), GitError> {
+        let flag = match mode {
+            ResetMode::Soft => "--soft",
+            ResetMode::Mixed => "--mixed",
+            ResetMode::Hard => "--hard",
+        };
+        self.run_simple(&["reset", flag, target]).await
+    }
+
+    async fn revert(&self, sha: &str) -> Result<SequenceOutcome, GitError> {
+        // --no-edit: the runner hardens GIT_EDITOR=false, so a revert that
+        // opened an editor for its message would fail outright.
+        let (code, stdout, stderr) = self.run_classified(&["revert", "--no-edit", sha]).await?;
+        classify_sequence_output(code, &stdout, &stderr)
+    }
+
+    async fn cherry_pick(&self, sha: &str) -> Result<SequenceOutcome, GitError> {
+        let (code, stdout, stderr) = self.run_classified(&["cherry-pick", sha]).await?;
+        classify_sequence_output(code, &stdout, &stderr)
+    }
+
+    async fn cherry_pick_continue(&self) -> Result<SequenceOutcome, GitError> {
+        let (code, stdout, stderr) = self
+            .run_classified_env(&CHERRY_PICK_CONTINUE_ARGS, EDITOR_ACCEPT_ENV)
+            .await?;
+        classify_sequence_output(code, &stdout, &stderr)
+    }
+
+    async fn cherry_pick_skip(&self) -> Result<SequenceOutcome, GitError> {
+        let (code, stdout, stderr) = self
+            .run_classified_env(&CHERRY_PICK_SKIP_ARGS, EDITOR_ACCEPT_ENV)
+            .await?;
+        classify_sequence_output(code, &stdout, &stderr)
+    }
+
+    async fn cherry_pick_abort(&self) -> Result<(), GitError> {
+        self.run_simple(&CHERRY_PICK_ABORT_ARGS).await
+    }
+
+    async fn revert_continue(&self) -> Result<SequenceOutcome, GitError> {
+        let (code, stdout, stderr) = self
+            .run_classified_env(&REVERT_CONTINUE_ARGS, EDITOR_ACCEPT_ENV)
+            .await?;
+        classify_sequence_output(code, &stdout, &stderr)
+    }
+
+    async fn revert_skip(&self) -> Result<SequenceOutcome, GitError> {
+        let (code, stdout, stderr) = self
+            .run_classified_env(&REVERT_SKIP_ARGS, EDITOR_ACCEPT_ENV)
+            .await?;
+        classify_sequence_output(code, &stdout, &stderr)
+    }
+
+    async fn revert_abort(&self) -> Result<(), GitError> {
+        self.run_simple(&REVERT_ABORT_ARGS).await
+    }
+
+    async fn reflog(&self, max_count: u32) -> Result<Vec<ReflogEntry>, GitError> {
+        let runner = self.runner().await;
+        let fmt_arg = format!("--format={}", parsers::reflog::REFLOG_FORMAT);
+        let count_arg = format!("-n{max_count}");
+        let output = runner
+            .run(&["reflog", &count_arg, &fmt_arg])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !output.success {
+            return Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr,
+            });
+        }
+        Ok(parsers::reflog::parse_reflog(&output.stdout))
     }
 
     async fn op_state(&self) -> Result<RepoOpState, GitError> {
@@ -1487,10 +1617,83 @@ fn inject_stashes(commits: &mut Vec<Commit>, stashes: Vec<StashEntry>) {
     }
 }
 
+/// Build the argument vector for `git commit`. `SignMode::None` passes
+/// `--no-gpg-sign` explicitly so a repo-level `commit.gpgsign=true` cannot
+/// re-enable signing; `Default` passes nothing and inherits config.
+fn build_commit_args(opts: &CommitOptions) -> Vec<String> {
+    let mut args: Vec<String> = vec!["commit".into(), "-m".into(), opts.message.clone()];
+    if opts.amend {
+        args.push("--amend".into());
+    }
+    if opts.allow_empty {
+        args.push("--allow-empty".into());
+    }
+    match &opts.sign {
+        SignMode::None => args.push("--no-gpg-sign".into()),
+        SignMode::WithKey(key) => args.push(format!("-S{}", key.0)),
+        SignMode::Default => {}
+    }
+    args
+}
+
+/// Build the argument vector for `git tag`. A non-blank message makes the tag
+/// annotated (`-a -m`); a blank/whitespace-only message is treated as absent
+/// so the UI's empty input never creates an annotated tag with an empty
+/// annotation. The target (when given) is always the trailing argument.
+fn build_tag_args<'a>(
+    name: &'a str,
+    target: Option<&'a str>,
+    message: Option<&'a str>,
+) -> Vec<&'a str> {
+    let mut args = vec!["tag"];
+    if let Some(msg) = message.filter(|m| !m.trim().is_empty()) {
+        args.push("-a");
+        args.push(name);
+        args.push("-m");
+        args.push(msg);
+    } else {
+        args.push(name);
+    }
+    if let Some(t) = target {
+        args.push(t);
+    }
+    args
+}
+
+/// Build the argument vector for `git fetch`. `--all` wins over a named
+/// remote; an empty remote name means "default remote" (no positional arg).
+/// `--progress` forces the transfer meter onto our (non-TTY) stderr pipe;
+/// `run_with_op_progress` parses and strips it.
+fn build_fetch_args(opts: &FetchOptions) -> Vec<String> {
+    let mut args: Vec<String> = vec!["fetch".into(), "--progress".into()];
+    if opts.prune {
+        args.push("--prune".into());
+    }
+    if opts.all {
+        args.push("--all".into());
+    } else if let Some(remote) = opts.remote.as_deref().filter(|r| !r.is_empty()) {
+        args.push(remote.to_string());
+    }
+    args
+}
+
+/// Build the argument vector for `git pull`. `Default` passes no integration
+/// flag so the repo's `pull.rebase` config decides.
+fn build_pull_args(opts: &PullOptions) -> Vec<String> {
+    let mut args: Vec<String> = vec!["pull".into(), "--progress".into()];
+    match opts.strategy {
+        PullStrategy::Default => {}
+        PullStrategy::Rebase => args.push("--rebase".into()),
+        PullStrategy::Merge => args.push("--no-rebase".into()),
+        PullStrategy::FfOnly => args.push("--ff-only".into()),
+    }
+    args
+}
+
 /// Build the argument vector for `git push`. The remote and branch are always
 /// passed explicitly so the push doesn't depend on `push.default`.
 fn build_push_args(opts: &PushOptions) -> Vec<String> {
-    let mut args: Vec<String> = vec!["push".into()];
+    let mut args: Vec<String> = vec!["push".into(), "--progress".into()];
     if opts.force_with_lease {
         args.push("--force-with-lease".into());
     }
@@ -1591,10 +1794,17 @@ fn merge_args(target: &str, opts: MergeOptions) -> Vec<String> {
     args
 }
 
-/// Continue/abort argument lists. The `-c core.editor=true` neutralizes the
-/// editor for the commit-message step (GIT_EDITOR=false would make it fail);
-/// `true` accepts the prepared message unchanged.
-const MERGE_CONTINUE_ARGS: [&str; 4] = ["-c", "core.editor=true", "merge", "--continue"];
+/// Env override for `merge/rebase --continue` (and `rebase --skip`): their
+/// commit step consults the editor, and the runner's hardened base env sets
+/// `GIT_EDITOR=false`, which fails it ("There was a problem with the editor
+/// 'false'"). A `-c core.editor=…` cannot fix this - the `GIT_EDITOR` env var
+/// outranks all config - so the env itself is overridden per invocation.
+/// `true` exits 0 without touching the file: the prepared message is accepted
+/// unchanged. Verified against real git in `tests/git_flows.rs`.
+const EDITOR_ACCEPT_ENV: &[(&str, &str)] = &[("GIT_EDITOR", "true")];
+
+/// Continue/abort argument lists (run with `EDITOR_ACCEPT_ENV`).
+const MERGE_CONTINUE_ARGS: [&str; 2] = ["merge", "--continue"];
 const MERGE_ABORT_ARGS: [&str; 2] = ["merge", "--abort"];
 
 /// `git rebase` always runs with `--autostash` so a dirty tree does not block
@@ -1603,9 +1813,19 @@ fn rebase_args(onto: &str) -> Vec<String> {
     vec!["rebase".into(), "--autostash".into(), onto.into()]
 }
 
-const REBASE_CONTINUE_ARGS: [&str; 4] = ["-c", "core.editor=true", "rebase", "--continue"];
-const REBASE_SKIP_ARGS: [&str; 4] = ["-c", "core.editor=true", "rebase", "--skip"];
+const REBASE_CONTINUE_ARGS: [&str; 2] = ["rebase", "--continue"];
+const REBASE_SKIP_ARGS: [&str; 2] = ["rebase", "--skip"];
 const REBASE_ABORT_ARGS: [&str; 2] = ["rebase", "--abort"];
+
+/// Sequencer (cherry-pick/revert) continue/skip/abort argument lists.
+/// Continue and skip run with `EDITOR_ACCEPT_ENV` — concluding creates a
+/// commit whose message git opens an editor for.
+const CHERRY_PICK_CONTINUE_ARGS: [&str; 2] = ["cherry-pick", "--continue"];
+const CHERRY_PICK_SKIP_ARGS: [&str; 2] = ["cherry-pick", "--skip"];
+const CHERRY_PICK_ABORT_ARGS: [&str; 2] = ["cherry-pick", "--abort"];
+const REVERT_CONTINUE_ARGS: [&str; 2] = ["revert", "--continue"];
+const REVERT_SKIP_ARGS: [&str; 2] = ["revert", "--skip"];
+const REVERT_ABORT_ARGS: [&str; 2] = ["revert", "--abort"];
 
 /// Compose a user-facing message from a command's streams (stdout carries
 /// git's conflict summary, stderr the hints).
@@ -1701,6 +1921,94 @@ fn classify_rebase_output(
         return Err(GitError::WouldOverwriteLocalChanges(stderr.trim().to_string()));
     }
     if err_lc.contains("invalid upstream") || err_lc.contains("unknown revision") {
+        return Err(GitError::RefNotFound(stderr.trim().to_string()));
+    }
+    Err(GitError::CommandFailed {
+        exit_code,
+        stderr: compose_output(stdout, stderr),
+    })
+}
+
+/// Build the printf format string for an interactive-rebase todo (lines
+/// `pick <sha>` / `squash <sha>` / `fixup <sha>` / `drop <sha>`, `\n`
+/// separated as printf escapes). Validates the plan up front:
+/// - non-empty, with at least one kept (non-drop) step;
+/// - the first kept step must be a `pick` (squash/fixup meld into a
+///   predecessor that wouldn't exist);
+/// - every sha must be plain hex — the todo is interpolated into a
+///   single-quoted, shell-interpreted editor string, so anything else is
+///   rejected outright rather than escaped.
+fn build_rebase_todo(plan: &[RebaseStep]) -> Result<String, GitError> {
+    if plan.is_empty() {
+        return Err(GitError::Internal("interactive rebase plan is empty".into()));
+    }
+    let mut first_kept = true;
+    let mut todo = String::new();
+    for step in plan {
+        let sha = step.sha().as_str();
+        if sha.is_empty() || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(GitError::Internal(format!(
+                "interactive rebase plan contains a non-hex sha: {sha:?}"
+            )));
+        }
+        let keyword = match step {
+            RebaseStep::Pick { .. } => "pick",
+            RebaseStep::Squash { .. } => "squash",
+            RebaseStep::Fixup { .. } => "fixup",
+            RebaseStep::Drop { .. } => "drop",
+        };
+        if matches!(step, RebaseStep::Squash { .. } | RebaseStep::Fixup { .. }) && first_kept {
+            return Err(GitError::Internal(
+                "interactive rebase plan starts with squash/fixup (nothing to meld into)".into(),
+            ));
+        }
+        if !matches!(step, RebaseStep::Drop { .. }) {
+            first_kept = false;
+        }
+        todo.push_str(keyword);
+        todo.push(' ');
+        todo.push_str(sha);
+        todo.push_str("\\n");
+    }
+    if first_kept {
+        return Err(GitError::Internal(
+            "interactive rebase plan drops every commit".into(),
+        ));
+    }
+    Ok(todo)
+}
+
+/// Split the sequencer's (revert/cherry-pick) exit-1 ambiguity the same way
+/// as merge/rebase: a paused sequencer — conflicts, or a pick whose
+/// resolution turned out empty ("is now empty" / "nothing to commit") — is
+/// an OUTCOME the user concludes via continue/skip/abort; real failures stay
+/// errors. Encoded in tests, not comments.
+fn classify_sequence_output(
+    exit_code: i32,
+    stdout: &str,
+    stderr: &str,
+) -> Result<SequenceOutcome, GitError> {
+    let out_lc = stdout.to_lowercase();
+    let err_lc = stderr.to_lowercase();
+    if exit_code == 0 {
+        return Ok(SequenceOutcome::Completed);
+    }
+    if err_lc.contains("could not apply")
+        || err_lc.contains("could not revert")
+        || out_lc.contains("conflict")
+        || err_lc.contains("conflict")
+        || err_lc.contains("you have unmerged files")
+        || err_lc.contains("is now empty")
+        || err_lc.contains("nothing to commit")
+    {
+        return Ok(SequenceOutcome::Conflicts {
+            message: compose_output(stdout, stderr),
+        });
+    }
+    if err_lc.contains("would be overwritten by") {
+        return Err(GitError::WouldOverwriteLocalChanges(stderr.trim().to_string()));
+    }
+    if err_lc.contains("bad revision") || err_lc.contains("unknown revision") {
         return Err(GitError::RefNotFound(stderr.trim().to_string()));
     }
     Err(GitError::CommandFailed {
@@ -1977,7 +2285,7 @@ mod tests {
     fn push_args_plain() {
         assert_eq!(
             build_push_args(&push_opts(false, false)),
-            vec!["push", "origin", "main"]
+            vec!["push", "--progress", "origin", "main"]
         );
     }
 
@@ -1985,7 +2293,7 @@ mod tests {
     fn push_args_set_upstream() {
         assert_eq!(
             build_push_args(&push_opts(true, false)),
-            vec!["push", "--set-upstream", "origin", "main"]
+            vec!["push", "--progress", "--set-upstream", "origin", "main"]
         );
     }
 
@@ -1993,7 +2301,7 @@ mod tests {
     fn push_args_force_with_lease_then_upstream() {
         assert_eq!(
             build_push_args(&push_opts(true, true)),
-            vec!["push", "--force-with-lease", "--set-upstream", "origin", "main"]
+            vec!["push", "--progress", "--force-with-lease", "--set-upstream", "origin", "main"]
         );
     }
 
@@ -2040,6 +2348,107 @@ mod tests {
         );
     }
 
+    // --- commit / tag / fetch / pull argument construction ---
+
+    #[test]
+    fn commit_args_plain_default_sign() {
+        let args = build_commit_args(&CommitOptions {
+            message: "msg".into(),
+            ..Default::default()
+        });
+        assert_eq!(args, vec!["commit", "-m", "msg"]);
+    }
+
+    #[test]
+    fn commit_args_amend_allow_empty_no_sign() {
+        let args = build_commit_args(&CommitOptions {
+            message: "msg".into(),
+            sign: SignMode::None,
+            allow_empty: true,
+            amend: true,
+        });
+        assert_eq!(
+            args,
+            vec!["commit", "-m", "msg", "--amend", "--allow-empty", "--no-gpg-sign"]
+        );
+    }
+
+    #[test]
+    fn commit_args_with_key_uses_inline_s() {
+        let args = build_commit_args(&CommitOptions {
+            message: "msg".into(),
+            sign: SignMode::WithKey(crate::types::KeyId("ABC123".into())),
+            ..Default::default()
+        });
+        assert_eq!(args, vec!["commit", "-m", "msg", "-SABC123"]);
+    }
+
+    #[test]
+    fn tag_args_lightweight() {
+        assert_eq!(build_tag_args("v1", None, None), vec!["tag", "v1"]);
+    }
+
+    #[test]
+    fn tag_args_blank_message_stays_lightweight() {
+        // The UI sends the annotation input verbatim; whitespace-only must not
+        // create an annotated tag with an empty message.
+        assert_eq!(build_tag_args("v1", None, Some("   ")), vec!["tag", "v1"]);
+    }
+
+    #[test]
+    fn tag_args_annotated_with_target() {
+        assert_eq!(
+            build_tag_args("v1", Some("abc123"), Some("release")),
+            vec!["tag", "-a", "v1", "-m", "release", "abc123"]
+        );
+    }
+
+    #[test]
+    fn tag_args_lightweight_with_target() {
+        assert_eq!(
+            build_tag_args("v1", Some("abc123"), None),
+            vec!["tag", "v1", "abc123"]
+        );
+    }
+
+    #[test]
+    fn fetch_args_variants() {
+        assert_eq!(
+            build_fetch_args(&FetchOptions { all: false, prune: false, remote: None }),
+            vec!["fetch", "--progress"]
+        );
+        assert_eq!(
+            build_fetch_args(&FetchOptions {
+                all: false,
+                prune: true,
+                remote: Some("origin".into())
+            }),
+            vec!["fetch", "--progress", "--prune", "origin"]
+        );
+        // --all wins over a named remote; empty remote name means default.
+        assert_eq!(
+            build_fetch_args(&FetchOptions {
+                all: true,
+                prune: false,
+                remote: Some("origin".into())
+            }),
+            vec!["fetch", "--progress", "--all"]
+        );
+        assert_eq!(
+            build_fetch_args(&FetchOptions { all: false, prune: false, remote: Some("".into()) }),
+            vec!["fetch", "--progress"]
+        );
+    }
+
+    #[test]
+    fn pull_args_variants() {
+        let mk = |strategy| build_pull_args(&PullOptions { strategy });
+        assert_eq!(mk(PullStrategy::Default), vec!["pull", "--progress"]);
+        assert_eq!(mk(PullStrategy::Rebase), vec!["pull", "--progress", "--rebase"]);
+        assert_eq!(mk(PullStrategy::Merge), vec!["pull", "--progress", "--no-rebase"]);
+        assert_eq!(mk(PullStrategy::FfOnly), vec!["pull", "--progress", "--ff-only"]);
+    }
+
     // --- merge/rebase argument construction ---
 
     #[test]
@@ -2064,10 +2473,14 @@ mod tests {
     }
 
     #[test]
-    fn continue_commands_neutralize_the_editor() {
-        assert_eq!(MERGE_CONTINUE_ARGS, ["-c", "core.editor=true", "merge", "--continue"]);
-        assert_eq!(REBASE_CONTINUE_ARGS, ["-c", "core.editor=true", "rebase", "--continue"]);
-        assert_eq!(REBASE_SKIP_ARGS, ["-c", "core.editor=true", "rebase", "--skip"]);
+    fn continue_commands_neutralize_the_editor_via_env() {
+        // Regression: `-c core.editor=true` was used before, but the runner's
+        // GIT_EDITOR=false env var outranks config, so continuing a conflicted
+        // merge/rebase always failed. The env must be overridden instead.
+        assert_eq!(EDITOR_ACCEPT_ENV, &[("GIT_EDITOR", "true")]);
+        assert_eq!(MERGE_CONTINUE_ARGS, ["merge", "--continue"]);
+        assert_eq!(REBASE_CONTINUE_ARGS, ["rebase", "--continue"]);
+        assert_eq!(REBASE_SKIP_ARGS, ["rebase", "--skip"]);
     }
 
     #[test]

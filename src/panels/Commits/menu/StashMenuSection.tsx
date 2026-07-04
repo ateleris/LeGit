@@ -17,6 +17,7 @@ export function StashMenuSection({
   onViewDiff,
   onApply,
   onPop,
+  onBranch,
   onRename,
   onDrop,
 }: {
@@ -24,6 +25,7 @@ export function StashMenuSection({
   onViewDiff: () => void;
   onApply: () => void;
   onPop: () => void;
+  onBranch: () => void;
   onRename: () => void;
   onDrop: () => void;
 }) {
@@ -44,6 +46,7 @@ export function StashMenuSection({
       <MenuItem onClick={onViewDiff}>View stash diff</MenuItem>
       <MenuItem onClick={onApply}>Apply stash</MenuItem>
       <MenuItem onClick={onPop}>Pop stash</MenuItem>
+      <MenuItem onClick={onBranch}>Branch from stash…</MenuItem>
       <MenuItem onClick={onRename}>Rename stash…</MenuItem>
       <Separator />
       <MenuItem onClick={requestDrop}>

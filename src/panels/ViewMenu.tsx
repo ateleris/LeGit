@@ -4,6 +4,7 @@ import { useDockviewStore } from "../store/dockview";
 import { GLOBAL_PANELS, REPO_PANELS } from "./registry";
 import { openGlobalPanel } from "./GlobalDock";
 import { openRepoPanel } from "./RepoDock";
+import { MenuItem, SectionLabel, Separator } from "./Commits/menu/primitives";
 
 /**
  * Dropdown that lets the user re-open closed panels in either dock.
@@ -44,26 +45,12 @@ export function ViewMenu() {
     isOpen: boolean,
     onClick: () => void
   ) => (
-    <button
-      key={id}
-      role="menuitem"
-      onClick={onClick}
-      style={{
-        display: "block",
-        width: "100%",
-        textAlign: "left",
-        background: "transparent",
-        border: "none",
-        padding: "4px 8px",
-        color: "inherit",
-        borderRadius: 3,
-      }}
-    >
-      <span style={{ display: "inline-flex", justifyContent: "center", width: 18 }}>
+    <MenuItem key={id} onClick={onClick}>
+      <span style={{ display: "inline-flex", justifyContent: "center", width: "1.5em" }}>
         {isOpen ? <CheckIcon /> : null}
       </span>
       {title}
-    </button>
+    </MenuItem>
   );
 
   return (
@@ -88,42 +75,23 @@ export function ViewMenu() {
             padding: 4,
           }}
         >
-          <div style={{ padding: "4px 8px", color: "var(--subtle-fg)", fontSize: "var(--fz-sm)" }}>
-            Global panels
-          </div>
+          <SectionLabel>Global panels</SectionLabel>
           {GLOBAL_PANELS.map((p) =>
             menuItem(p.id, p.title, !!globalApi?.getPanel(p.id), () => {
               openGlobalPanel(globalApi, p.id);
               setOpen(false);
             })
           )}
-          <div style={{ borderTop: "1px solid var(--panel-border)", margin: "4px 0" }} />
-          <div style={{ padding: "4px 8px", color: "var(--subtle-fg)", fontSize: "var(--fz-sm)" }}>
-            Repo panels
-          </div>
+          <Separator />
+          <SectionLabel>Repo panels</SectionLabel>
           {REPO_PANELS.map((p) =>
             menuItem(p.id, p.title, !!repoApi?.getPanel(p.id), () => {
               openRepoPanel(repoApi, p.id);
               setOpen(false);
             })
           )}
-          <div style={{ borderTop: "1px solid var(--panel-border)", margin: "4px 0" }} />
-          <button
-            role="menuitem"
-            onClick={resetLayouts}
-            style={{
-              display: "block",
-              width: "100%",
-              textAlign: "left",
-              background: "transparent",
-              border: "none",
-              padding: "4px 8px",
-              color: "inherit",
-              borderRadius: 3,
-            }}
-          >
-            Reset to default layout
-          </button>
+          <Separator />
+          <MenuItem onClick={resetLayouts}>Reset to default layout</MenuItem>
         </div>
       )}
     </div>

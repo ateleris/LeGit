@@ -7,12 +7,16 @@
 pub mod backend;
 pub mod cli_impl;
 pub mod error;
+pub mod executor;
+pub mod progress;
 pub mod runner;
 pub mod types;
 
 pub use backend::GitBackend;
 pub use cli_impl::{classify_remote_error, GitCliBackend};
+pub use executor::GitExecutor;
 pub use error::{GitError, ParseError};
+pub use progress::RemoteProgress;
 pub use runner::{
     GitRunner, GitVersion, OperationId, RunOutput, RunnerError, RunnerEvent,
     MIN_SUPPORTED_GIT_VERSION,

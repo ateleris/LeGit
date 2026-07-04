@@ -20,9 +20,29 @@ LeGit is a desktop **git GUI**: a **Tauri 2.x** app with a **Rust** backend and 
 **Git is run via the CLI, not a library.** Every git invocation goes through
 `GitRunner` (hardened env: `GIT_EDITOR=false`, `GIT_TERMINAL_PROMPT=0`,
 `LANG/LC_ALL=C.UTF-8`; cancellable via `OperationId`). `run` / `run_with_op` /
-`run_with_stdin` / `stream`. Parsers are **pure** `text -> type` functions in
-`cli_impl/parsers/`, and each command's format string is a constant next to its
-parser so the contract lives in one place.
+`run_with_stdin` / `run_with_env` / `stream`. Parsers are **pure** `text -> type`
+functions in `cli_impl/parsers/`, and each command's format string is a constant
+next to its parser so the contract lives in one place.
+
+**Env vars beat `-c` config - relax hardening via `run_with_env`.** Git gives
+environment variables (`GIT_EDITOR`, ...) precedence over ALL config, so a
+`-c core.editor=...` can never undo the runner's `GIT_EDITOR=false` (this
+silently broke `merge --continue` / `rebase --continue` until the integration
+harness caught it). When one command must relax a hardening default, pass a
+per-invocation override through `run_with_env` (applied after the base env, so
+it wins) - the continue/skip commands run with `GIT_EDITOR=true` to accept the
+prepared message unchanged.
+
+**Backend logic is testable without git (executor seam).** `GitCliBackend` is
+generic over the `GitExecutor` trait (`executor.rs`; default `GitRunner`, so
+production code never names it). Composed flows are tested at two levels, and a
+new composed flow or output-classification assumption needs both:
+`cli_impl/flow_tests.rs` scripts a `FakeExecutor` that asserts the exact git
+command sequence (incl. what must NOT run, e.g. no `stash pop` after a
+clean-tree auto-stash); `crates/legit-core/tests/git_flows.rs` validates the
+encoded assumptions against the real binary in tempdir repos (pins local
+config: identity, no signing, no autocrlf). Both run in
+`cargo test -p legit-core`.
 
 **Commands & bindings.** Backend commands are `#[tauri::command] #[specta::specta]`,
 registered in `src-tauri/src/lib.rs` (`collect_commands!`). specta regenerates
@@ -174,7 +194,11 @@ project memory for details.
   `pickHeadCommitId`, …). Assumptions about git's exit codes / output streams
   must be encoded in a test, not just in a comment: the auto-stash data-loss
   bug existed because "`stash push` fails on a clean tree" was assumed, wrong,
-  and untested.
+  and untested. Same lesson twice: "`-c core.editor=true` neutralizes the
+  editor" was assumed, wrong (env outranks config), and broke
+  merge/rebase continue until the real-git harness (`tests/git_flows.rs`)
+  encoded the flow. Prefer validating such assumptions there, against the
+  real binary.
 
 ## Backlog
 

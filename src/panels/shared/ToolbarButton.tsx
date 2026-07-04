@@ -1,23 +1,9 @@
 // Shared toolbar button — the Fetch/Pull/Push style from the Commits panel's
-// sync toolbar, extracted for reuse (Working Changes section actions, …).
-// First step of the button consolidation tracked in BACKLOG.md.
+// sync toolbar, reused across panel toolbars (Working Changes section
+// actions, op-state banner, Diff toolbar, Tags). A labeled preset of the
+// shared `Button` ghost variant (see buttons.tsx).
 
-/** Shared style for toolbar buttons (also used by split-button halves). */
-export function toolbarBtnStyle(disabled: boolean): React.CSSProperties {
-  return {
-    display: "flex",
-    alignItems: "center",
-    gap: 4,
-    fontSize: "var(--fz-sm)",
-    padding: "2px 8px",
-    border: "1px solid var(--panel-border)",
-    borderRadius: 3,
-    background: "transparent",
-    color: "var(--panel-fg)",
-    cursor: disabled ? "default" : "pointer",
-    opacity: disabled ? 0.5 : 1,
-  };
-}
+import { Button } from "./buttons";
 
 export function ToolbarButton({
   title,
@@ -38,18 +24,16 @@ export function ToolbarButton({
   rounded?: "left";
 }) {
   return (
-    <button
-      type="button"
+    <Button
+      variant="ghost"
       title={title}
       disabled={disabled}
+      loading={loading}
+      icon={icon}
       onClick={onClick}
-      style={{
-        ...toolbarBtnStyle(disabled),
-        borderRadius: rounded === "left" ? "3px 0 0 3px" : 3,
-      }}
+      rounded={rounded}
     >
-      {loading ? <span className="legit-spinner" aria-hidden="true" /> : icon}
       <span>{label}</span>
-    </button>
+    </Button>
   );
 }

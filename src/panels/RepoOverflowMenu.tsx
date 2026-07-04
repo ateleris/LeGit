@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRepoStore } from "../store/repos";
+import { SectionLabel } from "./Commits/menu/primitives";
+import { IconButton } from "./shared/buttons";
 
 /**
  * Dropdown that lists every open repo, so a user can jump to a buried tab
@@ -54,9 +56,7 @@ export function RepoOverflowMenu() {
             padding: 4,
           }}
         >
-          <div style={{ padding: "4px 8px", color: "var(--subtle-fg)", fontSize: "var(--fz-sm)" }}>
-            Open repositories
-          </div>
+          <SectionLabel>Open repositories</SectionLabel>
           {repos.map((r) => {
             const isActive = r.id === activeId;
             return (
@@ -97,22 +97,16 @@ export function RepoOverflowMenu() {
                     {r.path}
                   </div>
                 </div>
-                <button
+                <IconButton
                   aria-label={`Close ${r.name}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     closeRepo(r.id);
                   }}
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    color: "inherit",
-                    padding: "0 4px",
-                    cursor: "pointer",
-                  }}
+                  style={{ color: "inherit", fontSize: "inherit", padding: "0 4px" }}
                 >
                   ×
-                </button>
+                </IconButton>
               </div>
             );
           })}

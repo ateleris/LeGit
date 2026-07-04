@@ -469,6 +469,83 @@ pub enum StashApplyOutcome {
     Conflicts { message: String },
 }
 
+/// Mode for `git reset <target>` — what happens to the index and worktree.
+/// `Soft` moves HEAD only (changes stay staged), `Mixed` also resets the
+/// index (changes become unstaged), `Hard` additionally resets the worktree
+/// (destructive — uncommitted changes are lost).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ResetMode {
+    Soft,
+    Mixed,
+    Hard,
+}
+
+/// Outcome of `revert` / `cherry_pick` (and their `--continue` / `--skip`).
+/// Both drive git's sequencer, so they share one outcome shape. Conflicts are
+/// an outcome, not an error: the sequencer is paused and the user resolves,
+/// then continues/skips/aborts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SequenceOutcome {
+    Completed,
+    Conflicts { message: String },
+}
+
+/// The three index stages of a conflicted path (1 = base, 2 = ours,
+/// 3 = theirs), for the 3-way resolve view. A side is `None` when that stage
+/// is absent: add/add conflicts have no base, delete conflicts lack one side.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct ConflictFileSides {
+    pub base: Option<String>,
+    pub ours: Option<String>,
+    pub theirs: Option<String>,
+}
+
+/// One step of an interactive-rebase plan. The slice order is the new commit
+/// order, oldest first — exactly git's todo-file order. `Squash` melds the
+/// commit into the previous kept step combining both messages (accepted
+/// unchanged via `GIT_EDITOR=true`); `Fixup` melds keeping only the previous
+/// message. Rewording is deliberately not a step — see the separate "reword
+/// beyond HEAD" plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum RebaseStep {
+    Pick { sha: CommitId },
+    Squash { sha: CommitId },
+    Fixup { sha: CommitId },
+    Drop { sha: CommitId },
+}
+
+impl RebaseStep {
+    pub fn sha(&self) -> &CommitId {
+        match self {
+            RebaseStep::Pick { sha }
+            | RebaseStep::Squash { sha }
+            | RebaseStep::Fixup { sha }
+            | RebaseStep::Drop { sha } => sha,
+        }
+    }
+}
+
+/// One `git reflog` entry (HEAD's reflog). Backs the Reflog view: the safety
+/// net for undo — every HEAD movement is here, including resets and rebases.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct ReflogEntry {
+    /// Positional selector, e.g. `HEAD@{0}`. Display-only: it shifts with
+    /// every HEAD movement; actions address the entry by `sha`.
+    pub selector: String,
+    /// The commit HEAD pointed at after this movement.
+    pub sha: CommitId,
+    /// The action prefix of the reflog subject, e.g. `commit`, `reset`,
+    /// `checkout`, `rebase (finish)`.
+    pub action: String,
+    /// The rest of the reflog subject after `action: `.
+    pub subject: String,
+    /// Committer timestamp of the reflog entry (Unix seconds).
+    pub timestamp: i64,
+}
+
 /// Options for `git fetch`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct FetchOptions {

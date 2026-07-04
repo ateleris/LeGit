@@ -10,7 +10,9 @@ import {
   repoPopStash,
   repoDropStash,
   repoRenameStash,
+  repoStashBranch,
 } from "../../lib/commands";
+import { formatSwitchError } from "../../lib/switchFeedback";
 import { notify } from "../../store/notifications";
 import { useSummonStore } from "../../store/summon";
 import { useConfirmDestructive } from "../../store/settings";
@@ -23,6 +25,8 @@ import { InlineEditor } from "../shared/InlineEditor";
 
 // A stash mutation touches the working tree, the stash list, and the graph.
 const AFFECTED_DOMAINS = ["stashes", "log", "status"];
+// Branch-from-stash additionally creates and checks out a branch.
+const BRANCH_DOMAINS = ["stashes", "log", "status", "branches", "tracking"];
 
 const monoInput: React.CSSProperties = {
   fontSize: "var(--fz-md)",
@@ -65,10 +69,13 @@ export function StashesSection() {
   // Default on: a stash should capture the full working state, untracked files
   // included. Users can still opt out per-stash.
   const [includeUntracked, setIncludeUntracked] = useState(true);
+  const [keepIndex, setKeepIndex] = useState(false);
   const confirmDestructive = useConfirmDestructive();
   const [confirmDrop, setConfirmDrop] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draftMsg, setDraftMsg] = useState("");
+  const [branching, setBranching] = useState<string | null>(null);
+  const [draftBranch, setDraftBranch] = useState("");
 
   const invalidate = useCallback(() => {
     if (!repo) return;
@@ -78,8 +85,37 @@ export function StashesSection() {
   const openRename = (s: StashEntry) => {
     setError(null);
     setConfirmDrop(null);
+    setBranching(null);
     setDraftMsg(s.message);
     setRenaming(s.stash_sha);
+  };
+
+  const openBranch = (s: StashEntry) => {
+    setError(null);
+    setConfirmDrop(null);
+    setRenaming(null);
+    setDraftBranch("");
+    setBranching(s.stash_sha);
+  };
+
+  // `git stash branch`: new branch at the stash's base, stash applied and
+  // dropped on success — the escape hatch when a plain apply would conflict.
+  const doBranch = async (sha: string) => {
+    if (!repo) return;
+    const name = draftBranch.trim();
+    if (!name) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await repoStashBranch(repo.id, sha, name);
+      invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
+      setBranching(null);
+      notify.info(`Created branch '${name}' from the stash and checked it out.`);
+    } catch (e) {
+      setError(formatSwitchError(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   // Rename via drop + re-store (see the backend): the stash keeps its content
@@ -110,6 +146,7 @@ export function StashesSection() {
         repo.id,
         createMsg.trim() || undefined,
         includeUntracked,
+        keepIndex,
       );
       invalidate();
       if (outcome.kind === "nothing_to_stash") {
@@ -117,6 +154,7 @@ export function StashesSection() {
       } else {
         setCreateMsg("");
         setIncludeUntracked(false);
+        setKeepIndex(false);
       }
     } catch (e) {
       setError(formatAppError(e));
@@ -208,6 +246,12 @@ export function StashesSection() {
                 editing={renaming === s.stash_sha}
                 draftMsg={draftMsg}
                 onDraftChange={setDraftMsg}
+                branching={branching === s.stash_sha}
+                draftBranch={draftBranch}
+                onDraftBranchChange={setDraftBranch}
+                onOpenBranch={() => openBranch(s)}
+                onSaveBranch={() => doBranch(s.stash_sha)}
+                onCancelBranch={() => setBranching(null)}
                 onApply={() => doApplyOrPop(s.stash_sha, s.selector, repoApplyStash, "Applying")}
                 onPop={() => doApplyOrPop(s.stash_sha, s.selector, repoPopStash, "Popping")}
                 onViewDiff={() => openStashDiff(s.stash_sha)}
@@ -265,6 +309,23 @@ export function StashesSection() {
             />
             Include untracked files
           </label>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: "var(--fz-sm)",
+              color: "var(--subtle-fg)",
+            }}
+            title="The stash still records everything, but staged changes stay staged in the working tree (--keep-index)."
+          >
+            <input
+              type="checkbox"
+              checked={keepIndex}
+              onChange={(e) => setKeepIndex(e.target.checked)}
+            />
+            Keep staged changes
+          </label>
         </div>
       </div>
     </div>
@@ -297,6 +358,12 @@ function StashRow({
   editing,
   draftMsg,
   onDraftChange,
+  branching,
+  draftBranch,
+  onDraftBranchChange,
+  onOpenBranch,
+  onSaveBranch,
+  onCancelBranch,
   onApply,
   onPop,
   onViewDiff,
@@ -313,6 +380,12 @@ function StashRow({
   editing: boolean;
   draftMsg: string;
   onDraftChange: (v: string) => void;
+  branching: boolean;
+  draftBranch: string;
+  onDraftBranchChange: (v: string) => void;
+  onOpenBranch: () => void;
+  onSaveBranch: () => void;
+  onCancelBranch: () => void;
   onApply: () => void;
   onPop: () => void;
   onViewDiff: () => void;
@@ -373,6 +446,25 @@ function StashRow({
             style={{ fontSize: "var(--fz-md)" }}
           />
         </InlineEditor>
+      ) : branching ? (
+        <InlineEditor
+          label="Branch from stash"
+          disabled={busy}
+          onSave={onSaveBranch}
+          onCancel={onCancelBranch}
+        >
+          <input
+            autoFocus
+            value={draftBranch}
+            onChange={(e) => onDraftBranchChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") onSaveBranch();
+              if (e.key === "Escape") onCancelBranch();
+            }}
+            placeholder="new branch name"
+            style={{ fontSize: "var(--fz-md)" }}
+          />
+        </InlineEditor>
       ) : confirmingDrop ? (
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: "var(--fz-md)", flex: 1 }}>
@@ -390,6 +482,7 @@ function StashRow({
           <button disabled={busy} onClick={onViewDiff}>View diff</button>
           <button disabled={busy} onClick={onApply}>Apply</button>
           <button disabled={busy} onClick={onPop}>Pop</button>
+          <button disabled={busy} onClick={onOpenBranch}>Branch</button>
           <button disabled={busy} onClick={onOpenRename}>Rename</button>
           <button disabled={busy} onClick={onOpenDrop}>Drop</button>
         </div>

@@ -29,6 +29,7 @@ import type {
   DiffSource,
   FetchOptions,
   PullOptions,
+  PullStrategy,
   PushOptions,
   TrackingStatus,
   Remote,
@@ -42,7 +43,12 @@ import type {
   MergeOptions,
   MergeOutcome,
   RebaseOutcome,
+  RebaseStep,
+  ReflogEntry,
   RepoOpState,
+  ResetMode,
+  SequenceOutcome,
+  ConflictFileSides,
   ConflictEntry,
   ConflictSide,
 } from "./types";
@@ -241,8 +247,13 @@ export const createProfileFromRepo = (repoId: string, name: string) =>
 
 // --- log / commit details ---
 
-export const repoLog = (repoId: string, maxCount?: number, skip?: number) =>
-  invoke<Commit[]>("repo_log", { repoId, maxCount: maxCount ?? null, skip: skip ?? null });
+export const repoLog = (repoId: string, maxCount?: number, skip?: number, revisionRange?: string) =>
+  invoke<Commit[]>("repo_log", {
+    repoId,
+    maxCount: maxCount ?? null,
+    skip: skip ?? null,
+    revisionRange: revisionRange ?? null,
+  });
 
 export const repoStatus = (repoId: string) =>
   invoke<FileStatus[]>("repo_status", { repoId });
@@ -324,6 +335,49 @@ export const repoRebaseSkip = (repoId: string) =>
 
 export const repoRebaseAbort = (repoId: string) =>
   invoke<null>("repo_rebase_abort", { repoId });
+
+/** Interactive rebase of base..HEAD following `plan` (todo order, oldest
+ *  first). Conflicts pause the normal rebase machinery (banner handles them). */
+export const repoRebaseInteractive = (repoId: string, base: string, plan: RebaseStep[]) =>
+  invoke<RebaseOutcome>("repo_rebase_interactive", { repoId, base, plan });
+
+/** The index stages of a conflicted path, for the 3-way resolve view. */
+export const repoConflictFileSides = (repoId: string, path: string) =>
+  invoke<ConflictFileSides>("repo_conflict_file_sides", { repoId, path });
+
+// --- undo & history rewriting ---
+
+/** `git reset --soft|--mixed|--hard <target>`. Hard is destructive — confirm first. */
+export const repoReset = (repoId: string, target: string, mode: ResetMode) =>
+  invoke<null>("repo_reset", { repoId, target, mode });
+
+export const repoRevert = (repoId: string, sha: string) =>
+  invoke<SequenceOutcome>("repo_revert", { repoId, sha });
+
+export const repoCherryPick = (repoId: string, sha: string) =>
+  invoke<SequenceOutcome>("repo_cherry_pick", { repoId, sha });
+
+export const repoCherryPickContinue = (repoId: string) =>
+  invoke<SequenceOutcome>("repo_cherry_pick_continue", { repoId });
+
+export const repoCherryPickSkip = (repoId: string) =>
+  invoke<SequenceOutcome>("repo_cherry_pick_skip", { repoId });
+
+export const repoCherryPickAbort = (repoId: string) =>
+  invoke<null>("repo_cherry_pick_abort", { repoId });
+
+export const repoRevertContinue = (repoId: string) =>
+  invoke<SequenceOutcome>("repo_revert_continue", { repoId });
+
+export const repoRevertSkip = (repoId: string) =>
+  invoke<SequenceOutcome>("repo_revert_skip", { repoId });
+
+export const repoRevertAbort = (repoId: string) =>
+  invoke<null>("repo_revert_abort", { repoId });
+
+/** HEAD's reflog, newest first — the undo safety net. */
+export const repoReflog = (repoId: string, maxCount: number) =>
+  invoke<ReflogEntry[]>("repo_reflog", { repoId, maxCount });
 
 export const repoOpState = (repoId: string) =>
   invoke<RepoOpState>("repo_op_state", { repoId });
@@ -412,11 +466,13 @@ export const repoCreateStash = (
   repoId: string,
   message: string | undefined,
   includeUntracked: boolean,
+  keepIndex: boolean,
 ) =>
   invoke<StashOutcome>("repo_create_stash", {
     repoId,
     message: message ?? null,
     includeUntracked,
+    keepIndex,
   });
 
 // Stash mutations address the stash by its commit SHA (stable), not the
@@ -435,8 +491,15 @@ export const repoDropStash = (repoId: string, stashSha: string) =>
 export const repoRenameStash = (repoId: string, stashSha: string, message: string) =>
   invoke<void>("repo_rename_stash", { repoId, stashSha, message });
 
+/** Create + check out a branch at the stash's base, apply the stash, drop it on success. */
+export const repoStashBranch = (repoId: string, stashSha: string, branchName: string) =>
+  invoke<void>("repo_stash_branch", { repoId, stashSha, branchName });
+
 export const saveSwitchDirtyBehavior = (behavior: SwitchDirtyBehavior) =>
   invoke<void>("save_switch_dirty_behavior", { behavior });
+
+export const savePullStrategy = (strategy: PullStrategy) =>
+  invoke<void>("save_pull_strategy", { strategy });
 
 // --- remote sync (fetch / pull / push) ---
 //
@@ -455,6 +518,10 @@ export const repoPush = (repoId: string, opts: PushOptions, opId: string) =>
 
 export const repoTrackingStatus = (repoId: string) =>
   invoke<TrackingStatus | null>("repo_tracking_status", { repoId });
+
+/** Set (`origin/main`) or clear (`null`) a local branch's upstream. */
+export const repoSetUpstream = (repoId: string, branch: string, upstream: string | null) =>
+  invoke<void>("repo_set_upstream", { repoId, branch, upstream });
 
 // --- remote management ---
 

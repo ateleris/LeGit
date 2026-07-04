@@ -227,6 +227,19 @@ pub async fn save_switch_dirty_behavior(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn save_pull_strategy(
+    state: tauri::State<'_, AppState>,
+    strategy: legit_core::PullStrategy,
+) -> Result<(), AppError> {
+    {
+        let mut s = state.global_settings.write().await;
+        s.pull_strategy = Some(strategy);
+    }
+    state.persist_global_settings().await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn list_themes(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<ThemeEntry>, AppError> {

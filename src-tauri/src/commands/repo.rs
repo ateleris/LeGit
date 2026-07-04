@@ -234,6 +234,9 @@ pub async fn repo_clone(
         args.extend(crate::commands::profiles::clone_auth_config_args(&profile));
     }
     args.push("clone".into());
+    // Force the transfer meter onto our piped stderr; the runner parses it
+    // into progress-observer updates and strips it from the logged output.
+    args.push("--progress".into());
     args.push(url.clone());
     args.push(name.clone());
 
@@ -246,7 +249,7 @@ pub async fn repo_clone(
         .unwrap()
         .insert(oid.clone(), runner.clone());
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    let result = runner.run_with_op(&arg_refs, oid.clone()).await;
+    let result = runner.run_with_op_progress(&arg_refs, oid.clone()).await;
     state.transient_ops.lock().unwrap().remove(&oid);
 
     let out = result.map_err(AppError::from)?;

@@ -350,7 +350,8 @@ function decorationField(getLine: (i: number) => LineDeco | null): StateField<De
   });
 }
 
-const baseTheme = EditorView.theme({
+/** Shared editor chrome (exported for the 3-way resolve view). */
+export const baseTheme = EditorView.theme({
   "&": {
     height: "100%",
     fontSize: "var(--fz-md)",
@@ -463,7 +464,8 @@ const baseTheme = EditorView.theme({
   },
 });
 
-const readOnly = [
+/** Read-only pane extensions (exported for the 3-way resolve view). */
+export const readOnly = [
   EditorState.readOnly.of(true),
   EditorView.editable.of(false),
   // Belt and braces: non-editable panes never show a caret. Kept out of

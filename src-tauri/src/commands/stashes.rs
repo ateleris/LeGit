@@ -21,11 +21,12 @@ pub async fn repo_create_stash(
     repo_id: String,
     message: Option<String>,
     include_untracked: bool,
+    keep_index: bool,
 ) -> Result<StashOutcome, AppError> {
     let session = state.get_session(&repo_id).await?;
     session
         .backend
-        .create_stash(message.as_deref(), include_untracked)
+        .create_stash(message.as_deref(), include_untracked, keep_index)
         .await
         .map_err(AppError::Git)
 }
@@ -71,6 +72,22 @@ pub async fn repo_drop_stash(
     session
         .backend
         .drop_stash(&stash_sha)
+        .await
+        .map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_stash_branch(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    stash_sha: String,
+    branch_name: String,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .stash_branch(&stash_sha, &branch_name)
         .await
         .map_err(AppError::Git)
 }

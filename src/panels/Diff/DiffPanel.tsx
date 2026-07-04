@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRepoStore } from "../../store/repos";
 import { useSummonTarget } from "../../store/summon";
 import {
+  repoConflictFileSides,
   repoDiff,
   repoDiscardHunk,
   repoDiscardLines,
@@ -15,7 +16,8 @@ import {
   repoUnstageLines,
   repoWriteWorktreeFile,
 } from "../../lib/commands";
-import type { ConflictSide, DiffEntry, DiffRequest } from "../../lib/types";
+import type { ConflictFileSides, ConflictSide, DiffEntry, DiffRequest } from "../../lib/types";
+import { ThreeWayView } from "./ThreeWayView";
 import { formatAppError } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notify } from "../../store/notifications";
@@ -180,6 +182,21 @@ export function DiffPanel() {
     () => (resolveMode && conflictText != null ? parseConflicts(conflictText) : null),
     [resolveMode, conflictText],
   );
+
+  // 3-way resolve view (ours | result | theirs) — session-scoped preference.
+  const [threeWay, setThreeWay] = useState(false);
+  const threeWayActive = resolveMode && threeWay;
+  const threeWayActiveRef = useRef(threeWayActive);
+  threeWayActiveRef.current = threeWayActive;
+  // The centre pane's current text, reported on every edit; the save path
+  // writes it wholesale (the centre doc IS the full file).
+  const threeWayTextRef = useRef<string | null>(null);
+  const { data: sides } = useQuery<ConflictFileSides>({
+    queryKey: [request?.repoId, "diff", "sides", request?.path],
+    queryFn: () => repoConflictFileSides(request!.repoId, request!.path),
+    enabled: threeWayActive && !!request && request.repoId === activeRepoId && !dirty,
+    staleTime: 5_000,
+  });
   const parsedRef = useRef<ParsedConflicts | null>(null);
   parsedRef.current = parsed;
   const resolveDiff = useMemo(
@@ -279,12 +296,20 @@ export function DiffPanel() {
     if (savingRef.current) return;
     const req = requestRef.current;
     if (resolveModeRef.current) {
-      const regions = editorRef.current?.collectResolveRegions();
-      const parsedNow = parsedRef.current;
-      if (!req || !regions || !parsedNow) return;
       savingRef.current = true;
       try {
-        await repoWriteWorktreeFile(req.repoId, req.path, reconstructResolvedFile(parsedNow, regions));
+        // 3-way: the centre pane is the whole file — write it as-is.
+        // Marker view: reassemble the file from the edited editor regions.
+        let next: string | null = null;
+        if (threeWayActiveRef.current) {
+          next = threeWayTextRef.current;
+        } else {
+          const regions = editorRef.current?.collectResolveRegions();
+          const parsedNow = parsedRef.current;
+          if (regions && parsedNow) next = reconstructResolvedFile(parsedNow, regions);
+        }
+        if (!req || next == null) return;
+        await repoWriteWorktreeFile(req.repoId, req.path, next);
         setDirty(false);
         setRebuildKey((k) => k + 1);
         invalidateRepoDomains(queryClient, req.repoId, ["status", "diff", "op_state"]);
@@ -428,6 +453,15 @@ export function DiffPanel() {
         )}
         {resolveMode && (
           <span style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+            <button
+              onClick={() => setThreeWay((t) => !t)}
+              aria-pressed={threeWay}
+              disabled={dirty}
+              title="Show ours | result | theirs side by side (the real index stages)"
+              style={{ ...segStyle(threeWay, "left"), borderRadius: 3 }}
+            >
+              3-way
+            </button>
             <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
               {parsed
                 ? `${parsed.conflictCount} conflict${parsed.conflictCount === 1 ? "" : "s"}`
@@ -525,6 +559,20 @@ export function DiffPanel() {
                 This conflicted file cannot be shown as text. Use Take ours / Take theirs above.
               </span>
             </div>
+          ) : threeWay && conflictText != null ? (
+            sides ? (
+              <ThreeWayView
+                ours={sides.ours}
+                theirs={sides.theirs}
+                content={conflictText}
+                rebuildKey={rebuildKey}
+                onDirty={onDirty}
+                onSaveRequest={onSave}
+                onDocChange={(text) => {
+                  threeWayTextRef.current = text;
+                }}
+              />
+            ) : null
           ) : parsed && parsed.conflictCount === 0 ? (
             <div className="legit-panel__body">
               <span className="legit-subtle">

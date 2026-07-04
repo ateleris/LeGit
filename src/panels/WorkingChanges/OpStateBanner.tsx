@@ -4,26 +4,40 @@ import { useConfirmDestructive } from "../../store/settings";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { OP_DOMAINS } from "../../lib/useOpState";
 import {
+  repoCherryPickAbort,
+  repoCherryPickContinue,
+  repoCherryPickSkip,
   repoMergeAbort,
   repoMergeContinue,
   repoRebaseAbort,
   repoRebaseContinue,
   repoRebaseSkip,
+  repoRevertAbort,
+  repoRevertContinue,
+  repoRevertSkip,
 } from "../../lib/commands";
 import type { RepoOpState } from "../../lib/types";
 import {
   notifyMergeOutcome,
   notifyOpError,
   notifyRebaseOutcome,
+  notifySequenceOutcome,
 } from "../../lib/mergeFeedback";
 import { ToolbarButton } from "../shared/ToolbarButton";
 
+/** What the banner shows and can do per in-progress operation kind. */
+const OP_META = {
+  merge: { noun: "merge", canSkip: false },
+  rebase: { noun: "rebase", canSkip: true },
+  cherry_pick: { noun: "cherry-pick", canSkip: true },
+  revert: { noun: "revert", canSkip: true },
+} as const;
+
 /**
- * "Merge/rebase in progress" banner at the top of Working Changes: what is
- * running, how many conflicts remain, Continue / Skip / Abort. Renders only
- * for merge/rebase (cherry-pick/revert are detected but get no UI yet).
- * Abort is destructive (discards resolutions): inline confirm, gated by the
- * global destructive-confirmation setting.
+ * "Operation in progress" banner at the top of Working Changes: what is
+ * running (merge / rebase / cherry-pick / revert), how many conflicts remain,
+ * Continue / Skip / Abort. Abort is destructive (discards resolutions):
+ * inline confirm, gated by the global destructive-confirmation setting.
  */
 export function OpStateBanner({
   repoId,
@@ -40,8 +54,9 @@ export function OpStateBanner({
   const [busy, setBusy] = useState(false);
   const runningRef = useRef(false);
 
-  if (opState.kind !== "merge" && opState.kind !== "rebase") return null;
-  const isMerge = opState.kind === "merge";
+  if (opState.kind === "none") return null;
+  const kind = opState.kind;
+  const meta = OP_META[kind];
 
   const run = async (fn: () => Promise<void>) => {
     if (runningRef.current) return;
@@ -61,33 +76,79 @@ export function OpStateBanner({
     }
   };
 
-  const target = isMerge ? (opState.branch ?? "branch") : (opState.onto ?? "target");
+  const target =
+    opState.kind === "merge"
+      ? (opState.branch ?? "branch")
+      : opState.kind === "rebase"
+        ? (opState.onto ?? "target")
+        : opState.sha.slice(0, 8);
 
   const onContinue = () =>
     run(async () => {
-      if (isMerge) notifyMergeOutcome(await repoMergeContinue(repoId), target);
-      else notifyRebaseOutcome(await repoRebaseContinue(repoId), target);
+      switch (opState.kind) {
+        case "merge":
+          notifyMergeOutcome(await repoMergeContinue(repoId), target);
+          break;
+        case "rebase":
+          notifyRebaseOutcome(await repoRebaseContinue(repoId), target);
+          break;
+        case "cherry_pick":
+          notifySequenceOutcome(await repoCherryPickContinue(repoId), "cherry-pick", target);
+          break;
+        case "revert":
+          notifySequenceOutcome(await repoRevertContinue(repoId), "revert", target);
+          break;
+      }
     });
+
   const onSkip = () =>
     run(async () => {
-      notifyRebaseOutcome(await repoRebaseSkip(repoId), target);
+      switch (opState.kind) {
+        case "rebase":
+          notifyRebaseOutcome(await repoRebaseSkip(repoId), target);
+          break;
+        case "cherry_pick":
+          notifySequenceOutcome(await repoCherryPickSkip(repoId), "cherry-pick", target);
+          break;
+        case "revert":
+          notifySequenceOutcome(await repoRevertSkip(repoId), "revert", target);
+          break;
+      }
     });
+
   const doAbort = () =>
     run(async () => {
-      if (isMerge) await repoMergeAbort(repoId);
-      else await repoRebaseAbort(repoId);
+      switch (opState.kind) {
+        case "merge":
+          await repoMergeAbort(repoId);
+          break;
+        case "rebase":
+          await repoRebaseAbort(repoId);
+          break;
+        case "cherry_pick":
+          await repoCherryPickAbort(repoId);
+          break;
+        case "revert":
+          await repoRevertAbort(repoId);
+          break;
+      }
     });
   const onAbort = () => {
     if (!confirmDestructive) return void doAbort();
     setConfirmingAbort(true);
   };
 
-  const title = isMerge
-    ? `Merging '${opState.branch ?? "…"}'`
-    : `Rebasing${opState.head_name ? ` '${opState.head_name}'` : ""} onto ${opState.onto ?? "…"}` +
-      (opState.current_step != null && opState.total_steps != null
-        ? ` (step ${opState.current_step}/${opState.total_steps})`
-        : "");
+  const title =
+    opState.kind === "merge"
+      ? `Merging '${opState.branch ?? "…"}'`
+      : opState.kind === "rebase"
+        ? `Rebasing${opState.head_name ? ` '${opState.head_name}'` : ""} onto ${opState.onto ?? "…"}` +
+          (opState.current_step != null && opState.total_steps != null
+            ? ` (step ${opState.current_step}/${opState.total_steps})`
+            : "")
+        : opState.kind === "cherry_pick"
+          ? `Cherry-picking ${target}`
+          : `Reverting ${target}`;
   const conflictsText =
     conflictCount > 0
       ? `${conflictCount} conflict${conflictCount === 1 ? "" : "s"} remaining`
@@ -108,14 +169,10 @@ export function OpStateBanner({
       {confirmingAbort ? (
         <>
           <span style={{ minWidth: 0 }}>
-            Abort {isMerge ? "merge" : "rebase"}? Conflict resolutions will be discarded.
+            Abort {meta.noun}? Conflict resolutions will be discarded.
           </span>
           <span style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
-            <ToolbarButton
-              label={isMerge ? "Abort merge" : "Abort rebase"}
-              disabled={busy}
-              onClick={doAbort}
-            />
+            <ToolbarButton label={`Abort ${meta.noun}`} disabled={busy} onClick={doAbort} />
             <ToolbarButton label="Cancel" disabled={busy} onClick={() => setConfirmingAbort(false)} />
           </span>
         </>
@@ -137,14 +194,12 @@ export function OpStateBanner({
               title={
                 conflictCount > 0
                   ? "Resolve all conflicts first"
-                  : isMerge
-                    ? "Commit the merge"
-                    : "Continue the rebase"
+                  : `Conclude the ${meta.noun}`
               }
               disabled={busy || conflictCount > 0}
               onClick={onContinue}
             />
-            {!isMerge && (
+            {meta.canSkip && (
               <ToolbarButton
                 label="Skip"
                 title="Skip the current commit"
@@ -154,7 +209,7 @@ export function OpStateBanner({
             )}
             <ToolbarButton
               label={confirmDestructive ? "Abort…" : "Abort"}
-              title={isMerge ? "Abort the merge" : "Abort the rebase"}
+              title={`Abort the ${meta.noun}`}
               disabled={busy}
               onClick={onAbort}
             />

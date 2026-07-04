@@ -1,0 +1,797 @@
+//! Integration tests: `GitCliBackend` against the real `git` binary in
+//! throwaway tempdir repositories.
+//!
+//! The unit tests in `cli_impl` encode our *assumptions* about git's exit
+//! codes and output text; these validate those assumptions against the real
+//! binary (the auto-stash data-loss bug existed because "`stash push` fails
+//! on a clean tree" was assumed, wrong, and untested). Focus: the
+//! merge/rebase/conflict state machine, take-side resolution, and the
+//! stash-tip detection - flows whose correctness depends on real git
+//! behavior, not just on our own sequencing.
+//!
+//! Each repo pins the config the flows depend on (identity, no signing, no
+//! autocrlf) locally, so a developer's global config cannot skew outcomes.
+
+use legit_core::{
+    ConflictKind, ConflictSide, FetchOptions, GitBackend, GitCliBackend, GitRunner, MergeOptions,
+    MergeOutcome, OperationId, RebaseOutcome, RemoteProgress, RepoOpState, ResetMode,
+    SequenceOutcome, StashOutcome, SwitchDirtyBehavior, SwitchOutcome,
+};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock};
+use tempfile::TempDir;
+use tokio::sync::RwLock;
+
+struct TestRepo {
+    _dir: TempDir,
+    path: PathBuf,
+    backend: GitCliBackend,
+}
+
+impl TestRepo {
+    async fn init() -> Self {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().to_path_buf();
+        let runner = GitRunner::for_repo("git", &path);
+        for args in [
+            ["init", "-b", "main"].as_slice(),
+            &["config", "user.name", "LeGit Test"],
+            &["config", "user.email", "test@example.invalid"],
+            &["config", "commit.gpgsign", "false"],
+            &["config", "tag.gpgsign", "false"],
+            &["config", "core.autocrlf", "false"],
+        ] {
+            let out = runner.run(args).await.expect("spawn git");
+            assert!(out.success, "setup `git {args:?}` failed: {}", out.stderr);
+        }
+        let backend = GitCliBackend::new(Arc::new(RwLock::new(Arc::new(runner))));
+        Self { _dir: dir, path, backend }
+    }
+
+    /// Raw git for test setup/verification, asserting success.
+    async fn git(&self, args: &[&str]) -> String {
+        let runner = GitRunner::for_repo("git", &self.path);
+        let out = runner.run(args).await.expect("spawn git");
+        assert!(out.success, "`git {args:?}` failed: {}", out.stderr);
+        out.stdout
+    }
+
+    /// Raw git where a non-zero exit is expected (e.g. a conflicting
+    /// cherry-pick used as setup).
+    async fn git_any(&self, args: &[&str]) {
+        let runner = GitRunner::for_repo("git", &self.path);
+        runner.run(args).await.expect("spawn git");
+    }
+
+    fn write(&self, rel: &str, content: &str) {
+        std::fs::write(self.path.join(rel), content).expect("write file");
+    }
+
+    fn read(&self, rel: &str) -> String {
+        std::fs::read_to_string(self.path.join(rel)).expect("read file")
+    }
+
+    fn exists(&self, rel: &str) -> bool {
+        self.path.join(rel).exists()
+    }
+
+    async fn commit_all(&self, msg: &str) {
+        self.git(&["add", "-A"]).await;
+        self.git(&["commit", "-m", msg]).await;
+    }
+
+    async fn head(&self) -> String {
+        self.git(&["rev-parse", "HEAD"]).await.trim().to_string()
+    }
+}
+
+/// base -> `feature` edits a.txt one way, `main` the other. HEAD ends on main.
+async fn conflicting_branches(repo: &TestRepo) {
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["branch", "feature"]).await;
+    repo.git(&["switch", "feature"]).await;
+    repo.write("a.txt", "feature\n");
+    repo.commit_all("feature change").await;
+    repo.git(&["switch", "main"]).await;
+    repo.write("a.txt", "main\n");
+    repo.commit_all("main change").await;
+}
+
+// ---------------------------------------------------------------------------
+// merge: conflict -> resolve -> continue / abort
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn merge_conflict_resolve_continue() {
+    let repo = TestRepo::init().await;
+    conflicting_branches(&repo).await;
+
+    let outcome = repo.backend.merge("feature", MergeOptions::default()).await.unwrap();
+    assert!(matches!(outcome, MergeOutcome::Conflicts { .. }), "{outcome:?}");
+
+    // Real MERGE_HEAD / MERGE_MSG drive the op-state detection.
+    match repo.backend.op_state().await.unwrap() {
+        RepoOpState::Merge { branch, message } => {
+            assert_eq!(branch.as_deref(), Some("feature"));
+            assert!(message.unwrap().contains("feature"));
+        }
+        other => panic!("expected Merge op state, got {other:?}"),
+    }
+
+    let entries = repo.backend.conflict_entries().await.unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].path, "a.txt");
+    assert_eq!(entries[0].kind, ConflictKind::BothModified);
+
+    // Resolve, stage, continue.
+    repo.write("a.txt", "resolved\n");
+    repo.backend.stage(&[PathBuf::from("a.txt")]).await.unwrap();
+    let outcome = repo.backend.merge_continue().await.unwrap();
+    assert_eq!(outcome, MergeOutcome::Merged);
+    assert_eq!(repo.backend.op_state().await.unwrap(), RepoOpState::None);
+    assert!(repo.backend.conflict_entries().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn merge_abort_restores_pre_merge_state() {
+    let repo = TestRepo::init().await;
+    conflicting_branches(&repo).await;
+    let tip = repo.head().await;
+
+    let outcome = repo.backend.merge("feature", MergeOptions::default()).await.unwrap();
+    assert!(matches!(outcome, MergeOutcome::Conflicts { .. }));
+
+    repo.backend.merge_abort().await.unwrap();
+    assert_eq!(repo.backend.op_state().await.unwrap(), RepoOpState::None);
+    assert_eq!(repo.head().await, tip);
+    assert_eq!(repo.read("a.txt"), "main\n");
+    assert!(repo.backend.conflict_entries().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn merge_fast_forward_then_already_up_to_date() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["switch", "-c", "feature"]).await;
+    repo.write("b.txt", "b\n");
+    repo.commit_all("feature adds b").await;
+    repo.git(&["switch", "main"]).await;
+
+    // Validates the "Fast-forward" stdout-line detection against real git.
+    let outcome = repo.backend.merge("feature", MergeOptions::default()).await.unwrap();
+    assert_eq!(outcome, MergeOutcome::FastForwarded);
+
+    let outcome = repo.backend.merge("feature", MergeOptions::default()).await.unwrap();
+    assert_eq!(outcome, MergeOutcome::AlreadyUpToDate);
+}
+
+#[tokio::test]
+async fn squash_merge_stages_without_committing() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    let tip = repo.head().await;
+    repo.git(&["switch", "-c", "feature"]).await;
+    repo.write("b.txt", "b\n");
+    repo.commit_all("feature adds b").await;
+    repo.git(&["switch", "main"]).await;
+
+    let outcome = repo
+        .backend
+        .merge("feature", MergeOptions { squash: true, ..Default::default() })
+        .await
+        .unwrap();
+    assert_eq!(outcome, MergeOutcome::Squashed);
+    // Changes staged, no commit created.
+    assert_eq!(repo.head().await, tip);
+    let staged = repo.git(&["diff", "--cached", "--name-only"]).await;
+    assert!(staged.contains("b.txt"), "{staged}");
+}
+
+#[tokio::test]
+async fn conflicted_squash_merge_has_no_merge_op_state() {
+    // Documents real git behavior the UI must live with: `merge --squash`
+    // writes no MERGE_HEAD, so a conflicted squash merge reports
+    // `RepoOpState::None` (no Continue/Abort banner) while the conflicted
+    // paths still show up in conflict_entries / status. Resolution is
+    // resolve + ordinary commit, not `merge --continue`.
+    let repo = TestRepo::init().await;
+    conflicting_branches(&repo).await;
+
+    let outcome = repo
+        .backend
+        .merge("feature", MergeOptions { squash: true, ..Default::default() })
+        .await
+        .unwrap();
+    assert!(matches!(outcome, MergeOutcome::Conflicts { .. }), "{outcome:?}");
+    assert_eq!(repo.backend.op_state().await.unwrap(), RepoOpState::None);
+    assert!(!repo.backend.conflict_entries().await.unwrap().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// rebase: conflict -> skip / abort; autostash pop-conflict
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn rebase_conflict_then_skip_drops_the_commit() {
+    let repo = TestRepo::init().await;
+    conflicting_branches(&repo).await;
+    let main_tip = repo.head().await;
+    repo.git(&["switch", "feature"]).await;
+
+    let outcome = repo.backend.rebase("main").await.unwrap();
+    assert!(matches!(outcome, RebaseOutcome::Conflicts { .. }), "{outcome:?}");
+
+    // Real rebase-merge state files drive the detection.
+    match repo.backend.op_state().await.unwrap() {
+        RepoOpState::Rebase { head_name, current_step, total_steps, .. } => {
+            assert_eq!(head_name.as_deref(), Some("feature"));
+            assert_eq!(current_step, Some(1));
+            assert_eq!(total_steps, Some(1));
+        }
+        other => panic!("expected Rebase op state, got {other:?}"),
+    }
+
+    // Skipping the only commit completes the rebase; feature ends at main.
+    let outcome = repo.backend.rebase_skip().await.unwrap();
+    assert_eq!(outcome, RebaseOutcome::Completed);
+    assert_eq!(repo.backend.op_state().await.unwrap(), RepoOpState::None);
+    assert_eq!(repo.head().await, main_tip);
+}
+
+#[tokio::test]
+async fn rebase_conflict_resolve_continue() {
+    // Caught a real bug on first run: `rebase --continue` commits the resolved
+    // pick via the editor, and the runner's GIT_EDITOR=false failed it (env
+    // beats `-c core.editor=…`). Now runs with GIT_EDITOR=true overridden.
+    let repo = TestRepo::init().await;
+    conflicting_branches(&repo).await;
+    repo.git(&["switch", "feature"]).await;
+
+    let outcome = repo.backend.rebase("main").await.unwrap();
+    assert!(matches!(outcome, RebaseOutcome::Conflicts { .. }));
+
+    repo.write("a.txt", "resolved\n");
+    repo.backend.stage(&[PathBuf::from("a.txt")]).await.unwrap();
+    let outcome = repo.backend.rebase_continue().await.unwrap();
+    assert_eq!(outcome, RebaseOutcome::Completed);
+    assert_eq!(repo.backend.op_state().await.unwrap(), RepoOpState::None);
+    assert_eq!(repo.read("a.txt"), "resolved\n");
+}
+
+#[tokio::test]
+async fn rebase_conflict_then_abort_restores_the_branch() {
+    let repo = TestRepo::init().await;
+    conflicting_branches(&repo).await;
+    repo.git(&["switch", "feature"]).await;
+    let feature_tip = repo.head().await;
+
+    let outcome = repo.backend.rebase("main").await.unwrap();
+    assert!(matches!(outcome, RebaseOutcome::Conflicts { .. }));
+
+    repo.backend.rebase_abort().await.unwrap();
+    assert_eq!(repo.backend.op_state().await.unwrap(), RepoOpState::None);
+    assert_eq!(repo.head().await, feature_tip);
+    assert_eq!(repo.read("a.txt"), "feature\n");
+}
+
+#[tokio::test]
+async fn rebase_autostash_pop_conflict_is_a_distinct_outcome() {
+    // The rebase itself succeeds; reapplying the autostash conflicts. Encodes
+    // the assumption that git exits 0 and announces the stash conflict in its
+    // output ("Applying autostash resulted in conflicts").
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "1\n");
+    repo.commit_all("base").await;
+    repo.git(&["switch", "-c", "feature"]).await;
+    repo.write("b.txt", "b\n");
+    repo.commit_all("feature adds b").await;
+    repo.git(&["switch", "main"]).await;
+    repo.write("a.txt", "2\n");
+    repo.commit_all("main edits a").await;
+    repo.git(&["switch", "feature"]).await;
+
+    // Dirty, uncommitted edit that will conflict with main's a.txt.
+    repo.write("a.txt", "dirty\n");
+    let outcome = repo.backend.rebase("main").await.unwrap();
+    assert!(
+        matches!(outcome, RebaseOutcome::CompletedWithStashConflicts { .. }),
+        "{outcome:?}"
+    );
+    // The rebase is over (no op state) and git kept the stash entry.
+    assert_eq!(repo.backend.op_state().await.unwrap(), RepoOpState::None);
+    assert_eq!(repo.backend.stashes().await.unwrap().len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// take-side resolution on modify/delete conflicts
+// ---------------------------------------------------------------------------
+
+/// main modifies a.txt, feature deletes it, merge feature into main.
+async fn modify_delete_conflict(repo: &TestRepo) {
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["switch", "-c", "feature"]).await;
+    repo.git(&["rm", "a.txt"]).await;
+    repo.git(&["commit", "-m", "feature deletes a"]).await;
+    repo.git(&["switch", "main"]).await;
+    repo.write("a.txt", "main\n");
+    repo.commit_all("main edits a").await;
+
+    let outcome = repo.backend.merge("feature", MergeOptions::default()).await.unwrap();
+    assert!(matches!(outcome, MergeOutcome::Conflicts { .. }), "{outcome:?}");
+    let entries = repo.backend.conflict_entries().await.unwrap();
+    assert_eq!(entries[0].kind, ConflictKind::DeletedByThem);
+}
+
+#[tokio::test]
+async fn take_theirs_on_delete_conflict_removes_the_file() {
+    let repo = TestRepo::init().await;
+    modify_delete_conflict(&repo).await;
+
+    // Theirs deleted the file: taking their side = git rm (checkout --theirs
+    // has no stage to check out). Validates the stderr-based fallback.
+    repo.backend
+        .resolve_take_side(std::path::Path::new("a.txt"), ConflictSide::Theirs)
+        .await
+        .unwrap();
+    assert!(!repo.exists("a.txt"));
+    assert!(repo.backend.conflict_entries().await.unwrap().is_empty());
+
+    let outcome = repo.backend.merge_continue().await.unwrap();
+    assert_eq!(outcome, MergeOutcome::Merged);
+    assert_eq!(repo.backend.op_state().await.unwrap(), RepoOpState::None);
+}
+
+#[tokio::test]
+async fn take_ours_on_delete_conflict_keeps_the_file() {
+    let repo = TestRepo::init().await;
+    modify_delete_conflict(&repo).await;
+
+    repo.backend
+        .resolve_take_side(std::path::Path::new("a.txt"), ConflictSide::Ours)
+        .await
+        .unwrap();
+    assert_eq!(repo.read("a.txt"), "main\n");
+    assert!(repo.backend.conflict_entries().await.unwrap().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// stash-tip detection and auto-stash switching against real git
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn stash_push_on_clean_tree_is_nothing_to_stash() {
+    // Validates the discovery that motivated the tip comparison: on a clean
+    // tree `git stash push` exits 0, so only the unmoved tip can tell.
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+
+    let outcome = repo.backend.create_stash(Some("nothing"), true, false).await.unwrap();
+    assert_eq!(outcome, StashOutcome::NothingToStash);
+    assert!(repo.backend.stashes().await.unwrap().is_empty());
+
+    repo.write("a.txt", "dirty\n");
+    let outcome = repo.backend.create_stash(Some("wip"), true, false).await.unwrap();
+    assert_eq!(outcome, StashOutcome::Created);
+    assert_eq!(repo.backend.stashes().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn stash_keep_index_leaves_staged_changes_in_place() {
+    // `--keep-index` stashes everything but re-applies the index afterwards:
+    // staged changes stay staged (and in the worktree), unstaged-only changes
+    // are stashed away.
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.write("b.txt", "base\n");
+    repo.commit_all("base").await;
+
+    repo.write("a.txt", "staged change\n");
+    repo.git(&["add", "a.txt"]).await;
+    repo.write("b.txt", "unstaged change\n");
+
+    let outcome = repo.backend.create_stash(Some("wip"), false, true).await.unwrap();
+    assert_eq!(outcome, StashOutcome::Created);
+
+    assert_eq!(repo.read("a.txt"), "staged change\n");
+    let staged = repo.git(&["diff", "--cached", "--name-only"]).await;
+    assert_eq!(staged.trim(), "a.txt");
+    assert_eq!(repo.read("b.txt"), "base\n");
+}
+
+#[tokio::test]
+async fn stash_branch_restores_changes_on_a_new_branch_and_drops_the_stash() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+
+    repo.write("a.txt", "wip\n");
+    let outcome = repo.backend.create_stash(Some("wip"), true, false).await.unwrap();
+    assert_eq!(outcome, StashOutcome::Created);
+    let stash_sha = repo.backend.stashes().await.unwrap()[0].stash_sha.clone();
+
+    // Diverge main past the stash's base - the scenario `git stash branch`
+    // exists for (a plain apply could conflict; the new branch cannot).
+    repo.write("a.txt", "moved on\n");
+    repo.commit_all("main moved on").await;
+
+    repo.backend.stash_branch(stash_sha.as_str(), "from-stash").await.unwrap();
+
+    assert_eq!(repo.git(&["branch", "--show-current"]).await.trim(), "from-stash");
+    assert_eq!(repo.read("a.txt"), "wip\n");
+    // A successful stash branch drops the entry.
+    assert!(repo.backend.stashes().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn switch_auto_stash_carries_changes_to_the_target_branch() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["branch", "feature"]).await;
+
+    repo.write("a.txt", "wip\n");
+    let outcome = repo
+        .backend
+        .switch_branch("feature", SwitchDirtyBehavior::AutoStash)
+        .await
+        .unwrap();
+    assert_eq!(outcome, SwitchOutcome::Clean);
+    // The dirty edit travelled along; the transient stash entry is gone.
+    assert_eq!(repo.read("a.txt"), "wip\n");
+    assert!(repo.backend.stashes().await.unwrap().is_empty());
+    assert_eq!(repo.git(&["branch", "--show-current"]).await.trim(), "feature");
+}
+
+#[tokio::test]
+async fn switch_stash_and_keep_parks_the_changes() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["branch", "feature"]).await;
+
+    repo.write("a.txt", "wip\n");
+    let outcome = repo
+        .backend
+        .switch_branch("feature", SwitchDirtyBehavior::StashAndKeep)
+        .await
+        .unwrap();
+    assert_eq!(outcome, SwitchOutcome::ChangesStashed);
+    // Target branch starts clean; the WIP is retrievable from the stash.
+    assert_eq!(repo.read("a.txt"), "base\n");
+    assert_eq!(repo.backend.stashes().await.unwrap().len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// remote transfer progress (fetch --progress over file://)
+// ---------------------------------------------------------------------------
+
+/// Process-wide collector behind the runner's set-once progress observer;
+/// tests filter by their own `OperationId`, so sharing it is safe.
+fn progress_collector() -> &'static Mutex<Vec<(String, RemoteProgress)>> {
+    static EVENTS: OnceLock<Mutex<Vec<(String, RemoteProgress)>>> = OnceLock::new();
+    let events = EVENTS.get_or_init(|| Mutex::new(Vec::new()));
+    legit_core::runner::set_progress_observer(Arc::new(|op_id, progress| {
+        let _ = progress_collector()
+            .lock()
+            .map(|mut v| v.push((op_id.0.clone(), progress)));
+    }));
+    events
+}
+
+#[tokio::test]
+async fn fetch_reports_transfer_progress_and_strips_the_meter() {
+    let collector = progress_collector();
+
+    // A file:// URL forces the real transport (a bare path would use the
+    // hardlinking local optimization and skip the transfer meter).
+    let origin = TestRepo::init().await;
+    origin.write("a.txt", "base\n");
+    origin.commit_all("base").await;
+    let url = format!(
+        "file:///{}",
+        origin.path.to_string_lossy().replace('\\', "/").trim_start_matches('/')
+    );
+
+    let repo = TestRepo::init().await;
+    repo.git(&["remote", "add", "origin", &url]).await;
+
+    let op_id = OperationId::new();
+    repo.backend
+        .fetch(
+            FetchOptions { all: false, prune: false, remote: Some("origin".into()) },
+            op_id.clone(),
+        )
+        .await
+        .unwrap();
+
+    // The fetched ref exists, and the observer saw at least one parsed meter
+    // update for this exact operation (validates --progress + the \r-split
+    // streaming + the parser against real git output).
+    let head = repo.git(&["rev-parse", "origin/main"]).await;
+    assert!(!head.trim().is_empty());
+    let events = collector.lock().unwrap();
+    let ours: Vec<_> = events.iter().filter(|(id, _)| *id == op_id.0).collect();
+    assert!(!ours.is_empty(), "no progress events observed: {events:?}");
+}
+
+// ---------------------------------------------------------------------------
+// set / clear upstream
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn set_and_clear_upstream_change_the_tracking_config() {
+    // A local branch works as the upstream target — no network needed to
+    // validate the config round-trip.
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["branch", "feature"]).await;
+
+    repo.backend.set_upstream("feature", Some("main")).await.unwrap();
+    let up = repo
+        .git(&["rev-parse", "--abbrev-ref", "feature@{upstream}"])
+        .await;
+    assert_eq!(up.trim(), "main");
+
+    repo.backend.set_upstream("feature", None).await.unwrap();
+    let runner = GitRunner::for_repo("git", &repo.path);
+    let out = runner
+        .run(&["rev-parse", "--abbrev-ref", "feature@{upstream}"])
+        .await
+        .expect("spawn git");
+    assert!(!out.success, "upstream should be gone: {}", out.stdout);
+}
+
+// ---------------------------------------------------------------------------
+// interactive rebase against real git (validates the printf editor trick)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn interactive_rebase_reorders_squashes_and_drops() {
+    use legit_core::RebaseStep;
+
+    let repo = TestRepo::init().await;
+    repo.write("base.txt", "base\n");
+    repo.commit_all("base").await;
+    let base = repo.head().await;
+
+    repo.write("a.txt", "a\n");
+    repo.commit_all("add a").await;
+    let c1 = repo.head().await;
+    repo.write("b.txt", "b\n");
+    repo.commit_all("add b").await;
+    let c2 = repo.head().await;
+    repo.write("c.txt", "c\n");
+    repo.commit_all("add c").await;
+    let c3 = repo.head().await;
+
+    // Reorder (c2 first), squash c1 into it, drop c3.
+    let plan = vec![
+        RebaseStep::Pick { sha: legit_core::CommitId::new(&c2) },
+        RebaseStep::Squash { sha: legit_core::CommitId::new(&c1) },
+        RebaseStep::Drop { sha: legit_core::CommitId::new(&c3) },
+    ];
+    let outcome = repo.backend.rebase_interactive(&base, &plan).await.unwrap();
+    assert_eq!(outcome, RebaseOutcome::Completed);
+
+    // One squashed commit on top of base, with both files and neither c3's
+    // file nor its commit.
+    assert!(repo.exists("a.txt") && repo.exists("b.txt"));
+    assert!(!repo.exists("c.txt"));
+    let count = repo.git(&["rev-list", "--count", "HEAD"]).await;
+    assert_eq!(count.trim(), "2");
+    let msg = repo.git(&["log", "-1", "--format=%B"]).await;
+    assert!(msg.contains("add b") && msg.contains("add a"), "{msg}");
+    assert!(matches!(repo.backend.op_state().await.unwrap(), RepoOpState::None));
+}
+
+#[tokio::test]
+async fn interactive_rebase_conflict_pauses_the_normal_rebase_machinery() {
+    use legit_core::RebaseStep;
+
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    let base = repo.head().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("one").await;
+    let c1 = repo.head().await;
+    repo.write("a.txt", "two\n");
+    repo.commit_all("two").await;
+    let c2 = repo.head().await;
+    let tip = repo.head().await;
+
+    // Reordering two commits that touch the same lines must conflict.
+    let plan = vec![
+        RebaseStep::Pick { sha: legit_core::CommitId::new(&c2) },
+        RebaseStep::Pick { sha: legit_core::CommitId::new(&c1) },
+    ];
+    let outcome = repo.backend.rebase_interactive(&base, &plan).await.unwrap();
+    assert!(matches!(outcome, RebaseOutcome::Conflicts { .. }), "{outcome:?}");
+    assert!(matches!(
+        repo.backend.op_state().await.unwrap(),
+        RepoOpState::Rebase { .. }
+    ));
+
+    // The existing abort path restores the original tip.
+    repo.backend.rebase_abort().await.unwrap();
+    assert_eq!(repo.head().await, tip);
+    assert_eq!(repo.read("a.txt"), "two\n");
+}
+
+// ---------------------------------------------------------------------------
+// reset / revert / cherry-pick against real git
+// ---------------------------------------------------------------------------
+
+/// Two commits on main; returns (first sha, second sha).
+async fn two_commits(repo: &TestRepo) -> (String, String) {
+    repo.write("a.txt", "one\n");
+    repo.commit_all("one").await;
+    let first = repo.head().await;
+    repo.write("a.txt", "two\n");
+    repo.commit_all("two").await;
+    (first, repo.head().await)
+}
+
+#[tokio::test]
+async fn reset_soft_moves_head_and_keeps_the_index() {
+    let repo = TestRepo::init().await;
+    let (first, _) = two_commits(&repo).await;
+
+    repo.backend.reset(&first, ResetMode::Soft).await.unwrap();
+
+    assert_eq!(repo.head().await, first);
+    let staged = repo.git(&["diff", "--cached", "--name-only"]).await;
+    assert_eq!(staged.trim(), "a.txt");
+    assert_eq!(repo.read("a.txt"), "two\n");
+}
+
+#[tokio::test]
+async fn reset_mixed_unstages_but_keeps_the_worktree() {
+    let repo = TestRepo::init().await;
+    let (first, _) = two_commits(&repo).await;
+
+    repo.backend.reset(&first, ResetMode::Mixed).await.unwrap();
+
+    assert_eq!(repo.head().await, first);
+    let staged = repo.git(&["diff", "--cached", "--name-only"]).await;
+    assert_eq!(staged.trim(), "");
+    assert_eq!(repo.read("a.txt"), "two\n");
+}
+
+#[tokio::test]
+async fn reset_hard_discards_the_change() {
+    let repo = TestRepo::init().await;
+    let (first, _) = two_commits(&repo).await;
+
+    repo.backend.reset(&first, ResetMode::Hard).await.unwrap();
+
+    assert_eq!(repo.head().await, first);
+    assert_eq!(repo.read("a.txt"), "one\n");
+}
+
+#[tokio::test]
+async fn revert_creates_a_revert_commit() {
+    let repo = TestRepo::init().await;
+    let (_, second) = two_commits(&repo).await;
+
+    let outcome = repo.backend.revert(&second).await.unwrap();
+    assert_eq!(outcome, SequenceOutcome::Completed);
+
+    assert_eq!(repo.read("a.txt"), "one\n");
+    let subject = repo.git(&["log", "-1", "--format=%s"]).await;
+    assert!(subject.starts_with("Revert"), "{subject}");
+    assert!(matches!(repo.backend.op_state().await.unwrap(), RepoOpState::None));
+}
+
+#[tokio::test]
+async fn cherry_pick_conflict_resolve_continue() {
+    let repo = TestRepo::init().await;
+    conflicting_branches(&repo).await;
+    let feature_tip = repo.git(&["rev-parse", "feature"]).await.trim().to_string();
+
+    let outcome = repo.backend.cherry_pick(&feature_tip).await.unwrap();
+    assert!(matches!(outcome, SequenceOutcome::Conflicts { .. }), "{outcome:?}");
+
+    // Real sequencer state drives the op detection.
+    match repo.backend.op_state().await.unwrap() {
+        RepoOpState::CherryPick { sha } => assert!(feature_tip.starts_with(&sha)),
+        other => panic!("expected CherryPick op state, got {other:?}"),
+    }
+
+    repo.backend
+        .resolve_take_side(std::path::Path::new("a.txt"), ConflictSide::Theirs)
+        .await
+        .unwrap();
+    let outcome = repo.backend.cherry_pick_continue().await.unwrap();
+    assert_eq!(outcome, SequenceOutcome::Completed);
+
+    assert_eq!(repo.read("a.txt"), "feature\n");
+    assert!(matches!(repo.backend.op_state().await.unwrap(), RepoOpState::None));
+}
+
+#[tokio::test]
+async fn conflict_file_sides_expose_the_real_index_stages() {
+    let repo = TestRepo::init().await;
+    conflicting_branches(&repo).await;
+    repo.backend
+        .merge("feature", MergeOptions::default())
+        .await
+        .unwrap();
+
+    let sides = repo
+        .backend
+        .conflict_file_sides(std::path::Path::new("a.txt"))
+        .await
+        .unwrap();
+    assert_eq!(sides.base.as_deref(), Some("base\n"));
+    assert_eq!(sides.ours.as_deref(), Some("main\n"));
+    assert_eq!(sides.theirs.as_deref(), Some("feature\n"));
+}
+
+#[tokio::test]
+async fn revert_conflict_abort_restores_state() {
+    // Reverting an older commit whose change was since built upon conflicts;
+    // abort must restore the pre-revert state.
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.write("a.txt", "v2\n");
+    repo.commit_all("v2").await;
+    let middle = repo.head().await;
+    repo.write("a.txt", "v3\n");
+    repo.commit_all("v3").await;
+
+    let outcome = repo.backend.revert(&middle).await.unwrap();
+    assert!(matches!(outcome, SequenceOutcome::Conflicts { .. }), "{outcome:?}");
+    match repo.backend.op_state().await.unwrap() {
+        RepoOpState::Revert { sha } => assert!(middle.starts_with(&sha)),
+        other => panic!("expected Revert op state, got {other:?}"),
+    }
+
+    repo.backend.revert_abort().await.unwrap();
+    assert_eq!(repo.read("a.txt"), "v3\n");
+    assert!(matches!(repo.backend.op_state().await.unwrap(), RepoOpState::None));
+}
+
+#[tokio::test]
+async fn reflog_lists_head_movements_newest_first() {
+    let repo = TestRepo::init().await;
+    let (first, _) = two_commits(&repo).await;
+    repo.backend.reset(&first, ResetMode::Hard).await.unwrap();
+
+    let entries = repo.backend.reflog(50).await.unwrap();
+    // Two commits + the reset = at least three movements, newest first.
+    assert!(entries.len() >= 3, "{entries:?}");
+    assert_eq!(entries[0].selector, "HEAD@{0}");
+    assert_eq!(entries[0].sha.as_str(), first);
+    assert_eq!(entries[0].action, "reset");
+    assert!(entries.iter().any(|e| e.action == "commit"));
+}
+
+// ---------------------------------------------------------------------------
+// cherry-pick / revert state detection (detection ships; triggers are future)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn conflicted_cherry_pick_is_detected() {
+    let repo = TestRepo::init().await;
+    conflicting_branches(&repo).await;
+    let feature_tip = repo.git(&["rev-parse", "feature"]).await.trim().to_string();
+
+    // Setup via raw git: the app has no cherry-pick trigger yet.
+    repo.git_any(&["cherry-pick", &feature_tip]).await;
+
+    match repo.backend.op_state().await.unwrap() {
+        RepoOpState::CherryPick { sha } => {
+            assert!(feature_tip.starts_with(&sha), "{sha} vs {feature_tip}");
+        }
+        other => panic!("expected CherryPick op state, got {other:?}"),
+    }
+    assert!(!repo.backend.conflict_entries().await.unwrap().is_empty());
+}

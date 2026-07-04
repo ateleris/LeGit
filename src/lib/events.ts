@@ -1,5 +1,10 @@
 import { listen } from "@tauri-apps/api/event";
-import type { ConsoleEventPayload, GitInvocation, RepoChangedPayload } from "./types";
+import type {
+  ConsoleEventPayload,
+  GitInvocation,
+  RemoteProgressPayload,
+  RepoChangedPayload,
+} from "./types";
 
 /** Tauri event channel used by `console_exec`. Matches the constant in
  *  `src-tauri/src/commands/console.rs`. */
@@ -26,6 +31,21 @@ export async function onRepoChanged(
 ): Promise<() => void> {
   const unlisten = await listen<RepoChangedPayload>(
     REPO_CHANGED_EVENT,
+    (event) => handler(event.payload)
+  );
+  return unlisten;
+}
+
+/** Tauri event channel for remote transfer progress (fetch/pull/push/clone).
+ *  Matches `REMOTE_PROGRESS_EVENT` in `src-tauri/src/lib.rs`. */
+export const REMOTE_PROGRESS_EVENT = "legit://remote-progress";
+
+/** Subscribe to remote-progress events. Returns an unsubscribe function. */
+export async function onRemoteProgress(
+  handler: (payload: RemoteProgressPayload) => void
+): Promise<() => void> {
+  const unlisten = await listen<RemoteProgressPayload>(
+    REMOTE_PROGRESS_EVENT,
     (event) => handler(event.payload)
   );
   return unlisten;

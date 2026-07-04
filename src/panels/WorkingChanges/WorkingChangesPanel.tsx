@@ -10,6 +10,7 @@ import { useSummonStore } from "../../store/summon";
 import { notify } from "../../store/notifications";
 import { FileTree } from "../shared/FileTree/FileTree";
 import { ToolbarButton } from "../shared/ToolbarButton";
+import { IconButton } from "../shared/buttons";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
 import { StageIcon, UnstageIcon } from "../../icons";
@@ -18,6 +19,7 @@ import { MenuItem } from "../Commits/menu/primitives";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { useOpState } from "../../lib/useOpState";
+import { isDetachedHead } from "../../lib/detachedHead";
 import { OpStateBanner } from "./OpStateBanner";
 import { takeSideLabels } from "./conflictLabels";
 
@@ -98,6 +100,7 @@ export function WorkingChangesPanel() {
   const [selected, setSelected] = useState<Selection | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<DiscardRequest | null>(null);
+  const [confirmDetachedCommit, setConfirmDetachedCommit] = useState(false);
 
   // Clear the selection when the repo changes — a stale path from the previous
   // repo must not leak into actions or a diff summon for the new repo.
@@ -301,6 +304,26 @@ export function WorkingChangesPanel() {
       setAmend(false);
     });
 
+  // A detached-HEAD commit is reachable only through the reflog once HEAD
+  // moves on, so always ask first — this is a data-loss warning, not a
+  // destructive-action confirm, so it is deliberately NOT gated by the
+  // global confirmation setting. Judged from the HEAD commit's log
+  // decorations: a bare `head` decoration = detached.
+  const detached = isDetachedHead(head);
+  const requestCommit = () => {
+    if (detached) {
+      setConfirmDetachedCommit(true);
+      return;
+    }
+    commit();
+  };
+
+  // Drop a pending detached-HEAD confirmation once HEAD is back on a branch
+  // (e.g. the user switched away with the prompt still open).
+  useEffect(() => {
+    if (!detached) setConfirmDetachedCommit(false);
+  }, [detached]);
+
   // Prefill HEAD's message when turning amend on, but only if the box is empty
   // so typed-but-uncommitted text is never clobbered.
   const toggleAmend = (next: boolean) => {
@@ -350,7 +373,7 @@ export function WorkingChangesPanel() {
           onContextMenu={(e) => openMenu(e)}
         >
       <PanelLoadingBar active={isFetching} />
-      {repo && opState && (opState.kind === "merge" || opState.kind === "rebase") && (
+      {repo && opState && opState.kind !== "none" && (
         <OpStateBanner repoId={repo.id} opState={opState} conflictCount={conflictCount} />
       )}
       <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -549,15 +572,46 @@ export function WorkingChangesPanel() {
             rows={3}
             style={{ resize: "vertical", fontFamily: "inherit", fontSize: "var(--fz-md)" }}
           />
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fz-sm)", color: "var(--subtle-fg)" }}>
-              <input type="checkbox" checked={amend} disabled={!head || busy} onChange={(e) => toggleAmend(e.target.checked)} />
-              Amend last commit
-            </label>
-            <button className="primary" disabled={!canCommit} onClick={commit} style={{ marginLeft: "auto" }}>
-              {amend ? "Amend" : "Commit"} {!amend && staged.length > 0 ? `(${staged.length})` : ""}
-            </button>
-          </div>
+          {confirmDetachedCommit ? (
+            <div
+              style={{
+                padding: "8px 10px",
+                border: "1px solid var(--panel-border)",
+                borderRadius: 4,
+                background: "var(--button-hover-bg)",
+              }}
+            >
+              <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
+                HEAD is <strong>detached</strong> — no branch points here, so once you
+                switch away this commit is only reachable via the reflog. Commit anyway?
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button
+                  className="primary"
+                  disabled={busy}
+                  onClick={() => {
+                    setConfirmDetachedCommit(false);
+                    commit();
+                  }}
+                >
+                  Commit anyway
+                </button>
+                <button disabled={busy} onClick={() => setConfirmDetachedCommit(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fz-sm)", color: "var(--subtle-fg)" }}>
+                <input type="checkbox" checked={amend} disabled={!head || busy} onChange={(e) => toggleAmend(e.target.checked)} />
+                Amend last commit
+              </label>
+              <button className="primary" disabled={!canCommit} onClick={requestCommit} style={{ marginLeft: "auto" }}>
+                {amend ? "Amend" : "Commit"} {!amend && staged.length > 0 ? `(${staged.length})` : ""}
+              </button>
+            </div>
+          )}
         </div>
       </div>
         </div>
@@ -601,28 +655,6 @@ function Section({
       </div>
       {children}
     </div>
-  );
-}
-
-function IconButton({ children, ...rest }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return (
-    <button
-      {...rest}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "transparent",
-        border: "none",
-        color: "var(--subtle-fg)",
-        cursor: "pointer",
-        padding: "0 3px",
-        fontSize: "var(--fz-lg)",
-        lineHeight: 1,
-      }}
-    >
-      {children}
-    </button>
   );
 }
 

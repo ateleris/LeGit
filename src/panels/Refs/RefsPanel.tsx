@@ -17,6 +17,7 @@ import { BranchesSection } from "../Branches/BranchesPanel";
 import { RemotesSection } from "../Remotes/RemotesPanel";
 import { StashesSection } from "../Stashes/StashesPanel";
 import { TagsSection } from "../Tags/TagsSection";
+import { ReflogSection } from "../Reflog/ReflogSection";
 
 const LAYOUT_KEY = "legit.refs-paneview";
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -34,6 +35,7 @@ const DEFAULT_PANES = [
   { id: "remotes", title: "Remotes", isExpanded: false },
   { id: "tags", title: "Tags", isExpanded: false },
   { id: "stashes", title: "Stashes", isExpanded: true },
+  { id: "reflog", title: "Reflog", isExpanded: false },
 ] as const;
 
 const PANE_COMPONENTS: Record<string, FunctionComponent<IPaneviewPanelProps>> = {
@@ -41,6 +43,7 @@ const PANE_COMPONENTS: Record<string, FunctionComponent<IPaneviewPanelProps>> = 
   remotes: () => <RemotesSection />,
   tags: () => <TagsSection />,
   stashes: () => <StashesSection />,
+  reflog: () => <ReflogSection />,
 };
 
 /**
