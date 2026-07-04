@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import logoUrl from "./assets/legit-logo.png";
+import { useAppVersion } from "./lib/appVersion";
 import { useThemeStore } from "./store/themes";
 import { useSettingsStore } from "./store/settings";
 import { useGitStatusStore } from "./store/git-status";
@@ -64,12 +65,14 @@ export function App() {
 }
 
 function SplashScreen({ subtitle }: { subtitle: string }) {
+  const version = useAppVersion();
   return (
     <div className="legit-splash">
       <div className="legit-splash__inner">
         <img className="legit-splash__logo" src={logoUrl} alt="" />
         <div className="legit-splash__title">LeGit</div>
         <div className="legit-splash__subtitle">{subtitle}</div>
+        {version && <div className="legit-splash__version">v{version}</div>}
       </div>
     </div>
   );

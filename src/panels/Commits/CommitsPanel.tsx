@@ -1202,6 +1202,14 @@ export function CommitsPanel() {
                             >
                               Interactive rebase from here…
                             </MenuItem>
+                            <MenuItem
+                              onClick={() => {
+                                closeMenu();
+                                useSummonStore.getState().summon("compare", { from: commit.id, to: "HEAD" });
+                              }}
+                            >
+                              Compare with HEAD
+                            </MenuItem>
                             <ResetMenuItems
                               branch={currentBranchName}
                               onReset={(mode) => { closeMenu(); handleReset(commit.id, mode); }}

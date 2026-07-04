@@ -9,9 +9,9 @@ use crate::error::GitError;
 use crate::executor::GitExecutor;
 use crate::runner::{GitRunner, OperationId};
 use crate::types::{
-    Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, ConflictEntry,
-    ConflictFileSides, ConflictSide, Diff, DiffEntry, DiffSource, FetchOptions, FfMode,
-    FileState, FileStatus,
+    BlameHunk, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
+    CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
+    FetchOptions, FfMode, FileState, FileStatus,
     HunkOp, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullStrategy, PushOptions,
     RebaseOutcome, RebaseStep, RefDecoration, RefSelector, ReflogEntry, Remote, RemoteTag,
     RepoOpState, ResetMode, SequenceOutcome, SignMode, StashApplyOutcome, StashEntry,
@@ -107,6 +107,10 @@ impl<E: GitExecutor> GitCliBackend<E> {
                 let from = self.first_parent(&runner, commit_id.as_str()).await?;
                 args.push(from);
                 args.push(commit_id.as_str().to_string());
+            }
+            DiffSource::CommitRange { from, to } => {
+                args.push(from.as_str().to_string());
+                args.push(to.as_str().to_string());
             }
         }
         // For a rename/copy, pass BOTH paths with rename detection so git pairs
@@ -768,8 +772,109 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         Ok(parsers::branches::parse_branches(&output.stdout))
     }
 
-    async fn diff(&self, _from: &CommitId, _to: &CommitId) -> Result<Diff, GitError> {
-        Err(GitError::NotYet)
+    async fn blame(&self, path: &Path) -> Result<Vec<BlameHunk>, GitError> {
+        let runner = self.runner().await;
+        let path_str = path.to_string_lossy();
+        let output = runner
+            .run(&["blame", "--porcelain", "--", &path_str])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !output.success {
+            return Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr,
+            });
+        }
+        Ok(parsers::blame::parse_blame(&output.stdout))
+    }
+
+    async fn search_commits(
+        &self,
+        query: &str,
+        kind: CommitSearchKind,
+        max_count: u32,
+    ) -> Result<Vec<Commit>, GitError> {
+        let runner = self.runner().await;
+        let fmt_arg = format!("--format={}", parsers::log::LOG_FORMAT);
+        let max_arg = format!("--max-count={max_count}");
+        let filter = match kind {
+            CommitSearchKind::Message => format!("--grep={query}"),
+            CommitSearchKind::Author => format!("--author={query}"),
+            CommitSearchKind::Content => query.to_string(),
+        };
+        let mut args = vec!["log", &fmt_arg, &max_arg];
+        match kind {
+            CommitSearchKind::Message | CommitSearchKind::Author => {
+                args.push("--regexp-ignore-case");
+                args.push(&filter);
+            }
+            CommitSearchKind::Content => {
+                args.push("-S");
+                args.push(&filter);
+            }
+        }
+        // Same ref universe as the graph: HEAD + all local branches.
+        args.push("HEAD");
+        args.push("--branches");
+        args.push("--decorate=full");
+
+        let output = runner
+            .run(&args)
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !output.success {
+            return Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr,
+            });
+        }
+        parsers::log::parse_log(&output.stdout).map_err(GitError::from)
+    }
+
+    async fn search_paths(&self, query: &str, max_count: u32) -> Result<Vec<PathBuf>, GitError> {
+        let runner = self.runner().await;
+        let output = runner
+            .run(&["ls-files", "-z"])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !output.success {
+            return Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr,
+            });
+        }
+        Ok(filter_paths(&output.stdout, query, max_count as usize))
+    }
+
+    async fn diff_files(&self, from: &str, to: &str) -> Result<Vec<CommitFileChange>, GitError> {
+        let runner = self.runner().await;
+        let flags = parsers::commit_files::DIFF_TREE_FLAGS;
+        let run_diff = |kind: &'static str| {
+            let runner = runner.clone();
+            let from = from.to_string();
+            let to = to.to_string();
+            async move {
+                let mut args = vec!["diff-tree"];
+                args.extend_from_slice(&flags);
+                args.push(kind);
+                args.push(&from);
+                args.push(&to);
+                let out = runner
+                    .run(&args)
+                    .await
+                    .map_err(|e| GitError::Internal(e.to_string()))?;
+                if !out.success {
+                    return Err(GitError::CommandFailed {
+                        exit_code: out.exit_code.unwrap_or(-1),
+                        stderr: out.stderr,
+                    });
+                }
+                Ok::<String, GitError>(out.stdout)
+            }
+        };
+        let name_status = run_diff("--name-status").await?;
+        let numstat = run_diff("--numstat").await?;
+        Ok(parsers::commit_files::parse_commit_files(&name_status, &numstat))
     }
 
     async fn file_diff(
@@ -1715,6 +1820,18 @@ fn build_set_url_args<'a>(name: &'a str, url: &'a str, push: bool) -> Vec<&'a st
     args.push(name);
     args.push(url);
     args
+}
+
+/// Case-insensitive substring filter over `git ls-files -z` output, capped at
+/// `max` entries. Pure so the matching rule is unit-tested.
+fn filter_paths(ls_files_stdout: &str, query: &str, max: usize) -> Vec<PathBuf> {
+    let needle = query.to_lowercase();
+    ls_files_stdout
+        .split('\0')
+        .filter(|p| !p.is_empty() && p.to_lowercase().contains(&needle))
+        .take(max)
+        .map(PathBuf::from)
+        .collect()
 }
 
 /// Decide whether a `git stash push` actually created an entry, given the

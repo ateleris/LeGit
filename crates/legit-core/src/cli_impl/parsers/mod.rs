@@ -4,6 +4,7 @@
 //! The format string for each command is a constant in the same module as
 //! the parser, so the contract is visible in one place (DESIGN-v0.3.md §4.5).
 
+pub mod blame;
 pub mod log;
 pub mod commit;
 pub mod branches;

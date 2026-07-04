@@ -9,9 +9,9 @@
 use crate::error::GitError;
 use crate::runner::OperationId;
 use crate::types::{
-    Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, ConflictEntry,
-    ConflictFileSides, ConflictSide, Diff, DiffEntry, DiffSource, FetchOptions, FileStatus,
-    HunkOp, LogOptions,
+    BlameHunk, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
+    CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
+    FetchOptions, FileStatus, HunkOp, LogOptions,
     MergeOptions, MergeOutcome, PullOptions, PushOptions, RebaseOutcome, RebaseStep,
     ReflogEntry, Remote, RemoteTag, RepoOpState, ResetMode, SequenceOutcome, StashApplyOutcome,
     StashEntry, StashOutcome, SubmoduleInfo, SwitchDirtyBehavior, SwitchOutcome, TagInfo,
@@ -34,7 +34,30 @@ pub trait GitBackend: Send + Sync {
 
     async fn branches(&self) -> Result<Vec<Branch>, GitError>;
 
-    async fn diff(&self, from: &CommitId, to: &CommitId) -> Result<Diff, GitError>;
+    /// Blame the working-tree version of a tracked file
+    /// (`git blame --porcelain`): hunks of consecutive lines per commit,
+    /// carrying line contents. Uncommitted lines blame to the all-zeros sha.
+    async fn blame(&self, path: &Path) -> Result<Vec<BlameHunk>, GitError>;
+
+    /// Search commits across HEAD + all local branches. `Message`/`Author`
+    /// are case-insensitive regex matches; `Content` is the pickaxe (`-S`),
+    /// which is expensive on big repos — keep `max_count` modest.
+    async fn search_commits(
+        &self,
+        query: &str,
+        kind: CommitSearchKind,
+        max_count: u32,
+    ) -> Result<Vec<Commit>, GitError>;
+
+    /// Tracked paths containing `query` (case-insensitive substring), at most
+    /// `max_count`, in `git ls-files` order.
+    async fn search_paths(&self, query: &str, max_count: u32) -> Result<Vec<PathBuf>, GitError>;
+
+    /// Files changed between two arbitrary revs (`git diff-tree <from> <to>`,
+    /// rename-aware) — the Compare view's file list. Direct snapshot diff
+    /// (two-dot); per-file contents come from `file_diff` with
+    /// `DiffSource::CommitRange`.
+    async fn diff_files(&self, from: &str, to: &str) -> Result<Vec<CommitFileChange>, GitError>;
 
     /// The diff for a single file from one of the comparison sources, with
     /// `context` lines of surrounding context (small for chunked view, very

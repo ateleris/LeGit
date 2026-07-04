@@ -381,7 +381,24 @@ export type DiffEntry =
 export type DiffSource =
   | { kind: "working_unstaged" }
   | { kind: "working_staged" }
-  | { kind: "commit"; commit_id: string };
+  | { kind: "commit"; commit_id: string }
+  /** Two arbitrary revs (Compare view) — any rev spec works. */
+  | { kind: "commit_range"; from: string; to: string };
+
+/** What a commit search matches (matches legit-core `CommitSearchKind`). */
+export type CommitSearchKind = "message" | "author" | "content";
+
+/** One blame hunk (matches legit-core `BlameHunk`): consecutive lines last
+ *  touched by the same commit, contents included. All-zeros sha = uncommitted. */
+export interface BlameHunk {
+  sha: CommitId;
+  author: string;
+  timestamp: number;
+  summary: string;
+  /** 1-based first line number. */
+  start_line: number;
+  lines: string[];
+}
 
 /** Summon payload delivered to the Diff panel when a file is selected. */
 export interface DiffRequest {

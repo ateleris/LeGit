@@ -13,6 +13,8 @@ import type {
   LaneLock,
   RepoSettings,
   CommitFileChange,
+  CommitSearchKind,
+  BlameHunk,
   ConsoleExecHandle,
   FileStatus,
   GitStatus,
@@ -260,6 +262,25 @@ export const repoStatus = (repoId: string) =>
 
 export const repoCommitDetails = (repoId: string, commitId: string) =>
   invoke<CommitDetails>("repo_commit_details", { repoId, commitId });
+
+// --- inspection: compare / search / blame ---
+
+/** Files changed between two arbitrary revs (Compare view file list). */
+export const repoDiffFiles = (repoId: string, from: string, to: string) =>
+  invoke<CommitFileChange[]>("repo_diff_files", { repoId, from, to });
+
+export const repoSearchCommits = (
+  repoId: string,
+  query: string,
+  kind: CommitSearchKind,
+  maxCount: number,
+) => invoke<Commit[]>("repo_search_commits", { repoId, query, kind, maxCount });
+
+export const repoSearchPaths = (repoId: string, query: string, maxCount: number) =>
+  invoke<string[]>("repo_search_paths", { repoId, query, maxCount });
+
+export const repoBlame = (repoId: string, path: string) =>
+  invoke<BlameHunk[]>("repo_blame", { repoId, path });
 
 export const repoCommitFiles = (repoId: string, commitId: string) =>
   invoke<CommitFileChange[]>("repo_commit_files", { repoId, commitId });

@@ -238,6 +238,12 @@ button.legit-region-divider__mode:hover {
   margin-top: 8px;
   color: var(--subtle-fg);
 }
+.legit-splash__version {
+  margin-top: 4px;
+  font-size: var(--fz-sm);
+  color: var(--subtle-fg);
+  opacity: 0.8;
+}
 
 /* Panel chrome shared between every dockable panel. */
 .legit-panel {

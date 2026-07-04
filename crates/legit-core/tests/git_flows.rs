@@ -520,6 +520,106 @@ async fn fetch_reports_transfer_progress_and_strips_the_meter() {
 }
 
 // ---------------------------------------------------------------------------
+// inspection: range diff, search, blame against real git
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn diff_files_and_file_diff_work_across_branches() {
+    use legit_core::{CommitSearchKind, DiffEntry, DiffSource};
+    let _ = CommitSearchKind::Message; // silence unused-import pedantry in older toolchains
+
+    let repo = TestRepo::init().await;
+    repo.write("base.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["branch", "feature"]).await;
+    repo.git(&["switch", "feature"]).await;
+    repo.write("f.txt", "feature file\n");
+    repo.commit_all("feature adds f").await;
+    repo.git(&["switch", "main"]).await;
+    repo.write("base.txt", "base v2\n");
+    repo.commit_all("main edits base").await;
+
+    let files = repo.backend.diff_files("main", "feature").await.unwrap();
+    let paths: Vec<String> = files
+        .iter()
+        .map(|f| f.path.to_string_lossy().into_owned())
+        .collect();
+    assert!(paths.contains(&"f.txt".to_string()), "{paths:?}");
+    assert!(paths.contains(&"base.txt".to_string()), "{paths:?}");
+
+    let source = DiffSource::CommitRange {
+        from: legit_core::CommitId::new("main"),
+        to: legit_core::CommitId::new("feature"),
+    };
+    let entry = repo
+        .backend
+        .file_diff(&source, std::path::Path::new("base.txt"), None, 3)
+        .await
+        .unwrap();
+    match entry {
+        DiffEntry::Text(t) => assert!(!t.hunks.is_empty()),
+        other => panic!("expected text diff, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn search_commits_and_paths_find_real_matches() {
+    use legit_core::CommitSearchKind;
+
+    let repo = TestRepo::init().await;
+    std::fs::create_dir_all(repo.path.join("deep")).expect("mkdir");
+    repo.write("deep/UniqueNeedleFile.txt", "hello SECRET42\n");
+    repo.commit_all("add magic xyzzy feature").await;
+    repo.write("other.txt", "plain\n");
+    repo.commit_all("unrelated").await;
+
+    let by_msg = repo
+        .backend
+        .search_commits("xyzzy", CommitSearchKind::Message, 50)
+        .await
+        .unwrap();
+    assert_eq!(by_msg.len(), 1, "{by_msg:?}");
+
+    let by_author = repo
+        .backend
+        .search_commits("legit test", CommitSearchKind::Author, 50)
+        .await
+        .unwrap();
+    assert_eq!(by_author.len(), 2, "{by_author:?}");
+
+    let by_content = repo
+        .backend
+        .search_commits("SECRET42", CommitSearchKind::Content, 50)
+        .await
+        .unwrap();
+    assert_eq!(by_content.len(), 1, "{by_content:?}");
+
+    let paths = repo.backend.search_paths("uniqueneedle", 10).await.unwrap();
+    assert_eq!(paths, vec![std::path::PathBuf::from("deep/UniqueNeedleFile.txt")]);
+}
+
+#[tokio::test]
+async fn blame_attributes_lines_to_the_right_commits() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\ntwo\n");
+    repo.commit_all("first").await;
+    let c1 = repo.head().await;
+    repo.write("a.txt", "one\nTWO\n");
+    repo.commit_all("second").await;
+    let c2 = repo.head().await;
+
+    let hunks = repo.backend.blame(std::path::Path::new("a.txt")).await.unwrap();
+    assert_eq!(hunks.len(), 2, "{hunks:?}");
+    assert_eq!(hunks[0].sha.as_str(), c1);
+    assert_eq!(hunks[0].start_line, 1);
+    assert_eq!(hunks[0].lines, vec!["one"]);
+    assert_eq!(hunks[0].summary, "first");
+    assert_eq!(hunks[1].sha.as_str(), c2);
+    assert_eq!(hunks[1].lines, vec!["TWO"]);
+    assert_eq!(hunks[1].author, "LeGit Test");
+}
+
+// ---------------------------------------------------------------------------
 // set / clear upstream
 // ---------------------------------------------------------------------------
 

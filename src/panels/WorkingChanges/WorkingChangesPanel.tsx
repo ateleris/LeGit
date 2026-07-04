@@ -481,6 +481,16 @@ export function WorkingChangesPanel() {
                         ? "Delete file"
                         : "Discard changes"}
                     </MenuItem>
+                    {!many && f.change !== "Untracked" && (
+                      <MenuItem
+                        onClick={() => {
+                          closeMenu();
+                          useSummonStore.getState().summon("blame", f.path);
+                        }}
+                      >
+                        Blame file
+                      </MenuItem>
+                    )}
                   </>,
                 );
               }}
@@ -536,9 +546,21 @@ export function WorkingChangesPanel() {
                 const targets = selectForMenu("staged", f.path);
                 openMenu(
                   e,
-                  <MenuItem onClick={() => { unstage(targets); closeMenu(); }}>
-                    {targets.length > 1 ? `Unstage ${targets.length} selected` : "Unstage"}
-                  </MenuItem>,
+                  <>
+                    <MenuItem onClick={() => { unstage(targets); closeMenu(); }}>
+                      {targets.length > 1 ? `Unstage ${targets.length} selected` : "Unstage"}
+                    </MenuItem>
+                    {targets.length === 1 && f.change !== "Added" && (
+                      <MenuItem
+                        onClick={() => {
+                          closeMenu();
+                          useSummonStore.getState().summon("blame", f.path);
+                        }}
+                      >
+                        Blame file
+                      </MenuItem>
+                    )}
+                  </>,
                 );
               }}
               renderActions={(f) => (

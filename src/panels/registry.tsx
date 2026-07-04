@@ -7,6 +7,9 @@ import { ChangedFilesPanel } from "./ChangedFiles/ChangedFilesPanel";
 import { WorkingChangesPanel } from "./WorkingChanges/WorkingChangesPanel";
 import { DiffPanel } from "./Diff/DiffPanel";
 import { InteractiveRebasePanel } from "./InteractiveRebase/InteractiveRebasePanel";
+import { ComparePanel } from "./Compare/ComparePanel";
+import { SearchPanel } from "./Search/SearchPanel";
+import { BlamePanel } from "./Blame/BlamePanel";
 import { GitLogPanel } from "./GitLog/GitLogPanel";
 import { RefsPanel } from "./Refs/RefsPanel";
 import { RepositoriesPanel } from "./Repositories/RepositoriesPanel";
@@ -63,12 +66,33 @@ export const REPO_PANELS: PanelDescriptor[] = [
     id: "log",
     title: "Commits",
     scope: "repo",
-    summons: ["commit-details", "changed-files", "working-changes", "interactive-rebase"],
+    summons: ["commit-details", "changed-files", "working-changes", "interactive-rebase", "compare"],
   },
   {
     id: "interactive-rebase",
     title: "Interactive Rebase",
     scope: "repo",
+    defaultPlacement: { direction: "right", referencePanel: "log" },
+  },
+  {
+    id: "compare",
+    title: "Compare",
+    scope: "repo",
+    summons: ["diff"],
+    defaultPlacement: { direction: "right", referencePanel: "log" },
+  },
+  {
+    id: "search",
+    title: "Search",
+    scope: "repo",
+    summons: ["commit-details", "changed-files", "blame"],
+    defaultPlacement: { direction: "right", referencePanel: "log" },
+  },
+  {
+    id: "blame",
+    title: "Blame",
+    scope: "repo",
+    summons: ["commit-details", "changed-files"],
     defaultPlacement: { direction: "right", referencePanel: "log" },
   },
   {
@@ -145,4 +169,7 @@ export const REPO_DOCKVIEW_COMPONENTS: Record<
   "working-changes": wrap(WorkingChangesPanel),
   diff: wrap(DiffPanel),
   "interactive-rebase": wrap(InteractiveRebasePanel),
+  compare: wrap(ComparePanel),
+  search: wrap(SearchPanel),
+  blame: wrap(BlamePanel),
 };

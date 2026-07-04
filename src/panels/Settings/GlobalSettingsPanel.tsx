@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
 import { LinkIcon, UnlinkIcon, WarningIcon } from "../../icons";
 import { IconButton } from "../shared/buttons";
+import { useAppVersion } from "../../lib/appVersion";
 
 /** localStorage key for the line-height ↔ lane-width link toggle (default on). */
 const LANE_LINK_KEY = "legit.commits-lane-link";
@@ -132,8 +133,20 @@ export function GlobalSettingsPanel() {
         <LineEndingsGlobalSection />
         <SigningSettings scope="global" />
         <GlobalProfilesSection />
+        <AboutSection />
       </div>
     </div>
+  );
+}
+
+function AboutSection() {
+  const version = useAppVersion();
+  const status = useGitStatusStore((s) => s.status);
+  return (
+    <Section title="About">
+      <Row label="LeGit" value={version ? `v${version}` : "…"} />
+      {status?.version && <Row label="git" value={<code>{status.version.raw}</code>} />}
+    </Section>
   );
 }
 

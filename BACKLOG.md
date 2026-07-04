@@ -172,11 +172,16 @@ entered secret to git over a local IPC channel. Decide secret handling (prefer
 the OS keychain via the `keyring` crate; never plaintext in settings).
 Cross-platform care: the shim must be invocable by Git for Windows' shell.
 
-### 2. Inspection
-- **Diff between arbitrary commits/branches** (the `GitBackend::diff(from, to)`
-  method is currently a `NotYet` stub) — compare view.
-- **Blame / annotate** a file.
-- **Search**: commits (message/author), file paths, and content (`git log -S`/`-G`).
+### 2. Inspection polish
+Compare (two-rev snapshot diff with file list → read-only range diffs via
+`DiffSource::CommitRange`), Search (message/author regex, content pickaxe,
+path substring), and Blame (porcelain-parsed hunks, contents included) all
+ship (2026-07-04). Deferred polish:
+- Compare: a merge-base (three-dot) mode for "what would this branch merge";
+  rev pickers instead of free-text inputs.
+- Blame: blame at a specific revision (currently working-tree only);
+  re-blame from a hunk's parent ("time-travel" blame).
+- Search: `-G` regex content mode; virtualized results for huge repos.
 
 ### 3. Clone / init leftovers
 Clone / init ship (cancellable, profile-aware, streaming progress). Still open:

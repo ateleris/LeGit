@@ -595,6 +595,101 @@ async fn stash_mutation_on_vanished_sha_is_ref_not_found() {
 }
 
 // ---------------------------------------------------------------------------
+// search — commits (message/author/content) and paths
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn search_commits_builds_the_right_log_args_per_kind() {
+    let fmt = format!("--format={}", parsers::log::LOG_FORMAT);
+    for (kind, flag) in [
+        (CommitSearchKind::Message, "--grep=fix bug".to_string()),
+        (CommitSearchKind::Author, "--author=fix bug".to_string()),
+    ] {
+        let fake = FakeExecutor::default();
+        fake.expect(
+            &[
+                "log", fmt.as_str(), "--max-count=50", "--regexp-ignore-case", flag.as_str(),
+                "HEAD", "--branches", "--decorate=full",
+            ],
+            ok(""),
+        );
+        let (b, exec) = backend(fake);
+        let commits = b.search_commits("fix bug", kind, 50).await.unwrap();
+        assert!(commits.is_empty());
+        exec.assert_done();
+    }
+
+    // Content search is git's pickaxe: -S <literal>, no regex flag.
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["log", fmt.as_str(), "--max-count=50", "-S", "needle", "HEAD", "--branches", "--decorate=full"],
+        ok(""),
+    );
+    let (b, exec) = backend(fake);
+    b.search_commits("needle", CommitSearchKind::Content, 50).await.unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn search_paths_filters_ls_files_case_insensitively() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["ls-files", "-z"],
+        ok("src/Main.rs\0docs/readme.md\0src/lib/mainHelper.ts\0"),
+    );
+    let (b, exec) = backend(fake);
+
+    let paths = b.search_paths("main", 10).await.unwrap();
+    assert_eq!(
+        paths,
+        vec![PathBuf::from("src/Main.rs"), PathBuf::from("src/lib/mainHelper.ts")],
+    );
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
+// compare view — range file list + per-file range diff
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn diff_files_runs_diff_tree_over_the_given_revs() {
+    // Any rev spec works (branch names, HEAD~n, shas) — no parent resolution,
+    // unlike commit_files.
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["diff-tree", "--no-commit-id", "-r", "-M", "-z", "--name-status", "main", "feature"],
+        ok("M\0a.txt\0A\0b.txt\0"),
+    );
+    fake.expect(
+        &["diff-tree", "--no-commit-id", "-r", "-M", "-z", "--numstat", "main", "feature"],
+        ok("1\t1\ta.txt\02\t0\tb.txt\0"),
+    );
+    let (b, exec) = backend(fake);
+
+    let files = b.diff_files("main", "feature").await.unwrap();
+    assert_eq!(files.len(), 2);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn file_diff_commit_range_passes_both_revs() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["diff", "--no-color", "--no-ext-diff", "-U3", "main", "feature", "--", "a.txt"],
+        ok("diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-x\n+y\n"),
+    );
+    let (b, exec) = backend(fake);
+
+    let source = DiffSource::CommitRange {
+        from: CommitId::new("main"),
+        to: CommitId::new("feature"),
+    };
+    let entry = b.file_diff(&source, Path::new("a.txt"), None, 3).await.unwrap();
+    assert!(matches!(entry, DiffEntry::Text(_)), "{entry:?}");
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
 // conflict file sides — index stages :1/:2/:3
 // ---------------------------------------------------------------------------
 

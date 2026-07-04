@@ -254,6 +254,10 @@ pub enum DiffSource {
     WorkingStaged,
     /// A commit vs its first parent (`git diff <parent> <sha>`).
     Commit { commit_id: CommitId },
+    /// Two arbitrary revs (`git diff <from> <to>`) — the Compare view. The
+    /// fields accept any rev spec (branch names, `HEAD~3`, shas), carried in
+    /// `CommitId` for IPC uniformity.
+    CommitRange { from: CommitId, to: CommitId },
 }
 
 /// A working-tree operation applied to a single hunk (or line subset).
@@ -490,6 +494,36 @@ pub enum ResetMode {
 pub enum SequenceOutcome {
     Completed,
     Conflicts { message: String },
+}
+
+/// One blame hunk: a run of consecutive lines last touched by the same
+/// commit. Carries the line contents (git's porcelain output includes them),
+/// so the Blame view needs no separate file read and can never misalign.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct BlameHunk {
+    /// The blamed commit; all-zeros for uncommitted working-tree lines.
+    pub sha: CommitId,
+    pub author: String,
+    /// Author timestamp (Unix seconds).
+    pub timestamp: i64,
+    /// The commit's subject line.
+    pub summary: String,
+    /// 1-based first line number in the blamed file.
+    pub start_line: u32,
+    /// The hunk's line contents, in file order.
+    pub lines: Vec<String>,
+}
+
+/// What a commit search matches against. `Message`/`Author` are
+/// case-insensitive regexes (git `--grep`/`--author`); `Content` is the
+/// pickaxe (`-S`): commits that change the number of occurrences of the
+/// literal string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum CommitSearchKind {
+    Message,
+    Author,
+    Content,
 }
 
 /// The three index stages of a conflicted path (1 = base, 2 = ours,
