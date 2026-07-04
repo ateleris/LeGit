@@ -77,38 +77,6 @@ theme-token set.
 
 ---
 
-## Dependency updates: remaining major versions (frontend)
-
-**What:** The npm majors deliberately skipped in the 2026-07-03 dependency
-update (which took all in-range npm bumps, `cargo update`, and the Rust majors:
-thiserror 2, which 8, notify 8 + notify-debouncer-full 0.7 with the
-`Debouncer::watch` migration in `watcher.rs`; unused `dirs` removed).
-
-**Status:** Deferred 2026-07-03. Each bundle is its own session, in this order:
-
-1. **vite 5 → 8 + vitest 3 → 4 + @vitejs/plugin-react 4 → 6.** Toolchain
-   bundle, migrate together. **Has security urgency:** all current
-   `npm audit` findings (esbuild dev-server request proxying, vite path
-   traversal, Windows `server.fs.deny` bypass - relevant since dev runs on
-   Windows) are dev-server-only and fixed by this jump. Check vite 6/7/8
-   migration guides (Node version floor, `browserslist` defaults, plugin API).
-2. **react 18.3 → 19 + @types/react(-dom) 19 + zustand 4 → 5.** Go together:
-   zustand 4 typings don't work cleanly under React 19. React 19 removes
-   deprecated APIs (defaultProps on functions, legacy context, string refs -
-   none expected in this codebase) and changes `useRef` typing. zustand 5 is
-   mostly type-level: check `create` currying and equality-fn imports
-   (`useShallow`).
-3. **typescript 5.9 → 6.** After the toolchain bump; verify vitest/vite accept
-   it.
-4. **dockview-react 4.13 → 7 - last and riskiest.** The whole panel system
-   (registry, summon, persisted layouts, `--dv-*` token mapping, RefsPanel
-   paneview `headerSize` patching) sits on it, 3 majors behind. Read the 5/6/7
-   changelogs first; expect persisted-layout schema and CSS variable/class
-   changes. Budget a full session; verify layout restore from an existing
-   user layout file.
-
----
-
 ## Startup: parallelize repo-session restore
 
 **What:** `restore_open_repos` (commands/repo.rs) restores persisted repos

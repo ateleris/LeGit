@@ -19,7 +19,8 @@ export default defineConfig({
   build: {
     target: "esnext",
     sourcemap: true,
-    minify: "esbuild",
+    // Vite 8 bundles with Rolldown and minifies with Oxc (esbuild is gone);
+    // the default minifier is exactly that, so no explicit setting.
     outDir: "dist",
     // Tauri loads assets from disk — no network latency, so chunk size has no
     // performance impact. Raise the limit to silence the irrelevant warning.

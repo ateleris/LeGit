@@ -17,10 +17,9 @@
     "noFallthroughCasesInSwitch": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["src/*"]
-    }
+    // TS 6 stopped auto-including every node_modules/@types package; the
+    // node types are needed by the theme contract tests (fs/path/url).
+    "types": ["node"]
   },
   "include": ["src", "src/**/*.ts", "src/**/*.tsx"],
   "references": [{ "path": "./tsconfig.node.json" }]
