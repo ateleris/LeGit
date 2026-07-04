@@ -39,6 +39,12 @@ import type {
   RemoteTag,
   StashOutcome,
   StashApplyOutcome,
+  MergeOptions,
+  MergeOutcome,
+  RebaseOutcome,
+  RepoOpState,
+  ConflictEntry,
+  ConflictSide,
 } from "./types";
 
 // --- repo ---
@@ -287,6 +293,49 @@ export const repoUnstage = (repoId: string, paths: string[]) =>
 
 export const repoDiscard = (repoId: string, paths: string[]) =>
   invoke<null>("repo_discard", { repoId, paths });
+
+/** Read a working-tree file as UTF-8 text (editable diff save baseline). */
+export const repoReadWorktreeFile = (repoId: string, path: string) =>
+  invoke<string>("repo_read_worktree_file", { repoId, path });
+
+/** Overwrite a working-tree file with text (editable diff save path). */
+export const repoWriteWorktreeFile = (repoId: string, path: string, content: string) =>
+  invoke<null>("repo_write_worktree_file", { repoId, path, content });
+
+// --- merge / rebase / op-state ---
+
+export const repoMerge = (repoId: string, target: string, options: MergeOptions) =>
+  invoke<MergeOutcome>("repo_merge", { repoId, target, options });
+
+export const repoMergeContinue = (repoId: string) =>
+  invoke<MergeOutcome>("repo_merge_continue", { repoId });
+
+export const repoMergeAbort = (repoId: string) =>
+  invoke<null>("repo_merge_abort", { repoId });
+
+export const repoRebase = (repoId: string, onto: string) =>
+  invoke<RebaseOutcome>("repo_rebase", { repoId, onto });
+
+export const repoRebaseContinue = (repoId: string) =>
+  invoke<RebaseOutcome>("repo_rebase_continue", { repoId });
+
+export const repoRebaseSkip = (repoId: string) =>
+  invoke<RebaseOutcome>("repo_rebase_skip", { repoId });
+
+export const repoRebaseAbort = (repoId: string) =>
+  invoke<null>("repo_rebase_abort", { repoId });
+
+export const repoOpState = (repoId: string) =>
+  invoke<RepoOpState>("repo_op_state", { repoId });
+
+export const repoConflictEntries = (repoId: string) =>
+  invoke<ConflictEntry[]>("repo_conflict_entries", { repoId });
+
+/** Whole-file resolution; delete-conflicts resolve to deletion when the
+ *  chosen side removed the file. (Mark-resolved without taking a side is
+ *  just `repoStage([path])`.) */
+export const repoResolveTakeSide = (repoId: string, path: string, side: ConflictSide) =>
+  invoke<null>("repo_resolve_take_side", { repoId, path, side });
 
 export const repoCommit = (repoId: string, message: string, amend = false) =>
   invoke<string>("repo_commit", { repoId, message, amend });

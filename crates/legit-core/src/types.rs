@@ -307,6 +307,101 @@ pub enum SwitchDirtyBehavior {
     StashAndKeep,
 }
 
+/// Fast-forward behavior for `merge`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FfMode {
+    /// git's default: fast-forward when possible, else a merge commit.
+    #[default]
+    Auto,
+    NoFf,
+    FfOnly,
+}
+
+/// Options for `merge`. `squash: true` ignores `ff` (git `--squash` never
+/// creates a commit); the UI's menu items never combine them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, Default)]
+pub struct MergeOptions {
+    pub ff: FfMode,
+    pub squash: bool,
+}
+
+/// Outcome of `merge` / `merge_continue`. Conflicts are an outcome, not an
+/// error: the merge is in progress and the user resolves + continues/aborts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MergeOutcome {
+    FastForwarded,
+    Merged,
+    /// `--squash`: changes staged, no commit created; the user commits.
+    Squashed,
+    AlreadyUpToDate,
+    Conflicts { message: String },
+}
+
+/// Outcome of `rebase` / `rebase_continue` / `rebase_skip`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RebaseOutcome {
+    Completed,
+    AlreadyUpToDate,
+    Conflicts { message: String },
+    /// The rebase itself finished, but reapplying the `--autostash` produced
+    /// conflicts; git keeps the stash entry (mirrors `StashPopConflicts`).
+    CompletedWithStashConflicts { message: String },
+}
+
+/// Which multi-step git operation the repository is currently in, if any.
+/// Cherry-pick/revert are detected (the banner machinery is shared) even
+/// though their UI triggers ship later.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RepoOpState {
+    None,
+    Merge {
+        /// Branch named in MERGE_MSG ("Merge branch 'x' …"), when parseable.
+        branch: Option<String>,
+        /// The prepared merge message (MERGE_MSG), for commit prefill.
+        message: Option<String>,
+    },
+    Rebase {
+        /// Short SHA of the commit being rebased onto.
+        onto: Option<String>,
+        /// Short branch name being rebased (rebase-merge/head-name).
+        head_name: Option<String>,
+        current_step: Option<u32>,
+        total_steps: Option<u32>,
+    },
+    CherryPick { sha: String },
+    Revert { sha: String },
+}
+
+/// How a path conflicts, from the index's unmerged stages
+/// (1 = base, 2 = ours, 3 = theirs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ConflictKind {
+    BothModified,
+    BothAdded,
+    DeletedByUs,
+    DeletedByThem,
+}
+
+/// A conflicted path and how it conflicts (`git ls-files -u`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct ConflictEntry {
+    pub path: String,
+    pub kind: ConflictKind,
+}
+
+/// Which side of a conflict to take for a whole file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ConflictSide {
+    Ours,
+    Theirs,
+}
+
 /// A local tag from `git for-each-ref refs/tags`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct TagInfo {
@@ -318,6 +413,10 @@ pub struct TagInfo {
     pub annotated: bool,
     /// Annotation subject line (annotated tags only).
     pub message: Option<String>,
+    /// The tagged commit is reachable from a remote-tracking ref. Pushing a
+    /// tag whose target is NOT on the remote would upload commits no remote
+    /// branch references, so the UI disables it (push the branch first).
+    pub target_on_remote: bool,
 }
 
 /// A tag as it exists on a remote (`git ls-remote --tags`).

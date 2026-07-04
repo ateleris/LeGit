@@ -37,6 +37,10 @@
   --fz-md: var(--ui-font-size);
   --fz-lg: calc(var(--ui-font-size) + 1px);
   --fz-xl: calc(var(--ui-font-size) + 4px);
+  /* Measured gutter width of a diff editor pane; DiffEditor's ViewPlugin
+     overwrites this on the scroller so sticky hunk labels can pin just right
+     of the (sticky, overlaying) gutters. 0px until first measure. */
+  --cm-gutters-width: 0px;
 }
 
 html,
@@ -600,4 +604,12 @@ button.legit-tab__close:hover {
 }
 .legit-toast__close:hover {
   color: var(--panel-fg);
+}
+
+/* Editable diff: while there are unsaved edits, hunk/line actions are
+   inert; save or discard first (the panel also guards in its handlers). */
+.diff-editor-host--dirty .cm-diff-hunk-actions button,
+.diff-editor-host--dirty .cm-diff-line-action {
+  opacity: 0.4;
+  pointer-events: none;
 }

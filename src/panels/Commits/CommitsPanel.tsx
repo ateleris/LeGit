@@ -32,6 +32,8 @@ import {
   repoRenameBranch,
   repoRewordCommit,
   repoStatus,
+  repoMerge,
+  repoRebase,
   repoSwitchBranch,
   repoTrackingStatus,
   repoCreateStash,
@@ -49,7 +51,9 @@ import {
 import { pushedTagNames, pickTagRemote } from "../../lib/tags";
 import { openStashDiff } from "../Stashes/StashesPanel";
 import { notifySwitchOutcome, notifySwitchError } from "../../lib/switchFeedback";
-import type { Branch, Commit, CommitId, FileStatus, PushOptions, Remote, RemoteTag, Signature, TagInfo, TrackingStatus } from "../../lib/types";
+import { notifyMergeOutcome, notifyOpError, notifyRebaseOutcome } from "../../lib/mergeFeedback";
+import { OP_DOMAINS, useOpState } from "../../lib/useOpState";
+import type { Branch, Commit, CommitId, FileStatus, MergeOptions, PushOptions, Remote, RemoteTag, Signature, TagInfo, TrackingStatus } from "../../lib/types";
 import { formatAppError, gitErrorKind } from "../../lib/types";
 import { notify } from "../../store/notifications";
 import { BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon } from "../../icons";
@@ -283,6 +287,41 @@ export function CommitsPanel() {
   // Switching can create/consume an auto-stash, so "stashes" is invalidated too.
   const BRANCH_DOMAINS = ["branches", "log", "status", "tracking", "stashes"] as const;
 
+  // Merge/rebase entry points need the current branch NAME for labels and are
+  // hidden while an operation is already in progress. (Distinct from the
+  // `currentBranch` Branch object below, which drives reword gating.)
+  const currentBranchName = useMemo(
+    () => branches.find((b) => !b.is_remote && b.is_current)?.name ?? null,
+    [branches],
+  );
+  const opState = useOpState(repo?.id);
+  const opInProgress = !!opState && opState.kind !== "none";
+
+  const handleMerge = useCallback(async (target: string, options: MergeOptions) => {
+    if (!repo) return;
+    try {
+      const outcome = await repoMerge(repo.id, target, options);
+      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
+      notifyMergeOutcome(outcome, target);
+    } catch (e) {
+      // A failed merge can still leave state behind; refresh either way.
+      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
+      notifyOpError(e);
+    }
+  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleRebaseOnto = useCallback(async (onto: string) => {
+    if (!repo) return;
+    try {
+      const outcome = await repoRebase(repo.id, onto);
+      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
+      notifyRebaseOutcome(outcome, onto);
+    } catch (e) {
+      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
+      notifyOpError(e);
+    }
+  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleBranchCheckout = useCallback(async (name: string) => {
     if (!repo) return;
     try {
@@ -421,6 +460,12 @@ export function CommitsPanel() {
     retry: false,
   });
   const pushedTags = useMemo(() => pushedTagNames(tags, remoteTags), [tags, remoteTags]);
+  // Tags whose target commit is on the remote; pushing the others is disabled
+  // (it would upload commits no remote branch references).
+  const tagTargetsOnRemote = useMemo(
+    () => new Set(tags.filter((t) => t.target_on_remote).map((t) => t.name)),
+    [tags],
+  );
 
   const TAG_DOMAINS = ["tags", "log"] as const;
 
@@ -1059,9 +1104,13 @@ export function CommitsPanel() {
                             <BranchMenuSection
                               name={b.name}
                               isCurrent={b.isCurrent}
+                              currentBranch={currentBranchName}
+                              opInProgress={opInProgress}
                               onCheckout={() => { closeMenu(); handleBranchCheckout(b.name); }}
                               onRename={() => { closeMenu(); handleBranchRename(b.name); }}
                               onDelete={(force) => { closeMenu(); handleBranchDelete(b.name, force); }}
+                              onMerge={(options) => { closeMenu(); handleMerge(b.name, options); }}
+                              onRebaseOnto={() => { closeMenu(); handleRebaseOnto(b.name); }}
                             />
                           </Fragment>
                         ))}
@@ -1070,7 +1119,11 @@ export function CommitsPanel() {
                             <Separator />
                             <RemoteBranchMenuSection
                               remoteName={name}
+                              currentBranch={currentBranchName}
+                              opInProgress={opInProgress}
                               onCheckout={() => { closeMenu(); handleRemoteCheckout(name); }}
+                              onMerge={(options) => { closeMenu(); handleMerge(name, options); }}
+                              onRebaseOnto={() => { closeMenu(); handleRebaseOnto(name); }}
                             />
                           </Fragment>
                         ))}
@@ -1083,6 +1136,7 @@ export function CommitsPanel() {
                               <TagMenuSection
                                 name={name}
                                 pushed={pushedTags.has(name)}
+                                targetOnRemote={tagTargetsOnRemote.has(name)}
                                 remote={tagRemote}
                                 onPush={() => { closeMenu(); handleTagPush(name); }}
                                 onDelete={() => { closeMenu(); handleTagDelete(name); }}
@@ -1131,6 +1185,7 @@ export function CommitsPanel() {
                             onCreateTagSave={handleCreateTagSave}
                             onCreateTagCancel={handleCreateTagCancel}
                             pushedTags={pushedTags}
+                            tagTargetsOnRemote={tagTargetsOnRemote}
                             tagRemote={tagRemote}
                             onTagPush={handleTagPush}
                             onTagDelete={handleTagDelete}
@@ -1139,6 +1194,10 @@ export function CommitsPanel() {
                             onBranchRename={handleBranchRename}
                             onBranchDelete={handleBranchDelete}
                             onRemoteCheckout={handleRemoteCheckout}
+                            currentBranch={currentBranchName}
+                            opInProgress={opInProgress}
+                            onBranchMerge={handleMerge}
+                            onBranchRebaseOnto={handleRebaseOnto}
                           />
                         </div>
                       );

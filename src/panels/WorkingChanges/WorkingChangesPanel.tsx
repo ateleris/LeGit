@@ -3,8 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
 import { usePanelActiveEffect, usePanelFocusEffect } from "../PanelApiContext";
-import { repoCommit, repoDiscard, repoLog, repoStage, repoStatus, repoUnstage } from "../../lib/commands";
-import type { Commit, DiffRequest, DiffSource, FileStatus } from "../../lib/types";
+import { repoCommit, repoConflictEntries, repoDiscard, repoLog, repoResolveTakeSide, repoStage, repoStatus, repoUnstage } from "../../lib/commands";
+import type { Commit, ConflictEntry, DiffRequest, DiffSource, FileStatus } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { useSummonStore } from "../../store/summon";
 import { notify } from "../../store/notifications";
@@ -17,6 +17,9 @@ import { PanelContextMenuProvider, type BaselineEntry } from "../Commits/menu/Pa
 import { MenuItem } from "../Commits/menu/primitives";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
+import { useOpState } from "../../lib/useOpState";
+import { OpStateBanner } from "./OpStateBanner";
+import { takeSideLabels } from "./conflictLabels";
 
 const toEntry = (s: FileStatus): FileTreeEntry => ({ path: s.path, change: s.state });
 
@@ -138,6 +141,27 @@ export function WorkingChangesPanel() {
   const staged = useMemo(() => status.filter((s) => s.staged).map(toEntry), [status]);
   const unstaged = useMemo(() => status.filter((s) => !s.staged).map(toEntry), [status]);
 
+  // In-progress merge/rebase state drives the banner; the conflict count
+  // gates its Continue button (and the conflict-row menu labels).
+  const opState = useOpState(repo?.id);
+  const conflictCount = useMemo(
+    () => status.filter((s) => s.state === "Conflicted").length,
+    [status],
+  );
+
+  // Conflict kinds for delete-aware Take-ours/theirs labels; only fetched
+  // while conflicts exist (the cheap ls-files -u otherwise never runs).
+  const { data: conflictEntries = [] } = useQuery<ConflictEntry[]>({
+    queryKey: [repo?.id, "op_state", "conflicts"],
+    queryFn: () => repoConflictEntries(repo!.id),
+    enabled: !!repo && conflictCount > 0,
+    staleTime: 5_000,
+  });
+  const conflictKinds = useMemo(
+    () => new Map(conflictEntries.map((e) => [e.path, e.kind])),
+    [conflictEntries],
+  );
+
   // The highlighted set for each list — non-empty only for the active section.
   const unstagedSelected = useMemo(
     () => new Set(selected?.section === "unstaged" ? selected.paths : []),
@@ -216,7 +240,8 @@ export function WorkingChangesPanel() {
     // filesystem watcher's redundant follow-up for the same action is dropped.
     // "diff" is included so an open Diff panel re-fetches: staging/unstaging a
     // file here changes which hunks appear in its working-tree diff.
-    invalidateRepoDomains(queryClient, repo.id, ["status", "log", "branches", "diff"]);
+    // "op_state" keeps the merge/rebase banner's conflict actions fresh.
+    invalidateRepoDomains(queryClient, repo.id, ["status", "log", "branches", "diff", "op_state"]);
   }, [repo, queryClient]);
 
   // Re-entry guard for `run` — blocks double-clicks immediately, independent
@@ -325,6 +350,9 @@ export function WorkingChangesPanel() {
           onContextMenu={(e) => openMenu(e)}
         >
       <PanelLoadingBar active={isFetching} />
+      {repo && opState && (opState.kind === "merge" || opState.kind === "rebase") && (
+        <OpStateBanner repoId={repo.id} opState={opState} conflictCount={conflictCount} />
+      )}
       <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <div style={{ display: "flex" }}>
           <button onClick={() => setViewMode("tree")} aria-pressed={viewMode === "tree"} style={segStyle(viewMode === "tree", "left")}>
@@ -405,6 +433,19 @@ export function WorkingChangesPanel() {
                 openMenu(
                   e,
                   <>
+                    {!many && f.change === "Conflicted" && (
+                      <>
+                        <MenuItem onClick={() => { run(() => repoResolveTakeSide(repo!.id, f.path, "ours")); closeMenu(); }}>
+                          {takeSideLabels(conflictKinds.get(f.path)).ours}
+                        </MenuItem>
+                        <MenuItem onClick={() => { run(() => repoResolveTakeSide(repo!.id, f.path, "theirs")); closeMenu(); }}>
+                          {takeSideLabels(conflictKinds.get(f.path)).theirs}
+                        </MenuItem>
+                        <MenuItem onClick={() => { stage([f.path]); closeMenu(); }}>
+                          Mark resolved
+                        </MenuItem>
+                      </>
+                    )}
                     <MenuItem onClick={() => { stage(targets); closeMenu(); }}>
                       {many ? `Stage ${targets.length} selected` : "Stage"}
                     </MenuItem>

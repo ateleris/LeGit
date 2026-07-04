@@ -8,11 +8,12 @@ use crate::backend::GitBackend;
 use crate::error::GitError;
 use crate::runner::{GitRunner, OperationId};
 use crate::types::{
-    Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, Diff, DiffEntry,
-    DiffSource, FetchOptions, FileState, FileStatus, HunkOp, LogOptions, PullOptions, PullStrategy,
-    PushOptions, RefDecoration, RefSelector, Remote, RemoteTag, SignMode, StashApplyOutcome,
-    StashEntry, StashOutcome, SubmoduleInfo, SwitchDirtyBehavior, SwitchOutcome, TagInfo,
-    TrackingStatus,
+    Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, ConflictEntry,
+    ConflictSide, Diff, DiffEntry, DiffSource, FetchOptions, FfMode, FileState, FileStatus,
+    HunkOp, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullStrategy, PushOptions,
+    RebaseOutcome, RefDecoration, RefSelector, Remote, RemoteTag, RepoOpState, SignMode,
+    StashApplyOutcome, StashEntry, StashOutcome, SubmoduleInfo, SwitchDirtyBehavior,
+    SwitchOutcome, TagInfo, TrackingStatus,
 };
 
 /// Git's well-known empty-tree object id, used as the "before" side when
@@ -348,6 +349,19 @@ impl GitCliBackend {
 
     /// Run a non-network git invocation and map a non-zero exit to
     /// `CommandFailed` (used by the remote-management mutations).
+    /// Run args and return (exit_code, stdout, stderr) with 0 for success:
+    /// the classifier-friendly shape for merge/rebase commands, whose non-zero
+    /// exits may still be successful *outcomes* (conflicts).
+    async fn run_classified(&self, args: &[&str]) -> Result<(i32, String, String), GitError> {
+        let runner = self.runner().await;
+        let out = runner
+            .run(args)
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        let code = if out.success { 0 } else { out.exit_code.unwrap_or(-1) };
+        Ok((code, out.stdout, out.stderr))
+    }
+
     async fn run_simple(&self, args: &[&str]) -> Result<(), GitError> {
         let runner = self.runner().await;
         let output = runner
@@ -1126,7 +1140,22 @@ impl GitBackend for GitCliBackend {
                 stderr: output.stderr,
             });
         }
-        Ok(parsers::tags::parse_tags(&output.stdout))
+        let mut tags = parsers::tags::parse_tags(&output.stdout);
+        if !tags.is_empty() {
+            // Mark tags whose target commit is not reachable from any
+            // remote-tracking ref: pushing such a tag would upload commits no
+            // remote branch references, so the UI disables it. Best-effort: a
+            // failed probe leaves the permissive default (push allowed).
+            let probe = runner
+                .run(&parsers::tags::REV_LIST_UNPUSHED_TAG_TARGETS_ARGS)
+                .await;
+            if let Ok(out) = probe {
+                if out.success {
+                    parsers::tags::mark_unpushed_targets(&mut tags, &out.stdout);
+                }
+            }
+        }
+        Ok(tags)
     }
 
     async fn create_tag(
@@ -1265,6 +1294,155 @@ impl GitBackend for GitCliBackend {
         self.run_simple(&["stash", "drop", &selector]).await?;
         self.run_simple(&["stash", "store", "-m", new_message, stash_sha]).await
     }
+
+    async fn merge(&self, target: &str, opts: MergeOptions) -> Result<MergeOutcome, GitError> {
+        let args = merge_args(target, opts);
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, stdout, stderr) = self.run_classified(&refs).await?;
+        classify_merge_output(code, &stdout, &stderr, opts.squash)
+    }
+
+    async fn merge_continue(&self) -> Result<MergeOutcome, GitError> {
+        let (code, stdout, stderr) = self.run_classified(&MERGE_CONTINUE_ARGS).await?;
+        classify_merge_output(code, &stdout, &stderr, false)
+    }
+
+    async fn merge_abort(&self) -> Result<(), GitError> {
+        self.run_simple(&MERGE_ABORT_ARGS).await
+    }
+
+    async fn rebase(&self, onto: &str) -> Result<RebaseOutcome, GitError> {
+        let args = rebase_args(onto);
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, stdout, stderr) = self.run_classified(&refs).await?;
+        classify_rebase_output(code, &stdout, &stderr)
+    }
+
+    async fn rebase_continue(&self) -> Result<RebaseOutcome, GitError> {
+        let (code, stdout, stderr) = self.run_classified(&REBASE_CONTINUE_ARGS).await?;
+        classify_rebase_output(code, &stdout, &stderr)
+    }
+
+    async fn rebase_skip(&self) -> Result<RebaseOutcome, GitError> {
+        let (code, stdout, stderr) = self.run_classified(&REBASE_SKIP_ARGS).await?;
+        classify_rebase_output(code, &stdout, &stderr)
+    }
+
+    async fn rebase_abort(&self) -> Result<(), GitError> {
+        self.run_simple(&REBASE_ABORT_ARGS).await
+    }
+
+    async fn op_state(&self) -> Result<RepoOpState, GitError> {
+        // git reports the state paths; only existence/content is read from
+        // disk. --path-format=absolute avoids joining against the workdir.
+        let (code, stdout, stderr) = self
+            .run_classified(&[
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "MERGE_HEAD",
+                "--git-path",
+                "MERGE_MSG",
+                "--git-path",
+                "rebase-merge",
+                "--git-path",
+                "rebase-apply",
+                "--git-path",
+                "CHERRY_PICK_HEAD",
+                "--git-path",
+                "REVERT_HEAD",
+            ])
+            .await?;
+        if code != 0 {
+            return Err(GitError::CommandFailed {
+                exit_code: code,
+                stderr: stderr.trim().to_string(),
+            });
+        }
+        let lines: Vec<&str> = stdout.lines().map(str::trim).collect();
+        if lines.len() < 6 {
+            return Err(GitError::Parse(format!(
+                "rev-parse --git-path returned {} lines",
+                lines.len()
+            )));
+        }
+
+        async fn read_opt(p: PathBuf) -> Option<String> {
+            tokio::fs::read_to_string(p).await.ok()
+        }
+        async fn exists(p: &Path) -> bool {
+            tokio::fs::metadata(p).await.is_ok()
+        }
+
+        let merge_head = Path::new(lines[0]);
+        let merge_msg = Path::new(lines[1]);
+        let rebase_merge = Path::new(lines[2]);
+        let rebase_apply = Path::new(lines[3]);
+        let cherry = Path::new(lines[4]);
+        let revert = Path::new(lines[5]);
+
+        let probe = parsers::op_state::OpStateProbe {
+            merge_head: exists(merge_head).await,
+            merge_msg: read_opt(merge_msg.to_path_buf()).await,
+            rebase_merge: if exists(rebase_merge).await {
+                Some(parsers::op_state::RebaseMergeFiles {
+                    head_name: read_opt(rebase_merge.join("head-name")).await,
+                    onto: read_opt(rebase_merge.join("onto")).await,
+                    msgnum: read_opt(rebase_merge.join("msgnum")).await,
+                    end: read_opt(rebase_merge.join("end")).await,
+                })
+            } else {
+                None
+            },
+            rebase_apply: if exists(rebase_apply).await {
+                Some(parsers::op_state::RebaseApplyFiles {
+                    next: read_opt(rebase_apply.join("next")).await,
+                    last: read_opt(rebase_apply.join("last")).await,
+                    head_name: read_opt(rebase_apply.join("head-name")).await,
+                })
+            } else {
+                None
+            },
+            cherry_pick_head: read_opt(cherry.to_path_buf()).await,
+            revert_head: read_opt(revert.to_path_buf()).await,
+        };
+        Ok(parsers::op_state::op_state_from_probe(probe))
+    }
+
+    async fn conflict_entries(&self) -> Result<Vec<ConflictEntry>, GitError> {
+        let (code, stdout, stderr) = self
+            .run_classified(&parsers::conflicts::LS_FILES_UNMERGED_ARGS)
+            .await?;
+        if code != 0 {
+            return Err(GitError::CommandFailed {
+                exit_code: code,
+                stderr: stderr.trim().to_string(),
+            });
+        }
+        parsers::conflicts::parse_unmerged(&stdout)
+    }
+
+    async fn resolve_take_side(&self, path: &Path, side: ConflictSide) -> Result<(), GitError> {
+        let flag = match side {
+            ConflictSide::Ours => "--ours",
+            ConflictSide::Theirs => "--theirs",
+        };
+        let p = path.to_string_lossy().into_owned();
+        let (code, _stdout, stderr) = self.run_classified(&["checkout", flag, "--", &p]).await?;
+        if code != 0 {
+            if take_side_means_delete(&stderr) {
+                // The chosen side deleted the file: taking it = delete + stage
+                // (git rm stages the removal itself).
+                return self.run_simple(&["rm", "-f", "--", &p]).await;
+            }
+            return Err(GitError::CommandFailed {
+                exit_code: code,
+                stderr: stderr.trim().to_string(),
+            });
+        }
+        // Stage the taken side to mark the path resolved.
+        self.run_pathspec(&["add", "--"], &[path.to_path_buf()]).await
+    }
 }
 
 /// Build a synthetic graph node for a stash entry. The real stash object is a
@@ -1392,6 +1570,151 @@ fn classify_switch_error(exit_code: i32, stderr: &str) -> GitError {
         exit_code,
         stderr: stderr.trim().to_string(),
     }
+}
+
+/// `git merge` argument list. Non-squash merges pass `--no-edit` explicitly:
+/// the runner hardens with `GIT_EDITOR=false`, and without `--no-edit` a
+/// merge-commit path that decides to open an editor would fail outright.
+fn merge_args(target: &str, opts: MergeOptions) -> Vec<String> {
+    let mut args: Vec<String> = vec!["merge".into()];
+    if opts.squash {
+        args.push("--squash".into());
+    } else {
+        match opts.ff {
+            FfMode::Auto => {}
+            FfMode::NoFf => args.push("--no-ff".into()),
+            FfMode::FfOnly => args.push("--ff-only".into()),
+        }
+        args.push("--no-edit".into());
+    }
+    args.push(target.into());
+    args
+}
+
+/// Continue/abort argument lists. The `-c core.editor=true` neutralizes the
+/// editor for the commit-message step (GIT_EDITOR=false would make it fail);
+/// `true` accepts the prepared message unchanged.
+const MERGE_CONTINUE_ARGS: [&str; 4] = ["-c", "core.editor=true", "merge", "--continue"];
+const MERGE_ABORT_ARGS: [&str; 2] = ["merge", "--abort"];
+
+/// `git rebase` always runs with `--autostash` so a dirty tree does not block
+/// it; a conflicted stash reapply after completion is its own outcome.
+fn rebase_args(onto: &str) -> Vec<String> {
+    vec!["rebase".into(), "--autostash".into(), onto.into()]
+}
+
+const REBASE_CONTINUE_ARGS: [&str; 4] = ["-c", "core.editor=true", "rebase", "--continue"];
+const REBASE_SKIP_ARGS: [&str; 4] = ["-c", "core.editor=true", "rebase", "--skip"];
+const REBASE_ABORT_ARGS: [&str; 2] = ["rebase", "--abort"];
+
+/// Compose a user-facing message from a command's streams (stdout carries
+/// git's conflict summary, stderr the hints).
+fn compose_output(stdout: &str, stderr: &str) -> String {
+    let mut msg = stdout.trim().to_string();
+    let err = stderr.trim();
+    if !err.is_empty() {
+        if !msg.is_empty() {
+            msg.push('\n');
+        }
+        msg.push_str(err);
+    }
+    msg
+}
+
+/// Split `git merge`'s exit-1 ambiguity: conflicts are an OUTCOME (merge in
+/// progress), everything else an error. Encoded in tests, not comments.
+fn classify_merge_output(
+    exit_code: i32,
+    stdout: &str,
+    stderr: &str,
+    squash: bool,
+) -> Result<MergeOutcome, GitError> {
+    let out_lc = stdout.to_lowercase();
+    let err_lc = stderr.to_lowercase();
+    if exit_code == 0 {
+        if out_lc.contains("already up to date") {
+            return Ok(MergeOutcome::AlreadyUpToDate);
+        }
+        if squash {
+            return Ok(MergeOutcome::Squashed);
+        }
+        // "Fast-forward" appears on its own line under "Updating a..b".
+        if out_lc.lines().any(|l| l.trim() == "fast-forward") {
+            return Ok(MergeOutcome::FastForwarded);
+        }
+        return Ok(MergeOutcome::Merged);
+    }
+    if out_lc.contains("automatic merge failed")
+        || out_lc.contains("conflict")
+        || err_lc.contains("you have unmerged files")
+        || err_lc.contains("not possible because you have unmerged files")
+    {
+        return Ok(MergeOutcome::Conflicts {
+            message: compose_output(stdout, stderr),
+        });
+    }
+    if err_lc.contains("would be overwritten by") {
+        return Err(GitError::WouldOverwriteLocalChanges(stderr.trim().to_string()));
+    }
+    if err_lc.contains("not something we can merge") || err_lc.contains("unknown revision") {
+        return Err(GitError::RefNotFound(stderr.trim().to_string()));
+    }
+    Err(GitError::CommandFailed {
+        exit_code,
+        stderr: compose_output(stdout, stderr),
+    })
+}
+
+/// Split `git rebase`'s exit codes the same way. On exit 0 the autostash may
+/// still have conflicted ("Applying autostash resulted in conflicts"); the
+/// rebase itself succeeded, so that is a distinct success-flavored outcome.
+fn classify_rebase_output(
+    exit_code: i32,
+    stdout: &str,
+    stderr: &str,
+) -> Result<RebaseOutcome, GitError> {
+    let out_lc = stdout.to_lowercase();
+    let err_lc = stderr.to_lowercase();
+    let stash_conflict = out_lc.contains("applying autostash resulted in conflicts")
+        || err_lc.contains("applying autostash resulted in conflicts");
+    if exit_code == 0 {
+        if stash_conflict {
+            return Ok(RebaseOutcome::CompletedWithStashConflicts {
+                message: compose_output(stdout, stderr),
+            });
+        }
+        if out_lc.contains("is up to date") || err_lc.contains("is up to date") {
+            return Ok(RebaseOutcome::AlreadyUpToDate);
+        }
+        return Ok(RebaseOutcome::Completed);
+    }
+    if err_lc.contains("could not apply")
+        || out_lc.contains("conflict")
+        || err_lc.contains("conflict")
+        || err_lc.contains("you have unmerged files")
+    {
+        return Ok(RebaseOutcome::Conflicts {
+            message: compose_output(stdout, stderr),
+        });
+    }
+    if err_lc.contains("would be overwritten by") {
+        return Err(GitError::WouldOverwriteLocalChanges(stderr.trim().to_string()));
+    }
+    if err_lc.contains("invalid upstream") || err_lc.contains("unknown revision") {
+        return Err(GitError::RefNotFound(stderr.trim().to_string()));
+    }
+    Err(GitError::CommandFailed {
+        exit_code,
+        stderr: compose_output(stdout, stderr),
+    })
+}
+
+/// `git checkout --ours/--theirs` fails when the chosen side has no stage
+/// entry (a delete-conflict where that side deleted the file); taking that
+/// side then means deleting the path (`git rm -f`).
+fn take_side_means_delete(stderr: &str) -> bool {
+    let lc = stderr.to_lowercase();
+    lc.contains("does not have our version") || lc.contains("does not have their version")
 }
 
 /// Append a follow-up note to an error without losing its kind (used when a
@@ -1715,5 +2038,151 @@ mod tests {
             build_set_url_args("origin", "git@x:y.git", true),
             vec!["remote", "set-url", "--push", "origin", "git@x:y.git"]
         );
+    }
+
+    // --- merge/rebase argument construction ---
+
+    #[test]
+    fn merge_args_pass_no_edit_for_commit_merges() {
+        // GIT_EDITOR=false hardening: a merge that decides to open an editor
+        // would fail, so every non-squash merge must carry --no-edit.
+        for ff in [FfMode::Auto, FfMode::NoFf, FfMode::FfOnly] {
+            let args = merge_args("dev", MergeOptions { ff, squash: false });
+            assert!(args.contains(&"--no-edit".to_string()), "{args:?}");
+            assert_eq!(args.last().unwrap(), "dev");
+        }
+        assert!(merge_args("dev", MergeOptions { ff: FfMode::NoFf, squash: false })
+            .contains(&"--no-ff".to_string()));
+        assert!(merge_args("dev", MergeOptions { ff: FfMode::FfOnly, squash: false })
+            .contains(&"--ff-only".to_string()));
+    }
+
+    #[test]
+    fn squash_merge_ignores_ff_and_skips_no_edit() {
+        let args = merge_args("dev", MergeOptions { ff: FfMode::NoFf, squash: true });
+        assert_eq!(args, vec!["merge", "--squash", "dev"]);
+    }
+
+    #[test]
+    fn continue_commands_neutralize_the_editor() {
+        assert_eq!(MERGE_CONTINUE_ARGS, ["-c", "core.editor=true", "merge", "--continue"]);
+        assert_eq!(REBASE_CONTINUE_ARGS, ["-c", "core.editor=true", "rebase", "--continue"]);
+        assert_eq!(REBASE_SKIP_ARGS, ["-c", "core.editor=true", "rebase", "--skip"]);
+    }
+
+    #[test]
+    fn rebase_always_autostashes() {
+        assert_eq!(rebase_args("main"), vec!["rebase", "--autostash", "main"]);
+    }
+
+    // --- merge output classification (exit-1 ambiguity) ---
+
+    #[test]
+    fn merge_conflict_is_outcome_not_error() {
+        let out = classify_merge_output(
+            1,
+            "Auto-merging a.txt\nCONFLICT (content): Merge conflict in a.txt\nAutomatic merge failed; fix conflicts and then commit the result.\n",
+            "",
+            false,
+        );
+        assert!(matches!(out, Ok(MergeOutcome::Conflicts { .. })));
+    }
+
+    #[test]
+    fn merge_success_variants() {
+        assert_eq!(
+            classify_merge_output(0, "Already up to date.\n", "", false).unwrap(),
+            MergeOutcome::AlreadyUpToDate
+        );
+        assert_eq!(
+            classify_merge_output(0, "Updating 1a2b..3c4d\nFast-forward\n a.txt | 1 +\n", "", false)
+                .unwrap(),
+            MergeOutcome::FastForwarded
+        );
+        assert_eq!(
+            classify_merge_output(0, "Merge made by the 'ort' strategy.\n", "", false).unwrap(),
+            MergeOutcome::Merged
+        );
+        assert_eq!(
+            classify_merge_output(0, "Squash commit -- not updating HEAD\n", "", true).unwrap(),
+            MergeOutcome::Squashed
+        );
+    }
+
+    #[test]
+    fn merge_real_failures_stay_errors() {
+        assert!(matches!(
+            classify_merge_output(
+                1,
+                "",
+                "error: Your local changes to the following files would be overwritten by merge:\n\ta.txt\n",
+                false
+            ),
+            Err(GitError::WouldOverwriteLocalChanges(_))
+        ));
+        assert!(matches!(
+            classify_merge_output(1, "", "merge: nosuch - not something we can merge\n", false),
+            Err(GitError::RefNotFound(_))
+        ));
+        assert!(matches!(
+            classify_merge_output(128, "", "fatal: refusing to merge unrelated histories\n", false),
+            Err(GitError::CommandFailed { .. })
+        ));
+        // ff-only refusal is a plain failure with git's own message.
+        assert!(matches!(
+            classify_merge_output(128, "", "fatal: Not possible to fast-forward, aborting.\n", false),
+            Err(GitError::CommandFailed { .. })
+        ));
+    }
+
+    // --- rebase output classification ---
+
+    #[test]
+    fn rebase_conflict_is_outcome_not_error() {
+        let out = classify_rebase_output(
+            1,
+            "Auto-merging a.txt\nCONFLICT (content): Merge conflict in a.txt\n",
+            "error: could not apply 1a2b3c4... subject\n",
+        );
+        assert!(matches!(out, Ok(RebaseOutcome::Conflicts { .. })));
+    }
+
+    #[test]
+    fn rebase_success_variants() {
+        assert_eq!(
+            classify_rebase_output(0, "", "Successfully rebased and updated refs/heads/feature.\n")
+                .unwrap(),
+            RebaseOutcome::Completed
+        );
+        assert_eq!(
+            classify_rebase_output(0, "Current branch feature is up to date.\n", "").unwrap(),
+            RebaseOutcome::AlreadyUpToDate
+        );
+        assert!(matches!(
+            classify_rebase_output(
+                0,
+                "Applying autostash resulted in conflicts.\nYour changes are safe in the stash.\n",
+                "Successfully rebased and updated refs/heads/feature.\n"
+            )
+            .unwrap(),
+            RebaseOutcome::CompletedWithStashConflicts { .. }
+        ));
+    }
+
+    #[test]
+    fn rebase_real_failures_stay_errors() {
+        assert!(matches!(
+            classify_rebase_output(128, "", "fatal: invalid upstream 'nosuch'\n"),
+            Err(GitError::RefNotFound(_))
+        ));
+    }
+
+    // --- take-side delete detection ---
+
+    #[test]
+    fn take_side_delete_conflict_detection() {
+        assert!(take_side_means_delete("error: path 'a.txt' does not have their version\n"));
+        assert!(take_side_means_delete("error: path 'a.txt' does not have our version\n"));
+        assert!(!take_side_means_delete("error: pathspec 'a.txt' did not match any files\n"));
     }
 }

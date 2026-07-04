@@ -320,11 +320,13 @@ function TagRow({
             title={
               pushed
                 ? `Already on ${remote} with the same target`
-                : remote
-                  ? `Push tag to ${remote}`
-                  : "No remote configured"
+                : remote === null
+                  ? "No remote configured"
+                  : tag.target_on_remote
+                    ? `Push tag to ${remote}`
+                    : "The tagged commit is not on the remote - push its branch first"
             }
-            disabled={busy || pushed || remote === null}
+            disabled={busy || pushed || remote === null || !tag.target_on_remote}
             onClick={onPush}
           />
           <ToolbarButton label="Delete" disabled={busy} onClick={() => onOpenDelete(false)} />

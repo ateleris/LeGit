@@ -1,0 +1,217 @@
+import { describe, expect, it } from "vitest";
+import {
+  collectHunkNewSideTexts,
+  collectResolveRegionsInline,
+  collectResolveRegionsSplit,
+  detectEol,
+  hasTrailingNewline,
+  splitLines,
+  spliceEdits,
+  type RowMeta,
+} from "./editModel";
+
+describe("detectEol / splitLines / hasTrailingNewline", () => {
+  it("detects CRLF when present", () => {
+    expect(detectEol("a\r\nb\r\n")).toBe("\r\n");
+    expect(detectEol("a\nb\n")).toBe("\n");
+    expect(detectEol("")).toBe("\n");
+  });
+
+  it("splits lines dropping the trailing empty piece", () => {
+    expect(splitLines("a\nb\n")).toEqual(["a", "b"]);
+    expect(splitLines("a\r\nb")).toEqual(["a", "b"]);
+    expect(splitLines("")).toEqual([]);
+  });
+
+  it("reports trailing newline", () => {
+    expect(hasTrailingNewline("a\n")).toBe(true);
+    expect(hasTrailingNewline("a")).toBe(false);
+  });
+});
+
+describe("spliceEdits", () => {
+  it("replaces a hunk's new-side range in the middle of a file", () => {
+    const original = "one\ntwo\nthree\nfour\nfive\n";
+    // Hunk covered lines 2-4 (three lines); user edited them down to two.
+    const result = spliceEdits(
+      original,
+      [{ newStart: 2, newLines: 3 }],
+      [["TWO", "3+4"]]
+    );
+    expect(result).toBe("one\nTWO\n3+4\nfive\n");
+  });
+
+  it("preserves CRLF line endings", () => {
+    const original = "one\r\ntwo\r\nthree\r\n";
+    const result = spliceEdits(original, [{ newStart: 2, newLines: 1 }], [["TWO"]]);
+    expect(result).toBe("one\r\nTWO\r\nthree\r\n");
+  });
+
+  it("preserves a missing trailing newline", () => {
+    const original = "one\ntwo";
+    const result = spliceEdits(original, [{ newStart: 1, newLines: 1 }], [["ONE"]]);
+    expect(result).toBe("ONE\ntwo");
+  });
+
+  it("handles multiple hunks without offset drift (splices bottom-up)", () => {
+    const original = "a\nb\nc\nd\ne\nf\ng\n";
+    const result = spliceEdits(
+      original,
+      [
+        { newStart: 2, newLines: 1 },
+        { newStart: 6, newLines: 1 },
+      ],
+      [
+        ["B", "B2"], // grew by one line
+        ["F"],
+      ]
+    );
+    expect(result).toBe("a\nB\nB2\nc\nd\ne\nF\ng\n");
+  });
+
+  it("handles a hunk that grows and one that shrinks to empty", () => {
+    const original = "a\nb\nc\nd\n";
+    const result = spliceEdits(
+      original,
+      [
+        { newStart: 1, newLines: 1 },
+        { newStart: 3, newLines: 2 },
+      ],
+      [["a", "a2"], []]
+    );
+    expect(result).toBe("a\na2\nb\n");
+  });
+
+  it("strips stray carriage returns from collected lines (CRLF doc)", () => {
+    const original = "one\r\ntwo\r\n";
+    const result = spliceEdits(original, [{ newStart: 1, newLines: 1 }], [["ONE\r"]]);
+    expect(result).toBe("ONE\r\ntwo\r\n");
+  });
+});
+
+describe("collectHunkNewSideTexts", () => {
+  // Inline-view row model of one hunk: header, context, removed, added, context.
+  const rows: RowMeta[] = [
+    { kind: "Hunk", hunkIndex: 0 },
+    { kind: "Context", hunkIndex: 0 },
+    { kind: "Removed", hunkIndex: 0 },
+    { kind: "Added", hunkIndex: 0 },
+    { kind: "Context", hunkIndex: 0 },
+  ];
+
+  it("collects context + added lines, skipping headers and removed", () => {
+    const docLines = ["@@ -1,3 +1,3 @@", "ctx1", "old", "new", "ctx2"];
+    const out = collectHunkNewSideTexts(docLines, (i) => i, rows, 1);
+    expect(out).toEqual([["ctx1", "new", "ctx2"]]);
+  });
+
+  it("attributes user-inserted lines (no marker) to the preceding row's hunk", () => {
+    // A line was inserted after "new": doc has 6 lines, line 4 has no marker.
+    const docLines = ["@@ -1,3 +1,3 @@", "ctx1", "old", "new", "inserted", "ctx2"];
+    const rowAt = (i: number) => (i <= 3 ? i : i === 4 ? null : 4);
+    const out = collectHunkNewSideTexts(docLines, rowAt, rows, 1);
+    expect(out).toEqual([["ctx1", "new", "inserted", "ctx2"]]);
+  });
+
+  it("skips filler rows (split view) and handles multiple hunks", () => {
+    const splitRows: RowMeta[] = [
+      { kind: "Hunk", hunkIndex: 0 },
+      { kind: "Added", hunkIndex: 0 },
+      { kind: "Filler", hunkIndex: 0 },
+      { kind: "Hunk", hunkIndex: 1 },
+      { kind: "Context", hunkIndex: 1 },
+    ];
+    const docLines = ["@@", "new0", "", "@@", "ctx1"];
+    const out = collectHunkNewSideTexts(docLines, (i) => i, splitRows, 2);
+    expect(out).toEqual([["new0"], ["ctx1"]]);
+  });
+
+  it("a deleted line simply no longer contributes", () => {
+    // "new" was deleted: doc is 4 lines; markers skip original row 3.
+    const docLines = ["@@ -1,3 +1,3 @@", "ctx1", "old", "ctx2"];
+    const rowAt = (i: number) => (i <= 2 ? i : 4);
+    const out = collectHunkNewSideTexts(docLines, rowAt, rows, 1);
+    expect(out).toEqual([["ctx1", "ctx2"]]);
+  });
+});
+
+describe("collectResolveRegions (inline)", () => {
+  // Rows of one conflict hunk: header, lead ctx, ours(2), theirs(1), trail ctx.
+  const rows: RowMeta[] = [
+    { kind: "Hunk", hunkIndex: 0 },
+    { kind: "Context", hunkIndex: 0 },
+    { kind: "Removed", hunkIndex: 0 },
+    { kind: "Removed", hunkIndex: 0 },
+    { kind: "Added", hunkIndex: 0 },
+    { kind: "Context", hunkIndex: 0 },
+  ];
+  const doc = ["HEADER", "before", "ours1", "ours2", "theirs1", "after"];
+
+  it("splits an unedited doc into lead/ours/theirs/trail", () => {
+    const out = collectResolveRegionsInline(
+      { docLines: doc, rowIndexAt: (i) => i, rows },
+      1,
+    );
+    expect(out).toEqual([
+      { lead: ["before"], ours: ["ours1", "ours2"], theirs: ["theirs1"], trail: ["after"] },
+    ]);
+  });
+
+  it("attributes inserted lines to the region they were typed in", () => {
+    // A line inserted after ours2 (doc line index 4) and one after theirs1.
+    const edited = ["HEADER", "before", "ours1", "ours2", "ours3-new", "theirs1", "t-new", "after"];
+    const rowAt = (i: number) =>
+      i <= 3 ? i : i === 4 ? null : i === 5 ? 4 : i === 6 ? null : 5;
+    const out = collectResolveRegionsInline({ docLines: edited, rowIndexAt: rowAt, rows }, 1);
+    expect(out[0].ours).toEqual(["ours1", "ours2", "ours3-new"]);
+    expect(out[0].theirs).toEqual(["theirs1", "t-new"]);
+    expect(out[0].trail).toEqual(["after"]);
+  });
+});
+
+describe("collectResolveRegions (split)", () => {
+  it("takes ours from the left pane, lead/theirs/trail from the right", () => {
+    // Left rows: header, ctx, Removed x2, ctx. Right: header, ctx, Added, Filler, ctx.
+    const leftRows: RowMeta[] = [
+      { kind: "Hunk", hunkIndex: 0 },
+      { kind: "Context", hunkIndex: 0 },
+      { kind: "Removed", hunkIndex: 0 },
+      { kind: "Removed", hunkIndex: 0 },
+      { kind: "Context", hunkIndex: 0 },
+    ];
+    const rightRows: RowMeta[] = [
+      { kind: "Hunk", hunkIndex: 0 },
+      { kind: "Context", hunkIndex: 0 },
+      { kind: "Added", hunkIndex: 0 },
+      { kind: "Filler", hunkIndex: 0 },
+      { kind: "Context", hunkIndex: 0 },
+    ];
+    const out = collectResolveRegionsSplit(
+      { docLines: ["H", "before", "ours1", "ours2-edit", "after"], rowIndexAt: (i) => i, rows: leftRows },
+      { docLines: ["H", "before", "theirs1", "", "after"], rowIndexAt: (i) => i, rows: rightRows },
+      1,
+    );
+    expect(out).toEqual([
+      { lead: ["before"], ours: ["ours1", "ours2-edit"], theirs: ["theirs1"], trail: ["after"] },
+    ]);
+  });
+
+  it("an empty theirs side (all fillers on the right) still classifies trail", () => {
+    const leftRows: RowMeta[] = [
+      { kind: "Hunk", hunkIndex: 0 },
+      { kind: "Removed", hunkIndex: 0 },
+      { kind: "Context", hunkIndex: 0 },
+    ];
+    const rightRows: RowMeta[] = [
+      { kind: "Hunk", hunkIndex: 0 },
+      { kind: "Filler", hunkIndex: 0 },
+      { kind: "Context", hunkIndex: 0 },
+    ];
+    const out = collectResolveRegionsSplit(
+      { docLines: ["H", "mine", "after"], rowIndexAt: (i) => i, rows: leftRows },
+      { docLines: ["H", "", "after"], rowIndexAt: (i) => i, rows: rightRows },
+      1,
+    );
+    expect(out[0]).toEqual({ lead: [], ours: ["mine"], theirs: [], trail: ["after"] });
+  });
+});

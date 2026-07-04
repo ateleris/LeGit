@@ -46,7 +46,34 @@ fn parse_tag_line(line: &str) -> Option<TagInfo> {
         target_sha: CommitId(target.to_string()),
         annotated,
         message: (annotated && !subject.is_empty()).then(|| subject.to_string()),
+        // Permissive default; `mark_unpushed_targets` flips it based on the
+        // rev-list probe (a failed probe then falls back to the old,
+        // unrestricted behavior rather than disabling every push).
+        target_on_remote: true,
     })
+}
+
+/// Args listing commits reachable from tags but NOT from any remote-tracking
+/// ref; a tag whose target is in this set would push new commits.
+pub const REV_LIST_UNPUSHED_TAG_TARGETS_ARGS: [&str; 4] =
+    ["rev-list", "--tags", "--not", "--remotes"];
+
+/// Flip `target_on_remote` to false for tags whose target commit appears in
+/// the `rev-list --tags --not --remotes` output (one sha per line).
+pub fn mark_unpushed_targets(tags: &mut [TagInfo], rev_list_stdout: &str) {
+    let unpushed: std::collections::HashSet<&str> = rev_list_stdout
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    if unpushed.is_empty() {
+        return;
+    }
+    for tag in tags {
+        if unpushed.contains(tag.target_sha.as_str()) {
+            tag.target_on_remote = false;
+        }
+    }
 }
 
 /// Parse the stdout of `git ls-remote --tags <remote>`: lines of
@@ -131,5 +158,23 @@ mod tests {
     fn remote_tags_ignore_non_tag_refs() {
         let out = "aaa111\trefs/heads/main\naaa111\tHEAD\n";
         assert!(parse_remote_tags(out).is_empty());
+    }
+
+    #[test]
+    fn unpushed_targets_are_marked_not_on_remote() {
+        // v1 targets aaa (on remote), v2 targets bbb (only reachable locally).
+        let out = "v1\tcommit\taaa\t\t\nv2\tcommit\tbbb\t\t\n";
+        let mut tags = parse_tags(out);
+        assert!(tags.iter().all(|t| t.target_on_remote));
+        mark_unpushed_targets(&mut tags, "bbb\nccc\n");
+        assert!(tags.iter().find(|t| t.name == "v1").unwrap().target_on_remote);
+        assert!(!tags.iter().find(|t| t.name == "v2").unwrap().target_on_remote);
+    }
+
+    #[test]
+    fn empty_rev_list_leaves_all_tags_pushable() {
+        let mut tags = parse_tags("v1\tcommit\taaa\t\t\n");
+        mark_unpushed_targets(&mut tags, "");
+        assert!(tags[0].target_on_remote);
     }
 }

@@ -51,6 +51,9 @@ pub enum ChangeDomain {
     Branches,
     Stashes,
     Tags,
+    /// A merge/rebase/cherry-pick/revert started, advanced, or ended
+    /// (MERGE_HEAD, MERGE_MSG, rebase-merge/, rebase-apply/, *_HEAD).
+    OpState,
 }
 
 /// Payload for [`REPO_CHANGED_EVENT`]: which repo changed and in which domains.
@@ -196,6 +199,9 @@ fn classify_git(rel: &Path, out: &mut BTreeSet<ChangeDomain>) {
         | "CHERRY_PICK_HEAD" | "REVERT_HEAD" => {
             out.insert(ChangeDomain::Log);
             out.insert(ChangeDomain::Branches);
+            if matches!(first.as_str(), "MERGE_HEAD" | "CHERRY_PICK_HEAD" | "REVERT_HEAD") {
+                out.insert(ChangeDomain::OpState);
+            }
             if first == "packed-refs" || rel.starts_with("refs/stash") {
                 out.insert(ChangeDomain::Stashes);
             }
@@ -203,11 +209,17 @@ fn classify_git(rel: &Path, out: &mut BTreeSet<ChangeDomain>) {
                 out.insert(ChangeDomain::Tags);
             }
         }
-        // In-progress merge/rebase state affects all three (conflicts + refs).
+        // The prepared merge message feeds the op-state banner.
+        "MERGE_MSG" => {
+            out.insert(ChangeDomain::OpState);
+        }
+        // In-progress merge/rebase state affects all three (conflicts + refs)
+        // plus the op-state banner.
         "rebase-merge" | "rebase-apply" => {
             out.insert(ChangeDomain::Status);
             out.insert(ChangeDomain::Log);
             out.insert(ChangeDomain::Branches);
+            out.insert(ChangeDomain::OpState);
         }
         _ => {}
     }
@@ -324,5 +336,32 @@ mod tests {
         b.add_line(None, "node_modules/").unwrap();
         let ig = b.build().unwrap();
         assert!(domains("node_modules/x/index.js", wt, gd, &ig).is_empty());
+    }
+
+    #[test]
+    fn merge_head_drives_op_state() {
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        let mut out = BTreeSet::new();
+        classify(Path::new("/repo/.git/MERGE_HEAD"), wt, gd, &Gitignore::empty(), &mut out);
+        assert!(out.contains(&ChangeDomain::OpState));
+    }
+
+    #[test]
+    fn rebase_dir_drives_op_state() {
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        let mut out = BTreeSet::new();
+        classify(Path::new("/repo/.git/rebase-merge/msgnum"), wt, gd, &Gitignore::empty(), &mut out);
+        assert!(out.contains(&ChangeDomain::OpState) && out.contains(&ChangeDomain::Status));
+    }
+
+    #[test]
+    fn merge_msg_drives_op_state_only() {
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        let mut out = BTreeSet::new();
+        classify(Path::new("/repo/.git/MERGE_MSG"), wt, gd, &Gitignore::empty(), &mut out);
+        assert_eq!(out.into_iter().collect::<Vec<_>>(), vec![ChangeDomain::OpState]);
     }
 }

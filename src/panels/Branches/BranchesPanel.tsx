@@ -10,13 +10,19 @@ import {
   repoRenameBranch,
   repoCreateBranch,
   repoCheckoutRemoteBranch,
+  repoMerge,
+  repoRebase,
 } from "../../lib/commands";
 import { notifySwitchOutcome, formatSwitchError } from "../../lib/switchFeedback";
+import { notifyMergeOutcome, notifyOpError, notifyRebaseOutcome } from "../../lib/mergeFeedback";
+import { OP_DOMAINS, useOpState } from "../../lib/useOpState";
 import { useConfirmDestructive } from "../../store/settings";
-import type { Branch } from "../../lib/types";
+import type { Branch, MergeOptions } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { InlineEditor } from "../shared/InlineEditor";
+import { PanelContextMenuProvider } from "../Commits/menu/PanelContextMenu";
+import { BranchMenuSection, RemoteBranchMenuSection } from "../Commits/menu/BranchMenuSection";
 
 // Switching can create/consume an auto-stash, so "stashes" is invalidated too.
 const AFFECTED_DOMAINS = ["branches", "log", "status", "tracking", "stashes"];
@@ -156,6 +162,43 @@ export function BranchesSection() {
     }
   };
 
+  // Merge/rebase entry points (row context menu, shared sections): need the
+  // current branch for labels; hidden while an op is already in progress.
+  const currentBranch = localBranches.find((b) => b.is_current)?.name ?? null;
+  const opState = useOpState(repo?.id);
+  const opInProgress = !!opState && opState.kind !== "none";
+
+  const handleMerge = useCallback(async (target: string, options: MergeOptions) => {
+    if (!repo) return;
+    setBusy(true);
+    try {
+      const outcome = await repoMerge(repo.id, target, options);
+      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
+      notifyMergeOutcome(outcome, target);
+    } catch (e) {
+      // A failed merge can still leave state behind; refresh either way.
+      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
+      notifyOpError(e);
+    } finally {
+      setBusy(false);
+    }
+  }, [repo, queryClient]);
+
+  const handleRebaseOnto = useCallback(async (onto: string) => {
+    if (!repo) return;
+    setBusy(true);
+    try {
+      const outcome = await repoRebase(repo.id, onto);
+      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
+      notifyRebaseOutcome(outcome, onto);
+    } catch (e) {
+      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
+      notifyOpError(e);
+    } finally {
+      setBusy(false);
+    }
+  }, [repo, queryClient]);
+
   if (!repo) {
     return (
       <div className="legit-panel">
@@ -167,6 +210,8 @@ export function BranchesSection() {
   }
 
   return (
+    <PanelContextMenuProvider baseline={[]}>
+      {({ openMenu, closeMenu }) => (
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
       <PanelLoadingBar active={isFetching} />
       <div
@@ -196,6 +241,22 @@ export function BranchesSection() {
                 onDoDelete={(force) => doDelete(b.name, force)}
                 onCheckout={() => doCheckout(b.name)}
                 onCancelEdit={() => setEdit(null)}
+                onContextMenu={(e) =>
+                  openMenu(
+                    e,
+                    <BranchMenuSection
+                      name={b.name}
+                      isCurrent={b.is_current}
+                      currentBranch={currentBranch}
+                      opInProgress={opInProgress}
+                      onCheckout={() => { closeMenu(); doCheckout(b.name); }}
+                      onRename={() => { closeMenu(); openRename(b); }}
+                      onDelete={(force) => { closeMenu(); doDelete(b.name, force); }}
+                      onMerge={(options) => { closeMenu(); handleMerge(b.name, options); }}
+                      onRebaseOnto={() => { closeMenu(); handleRebaseOnto(b.name); }}
+                    />,
+                  )
+                }
               />
             ))}
           </div>
@@ -214,6 +275,19 @@ export function BranchesSection() {
                   trackingLocal={trackingLocal}
                   busy={busy}
                   onCheckout={() => doRemoteCheckout(b.name)}
+                  onContextMenu={(e) =>
+                    openMenu(
+                      e,
+                      <RemoteBranchMenuSection
+                        remoteName={b.name}
+                        currentBranch={currentBranch}
+                        opInProgress={opInProgress}
+                        onCheckout={() => { closeMenu(); doRemoteCheckout(b.name); }}
+                        onMerge={(options) => { closeMenu(); handleMerge(b.name, options); }}
+                        onRebaseOnto={() => { closeMenu(); handleRebaseOnto(b.name); }}
+                      />,
+                    )
+                  }
                 />
               );
             })}
@@ -256,6 +330,8 @@ export function BranchesSection() {
         </div>
       </div>
     </div>
+      )}
+    </PanelContextMenuProvider>
   );
 }
 
@@ -290,6 +366,7 @@ function LocalBranchRow({
   onDoDelete,
   onCheckout,
   onCancelEdit,
+  onContextMenu,
 }: {
   branch: Branch;
   edit: EditState;
@@ -302,12 +379,14 @@ function LocalBranchRow({
   onDoDelete: (force: boolean) => void;
   onCheckout: () => void;
   onCancelEdit: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }) {
   const isEditing = edit?.name === branch.name;
   const mono: React.CSSProperties = { fontSize: "var(--fz-md)", fontFamily: "monospace" };
 
   return (
     <div
+      onContextMenu={onContextMenu}
       style={{
         border: "1px solid var(--panel-border)",
         borderRadius: 4,
@@ -386,14 +465,17 @@ function RemoteBranchRow({
   trackingLocal,
   busy,
   onCheckout,
+  onContextMenu,
 }: {
   branch: Branch;
   trackingLocal: string | undefined;
   busy: boolean;
   onCheckout: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }) {
   return (
     <div
+      onContextMenu={onContextMenu}
       style={{
         border: "1px solid var(--panel-border)",
         borderRadius: 4,

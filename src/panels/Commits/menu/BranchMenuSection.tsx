@@ -1,6 +1,51 @@
 import { useConfirmDestructive } from "../../../store/settings";
 import { useMenuConfirm } from "./PanelContextMenu";
 import { MenuItem, Separator, SectionLabel } from "./primitives";
+import type { MergeOptions } from "../../../lib/types";
+
+/**
+ * Merge/rebase entries for a target branch (local or remote-tracking),
+ * shared by both sections so the two menus cannot drift. Hidden when the
+ * target IS the current branch, when HEAD is detached (no current branch),
+ * or while a merge/rebase is already in progress.
+ */
+function MergeRebaseItems({
+  targetLabel,
+  currentBranch,
+  opInProgress,
+  isCurrent,
+  onMerge,
+  onRebaseOnto,
+}: {
+  targetLabel: string;
+  currentBranch: string | null;
+  opInProgress: boolean;
+  isCurrent: boolean;
+  onMerge: (options: MergeOptions) => void;
+  onRebaseOnto: () => void;
+}) {
+  if (isCurrent || !currentBranch || opInProgress) return null;
+  return (
+    <>
+      <Separator />
+      <MenuItem onClick={() => onMerge({ ff: "auto", squash: false })}>
+        Merge '{targetLabel}' into '{currentBranch}'
+      </MenuItem>
+      <MenuItem onClick={() => onMerge({ ff: "no_ff", squash: false })}>
+        Merge '{targetLabel}' into '{currentBranch}' (no fast-forward)
+      </MenuItem>
+      <MenuItem onClick={() => onMerge({ ff: "ff_only", squash: false })}>
+        Merge '{targetLabel}' into '{currentBranch}' (fast-forward only)
+      </MenuItem>
+      <MenuItem onClick={() => onMerge({ ff: "auto", squash: true })}>
+        Squash merge '{targetLabel}' into '{currentBranch}'
+      </MenuItem>
+      <MenuItem onClick={onRebaseOnto}>
+        Rebase '{currentBranch}' onto '{targetLabel}'
+      </MenuItem>
+    </>
+  );
+}
 
 /**
  * Shared context-menu section for a local branch. Used by both the branch
@@ -12,15 +57,23 @@ import { MenuItem, Separator, SectionLabel } from "./primitives";
 export function BranchMenuSection({
   name,
   isCurrent,
+  currentBranch,
+  opInProgress,
   onCheckout,
   onRename,
   onDelete,
+  onMerge,
+  onRebaseOnto,
 }: {
   name: string;
   isCurrent: boolean;
+  currentBranch: string | null;
+  opInProgress: boolean;
   onCheckout: () => void;
   onRename: () => void;
   onDelete: (force: boolean) => void;
+  onMerge: (options: MergeOptions) => void;
+  onRebaseOnto: () => void;
 }) {
   const confirmDestructive = useConfirmDestructive();
   const menuConfirm = useMenuConfirm();
@@ -43,6 +96,14 @@ export function BranchMenuSection({
         {isCurrent ? "Checkout branch (current)" : "Checkout branch"}
       </MenuItem>
       <MenuItem onClick={onRename}>Rename branch…</MenuItem>
+      <MergeRebaseItems
+        targetLabel={name}
+        currentBranch={currentBranch}
+        opInProgress={opInProgress}
+        isCurrent={isCurrent}
+        onMerge={onMerge}
+        onRebaseOnto={onRebaseOnto}
+      />
       <Separator />
       <MenuItem onClick={() => requestDelete(false)}>
         {confirmDestructive ? "Delete branch…" : "Delete branch"}
@@ -54,18 +115,36 @@ export function BranchMenuSection({
   );
 }
 
-/** Shared context-menu section for a remote-tracking branch. */
+/** Shared context-menu section for a remote-tracking branch. Merge/rebase
+ *  target the remote ref directly (rebasing onto 'origin/main' is the most
+ *  common rebase there is). */
 export function RemoteBranchMenuSection({
   remoteName,
+  currentBranch,
+  opInProgress,
   onCheckout,
+  onMerge,
+  onRebaseOnto,
 }: {
   remoteName: string;
+  currentBranch: string | null;
+  opInProgress: boolean;
   onCheckout: () => void;
+  onMerge: (options: MergeOptions) => void;
+  onRebaseOnto: () => void;
 }) {
   return (
     <>
       <SectionLabel>{remoteName}</SectionLabel>
       <MenuItem onClick={onCheckout}>Checkout branch</MenuItem>
+      <MergeRebaseItems
+        targetLabel={remoteName}
+        currentBranch={currentBranch}
+        opInProgress={opInProgress}
+        isCurrent={false}
+        onMerge={onMerge}
+        onRebaseOnto={onRebaseOnto}
+      />
     </>
   );
 }

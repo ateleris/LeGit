@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { BranchIcon, RemoteIcon, TagIcon } from "../../../icons";
-import type { LaneLock, RefDecoration } from "../../../lib/types";
+import type { LaneLock, MergeOptions, RefDecoration } from "../../../lib/types";
 import { usePanelContextMenu } from "../menu/PanelContextMenu";
 import { LaneLockSection } from "../menu/LaneLockSection";
 import { Separator } from "../menu/primitives";
@@ -44,6 +44,9 @@ interface RefsCellProps {
   /** Tag names that exist on the remote with the same target — their chips
    *  carry the remote indicator, like fused branch chips do. */
   pushedTags?: ReadonlySet<string>;
+  /** Tag names whose target commit is on the remote; pushing the others is
+   *  disabled (it would upload commits no remote branch references). */
+  tagTargetsOnRemote?: ReadonlySet<string>;
   /** Remote tags are pushed to (chip menu label), or null when none exists. */
   tagRemote?: string | null;
   onTagPush?: (name: string) => void;
@@ -55,12 +58,20 @@ interface RefsCellProps {
   onBranchDelete?: (name: string, force: boolean) => void;
   /** Called when checking out a remote-tracking branch (passes the full remote ref, e.g. `origin/feature-x`). */
   onRemoteCheckout?: (remoteRef: string) => void;
+  /** Current branch (merge/rebase menu labels); null when HEAD is detached. */
+  currentBranch?: string | null;
+  /** Hide merge/rebase entries while a merge/rebase is already running. */
+  opInProgress?: boolean;
+  /** Merge `target` (local name or remote ref) into the current branch. */
+  onBranchMerge?: (target: string, options: MergeOptions) => void;
+  /** Rebase the current branch onto `target`. */
+  onBranchRebaseOnto?: (target: string) => void;
 }
 
 const CHIP_GAP = 3;
 
 /** Renders ref decoration chips for a commit row. */
-export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, renamingBranch, onBranchRenameSave, onBranchRenameCancel, creatingBranch, onCreateBranchSave, onCreateBranchCancel, creatingTag, onCreateTagSave, onCreateTagCancel, pushedTags, tagRemote, onTagPush, onTagDelete, onTagDeleteRemote, onBranchCheckout, onBranchRename, onBranchDelete, onRemoteCheckout }: RefsCellProps) {
+export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, renamingBranch, onBranchRenameSave, onBranchRenameCancel, creatingBranch, onCreateBranchSave, onCreateBranchCancel, creatingTag, onCreateTagSave, onCreateTagCancel, pushedTags, tagTargetsOnRemote, tagRemote, onTagPush, onTagDelete, onTagDeleteRemote, onBranchCheckout, onBranchRename, onBranchDelete, onRemoteCheckout, currentBranch, opInProgress, onBranchMerge, onBranchRebaseOnto }: RefsCellProps) {
   const { openMenu, closeMenu } = usePanelContextMenu();
   const [visibleCount, setVisibleCount] = useState(Number.MAX_SAFE_INTEGER);
   const [popover, setPopover] = useState<{ x: number; y: number } | null>(null);
@@ -188,9 +199,13 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
           <BranchMenuSection
             name={localName}
             isCurrent={isCurrent}
+            currentBranch={currentBranch ?? null}
+            opInProgress={opInProgress ?? false}
             onCheckout={() => { closeMenu(); onBranchCheckout?.(localName); }}
             onRename={() => { closeMenu(); onBranchRename?.(localName); }}
             onDelete={(force) => { closeMenu(); onBranchDelete?.(localName, force); }}
+            onMerge={(options) => { closeMenu(); onBranchMerge?.(localName, options); }}
+            onRebaseOnto={() => { closeMenu(); onBranchRebaseOnto?.(localName); }}
           />
         );
       }
@@ -199,7 +214,11 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
         return (
           <RemoteBranchMenuSection
             remoteName={remoteName}
+            currentBranch={currentBranch ?? null}
+            opInProgress={opInProgress ?? false}
             onCheckout={() => { closeMenu(); onRemoteCheckout?.(remoteName); }}
+            onMerge={(options) => { closeMenu(); onBranchMerge?.(remoteName, options); }}
+            onRebaseOnto={() => { closeMenu(); onBranchRebaseOnto?.(remoteName); }}
           />
         );
       }
@@ -209,6 +228,7 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
           <TagMenuSection
             name={tagName}
             pushed={pushedTags?.has(tagName) ?? false}
+            targetOnRemote={tagTargetsOnRemote?.has(tagName) ?? true}
             remote={tagRemote ?? null}
             onPush={() => { closeMenu(); onTagPush?.(tagName); }}
             onDelete={() => { closeMenu(); onTagDelete?.(tagName); }}

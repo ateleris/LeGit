@@ -11,6 +11,7 @@ import { MenuItem, Separator, SectionLabel } from "./primitives";
 export function TagMenuSection({
   name,
   pushed,
+  targetOnRemote,
   remote,
   onPush,
   onDelete,
@@ -19,6 +20,9 @@ export function TagMenuSection({
   name: string;
   /** Tag exists on the remote with the same target (see `pushedTagNames`). */
   pushed: boolean;
+  /** The tagged commit is on the remote; pushing a tag whose commit is not
+   *  would upload unreferenced history, so the entry is disabled. */
+  targetOnRemote: boolean;
   /** Remote tags are pushed to, or null when no remote is configured. */
   remote: string | null;
   onPush: () => void;
@@ -49,12 +53,14 @@ export function TagMenuSection({
   return (
     <>
       <SectionLabel>{name}</SectionLabel>
-      <MenuItem onClick={onPush} disabled={pushed || remote === null}>
+      <MenuItem onClick={onPush} disabled={pushed || remote === null || !targetOnRemote}>
         {pushed
           ? `Pushed to ${remote}`
-          : remote
-            ? `Push tag to ${remote}`
-            : "Push tag (no remote configured)"}
+          : remote === null
+            ? "Push tag (no remote configured)"
+            : targetOnRemote
+              ? `Push tag to ${remote}`
+              : "Push tag (commit not on remote)"}
       </MenuItem>
       <Separator />
       <MenuItem onClick={requestDelete}>

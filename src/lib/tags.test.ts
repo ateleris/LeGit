@@ -7,6 +7,7 @@ const tag = (name: string, sha: string): TagInfo => ({
   target_sha: sha,
   annotated: false,
   message: null,
+  target_on_remote: true,
 });
 const remoteTag = (name: string, sha: string): RemoteTag => ({ name, target_sha: sha });
 const remote = (name: string): Remote => ({ name, fetch_url: "u", push_url: "u" });

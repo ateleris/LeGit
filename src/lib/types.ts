@@ -427,6 +427,54 @@ export type SwitchOutcome =
 
 export type SwitchDirtyBehavior = "try_directly" | "auto_stash" | "stash_and_keep";
 
+/** Fast-forward behavior for a merge (matches legit-core `FfMode`). */
+export type FfMode = "auto" | "no_ff" | "ff_only";
+
+export interface MergeOptions {
+  ff: FfMode;
+  /** `--squash`: stages the result without committing; `ff` is ignored. */
+  squash: boolean;
+}
+
+/** Outcome of merge/merge-continue. Conflicts are data, not an error. */
+export type MergeOutcome =
+  | { kind: "fast_forwarded" }
+  | { kind: "merged" }
+  | { kind: "squashed" }
+  | { kind: "already_up_to_date" }
+  | { kind: "conflicts"; message: string };
+
+export type RebaseOutcome =
+  | { kind: "completed" }
+  | { kind: "already_up_to_date" }
+  | { kind: "conflicts"; message: string }
+  /** Rebase finished, but reapplying the autostash conflicted (stash kept). */
+  | { kind: "completed_with_stash_conflicts"; message: string };
+
+/** Which multi-step operation the repo is in (matches `RepoOpState`). */
+export type RepoOpState =
+  | { kind: "none" }
+  | { kind: "merge"; branch: string | null; message: string | null }
+  | {
+      kind: "rebase";
+      onto: string | null;
+      head_name: string | null;
+      current_step: number | null;
+      total_steps: number | null;
+    }
+  | { kind: "cherry_pick"; sha: string }
+  | { kind: "revert"; sha: string };
+
+export type ConflictKind = "both_modified" | "both_added" | "deleted_by_us" | "deleted_by_them";
+
+/** A conflicted path and how it conflicts (matches `ConflictEntry`). */
+export interface ConflictEntry {
+  path: string;
+  kind: ConflictKind;
+}
+
+export type ConflictSide = "ours" | "theirs";
+
 /** A local tag (matches legit-core `TagInfo`). */
 export interface TagInfo {
   /** Short tag name (no refs/tags/ prefix). */
@@ -437,6 +485,9 @@ export interface TagInfo {
   annotated: boolean;
   /** Annotation subject line (annotated tags only). */
   message: string | null;
+  /** The tagged commit is reachable from a remote-tracking ref; pushing a
+   *  tag whose commit is not on the remote is disabled (push branch first). */
+  target_on_remote: boolean;
 }
 
 /** A tag as it exists on a remote (matches legit-core `RemoteTag`). */

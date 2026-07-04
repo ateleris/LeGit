@@ -176,6 +176,16 @@ they actually issue or how they react to failures mid-sequence.
   builds throwaway repos in a tempdir with the real git — good for the
   happy paths the fake can't validate (actual git behaviour drift, e.g.
   the `stash push` exit-0 discovery).
+- **Merge/rebase/conflict flows are prime candidates for that harness**
+  (deferred 2026-07-03 from the merge/rebase design,
+  `docs/superpowers/specs/2026-07-03-merge-rebase-conflicts-design.md`):
+  build a repo with a real conflict, then exercise the continue/abort state
+  machine end to end — merge conflict → resolve → continue; rebase conflict
+  → skip / abort; `--autostash` pop-conflict after a completed rebase;
+  `resolve_take_side` on modify/delete conflicts; op-state detection
+  reading real `MERGE_HEAD` / `rebase-merge` contents. The unit tests
+  encode our *assumptions* about git's outputs; these validate them
+  against the real binary.
 - While reviewing: sweep for silent `let _ =` results, unclassified stderr
   paths, and methods missing from the audit-tests entirely.
 
@@ -217,9 +227,13 @@ see the tab-ordering convention). Watch out: `open_session` takes
   "Cancel", still enabled, `onClick` → `cancelSync`); the standalone Cancel
   at the end of the toolbar is gone.
 
-- **Diff viewer: inline editing.** The original reason CodeMirror was chosen —
-  let users fix small things directly in the diff pane. Needs an editable
-  document model and write-back to the working tree.
+- ~~**Diff viewer: inline editing.**~~ Done (2026-07-03, Phase 1 of the
+  merge/rebase design): unstaged working-tree diffs are editable on the
+  new side (inline view + split right pane), with row-identity markers
+  (`editableState.ts`), splice write-back (`editModel.ts` +
+  `repo_write_worktree_file`), explicit save (Ctrl+S / Save button),
+  deferred refetches and disabled hunk/line actions while dirty. Staged
+  diffs (new side = index) remain read-only — extend later if wanted.
 - **Live-refresh the diff on external git changes.** The filesystem watcher's
   emitted domains (backend) don't include `diff`, so an external `git`
   stage/unstage while the app is open doesn't refresh an open diff (in-app
@@ -295,7 +309,12 @@ Cross-platform care: the shim must be invocable by Git for Windows' shell.
 ### 2. Branch operations (write)
 - **Create**, **checkout/switch** (incl. detached, checkout a remote branch),
   **delete** (safe + force), **rename**.
-- **Merge** (with conflict handling) and **rebase** (onto / interactive).
+- ~~**Merge** (with conflict handling) and **rebase** (onto)~~ Done
+  (2026-07-03, Phase 2 of the merge/rebase design): merge with ff-auto /
+  no-ff / ff-only / squash, rebase with `--autostash`, conflict outcomes,
+  op-state banner in Working Changes (Continue/Skip/Abort), triggers in the
+  shared branch menus + Branches pane context menu. **Interactive rebase**
+  remains future work.
 - Branch from a commit; set as current. (Branch *listing* already exists.)
 
 ### 3. Stash
@@ -326,8 +345,16 @@ Cross-platform care: the shim must be invocable by Git for Windows' shell.
   submodules), `git init --bare` / initial-branch name.
 
 ### 6. Conflict resolution
-- Detect conflicted state; per-file resolve UI (ours / theirs / manual via the
-  diff editor), mark resolved, continue/abort merge/rebase/cherry-pick.
+- ~~Detect conflicted state~~, ~~mark resolved~~, ~~continue/abort
+  merge/rebase~~, ~~whole-file ours/theirs (delete-aware)~~ Done (2026-07-03,
+  Phase 2). ~~Per-file manual resolve UI~~ Done (2026-07-03, Phase 3): the
+  Diff panel renders a conflicted file as a synthetic diff (`conflictModel.ts`,
+  classic + diff3 markers) with per-conflict Ours/Theirs/Both, editable
+  ours/theirs blocks in inline AND split view, region-based save, conflict
+  count + whole-file take-side + Mark resolved in the toolbar, and a
+  binary/non-UTF-8 fallback. Remaining: continue/abort for cherry-pick/revert
+  (state detection already ships), and a 3-way (ours | result | theirs) view
+  as a possible later upgrade.
 
 ### 7. Inspection
 - **Diff between arbitrary commits/branches** (the `GitBackend::diff(from, to)`

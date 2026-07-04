@@ -9,10 +9,11 @@
 use crate::error::GitError;
 use crate::runner::OperationId;
 use crate::types::{
-    Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, Diff, DiffEntry,
-    DiffSource, FetchOptions, FileStatus, HunkOp, LogOptions, PullOptions, PushOptions, Remote,
-    RemoteTag, StashApplyOutcome, StashEntry, StashOutcome, SubmoduleInfo, SwitchDirtyBehavior,
-    SwitchOutcome, TagInfo, TrackingStatus,
+    Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions, ConflictEntry,
+    ConflictSide, Diff, DiffEntry, DiffSource, FetchOptions, FileStatus, HunkOp, LogOptions,
+    MergeOptions, MergeOutcome, PullOptions, PushOptions, RebaseOutcome, Remote, RemoteTag,
+    RepoOpState, StashApplyOutcome, StashEntry, StashOutcome, SubmoduleInfo,
+    SwitchDirtyBehavior, SwitchOutcome, TagInfo, TrackingStatus,
 };
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
@@ -216,4 +217,46 @@ pub trait GitBackend: Send + Sync {
     /// renaming an older stash reorders it to the top. `stash_sha` is resolved
     /// like `apply_stash`.
     async fn rename_stash(&self, stash_sha: &str, new_message: &str) -> Result<(), GitError>;
+
+    /// Merge `target` into the current branch. Conflicts are an OUTCOME
+    /// (`MergeOutcome::Conflicts` - merge in progress, resolve then
+    /// continue/abort), not an error. Non-squash merges run with `--no-edit`
+    /// (the runner's GIT_EDITOR=false would otherwise fail the message step).
+    async fn merge(&self, target: &str, opts: MergeOptions) -> Result<MergeOutcome, GitError>;
+
+    /// Conclude an in-progress merge after conflicts are resolved
+    /// (`git merge --continue` with the editor neutralized; the prepared
+    /// MERGE_MSG is used unchanged).
+    async fn merge_continue(&self) -> Result<MergeOutcome, GitError>;
+
+    /// Abort an in-progress merge, restoring the pre-merge state.
+    async fn merge_abort(&self) -> Result<(), GitError>;
+
+    /// Rebase the current branch onto `onto`, always with `--autostash`.
+    /// A conflicted stash reapply after a successful rebase is
+    /// `CompletedWithStashConflicts` (the stash entry is kept).
+    async fn rebase(&self, onto: &str) -> Result<RebaseOutcome, GitError>;
+
+    /// Continue an in-progress rebase after resolving conflicts.
+    async fn rebase_continue(&self) -> Result<RebaseOutcome, GitError>;
+
+    /// Skip the current commit of an in-progress rebase.
+    async fn rebase_skip(&self) -> Result<RebaseOutcome, GitError>;
+
+    /// Abort an in-progress rebase, restoring the original branch state.
+    async fn rebase_abort(&self) -> Result<(), GitError>;
+
+    /// Which multi-step operation (merge/rebase/cherry-pick/revert) the repo
+    /// is currently in. Probed from git-reported state paths
+    /// (`rev-parse --git-path`), never a hardcoded `.git` layout.
+    async fn op_state(&self) -> Result<RepoOpState, GitError>;
+
+    /// The currently conflicted paths with their conflict kinds
+    /// (`git ls-files -u`).
+    async fn conflict_entries(&self) -> Result<Vec<ConflictEntry>, GitError>;
+
+    /// Resolve a conflicted path by taking one side wholesale:
+    /// `git checkout --ours|--theirs -- <path>` + `git add`; for a
+    /// delete-conflict where the chosen side deleted the file, `git rm -f`.
+    async fn resolve_take_side(&self, path: &Path, side: ConflictSide) -> Result<(), GitError>;
 }
