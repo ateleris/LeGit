@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRepoStore } from "../../store/repos";
+import { useSettingsStore } from "../../store/settings";
 import { useSummonTarget } from "../../store/summon";
 import {
   repoConflictFileSides,
@@ -229,6 +230,10 @@ export function DiffPanel() {
   // Editable only for the unstaged working diff: its new side IS the file on
   // disk. Staged diffs (new side = index) and commit diffs stay read-only.
   const editable = request?.source.kind === "working_unstaged";
+
+  // Global opt-in for syntax highlighting; the path picks the language.
+  const syntaxEnabled = useSettingsStore((s) => s.settings?.diff_syntax_highlighting ?? false);
+  const syntaxPath = syntaxEnabled && request ? request.path : null;
 
   const actions = useMemo(() => actionsForSource(request), [request?.source.kind]);
 
@@ -590,6 +595,7 @@ export function DiffPanel() {
               scrollResetKey={`${request.repoId}|${request.path}|resolve`}
               editable
               resolve
+              syntaxPath={syntaxPath}
               dirty={dirty}
               onDirty={onDirty}
               onSaveRequest={onSave}
@@ -611,6 +617,7 @@ export function DiffPanel() {
             onSaveRequest={onSave}
             editorRef={editorRef}
             rebuildKey={rebuildKey}
+            syntaxPath={syntaxPath}
           />
         )}
       </div>
@@ -633,6 +640,7 @@ function DiffBody({
   onSaveRequest,
   editorRef,
   rebuildKey,
+  syntaxPath,
 }: {
   data: DiffEntry | undefined;
   mode: DiffViewMode;
@@ -647,6 +655,7 @@ function DiffBody({
   onSaveRequest: () => void;
   editorRef: React.MutableRefObject<DiffEditorHandle | null>;
   rebuildKey: number;
+  syntaxPath: string | null;
 }) {
   const { openMenu, closeMenu } = usePanelContextMenu();
   const onContextMenu = useCallback(
@@ -740,6 +749,7 @@ function DiffBody({
       onDirty={onDirty}
       onSaveRequest={onSaveRequest}
       rebuildKey={rebuildKey}
+      syntaxPath={syntaxPath}
     />
   );
 }

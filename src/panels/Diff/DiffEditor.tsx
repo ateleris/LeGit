@@ -13,7 +13,7 @@
 // it; we build split from the same model as inline instead.
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
-import { EditorState, type Range, StateField } from "@codemirror/state";
+import { EditorState, type Range, StateEffect, StateField } from "@codemirror/state";
 import {
   Decoration,
   type DecorationSet,
@@ -42,6 +42,8 @@ import {
   type RowMeta,
 } from "./editModel";
 import { createRowState, type RowState } from "./editableState";
+import { computeSyntaxSegments, type ContextSide, type SyntaxRow } from "./syntaxModel";
+import { loadParserForPath } from "./syntaxLanguages";
 
 export type HunkAction = "stage" | "unstage" | "discard" | "ours" | "theirs" | "both";
 export type DiffViewMode = "inline" | "split";
@@ -79,6 +81,9 @@ interface DiffEditorProps {
   /** Conflict-resolve rendering: ours/theirs blocks are editable (inline both
    *  in one doc; split panes divide them) and collected as regions. */
   resolve?: boolean;
+  /** Repo-relative path used to pick a syntax-highlighting language, or null
+   *  when highlighting is off (setting disabled / no file context). */
+  syntaxPath?: string | null;
 }
 
 export interface DiffEditorHandle {
@@ -350,6 +355,68 @@ function decorationField(getLine: (i: number) => LineDeco | null): StateField<De
   });
 }
 
+// --- Syntax highlighting ----------------------------------------------------
+// A second, independent decoration layer: `cm-syn-*` marks arrive
+// asynchronously (the language chunk is lazy-loaded and the hunk sides parsed
+// off the mount path) via a StateEffect, then map through edits like the diff
+// marks. Syntax marks set only `color`; the diff word marks set only
+// `background-color`, so the two layers compose on the same span.
+
+/** Skip highlighting for very large diffs: parsing is synchronous on the main
+ *  thread once the language has loaded. */
+const MAX_SYNTAX_CHARS = 400_000;
+
+const setSyntaxDecorations = StateEffect.define<DecorationSet>();
+
+const syntaxField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, tr) {
+    for (const e of tr.effects) if (e.is(setSyntaxDecorations)) return e.value;
+    return tr.docChanged ? value.map(tr.changes) : value;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+/**
+ * Kick off async highlighting for a freshly mounted pane: load the language
+ * for `path`, compute per-row segments from the reconstructed hunk sides, and
+ * dispatch them as decorations. Returns a cancel function for unmount. The
+ * segments are computed against the mount-time document; if the user edited
+ * the pane before the language arrived (only possible in the first instants),
+ * the stale highlights are dropped rather than misapplied.
+ */
+function applySyntaxHighlights(
+  view: EditorView,
+  rows: readonly SyntaxRow[],
+  path: string,
+  contextSide: ContextSide
+): () => void {
+  if (rows.reduce((n, r) => n + r.text.length, 0) > MAX_SYNTAX_CHARS) return () => {};
+  let cancelled = false;
+  const mountDoc = view.state.doc;
+  void loadParserForPath(path).then((parser) => {
+    if (!parser || cancelled) return;
+    const segments = computeSyntaxSegments(rows, parser, contextSide);
+    if (cancelled || view.state.doc !== mountDoc) return;
+    const ranges: Range<Decoration>[] = [];
+    segments.forEach((list, i) => {
+      if (list.length === 0) return;
+      const line = mountDoc.line(i + 1);
+      for (const s of list) {
+        const from = line.from + s.from;
+        const to = line.from + s.to;
+        if (to > from && to <= line.to) {
+          ranges.push(Decoration.mark({ class: s.cls }).range(from, to));
+        }
+      }
+    });
+    view.dispatch({ effects: setSyntaxDecorations.of(Decoration.set(ranges, true)) });
+  });
+  return () => {
+    cancelled = true;
+  };
+}
+
 /** Shared editor chrome (exported for the 3-way resolve view). */
 export const baseTheme = EditorView.theme({
   "&": {
@@ -384,6 +451,19 @@ export const baseTheme = EditorView.theme({
   ".cm-diff-filler": {
     backgroundColor: "color-mix(in srgb, var(--panel-fg) 7%, transparent)",
   },
+  // Syntax highlighting (colour only — diff tints/word marks own backgrounds).
+  ".cm-syn-keyword": { color: "var(--syntax-keyword)" },
+  ".cm-syn-string": { color: "var(--syntax-string)" },
+  ".cm-syn-number": { color: "var(--syntax-number)" },
+  ".cm-syn-comment": { color: "var(--syntax-comment)" },
+  ".cm-syn-function": { color: "var(--syntax-function)" },
+  ".cm-syn-type": { color: "var(--syntax-type)" },
+  ".cm-syn-variable": { color: "var(--syntax-variable)" },
+  ".cm-syn-property": { color: "var(--syntax-property)" },
+  ".cm-syn-operator": { color: "var(--syntax-operator)" },
+  ".cm-syn-punctuation": { color: "var(--syntax-punctuation)" },
+  ".cm-syn-constant": { color: "var(--syntax-constant)" },
+  ".cm-syn-tag": { color: "var(--syntax-tag)" },
   ".cm-gutters": {
     backgroundColor: "var(--diff-gutter-bg)",
     color: "var(--diff-gutter-fg)",
@@ -543,6 +623,11 @@ function editableExtensions(
       ".cm-diff-edited .cm-diff-added-word, .cm-diff-edited .cm-diff-removed-word": {
         backgroundColor: "transparent",
       },
+      // Syntax marks on an edited line may straddle stale boundaries; neutralize
+      // them like the word marks (the line re-highlights after save/rebuild).
+      '.cm-diff-edited [class*="cm-syn-"]': {
+        color: "inherit",
+      },
     }),
   ];
 }
@@ -552,7 +637,7 @@ function editableExtensions(
 // below — `hunkActionWidget` (header buttons), `lineActionGutter` (per-line column)
 // and `contextMenuExtension` (right-click menu) — and both mount functions take
 // the same (actions, onAction, onContextMenu, lineActionOp, onLineAction,
-// editable, onDirty, onSaveRequest, resolve) parameters. Editability is part
+// editable, onDirty, onSaveRequest, resolve, syntaxPath) parameters. Editability is part
 // of the invariant: inline applies it to its single editor, split to its
 // RIGHT pane (the left/old side is not new-side content and stays read-only).
 // Resolve mode is shared too: both mounts honour the same `resolve` flag via
@@ -696,7 +781,8 @@ function mountInline(
   editable: boolean,
   onDirty: (() => void) | undefined,
   onSaveRequest: (() => void) | undefined,
-  resolve: boolean
+  resolve: boolean,
+  syntaxPath: string | null
 ): MountedEditor {
   const rows = buildRows(diff);
   const doc = rows.map((r) => r.text).join("\n");
@@ -704,6 +790,7 @@ function mountInline(
   const extensions = [
     baseTheme,
     guttersWidthVar,
+    syntaxField,
     rowState.field,
     ...(editable
       ? [rowState.guard, ...editableExtensions(onDirty, onSaveRequest)]
@@ -729,9 +816,11 @@ function mountInline(
     state: EditorState.create({ doc, extensions }),
     parent: host,
   });
+  const cancelSyntax = syntaxPath ? applySyntaxHighlights(view, rows, syntaxPath, "new") : null;
   const untrack = restoreAndTrack(view, anchor);
   return {
     destroy: () => {
+      cancelSyntax?.();
       untrack();
       view.destroy();
     },
@@ -754,7 +843,8 @@ function mountSplit(
   editable: boolean,
   onDirty: (() => void) | undefined,
   onSaveRequest: (() => void) | undefined,
-  resolve: boolean
+  resolve: boolean,
+  syntaxPath: string | null
 ): MountedEditor {
   const { left, right } = buildSplitRows(diff);
 
@@ -789,6 +879,7 @@ function mountSplit(
     const extensions = [
       baseTheme,
       guttersWidthVar,
+      syntaxField,
       rowState.field,
       ...(paneEditable
         ? [rowState.guard, ...editableExtensions(onDirty, onSaveRequest)]
@@ -836,6 +927,16 @@ function mountSplit(
   const leftView = leftPane.view;
   const rightView = rightPane.view;
 
+  // Each pane highlights against its own complete side: the left pane's old
+  // side holds context + removed rows, the right pane's new side context +
+  // added rows (hence the differing context attribution).
+  const cancelSyntax = syntaxPath
+    ? [
+        applySyntaxHighlights(leftView, left, syntaxPath, "old"),
+        applySyntaxHighlights(rightView, right, syntaxPath, "new"),
+      ]
+    : [];
+
   // Keep the two panes scroll-locked (vertical + horizontal).
   let lock = false;
   const link = (src: EditorView, dst: EditorView) => () => {
@@ -856,6 +957,7 @@ function mountSplit(
 
   return {
     destroy: () => {
+      for (const cancel of cancelSyntax) cancel();
       leftView.scrollDOM.removeEventListener("scroll", onLeft);
       rightView.scrollDOM.removeEventListener("scroll", onRight);
       untrack();
@@ -891,6 +993,7 @@ export const DiffEditor = forwardRef<DiffEditorHandle, DiffEditorProps>(function
     onSaveRequest,
     rebuildKey = 0,
     resolve = false,
+    syntaxPath = null,
   },
   ref
 ) {
@@ -915,8 +1018,8 @@ export const DiffEditor = forwardRef<DiffEditorHandle, DiffEditorProps>(function
     const anchor = anchorRef.current;
     const mounted =
       mode === "split"
-        ? mountSplit(host, diff, actions, onAction, onContextMenu, lineActionOp, onLineAction, anchor, editable, onDirty, onSaveRequest, resolve)
-        : mountInline(host, diff, actions, onAction, onContextMenu, lineActionOp, onLineAction, anchor, editable, onDirty, onSaveRequest, resolve);
+        ? mountSplit(host, diff, actions, onAction, onContextMenu, lineActionOp, onLineAction, anchor, editable, onDirty, onSaveRequest, resolve, syntaxPath)
+        : mountInline(host, diff, actions, onAction, onContextMenu, lineActionOp, onLineAction, anchor, editable, onDirty, onSaveRequest, resolve, syntaxPath);
     mountRef.current = mounted;
     return () => {
       mountRef.current = null;
@@ -924,7 +1027,7 @@ export const DiffEditor = forwardRef<DiffEditorHandle, DiffEditorProps>(function
     };
     // NOTE: `dirty` is intentionally NOT a dependency: recreating the editor
     // would discard the user's unsaved edits. It only drives the CSS class.
-  }, [diff, mode, actions, onAction, onContextMenu, lineActionOp, onLineAction, editable, onDirty, onSaveRequest, rebuildKey, resolve]);
+  }, [diff, mode, actions, onAction, onContextMenu, lineActionOp, onLineAction, editable, onDirty, onSaveRequest, rebuildKey, resolve, syntaxPath]);
 
   return (
     <div

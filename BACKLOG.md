@@ -8,40 +8,6 @@ record); an item that is partially done keeps only its open remainder.
 
 ---
 
-## Diff viewer: syntax highlighting
-
-**What:** Syntax-highlight the code shown in the diff panel (inline + split).
-
-**Status:** Deferred 2026-06-19. The diff viewer (Phase A hunk-level + Phase B
-line-level) is complete without it.
-
-**Approach (recommended — per-line, decoration-based):**
-- The CodeMirror document is *not* real source (inline interleaves old/new/
-  context lines), so CodeMirror's native Lezer language highlighting would
-  mis-parse it. Instead, tokenize each diff line independently and emit
-  `Decoration.mark`s — the same mechanism `DiffEditor.tsx` already uses for
-  word-level highlighting.
-- Use a lightweight tokenizer (e.g. Prism's `tokenize`, which returns a token
-  tree that maps cleanly to ranges); pick the grammar from the file extension
-  (`request.path`). Consider lazy-loading grammars to keep the bundle small.
-- Layer syntax marks under the existing added/removed-word marks in
-  `decorationField` (mind `Decoration.set` ordering).
-- Add syntax colour **theme tokens** (keyword/string/number/comment/function/
-  type/operator/punctuation/…) in all 4 token places (see
-  [[feedback-theme-tokens]] convention: `tokens.ts`, `defaults.ts`,
-  `theme.css`, both theme JSONs).
-
-**Caveat:** per-line tokenization can't see across lines, so multi-line
-constructs (block comments, multi-line/template strings) highlight imperfectly.
-Full fidelity would require highlighting the whole file on each side and mapping
-colours onto diff lines by line number (fetch full blobs + a mapping layer) —
-significantly more work; most diff viewers accept the per-line approximation.
-
-**Rough effort:** ~1 day; most of it the tokenizer integration and the syntax
-theme-token set.
-
----
-
 ## Review findings deferred (2026-07-05 full-codebase review)
 
 The review's directly fixable findings were applied the same day (lossy
@@ -86,9 +52,21 @@ Branches delayed-busy pattern). Still open:
   emitted domains (backend) don't include `diff`, so an external `git`
   stage/unstage while the app is open doesn't refresh an open diff (in-app
   actions do). Add `diff` to the watcher's domains in the Rust side.
-- **Diff viewer: full-fidelity (multi-line) syntax highlighting.** See the
-  caveat in the syntax-highlighting item — only if the per-line approximation
-  proves insufficient.
+- **Diff viewer: cross-hunk syntax highlighting.** Shipped 2026-07-05 (Lezer
+  via `@codemirror/language-data`, opt-in global setting): each hunk's old/new
+  side is reconstructed from the rows and parsed independently
+  (`syntaxModel.ts`), so multi-line constructs highlight correctly *within* a
+  hunk. Constructs opened before the hunk's context window still mis-parse;
+  full fidelity would mean fetching both full blobs, parsing each once, and
+  mapping by line number. Only worth it if the per-hunk approximation proves
+  insufficient in practice.
+- **Syntax highlighting elsewhere.** File View shows whole real files, so it
+  could attach the language extension directly (no reconstruction needed); the
+  3-way resolve view could reuse `applySyntaxHighlights`. The `syntax.*` theme
+  tokens and `syntaxLanguages.ts` loader are shared infrastructure. Also: the
+  highlight-vs-`diff.added.fg`/`diff.removed.fg` interaction means themes that
+  tint changed-line text heavily may want their Syntax palette checked for
+  contrast against the line tints.
 - **Diff viewer: inline editing of staged diffs.** Unstaged working-tree
   diffs are editable (2026-07-03); staged diffs (new side = index) remain
   read-only — extend if wanted.

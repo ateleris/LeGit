@@ -474,7 +474,7 @@ function RemoteGroupHeader({
 function DivergenceBadge({ branch }: { branch: Branch }) {
   if (branch.upstream_gone) {
     return (
-      <span style={{ fontSize: "var(--fz-sm)", color: "var(--warning)", flexShrink: 0 }}>
+      <span style={{ fontSize: "var(--fz-sm)", color: "var(--warning-fg)", flexShrink: 0 }}>
         upstream gone
       </span>
     );

@@ -126,6 +126,7 @@ export function GlobalSettingsPanel() {
         <LayoutOrientationSection />
         <AppearanceSection />
         <CommitsGraphSection />
+        <DiffViewerSection />
         <AutoRefreshSection />
         <ConfirmDiscardSection />
         <BranchSwitchingSection />
@@ -488,6 +489,44 @@ function NumberField({
         px ({min}–{max})
       </span>
     </label>
+  );
+}
+
+function DiffViewerSection() {
+  const enabled = useSettingsStore((s) => s.settings?.diff_syntax_highlighting ?? false);
+  const setDiffSyntaxHighlighting = useSettingsStore((s) => s.setDiffSyntaxHighlighting);
+  const [saving, setSaving] = useState(false);
+
+  const toggle = async () => {
+    setSaving(true);
+    try {
+      await setDiffSyntaxHighlighting(!enabled);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Diff viewer">
+      <FieldNote>writes to: global settings — applies to all repos</FieldNote>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <input
+          type="checkbox"
+          id="global-diff-syntax"
+          checked={enabled}
+          onChange={toggle}
+          disabled={saving}
+        />
+        <label htmlFor="global-diff-syntax" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
+          Syntax-highlight code in diffs
+        </label>
+      </div>
+      <FieldNote>
+        Colours come from the theme's Syntax tokens. Each hunk is highlighted on
+        its own, so constructs opened outside the visible context may colour
+        imperfectly. Very large diffs are skipped.
+      </FieldNote>
+    </Section>
   );
 }
 

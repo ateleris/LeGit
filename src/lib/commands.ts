@@ -191,6 +191,9 @@ export const setConfirmDiscard = (confirm: boolean) =>
 export const setCommitAvatars = (enabled: boolean) =>
   invoke<null>("set_commit_avatars", { enabled });
 
+export const setDiffSyntaxHighlighting = (enabled: boolean) =>
+  invoke<null>("set_diff_syntax_highlighting", { enabled });
+
 export const setActiveTheme = (name: string) =>
   invoke<null>("set_active_theme", { name });
 

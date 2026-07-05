@@ -88,6 +88,7 @@ pub fn run() {
         commands::save_switch_dirty_behavior,
         commands::save_pull_strategy,
         commands::set_commit_avatars,
+        commands::set_diff_syntax_highlighting,
         commands::repo_log,
         commands::repo_status,
         commands::repo_branches,

@@ -49,6 +49,8 @@ export interface GlobalSettings {
   /** Show author Gravatars in the commit graph. OFF by default — enabling it
    * sends hashed author emails to gravatar.com. */
   commit_avatars?: boolean;
+  /** Syntax-highlight code in the diff viewer (default off). */
+  diff_syntax_highlighting?: boolean;
   /** User-defined git identity profiles (camelCase key — serde rename). */
   gitProfiles?: GitProfilesDoc;
 }

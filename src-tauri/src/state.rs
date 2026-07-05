@@ -231,6 +231,10 @@ pub struct GlobalSettings {
     /// opt-in; see BACKLOG/settings copy).
     #[serde(default)]
     pub commit_avatars: bool,
+    /// Syntax-highlight code in the diff viewer. Off by default: highlighting
+    /// parses each hunk's sides on the UI thread, so it is opt-in.
+    #[serde(default)]
+    pub diff_syntax_highlighting: bool,
     /// User-defined git identity profiles (versioned envelope).
     #[serde(default, rename = "gitProfiles")]
     pub git_profiles_doc: GitProfilesDoc,
@@ -263,6 +267,7 @@ impl Default for GlobalSettings {
             switch_dirty_behavior: None,
             pull_strategy: None,
             commit_avatars: false,
+            diff_syntax_highlighting: false,
             git_profiles_doc: GitProfilesDoc::default(),
         }
     }

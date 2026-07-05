@@ -8,6 +8,7 @@ import {
   setWatcherEnabled,
   setConfirmDiscard,
   setCommitAvatars,
+  setDiffSyntaxHighlighting,
   saveSwitchDirtyBehavior,
   savePullStrategy,
 } from "../lib/commands";
@@ -91,6 +92,7 @@ interface SettingsStore {
   setWatcherEnabled: (enabled: boolean) => Promise<void>;
   setConfirmDiscard: (confirm: boolean) => Promise<void>;
   setCommitAvatars: (enabled: boolean) => Promise<void>;
+  setDiffSyntaxHighlighting: (enabled: boolean) => Promise<void>;
   setSwitchDirtyBehavior: (behavior: SwitchDirtyBehavior) => Promise<void>;
   setPullStrategy: (strategy: PullStrategy) => Promise<void>;
 }
@@ -173,6 +175,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     await setCommitAvatars(enabled);
     const s = get().settings;
     if (s) set({ settings: { ...s, commit_avatars: enabled } });
+  },
+
+  async setDiffSyntaxHighlighting(enabled) {
+    await setDiffSyntaxHighlighting(enabled);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, diff_syntax_highlighting: enabled } });
   },
 
   async setSwitchDirtyBehavior(behavior) {

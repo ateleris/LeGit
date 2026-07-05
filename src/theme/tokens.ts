@@ -76,6 +76,19 @@ export const PALETTE_CONTRACT: readonly PaletteDescriptor[] = [
   { name: "diff-added-line", documentation: "Whole-line background for an added/modified diff line (light tint)." },
   { name: "diff-removed-line", documentation: "Whole-line background for a removed/modified diff line (light tint)." },
   { name: "diff-hunk-header", documentation: "Background band behind a diff hunk's `@@` header row." },
+  // Syntax highlighting colours (diff viewer code).
+  { name: "syn-keyword", documentation: "Syntax: keywords (`if`, `fn`, `const`, ...)." },
+  { name: "syn-string", documentation: "Syntax: string, character, and regexp literals." },
+  { name: "syn-number", documentation: "Syntax: numeric literals." },
+  { name: "syn-comment", documentation: "Syntax: comments and preprocessor/meta lines." },
+  { name: "syn-function", documentation: "Syntax: function and macro names." },
+  { name: "syn-type", documentation: "Syntax: type, class, and namespace names." },
+  { name: "syn-variable", documentation: "Syntax: variable names." },
+  { name: "syn-property", documentation: "Syntax: object properties and markup attribute names." },
+  { name: "syn-operator", documentation: "Syntax: operators." },
+  { name: "syn-punctuation", documentation: "Syntax: punctuation and brackets." },
+  { name: "syn-constant", documentation: "Syntax: built-in constants (`true`, `null`, `self`, ...)." },
+  { name: "syn-tag", documentation: "Syntax: markup tag names and headings." },
 ] as const;
 
 export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
@@ -166,6 +179,19 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "diff.discard.fg", group: "Diff", documentation: "Text of the hunk discard button." },
   { name: "diff.discard.hover.bg", group: "Diff", documentation: "Background of the hunk discard button on hover." },
   { name: "diff.discard.hover.fg", group: "Diff", documentation: "Text of the hunk discard button on hover." },
+
+  { name: "syntax.keyword", group: "Syntax", documentation: "Keywords (`if`, `fn`, `const`, ...) in the diff viewer's code." },
+  { name: "syntax.string", group: "Syntax", documentation: "String, character, and regexp literals." },
+  { name: "syntax.number", group: "Syntax", documentation: "Numeric literals." },
+  { name: "syntax.comment", group: "Syntax", documentation: "Comments and preprocessor/meta lines." },
+  { name: "syntax.function", group: "Syntax", documentation: "Function and macro names." },
+  { name: "syntax.type", group: "Syntax", documentation: "Type, class, and namespace names." },
+  { name: "syntax.variable", group: "Syntax", documentation: "Variable names." },
+  { name: "syntax.property", group: "Syntax", documentation: "Object properties and markup attribute names." },
+  { name: "syntax.operator", group: "Syntax", documentation: "Operators." },
+  { name: "syntax.punctuation", group: "Syntax", documentation: "Punctuation and brackets." },
+  { name: "syntax.constant", group: "Syntax", documentation: "Built-in constants (`true`, `null`, `self`, ...)." },
+  { name: "syntax.tag", group: "Syntax", documentation: "Markup tag names and headings." },
 
   { name: "menu.hover.bg", group: "Menus", documentation: "Background of a hovered context-menu item." },
 
