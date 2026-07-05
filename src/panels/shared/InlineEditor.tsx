@@ -1,3 +1,5 @@
+import { Button } from "./buttons";
+
 export function InlineEditor({
   label,
   disabled,
@@ -16,9 +18,9 @@ export function InlineEditor({
       <span style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)" }}>{label}</span>
       {children}
       <div style={{ display: "flex", gap: 6 }}>
-        <button className="primary" disabled={disabled} onClick={onSave}>
+        <Button variant="primary" disabled={disabled} onClick={onSave}>
           Save
-        </button>
+        </Button>
         <button disabled={disabled} onClick={onCancel}>
           Cancel
         </button>

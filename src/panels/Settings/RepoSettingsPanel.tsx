@@ -9,6 +9,7 @@ import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
 import { SigningSettings } from "./SigningSettings";
 import { RepoProfileSection } from "./RepoProfileSection";
+import { Button } from "../shared/buttons";
 
 /**
  * Repo Settings panel — edits repo-scope settings for the active repo.
@@ -111,13 +112,13 @@ export function RepoSettingsPanel() {
               placeholder="Leave blank to inherit global default"
             />
             <button onClick={browseFor}>Browse…</button>
-            <button
-              className="primary"
+            <Button
+              variant="primary"
               disabled={applying}
               onClick={() => apply(draft.trim() === "" ? null : draft)}
             >
               {draft.trim() === "" ? "Inherit" : "Apply override"}
-            </button>
+            </Button>
             {repoSettings?.git_path_override && (
               <button onClick={() => apply(null)} disabled={applying}>
                 Clear override
@@ -331,7 +332,7 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
             These writes affect only this repo. Your global Git config and other repos are not affected.
           </div>
           <div style={{ display: "flex", gap: 6 }}>
-            <button className="primary" onClick={handleConfirm} disabled={saving}>Save</button>
+            <Button variant="primary" onClick={handleConfirm} disabled={saving}>Save</Button>
             <button onClick={() => setConfirmPending(false)}>Cancel</button>
           </div>
         </div>
@@ -339,9 +340,9 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
 
       {!confirmPending && (
         <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-          <button className="primary" disabled={!dirty || saving || coversAll} onClick={handleSave}>
+          <Button variant="primary" disabled={!dirty || saving || coversAll} onClick={handleSave}>
             Save
-          </button>
+          </Button>
           <button disabled={!dirty || saving} onClick={handleCancel}>
             Cancel
           </button>

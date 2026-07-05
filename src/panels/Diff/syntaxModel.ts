@@ -139,6 +139,46 @@ const diffHighlighter = tagHighlighter([
   { tag: [t.tagName, t.heading], class: "cm-syn-tag" },
 ]);
 
+/** Skip highlighting for very large content: parsing is synchronous on the
+ *  main thread once the language has loaded. Shared by every consumer. */
+export const MAX_SYNTAX_CHARS = 400_000;
+
+/** Whole-file per-line highlight segments (full fidelity - the "document" IS
+ *  the file). Used by surfaces that show a complete file in custom DOM,
+ *  e.g. the Blame panel's rows. */
+export function computeFileSyntaxSegments(
+  lines: readonly string[],
+  parser: Parser
+): SyntaxSegment[][] {
+  const rows: SyntaxRow[] = lines.map((text) => ({ kind: "Added", text, hunkIndex: 0 }));
+  return computeSyntaxSegments(rows, parser, "new");
+}
+
+/** The theme-token colour behind each segment class, for surfaces that render
+ *  outside CodeMirror (the `cm-syn-*` classes are scoped to the editor
+ *  theme). An explicit map - never string-built - so an unexpected class can
+ *  only ever fall back to `inherit`, not an undefined variable. */
+const SYNTAX_VARS: Record<string, string> = {
+  "cm-syn-keyword": "var(--syntax-keyword)",
+  "cm-syn-string": "var(--syntax-string)",
+  "cm-syn-number": "var(--syntax-number)",
+  "cm-syn-comment": "var(--syntax-comment)",
+  "cm-syn-function": "var(--syntax-function)",
+  "cm-syn-type": "var(--syntax-type)",
+  "cm-syn-variable": "var(--syntax-variable)",
+  "cm-syn-property": "var(--syntax-property)",
+  "cm-syn-operator": "var(--syntax-operator)",
+  "cm-syn-punctuation": "var(--syntax-punctuation)",
+  "cm-syn-constant": "var(--syntax-constant)",
+  "cm-syn-tag": "var(--syntax-tag)",
+};
+
+/** `"cm-syn-keyword"` -> `"var(--syntax-keyword)"`. A segment carrying
+ *  several classes (a node with multiple tags) uses the first. */
+export function syntaxVarFor(cls: string): string {
+  return SYNTAX_VARS[cls.split(" ")[0]] ?? "inherit";
+}
+
 /** Per-row highlight segments for the given rows: reconstruct each hunk side,
  *  parse it, and map the highlights back. Pure and synchronous - the caller
  *  supplies the (lazily loaded) parser. */

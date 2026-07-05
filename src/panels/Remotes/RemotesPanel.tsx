@@ -17,6 +17,7 @@ import type { Remote } from "../../lib/types";
 import { formatAppError, gitErrorKind } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { InlineEditor } from "../shared/InlineEditor";
+import { Button } from "../shared/buttons";
 import { useConfirmDestructive } from "../../store/settings";
 import { FetchIcon } from "../../icons";
 
@@ -231,9 +232,9 @@ export function RemotesSection() {
                       Remove remote <strong>{r.name}</strong>? Its remote-tracking refs will be deleted.
                     </span>
                     <div style={{ display: "flex", gap: 6 }}>
-                      <button className="danger" disabled={busy} onClick={() => doRemove(r.name)}>
+                      <Button variant="danger" disabled={busy} onClick={() => doRemove(r.name)}>
                         Remove
-                      </button>
+                      </Button>
                       <button disabled={busy} onClick={() => setEdit(null)}>
                         Cancel
                       </button>
@@ -350,13 +351,13 @@ function AddRemoteForm({
           placeholder="URL (https://… or git@…)"
           style={{ ...inputStyle, flex: 1 }}
         />
-        <button
-          className="primary"
+        <Button
+          variant="primary"
           disabled={disabled || name.trim() === "" || url.trim() === ""}
           onClick={submit}
         >
           Add
-        </button>
+        </Button>
       </div>
     </div>
   );

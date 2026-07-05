@@ -10,7 +10,7 @@ import { useSummonStore } from "../../store/summon";
 import { notify } from "../../store/notifications";
 import { FileTree } from "../shared/FileTree/FileTree";
 import { ToolbarButton } from "../shared/ToolbarButton";
-import { IconButton } from "../shared/buttons";
+import { Button, IconButton } from "../shared/buttons";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
 import { StageIcon, UnstageIcon } from "../../icons";
@@ -408,7 +408,7 @@ export function WorkingChangesPanel() {
             Discard changes to <strong>{confirm.label}</strong>? This cannot be undone.
           </div>
           <div style={{ display: "flex", gap: 6 }}>
-            <button className="danger" disabled={busy} onClick={confirmDiscard}>Discard</button>
+            <Button variant="danger" disabled={busy} onClick={confirmDiscard}>Discard</Button>
             <button disabled={busy} onClick={() => setConfirm(null)}>Cancel</button>
           </div>
         </div>
@@ -608,8 +608,8 @@ export function WorkingChangesPanel() {
                 switch away this commit is only reachable via the reflog. Commit anyway?
               </div>
               <div style={{ display: "flex", gap: 6 }}>
-                <button
-                  className="primary"
+                <Button
+                  variant="primary"
                   disabled={busy}
                   onClick={() => {
                     setConfirmDetachedCommit(false);
@@ -617,7 +617,7 @@ export function WorkingChangesPanel() {
                   }}
                 >
                   Commit anyway
-                </button>
+                </Button>
                 <button disabled={busy} onClick={() => setConfirmDetachedCommit(false)}>
                   Cancel
                 </button>
@@ -629,9 +629,9 @@ export function WorkingChangesPanel() {
                 <input type="checkbox" checked={amend} disabled={!head || busy} onChange={(e) => toggleAmend(e.target.checked)} />
                 Amend last commit
               </label>
-              <button className="primary" disabled={!canCommit} onClick={requestCommit} style={{ marginLeft: "auto" }}>
+              <Button variant="primary" disabled={!canCommit} onClick={requestCommit} style={{ marginLeft: "auto" }}>
                 {amend ? "Amend" : "Commit"} {!amend && staged.length > 0 ? `(${staged.length})` : ""}
-              </button>
+              </Button>
             </div>
           )}
         </div>

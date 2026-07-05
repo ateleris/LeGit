@@ -11,6 +11,7 @@ import type { ReflogEntry } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { formatRelative } from "../../lib/time";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
+import { Button } from "../shared/buttons";
 
 const MAX_ENTRIES = 200;
 
@@ -198,9 +199,9 @@ function ReflogRow({
           <span style={{ fontSize: "var(--fz-md)", flex: 1 }}>
             Hard-reset to {entry.sha.slice(0, 8)}? Uncommitted changes will be discarded.
           </span>
-          <button className="danger" disabled={busy} onClick={onConfirmReset}>
+          <Button variant="danger" disabled={busy} onClick={onConfirmReset}>
             Reset
-          </button>
+          </Button>
           <button disabled={busy} onClick={onCancelReset}>
             Cancel
           </button>

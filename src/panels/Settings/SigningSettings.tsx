@@ -10,6 +10,7 @@ import {
   repoWriteSigning,
   globalWriteSigning,
 } from "../../lib/commands";
+import { Button } from "../shared/buttons";
 
 type Scope = "repo" | "global";
 
@@ -196,9 +197,9 @@ export function SigningSettings({ scope, repoId }: { scope: Scope; repoId?: stri
               : "These changes affect every repository on this machine that doesn't override them locally, and every tool that reads your global Git config."}
           </div>
           <div style={{ display: "flex", gap: 6 }}>
-            <button className="primary" onClick={handleConfirm} disabled={saving}>
+            <Button variant="primary" onClick={handleConfirm} disabled={saving}>
               {isRepo ? "Save" : "Save globally"}
-            </button>
+            </Button>
             <button onClick={() => setConfirmPending(false)}>Cancel</button>
           </div>
         </div>
@@ -206,7 +207,7 @@ export function SigningSettings({ scope, repoId }: { scope: Scope; repoId?: stri
 
       {!confirmPending && (
         <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-          <button className="primary" disabled={!dirty || saving} onClick={handleSave}>Save</button>
+          <Button variant="primary" disabled={!dirty || saving} onClick={handleSave}>Save</Button>
           <button disabled={!dirty || saving} onClick={handleCancel}>Cancel</button>
         </div>
       )}

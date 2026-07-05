@@ -11,6 +11,7 @@ import {
   clearRepoProfile,
   createProfileFromRepo,
 } from "../../lib/commands";
+import { Button } from "../shared/buttons";
 
 const INHERIT = "__inherit__";
 
@@ -173,9 +174,9 @@ export function RepoProfileSection({ repoId }: { repoId: string }) {
               placeholder="New profile name"
               onChange={(e) => setNewName(e.target.value)}
             />
-            <button className="primary" disabled={savingNew || newName.trim() === ""} onClick={saveAsProfile}>
+            <Button variant="primary" disabled={savingNew || newName.trim() === ""} onClick={saveAsProfile}>
               Save as profile
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -257,7 +258,7 @@ function ConfirmPanel({
       )}
       <div style={{ fontSize: "var(--fz-md)", color: "var(--subtle-fg)", marginBottom: 10 }}>{note}</div>
       <div style={{ display: "flex", gap: 6 }}>
-        <button className="primary" onClick={onConfirm} disabled={busy}>{confirmLabel}</button>
+        <Button variant="primary" onClick={onConfirm} disabled={busy}>{confirmLabel}</Button>
         <button onClick={onCancel} disabled={busy}>Cancel</button>
       </div>
     </div>

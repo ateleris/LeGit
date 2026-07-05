@@ -42,13 +42,10 @@ re-deferred with justification:
   full fidelity would mean fetching both full blobs, parsing each once, and
   mapping by line number. Only worth it if the per-hunk approximation proves
   insufficient in practice.
-- **Syntax highlighting elsewhere.** File View shows whole real files, so it
-  could attach the language extension directly (no reconstruction needed); the
-  3-way resolve view could reuse `applySyntaxHighlights`. The `syntax.*` theme
-  tokens and `syntaxLanguages.ts` loader are shared infrastructure. Also: the
-  highlight-vs-`diff.added.fg`/`diff.removed.fg` interaction means themes that
-  tint changed-line text heavily may want their Syntax palette checked for
-  contrast against the line tints.
+- **Theme note: syntax palette vs heavy line tints.** Themes that tint
+  changed-line text strongly (`diff.added.fg`/`diff.removed.fg`) may want
+  their Syntax palette checked for contrast against the line tints - a
+  theme-author concern, no code planned.
 - **Diff viewer: inline editing of staged diffs.** Unstaged working-tree
   diffs are editable (2026-07-03); staged diffs (new side = index) remain
   read-only — extend if wanted.
@@ -61,18 +58,6 @@ re-deferred with justification:
   injection), and a warning when the plan rewrites pushed commits.
   (Reword beyond HEAD as a standalone feature was dropped 2026-07-05 by
   decision - not planned.)
-- **3-way view polish.** Ships as a Diff-panel toggle on conflicted files
-  (ours | editable result | theirs from the real index stages, proportional
-  scroll sync). Deferred: showing the base stage (already fetched), and
-  conflict-aligned scroll sync instead of proportional.
-- **Button set: sweep the class call sites.** The shared set ships
-  (`panels/shared/buttons.tsx`: `Button` default/primary/danger/ghost +
-  `IconButton`; `ToolbarButton` is the labeled ghost preset; menu entries
-  unified on the `primitives.tsx` `MenuItem`, now a real button). The ~36
-  `className="primary"/"danger"` call sites still use the classes directly —
-  they ARE the token-backed system underneath `Button`, so migrating them to
-  `<Button variant>` is optional, purely mechanical churn. New code should
-  use the shared components. A "link" variant was skipped (no call sites).
 
 ---
 

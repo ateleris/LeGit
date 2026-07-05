@@ -7,6 +7,7 @@ import { formatAppError, gitErrorKind } from "../../lib/types";
 import { useRepoStore } from "../../store/repos";
 import { useRemoteProgressStore } from "../../store/remoteProgress";
 import { notify } from "../../store/notifications";
+import { Button } from "../shared/buttons";
 
 type Mode = "none" | "clone" | "init";
 
@@ -60,7 +61,7 @@ export function RepositoriesPanel() {
   return (
     <div className="legit-panel">
       <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <button className="primary" onClick={doDialog}>Open repository…</button>
+        <Button variant="primary" onClick={doDialog}>Open repository…</Button>
         <button onClick={() => { setError(null); setMode(mode === "clone" ? "none" : "clone"); }} aria-pressed={mode === "clone"}>
           Clone…
         </button>
@@ -109,14 +110,14 @@ export function RepositoriesPanel() {
               key={r.id}
               style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", borderBottom: "1px solid var(--panel-border)" }}
             >
-              <button onClick={() => setActive(r.id)} style={{ minWidth: 80 }} className={r.id === activeRepoId ? "primary" : ""}>
+              <Button onClick={() => setActive(r.id)} style={{ minWidth: 80 }} variant={r.id === activeRepoId ? "primary" : "default"}>
                 {r.id === activeRepoId ? "Active" : "Activate"}
-              </button>
+              </Button>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600 }}>{r.name}</div>
                 <div className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>{r.path}</div>
               </div>
-              <button className="danger" onClick={() => closeRepo(r.id)} aria-label={`Close ${r.name}`}>Close</button>
+              <Button variant="danger" onClick={() => closeRepo(r.id)} aria-label={`Close ${r.name}`}>Close</Button>
             </div>
           ))}
         </Section>
@@ -263,9 +264,9 @@ function CloneForm({
         Clone submodules
       </label>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
-        <button className="primary" disabled={busy || !url.trim() || !parentDir.trim() || !name.trim()} onClick={submit}>
+        <Button variant="primary" disabled={busy || !url.trim() || !parentDir.trim() || !name.trim()} onClick={submit}>
           {busy ? "Cloning…" : "Clone"}
-        </button>
+        </Button>
         {busy ? (
           <button onClick={cancel}>Cancel clone</button>
         ) : (
@@ -346,9 +347,9 @@ function InitForm({
       </label>
       <ProfileField profiles={profiles} value={profileId} onChange={setProfileId} disabled={bare} />
       <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-        <button className="primary" disabled={busy || !dir.trim()} onClick={submit}>
+        <Button variant="primary" disabled={busy || !dir.trim()} onClick={submit}>
           {busy ? "Initializing…" : "Init"}
-        </button>
+        </Button>
         <button onClick={onCancel}>Close</button>
       </div>
     </FormCard>

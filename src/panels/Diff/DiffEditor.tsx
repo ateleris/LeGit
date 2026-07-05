@@ -42,7 +42,12 @@ import {
   type RowMeta,
 } from "./editModel";
 import { createRowState, type RowState } from "./editableState";
-import { computeSyntaxSegments, type ContextSide, type SyntaxRow } from "./syntaxModel";
+import {
+  MAX_SYNTAX_CHARS,
+  computeSyntaxSegments,
+  type ContextSide,
+  type SyntaxRow,
+} from "./syntaxModel";
 import { loadParserForPath } from "./syntaxLanguages";
 
 export type HunkAction = "stage" | "unstage" | "discard" | "ours" | "theirs" | "both";
@@ -361,10 +366,6 @@ function decorationField(getLine: (i: number) => LineDeco | null): StateField<De
 // off the mount path) via a StateEffect, then map through edits like the diff
 // marks. Syntax marks set only `color`; the diff word marks set only
 // `background-color`, so the two layers compose on the same span.
-
-/** Skip highlighting for very large diffs: parsing is synchronous on the main
- *  thread once the language has loaded. */
-const MAX_SYNTAX_CHARS = 400_000;
 
 const setSyntaxDecorations = StateEffect.define<DecorationSet>();
 

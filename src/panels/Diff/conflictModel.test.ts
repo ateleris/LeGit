@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  alignedBreakpoints,
+  conflictAnchors,
   conflictsToDiff,
   parseConflicts,
+  piecewiseMap,
   reconstructResolvedFile,
   resolveBlock,
 } from "./conflictModel";
@@ -184,5 +187,85 @@ describe("reconstructResolvedFile", () => {
       ["BEFORE", "<<<<<<< HEAD", "ours1", "ours2", "=======", "theirs1", ">>>>>>> feature/x", "after", "added"]
         .join("\r\n") + "\r\n",
     );
+  });
+});
+
+describe("conflictAnchors", () => {
+  // 3-way scroll sync: for each conflict, the 0-based start line in the
+  // centre (marker) doc and in each side's "file as if that side were
+  // chosen" - the shape of the real index stages.
+  it("locates each conflict in the centre and both side docs", () => {
+    const two = [
+      "a",            // common (1 line)
+      "<<<<<<< HEAD", // conflict 0: centre line 1
+      "o1",
+      "o2",
+      "=======",
+      "t1",
+      ">>>>>>> x",
+      "b",            // common
+      "<<<<<<< HEAD", // conflict 1
+      "o3",
+      "=======",
+      "t2",
+      "t3",
+      ">>>>>>> x",
+    ].join("\n") + "\n";
+    const anchors = conflictAnchors(parseConflicts(two));
+    expect(anchors.center).toEqual([1, 8]);
+    // ours doc: a, o1, o2, b, o3 -> conflicts at 1 and 4
+    expect(anchors.ours).toEqual([1, 4]);
+    // theirs doc: a, t1, b, t2, t3 -> conflicts at 1 and 3
+    expect(anchors.theirs).toEqual([1, 3]);
+    // classic markers carry no base content
+    expect(anchors.base).toBeNull();
+  });
+
+  it("derives base anchors for diff3 markers", () => {
+    const diff3 = [
+      "lead",
+      "<<<<<<< HEAD",
+      "ours",
+      "||||||| base123",
+      "orig1",
+      "orig2",
+      "=======",
+      "theirs",
+      ">>>>>>> x",
+    ].join("\n") + "\n";
+    const anchors = conflictAnchors(parseConflicts(diff3));
+    expect(anchors.center).toEqual([1]);
+    // base doc: lead, orig1, orig2 -> conflict content starts at line 1
+    expect(anchors.base).toEqual([1]);
+  });
+});
+
+describe("piecewiseMap / alignedBreakpoints", () => {
+  it("interpolates linearly between breakpoints and clamps at the ends", () => {
+    const xs = [0, 100, 200];
+    const ys = [0, 50, 400];
+    expect(piecewiseMap(0, xs, ys)).toBe(0);
+    expect(piecewiseMap(50, xs, ys)).toBe(25);
+    expect(piecewiseMap(150, xs, ys)).toBe(225);
+    expect(piecewiseMap(-10, xs, ys)).toBe(0);
+    expect(piecewiseMap(999, xs, ys)).toBe(400);
+  });
+
+  it("handles a single breakpoint (unscrollable pane)", () => {
+    expect(piecewiseMap(123, [0], [0])).toBe(0);
+  });
+
+  it("builds monotone breakpoints from anchor tops, clamped to the scroll ranges", () => {
+    const { xs, ys } = alignedBreakpoints([100, 900], 500, [80, 300], 400);
+    // Anchor beyond the source scroll range is dropped (clamping would break
+    // monotonicity), the ends are pinned to (0,0) and (max,max).
+    expect(xs).toEqual([0, 100, 500]);
+    expect(ys).toEqual([0, 80, 400]);
+  });
+
+  it("drops non-monotonic anchor pairs instead of producing a reversing map", () => {
+    const { xs, ys } = alignedBreakpoints([100, 90], 500, [80, 200], 400);
+    expect(xs).toEqual([0, 100, 500]);
+    expect(ys).toEqual([0, 80, 400]);
   });
 });

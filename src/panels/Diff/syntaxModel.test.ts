@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { javascriptLanguage } from "@codemirror/lang-javascript";
 import {
   buildSideDocs,
+  computeFileSyntaxSegments,
   computeSyntaxSegments,
   mapHighlightsToRows,
+  syntaxVarFor,
   type SyntaxRow,
   type SyntaxSegment,
 } from "./syntaxModel";
@@ -134,5 +136,30 @@ describe("computeSyntaxSegments (real JavaScript parser)", () => {
     const segs = computeSyntaxSegments(rows, parser, "new");
     expect(segs[0]).toEqual([]);
     expect(segs[2]).toEqual([]);
+  });
+});
+
+describe("computeFileSyntaxSegments (whole file, e.g. Blame)", () => {
+  const parser = javascriptLanguage.parser;
+
+  it("highlights a whole file with cross-line fidelity", () => {
+    const lines = ["/* first", "second */", 'const x = "hi";'];
+    const segs = computeFileSyntaxSegments(lines, parser);
+    expect(segs).toHaveLength(3);
+    expect(segs[0].some((s) => s.cls === "cm-syn-comment")).toBe(true);
+    expect(segs[1].some((s) => s.cls === "cm-syn-comment")).toBe(true);
+    const third = segs[2].map((s) => `${lines[2].slice(s.from, s.to)}:${s.cls}`);
+    expect(third).toContain("const:cm-syn-keyword");
+  });
+});
+
+describe("syntaxVarFor", () => {
+  // Non-CodeMirror surfaces (Blame's custom rows) can't use the cm-syn-*
+  // classes (they are scoped to the editor theme) - they inline the token
+  // colour instead.
+  it("maps a segment class to its theme-token var", () => {
+    expect(syntaxVarFor("cm-syn-keyword")).toBe("var(--syntax-keyword)");
+    // Multiple classes (a node carrying several tags): first one wins.
+    expect(syntaxVarFor("cm-syn-string cm-syn-constant")).toBe("var(--syntax-string)");
   });
 });

@@ -2,6 +2,7 @@ import { type ReactNode, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { GitStatus } from "../../lib/types";
 import { useGitStatusStore } from "../../store/git-status";
+import { Button } from "../shared/buttons";
 
 interface Props {
   status: GitStatus;
@@ -101,14 +102,14 @@ function Setup({ title, body, showBrowse, onBrowse, onContinueAnyway, onRetry }:
             <button onClick={onBrowse}>Browse for git executable…</button>
           )}
           {onRetry && (
-            <button onClick={onRetry} className="primary">
+            <Button onClick={onRetry} variant="primary">
               Try again
-            </button>
+            </Button>
           )}
           {onContinueAnyway && (
-            <button onClick={onContinueAnyway} className="primary">
+            <Button onClick={onContinueAnyway} variant="primary">
               Continue anyway
-            </button>
+            </Button>
           )}
         </div>
       </div>

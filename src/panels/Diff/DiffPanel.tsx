@@ -186,6 +186,8 @@ export function DiffPanel() {
 
   // 3-way resolve view (ours | result | theirs) — session-scoped preference.
   const [threeWay, setThreeWay] = useState(false);
+  // Optional base (stage 1) pane inside the 3-way view.
+  const [showBase, setShowBase] = useState(false);
   const threeWayActive = resolveMode && threeWay;
   const threeWayActiveRef = useRef(threeWayActive);
   threeWayActiveRef.current = threeWayActive;
@@ -472,6 +474,17 @@ export function DiffPanel() {
             >
               3-way
             </button>
+            {threeWay && (
+              <button
+                onClick={() => setShowBase((b) => !b)}
+                aria-pressed={showBase}
+                disabled={dirty}
+                title="Also show the merge base (stage 1) next to the result"
+                style={{ ...segStyle(showBase, "left"), borderRadius: 3 }}
+              >
+                Base
+              </button>
+            )}
             <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
               {parsed
                 ? `${parsed.conflictCount} conflict${parsed.conflictCount === 1 ? "" : "s"}`
@@ -574,6 +587,8 @@ export function DiffPanel() {
               <ThreeWayView
                 ours={sides.ours}
                 theirs={sides.theirs}
+                base={sides.base}
+                showBase={showBase}
                 content={conflictText}
                 rebuildKey={rebuildKey}
                 onDirty={onDirty}
@@ -581,6 +596,7 @@ export function DiffPanel() {
                 onDocChange={(text) => {
                   threeWayTextRef.current = text;
                 }}
+                syntaxPath={syntaxPath}
               />
             ) : null
           ) : parsed && parsed.conflictCount === 0 ? (

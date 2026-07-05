@@ -2,7 +2,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
 import { LinkIcon, UnlinkIcon, WarningIcon } from "../../icons";
-import { IconButton } from "../shared/buttons";
+import { Button, IconButton } from "../shared/buttons";
 import { useAppVersion } from "../../lib/appVersion";
 
 /** localStorage key for the line-height ↔ lane-width link toggle (default on). */
@@ -102,13 +102,13 @@ export function GlobalSettingsPanel() {
                   placeholder="/usr/bin/git or leave blank for auto-detect"
                 />
                 <button onClick={browseFor}>Browse…</button>
-                <button
-                  className="primary"
+                <Button
+                  variant="primary"
                   disabled={pending}
                   onClick={() => apply(draft.trim() === "" ? null : draft)}
                 >
                   Apply
-                </button>
+                </Button>
                 <button onClick={() => apply(null)} disabled={pending}>
                   Reset
                 </button>
@@ -170,20 +170,20 @@ function LayoutOrientationSection() {
     <Section title="Layout orientation">
       <FieldNote>writes to: global settings</FieldNote>
       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-        <button
-          className={placement === "top" ? "primary" : ""}
+        <Button
+          variant={placement === "top" ? "primary" : "default"}
           disabled={saving}
           onClick={() => select("top")}
         >
           Top / Bottom
-        </button>
-        <button
-          className={placement === "left" ? "primary" : ""}
+        </Button>
+        <Button
+          variant={placement === "left" ? "primary" : "default"}
           disabled={saving}
           onClick={() => select("left")}
         >
           Left / Right
-        </button>
+        </Button>
       </div>
     </Section>
   );
@@ -518,7 +518,7 @@ function DiffViewerSection() {
           disabled={saving}
         />
         <label htmlFor="global-diff-syntax" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
-          Syntax-highlight code in diffs
+          Syntax-highlight code in diffs and file views
         </label>
       </div>
       <FieldNote>
@@ -830,7 +830,7 @@ function LineEndingsGlobalSection() {
             If you only want this for one repo, cancel and edit that repo's settings instead.
           </div>
           <div style={{ display: "flex", gap: 6 }}>
-            <button className="primary" onClick={handleConfirm} disabled={saving}>Save globally</button>
+            <Button variant="primary" onClick={handleConfirm} disabled={saving}>Save globally</Button>
             <button onClick={() => setConfirmPending(false)}>Cancel</button>
           </div>
         </div>
@@ -838,9 +838,9 @@ function LineEndingsGlobalSection() {
 
       {!confirmPending && (
         <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-          <button className="primary" disabled={!dirty || saving} onClick={handleSave}>
+          <Button variant="primary" disabled={!dirty || saving} onClick={handleSave}>
             Save
-          </button>
+          </Button>
           <button disabled={!dirty || saving} onClick={handleCancel}>
             Cancel
           </button>

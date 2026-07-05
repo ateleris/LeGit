@@ -19,6 +19,7 @@ import { formatAppError } from "../../lib/types";
 import { RemoteIcon, TagIcon } from "../../icons";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { ToolbarButton } from "../shared/ToolbarButton";
+import { Button } from "../shared/buttons";
 import { useConfirmDestructive } from "../../store/settings";
 
 // A tag mutation touches the tag list and the graph decorations.
@@ -230,9 +231,9 @@ export function TagsSection() {
               placeholder="name"
               style={{ fontSize: "var(--fz-md)", fontFamily: "monospace", flex: 1 }}
             />
-            <button className="primary" disabled={busy || !createName.trim()} onClick={doCreate}>
+            <Button variant="primary" disabled={busy || !createName.trim()} onClick={doCreate}>
               Tag
-            </button>
+            </Button>
           </div>
           <input
             value={createMsg}
@@ -335,9 +336,9 @@ function TagRow({
               ? `Delete this tag from ${remote}?`
               : "Delete this tag locally?"}
           </span>
-          <button className="danger" disabled={busy} onClick={() => onConfirmDelete(confirming === "remote")}>
+          <Button variant="danger" disabled={busy} onClick={() => onConfirmDelete(confirming === "remote")}>
             Delete
-          </button>
+          </Button>
           <button disabled={busy} onClick={onCancelDelete}>
             Cancel
           </button>

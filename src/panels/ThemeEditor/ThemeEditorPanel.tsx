@@ -17,6 +17,7 @@ import {
 } from "../../theme/filters";
 import { validateTheme } from "../../theme/validate";
 import type { ThemeDocument, TokenFilterId } from "../../lib/types";
+import { Button } from "../shared/buttons";
 
 export function ThemeEditorPanel() {
   const confirmDestructive = useConfirmDestructive();
@@ -211,18 +212,18 @@ export function ThemeEditorPanel() {
           </>
         ) : (
           <>
-            <button className="primary" onClick={onSave} disabled={!draftDirty}>
+            <Button variant="primary" onClick={onSave} disabled={!draftDirty}>
               Save
-            </button>
+            </Button>
             <button onClick={cancelEditing}>Cancel</button>
           </>
         )}
         <button onClick={onImport}>Import…</button>
         <button onClick={onExport}>Export…</button>
         {activeName && isUserTheme(activeName) && (
-          <button className="danger" onClick={() => onDeleteUserTheme(activeName)}>
+          <Button variant="danger" onClick={() => onDeleteUserTheme(activeName)}>
             Delete
-          </button>
+          </Button>
         )}
       </div>
       <div className="legit-panel__body">

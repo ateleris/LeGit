@@ -2,6 +2,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
 import { formatAppError } from "../../lib/types";
 import { useGitStatusStore } from "../../store/git-status";
+import { Button } from "../shared/buttons";
 
 /** v0.1 Settings panel: Git executable path only (DESIGN.md §8). */
 export function SettingsPanel() {
@@ -77,13 +78,13 @@ export function SettingsPanel() {
                     placeholder="/usr/bin/git or C:\\Program Files\\Git\\cmd\\git.exe"
                   />
                   <button onClick={browseFor}>Browse…</button>
-                  <button
-                    className="primary"
+                  <Button
+                    variant="primary"
                     disabled={pending}
                     onClick={() => apply(draft.trim() === "" ? null : draft)}
                   >
                     Apply
-                  </button>
+                  </Button>
                   <button onClick={() => apply(null)} disabled={pending}>
                     Reset
                   </button>

@@ -6,6 +6,7 @@ import {
   type CredentialRequestPayload,
 } from "../lib/events";
 import { credentialRespond, credentialCancel } from "../lib/commands";
+import { Button } from "./shared/buttons";
 
 /**
  * Global host for in-app git credential prompts. The backend's credential
@@ -179,13 +180,13 @@ function CredentialDialog({
       </label>
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
         <button onClick={() => void cancel()}>Cancel</button>
-        <button
-          className="primary"
+        <Button
+          variant="primary"
           disabled={!username.trim() || !password}
           onClick={() => void submit()}
         >
           OK
-        </button>
+        </Button>
       </div>
     </div>,
     document.body,

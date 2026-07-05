@@ -185,6 +185,98 @@ export function conflictsToDiff(parsed: ParsedConflicts, path: string): TextDiff
   return { old_path: path, new_path: path, hunks };
 }
 
+// ---------------------------------------------------------------------------
+// 3-way scroll alignment: conflict anchor lines per pane + piecewise mapping
+// ---------------------------------------------------------------------------
+
+/** For each conflict, its 0-based start line in the centre (marker) doc and
+ *  in each side's "file as if that side were chosen" - the shape of the real
+ *  index stages, assuming the working file still reflects the merge that
+ *  produced the markers (edits degrade the alignment gracefully, never
+ *  break it: the mapping clamps). `base` is derivable only from diff3
+ *  markers; null under the classic conflict style. */
+export interface ConflictAnchors {
+  center: number[];
+  ours: number[];
+  theirs: number[];
+  base: number[] | null;
+}
+
+export function conflictAnchors(parsed: ParsedConflicts): ConflictAnchors {
+  const center: number[] = [];
+  const ours: number[] = [];
+  const theirs: number[] = [];
+  const base: number[] = [];
+  let haveBase = true;
+  let c = 0;
+  let o = 0;
+  let t = 0;
+  let b = 0;
+  for (const section of parsed.sections) {
+    if (section.kind === "common") {
+      c += section.lines.length;
+      o += section.lines.length;
+      t += section.lines.length;
+      b += section.lines.length;
+      continue;
+    }
+    center.push(c);
+    ours.push(o);
+    theirs.push(t);
+    base.push(b);
+    // Centre doc: `<<<` + ours + (diff3: `|||` + base) + `===` + theirs + `>>>`.
+    c += 1 + section.ours.length + (section.base ? 1 + section.base.length : 0) + 1 + section.theirs.length + 1;
+    o += section.ours.length;
+    t += section.theirs.length;
+    if (section.base) b += section.base.length;
+    else haveBase = false;
+  }
+  return { center, ours, theirs, base: haveBase ? base : null };
+}
+
+/** Piecewise-linear map of `x` through matched ascending breakpoints;
+ *  clamps outside the ends. `xs`/`ys` are same-length, length >= 1. */
+export function piecewiseMap(x: number, xs: number[], ys: number[]): number {
+  if (x <= xs[0]) return ys[0];
+  const last = xs.length - 1;
+  if (x >= xs[last]) return ys[last];
+  for (let i = 0; i < last; i++) {
+    if (x <= xs[i + 1]) {
+      const span = xs[i + 1] - xs[i];
+      const f = span > 0 ? (x - xs[i]) / span : 0;
+      return ys[i] + f * (ys[i + 1] - ys[i]);
+    }
+  }
+  return ys[last];
+}
+
+/** Matched scroll breakpoints from per-pane anchor pixel offsets: pinned to
+ *  (0, 0) and (srcMax, dstMax), keeping only anchor pairs that preserve
+ *  strict monotonicity on BOTH axes (an anchor beyond a pane's scroll range,
+ *  or out of order after clamping, would make the map reverse - drop it). */
+export function alignedBreakpoints(
+  src: number[],
+  srcMax: number,
+  dst: number[],
+  dstMax: number
+): { xs: number[]; ys: number[] } {
+  const xs = [0];
+  const ys = [0];
+  for (let i = 0; i < Math.min(src.length, dst.length); i++) {
+    const x = src[i];
+    const y = dst[i];
+    if (x <= xs[xs.length - 1] || x >= srcMax) continue;
+    if (y <= ys[ys.length - 1] || y >= dstMax) continue;
+    xs.push(x);
+    ys.push(y);
+  }
+  if (srcMax > 0 && dstMax > 0) {
+    xs.push(srcMax);
+    ys.push(dstMax);
+  }
+  return { xs, ys };
+}
+
 export type ResolveChoice = "ours" | "theirs" | "both";
 
 function joinLines(lines: string[], eol: Eol, trailingNewline: boolean): string {

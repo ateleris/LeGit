@@ -4,6 +4,7 @@ import { consoleCancel, consoleExec } from "../../lib/commands";
 import { onConsoleOutput } from "../../lib/events";
 import { formatAppError } from "../../lib/types";
 import { useActiveRepo } from "../../store/repos";
+import { Button } from "../shared/buttons";
 
 interface LogLine {
   id: number;
@@ -194,14 +195,14 @@ export function ConsolePanel() {
           style={{ flex: 1 }}
           autoFocus
         />
-        <button type="submit" className="primary" disabled={!activeRepo || running}>
+        <Button type="submit" variant="primary" disabled={!activeRepo || running}>
           Run
-        </button>
+        </Button>
         <button type="button" onClick={() => setLines([])}>Clear</button>
         {running && (
-          <button type="button" className="danger" onClick={cancel}>
+          <Button type="button" variant="danger" onClick={cancel}>
             Cancel
-          </button>
+          </Button>
         )}
       </form>
     </div>

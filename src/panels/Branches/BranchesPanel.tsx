@@ -17,6 +17,7 @@ import {
 } from "../../lib/commands";
 import { groupRemoteBranches, shortRemoteBranchName } from "../../lib/branchGroups";
 import { ChevronDownIcon } from "../../icons";
+import { Button } from "../shared/buttons";
 import { notifySwitchOutcome, formatSwitchError } from "../../lib/switchFeedback";
 import { notifyMergeOutcome, notifyOpError, notifyRebaseOutcome } from "../../lib/mergeFeedback";
 import { OP_DOMAINS, useOpState } from "../../lib/useOpState";
@@ -391,13 +392,13 @@ export function BranchesSection() {
               placeholder="from (branch / tag / SHA, or blank for HEAD)"
               style={{ ...monoInput, flex: 1 }}
             />
-            <button
-              className="primary"
+            <Button
+              variant="primary"
               disabled={busy || !createName.trim()}
               onClick={doCreate}
             >
               Create
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -559,9 +560,9 @@ function LocalBranchRow({
             Delete <strong>{branch.name}</strong>?
           </span>
           <div style={{ display: "flex", gap: 6 }}>
-            <button className="danger" disabled={busy} onClick={() => onDoDelete(false)}>
+            <Button variant="danger" disabled={busy} onClick={() => onDoDelete(false)}>
               Delete
-            </button>
+            </Button>
             <button disabled={busy} onClick={() => onDoDelete(true)}>
               Force Delete
             </button>

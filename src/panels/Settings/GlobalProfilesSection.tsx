@@ -9,6 +9,7 @@ import {
   updateGitProfile,
   deleteGitProfile,
 } from "../../lib/commands";
+import { Button } from "../shared/buttons";
 
 const FORMAT_OPTIONS: { label: string; value: string | null }[] = [
   { label: "ssh", value: "ssh" },
@@ -123,9 +124,9 @@ export function GlobalProfilesSection() {
         />
       ) : (
         <div style={{ marginTop: 10 }}>
-          <button className="primary" onClick={() => setEditing(emptyProfile())}>
+          <Button variant="primary" onClick={() => setEditing(emptyProfile())}>
             New profile
-          </button>
+          </Button>
         </div>
       )}
 
@@ -211,9 +212,9 @@ function ProfileEditor({
       </Field>
 
       <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-        <button className="primary" disabled={p.name.trim() === ""} onClick={() => onSave({ ...p, name: p.name.trim() })}>
+        <Button variant="primary" disabled={p.name.trim() === ""} onClick={() => onSave({ ...p, name: p.name.trim() })}>
           Save profile
-        </button>
+        </Button>
         <button onClick={onCancel}>Cancel</button>
       </div>
     </div>

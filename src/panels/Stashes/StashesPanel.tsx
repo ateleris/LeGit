@@ -22,6 +22,7 @@ import { formatRelative } from "../../lib/time";
 import { StashIcon } from "../../icons";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { InlineEditor } from "../shared/InlineEditor";
+import { Button } from "../shared/buttons";
 
 // A stash mutation touches the working tree, the stash list, and the graph.
 const AFFECTED_DOMAINS = ["stashes", "log", "status"];
@@ -289,9 +290,9 @@ export function StashesSection() {
               placeholder="message (optional)"
               style={{ ...monoInput, flex: 1 }}
             />
-            <button className="primary" disabled={busy} onClick={doCreate}>
+            <Button variant="primary" disabled={busy} onClick={doCreate}>
               Stash
-            </button>
+            </Button>
           </div>
           <label
             style={{
@@ -470,9 +471,9 @@ function StashRow({
           <span style={{ fontSize: "var(--fz-md)", flex: 1 }}>
             Drop this stash?
           </span>
-          <button className="danger" disabled={busy} onClick={onConfirmDrop}>
+          <Button variant="danger" disabled={busy} onClick={onConfirmDrop}>
             Drop
-          </button>
+          </Button>
           <button disabled={busy} onClick={onCancelDrop}>
             Cancel
           </button>

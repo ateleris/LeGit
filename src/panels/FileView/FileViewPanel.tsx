@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { EditorState, StateEffect } from "@codemirror/state";
+import { EditorView, lineNumbers } from "@codemirror/view";
 import { useActiveRepo } from "../../store/repos";
+import { useSettingsStore } from "../../store/settings";
 import { useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { repoFileAtRevision } from "../../lib/commands";
 import { formatAppError, type FileAtRevision } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
+import { baseTheme, readOnly } from "../Diff/DiffEditor";
+import { loadLanguageForPath, syntaxColorTheme } from "../Diff/syntaxLanguages";
 
 /** Summon payload: which file, at which tree-ish. */
 export interface FileViewRequest {
@@ -34,6 +39,49 @@ function isFileViewRequest(payload: unknown): payload is FileViewRequest {
     typeof (payload as FileViewRequest).path === "string" &&
     typeof (payload as FileViewRequest).rev === "string"
   );
+}
+
+/**
+ * Read-only CodeMirror pane over a whole real file - so, unlike the diff
+ * views' reconstructed hunk sides, the language support attaches directly
+ * (full-fidelity highlighting). The language chunk loads lazily and is
+ * appended to the live config when it arrives.
+ */
+function FileContentView({
+  content,
+  path,
+  syntaxEnabled,
+}: {
+  content: string;
+  path: string;
+  syntaxEnabled: boolean;
+}) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: content,
+        extensions: [baseTheme, ...readOnly, lineNumbers()],
+      }),
+      parent: host,
+    });
+    let disposed = false;
+    if (syntaxEnabled) {
+      void loadLanguageForPath(path).then((support) => {
+        if (disposed || !support) return;
+        view.dispatch({ effects: StateEffect.appendConfig.of([support, syntaxColorTheme]) });
+      });
+    }
+    return () => {
+      disposed = true;
+      view.destroy();
+    };
+  }, [content, path, syntaxEnabled]);
+
+  return <div ref={hostRef} style={{ height: "100%" }} />;
 }
 
 /**
@@ -67,6 +115,7 @@ export function FileViewPanel() {
     staleTime: 60_000,
   });
   const content = data && "Text" in data ? data.Text : null;
+  const syntaxEnabled = useSettingsStore((s) => s.settings?.diff_syntax_highlighting ?? false);
   usePanelFocusEffect(useCallback(() => { refetch(); }, [refetch]));
 
   if (!repo || !request) {
@@ -80,11 +129,6 @@ export function FileViewPanel() {
       </div>
     );
   }
-
-  const lines = content != null ? content.split("\n") : [];
-  // A trailing newline produces one phantom empty line at the end — drop it.
-  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
-  const gutterWidth = String(lines.length).length;
 
   return (
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
@@ -105,7 +149,7 @@ export function FileViewPanel() {
         </span>
       </div>
 
-      <div className="legit-panel__body" style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 0 }}>
+      <div className="legit-panel__body" style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: 0 }}>
         {isError ? (
           <pre className="legit-error" style={{ margin: 8, fontSize: "var(--fz-md)" }}>
             {formatAppError(error)}
@@ -116,18 +160,7 @@ export function FileViewPanel() {
           </span>
         ) : (
           content != null && (
-            <pre
-              style={{
-                margin: 0,
-                padding: "4px 8px",
-                fontSize: "var(--fz-md)",
-                fontFamily: "monospace",
-              }}
-            >
-              {lines
-                .map((line, i) => `${String(i + 1).padStart(gutterWidth)}  ${line}`)
-                .join("\n")}
-            </pre>
+            <FileContentView content={content} path={request.path} syntaxEnabled={syntaxEnabled} />
           )
         )}
       </div>

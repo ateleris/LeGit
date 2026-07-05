@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
+import { useSettingsStore } from "../../store/settings";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { repoBlame } from "../../lib/commands";
@@ -9,6 +10,13 @@ import { formatAppError } from "../../lib/types";
 import { formatRelative } from "../../lib/time";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { RevPicker } from "../shared/RevPicker";
+import {
+  MAX_SYNTAX_CHARS,
+  computeFileSyntaxSegments,
+  syntaxVarFor,
+  type SyntaxSegment,
+} from "../Diff/syntaxModel";
+import { loadParserForPath } from "../Diff/syntaxLanguages";
 
 const UNCOMMITTED = "0".repeat(40);
 
@@ -69,6 +77,26 @@ export function BlamePanel() {
     staleTime: 5_000,
   });
   usePanelFocusEffect(useCallback(() => { refetch(); }, [refetch]));
+
+  // Syntax highlighting (global opt-in). Blame hunks tile the whole file in
+  // order, so the full file is reconstructed and parsed once (full fidelity);
+  // segments are addressed by absolute line via each hunk's start_line.
+  const syntaxEnabled = useSettingsStore((s) => s.settings?.diff_syntax_highlighting ?? false);
+  const [segments, setSegments] = useState<SyntaxSegment[][] | null>(null);
+  useEffect(() => {
+    setSegments(null);
+    if (!syntaxEnabled || !path || hunks.length === 0) return;
+    const lines = hunks.flatMap((h) => h.lines);
+    if (lines.reduce((n, l) => n + l.length, 0) > MAX_SYNTAX_CHARS) return;
+    let cancelled = false;
+    void loadParserForPath(path).then((parser) => {
+      if (cancelled || !parser) return;
+      setSegments(computeFileSyntaxSegments(lines, parser));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [syntaxEnabled, path, hunks]);
 
   const openCommit = (h: BlameHunk) => {
     if (h.sha === UNCOMMITTED) return;
@@ -156,6 +184,7 @@ export function BlamePanel() {
               key={`${h.sha}-${h.start_line}`}
               hunk={h}
               tinted={i % 2 === 1}
+              segments={segments}
               onOpen={() => openCommit(h)}
               onReblameParent={() => reblameParent(h)}
             />
@@ -166,14 +195,38 @@ export function BlamePanel() {
   );
 }
 
+/** One line's text as syntax-coloured spans (plain text when no segments).
+ *  Segments are row-local, ascending, non-overlapping (highlightTree order);
+ *  colours inline the `syntax.*` token vars - the `cm-syn-*` classes are
+ *  scoped to CodeMirror's theme and do nothing in this DOM. */
+function renderLine(text: string, segs: SyntaxSegment[] | undefined): React.ReactNode {
+  if (!segs || segs.length === 0) return text;
+  const out: React.ReactNode[] = [];
+  let pos = 0;
+  segs.forEach((s, i) => {
+    if (s.from > pos) out.push(text.slice(pos, s.from));
+    out.push(
+      <span key={i} style={{ color: syntaxVarFor(s.cls) }}>
+        {text.slice(s.from, s.to)}
+      </span>
+    );
+    pos = s.to;
+  });
+  if (pos < text.length) out.push(text.slice(pos));
+  return out;
+}
+
 function HunkRow({
   hunk,
   tinted,
+  segments,
   onOpen,
   onReblameParent,
 }: {
   hunk: BlameHunk;
   tinted: boolean;
+  /** Whole-file per-line syntax segments (absolute 0-based line index). */
+  segments: SyntaxSegment[][] | null;
   onOpen: () => void;
   onReblameParent: () => void;
 }) {
@@ -251,9 +304,13 @@ function HunkRow({
           overflowX: "auto",
         }}
       >
-        {hunk.lines
-          .map((line, i) => `${String(hunk.start_line + i).padStart(5)}  ${line}`)
-          .join("\n")}
+        {hunk.lines.map((line, i) => (
+          <div key={i}>
+            <span className="legit-subtle">{String(hunk.start_line + i).padStart(5)}</span>
+            {"  "}
+            {renderLine(line, segments?.[hunk.start_line - 1 + i])}
+          </div>
+        ))}
       </pre>
     </div>
   );
