@@ -1,10 +1,12 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import { cancelClone, listGitProfiles, recentRepos } from "../../lib/commands";
+import type { CloneOptions, InitOptions } from "../../lib/commands";
 import type { GitProfile } from "../../lib/types";
 import { formatAppError, gitErrorKind } from "../../lib/types";
 import { useRepoStore } from "../../store/repos";
 import { useRemoteProgressStore } from "../../store/remoteProgress";
+import { notify } from "../../store/notifications";
 
 type Mode = "none" | "clone" | "init";
 
@@ -77,8 +79,8 @@ export function RepositoriesPanel() {
             profiles={profiles}
             onCancel={() => setMode("none")}
             onError={setError}
-            onClone={async (url, parentDir, name, profileId, opId) => {
-              await cloneRepo(url, parentDir, name, profileId, opId);
+            onClone={async (url, parentDir, name, profileId, opId, options) => {
+              await cloneRepo(url, parentDir, name, profileId, opId, options);
               setMode("none");
               refreshRecents();
             }}
@@ -89,10 +91,13 @@ export function RepositoriesPanel() {
             profiles={profiles}
             onCancel={() => setMode("none")}
             onError={setError}
-            onInit={async (path, profileId) => {
-              await initRepo(path, profileId);
+            onInit={async (path, profileId, options) => {
+              const summary = await initRepo(path, profileId, options);
               setMode("none");
               refreshRecents();
+              if (!summary) {
+                notify.success(`Bare repository created at ${path}`);
+              }
             }}
           />
         )}
@@ -140,7 +145,14 @@ function CloneForm({
   onError,
 }: {
   profiles: GitProfile[];
-  onClone: (url: string, parentDir: string, name: string, profileId: string | null, opId: string) => Promise<void>;
+  onClone: (
+    url: string,
+    parentDir: string,
+    name: string,
+    profileId: string | null,
+    opId: string,
+    options: CloneOptions,
+  ) => Promise<void>;
   onCancel: () => void;
   onError: (msg: string | null) => void;
 }) {
@@ -148,6 +160,9 @@ function CloneForm({
   const [parentDir, setParentDir] = useState("");
   const [name, setName] = useState("");
   const [profileId, setProfileId] = useState("");
+  const [depth, setDepth] = useState("");
+  const [branch, setBranch] = useState("");
+  const [recurseSubmodules, setRecurseSubmodules] = useState(false);
   const [busy, setBusy] = useState(false);
   const opIdRef = useRef<string | null>(null);
   const cancelRequestedRef = useRef(false);
@@ -169,8 +184,13 @@ function CloneForm({
     cancelRequestedRef.current = false;
     setBusy(true);
     onError(null);
+    const parsedDepth = Number.parseInt(depth, 10);
     try {
-      await onClone(url.trim(), parentDir.trim(), name.trim(), profileId || null, opId);
+      await onClone(url.trim(), parentDir.trim(), name.trim(), profileId || null, opId, {
+        depth: Number.isFinite(parsedDepth) && parsedDepth > 0 ? parsedDepth : null,
+        branch: branch.trim() || null,
+        recurseSubmodules,
+      });
     } catch (e) {
       if (!cancelRequestedRef.current) {
         onError(
@@ -214,6 +234,34 @@ function CloneForm({
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="target folder" style={{ width: "100%", fontFamily: "monospace" }} />
       </Field>
       <ProfileField profiles={profiles} value={profileId} onChange={setProfileId} />
+      <div style={{ display: "flex", gap: 6 }}>
+        <Field label="Branch (optional)">
+          <input
+            value={branch}
+            onChange={(e) => setBranch(e.target.value)}
+            placeholder="remote default"
+            style={{ width: "100%", fontFamily: "monospace" }}
+          />
+        </Field>
+        <Field label="Depth (optional)">
+          <input
+            type="number"
+            min={1}
+            value={depth}
+            onChange={(e) => setDepth(e.target.value)}
+            placeholder="full history"
+            style={{ width: "100%" }}
+          />
+        </Field>
+      </div>
+      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fz-md)" }}>
+        <input
+          type="checkbox"
+          checked={recurseSubmodules}
+          onChange={(e) => setRecurseSubmodules(e.target.checked)}
+        />
+        Clone submodules
+      </label>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
         <button className="primary" disabled={busy || !url.trim() || !parentDir.trim() || !name.trim()} onClick={submit}>
           {busy ? "Cloning…" : "Clone"}
@@ -245,12 +293,14 @@ function InitForm({
   onError,
 }: {
   profiles: GitProfile[];
-  onInit: (path: string, profileId: string | null) => Promise<void>;
+  onInit: (path: string, profileId: string | null, options: InitOptions) => Promise<void>;
   onCancel: () => void;
   onError: (msg: string | null) => void;
 }) {
   const [dir, setDir] = useState("");
   const [profileId, setProfileId] = useState("");
+  const [bare, setBare] = useState(false);
+  const [initialBranch, setInitialBranch] = useState("");
   const [busy, setBusy] = useState(false);
 
   const browse = async () => {
@@ -263,7 +313,10 @@ function InitForm({
     setBusy(true);
     onError(null);
     try {
-      await onInit(dir.trim(), profileId || null);
+      await onInit(dir.trim(), profileId || null, {
+        bare,
+        initialBranch: initialBranch.trim() || null,
+      });
     } catch (e) {
       onError(formatAppError(e));
     } finally {
@@ -279,7 +332,19 @@ function InitForm({
           <button onClick={browse}>Browse…</button>
         </div>
       </Field>
-      <ProfileField profiles={profiles} value={profileId} onChange={setProfileId} />
+      <Field label="Initial branch (optional)">
+        <input
+          value={initialBranch}
+          onChange={(e) => setInitialBranch(e.target.value)}
+          placeholder="git default"
+          style={{ width: "100%", fontFamily: "monospace" }}
+        />
+      </Field>
+      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fz-md)" }}>
+        <input type="checkbox" checked={bare} onChange={(e) => setBare(e.target.checked)} />
+        Bare repository (created but not opened, it has no working tree)
+      </label>
+      <ProfileField profiles={profiles} value={profileId} onChange={setProfileId} disabled={bare} />
       <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
         <button className="primary" disabled={busy || !dir.trim()} onClick={submit}>
           {busy ? "Initializing…" : "Init"}
@@ -295,14 +360,22 @@ function ProfileField({
   profiles,
   value,
   onChange,
+  disabled,
 }: {
   profiles: GitProfile[];
   value: string;
   onChange: (v: string) => void;
+  /** Disable when a profile cannot apply (profiles are session-scoped, e.g. bare init). */
+  disabled?: boolean;
 }) {
   return (
     <Field label="Profile">
-      <select value={value} onChange={(e) => onChange(e.target.value)} style={{ width: "100%" }}>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ width: "100%" }}
+        disabled={disabled}
+      >
         <option value="">Use global config</option>
         {profiles.map((p) => (
           <option key={p.id} value={p.id}>{p.name}</option>

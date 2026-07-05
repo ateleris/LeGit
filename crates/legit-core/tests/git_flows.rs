@@ -608,7 +608,7 @@ async fn blame_attributes_lines_to_the_right_commits() {
     repo.commit_all("second").await;
     let c2 = repo.head().await;
 
-    let hunks = repo.backend.blame(std::path::Path::new("a.txt")).await.unwrap();
+    let hunks = repo.backend.blame(std::path::Path::new("a.txt"), None).await.unwrap();
     assert_eq!(hunks.len(), 2, "{hunks:?}");
     assert_eq!(hunks[0].sha.as_str(), c1);
     assert_eq!(hunks[0].start_line, 1);
@@ -617,6 +617,29 @@ async fn blame_attributes_lines_to_the_right_commits() {
     assert_eq!(hunks[1].sha.as_str(), c2);
     assert_eq!(hunks[1].lines, vec!["TWO"]);
     assert_eq!(hunks[1].author, "LeGit Test");
+
+    // Blame at a revision sees the file as of that rev: every line from c1.
+    let historic = repo
+        .backend
+        .blame(std::path::Path::new("a.txt"), Some(&c1))
+        .await
+        .unwrap();
+    assert_eq!(historic.len(), 1, "{historic:?}");
+    assert_eq!(historic[0].sha.as_str(), c1);
+    assert_eq!(historic[0].lines, vec!["one", "two"]);
+}
+
+#[tokio::test]
+async fn merge_base_resolves_the_fork_point() {
+    let repo = TestRepo::init().await;
+    conflicting_branches(&repo).await; // base -> feature + main diverge
+    let base = repo.git(&["rev-parse", "main~1"]).await.trim().to_string();
+
+    let mb = repo.backend.merge_base("main", "feature").await.unwrap();
+    assert_eq!(mb.as_deref(), Some(base.as_str()));
+
+    // Unknown revs are an error, not a silent None.
+    assert!(repo.backend.merge_base("main", "no-such-rev").await.is_err());
 }
 
 // ---------------------------------------------------------------------------
@@ -894,4 +917,183 @@ async fn conflicted_cherry_pick_is_detected() {
         other => panic!("expected CherryPick op state, got {other:?}"),
     }
     assert!(!repo.backend.conflict_entries().await.unwrap().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// branch listing: %(upstream:track) divergence (validates the parser's
+// assumption about real git's "[ahead N, behind M]" / "[gone]" text)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn branch_list_reports_upstream_divergence_and_gone() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+
+    // A local branch as upstream is enough for %(upstream:track): create `up`
+    // at base, diverge it by one commit, and put one extra commit on main.
+    repo.git(&["branch", "up"]).await;
+    repo.git(&["branch", "--set-upstream-to=up", "main"]).await;
+    repo.git(&["switch", "up"]).await;
+    repo.write("up.txt", "up\n");
+    repo.commit_all("up change").await;
+    repo.git(&["switch", "main"]).await;
+    repo.write("b.txt", "main\n");
+    repo.commit_all("main change").await;
+
+    let branches = repo.backend.branches().await.unwrap();
+    let main = branches.iter().find(|b| b.name == "main").expect("main listed");
+    assert_eq!(main.ahead, Some(1), "{main:?}");
+    assert_eq!(main.behind, Some(1), "{main:?}");
+    assert!(!main.upstream_gone);
+
+    // A branch in sync with its upstream reports no divergence.
+    let up = branches.iter().find(|b| b.name == "up").expect("up listed");
+    assert_eq!((up.ahead, up.behind), (None, None), "{up:?}");
+
+    // Deleting the upstream ref turns the tracking info into "[gone]".
+    repo.git(&["branch", "-D", "up"]).await;
+    let branches = repo.backend.branches().await.unwrap();
+    let main = branches.iter().find(|b| b.name == "main").expect("main listed");
+    assert!(main.upstream_gone, "{main:?}");
+    assert_eq!((main.ahead, main.behind), (None, None), "{main:?}");
+}
+
+// ---------------------------------------------------------------------------
+// file at revision: read (`show rev:path`) and restore (`checkout rev -- path`)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn file_at_revision_reads_and_restores_historic_content() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "v1\n");
+    repo.commit_all("v1").await;
+    repo.write("a.txt", "v2\n");
+    repo.commit_all("v2").await;
+    repo.write("a.txt", "dirty\n"); // uncommitted local edit
+
+    let content = repo
+        .backend
+        .file_at_revision("HEAD~1", std::path::Path::new("a.txt"))
+        .await
+        .unwrap();
+    assert_eq!(content, "v1\n");
+
+    // A path missing at the rev is an error, not empty content.
+    let missing = repo
+        .backend
+        .file_at_revision("HEAD~1", std::path::Path::new("nope.txt"))
+        .await;
+    assert!(missing.is_err());
+
+    // Restore overwrites the dirty working-tree copy AND stages the content
+    // (a pathspec checkout touches index + worktree, without complaint).
+    repo.backend
+        .restore_file_at_revision("HEAD~1", std::path::Path::new("a.txt"))
+        .await
+        .unwrap();
+    assert_eq!(repo.read("a.txt"), "v1\n");
+    let staged = repo.git(&["diff", "--cached", "--name-only"]).await;
+    assert!(staged.contains("a.txt"), "restore should stage the file: {staged}");
+}
+
+// ---------------------------------------------------------------------------
+// credential helper injection via GIT_CONFIG_* environment config
+// (the in-app credential prompt depends on: env config applies like `-c`,
+// a `!shell` helper runs with the op appended, and its output is consumed)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn env_injected_credential_helper_is_consulted() {
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let helper = r#"!f() { test "$1" = get && printf 'username=u-from-helper\npassword=p-from-helper\n'; }; f"#;
+
+    let mut child = Command::new("git")
+        .current_dir(dir.path())
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "credential.helper")
+        .env("GIT_CONFIG_VALUE_0", helper)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args(["credential", "fill"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn git credential fill");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"protocol=https\nhost=example.invalid\n\n")
+        .unwrap();
+    let out = child.wait_with_output().expect("git credential fill");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("username=u-from-helper"), "{stdout}");
+    assert!(stdout.contains("password=p-from-helper"), "{stdout}");
+}
+
+// ---------------------------------------------------------------------------
+// non-UTF-8 output survives the runner (lossy decode, never silently empty)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn non_utf8_file_content_is_not_silently_dropped() {
+    let repo = TestRepo::init().await;
+    // Latin-1 "caf<e9>" + newline: invalid UTF-8, but text to git (no NUL).
+    std::fs::write(repo.path.join("latin1.txt"), b"caf\xe9\n").expect("write file");
+    repo.commit_all("latin1").await;
+
+    let content = repo
+        .backend
+        .file_at_revision("HEAD", std::path::Path::new("latin1.txt"))
+        .await
+        .unwrap();
+    assert!(!content.is_empty(), "non-UTF-8 content must not vanish");
+    assert!(content.starts_with("caf"), "{content:?}");
+
+    // The same guarantee for a diff of such a file.
+    std::fs::write(repo.path.join("latin1.txt"), b"caf\xe9 au lait\n").expect("write file");
+    let diff = repo
+        .backend
+        .file_diff(
+            &legit_core::DiffSource::WorkingUnstaged,
+            std::path::Path::new("latin1.txt"),
+            None,
+            3,
+        )
+        .await
+        .unwrap();
+    match diff {
+        legit_core::DiffEntry::Text(text) => {
+            assert!(!text.hunks.is_empty(), "diff of a modified non-UTF-8 file must show hunks");
+        }
+        other => panic!("expected a text diff, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CRLF content survives hunk staging (rebuilt patches must keep the \r bytes)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn hunk_staging_works_on_crlf_files() {
+    let repo = TestRepo::init().await; // pins core.autocrlf=false
+    repo.write("c.txt", "a\r\nb\r\nc\r\n");
+    repo.commit_all("crlf base").await;
+    repo.write("c.txt", "a\r\nB\r\nc\r\n");
+
+    repo.backend
+        .apply_hunk(std::path::Path::new("c.txt"), 0, legit_core::HunkOp::Stage)
+        .await
+        .expect("staging a CRLF hunk must succeed");
+
+    let staged = repo.git(&["diff", "--cached"]).await;
+    assert!(staged.contains("+B\r"), "staged patch kept the CR: {staged:?}");
+    // Nothing left unstaged: the whole change was one hunk.
+    let unstaged = repo.git(&["diff"]).await;
+    assert!(unstaged.trim().is_empty(), "{unstaged:?}");
 }

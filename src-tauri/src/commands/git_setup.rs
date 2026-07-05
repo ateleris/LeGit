@@ -40,13 +40,31 @@ pub async fn set_git_path(
 ) -> Result<GitStatus, AppError> {
     let override_pb = path.as_deref().map(PathBuf::from);
     let resolved = resolve_git_path(override_pb.as_ref());
+    // Separate acquisitions - nesting them would pin a lock order for no gain.
     {
         let mut settings = state.global_settings.write().await;
         settings.git_path_override = path.clone();
+    }
+    {
         let mut current = state.git_path.write().await;
         *current = resolved.clone();
     }
     state.persist_global_settings().await?;
+
+    // Hot-swap the runner of every open session so the change takes effect
+    // immediately - this is what the `RwLock<Arc<GitRunner>>` indirection in
+    // `RepoSession` exists for. Sessions with a per-repo override keep their
+    // own binary (`resolve_repo_git_path` prefers the override when valid).
+    {
+        let repos = state.repos.read().await;
+        for session in repos.values() {
+            let repo_settings = session.settings.read().await.clone();
+            let effective = resolve_repo_git_path(&repo_settings, &resolved);
+            *session.runner.write().await =
+                std::sync::Arc::new(GitRunner::for_repo(effective, &session.path));
+        }
+    }
+
     probe(&resolved, path).await
 }
 

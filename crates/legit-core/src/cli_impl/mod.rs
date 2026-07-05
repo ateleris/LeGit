@@ -772,11 +772,17 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         Ok(parsers::branches::parse_branches(&output.stdout))
     }
 
-    async fn blame(&self, path: &Path) -> Result<Vec<BlameHunk>, GitError> {
+    async fn blame(&self, path: &Path, rev: Option<&str>) -> Result<Vec<BlameHunk>, GitError> {
         let runner = self.runner().await;
         let path_str = path.to_string_lossy();
+        let mut args = vec!["blame", "--porcelain"];
+        if let Some(rev) = rev {
+            args.push(rev);
+        }
+        args.push("--");
+        args.push(&path_str);
         let output = runner
-            .run(&["blame", "--porcelain", "--", &path_str])
+            .run(&args)
             .await
             .map_err(|e| GitError::Internal(e.to_string()))?;
         if !output.success {
@@ -786,6 +792,24 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             });
         }
         Ok(parsers::blame::parse_blame(&output.stdout))
+    }
+
+    async fn merge_base(&self, a: &str, b: &str) -> Result<Option<String>, GitError> {
+        let runner = self.runner().await;
+        let output = runner
+            .run(&["merge-base", a, b])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        // Exit 1 = no common ancestor (unrelated histories) - that is an
+        // answer, not an error. Unknown revs etc. exit 128 and are errors.
+        match output.exit_code {
+            Some(0) => Ok(Some(output.stdout.trim().to_string())),
+            Some(1) => Ok(None),
+            _ => Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr.trim().to_string(),
+            }),
+        }
     }
 
     async fn search_commits(
@@ -800,7 +824,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let filter = match kind {
             CommitSearchKind::Message => format!("--grep={query}"),
             CommitSearchKind::Author => format!("--author={query}"),
-            CommitSearchKind::Content => query.to_string(),
+            CommitSearchKind::Content | CommitSearchKind::ContentRegex => query.to_string(),
         };
         let mut args = vec!["log", &fmt_arg, &max_arg];
         match kind {
@@ -810,6 +834,11 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             }
             CommitSearchKind::Content => {
                 args.push("-S");
+                args.push(&filter);
+            }
+            // -G is regex by nature (unlike -S, which needs --pickaxe-regex).
+            CommitSearchKind::ContentRegex => {
+                args.push("-G");
                 args.push(&filter);
             }
         }
@@ -1065,6 +1094,29 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
                 .await?;
         }
         Ok(())
+    }
+
+    async fn file_at_revision(&self, rev: &str, path: &Path) -> Result<String, GitError> {
+        let runner = self.runner().await;
+        let spec = format!("{rev}:{}", path.to_string_lossy());
+        let output = runner
+            .run(&["show", &spec])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !output.success {
+            return Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr.trim().to_string(),
+            });
+        }
+        Ok(output.stdout)
+    }
+
+    async fn restore_file_at_revision(&self, rev: &str, path: &Path) -> Result<(), GitError> {
+        // A pathspec checkout touches index + worktree and never refuses on
+        // local changes - the destructive-confirm gate lives in the UI.
+        self.run_pathspec(&["checkout", rev, "--"], std::slice::from_ref(&path.to_path_buf()))
+            .await
     }
 
     async fn submodules(&self) -> Result<Vec<SubmoduleInfo>, GitError> {

@@ -40,6 +40,8 @@ specta-typescript = { workspace = true }
 shlex = "1"
 which = "8"
 sha2 = "0.10"
+# OS keychain for the in-app git credential prompt ("remember" checkbox).
+keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native"] }
 notify = { workspace = true }
 notify-debouncer-full = { workspace = true }
 ignore = { workspace = true }

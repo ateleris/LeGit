@@ -279,6 +279,13 @@ pub struct Branch {
     pub is_remote: bool,
     pub upstream: Option<String>,
     pub head: Option<CommitId>,
+    /// Commits ahead of the upstream (`%(upstream:track)`); `None` when in
+    /// sync, without an upstream, or for remote branches.
+    pub ahead: Option<u32>,
+    /// Commits behind the upstream; `None` under the same conditions.
+    pub behind: Option<u32>,
+    /// The configured upstream ref no longer exists (`[gone]`).
+    pub upstream_gone: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -523,7 +530,11 @@ pub struct BlameHunk {
 pub enum CommitSearchKind {
     Message,
     Author,
+    /// Pickaxe (`-S`): commits changing the NUMBER of occurrences of the
+    /// literal string.
     Content,
+    /// `-G`: commits whose diff has an added/removed line matching the regex.
+    ContentRegex,
 }
 
 /// The three index stages of a conflicted path (1 = base, 2 = ours,

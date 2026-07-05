@@ -51,13 +51,50 @@ pub async fn repo_search_paths(
         .map_err(AppError::Git)
 }
 
+/// Blame `path` - at `rev` when given, else the working tree.
 #[tauri::command]
 #[specta::specta]
 pub async fn repo_blame(
     state: tauri::State<'_, AppState>,
     repo_id: String,
     path: PathBuf,
+    rev: Option<String>,
 ) -> Result<Vec<BlameHunk>, AppError> {
     let session = state.get_session(&repo_id).await?;
-    session.backend.blame(&path).await.map_err(AppError::Git)
+    session
+        .backend
+        .blame(&path, rev.as_deref())
+        .await
+        .map_err(AppError::Git)
+}
+
+/// Merge base of two revs, or null for unrelated histories (Compare's
+/// three-dot mode diffs from this base instead of `from` itself).
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_merge_base(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    a: String,
+    b: String,
+) -> Result<Option<String>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.merge_base(&a, &b).await.map_err(AppError::Git)
+}
+
+/// Full content of a repo-relative file as of an arbitrary tree-ish.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_file_at_revision(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    rev: String,
+    path: PathBuf,
+) -> Result<String, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .file_at_revision(&rev, &path)
+        .await
+        .map_err(AppError::Git)
 }

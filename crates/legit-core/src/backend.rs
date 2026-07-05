@@ -34,10 +34,25 @@ pub trait GitBackend: Send + Sync {
 
     async fn branches(&self) -> Result<Vec<Branch>, GitError>;
 
-    /// Blame the working-tree version of a tracked file
-    /// (`git blame --porcelain`): hunks of consecutive lines per commit,
-    /// carrying line contents. Uncommitted lines blame to the all-zeros sha.
-    async fn blame(&self, path: &Path) -> Result<Vec<BlameHunk>, GitError>;
+    /// Blame a tracked file (`git blame --porcelain`): hunks of consecutive
+    /// lines per commit, carrying line contents. `rev` blames the file as of
+    /// that tree-ish; `None` blames the working tree, where uncommitted lines
+    /// blame to the all-zeros sha.
+    async fn blame(&self, path: &Path, rev: Option<&str>) -> Result<Vec<BlameHunk>, GitError>;
+
+    /// The merge base of two revs (`git merge-base a b`), or `None` when the
+    /// histories are unrelated. Backs the Compare panel's three-dot mode.
+    async fn merge_base(&self, a: &str, b: &str) -> Result<Option<String>, GitError>;
+
+    /// Full content of `path` (repo-relative) as of `rev`
+    /// (`git show <rev>:<path>`). `rev` is any tree-ish.
+    async fn file_at_revision(&self, rev: &str, path: &Path) -> Result<String, GitError>;
+
+    /// Restore `path` in the index AND working tree to its content at `rev`
+    /// (`git checkout <rev> -- <path>`). Destructive: git overwrites local
+    /// changes to that file silently (a pathspec checkout has no dirty-tree
+    /// guard), so confirmation is the caller's job.
+    async fn restore_file_at_revision(&self, rev: &str, path: &Path) -> Result<(), GitError>;
 
     /// Search commits across HEAD + all local branches. `Message`/`Author`
     /// are case-insensitive regex matches; `Content` is the pickaxe (`-S`),

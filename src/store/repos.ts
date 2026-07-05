@@ -11,6 +11,7 @@ import {
   getRepoSettings as getRepoSettingsCmd,
   updateRepoSettings as updateRepoSettingsCmd,
 } from "../lib/commands";
+import type { CloneOptions, InitOptions } from "../lib/commands";
 import type { RepoId, RepoSettings, RepoSummary } from "../lib/types";
 
 interface RepoStore {
@@ -25,15 +26,23 @@ interface RepoStore {
   init: () => Promise<void>;
   refresh: () => Promise<void>;
   openRepo: (path: string) => Promise<RepoSummary>;
-  /** Init a new repo at `path`, open it, optionally apply a profile. */
-  initRepo: (path: string, profileId: string | null) => Promise<RepoSummary>;
+  /**
+   * Init a new repo at `path`, open it, optionally apply a profile.
+   * A bare init returns null (created, but there is no worktree to open).
+   */
+  initRepo: (
+    path: string,
+    profileId: string | null,
+    options?: InitOptions
+  ) => Promise<RepoSummary | null>;
   /** Clone `url` into `parentDir/name`, open it, optionally apply a profile. */
   cloneRepo: (
     url: string,
     parentDir: string,
     name: string,
     profileId: string | null,
-    opId: string
+    opId: string,
+    options?: CloneOptions
   ) => Promise<RepoSummary>;
   closeRepo: (id: RepoId) => Promise<void>;
   setActive: (id: RepoId | null) => void;
@@ -130,8 +139,9 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
     return summary;
   },
 
-  async initRepo(path, profileId) {
-    const summary = await repoInitCmd(path, profileId);
+  async initRepo(path, profileId, options) {
+    const summary = await repoInitCmd(path, profileId, options);
+    if (!summary) return null; // bare init: created, nothing to open
     await get().refresh();
     set({ activeRepoId: summary.id });
     setActiveRepoCmd(summary.id).catch((e) => console.warn("persist active failed", e));
@@ -139,8 +149,8 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
     return summary;
   },
 
-  async cloneRepo(url, parentDir, name, profileId, opId) {
-    const summary = await repoCloneCmd(url, parentDir, name, profileId, opId);
+  async cloneRepo(url, parentDir, name, profileId, opId, options) {
+    const summary = await repoCloneCmd(url, parentDir, name, profileId, opId, options);
     await get().refresh();
     set({ activeRepoId: summary.id });
     setActiveRepoCmd(summary.id).catch((e) => console.warn("persist active failed", e));
@@ -172,10 +182,11 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
   },
 
   async updateRepoSetting(id, key, value) {
-    const current = get().repoSettings[id] ?? {
-      git_path_override: null,
-      warn_on_mixed_endings: null,
-    };
+    // On a cold cache, fetch the real settings first: the backend replaces
+    // the WHOLE settings doc on write, so building the update from a bare
+    // fallback literal would wipe every field the TS type doesn't spell out
+    // (lane locks, selected profile).
+    const current = get().repoSettings[id] ?? (await getRepoSettingsCmd(id));
     const updated = { ...current, [key]: value };
     set((s) => ({ repoSettings: { ...s.repoSettings, [id]: updated } }));
     await updateRepoSettingsCmd(id, updated);

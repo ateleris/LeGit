@@ -5,6 +5,7 @@
 //! typed Tauri commands, and hand off to Tauri.
 
 mod commands;
+mod credentials;
 mod error;
 mod git_resolve;
 mod state;
@@ -28,6 +29,11 @@ struct RemoteProgressPayload {
 }
 
 pub fn run() {
+    // Shim dispatch MUST precede everything else: when git invokes this
+    // executable as its credential helper, we answer over the broker socket
+    // and exit - no tracing, no Tauri, no state.
+    credentials::maybe_run_credential_helper();
+
     init_tracing();
 
     let specta_builder = Builder::<tauri::Wry>::new().commands(collect_commands![
@@ -44,6 +50,8 @@ pub fn run() {
         commands::set_watcher_enabled,
         commands::console_exec,
         commands::console_cancel,
+        commands::credential_respond,
+        commands::credential_cancel,
         commands::git_status_check,
         commands::set_git_path,
         commands::set_repo_git_path,
@@ -109,6 +117,9 @@ pub fn run() {
         commands::repo_search_commits,
         commands::repo_search_paths,
         commands::repo_blame,
+        commands::repo_merge_base,
+        commands::repo_file_at_revision,
+        commands::repo_restore_file_at_revision,
         commands::repo_diff,
         commands::repo_stage_hunk,
         commands::repo_unstage_hunk,
@@ -210,6 +221,18 @@ pub fn run() {
                 builtin_themes_dir,
             );
             app.manage(state);
+
+            // In-app credential prompt: start the broker and point every git
+            // invocation's credential machinery at it. Registered BEFORE any
+            // RepoSession/GitRunner exists so every runner snapshot includes
+            // it. Failure is non-fatal - auth then behaves as before (config-
+            // driven helpers only, interactive prompts disabled).
+            match credentials::start_broker(app.handle().clone()) {
+                Ok(env) => legit_core::runner::set_global_base_env(env),
+                Err(e) => {
+                    tracing::warn!(err = %e, "credential broker failed to start - in-app credential prompts disabled");
+                }
+            }
 
             // Forward every git invocation to the UI as a live command log.
             let handle = app.handle().clone();

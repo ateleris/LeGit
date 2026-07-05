@@ -1,6 +1,7 @@
 pub mod branches;
 pub mod config_util;
 pub mod console;
+pub mod credentials;
 pub mod diff;
 pub mod git_setup;
 pub mod inspect;
@@ -18,6 +19,7 @@ pub mod working;
 
 pub use branches::*;
 pub use console::*;
+pub use credentials::*;
 pub use diff::*;
 pub use git_setup::*;
 pub use inspect::*;

@@ -155,6 +155,32 @@ export function useMenuConfirm() {
   );
 }
 
+/**
+ * Choice takeover: replaces the whole menu with a title plus one entry per
+ * option (and Cancel). `onPick` decides what happens next: it may act and
+ * close the menu, or chain into a `useMenuConfirm` step for destructive
+ * actions (the confirm content simply replaces the picker content).
+ */
+export function useMenuPicker() {
+  const { requestConfirm } = usePanelContextMenu();
+  return useCallback(
+    (title: string, options: string[], onPick: (choice: string) => void) => {
+      requestConfirm(
+        <>
+          <SectionLabel>{title}</SectionLabel>
+          {options.map((option) => (
+            <MenuItem key={option} onClick={() => onPick(option)}>
+              {option}
+            </MenuItem>
+          ))}
+          <MenuItem onClick={() => requestConfirm(null)}>Cancel</MenuItem>
+        </>,
+      );
+    },
+    [requestConfirm],
+  );
+}
+
 const MENU_MIN_W = 220;
 
 /** Positioned, dismissable portal container shared by every panel menu. */

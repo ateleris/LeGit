@@ -108,6 +108,27 @@ fn report_progress(op_id: &OperationId, progress: crate::progress::RemoteProgres
     }
 }
 
+static GLOBAL_BASE_ENV: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
+
+/// Install process-wide extra base-environment variables appended to the
+/// hardened base env of every `GitRunner` constructed afterwards (per-runner
+/// snapshot, like the rest of the base env). Set once at startup, before any
+/// runner exists - the app uses it to point git's credential machinery at
+/// the in-app credential broker (`GIT_CONFIG_*` + the broker's endpoint).
+/// Applied after `default_base_env`, so it may override hardened defaults.
+pub fn set_global_base_env(vars: Vec<(String, String)>) {
+    let _ = GLOBAL_BASE_ENV.set(vars);
+}
+
+/// The hardened defaults plus any registered process-wide extras.
+fn base_env_with_globals() -> Vec<(String, String)> {
+    let mut env = default_base_env();
+    if let Some(extra) = GLOBAL_BASE_ENV.get() {
+        env.extend(extra.iter().cloned());
+    }
+    env
+}
+
 /// Streaming event emitted while a `git` invocation is in flight.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -159,7 +180,7 @@ impl GitRunner {
         Self {
             git_path: git_path.into(),
             cwd: Some(cwd.into()),
-            base_env: Arc::new(default_base_env()),
+            base_env: Arc::new(base_env_with_globals()),
             running: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -170,7 +191,7 @@ impl GitRunner {
         Self {
             git_path: git_path.into(),
             cwd: None,
-            base_env: Arc::new(default_base_env()),
+            base_env: Arc::new(base_env_with_globals()),
             running: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -618,12 +639,17 @@ fn default_base_env() -> Vec<(String, String)> {
     ]
 }
 
+/// Collect a child stream as text. Git's output is not guaranteed UTF-8
+/// (diff/show/blame emit raw file bytes; paths and author names follow the
+/// repo, not us), so decode lossily - a strict read would either error or,
+/// worse, silently yield an EMPTY string for a whole non-UTF-8 stream,
+/// making a real diff look like "no changes".
 async fn read_to_string<R: tokio::io::AsyncRead + Unpin>(reader: R) -> String {
     use tokio::io::AsyncReadExt;
-    let mut buf = String::new();
+    let mut buf = Vec::new();
     let mut reader = reader;
-    let _ = reader.read_to_string(&mut buf).await;
-    buf
+    let _ = reader.read_to_end(&mut buf).await;
+    String::from_utf8_lossy(&buf).into_owned()
 }
 
 fn log_invocation(

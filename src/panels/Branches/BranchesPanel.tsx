@@ -1,10 +1,11 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import {
   repoBranches,
+  repoListRemotes,
   repoSwitchBranch,
   repoDeleteBranch,
   repoRenameBranch,
@@ -14,11 +15,13 @@ import {
   repoRebase,
   repoSetUpstream,
 } from "../../lib/commands";
+import { groupRemoteBranches, shortRemoteBranchName } from "../../lib/branchGroups";
+import { ChevronDownIcon } from "../../icons";
 import { notifySwitchOutcome, formatSwitchError } from "../../lib/switchFeedback";
 import { notifyMergeOutcome, notifyOpError, notifyRebaseOutcome } from "../../lib/mergeFeedback";
 import { OP_DOMAINS, useOpState } from "../../lib/useOpState";
 import { useConfirmDestructive } from "../../store/settings";
-import type { Branch, MergeOptions } from "../../lib/types";
+import type { Branch, MergeOptions, Remote } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { InlineEditor } from "../shared/InlineEditor";
@@ -32,6 +35,17 @@ type EditState =
   | { name: string; mode: "rename" }
   | { name: string; mode: "delete" }
   | null;
+
+/** localStorage key for the collapsed-remote-groups set (by remote name). */
+const COLLAPSED_REMOTES_KEY = "legit.branches-collapsed-remotes";
+
+function loadCollapsedRemotes(): Record<string, boolean> {
+  try {
+    return JSON.parse(localStorage.getItem(COLLAPSED_REMOTES_KEY) ?? "{}");
+  } catch {
+    return {};
+  }
+}
 
 const monoInput: React.CSSProperties = {
   fontSize: "var(--fz-md)",
@@ -54,6 +68,13 @@ export function BranchesSection() {
     staleTime: 5_000,
   });
 
+  const { data: remotes = [] } = useQuery<Remote[]>({
+    queryKey: [repo?.id, "remotes"],
+    queryFn: () => repoListRemotes(repo!.id),
+    enabled: !!repo,
+    staleTime: 5_000,
+  });
+
   const reload = useCallback(() => { refetch(); }, [refetch]);
   usePanelFocusEffect(reload);
 
@@ -69,9 +90,13 @@ export function BranchesSection() {
     invalidateRepoDomains(queryClient, repo.id, AFFECTED_DOMAINS);
   }, [queryClient, repo]);
 
+  // Delayed busy + re-entry guard (see CLAUDE.md: fast ops must not flicker).
+  // Rename/delete/create/set-upstream are near-instant local git calls.
+  const runningRef = useRef(false);
   const runMut = useCallback(async (fn: () => Promise<unknown>): Promise<boolean> => {
-    if (!repo) return false;
-    setBusy(true);
+    if (!repo || runningRef.current) return false;
+    runningRef.current = true;
+    const busyTimer = window.setTimeout(() => setBusy(true), 150);
     setError(null);
     try {
       await fn();
@@ -81,6 +106,8 @@ export function BranchesSection() {
       setError(formatAppError(e));
       return false;
     } finally {
+      window.clearTimeout(busyTimer);
+      runningRef.current = false;
       setBusy(false);
     }
   }, [repo, invalidate]);
@@ -88,12 +115,36 @@ export function BranchesSection() {
   const localBranches = branches.filter((b) => !b.is_remote);
   const remoteBranches = branches.filter((b) => b.is_remote);
 
-  // Map full upstream ref → local branch name for "tracking" labels.
+  // Map full upstream ref → local branch for "tracking" labels + divergence.
   const trackedRemotes = new Map(
     localBranches
       .filter((b) => b.upstream)
-      .map((b) => [b.upstream!, b.name]),
+      .map((b) => [b.upstream!, b]),
   );
+
+  const remoteGroups = useMemo(
+    () =>
+      groupRemoteBranches(
+        branches.filter((b) => b.is_remote),
+        remotes.map((r) => r.name),
+      ),
+    [branches, remotes],
+  );
+
+  const [collapsedRemotes, setCollapsedRemotes] = useState<Record<string, boolean>>(
+    loadCollapsedRemotes,
+  );
+  const toggleRemoteCollapsed = (remote: string) => {
+    setCollapsedRemotes((prev) => {
+      const next = { ...prev, [remote]: !prev[remote] };
+      try {
+        localStorage.setItem(COLLAPSED_REMOTES_KEY, JSON.stringify(next));
+      } catch {
+        // best-effort persistence only
+      }
+      return next;
+    });
+  };
 
   const openRename = (b: Branch) => {
     setError(null);
@@ -274,37 +325,46 @@ export function BranchesSection() {
           </div>
         )}
 
-        {remoteBranches.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <SectionLabel>Remote</SectionLabel>
-            {remoteBranches.map((b) => {
-              const fullRef = `refs/remotes/${b.name}`;
-              const trackingLocal = trackedRemotes.get(fullRef);
-              return (
-                <RemoteBranchRow
-                  key={b.name}
-                  branch={b}
-                  trackingLocal={trackingLocal}
-                  busy={busy}
-                  onCheckout={() => doRemoteCheckout(b.name)}
-                  onContextMenu={(e) =>
-                    openMenu(
-                      e,
-                      <RemoteBranchMenuSection
-                        remoteName={b.name}
-                        currentBranch={currentBranch}
-                        opInProgress={opInProgress}
-                        onCheckout={() => { closeMenu(); doRemoteCheckout(b.name); }}
-                        onMerge={(options) => { closeMenu(); handleMerge(b.name, options); }}
-                        onRebaseOnto={() => { closeMenu(); handleRebaseOnto(b.name); }}
-                      />,
-                    )
-                  }
-                />
-              );
-            })}
-          </div>
-        )}
+        {remoteGroups.map((group) => {
+          const collapsed = !!collapsedRemotes[group.remote];
+          return (
+            <div key={group.remote} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <RemoteGroupHeader
+                remote={group.remote}
+                count={group.branches.length}
+                collapsed={collapsed}
+                onToggle={() => toggleRemoteCollapsed(group.remote)}
+              />
+              {!collapsed && group.branches.map((b) => {
+                const fullRef = `refs/remotes/${b.name}`;
+                const trackingBranch = trackedRemotes.get(fullRef);
+                return (
+                  <RemoteBranchRow
+                    key={b.name}
+                    branch={b}
+                    shortName={shortRemoteBranchName(b.name, group.remote)}
+                    trackingBranch={trackingBranch}
+                    busy={busy}
+                    onCheckout={() => doRemoteCheckout(b.name)}
+                    onContextMenu={(e) =>
+                      openMenu(
+                        e,
+                        <RemoteBranchMenuSection
+                          remoteName={b.name}
+                          currentBranch={currentBranch}
+                          opInProgress={opInProgress}
+                          onCheckout={() => { closeMenu(); doRemoteCheckout(b.name); }}
+                          onMerge={(options) => { closeMenu(); handleMerge(b.name, options); }}
+                          onRebaseOnto={() => { closeMenu(); handleRebaseOnto(b.name); }}
+                        />,
+                      )
+                    }
+                  />
+                );
+              })}
+            </div>
+          );
+        })}
 
         <div
           style={{
@@ -362,6 +422,73 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
+    </span>
+  );
+}
+
+/** Collapsible per-remote group heading in the remote-branches area. */
+function RemoteGroupHeader({
+  remote,
+  count,
+  collapsed,
+  onToggle,
+}: {
+  remote: string;
+  count: number;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      title={collapsed ? `Expand ${remote}` : `Collapse ${remote}`}
+      style={{
+        background: "none",
+        border: "none",
+        padding: 0,
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        cursor: "pointer",
+        color: "var(--subtle-fg)",
+        alignSelf: "flex-start",
+      }}
+    >
+      <ChevronDownIcon
+        style={{
+          transform: collapsed ? "rotate(-90deg)" : undefined,
+          transition: "transform 120ms",
+        }}
+      />
+      <SectionLabel>
+        {remote} ({count})
+      </SectionLabel>
+    </button>
+  );
+}
+
+/**
+ * Ahead/behind arrows for a local branch relative to its upstream, or an
+ * "upstream gone" warning when the configured upstream ref no longer exists.
+ */
+function DivergenceBadge({ branch }: { branch: Branch }) {
+  if (branch.upstream_gone) {
+    return (
+      <span style={{ fontSize: "var(--fz-sm)", color: "var(--warning)", flexShrink: 0 }}>
+        upstream gone
+      </span>
+    );
+  }
+  if (!branch.ahead && !branch.behind) return null;
+  return (
+    <span
+      className="legit-subtle"
+      style={{ fontSize: "var(--fz-sm)", fontFamily: "monospace", flexShrink: 0 }}
+      title="Commits ahead/behind the upstream"
+    >
+      {branch.ahead ? `↑${branch.ahead}` : ""}
+      {branch.ahead && branch.behind ? " " : ""}
+      {branch.behind ? `↓${branch.behind}` : ""}
     </span>
   );
 }
@@ -453,6 +580,7 @@ function LocalBranchRow({
             )}
             {branch.name}
           </span>
+          <DivergenceBadge branch={branch} />
           <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
             {!branch.is_current && (
               <button disabled={busy} onClick={onCheckout}>
@@ -474,13 +602,17 @@ function LocalBranchRow({
 
 function RemoteBranchRow({
   branch,
-  trackingLocal,
+  shortName,
+  trackingBranch,
   busy,
   onCheckout,
   onContextMenu,
 }: {
   branch: Branch;
-  trackingLocal: string | undefined;
+  /** Branch name without the remote prefix (the group header carries it). */
+  shortName: string;
+  /** The local branch tracking this remote branch, if any. */
+  trackingBranch: Branch | undefined;
   busy: boolean;
   onCheckout: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
@@ -488,6 +620,7 @@ function RemoteBranchRow({
   return (
     <div
       onContextMenu={onContextMenu}
+      title={branch.name}
       style={{
         border: "1px solid var(--panel-border)",
         borderRadius: 4,
@@ -507,12 +640,15 @@ function RemoteBranchRow({
           whiteSpace: "nowrap",
         }}
       >
-        {branch.name}
+        {shortName}
       </span>
-      {trackingLocal ? (
-        <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", flexShrink: 0 }}>
-          tracking: {trackingLocal}
-        </span>
+      {trackingBranch ? (
+        <>
+          <DivergenceBadge branch={trackingBranch} />
+          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", flexShrink: 0 }}>
+            tracking: {trackingBranch.name}
+          </span>
+        </>
       ) : (
         <button disabled={busy} onClick={onCheckout} style={{ flexShrink: 0 }}>
           Checkout

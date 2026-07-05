@@ -10,6 +10,7 @@ import { InteractiveRebasePanel } from "./InteractiveRebase/InteractiveRebasePan
 import { ComparePanel } from "./Compare/ComparePanel";
 import { SearchPanel } from "./Search/SearchPanel";
 import { BlamePanel } from "./Blame/BlamePanel";
+import { FileViewPanel } from "./FileView/FileViewPanel";
 import { GitLogPanel } from "./GitLog/GitLogPanel";
 import { RefsPanel } from "./Refs/RefsPanel";
 import { RepositoriesPanel } from "./Repositories/RepositoriesPanel";
@@ -31,7 +32,8 @@ export interface PanelDescriptor {
   id: string;
   title: string;
   scope: "global" | "repo";
-  /** IDs of panels this panel may summon (informational + enforced by API). */
+  /** IDs of panels this panel may summon. Informational only - `summon()`
+   *  does not enforce it; keep it in sync when adding summon() calls. */
   summons?: string[];
   /** Where to open the panel the first time it's ever opened. */
   defaultPlacement?: DefaultPlacement;
@@ -105,8 +107,14 @@ export const REPO_PANELS: PanelDescriptor[] = [
     id: "changed-files",
     title: "Changed Files",
     scope: "repo",
-    summons: ["diff"],
+    summons: ["diff", "file-view"],
     defaultPlacement: { direction: "below", referencePanel: "commit-details" },
+  },
+  {
+    id: "file-view",
+    title: "File View",
+    scope: "repo",
+    defaultPlacement: { direction: "right", referencePanel: "log" },
   },
   {
     id: "working-changes",
@@ -172,4 +180,5 @@ export const REPO_DOCKVIEW_COMPONENTS: Record<
   compare: wrap(ComparePanel),
   search: wrap(SearchPanel),
   blame: wrap(BlamePanel),
+  "file-view": wrap(FileViewPanel),
 };

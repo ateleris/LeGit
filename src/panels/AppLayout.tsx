@@ -11,6 +11,7 @@ import type { RegionPlacement } from "../lib/types";
 import { GlobalDock } from "./GlobalDock";
 import { RepoDock } from "./RepoDock";
 import { RepoTabBar } from "./RepoTabBar";
+import { CredentialPromptHost } from "./CredentialPrompt";
 
 const DEFAULT_SIZE_TOP = 240;
 const DEFAULT_SIZE_LEFT = 280;
@@ -259,6 +260,7 @@ export function AppLayout() {
             </div>
           </div>
         </div>
+        <CredentialPromptHost />
       </div>
     );
   }
@@ -284,6 +286,7 @@ export function AppLayout() {
       <div className="legit-repo-region" style={{ flex: 1, minHeight: 0 }}>
         <RepoDock />
       </div>
+      <CredentialPromptHost />
     </div>
   );
 }

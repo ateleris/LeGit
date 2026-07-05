@@ -51,6 +51,44 @@ export async function onRemoteProgress(
   return unlisten;
 }
 
+/** Tauri event channel asking the UI to show a git credential prompt.
+ *  Matches `CREDENTIAL_REQUEST_EVENT` in `src-tauri/src/credentials.rs`. */
+export const CREDENTIAL_REQUEST_EVENT = "legit://credential-request";
+
+/** Tauri event channel telling the UI a pending credential prompt is moot
+ *  (git went away / timed out). Matches `CREDENTIAL_CLOSED_EVENT`. */
+export const CREDENTIAL_CLOSED_EVENT = "legit://credential-closed";
+
+export interface CredentialRequestPayload {
+  request_id: string;
+  protocol: string;
+  host: string;
+  /** Username git already knows (from the URL), if any. */
+  username: string | null;
+}
+
+/** Subscribe to credential-prompt requests. Returns an unsubscribe function. */
+export async function onCredentialRequest(
+  handler: (payload: CredentialRequestPayload) => void
+): Promise<() => void> {
+  const unlisten = await listen<CredentialRequestPayload>(
+    CREDENTIAL_REQUEST_EVENT,
+    (event) => handler(event.payload)
+  );
+  return unlisten;
+}
+
+/** Subscribe to credential-prompt dismissals. Returns an unsubscribe function. */
+export async function onCredentialClosed(
+  handler: (payload: { request_id: string }) => void
+): Promise<() => void> {
+  const unlisten = await listen<{ request_id: string }>(
+    CREDENTIAL_CLOSED_EVENT,
+    (event) => handler(event.payload)
+  );
+  return unlisten;
+}
+
 /** Tauri event channel for the git command log. Matches the event name emitted
  *  by the invocation observer in `src-tauri/src/lib.rs`. */
 export const GIT_INVOCATION_EVENT = "git_invocation";

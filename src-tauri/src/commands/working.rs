@@ -58,6 +58,25 @@ pub async fn repo_discard(
         .map_err(AppError::Git)
 }
 
+/// Restore a single file (index + working tree) to its content at `rev`.
+/// Destructive - git overwrites local changes to the file without complaint;
+/// the destructive-confirmation gate lives in the UI.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_restore_file_at_revision(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    rev: String,
+    path: String,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .restore_file_at_revision(&rev, std::path::Path::new(&path))
+        .await
+        .map_err(AppError::Git)
+}
+
 /// Commit the staged changes with the given message; returns the new commit id.
 /// When `amend` is set, rewrites HEAD instead of creating a new commit.
 #[tauri::command]

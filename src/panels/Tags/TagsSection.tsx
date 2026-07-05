@@ -47,7 +47,14 @@ export function TagsSection() {
     enabled: !!repo,
     staleTime: 5_000,
   });
-  const tagRemote = useMemo(() => pickTagRemote(remotes), [remotes]);
+  // Remote targeted by push / delete-on-remote / the pushed indicator.
+  // Default is `pickTagRemote` (origin, else first); with multiple remotes a
+  // selector overrides it. A stale selection (remote removed) falls back.
+  const [remoteChoice, setRemoteChoice] = useState("");
+  const tagRemote = useMemo(() => {
+    if (remoteChoice && remotes.some((r) => r.name === remoteChoice)) return remoteChoice;
+    return pickTagRemote(remotes);
+  }, [remoteChoice, remotes]);
   const { data: remoteTags = [] } = useQuery<RemoteTag[]>({
     queryKey: [repo?.id, "remote-tags", tagRemote],
     queryFn: () => repoRemoteTags(repo!.id, tagRemote!, crypto.randomUUID()),
@@ -143,6 +150,28 @@ export function TagsSection() {
           <pre className="legit-error" style={{ margin: 0, fontSize: "var(--fz-md)" }}>
             {error}
           </pre>
+        )}
+
+        {remotes.length > 1 && (
+          <label
+            style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fz-md)" }}
+          >
+            <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
+              Remote
+            </span>
+            <select
+              value={tagRemote ?? ""}
+              onChange={(e) => setRemoteChoice(e.target.value)}
+              style={{ flex: 1 }}
+              title="Remote used for pushing tags, deleting remote tags, and the pushed indicator"
+            >
+              {remotes.map((r) => (
+                <option key={r.name} value={r.name}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+          </label>
         )}
 
         {tags.length === 0 ? (

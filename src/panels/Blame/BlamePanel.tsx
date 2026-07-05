@@ -8,19 +8,35 @@ import type { BlameHunk } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { formatRelative } from "../../lib/time";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
+import { RevPicker } from "../shared/RevPicker";
 
 const UNCOMMITTED = "0".repeat(40);
 
+/** Summon payload for blaming at a revision (a bare string = working tree). */
+export interface BlameRequest {
+  path: string;
+  /** Tree-ish to blame at; null/absent blames the working tree. */
+  rev?: string | null;
+}
+
 /**
- * Blame panel — the working-tree file annotated per hunk with the commit
- * that last touched those lines (git blame --porcelain; contents come from
- * the blame output itself, so meta and code can never misalign). Clicking a
+ * Blame panel - a file annotated per hunk with the commit that last touched
+ * those lines (git blame --porcelain; contents come from the blame output
+ * itself, so meta and code can never misalign). Blames the working tree by
+ * default, or the file as of a revision ("time-travel": each hunk offers a
+ * re-blame at its commit's parent, stepping past that change). Clicking a
  * hunk's meta opens the commit; uncommitted lines show as such. Summoned
- * with a path (Search results, file context menus).
+ * with a path string (Search results, file context menus) or a
+ * `BlameRequest` with a rev.
  */
 export function BlamePanel() {
   const repo = useActiveRepo();
   const [path, setPath] = useState<string | null>(null);
+  const [rev, setRev] = useState<string | null>(null);
+  // Toolbar rev input draft - applied on Enter, kept in sync when the rev
+  // changes through other paths (summon payload, per-hunk time travel).
+  const [revDraft, setRevDraft] = useState("");
+  useEffect(() => setRevDraft(rev ?? ""), [rev]);
 
   // Reset when the repo changes — the path belongs to the previous repo.
   const prevRepoId = useRef(repo?.id);
@@ -28,17 +44,27 @@ export function BlamePanel() {
     if (prevRepoId.current === repo?.id) return;
     prevRepoId.current = repo?.id;
     setPath(null);
+    setRev(null);
   }, [repo?.id]);
 
   const onReceive = useCallback((payload: unknown) => {
-    if (typeof payload === "string") setPath(payload);
+    if (typeof payload === "string") {
+      setPath(payload);
+      setRev(null);
+      return;
+    }
+    const p = payload as Partial<BlameRequest> | null;
+    if (p && typeof p.path === "string") {
+      setPath(p.path);
+      setRev(typeof p.rev === "string" ? p.rev : null);
+    }
   }, []);
   useSummonTarget("blame", onReceive);
 
   const { data: hunks = [], isFetching, isError, error, refetch } = useQuery<BlameHunk[]>({
     // Under the "log" domain: blame changes exactly when history/worktree do.
-    queryKey: [repo?.id, "log", "blame", path],
-    queryFn: () => repoBlame(repo!.id, path!),
+    queryKey: [repo?.id, "log", "blame", rev, path],
+    queryFn: () => repoBlame(repo!.id, path!, rev),
     enabled: !!repo && !!path,
     staleTime: 5_000,
   });
@@ -49,6 +75,14 @@ export function BlamePanel() {
     const summon = useSummonStore.getState();
     summon.summon("commit-details", h.sha);
     summon.swapSummon("changed-files", "working-changes", h.sha);
+  };
+
+  // Time-travel: blame the file as it was just before this hunk's commit.
+  // `<sha>^` may not contain the file (the commit added it) - git's error is
+  // shown as-is, and the previous result stays one "Working tree" click away.
+  const reblameParent = (h: BlameHunk) => {
+    if (h.sha === UNCOMMITTED) return;
+    setRev(`${h.sha}^`);
   };
 
   if (!repo) {
@@ -86,11 +120,29 @@ export function BlamePanel() {
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
+            minWidth: 0,
           }}
-          title={path}
+          title={rev ? `${path} @ ${rev}` : `${path} (working tree)`}
         >
-          {path}
+          {path} @ {rev ? rev.slice(0, 12) : "working tree"}
         </span>
+        <RevPicker
+          repoId={repo.id}
+          value={revDraft}
+          onChange={setRevDraft}
+          onEnter={() => setRev(revDraft.trim() || null)}
+          placeholder="blame at rev (blank = working tree)"
+          style={{ marginLeft: "auto", width: "18em", flexShrink: 0 }}
+        />
+        {rev && (
+          <button
+            onClick={() => setRev(null)}
+            title="Back to blaming the current working-tree file"
+            style={{ fontSize: "var(--fz-sm)", flexShrink: 0 }}
+          >
+            Working tree
+          </button>
+        )}
       </div>
 
       <div className="legit-panel__body" style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 0 }}>
@@ -99,14 +151,32 @@ export function BlamePanel() {
             {formatAppError(error)}
           </pre>
         ) : (
-          hunks.map((h, i) => <HunkRow key={`${h.sha}-${h.start_line}`} hunk={h} tinted={i % 2 === 1} onOpen={() => openCommit(h)} />)
+          hunks.map((h, i) => (
+            <HunkRow
+              key={`${h.sha}-${h.start_line}`}
+              hunk={h}
+              tinted={i % 2 === 1}
+              onOpen={() => openCommit(h)}
+              onReblameParent={() => reblameParent(h)}
+            />
+          ))
         )}
       </div>
     </div>
   );
 }
 
-function HunkRow({ hunk, tinted, onOpen }: { hunk: BlameHunk; tinted: boolean; onOpen: () => void }) {
+function HunkRow({
+  hunk,
+  tinted,
+  onOpen,
+  onReblameParent,
+}: {
+  hunk: BlameHunk;
+  tinted: boolean;
+  onOpen: () => void;
+  onReblameParent: () => void;
+}) {
   const uncommitted = hunk.sha === UNCOMMITTED;
   return (
     <div
@@ -117,33 +187,60 @@ function HunkRow({ hunk, tinted, onOpen }: { hunk: BlameHunk; tinted: boolean; o
         borderBottom: "1px solid var(--panel-border)",
       }}
     >
-      <button
-        onClick={onOpen}
-        disabled={uncommitted}
-        title={
-          uncommitted
-            ? "Uncommitted changes"
-            : `${hunk.sha.slice(0, 8)} · ${hunk.author} · ${hunk.summary}`
-        }
+      <div
         style={{
           width: "16em",
           flexShrink: 0,
-          textAlign: "left",
-          background: "transparent",
-          border: "none",
+          display: "flex",
+          alignItems: "stretch",
           borderRight: "1px solid var(--panel-border)",
-          padding: "2px 8px",
-          cursor: uncommitted ? "default" : "pointer",
-          overflow: "hidden",
         }}
       >
-        <span style={{ display: "block", fontSize: "var(--fz-sm)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {uncommitted ? <span className="legit-subtle">uncommitted</span> : hunk.summary}
-        </span>
-        <span className="legit-subtle" style={{ display: "block", fontSize: "var(--fz-sm)", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {uncommitted ? "" : `${hunk.sha.slice(0, 8)} · ${hunk.author} · ${formatRelative(hunk.timestamp)}`}
-        </span>
-      </button>
+        <button
+          onClick={onOpen}
+          disabled={uncommitted}
+          title={
+            uncommitted
+              ? "Uncommitted changes"
+              : `${hunk.sha.slice(0, 8)} · ${hunk.author} · ${hunk.summary}`
+          }
+          style={{
+            flex: 1,
+            minWidth: 0,
+            textAlign: "left",
+            background: "transparent",
+            border: "none",
+            padding: "2px 8px",
+            cursor: uncommitted ? "default" : "pointer",
+            overflow: "hidden",
+          }}
+        >
+          <span style={{ display: "block", fontSize: "var(--fz-sm)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {uncommitted ? <span className="legit-subtle">uncommitted</span> : hunk.summary}
+          </span>
+          <span className="legit-subtle" style={{ display: "block", fontSize: "var(--fz-sm)", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {uncommitted ? "" : `${hunk.sha.slice(0, 8)} · ${hunk.author} · ${formatRelative(hunk.timestamp)}`}
+          </span>
+        </button>
+        {!uncommitted && (
+          <button
+            onClick={onReblameParent}
+            title="Blame at this commit's parent: see the file before this change"
+            style={{
+              flexShrink: 0,
+              background: "transparent",
+              border: "none",
+              borderLeft: "1px solid var(--panel-border)",
+              padding: "0 5px",
+              cursor: "pointer",
+              fontSize: "var(--fz-sm)",
+              color: "var(--subtle-fg)",
+            }}
+          >
+            ↶
+          </button>
+        )}
+      </div>
       <pre
         style={{
           margin: 0,

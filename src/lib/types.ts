@@ -81,9 +81,15 @@ export interface ConsoleExecHandle {
 }
 
 /** Query domain affected by a filesystem change. Matches the react-query key
- *  suffixes `[repoId, "status"|"log"|"branches"|"stashes"|"tags"]` and the
- *  Rust `ChangeDomain` enum in `src-tauri/src/watcher.rs`. */
-export type ChangeDomain = "status" | "log" | "branches" | "stashes" | "tags";
+ *  suffixes `[repoId, <domain>]` and the Rust `ChangeDomain` enum in
+ *  `src-tauri/src/watcher.rs`. */
+export type ChangeDomain =
+  | "status"
+  | "log"
+  | "branches"
+  | "stashes"
+  | "tags"
+  | "op_state";
 
 /** Payload of the `legit://repo-changed` event emitted by the FS watcher. */
 export interface RepoChangedPayload {
@@ -137,7 +143,8 @@ export type AppError =
   | { kind: "Settings"; details: string }
   | { kind: "ParseArgs"; details: string }
   | { kind: "InvalidLockIndex"; details: number }
-  | { kind: "OperationNotFound"; details: string };
+  | { kind: "OperationNotFound"; details: string }
+  | { kind: "UnknownProfile"; details: string };
 
 /** Human-readable labels for `GitError` variants that carry no message. */
 const GIT_ERROR_LABELS: Record<string, string> = {
@@ -386,7 +393,7 @@ export type DiffSource =
   | { kind: "commit_range"; from: string; to: string };
 
 /** What a commit search matches (matches legit-core `CommitSearchKind`). */
-export type CommitSearchKind = "message" | "author" | "content";
+export type CommitSearchKind = "message" | "author" | "content" | "content_regex";
 
 /** One blame hunk (matches legit-core `BlameHunk`): consecutive lines last
  *  touched by the same commit, contents included. All-zeros sha = uncommitted. */
@@ -430,6 +437,12 @@ export interface Branch {
   /** Full upstream ref (e.g. "refs/remotes/origin/dev") for local branches. */
   upstream: string | null;
   head: CommitId | null;
+  /** Commits ahead of the upstream; null when in sync / no upstream / remote branch. */
+  ahead: number | null;
+  /** Commits behind the upstream; null under the same conditions. */
+  behind: number | null;
+  /** The configured upstream ref no longer exists ("[gone]"). */
+  upstream_gone: boolean;
 }
 
 export type SwitchOutcome =

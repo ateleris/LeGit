@@ -72,9 +72,38 @@ export const restoreOpenRepos = () => invoke<RestoreResult>("restore_open_repos"
 export const setActiveRepo = (repoId: string | null) =>
   invoke<null>("set_active_repo", { repoId });
 
-/** Init a new repo at `path`; optionally apply a profile (id, or null for global config). */
-export const repoInit = (path: string, profileId: string | null) =>
-  invoke<RepoSummary>("repo_init", { path, profileId });
+export interface InitOptions {
+  /** Create a bare repository (created but not opened: no worktree). */
+  bare?: boolean;
+  /** Initial branch name (`--initial-branch`); blank/absent uses git's default. */
+  initialBranch?: string | null;
+}
+
+export interface CloneOptions {
+  /** Shallow clone depth (`--depth`); absent/0 clones full history. */
+  depth?: number | null;
+  /** Branch to check out (`--branch`); absent uses the remote default. */
+  branch?: string | null;
+  /** Also clone submodules (`--recurse-submodules`). */
+  recurseSubmodules?: boolean;
+}
+
+/**
+ * Init a new repo at `path`; optionally apply a profile (id, or null for
+ * global config). Returns null for a bare init: a bare repo has no worktree,
+ * so it is created but not opened as a session.
+ */
+export const repoInit = (
+  path: string,
+  profileId: string | null,
+  options: InitOptions = {}
+) =>
+  invoke<RepoSummary | null>("repo_init", {
+    path,
+    profileId,
+    bare: options.bare ?? false,
+    initialBranch: options.initialBranch ?? null,
+  });
 
 /** Clone `url` into `parentDir/name`; optional profile; cancellable via `opId`. */
 export const repoClone = (
@@ -82,8 +111,19 @@ export const repoClone = (
   parentDir: string,
   name: string,
   profileId: string | null,
-  opId: string
-) => invoke<RepoSummary>("repo_clone", { url, parentDir, name, profileId, opId });
+  opId: string,
+  options: CloneOptions = {}
+) =>
+  invoke<RepoSummary>("repo_clone", {
+    url,
+    parentDir,
+    name,
+    profileId,
+    opId,
+    depth: options.depth ?? null,
+    branch: options.branch ?? null,
+    recurseSubmodules: options.recurseSubmodules ?? false,
+  });
 
 export const cancelClone = (opId: string) =>
   invoke<boolean>("cancel_clone", { opId });
@@ -101,6 +141,23 @@ export const consoleExec = (repoId: string, command: string) =>
 
 export const consoleCancel = (repoId: string, opId: string) =>
   invoke<boolean>("console_cancel", { repoId, opId });
+
+// --- in-app git credential prompt ---
+
+/**
+ * Complete a pending credential prompt. `remember` persists the credentials
+ * to the OS keychain once git confirms they work.
+ */
+export const credentialRespond = (
+  requestId: string,
+  username: string,
+  password: string,
+  remember: boolean
+) => invoke<boolean>("credential_respond", { requestId, username, password, remember });
+
+/** Dismiss a pending credential prompt (git fails with its normal auth error). */
+export const credentialCancel = (requestId: string) =>
+  invoke<boolean>("credential_cancel", { requestId });
 
 // --- git setup ---
 
@@ -279,8 +336,24 @@ export const repoSearchCommits = (
 export const repoSearchPaths = (repoId: string, query: string, maxCount: number) =>
   invoke<string[]>("repo_search_paths", { repoId, query, maxCount });
 
-export const repoBlame = (repoId: string, path: string) =>
-  invoke<BlameHunk[]>("repo_blame", { repoId, path });
+/** Blame `path` - at `rev` when given, else the working tree. */
+export const repoBlame = (repoId: string, path: string, rev?: string | null) =>
+  invoke<BlameHunk[]>("repo_blame", { repoId, path, rev: rev ?? null });
+
+/** Merge base of two revs, or null for unrelated histories. */
+export const repoMergeBase = (repoId: string, a: string, b: string) =>
+  invoke<string | null>("repo_merge_base", { repoId, a, b });
+
+/** Full content of a repo-relative file as of an arbitrary tree-ish. */
+export const repoFileAtRevision = (repoId: string, rev: string, path: string) =>
+  invoke<string>("repo_file_at_revision", { repoId, rev, path });
+
+/**
+ * Restore a single file (index + working tree) to its content at `rev`.
+ * Destructive: overwrites local changes to the file without complaint.
+ */
+export const repoRestoreFileAtRevision = (repoId: string, rev: string, path: string) =>
+  invoke<null>("repo_restore_file_at_revision", { repoId, rev, path });
 
 export const repoCommitFiles = (repoId: string, commitId: string) =>
   invoke<CommitFileChange[]>("repo_commit_files", { repoId, commitId });

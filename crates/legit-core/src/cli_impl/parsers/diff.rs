@@ -126,17 +126,26 @@ fn parse_range(range: &str) -> Option<(u32, u32)> {
     Some((start, count))
 }
 
+/// Split diff text on `\n` only, PRESERVING any trailing `\r`. For a CRLF
+/// file the `\r` is part of the content git diffed, and `str::lines()` would
+/// strip it - a patch rebuilt from such lines no longer matches the index /
+/// worktree and `git apply` rejects it ("patch does not apply"). The final
+/// piece after a trailing newline is empty and dropped.
+fn split_keep_cr(raw: &str) -> impl Iterator<Item = &str> {
+    raw.strip_suffix('\n').unwrap_or(raw).split('\n')
+}
+
 /// Build a minimal, self-contained patch for a single hunk of a file diff,
 /// suitable for `git apply [--cached] [-R] --recount`. Works by slicing the raw
 /// `git diff` output — the file preamble (everything before the first `@@`)
 /// followed by just the `hunk_index`-th hunk block — so `\ No newline at end of
-/// file` markers and file-mode headers are preserved verbatim. Returns `None`
-/// if there is no hunk at `hunk_index`.
+/// file` markers, file-mode headers, and CRLF content bytes are preserved
+/// verbatim. Returns `None` if there is no hunk at `hunk_index`.
 pub fn build_hunk_patch(raw_diff: &str, hunk_index: usize) -> Option<String> {
     let mut preamble: Vec<&str> = Vec::new();
     let mut hunks: Vec<Vec<&str>> = Vec::new();
 
-    for line in raw_diff.lines() {
+    for line in split_keep_cr(raw_diff) {
         if line.starts_with("@@") {
             hunks.push(vec![line]);
         } else if let Some(current) = hunks.last_mut() {
@@ -174,7 +183,7 @@ pub fn build_line_patch(
 ) -> Option<String> {
     let mut preamble: Vec<&str> = Vec::new();
     let mut hunks: Vec<Vec<&str>> = Vec::new();
-    for line in raw_diff.lines() {
+    for line in split_keep_cr(raw_diff) {
         if line.starts_with("@@") {
             hunks.push(vec![line]);
         } else if let Some(current) = hunks.last_mut() {
@@ -591,5 +600,26 @@ diff --git a/n.txt b/n.txt
     #[test]
     fn line_patch_out_of_range_hunk_is_none() {
         assert!(build_line_patch(MIXED_DIFF, 5, &sel(&[1]), false).is_none());
+    }
+
+    // CRLF file content: the `\r` is part of every diffed line and must
+    // survive into rebuilt patches byte-for-byte, or `git apply` rejects them.
+    const CRLF_DIFF: &str = "diff --git a/c.txt b/c.txt\nindex 1111111..2222222 100644\n--- a/c.txt\n+++ b/c.txt\n@@ -1,2 +1,2 @@\n a\r\n-b\r\n+B\r\n";
+
+    #[test]
+    fn hunk_patch_preserves_crlf_content() {
+        let patch = build_hunk_patch(CRLF_DIFF, 0).unwrap();
+        assert!(patch.contains(" a\r\n"), "{patch:?}");
+        assert!(patch.contains("-b\r\n"), "{patch:?}");
+        assert!(patch.contains("+B\r\n"), "{patch:?}");
+    }
+
+    #[test]
+    fn line_patch_preserves_crlf_content_including_context_conversion() {
+        // Select nothing: forward drops "+B\r", "-b\r" becomes context " b\r".
+        let patch = build_line_patch(CRLF_DIFF, 0, &sel(&[]), false).unwrap();
+        assert!(patch.contains(" a\r\n"), "{patch:?}");
+        assert!(patch.contains(" b\r\n"), "{patch:?}");
+        assert!(!patch.contains("+B"), "{patch:?}");
     }
 }

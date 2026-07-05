@@ -1,5 +1,6 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useActiveRepo } from "../../store/repos";
 import { useSummonStore } from "../../store/summon";
 import { repoSearchCommits, repoSearchPaths } from "../../lib/commands";
@@ -7,6 +8,7 @@ import type { Commit, CommitSearchKind } from "../../lib/types";
 import { formatRelative } from "../../lib/time";
 import { Button } from "../shared/buttons";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
+import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 
 type SearchKind = CommitSearchKind | "paths";
 
@@ -14,23 +16,26 @@ const KIND_LABELS: Record<SearchKind, string> = {
   message: "Message",
   author: "Author",
   content: "Content (pickaxe)",
+  content_regex: "Content (regex)",
   paths: "File paths",
 };
 
-const MAX_RESULTS = 100;
+// Results render in a virtualized list, so a big cap costs only git time.
+const MAX_RESULTS = 1000;
 
 const rowStyle: React.CSSProperties = {
   display: "flex",
-  alignItems: "baseline",
+  alignItems: "center",
   gap: 8,
   textAlign: "left",
   background: "transparent",
   border: "none",
   borderRadius: 3,
-  padding: "2px 6px",
+  padding: "0 6px",
   cursor: "pointer",
   minWidth: 0,
   width: "100%",
+  boxSizing: "border-box",
 };
 
 /**
@@ -45,6 +50,16 @@ export function SearchPanel() {
   const [kind, setKind] = useState<SearchKind>("message");
   // Submitted search — runs on demand (content search is expensive).
   const [submitted, setSubmitted] = useState<{ query: string; kind: SearchKind } | null>(null);
+
+  // Reset the submitted search when the repo changes so an expensive content
+  // search doesn't silently re-run against the new repo (query/kind inputs
+  // are repo-agnostic and kept). Same guard as the sibling summon panels.
+  const prevRepoId = useRef(repo?.id);
+  useEffect(() => {
+    if (prevRepoId.current === repo?.id) return;
+    prevRepoId.current = repo?.id;
+    setSubmitted(null);
+  }, [repo?.id]);
 
   const { data: commits = [], isFetching: fetchingCommits, isError, error } = useQuery<Commit[]>({
     queryKey: [repo?.id, "log", "search-commits", submitted],
@@ -65,6 +80,24 @@ export function SearchPanel() {
     const q = query.trim();
     if (q) setSubmitted({ query: q, kind });
   }, [query, kind]);
+
+  // Virtualized results (the cap is high enough that plain mapping would
+  // put thousands of DOM rows in the panel).
+  const { rowHeight } = useFileRowMetrics();
+  const parentRef = useRef<HTMLDivElement>(null);
+  const showCommitRows = submitted && submitted.kind !== "paths";
+  const resultCount = showCommitRows ? commits.length : paths.length;
+  const virtualizer = useVirtualizer({
+    count: resultCount,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => rowHeight,
+    overscan: 12,
+  });
+  useEffect(() => {
+    virtualizer.scrollToOffset(0);
+    // A new submission restarts the list from the top.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [submitted]);
 
   const openCommit = (c: Commit) => {
     const summon = useSummonStore.getState();
@@ -87,7 +120,6 @@ export function SearchPanel() {
   }
 
   const busy = fetchingCommits || fetchingPaths;
-  const showCommits = submitted && submitted.kind !== "paths";
 
   return (
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
@@ -113,7 +145,9 @@ export function SearchPanel() {
               ? "path substring…"
               : kind === "content"
                 ? "literal string (finds commits changing it)…"
-                : "search…"
+                : kind === "content_regex"
+                  ? "regex (finds commits whose diff touches a matching line)…"
+                  : "search…"
           }
           style={{ fontSize: "var(--fz-md)", flex: 1, minWidth: 0 }}
         />
@@ -124,7 +158,7 @@ export function SearchPanel() {
 
       <div
         className="legit-panel__body"
-        style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 2 }}
+        style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 2 }}
       >
         {isError && (
           <pre className="legit-error" style={{ margin: 0, fontSize: "var(--fz-md)" }}>
@@ -136,54 +170,69 @@ export function SearchPanel() {
             Search commit messages, authors, file contents (which commits added
             or removed a string), or tracked file paths.
           </span>
-        ) : showCommits ? (
-          commits.length === 0 && !busy ? (
+        ) : resultCount === 0 ? (
+          !busy && (
             <span className="legit-subtle" style={{ fontSize: "var(--fz-md)" }}>No matches.</span>
-          ) : (
-            commits.map((c) => (
-              <button key={c.id} onClick={() => openCommit(c)} style={rowStyle} title={c.message}>
-                <span className="legit-subtle" style={{ fontFamily: "monospace", fontSize: "var(--fz-sm)", flexShrink: 0 }}>
-                  {c.id.slice(0, 8)}
-                </span>
-                <span
-                  style={{
-                    fontSize: "var(--fz-md)",
-                    flex: 1,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {c.message.split("\n")[0]}
-                </span>
-                <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", flexShrink: 0 }}>
-                  {c.author.name} · {formatRelative(c.timestamp)}
-                </span>
-              </button>
-            ))
           )
-        ) : paths.length === 0 && !busy ? (
-          <span className="legit-subtle" style={{ fontSize: "var(--fz-md)" }}>No matches.</span>
         ) : (
-          paths.map((p) => (
-            <button key={p} onClick={() => openBlame(p)} style={rowStyle} title={`Blame ${p}`}>
-              <span
-                style={{
-                  fontSize: "var(--fz-md)",
-                  fontFamily: "monospace",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {p}
-              </span>
-            </button>
-          ))
+          <div ref={parentRef} style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+            <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+              {virtualizer.getVirtualItems().map((vi) => {
+                const positioned: React.CSSProperties = {
+                  ...rowStyle,
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  height: vi.size,
+                  transform: `translateY(${vi.start}px)`,
+                };
+                if (showCommitRows) {
+                  const c = commits[vi.index];
+                  return (
+                    <button key={c.id} onClick={() => openCommit(c)} style={positioned} title={c.message}>
+                      <span className="legit-subtle" style={{ fontFamily: "monospace", fontSize: "var(--fz-sm)", flexShrink: 0 }}>
+                        {c.id.slice(0, 8)}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "var(--fz-md)",
+                          flex: 1,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {c.message.split("\n")[0]}
+                      </span>
+                      <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", flexShrink: 0 }}>
+                        {c.author.name} · {formatRelative(c.timestamp)}
+                      </span>
+                    </button>
+                  );
+                }
+                const p = paths[vi.index];
+                return (
+                  <button key={p} onClick={() => openBlame(p)} style={positioned} title={`Blame ${p}`}>
+                    <span
+                      style={{
+                        fontSize: "var(--fz-md)",
+                        fontFamily: "monospace",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {p}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         )}
-        {submitted && (showCommits ? commits.length : paths.length) >= MAX_RESULTS && (
-          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
-            Showing the first {MAX_RESULTS} matches — refine the query for more.
+        {submitted && resultCount >= MAX_RESULTS && (
+          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", flexShrink: 0 }}>
+            Showing the first {MAX_RESULTS} matches - refine the query for more.
           </span>
         )}
       </div>

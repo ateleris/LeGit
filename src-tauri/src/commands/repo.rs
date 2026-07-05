@@ -10,6 +10,7 @@ use crate::state::{
 use legit_core::{classify_remote_error, GitError, GitRunner, OperationId};
 use std::path::PathBuf;
 use std::sync::Arc;
+use tauri::Manager as _;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -160,8 +161,26 @@ pub async fn open_repo(
     register_open_repo(&state, &app, git_path, path).await
 }
 
+/// Build the `git init` argument list. Pure so the option handling is
+/// unit-testable; blank branch names degrade to git's default.
+fn build_init_args(bare: bool, initial_branch: Option<&str>) -> Vec<String> {
+    let mut args = vec!["init".to_string()];
+    if bare {
+        args.push("--bare".into());
+    }
+    if let Some(branch) = initial_branch.map(str::trim).filter(|b| !b.is_empty()) {
+        args.push("--initial-branch".into());
+        args.push(branch.to_string());
+    }
+    args
+}
+
 /// Initialize a new repository in `path` (`git init`), open it, and optionally
 /// apply (and select) a profile. `path` must be an existing directory.
+///
+/// A `--bare` repository has no worktree, so it cannot become a session:
+/// it is created but not opened, and the result is `None` (profiles are
+/// session-scoped, so a profile selection is ignored for bare repos too).
 #[tauri::command]
 #[specta::specta]
 pub async fn repo_init(
@@ -169,7 +188,9 @@ pub async fn repo_init(
     app: tauri::AppHandle,
     path: String,
     profile_id: Option<String>,
-) -> Result<RepoSummary, AppError> {
+    bare: bool,
+    initial_branch: Option<String>,
+) -> Result<Option<RepoSummary>, AppError> {
     let dir = PathBuf::from(&path);
     if !dir.exists() {
         return Err(AppError::NotARepo(format!(
@@ -179,19 +200,53 @@ pub async fn repo_init(
     }
     let git_path = state.git_path.read().await.clone();
     let runner = GitRunner::for_repo(git_path.clone(), &dir);
-    let out = runner.run(&["init"]).await.map_err(AppError::from)?;
+    let args = build_init_args(bare, initial_branch.as_deref());
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let out = runner.run(&arg_refs).await.map_err(AppError::from)?;
     if !out.success {
         return Err(AppError::Git(GitError::CommandFailed {
             exit_code: out.exit_code.unwrap_or(-1),
             stderr: out.stderr.trim().to_string(),
         }));
     }
+    if bare {
+        return Ok(None);
+    }
     let summary = register_open_repo(&state, &app, git_path, dir).await?;
     if let Some(pid) = profile_id {
         let session = state.get_session(&summary.id).await?;
         crate::commands::profiles::apply_profile_core(&state, &session, &pid).await?;
     }
-    Ok(summary)
+    Ok(Some(summary))
+}
+
+/// Build the `git clone` argument list (auth `-c` overrides are spliced in
+/// front by the caller). Pure so the option handling is unit-testable.
+///
+/// `--progress` forces the transfer meter onto our piped stderr; the runner
+/// parses it into progress-observer updates and strips it from logged output.
+fn build_clone_args(
+    url: &str,
+    name: &str,
+    depth: Option<u32>,
+    branch: Option<&str>,
+    recurse_submodules: bool,
+) -> Vec<String> {
+    let mut args = vec!["clone".to_string(), "--progress".to_string()];
+    if let Some(depth) = depth.filter(|d| *d > 0) {
+        args.push("--depth".into());
+        args.push(depth.to_string());
+    }
+    if let Some(branch) = branch.map(str::trim).filter(|b| !b.is_empty()) {
+        args.push("--branch".into());
+        args.push(branch.to_string());
+    }
+    if recurse_submodules {
+        args.push("--recurse-submodules".into());
+    }
+    args.push(url.to_string());
+    args.push(name.to_string());
+    args
 }
 
 /// Clone `url` into `parent_dir/name`, open it, and optionally apply (and select)
@@ -208,6 +263,9 @@ pub async fn repo_clone(
     name: String,
     profile_id: Option<String>,
     op_id: String,
+    depth: Option<u32>,
+    branch: Option<String>,
+    recurse_submodules: bool,
 ) -> Result<RepoSummary, AppError> {
     let parent = PathBuf::from(&parent_dir);
     if !parent.exists() {
@@ -233,12 +291,13 @@ pub async fn repo_clone(
             .ok_or_else(|| AppError::UnknownProfile(pid.clone()))?;
         args.extend(crate::commands::profiles::clone_auth_config_args(&profile));
     }
-    args.push("clone".into());
-    // Force the transfer meter onto our piped stderr; the runner parses it
-    // into progress-observer updates and strips it from the logged output.
-    args.push("--progress".into());
-    args.push(url.clone());
-    args.push(name.clone());
+    args.extend(build_clone_args(
+        &url,
+        &name,
+        depth,
+        branch.as_deref(),
+        recurse_submodules,
+    ));
 
     // Run on a transient runner registered for the op so cancel_clone can reach it.
     let oid = OperationId(op_id);
@@ -401,41 +460,84 @@ pub async fn restore_open_repos(
         let s = state.global_settings.read().await;
         (s.currently_open.clone(), s.active_open_repo.clone())
     };
+    // Snapshot for the final merge: `currently_open` entries added while
+    // restore runs (open_repo racing the splash) must not be clobbered.
+    let snapshot: std::collections::HashSet<String> = paths.iter().cloned().collect();
     let git_path = state.git_path.read().await.clone();
 
     let mut summaries: Vec<RepoSummary> = Vec::new();
     let mut still_valid: Vec<String> = Vec::new();
     let mut active_id: Option<String> = None;
 
-    for raw in paths {
-        let path = PathBuf::from(&raw);
-        if !path.exists() {
-            tracing::info!(path = %raw, "restore: skipping missing path");
-            continue;
-        }
-        let probe = GitRunner::for_repo(git_path.clone(), &path);
-        let Ok(out) = probe.run(&["rev-parse", "--show-toplevel"]).await else {
-            tracing::warn!(path = %raw, "restore: rev-parse spawn failed");
-            continue;
-        };
-        if !out.success {
-            tracing::info!(path = %raw, stderr = %out.stderr.trim(), "restore: not a repo");
-            continue;
-        }
-        let toplevel = PathBuf::from(out.stdout.trim());
+    // Probe phase: all persisted paths concurrently. This is the startup hot
+    // path (the frontend holds the splash until restore completes): each repo
+    // costs at least one process spawn, which dominates on Windows, so with
+    // many repos sequential probing is the visible splash time.
+    let probe_handles: Vec<_> = paths
+        .into_iter()
+        .map(|raw| {
+            let git_path = git_path.clone();
+            tokio::spawn(async move {
+                let path = PathBuf::from(&raw);
+                if !path.exists() {
+                    tracing::info!(path = %raw, "restore: skipping missing path");
+                    return None;
+                }
+                let probe = GitRunner::for_repo(git_path, &path);
+                let Ok(out) = probe.run(&["rev-parse", "--show-toplevel"]).await else {
+                    tracing::warn!(path = %raw, "restore: rev-parse spawn failed");
+                    return None;
+                };
+                if !out.success {
+                    tracing::info!(path = %raw, stderr = %out.stderr.trim(), "restore: not a repo");
+                    return None;
+                }
+                Some(PathBuf::from(out.stdout.trim()))
+            })
+        })
+        .collect();
 
-        let existing = {
-            let repos = state.repos.read().await;
-            repos
-                .values()
-                .find(|s| s.path == toplevel)
-                .map(|s| s.summary())
-        };
-        let summary = if let Some(s) = existing {
-            s
-        } else {
-            open_session(&state, &app, git_path.clone(), toplevel.clone()).await
-        };
+    // Await in submission order (keeps the user-controlled tab order) and
+    // dedup by resolved toplevel BEFORE opening anything: two persisted paths
+    // inside the same repo must not race to create two sessions for it.
+    let mut toplevels: Vec<PathBuf> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for handle in probe_handles {
+        if let Ok(Some(toplevel)) = handle.await {
+            if seen.insert(toplevel.clone()) {
+                toplevels.push(toplevel);
+            }
+        }
+    }
+
+    // Open phase: sessions concurrently (settings read + git spawn + watcher
+    // each), reassembled in the persisted order below. The concurrent
+    // sessions insert into the `repos` map behind its RwLock; the toplevels
+    // are unique, so no two tasks open the same repo.
+    let open_handles: Vec<_> = toplevels
+        .into_iter()
+        .map(|toplevel| {
+            let app = app.clone();
+            let git_path = git_path.clone();
+            tokio::spawn(async move {
+                let state = app.state::<AppState>();
+                let existing = {
+                    let repos = state.repos.read().await;
+                    repos
+                        .values()
+                        .find(|s| s.path == toplevel)
+                        .map(|s| s.summary())
+                };
+                match existing {
+                    Some(s) => s,
+                    None => open_session(&state, &app, git_path, toplevel).await,
+                }
+            })
+        })
+        .collect();
+
+    for handle in open_handles {
+        let Ok(summary) = handle.await else { continue };
         still_valid.push(summary.path.clone());
         if persisted_active.as_deref() == Some(summary.path.as_str()) {
             active_id = Some(summary.id.clone());
@@ -449,13 +551,27 @@ pub async fn restore_open_repos(
 
     {
         let mut settings = state.global_settings.write().await;
-        settings.currently_open = still_valid;
-        if let Some(id) = &active_id {
-            settings.active_open_repo = summaries
-                .iter()
-                .find(|s| &s.id == id)
-                .map(|s| s.path.clone());
+        // Merge instead of overwrite: keep any paths that were opened while
+        // restore was running (they weren't in our snapshot), in their order.
+        let mut merged = still_valid;
+        for p in &settings.currently_open {
+            if !snapshot.contains(p) && !merged.contains(p) {
+                merged.push(p.clone());
+            }
         }
+        settings.currently_open = merged;
+        // Keep active consistent with the list: clear it when nothing
+        // restored, rather than leaving a pointer at a repo that is gone.
+        settings.active_open_repo = active_id
+            .as_ref()
+            .and_then(|id| summaries.iter().find(|s| &s.id == id))
+            .map(|s| s.path.clone())
+            .or_else(|| {
+                settings
+                    .currently_open
+                    .first()
+                    .cloned()
+            });
     }
     state.persist_global_settings().await.ok();
 
@@ -581,4 +697,57 @@ pub async fn unset_lane_lock(
     let (repo_dir, _) = state.repo_data_paths(&session.path);
     persist_repo_settings(&settings, &repo_dir, &session.settings_path, &session.path).await?;
     Ok(settings.lane_locks_doc.locks)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_clone_args, build_init_args};
+
+    #[test]
+    fn clone_args_default_is_progress_url_name() {
+        assert_eq!(
+            build_clone_args("https://x/y.git", "y", None, None, false),
+            vec!["clone", "--progress", "https://x/y.git", "y"],
+        );
+    }
+
+    #[test]
+    fn clone_args_with_all_options() {
+        assert_eq!(
+            build_clone_args("https://x/y.git", "y", Some(1), Some("dev"), true),
+            vec![
+                "clone",
+                "--progress",
+                "--depth",
+                "1",
+                "--branch",
+                "dev",
+                "--recurse-submodules",
+                "https://x/y.git",
+                "y",
+            ],
+        );
+    }
+
+    #[test]
+    fn clone_args_ignore_blank_branch_and_zero_depth() {
+        assert_eq!(
+            build_clone_args("u", "n", Some(0), Some("  "), false),
+            vec!["clone", "--progress", "u", "n"],
+        );
+    }
+
+    #[test]
+    fn init_args_default_is_bare_init() {
+        assert_eq!(build_init_args(false, None), vec!["init"]);
+    }
+
+    #[test]
+    fn init_args_with_bare_and_initial_branch() {
+        assert_eq!(
+            build_init_args(true, Some("trunk")),
+            vec!["init", "--bare", "--initial-branch", "trunk"],
+        );
+        assert_eq!(build_init_args(false, Some(" ")), vec!["init"]);
+    }
 }

@@ -37,9 +37,10 @@ interface RefsCellProps {
   creatingBranch?: boolean;
   onCreateBranchSave?: (name: string) => void;
   onCreateBranchCancel?: () => void;
-  /** Same as `creatingBranch`, but for a (lightweight) tag on this row's commit. */
+  /** Same as `creatingBranch`, but for a tag on this row's commit (annotated
+   *  when a message is entered, lightweight otherwise). */
   creatingTag?: boolean;
-  onCreateTagSave?: (name: string) => void;
+  onCreateTagSave?: (name: string, message: string | null) => void;
   onCreateTagCancel?: () => void;
   /** Tag names that exist on the remote with the same target — their chips
    *  carry the remote indicator, like fused branch chips do. */
@@ -47,12 +48,14 @@ interface RefsCellProps {
   /** Tag names whose target commit is on the remote; pushing the others is
    *  disabled (it would upload commits no remote branch references). */
   tagTargetsOnRemote?: ReadonlySet<string>;
-  /** Remote tags are pushed to (chip menu label), or null when none exists. */
+  /** Default remote tags are pushed to (chip menu label), or null when none exists. */
   tagRemote?: string | null;
-  onTagPush?: (name: string) => void;
+  /** All configured remote names (multi-remote repos get a picker entry). */
+  tagRemotes?: string[];
+  onTagPush?: (name: string, remote: string) => void;
   onTagDelete?: (name: string) => void;
-  /** Deletes the tag on the remote only (offered while pushed). */
-  onTagDeleteRemote?: (name: string) => void;
+  /** Deletes the tag on the given remote only (offered while pushed). */
+  onTagDeleteRemote?: (name: string, remote: string) => void;
   onBranchCheckout?: (name: string) => void;
   onBranchRename?: (name: string) => void;
   /** Set (short remote ref) or clear (null) a local branch's upstream. */
@@ -75,7 +78,7 @@ interface RefsCellProps {
 const CHIP_GAP = 3;
 
 /** Renders ref decoration chips for a commit row. */
-export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, renamingBranch, onBranchRenameSave, onBranchRenameCancel, creatingBranch, onCreateBranchSave, onCreateBranchCancel, creatingTag, onCreateTagSave, onCreateTagCancel, pushedTags, tagTargetsOnRemote, tagRemote, onTagPush, onTagDelete, onTagDeleteRemote, onBranchCheckout, onBranchRename, onBranchSetUpstream, upstreamCandidatesFor, onBranchDelete, onRemoteCheckout, currentBranch, opInProgress, onBranchMerge, onBranchRebaseOnto }: RefsCellProps) {
+export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, renamingBranch, onBranchRenameSave, onBranchRenameCancel, creatingBranch, onCreateBranchSave, onCreateBranchCancel, creatingTag, onCreateTagSave, onCreateTagCancel, pushedTags, tagTargetsOnRemote, tagRemote, tagRemotes, onTagPush, onTagDelete, onTagDeleteRemote, onBranchCheckout, onBranchRename, onBranchSetUpstream, upstreamCandidatesFor, onBranchDelete, onRemoteCheckout, currentBranch, opInProgress, onBranchMerge, onBranchRebaseOnto }: RefsCellProps) {
   const { openMenu, closeMenu } = usePanelContextMenu();
   const [visibleCount, setVisibleCount] = useState(Number.MAX_SAFE_INTEGER);
   const [popover, setPopover] = useState<{ x: number; y: number } | null>(null);
@@ -237,9 +240,10 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
             pushed={pushedTags?.has(tagName) ?? false}
             targetOnRemote={tagTargetsOnRemote?.has(tagName) ?? true}
             remote={tagRemote ?? null}
-            onPush={() => { closeMenu(); onTagPush?.(tagName); }}
+            remotes={tagRemotes ?? []}
+            onPush={(remote) => { closeMenu(); onTagPush?.(tagName, remote); }}
             onDelete={() => { closeMenu(); onTagDelete?.(tagName); }}
-            onDeleteRemote={() => { closeMenu(); onTagDeleteRemote?.(tagName); }}
+            onDeleteRemote={(remote) => { closeMenu(); onTagDeleteRemote?.(tagName, remote); }}
           />
         );
       }
@@ -350,21 +354,13 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
         />
       )}
 
-      {/* Create-new-tag input (row context menu): same pattern, tag-shaped. */}
+      {/* Create-new-tag inputs (row context menu): same pattern, tag-shaped.
+          A non-empty message makes the tag annotated. */}
       {creatingTag && (
-        <InlineRenameInput
-          initialValue=""
-          placeholder="tag name…"
-          title="Enter to create · Esc to cancel"
-          onSave={(name) => onCreateTagSave?.(name)}
+        <InlineTagCreate
+          textSize={textSize}
+          onSave={(name, message) => onCreateTagSave?.(name, message)}
           onCancel={() => onCreateTagCancel?.()}
-          style={{
-            fontSize: textSize,
-            padding: "1px 5px",
-            borderRadius: 3, // tag chips are squarer than branch chips
-            width: "16ch",
-            flexShrink: 0,
-          }}
         />
       )}
 
@@ -423,6 +419,80 @@ interface ChipProps {
 
 const shortBranch = (ref: string) => ref.replace(/^refs\/heads\//, "");
 const shortRemote = (ref: string) => ref.replace(/^refs\/remotes\//, "");
+
+/**
+ * In-place tag creation: a required name plus an optional message (a
+ * non-empty message creates an annotated tag). Enter in either field creates
+ * the tag, Esc discards; a save without a name is treated as cancel, matching
+ * `InlineRenameInput` semantics.
+ */
+function InlineTagCreate({
+  textSize,
+  onSave,
+  onCancel,
+}: {
+  textSize: number;
+  onSave: (name: string, message: string | null) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [message, setMessage] = useState("");
+
+  const save = () => {
+    const trimmed = name.trim();
+    if (trimmed.length === 0) {
+      onCancel();
+      return;
+    }
+    onSave(trimmed, message.trim() || null);
+  };
+
+  const inputStyle: React.CSSProperties = {
+    boxSizing: "border-box",
+    fontSize: textSize,
+    padding: "1px 5px",
+    borderRadius: 3, // tag chips are squarer than branch chips
+    flexShrink: 0,
+  };
+  const keyHandler = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      save();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      onCancel();
+    }
+    // Keep list-level shortcuts (arrows etc.) from acting while typing.
+    e.stopPropagation();
+  };
+  const stop = (e: React.MouseEvent) => e.stopPropagation();
+
+  return (
+    <span style={{ display: "inline-flex", gap: 3, flexShrink: 0 }}>
+      <input
+        autoFocus
+        value={name}
+        placeholder="tag name…"
+        title="Enter to create · Esc to cancel"
+        onChange={(e) => setName(e.target.value)}
+        onClick={stop}
+        onContextMenu={stop}
+        onKeyDown={keyHandler}
+        style={{ ...inputStyle, width: "14ch" }}
+      />
+      <input
+        value={message}
+        placeholder="message (annotated)…"
+        title="Optional: a message makes the tag annotated"
+        onChange={(e) => setMessage(e.target.value)}
+        onClick={stop}
+        onContextMenu={stop}
+        onKeyDown={keyHandler}
+        style={{ ...inputStyle, width: "20ch" }}
+      />
+    </span>
+  );
+}
 
 /**
  * The checked-out marker: a filled dot at the left edge of the current

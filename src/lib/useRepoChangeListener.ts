@@ -18,7 +18,7 @@ export function useRepoChangeListener() {
     let unlisten: (() => void) | undefined;
     let disposed = false;
     onRepoChanged((payload) => {
-      // domains ∈ "status" | "log" | "branches" — matches the query-key suffixes.
+      // domains ∈ ChangeDomain (see types.ts) - matches the query-key suffixes.
       // Coalescing backstop: skip any domain a manual refresh (or an earlier
       // emission of this same change) already invalidated within the window, so
       // one action triggers one refetch. See repoInvalidation.ts.

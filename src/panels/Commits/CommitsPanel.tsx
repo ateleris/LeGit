@@ -520,6 +520,7 @@ export function CommitsPanel() {
     staleTime: 5_000,
   });
   const tagRemote = useMemo(() => pickTagRemote(remotesList), [remotesList]);
+  const remoteNames = useMemo(() => remotesList.map((r) => r.name), [remotesList]);
   const { data: remoteTags = [] } = useQuery<RemoteTag[]>({
     queryKey: [repo?.id, "remote-tags", tagRemote],
     queryFn: () => repoRemoteTags(repo!.id, tagRemote!, crypto.randomUUID()),
@@ -537,16 +538,16 @@ export function CommitsPanel() {
 
   const TAG_DOMAINS = ["tags", "log"] as const;
 
-  const handleTagPush = useCallback(async (name: string) => {
-    if (!repo || !tagRemote) return;
+  const handleTagPush = useCallback(async (name: string, remote: string) => {
+    if (!repo) return;
     try {
-      await repoPushTag(repo.id, tagRemote, name, crypto.randomUUID());
-      notify.success(`Pushed tag '${name}' to ${tagRemote}`);
+      await repoPushTag(repo.id, remote, name, crypto.randomUUID());
+      notify.success(`Pushed tag '${name}' to ${remote}`);
       invalidateRepoDomains(queryClient, repo.id, ["remote-tags"]);
     } catch (e) {
       notify.error(formatAppError(e));
     }
-  }, [repo, tagRemote, queryClient]);
+  }, [repo, queryClient]);
 
   const handleTagDelete = useCallback(async (name: string) => {
     if (!repo) return;
@@ -560,16 +561,16 @@ export function CommitsPanel() {
 
   // Deletes the tag ON THE REMOTE only — local/remote deletion are separate,
   // deliberate actions (GitKraken-style).
-  const handleTagDeleteRemote = useCallback(async (name: string) => {
-    if (!repo || !tagRemote) return;
+  const handleTagDeleteRemote = useCallback(async (name: string, remote: string) => {
+    if (!repo) return;
     try {
-      await repoDeleteRemoteTag(repo.id, tagRemote, name, crypto.randomUUID());
-      notify.success(`Deleted tag '${name}' from ${tagRemote}`);
+      await repoDeleteRemoteTag(repo.id, remote, name, crypto.randomUUID());
+      notify.success(`Deleted tag '${name}' from ${remote}`);
       invalidateRepoDomains(queryClient, repo.id, ["remote-tags"]);
     } catch (e) {
       notify.error(formatAppError(e));
     }
-  }, [repo, tagRemote, queryClient]);
+  }, [repo, queryClient]);
 
   // Create-new-tag flow: the input shows on the clicked row; the (lightweight)
   // tag is only created when a name is confirmed.
@@ -577,12 +578,12 @@ export function CommitsPanel() {
     setTagCreation({ rowId: commitId });
   }, []);
 
-  const handleCreateTagSave = useCallback(async (name: string) => {
+  const handleCreateTagSave = useCallback(async (name: string, message: string | null) => {
     const creation = tagCreation;
     setTagCreation(null);
     if (!repo || !creation) return;
     try {
-      await repoCreateTag(repo.id, name, creation.rowId, undefined);
+      await repoCreateTag(repo.id, name, creation.rowId, message ?? undefined);
       invalidateRepoDomains(queryClient, repo.id, TAG_DOMAINS);
     } catch (e) {
       notify.error(formatAppError(e));
@@ -1259,9 +1260,10 @@ export function CommitsPanel() {
                                 pushed={pushedTags.has(name)}
                                 targetOnRemote={tagTargetsOnRemote.has(name)}
                                 remote={tagRemote}
-                                onPush={() => { closeMenu(); handleTagPush(name); }}
+                                remotes={remoteNames}
+                                onPush={(remote) => { closeMenu(); handleTagPush(name, remote); }}
                                 onDelete={() => { closeMenu(); handleTagDelete(name); }}
-                                onDeleteRemote={() => { closeMenu(); handleTagDeleteRemote(name); }}
+                                onDeleteRemote={(remote) => { closeMenu(); handleTagDeleteRemote(name, remote); }}
                               />
                             </Fragment>
                           ))}
@@ -1308,6 +1310,7 @@ export function CommitsPanel() {
                             pushedTags={pushedTags}
                             tagTargetsOnRemote={tagTargetsOnRemote}
                             tagRemote={tagRemote}
+                            tagRemotes={remoteNames}
                             onTagPush={handleTagPush}
                             onTagDelete={handleTagDelete}
                             onTagDeleteRemote={handleTagDeleteRemote}
