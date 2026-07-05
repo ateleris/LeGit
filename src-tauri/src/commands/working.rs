@@ -117,6 +117,17 @@ pub async fn repo_reword_commit(
 /// Resolve a repo-relative file path against the repo root, rejecting absolute
 /// paths and any non-plain component (`..`, `.`, prefixes) so IPC callers can
 /// only ever touch files inside the repository working tree.
+///
+/// The component check alone is not enough: a tracked in-repo symlink
+/// (`link -> /outside`) is all-plain components yet the filesystem follows it
+/// out of the repo on read/write. So after joining, the path is
+/// canonicalized (following every symlink, including a final-component file
+/// symlink) and verified to still sit under the canonicalized root. Both
+/// sides are canonicalized so the comparison is consistent on Windows, where
+/// `canonicalize` returns `\\?\`-prefixed paths. The final component may not
+/// exist yet (a save creating the file): its parent is verified instead, and
+/// the plain-component check already guarantees the final name itself cannot
+/// traverse.
 fn resolve_repo_relative(root: &Path, rel: &str) -> Result<PathBuf, AppError> {
     let rel_path = Path::new(rel);
     let plain = !rel_path.as_os_str().is_empty()
@@ -128,7 +139,27 @@ fn resolve_repo_relative(root: &Path, rel: &str) -> Result<PathBuf, AppError> {
             "invalid repo-relative path: {rel}"
         )));
     }
-    Ok(root.join(rel_path))
+    let joined = root.join(rel_path);
+    let canonical_root = std::fs::canonicalize(root)
+        .map_err(|e| AppError::Io(format!("resolve {}: {e}", root.display())))?;
+    let canonical = match std::fs::canonicalize(&joined) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let parent = joined
+                .parent()
+                .ok_or_else(|| AppError::ParseArgs(format!("invalid repo-relative path: {rel}")))?;
+            let canonical_parent = std::fs::canonicalize(parent)
+                .map_err(|e| AppError::Io(format!("resolve {}: {e}", parent.display())))?;
+            canonical_parent.join(joined.file_name().expect("plain final component"))
+        }
+        Err(e) => return Err(AppError::Io(format!("resolve {}: {e}", joined.display()))),
+    };
+    if !canonical.starts_with(&canonical_root) {
+        return Err(AppError::ParseArgs(format!(
+            "path escapes the repository: {rel}"
+        )));
+    }
+    Ok(canonical)
 }
 
 /// Read a working-tree file as UTF-8 text (the editable diff's save baseline).
@@ -170,9 +201,12 @@ mod tests {
 
     #[test]
     fn resolve_repo_relative_joins_inside_root() {
-        let root = Path::new("/repo");
-        let p = resolve_repo_relative(root, "src/main.rs").unwrap();
-        assert_eq!(p, Path::new("/repo/src/main.rs"));
+        let repo = tempfile::tempdir().unwrap();
+        std::fs::create_dir(repo.path().join("src")).unwrap();
+        std::fs::write(repo.path().join("src/main.rs"), "fn main() {}").unwrap();
+        let p = resolve_repo_relative(repo.path(), "src/main.rs").unwrap();
+        assert!(p.ends_with("src/main.rs") || p.ends_with("src\\main.rs"));
+        assert!(p.starts_with(std::fs::canonicalize(repo.path()).unwrap()));
     }
 
     #[test]
@@ -188,5 +222,52 @@ mod tests {
         assert!(resolve_repo_relative(root, "src/../../outside.txt").is_err());
         assert!(resolve_repo_relative(root, "./x/./y").is_err());
         assert!(resolve_repo_relative(root, "").is_err());
+    }
+
+    /// A tracked symlink pointing outside the repo must not be followable:
+    /// `link/secret` and a file symlink as the final component both resolve
+    /// (via the filesystem) to paths outside the root, even though every
+    /// path component is plain. The component check alone cannot see this -
+    /// only canonicalize-and-verify can.
+    #[cfg(unix)]
+    #[test]
+    fn resolve_repo_relative_rejects_symlink_escape() {
+        let repo = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "s").unwrap();
+        std::os::unix::fs::symlink(outside.path(), repo.path().join("link")).unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.txt"),
+            repo.path().join("flink.txt"),
+        )
+        .unwrap();
+
+        // Directory symlink traversal.
+        assert!(resolve_repo_relative(repo.path(), "link/secret.txt").is_err());
+        // File symlink as the final component (fs::write would follow it).
+        assert!(resolve_repo_relative(repo.path(), "flink.txt").is_err());
+        // Writing a NEW file through an escaping directory symlink.
+        assert!(resolve_repo_relative(repo.path(), "link/new.txt").is_err());
+    }
+
+    /// In-repo symlinks that stay inside the repo remain usable.
+    #[cfg(unix)]
+    #[test]
+    fn resolve_repo_relative_allows_inside_symlink() {
+        let repo = tempfile::tempdir().unwrap();
+        std::fs::write(repo.path().join("real.txt"), "r").unwrap();
+        std::os::unix::fs::symlink(repo.path().join("real.txt"), repo.path().join("alias.txt"))
+            .unwrap();
+        assert!(resolve_repo_relative(repo.path(), "alias.txt").is_ok());
+    }
+
+    /// The final component may not exist yet (saving creates it); the parent
+    /// is verified instead.
+    #[test]
+    fn resolve_repo_relative_allows_new_file_in_existing_dir() {
+        let repo = tempfile::tempdir().unwrap();
+        std::fs::create_dir(repo.path().join("src")).unwrap();
+        let p = resolve_repo_relative(repo.path(), "src/new.rs").unwrap();
+        assert!(p.ends_with("src/new.rs") || p.ends_with("src\\new.rs"));
     }
 }

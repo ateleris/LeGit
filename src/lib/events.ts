@@ -65,6 +65,9 @@ export interface CredentialRequestPayload {
   host: string;
   /** Username git already knows (from the URL), if any. */
   username: string | null;
+  /** Directory the triggering git operation ran in (its repo working tree),
+   * so the user can verify an unexpected prompt. */
+  repo_dir: string | null;
 }
 
 /** Subscribe to credential-prompt requests. Returns an unsubscribe function. */

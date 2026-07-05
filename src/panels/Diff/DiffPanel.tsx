@@ -37,7 +37,7 @@ import {
   type HunkAction,
   type LineActionOp,
 } from "./DiffEditor";
-import { spliceEdits } from "./editModel";
+import { applyEol, spliceEdits } from "./editModel";
 import {
   conflictsToDiff,
   parseConflicts,
@@ -303,11 +303,16 @@ export function DiffPanel() {
     if (resolveModeRef.current) {
       savingRef.current = true;
       try {
-        // 3-way: the centre pane is the whole file — write it as-is.
-        // Marker view: reassemble the file from the edited editor regions.
+        // 3-way: the centre pane is the whole file, but the editor document
+        // joins lines with "\n" regardless of the file — re-instate the real
+        // EOL (parseConflicts recorded it) or a CRLF file saves as LF.
+        // Marker view: reassemble the file from the edited editor regions
+        // (joinLines applies the recorded EOL there).
         let next: string | null = null;
         if (threeWayActiveRef.current) {
-          next = threeWayTextRef.current;
+          const text = threeWayTextRef.current;
+          const parsedNow = parsedRef.current;
+          next = text != null && parsedNow ? applyEol(text, parsedNow.eol) : text;
         } else {
           const regions = editorRef.current?.collectResolveRegions();
           const parsedNow = parsedRef.current;

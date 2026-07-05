@@ -10,39 +10,21 @@ record); an item that is partially done keeps only its open remainder.
 
 ## Review findings deferred (2026-07-05 full-codebase review)
 
-The review's directly fixable findings were applied the same day (lossy
-non-UTF-8 stdout, CRLF hunk-patch corruption, Compare/Search repo-switch
-reset, global git-path hot-swap to open sessions, restore merge race +
-stale active pointer, cold-cache repo-settings wipe, credential-broker
-poison-proofing + shim timeouts, type-drift arms, binary-file View guard,
-Branches delayed-busy pattern). Still open:
+All findings from the review are now closed (second sweep 2026-07-05:
+duplicate-OperationId guard in the runner, 3-way resolve CRLF preservation,
+canonicalize-and-verify in `resolve_repo_relative`, credential-broker trust
+docs + prompt attribution, File View binary classification) except one,
+re-deferred with justification:
 
-- **Runner: duplicate `OperationId` kills the earlier invocation.** A second
-  invocation under the same op id evicts the first's kill channel, whose
-  dropped sender fires the cancel arm and kills the first child. Latent (the
-  frontend mints UUIDs), but the runner should guard: reject a colliding id
-  or key the running map by (id, generation).
 - **Runner: non-UTF-8 paths cannot be represented.** The whole `&[&str]` arg
   surface (and `<rev>:<path>` interpolation via `to_string_lossy`) assumes
-  UTF-8 paths. Rarely bites (paths originate from git's own output); a real
-  fix means an `OsStr`/bytes-capable runner arg path. Large.
-- **Editable diff: CRLF files saved from the inline editor lose their `\r`.**
-  The display model strips `\r` (`parse_file_diff` uses `lines()`), so the
-  editable-diff save path writes LF-only content back. Sibling of the fixed
-  patch-builder bug; needs an end-of-line-aware edit model or save-time
-  re-instatement.
-- **Worktree read/write symlink escape (defense-in-depth).**
-  `resolve_repo_relative` rejects `..` but follows in-repo symlinks, so a
-  tracked `link -> /outside` lets `repo_write_worktree_file` write outside
-  the repo. Canonicalize-and-verify after join (mind Windows `\\?\` paths).
-- **Credential broker trust note.** Any same-user process that reads
-  `LEGIT_CRED_TOKEN` from a git child's environment can request credentials
-  (and trigger a genuine-looking prompt). Same-user is the existing trust
-  boundary (same as git's own helper model); document it, and consider
-  showing which operation/remote triggered the prompt for user verification.
-- **File View: report binary content properly.** The menu entry is disabled
-  for binary files; nicer would be the backend classifying content (NUL
-  sniff) so the panel can say "binary file, N bytes" for any rev.
+  UTF-8 paths. Re-deferred after scoping: every path crossing IPC is JSON
+  (UTF-8 by construction), so the frontend cannot even express a non-UTF-8
+  path - a real fix means bytes end-to-end (runner + executor trait + every
+  backend signature + an IPC encoding + frontend types), a cross-cutting
+  rewrite. Today a repo with non-UTF-8 filenames fails cleanly (git reports
+  "pathspec did not match" on the lossy-decoded name); nothing corrupts.
+  Revisit only if such repos become a real support case.
 
 ---
 

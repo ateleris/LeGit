@@ -976,3 +976,51 @@ async fn discard_restores_tracked_and_cleans_untracked() {
         .unwrap();
     exec.assert_done();
 }
+
+// ---------------------------------------------------------------------------
+// file_at_revision - binary classification (NUL sniff) + size lookup
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn file_at_revision_returns_text_without_a_size_lookup() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["show", "abc123:src/main.rs"], ok("fn main() {}\n"));
+    let (b, exec) = backend(fake);
+
+    let content = b
+        .file_at_revision("abc123", Path::new("src/main.rs"))
+        .await
+        .unwrap();
+    assert_eq!(content, FileAtRevision::Text("fn main() {}\n".to_string()));
+    // No `cat-file -s` for text content.
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn file_at_revision_classifies_binary_and_reports_the_blob_size() {
+    let fake = FakeExecutor::default();
+    // NUL in the content marks it binary (git's own heuristic)...
+    fake.expect(&["show", "abc123:logo.png"], ok("\u{89}PNG\0\u{1a}junk"));
+    // ...which triggers exactly one exact-size lookup.
+    fake.expect(&["cat-file", "-s", "abc123:logo.png"], ok("51234\n"));
+    let (b, exec) = backend(fake);
+
+    let content = b
+        .file_at_revision("abc123", Path::new("logo.png"))
+        .await
+        .unwrap();
+    assert_eq!(content, FileAtRevision::Binary { size_bytes: 51234 });
+    exec.assert_done();
+}
+
+/// The sniff only inspects the leading bytes (like git): a NUL later in a
+/// huge text file must not flip it to binary, and the check must not scan
+/// the whole blob. Mirrors `is_binary_content`'s 8000-byte window.
+#[test]
+fn binary_sniff_checks_only_the_leading_window() {
+    assert!(is_binary_content("abc\0def"));
+    assert!(!is_binary_content("plain text\n"));
+    let mut long_text = "x".repeat(9000);
+    long_text.push('\0');
+    assert!(!is_binary_content(&long_text));
+}

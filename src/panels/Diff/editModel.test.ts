@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyEol,
   collectHunkNewSideTexts,
   collectResolveRegionsInline,
   collectResolveRegionsSplit,
@@ -26,6 +27,28 @@ describe("detectEol / splitLines / hasTrailingNewline", () => {
   it("reports trailing newline", () => {
     expect(hasTrailingNewline("a\n")).toBe(true);
     expect(hasTrailingNewline("a")).toBe(false);
+  });
+});
+
+describe("applyEol", () => {
+  // A CodeMirror document always joins lines with "\n" (toString), so a doc
+  // written back wholesale (the 3-way resolve save path) must have the file's
+  // real EOL re-instated or a CRLF file is silently normalized to LF.
+  it("re-instates CRLF on LF-joined editor text", () => {
+    expect(applyEol("a\nb\nc\n", "\r\n")).toBe("a\r\nb\r\nc\r\n");
+  });
+
+  it("leaves LF text unchanged for an LF file", () => {
+    expect(applyEol("a\nb\n", "\n")).toBe("a\nb\n");
+  });
+
+  it("normalizes stray CRLF a user pasted into the editor", () => {
+    expect(applyEol("a\r\nb\n", "\n")).toBe("a\nb\n");
+    expect(applyEol("a\r\nb\n", "\r\n")).toBe("a\r\nb\r\n");
+  });
+
+  it("preserves a missing trailing newline", () => {
+    expect(applyEol("a\nb", "\r\n")).toBe("a\r\nb");
   });
 });
 

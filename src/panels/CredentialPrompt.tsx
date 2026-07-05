@@ -51,6 +51,12 @@ export function CredentialPromptHost() {
   );
 }
 
+/** Last path component, for display ("C:\\work\\repo" / "/work/repo" -> "repo"). */
+function basename(dir: string): string {
+  const parts = dir.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] ?? dir;
+}
+
 function CredentialDialog({
   request,
   onDone,
@@ -131,6 +137,13 @@ function CredentialDialog({
       <div style={{ fontFamily: "monospace", overflowWrap: "anywhere" }}>
         {request.protocol}://{request.host}
       </div>
+      {request.repo_dir && (
+        <div style={caption} title={request.repo_dir}>
+          Requested by a git operation in{" "}
+          <span style={{ fontFamily: "monospace" }}>{basename(request.repo_dir)}</span>. If you
+          didn't start one, cancel.
+        </div>
+      )}
       <label style={field}>
         <span style={caption}>Username</span>
         <input

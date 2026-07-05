@@ -4,13 +4,27 @@ import { useActiveRepo } from "../../store/repos";
 import { useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { repoFileAtRevision } from "../../lib/commands";
-import { formatAppError } from "../../lib/types";
+import { formatAppError, type FileAtRevision } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 
 /** Summon payload: which file, at which tree-ish. */
 export interface FileViewRequest {
   path: string;
   rev: string;
+}
+
+/** "51234" -> "50.0 KiB" (exact bytes for small values). */
+function formatByteSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} bytes`;
+  const units = ["KiB", "MiB", "GiB"];
+  let value = bytes;
+  let unit = "bytes";
+  for (const next of units) {
+    if (value < 1024) break;
+    value /= 1024;
+    unit = next;
+  }
+  return `${value.toFixed(1)} ${unit} (${bytes.toLocaleString()} bytes)`;
 }
 
 function isFileViewRequest(payload: unknown): payload is FileViewRequest {
@@ -44,7 +58,7 @@ export function FileViewPanel() {
   }, []);
   useSummonTarget("file-view", onReceive);
 
-  const { data: content, isFetching, isError, error, refetch } = useQuery<string>({
+  const { data, isFetching, isError, error, refetch } = useQuery<FileAtRevision>({
     // Under the "log" domain: content at a rev changes exactly when history
     // does (e.g. the rev is rewritten away).
     queryKey: [repo?.id, "log", "file-at-rev", request?.rev, request?.path],
@@ -52,6 +66,7 @@ export function FileViewPanel() {
     enabled: !!repo && !!request,
     staleTime: 60_000,
   });
+  const content = data && "Text" in data ? data.Text : null;
   usePanelFocusEffect(useCallback(() => { refetch(); }, [refetch]));
 
   if (!repo || !request) {
@@ -95,6 +110,10 @@ export function FileViewPanel() {
           <pre className="legit-error" style={{ margin: 8, fontSize: "var(--fz-md)" }}>
             {formatAppError(error)}
           </pre>
+        ) : data && "Binary" in data ? (
+          <span className="legit-subtle" style={{ display: "block", padding: 8, fontSize: "var(--fz-md)" }}>
+            Binary file, {formatByteSize(data.Binary.size_bytes)}. No text content to show.
+          </span>
         ) : (
           content != null && (
             <pre

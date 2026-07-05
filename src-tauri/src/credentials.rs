@@ -17,6 +17,22 @@
 //! "remember" AND git confirms them via a `store` callback (wrong passwords
 //! never reach the keychain; a git `erase` removes a stale entry). Nothing is
 //! ever written to LeGit's settings files.
+//!
+//! # Trust boundary (same-user)
+//!
+//! The broker trusts any local process that presents the session token. The
+//! token travels in the environment of every git child (`LEGIT_CRED_TOKEN`),
+//! so any process running as the same user that can read a child's
+//! environment (e.g. `/proc/<pid>/environ`) can impersonate a helper:
+//! request credentials the session already holds, or trigger a
+//! genuine-looking prompt. This is deliberately the same trust boundary as
+//! git's own credential-helper model - a same-user process can equally well
+//! run `git credential fill`, read the user's git config, or query the OS
+//! keychain as that user - and LeGit does not attempt to defend against a
+//! compromised local account. Two mitigations narrow the surface: the token
+//! is a per-app-run UUID (a stale port squatter can't satisfy a new run),
+//! and the prompt shows the requesting `protocol://host` plus the directory
+//! the git operation ran in, so an unexpected prompt is recognizable.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
@@ -109,6 +125,11 @@ struct ShimRequest {
     token: String,
     op: String,
     fields: HashMap<String, String>,
+    /// The shim's working directory. git spawns helpers with its own cwd -
+    /// the repo working tree of the triggering operation - so the prompt can
+    /// tell the user where the request came from.
+    #[serde(default)]
+    cwd: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -156,7 +177,10 @@ fn run_shim(op: &str) -> Option<i32> {
     stream
         .set_write_timeout(Some(std::time::Duration::from_secs(10)))
         .ok()?;
-    let request = ShimRequest { token, op: op.to_string(), fields };
+    let cwd = std::env::current_dir()
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned());
+    let request = ShimRequest { token, op: op.to_string(), fields, cwd };
     let mut line = serde_json::to_string(&request).ok()?;
     line.push('\n');
     std::io::Write::write_all(&mut stream, line.as_bytes()).ok()?;
@@ -220,6 +244,10 @@ struct CredentialRequestPayload {
     protocol: String,
     host: String,
     username: Option<String>,
+    /// Directory the triggering git operation ran in (its repo working
+    /// tree), so the user can verify an unexpected prompt. Attribution only
+    /// - not used for any decision.
+    repo_dir: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -303,7 +331,7 @@ async fn handle_connection(
     }
 
     let response = match request.op.as_str() {
-        "get" => handle_get(&broker, &request.fields, &mut reader).await,
+        "get" => handle_get(&broker, &request.fields, request.cwd.as_deref(), &mut reader).await,
         "store" => {
             handle_store(&broker, &request.fields);
             ShimResponse::default()
@@ -324,6 +352,7 @@ async fn handle_connection(
 async fn handle_get(
     broker: &std::sync::Arc<Broker>,
     fields: &HashMap<String, String>,
+    cwd: Option<&str>,
     reader: &mut BufReader<tokio::net::tcp::OwnedReadHalf>,
 ) -> ShimResponse {
     let cancel = ShimResponse { cancel: true, ..Default::default() };
@@ -377,6 +406,7 @@ async fn handle_get(
             protocol: fields.get("protocol").cloned().unwrap_or_default(),
             host: fields.get("host").cloned().unwrap_or_default(),
             username: wanted_user,
+            repo_dir: cwd.map(str::to_string),
         },
     );
 

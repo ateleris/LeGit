@@ -29,6 +29,7 @@ import type {
   KeyDiff,
   DiffEntry,
   DiffSource,
+  FileAtRevision,
   FetchOptions,
   PullOptions,
   PullStrategy,
@@ -349,7 +350,7 @@ export const repoMergeBase = (repoId: string, a: string, b: string) =>
 
 /** Full content of a repo-relative file as of an arbitrary tree-ish. */
 export const repoFileAtRevision = (repoId: string, rev: string, path: string) =>
-  invoke<string>("repo_file_at_revision", { repoId, rev, path });
+  invoke<FileAtRevision>("repo_file_at_revision", { repoId, rev, path });
 
 /**
  * Restore a single file (index + working tree) to its content at `rev`.

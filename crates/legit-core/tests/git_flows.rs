@@ -977,7 +977,7 @@ async fn file_at_revision_reads_and_restores_historic_content() {
         .file_at_revision("HEAD~1", std::path::Path::new("a.txt"))
         .await
         .unwrap();
-    assert_eq!(content, "v1\n");
+    assert_eq!(content, legit_core::FileAtRevision::Text("v1\n".to_string()));
 
     // A path missing at the rev is an error, not empty content.
     let missing = repo
@@ -995,6 +995,28 @@ async fn file_at_revision_reads_and_restores_historic_content() {
     assert_eq!(repo.read("a.txt"), "v1\n");
     let staged = repo.git(&["diff", "--cached", "--name-only"]).await;
     assert!(staged.contains("a.txt"), "restore should stage the file: {staged}");
+}
+
+/// Binary content (NUL in the leading bytes) is classified, not returned as
+/// mojibake, and the reported size is the blob's exact byte size - validated
+/// against the real binary because the lossy decode inflates invalid bytes
+/// (each becomes a 3-byte U+FFFD), so `stdout.len()` would be wrong.
+#[tokio::test]
+async fn file_at_revision_classifies_binary_with_exact_size() {
+    let repo = TestRepo::init().await;
+    let bytes: Vec<u8> = vec![0x89, b'P', b'N', b'G', 0x00, 0xFF, 0xFE, 0x01, 0x02, 0x03];
+    std::fs::write(repo.path.join("blob.bin"), &bytes).expect("write binary file");
+    repo.commit_all("binary").await;
+
+    let content = repo
+        .backend
+        .file_at_revision("HEAD", std::path::Path::new("blob.bin"))
+        .await
+        .unwrap();
+    assert_eq!(
+        content,
+        legit_core::FileAtRevision::Binary { size_bytes: bytes.len() as u64 }
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1047,11 +1069,16 @@ async fn non_utf8_file_content_is_not_silently_dropped() {
     std::fs::write(repo.path.join("latin1.txt"), b"caf\xe9\n").expect("write file");
     repo.commit_all("latin1").await;
 
+    // Latin-1 is invalid UTF-8 but has no NUL, so it must stay classified as
+    // TEXT (lossy-decoded), never flip to the binary notice.
     let content = repo
         .backend
         .file_at_revision("HEAD", std::path::Path::new("latin1.txt"))
         .await
         .unwrap();
+    let legit_core::FileAtRevision::Text(content) = content else {
+        panic!("NUL-free non-UTF-8 content must classify as text: {content:?}");
+    };
     assert!(!content.is_empty(), "non-UTF-8 content must not vanish");
     assert!(content.starts_with("caf"), "{content:?}");
 

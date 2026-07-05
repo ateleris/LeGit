@@ -386,6 +386,10 @@ export type DiffEntry =
   | { Binary: BinaryDiff }
   | { Submodule: SubmoduleChange };
 
+/** A file's content at a revision: text, or a binary classification with the
+ * blob's exact byte size (mirrors `FileAtRevision` in types.rs). */
+export type FileAtRevision = { Text: string } | { Binary: { size_bytes: number } };
+
 /** Which two sides the Diff panel compares for a file (matches `DiffSource`). */
 export type DiffSource =
   | { kind: "working_unstaged" }

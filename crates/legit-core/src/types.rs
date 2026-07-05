@@ -239,6 +239,15 @@ pub enum DiffEntry {
     Submodule(SubmoduleChange),
 }
 
+/// A file's content at a revision: text, or a binary classification (NUL
+/// sniff, git's own heuristic) with the blob's exact size so the UI can say
+/// "binary file, N bytes" instead of rendering mojibake.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum FileAtRevision {
+    Text(String),
+    Binary { size_bytes: u64 },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, Default)]
 pub struct Diff {
     pub entries: Vec<DiffEntry>,

@@ -11,7 +11,7 @@ use crate::runner::{GitRunner, OperationId};
 use crate::types::{
     BlameHunk, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
-    FetchOptions, FfMode, FileState, FileStatus,
+    FetchOptions, FfMode, FileAtRevision, FileState, FileStatus,
     HunkOp, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullStrategy, PushOptions,
     RebaseOutcome, RebaseStep, RefDecoration, RefSelector, ReflogEntry, Remote, RemoteTag,
     RepoOpState, ResetMode, SequenceOutcome, SignMode, StashApplyOutcome, StashEntry,
@@ -21,6 +21,20 @@ use crate::types::{
 /// Git's well-known empty-tree object id, used as the "before" side when
 /// diffing a root commit (which has no parent).
 const EMPTY_TREE_OID: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/// Git's binary heuristic: a NUL byte within the leading window marks the
+/// content binary. The window matches git's own (`buffer_is_binary`, 8000
+/// bytes) so LeGit and git classify a blob identically; lossy UTF-8 decoding
+/// preserves NUL bytes, so sniffing the decoded string is sound.
+const BINARY_SNIFF_WINDOW: usize = 8000;
+
+fn is_binary_content(content: &str) -> bool {
+    content
+        .as_bytes()
+        .iter()
+        .take(BINARY_SNIFF_WINDOW)
+        .any(|&b| b == 0)
+}
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -1096,7 +1110,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         Ok(())
     }
 
-    async fn file_at_revision(&self, rev: &str, path: &Path) -> Result<String, GitError> {
+    async fn file_at_revision(&self, rev: &str, path: &Path) -> Result<FileAtRevision, GitError> {
         let runner = self.runner().await;
         let spec = format!("{rev}:{}", path.to_string_lossy());
         let output = runner
@@ -1109,7 +1123,26 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
                 stderr: output.stderr.trim().to_string(),
             });
         }
-        Ok(output.stdout)
+        if !is_binary_content(&output.stdout) {
+            return Ok(FileAtRevision::Text(output.stdout));
+        }
+        // Binary: report the blob's exact size instead of lossy bytes. The
+        // decoded string's length is NOT the byte size (each invalid byte
+        // became a 3-byte U+FFFD), hence the explicit `cat-file -s`.
+        let size = runner
+            .run(&["cat-file", "-s", &spec])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !size.success {
+            return Err(GitError::CommandFailed {
+                exit_code: size.exit_code.unwrap_or(-1),
+                stderr: size.stderr.trim().to_string(),
+            });
+        }
+        let size_bytes = size.stdout.trim().parse::<u64>().map_err(|_| {
+            GitError::Internal(format!("unexpected `cat-file -s` output: {:?}", size.stdout))
+        })?;
+        Ok(FileAtRevision::Binary { size_bytes })
     }
 
     async fn restore_file_at_revision(&self, rev: &str, path: &Path) -> Result<(), GitError> {

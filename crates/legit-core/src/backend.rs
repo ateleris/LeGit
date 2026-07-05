@@ -11,7 +11,7 @@ use crate::runner::OperationId;
 use crate::types::{
     BlameHunk, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
-    FetchOptions, FileStatus, HunkOp, LogOptions,
+    FetchOptions, FileAtRevision, FileStatus, HunkOp, LogOptions,
     MergeOptions, MergeOutcome, PullOptions, PushOptions, RebaseOutcome, RebaseStep,
     ReflogEntry, Remote, RemoteTag, RepoOpState, ResetMode, SequenceOutcome, StashApplyOutcome,
     StashEntry, StashOutcome, SubmoduleInfo, SwitchDirtyBehavior, SwitchOutcome, TagInfo,
@@ -45,8 +45,11 @@ pub trait GitBackend: Send + Sync {
     async fn merge_base(&self, a: &str, b: &str) -> Result<Option<String>, GitError>;
 
     /// Full content of `path` (repo-relative) as of `rev`
-    /// (`git show <rev>:<path>`). `rev` is any tree-ish.
-    async fn file_at_revision(&self, rev: &str, path: &Path) -> Result<String, GitError>;
+    /// (`git show <rev>:<path>`). `rev` is any tree-ish. Binary content (NUL
+    /// sniff) is classified, not returned: the variant carries the blob size
+    /// (`git cat-file -s`) so the UI can describe the file instead of
+    /// rendering lossy bytes.
+    async fn file_at_revision(&self, rev: &str, path: &Path) -> Result<FileAtRevision, GitError>;
 
     /// Restore `path` in the index AND working tree to its content at `rev`
     /// (`git checkout <rev> -- <path>`). Destructive: git overwrites local

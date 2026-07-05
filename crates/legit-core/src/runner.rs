@@ -155,6 +155,9 @@ pub enum RunnerError {
 
     #[error("operation cancelled")]
     Cancelled,
+
+    #[error("operation id {0} is already in flight")]
+    DuplicateOperation(OperationId),
 }
 
 /// In-flight operation handle stored in the runner's cancellation map.
@@ -253,7 +256,7 @@ impl GitRunner {
         })?;
 
         let (kill_tx, kill_rx) = oneshot::channel();
-        self.insert_running(op_id.clone(), kill_tx);
+        self.try_insert_running(op_id.clone(), kill_tx)?;
 
         let stdout = child.stdout.take().expect("stdout piped");
         let stderr = child.stderr.take().expect("stderr piped");
@@ -327,7 +330,7 @@ impl GitRunner {
         })?;
 
         let (kill_tx, kill_rx) = oneshot::channel();
-        self.insert_running(op_id.clone(), kill_tx);
+        self.try_insert_running(op_id.clone(), kill_tx)?;
 
         let stdout = child.stdout.take().expect("stdout piped");
         let mut stderr = child.stderr.take().expect("stderr piped");
@@ -471,7 +474,7 @@ impl GitRunner {
         })?;
 
         let (kill_tx, kill_rx) = oneshot::channel();
-        self.insert_running(op_id.clone(), kill_tx);
+        self.try_insert_running(op_id.clone(), kill_tx)?;
 
         let stdout = child.stdout.take().expect("stdout piped");
         let stderr = child.stderr.take().expect("stderr piped");
@@ -602,11 +605,34 @@ impl GitRunner {
         cmd
     }
 
-    fn insert_running(&self, op_id: OperationId, kill: oneshot::Sender<()>) {
-        self.running
+    /// Record an in-flight operation, rejecting an id that is already in
+    /// flight. A plain `insert` would EVICT the earlier entry: dropping its
+    /// kill sender closes the channel, which completes the earlier
+    /// invocation's cancel arm and kills that child. Ids are minted as UUIDs,
+    /// so a collision is always a caller bug - fail the new invocation, never
+    /// the running one. (Checked-and-inserted under one lock; the colliding
+    /// caller's just-spawned child is killed via `kill_on_drop` on the error
+    /// return.)
+    fn try_insert_running(
+        &self,
+        op_id: OperationId,
+        kill: oneshot::Sender<()>,
+    ) -> Result<(), RunnerError> {
+        match self
+            .running
             .lock()
             .expect("running map poisoned")
-            .insert(op_id, RunningOp { kill });
+            .entry(op_id.clone())
+        {
+            std::collections::hash_map::Entry::Occupied(_) => {
+                warn!(op_id = %op_id, "duplicate operation id - rejecting new invocation");
+                Err(RunnerError::DuplicateOperation(op_id))
+            }
+            std::collections::hash_map::Entry::Vacant(v) => {
+                v.insert(RunningOp { kill });
+                Ok(())
+            }
+        }
     }
 
     fn remove_running(&self, op_id: &OperationId) {
@@ -813,6 +839,43 @@ mod tests {
         std::env::remove_var("LEGIT_TEST_OS_VAR");
         std::env::remove_var("GIT_DIR");
         std::env::remove_var("LC_ALL");
+    }
+
+    /// A second invocation under an already-in-flight `OperationId` must be
+    /// rejected - NOT silently replace the map entry. The old `HashMap::insert`
+    /// evicted the first op's `RunningOp`, dropping its kill sender; the closed
+    /// channel completed the first invocation's cancel arm and killed its child.
+    #[tokio::test]
+    async fn duplicate_operation_id_is_rejected_and_does_not_kill_the_first() {
+        let runner = GitRunner::unbound("git");
+        let id = OperationId::new();
+
+        // Simulate an in-flight operation holding the id.
+        let (kill_tx, mut kill_rx) = oneshot::channel();
+        runner
+            .try_insert_running(id.clone(), kill_tx)
+            .expect("first insert must succeed");
+
+        // A second invocation under the same id is rejected up front...
+        let err = runner
+            .run_with_op(&["--version"], id.clone())
+            .await
+            .expect_err("colliding op id must be rejected");
+        assert!(matches!(err, RunnerError::DuplicateOperation(_)));
+
+        // ...and the first op's kill channel is untouched (still open, unfired).
+        assert!(matches!(
+            kill_rx.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+
+        // Cancellation still reaches the ORIGINAL operation.
+        assert!(runner.cancel(&id));
+        assert!(kill_rx.try_recv().is_ok());
+
+        // Once released, the id is usable again.
+        let out = runner.run_with_op(&["--version"], id).await.unwrap();
+        assert!(out.success);
     }
 
     /// Per-invocation env overrides must be applied AFTER the hardened base

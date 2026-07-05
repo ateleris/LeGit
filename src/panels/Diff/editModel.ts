@@ -13,6 +13,14 @@ export function hasTrailingNewline(text: string): boolean {
   return text.endsWith("\n");
 }
 
+/** Rewrite every line break in `text` to `eol`. A CodeMirror document joins
+ *  lines with "\n" regardless of the source file, so any save path that
+ *  writes an editor document wholesale (the 3-way resolve view) must
+ *  re-instate the file's real EOL or a CRLF file is silently normalized. */
+export function applyEol(text: string, eol: Eol): string {
+  return text.replace(/\r?\n/g, eol);
+}
+
 /** Split file text into lines without their EOLs; a trailing newline does not
  *  produce a final empty line. */
 export function splitLines(text: string): string[] {

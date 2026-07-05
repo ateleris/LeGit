@@ -82,7 +82,8 @@ pub async fn repo_merge_base(
     session.backend.merge_base(&a, &b).await.map_err(AppError::Git)
 }
 
-/// Full content of a repo-relative file as of an arbitrary tree-ish.
+/// Full content of a repo-relative file as of an arbitrary tree-ish; binary
+/// content is classified (with its blob size) instead of returned.
 #[tauri::command]
 #[specta::specta]
 pub async fn repo_file_at_revision(
@@ -90,7 +91,7 @@ pub async fn repo_file_at_revision(
     repo_id: String,
     rev: String,
     path: PathBuf,
-) -> Result<String, AppError> {
+) -> Result<legit_core::FileAtRevision, AppError> {
     let session = state.get_session(&repo_id).await?;
     session
         .backend

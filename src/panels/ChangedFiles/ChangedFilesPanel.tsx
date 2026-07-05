@@ -243,9 +243,6 @@ function FileAtCommitMenuSection({
   const confirmDestructive = useConfirmDestructive();
   const menuConfirm = useMenuConfirm();
   const deleted = file.change === "Deleted";
-  // The File View panel renders text; binary content has nothing to show
-  // (restore still works - checkout doesn't care about content type).
-  const binary = !!file.binary;
 
   const requestRestore = () => {
     if (!confirmDestructive) {
@@ -262,12 +259,10 @@ function FileAtCommitMenuSection({
   return (
     <>
       <SectionLabel>{file.path}</SectionLabel>
-      <MenuItem disabled={deleted || binary} onClick={() => { onClose(); onView(); }}>
-        {deleted
-          ? "View file (deleted in this commit)"
-          : binary
-            ? "View file (binary)"
-            : "View file at this commit"}
+      {/* Binary files are viewable too: the backend classifies content and
+          the File View panel reports "binary file, N bytes" for them. */}
+      <MenuItem disabled={deleted} onClick={() => { onClose(); onView(); }}>
+        {deleted ? "View file (deleted in this commit)" : "View file at this commit"}
       </MenuItem>
       <MenuItem disabled={deleted} onClick={requestRestore}>
         {deleted
