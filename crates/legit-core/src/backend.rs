@@ -11,7 +11,7 @@ use crate::runner::OperationId;
 use crate::types::{
     BlameHunk, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
-    FetchOptions, FileAtRevision, FileStatus, HunkOp, LogOptions,
+    FetchOptions, FileAtRevision, FileHistoryEntry, FileStatus, HunkOp, LogOptions,
     MergeOptions, MergeOutcome, PullOptions, PushOptions, RebaseOutcome, RebaseStep,
     ReflogEntry, Remote, RemoteTag, RepoOpState, ResetMode, SequenceOutcome, StashApplyOutcome,
     StashEntry, StashOutcome, SubmoduleInfo, SwitchDirtyBehavior, SwitchOutcome, TagInfo,
@@ -50,6 +50,17 @@ pub trait GitBackend: Send + Sync {
     /// (`git cat-file -s`) so the UI can describe the file instead of
     /// rendering lossy bytes.
     async fn file_at_revision(&self, rev: &str, path: &Path) -> Result<FileAtRevision, GitError>;
+
+    /// A single file's commit history, newest first, following renames
+    /// (`git log --follow --name-status`). Each entry carries the file's path
+    /// AS OF THAT COMMIT, so pre-rename commits address the old name. `skip`
+    /// and `max_count` page the walk.
+    async fn file_history(
+        &self,
+        path: &Path,
+        max_count: u32,
+        skip: u32,
+    ) -> Result<Vec<FileHistoryEntry>, GitError>;
 
     /// Restore `path` in the index AND working tree to its content at `rev`
     /// (`git checkout <rev> -- <path>`). Destructive: git overwrites local

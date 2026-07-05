@@ -99,3 +99,22 @@ pub async fn repo_file_at_revision(
         .await
         .map_err(AppError::Git)
 }
+
+/// A single file's commit history (newest first), following renames. `path`
+/// is repo-relative; `max_count`/`skip` page the walk.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_file_history(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    path: PathBuf,
+    max_count: u32,
+    skip: u32,
+) -> Result<Vec<legit_core::FileHistoryEntry>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .file_history(&path, max_count, skip)
+        .await
+        .map_err(AppError::Git)
+}

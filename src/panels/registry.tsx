@@ -11,6 +11,7 @@ import { ComparePanel } from "./Compare/ComparePanel";
 import { SearchPanel } from "./Search/SearchPanel";
 import { BlamePanel } from "./Blame/BlamePanel";
 import { FileViewPanel } from "./FileView/FileViewPanel";
+import { FileHistoryPanel } from "./FileHistory/FileHistoryPanel";
 import { GitLogPanel } from "./GitLog/GitLogPanel";
 import { RefsPanel } from "./Refs/RefsPanel";
 import { RepositoriesPanel } from "./Repositories/RepositoriesPanel";
@@ -94,7 +95,21 @@ export const REPO_PANELS: PanelDescriptor[] = [
     id: "blame",
     title: "Blame",
     scope: "repo",
-    summons: ["commit-details", "changed-files"],
+    summons: ["commit-details", "changed-files", "file-history"],
+    defaultPlacement: { direction: "right", referencePanel: "log" },
+  },
+  {
+    id: "file-history",
+    title: "File History",
+    scope: "repo",
+    summons: [
+      "commit-details",
+      "changed-files",
+      "working-changes",
+      "file-view",
+      "blame",
+      "diff",
+    ],
     defaultPlacement: { direction: "right", referencePanel: "log" },
   },
   {
@@ -181,4 +196,5 @@ export const REPO_DOCKVIEW_COMPONENTS: Record<
   search: wrap(SearchPanel),
   blame: wrap(BlamePanel),
   "file-view": wrap(FileViewPanel),
+  "file-history": wrap(FileHistoryPanel),
 };

@@ -1020,6 +1020,59 @@ async fn file_at_revision_classifies_binary_with_exact_size() {
 }
 
 // ---------------------------------------------------------------------------
+// file history: --follow across a rename, path-as-of-then feeds file_at_revision
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn file_history_follows_renames_and_reports_the_path_at_each_commit() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "v1\n");
+    repo.commit_all("add a").await;
+    repo.write("a.txt", "v2\n");
+    repo.commit_all("modify a").await;
+    repo.git(&["mv", "a.txt", "b.txt"]).await;
+    repo.commit_all("rename a to b").await;
+    repo.write("b.txt", "v3\n");
+    repo.commit_all("modify b").await;
+
+    let history = repo
+        .backend
+        .file_history(std::path::Path::new("b.txt"), 200, 0)
+        .await
+        .unwrap();
+
+    // Newest first: modify b, rename, modify a, add a - all four, following
+    // the rename past the point where the file was named a.txt.
+    let subjects: Vec<&str> = history.iter().map(|e| e.summary.as_str()).collect();
+    assert_eq!(subjects, ["modify b", "rename a to b", "modify a", "add a"]);
+
+    // The rename commit reports the new path and the old name it came from.
+    assert_eq!(history[1].path, "b.txt");
+    assert_eq!(history[1].old_path.as_deref(), Some("a.txt"));
+
+    // Pre-rename commits carry the OLD path - so addressing the file at those
+    // commits with that path actually resolves (the whole point of tracking
+    // path-as-of-then).
+    assert_eq!(history[2].path, "a.txt");
+    assert_eq!(history[3].path, "a.txt");
+    let old = repo
+        .backend
+        .file_at_revision(history[3].commit_id.as_str(), std::path::Path::new(&history[3].path))
+        .await
+        .unwrap();
+    assert_eq!(old, legit_core::FileAtRevision::Text("v1\n".to_string()));
+
+    // Paging: skipping the newest leaves the remaining three.
+    let page = repo
+        .backend
+        .file_history(std::path::Path::new("b.txt"), 200, 1)
+        .await
+        .unwrap();
+    assert_eq!(page.len(), 3);
+    assert_eq!(page[0].summary, "rename a to b");
+}
+
+// ---------------------------------------------------------------------------
 // credential helper injection via GIT_CONFIG_* environment config
 // (the in-app credential prompt depends on: env config applies like `-c`,
 // a `!shell` helper runs with the op appended, and its output is consumed)

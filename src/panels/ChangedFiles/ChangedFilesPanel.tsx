@@ -209,6 +209,7 @@ export function ChangedFilesPanel() {
                 commitShort={selectedId.slice(0, 8)}
                 onView={() => handleViewAtCommit(file.path)}
                 onRestore={() => handleRestoreToCommit(file.path)}
+                onHistory={() => useSummonStore.getState().summon("file-history", file.path)}
                 onClose={closeMenu}
               />,
             )
@@ -232,12 +233,14 @@ function FileAtCommitMenuSection({
   commitShort,
   onView,
   onRestore,
+  onHistory,
   onClose,
 }: {
   file: FileTreeEntry;
   commitShort: string;
   onView: () => void;
   onRestore: () => void;
+  onHistory: () => void;
   onClose: () => void;
 }) {
   const confirmDestructive = useConfirmDestructive();
@@ -263,6 +266,9 @@ function FileAtCommitMenuSection({
           the File View panel reports "binary file, N bytes" for them. */}
       <MenuItem disabled={deleted} onClick={() => { onClose(); onView(); }}>
         {deleted ? "View file (deleted in this commit)" : "View file at this commit"}
+      </MenuItem>
+      <MenuItem onClick={() => { onClose(); onHistory(); }}>
+        File history
       </MenuItem>
       <MenuItem disabled={deleted} onClick={requestRestore}>
         {deleted

@@ -100,3 +100,42 @@ written only after git confirms via `store`), or a UI prompt. Deferred:
 - **Submodules** (the `GitBackend::submodules()` method is a `NotYet` stub) —
   list/update/sync.
 - **Worktrees** (add/list/remove), **bisect**.
+
+---
+
+## UX / polish
+
+- **Global Settings cleanup.** The Global Settings panel has grown a long
+  flat stack of sections (git path, layout, appearance, commits graph, diff
+  viewer, auto-refresh, confirm, branch switching, mixed endings, line
+  endings, signing, profiles, about). Rework its grouping and layout:
+  cluster related sections (e.g. Appearance + Diff viewer + Commits graph
+  under a visual "Display" group; the git-behaviour ones together), consider
+  collapsible groups or a left-nav/tabbed layout instead of one scroll, and
+  tighten spacing. Pure frontend (`GlobalSettingsPanel.tsx`); no settings-
+  storage change. Keep every control font-relative and token-backed.
+
+---
+
+## Release readiness (v0.x → first public release)
+
+Not started. Prepare LeGit for a first tagged release:
+- **Installers / bundles.** Wire up `tauri build` for the target platforms
+  (Windows `.msi`/NSIS, macOS `.dmg`, Linux AppImage/`.deb`); confirm the
+  bundle identifier, icons, product name, and version wiring in
+  `tauri.conf.json` + `Cargo.toml`. Decide on code signing (Windows
+  Authenticode, macOS notarization) or explicitly defer it with a note.
+- **Automatic GitHub releases.** A CI workflow (GitHub Actions) that, on a
+  version tag, builds the bundles on each OS runner and attaches them to a
+  GitHub Release. Consider `tauri-action`. Include the auto-generated or
+  curated changelog.
+- **Repository cleanup.** Remove stray/committed junk (e.g. the tracked
+  `crates/legit-core/src/XXYaRI8C` scratch file), ensure `.gitignore`
+  covers build output, add a README with screenshots + build instructions,
+  a LICENSE, and prune dead files.
+- **Versioning + changelog.** Pick a versioning scheme, seed a CHANGELOG,
+  and align the workspace version(s).
+- **Pre-release pass.** Smoke-test a built (non-dev) bundle on each target,
+  since several code paths differ from `tauri dev` (e.g. the
+  `CREATE_NO_WINDOW` git-spawn flag, `windows_subsystem = "windows"`,
+  bindings generated only when the app runs).

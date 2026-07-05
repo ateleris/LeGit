@@ -171,6 +171,13 @@ export function BlamePanel() {
             Working tree
           </button>
         )}
+        <button
+          onClick={() => useSummonStore.getState().summon("file-history", path)}
+          title="Show this file's commit history"
+          style={{ fontSize: "var(--fz-sm)", flexShrink: 0 }}
+        >
+          History
+        </button>
       </div>
 
       <div className="legit-panel__body" style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 0 }}>

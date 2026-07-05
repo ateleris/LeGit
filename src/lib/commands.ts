@@ -30,6 +30,7 @@ import type {
   DiffEntry,
   DiffSource,
   FileAtRevision,
+  FileHistoryEntry,
   FetchOptions,
   PullOptions,
   PullStrategy,
@@ -351,6 +352,15 @@ export const repoMergeBase = (repoId: string, a: string, b: string) =>
 /** Full content of a repo-relative file as of an arbitrary tree-ish. */
 export const repoFileAtRevision = (repoId: string, rev: string, path: string) =>
   invoke<FileAtRevision>("repo_file_at_revision", { repoId, rev, path });
+
+/** A single file's commit history (newest first), following renames. */
+export const repoFileHistory = (
+  repoId: string,
+  path: string,
+  maxCount: number,
+  skip: number,
+) =>
+  invoke<FileHistoryEntry[]>("repo_file_history", { repoId, path, maxCount, skip });
 
 /**
  * Restore a single file (index + working tree) to its content at `rev`.

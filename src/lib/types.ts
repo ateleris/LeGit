@@ -390,6 +390,19 @@ export type DiffEntry =
  * blob's exact byte size (mirrors `FileAtRevision` in types.rs). */
 export type FileAtRevision = { Text: string } | { Binary: { size_bytes: number } };
 
+/** One commit in a single file's history (mirrors `FileHistoryEntry` in
+ * types.rs). `path` is the file's name AS OF THAT COMMIT (pre-rename commits
+ * carry the old name); `old_path` is set only on the renaming commit. */
+export interface FileHistoryEntry {
+  commit_id: string;
+  summary: string;
+  author: string;
+  /** Author date, unix seconds. */
+  timestamp: number;
+  path: string;
+  old_path: string | null;
+}
+
 /** Which two sides the Diff panel compares for a file (matches `DiffSource`). */
 export type DiffSource =
   | { kind: "working_unstaged" }

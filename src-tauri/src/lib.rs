@@ -120,6 +120,7 @@ pub fn run() {
         commands::repo_blame,
         commands::repo_merge_base,
         commands::repo_file_at_revision,
+        commands::repo_file_history,
         commands::repo_restore_file_at_revision,
         commands::repo_diff,
         commands::repo_stage_hunk,

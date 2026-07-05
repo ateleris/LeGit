@@ -491,6 +491,16 @@ export function WorkingChangesPanel() {
                         Blame file
                       </MenuItem>
                     )}
+                    {!many && (
+                      <MenuItem
+                        onClick={() => {
+                          closeMenu();
+                          useSummonStore.getState().summon("file-history", f.path);
+                        }}
+                      >
+                        File history
+                      </MenuItem>
+                    )}
                   </>,
                 );
               }}
@@ -558,6 +568,16 @@ export function WorkingChangesPanel() {
                         }}
                       >
                         Blame file
+                      </MenuItem>
+                    )}
+                    {targets.length === 1 && (
+                      <MenuItem
+                        onClick={() => {
+                          closeMenu();
+                          useSummonStore.getState().summon("file-history", f.path);
+                        }}
+                      >
+                        File history
                       </MenuItem>
                     )}
                   </>,

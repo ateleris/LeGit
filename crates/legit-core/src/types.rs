@@ -239,6 +239,23 @@ pub enum DiffEntry {
     Submodule(SubmoduleChange),
 }
 
+/// One commit in a single file's history (`git log --follow`), with the
+/// file's path AS OF THAT COMMIT - pre-rename commits carry the old name, so
+/// "view/blame/diff at this commit" can address the file that actually
+/// existed there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct FileHistoryEntry {
+    pub commit_id: CommitId,
+    pub summary: String,
+    pub author: String,
+    /// Author date, unix seconds.
+    pub timestamp: i64,
+    /// The file's repo-relative path at this commit.
+    pub path: String,
+    /// Set only on the commit that renamed the file (its previous name).
+    pub old_path: Option<String>,
+}
+
 /// A file's content at a revision: text, or a binary classification (NUL
 /// sniff, git's own heuristic) with the blob's exact size so the UI can say
 /// "binary file, N bytes" instead of rendering mojibake.

@@ -109,6 +109,10 @@ export function SearchPanel() {
     useSummonStore.getState().summon("blame", path);
   };
 
+  const openFileHistory = (path: string) => {
+    useSummonStore.getState().summon("file-history", path);
+  };
+
   if (!repo) {
     return (
       <div className="legit-panel">
@@ -212,7 +216,16 @@ export function SearchPanel() {
                 }
                 const p = paths[vi.index];
                 return (
-                  <button key={p} onClick={() => openBlame(p)} style={positioned} title={`Blame ${p}`}>
+                  <button
+                    key={p}
+                    onClick={() => openBlame(p)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      openFileHistory(p);
+                    }}
+                    style={positioned}
+                    title={`Blame ${p} (right-click for history)`}
+                  >
                     <span
                       style={{
                         fontSize: "var(--fz-md)",

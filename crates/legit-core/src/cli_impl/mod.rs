@@ -11,7 +11,7 @@ use crate::runner::{GitRunner, OperationId};
 use crate::types::{
     BlameHunk, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
-    FetchOptions, FfMode, FileAtRevision, FileState, FileStatus,
+    FetchOptions, FfMode, FileAtRevision, FileHistoryEntry, FileState, FileStatus,
     HunkOp, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullStrategy, PushOptions,
     RebaseOutcome, RebaseStep, RefDecoration, RefSelector, ReflogEntry, Remote, RemoteTag,
     RepoOpState, ResetMode, SequenceOutcome, SignMode, StashApplyOutcome, StashEntry,
@@ -1150,6 +1150,39 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         // local changes - the destructive-confirm gate lives in the UI.
         self.run_pathspec(&["checkout", rev, "--"], std::slice::from_ref(&path.to_path_buf()))
             .await
+    }
+
+    async fn file_history(
+        &self,
+        path: &Path,
+        max_count: u32,
+        skip: u32,
+    ) -> Result<Vec<FileHistoryEntry>, GitError> {
+        let runner = self.runner().await;
+        let path_str = path.to_string_lossy();
+        let fmt_arg = format!("--format={}", parsers::file_history::FILE_HISTORY_FORMAT);
+        let max_arg = format!("--max-count={max_count}");
+        let skip_arg = format!("--skip={skip}");
+        // `--follow` requires exactly one pathspec (guaranteed here). `-M`
+        // enables the rename detection that produces the `R<score>` lines.
+        let mut args = vec!["log"];
+        args.extend(parsers::file_history::FILE_HISTORY_FLAGS);
+        args.push(&fmt_arg);
+        args.push(&max_arg);
+        args.push(&skip_arg);
+        args.push("--");
+        args.push(&path_str);
+        let output = runner
+            .run(&args)
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !output.success {
+            return Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr.trim().to_string(),
+            });
+        }
+        parsers::file_history::parse_file_history(&output.stdout, &path_str).map_err(GitError::from)
     }
 
     async fn submodules(&self) -> Result<Vec<SubmoduleInfo>, GitError> {
