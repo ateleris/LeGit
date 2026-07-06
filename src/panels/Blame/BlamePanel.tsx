@@ -190,16 +190,20 @@ export function BlamePanel() {
             {formatAppError(error)}
           </pre>
         ) : (
-          hunks.map((h, i) => (
-            <HunkRow
-              key={`${h.sha}-${h.start_line}`}
-              hunk={h}
-              tinted={i % 2 === 1}
-              segments={segments}
-              onOpen={() => openCommit(h)}
-              onReblameParent={() => reblameParent(h)}
-            />
-          ))
+          // Sized to the widest row (min 100%) so every row's tint/border spans
+          // the full scroll width instead of ending at its own line length.
+          <div style={{ minWidth: "max-content" }}>
+            {hunks.map((h, i) => (
+              <HunkRow
+                key={`${h.sha}-${h.start_line}`}
+                hunk={h}
+                tinted={i % 2 === 1}
+                segments={segments}
+                onOpen={() => openCommit(h)}
+                onReblameParent={() => reblameParent(h)}
+              />
+            ))}
+          </div>
         )}
       </div>
     </div>
@@ -258,6 +262,13 @@ function HunkRow({
           display: "flex",
           alignItems: "stretch",
           borderRight: "1px solid var(--panel-border)",
+          // Pinned to the left as the file scrolls horizontally (one shared
+          // scrollbar for the whole file), so the commit stays visible. Needs
+          // an opaque background and a stacking context above the code.
+          position: "sticky",
+          left: 0,
+          zIndex: 1,
+          background: tinted ? "var(--button-hover-bg)" : "var(--panel-bg)",
         }}
       >
         <button
@@ -312,7 +323,8 @@ function HunkRow({
           fontSize: "var(--fz-md)",
           fontFamily: "monospace",
           flex: 1,
-          overflowX: "auto",
+          // No per-hunk scroll: long lines extend the row so the panel body's
+          // single horizontal scrollbar scrolls the whole file at once.
         }}
       >
         {hunk.lines.map((line, i) => (

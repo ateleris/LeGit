@@ -31,6 +31,9 @@ export function ChangedFilesPanel() {
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<CommitId | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  // A path the summoner asked us to pre-select once this commit's files load
+  // (File History → "select this file's row and open its diff").
+  const [pendingSelectPath, setPendingSelectPath] = useState<string | null>(null);
 
   // View mode is persisted in global settings so it's remembered across panel
   // re-opens and restarts. Defaults to flat until the user first toggles it.
@@ -53,14 +56,26 @@ export function ChangedFilesPanel() {
     setSelectedPath(null);
   }, [repo?.id]);
 
-  const onReceive = useCallback((id: unknown) => {
-    if (typeof id === "string") {
-      setSelectedId(id as CommitId);
-      setSelectedPath(null);
-      // No file is selected for the new commit yet — clear the Diff panel
-      // (only if it's open). The diff is always tied to a file selection.
-      useSummonStore.getState().notifyIfOpen("diff", null);
+  const onReceive = useCallback((payload: unknown) => {
+    // Payload is either a bare commit SHA (most callers) or
+    // `{ commitId, selectPath }` (File History, to pre-select a file's row).
+    let id: string | null = null;
+    let selectPath: string | null = null;
+    if (typeof payload === "string") {
+      id = payload;
+    } else if (payload && typeof payload === "object" && typeof (payload as { commitId?: unknown }).commitId === "string") {
+      const p = payload as { commitId: string; selectPath?: unknown };
+      id = p.commitId;
+      selectPath = typeof p.selectPath === "string" ? p.selectPath : null;
     }
+    if (id === null) return;
+    setSelectedId(id as CommitId);
+    setSelectedPath(null);
+    setPendingSelectPath(selectPath);
+    // No file is selected for the new commit yet — clear the Diff panel
+    // (only if it's open). The diff is always tied to a file selection.
+    // (When `selectPath` is set, the effect below opens the diff once files load.)
+    useSummonStore.getState().notifyIfOpen("diff", null);
   }, []);
   useSummonTarget("changed-files", onReceive);
 
@@ -112,6 +127,18 @@ export function ChangedFilesPanel() {
     },
     [repo, selectedId],
   );
+
+  // Consume a pending pre-select once this commit's files have loaded: select
+  // the requested file's row and open its diff (File History flow). Matches on
+  // the destination path; cleared once handled or if it never appears.
+  useEffect(() => {
+    if (!pendingSelectPath) return;
+    const match = files.find((f) => f.path === pendingSelectPath);
+    if (match) {
+      handleSelect(match);
+      setPendingSelectPath(null);
+    }
+  }, [files, pendingSelectPath, handleSelect]);
 
   const handleViewAtCommit = useCallback(
     (path: string) => {
