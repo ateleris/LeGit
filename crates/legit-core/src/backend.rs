@@ -13,7 +13,7 @@ use crate::types::{
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
     FetchOptions, FileAtRevision, FileHistoryEntry, FileStatus, HunkOp, LogOptions,
     MergeOptions, MergeOutcome, PullOptions, PushOptions, RebaseOutcome, RebaseStep,
-    ReflogEntry, Remote, RemoteTag, RepoOpState, ResetMode, SequenceOutcome, StashApplyOutcome,
+    ReflogEntry, Remote, RemoteTag, RepoFileEntry, RepoOpState, ResetMode, SequenceOutcome, StashApplyOutcome,
     StashEntry, StashOutcome, SubmoduleInfo, SwitchDirtyBehavior, SwitchOutcome, TagInfo,
     TrackingStatus,
 };
@@ -81,6 +81,18 @@ pub trait GitBackend: Send + Sync {
     /// Tracked paths containing `query` (case-insensitive substring), at most
     /// `max_count`, in `git ls-files` order.
     async fn search_paths(&self, query: &str, max_count: u32) -> Result<Vec<PathBuf>, GitError>;
+
+    /// Every file in the repo's working tree, classified as tracked, untracked,
+    /// or (when `show_ignored`) ignored. Backs the Files tree. Sorted by path.
+    async fn list_repo_files(
+        &self,
+        show_ignored: bool,
+    ) -> Result<Vec<RepoFileEntry>, GitError>;
+
+    /// Remove paths from the index but keep them on disk (`git rm --cached`).
+    /// Used to stop tracking a file without deleting it (Files tree "Stop
+    /// tracking & ignore").
+    async fn rm_cached(&self, paths: &[PathBuf]) -> Result<(), GitError>;
 
     /// Files changed between two arbitrary revs (`git diff-tree <from> <to>`,
     /// rename-aware) — the Compare view's file list. Direct snapshot diff

@@ -12,9 +12,9 @@ use crate::types::{
     BlameHunk, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
     FetchOptions, FfMode, FileAtRevision, FileHistoryEntry, FileState, FileStatus,
-    HunkOp, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullStrategy, PushOptions,
+    HunkOp, LineEndingKind, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullStrategy, PushOptions,
     RebaseOutcome, RebaseStep, RefDecoration, RefSelector, ReflogEntry, Remote, RemoteTag,
-    RepoOpState, ResetMode, SequenceOutcome, SignMode, StashApplyOutcome, StashEntry,
+    RepoFileEntry, RepoFileKind, RepoOpState, ResetMode, SequenceOutcome, SignMode, StashApplyOutcome, StashEntry,
     StashOutcome, SubmoduleInfo, SwitchDirtyBehavior, SwitchOutcome, TagInfo, TrackingStatus,
 };
 
@@ -887,6 +887,41 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             });
         }
         Ok(filter_paths(&output.stdout, query, max_count as usize))
+    }
+
+    async fn list_repo_files(
+        &self,
+        show_ignored: bool,
+    ) -> Result<Vec<RepoFileEntry>, GitError> {
+        let runner = self.runner().await;
+        let run = |args: &'static [&'static str]| {
+            let runner = runner.clone();
+            async move {
+                let out = runner
+                    .run(args)
+                    .await
+                    .map_err(|e| GitError::Internal(e.to_string()))?;
+                if !out.success {
+                    return Err(GitError::CommandFailed {
+                        exit_code: out.exit_code.unwrap_or(-1),
+                        stderr: out.stderr,
+                    });
+                }
+                Ok::<String, GitError>(out.stdout)
+            }
+        };
+        let cached = run(&["ls-files", "-z"]).await?;
+        let others = run(&["ls-files", "-z", "--others", "--exclude-standard"]).await?;
+        let ignored = if show_ignored {
+            run(&["ls-files", "-z", "--others", "--ignored", "--exclude-standard"]).await?
+        } else {
+            String::new()
+        };
+        Ok(classify_repo_files(&cached, &others, &ignored))
+    }
+
+    async fn rm_cached(&self, paths: &[PathBuf]) -> Result<(), GitError> {
+        self.run_pathspec(&["rm", "--cached", "--"], paths).await
     }
 
     async fn diff_files(&self, from: &str, to: &str) -> Result<Vec<CommitFileChange>, GitError> {
@@ -1940,6 +1975,69 @@ fn build_set_url_args<'a>(name: &'a str, url: &'a str, push: bool) -> Vec<&'a st
     args
 }
 
+/// Classify the repo's files into the Files tree from three `-z` (NUL-separated)
+/// `git ls-files` outputs: `cached` (tracked), `others` (untracked, not
+/// ignored), and `ignored` (empty when the caller didn't request ignored
+/// files). The three sets are disjoint by git's definition, so no overlap
+/// resolution is needed. Result is de-duplicated and sorted by path so the
+/// tree order is stable regardless of git's listing order. Pure so the
+/// classification rule is unit-tested.
+fn classify_repo_files(cached: &str, others: &str, ignored: &str) -> Vec<RepoFileEntry> {
+    let mut entries: Vec<RepoFileEntry> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Order matters only for the disjoint-set guarantee: tracked wins if a path
+    // somehow appears twice. The final sort makes the visible order stable.
+    for (stdout, kind) in [
+        (cached, RepoFileKind::Tracked),
+        (others, RepoFileKind::Untracked),
+        (ignored, RepoFileKind::Ignored),
+    ] {
+        for path in stdout.split('\0').filter(|p| !p.is_empty()) {
+            if seen.insert(path.to_string()) {
+                entries.push(RepoFileEntry { path: PathBuf::from(path), kind });
+            }
+        }
+    }
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    entries
+}
+
+/// Classify the line-ending style of some text (the Diff/File View/Blame
+/// indicator). Binary is detected by a NUL byte in the leading window (git's
+/// heuristic). Pure so it's unit-tested. Backs `repo_line_ending_kind`.
+pub fn classify_line_endings(text: &str) -> LineEndingKind {
+    let bytes = text.as_bytes();
+    if bytes.iter().take(BINARY_SNIFF_WINDOW).any(|&b| b == 0) {
+        return LineEndingKind::Binary;
+    }
+    let (mut crlf, mut lf, mut cr) = (false, false, false);
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\r' if i + 1 < bytes.len() && bytes[i + 1] == b'\n' => {
+                crlf = true;
+                i += 2;
+            }
+            b'\r' => {
+                cr = true;
+                i += 1;
+            }
+            b'\n' => {
+                lf = true;
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    match (crlf, lf, cr) {
+        (false, false, false) => LineEndingKind::None,
+        (true, false, false) => LineEndingKind::Crlf,
+        (false, true, false) => LineEndingKind::Lf,
+        (false, false, true) => LineEndingKind::Cr,
+        _ => LineEndingKind::Mixed,
+    }
+}
+
 /// Case-insensitive substring filter over `git ls-files -z` output, capped at
 /// `max` entries. Pure so the matching rule is unit-tested.
 fn filter_paths(ls_files_stdout: &str, query: &str, max: usize) -> Vec<PathBuf> {
@@ -2340,6 +2438,76 @@ mod tests {
     #[test]
     fn stash_created_dirty_tree_with_prior_stash() {
         assert_eq!(stash_created(Some("old"), Some("new")), Some("new".into()));
+    }
+
+    // --- line-ending classification -----------------------------------------
+
+    #[test]
+    fn classify_line_endings_pure_kinds() {
+        assert_eq!(classify_line_endings("a\nb\nc\n"), LineEndingKind::Lf);
+        assert_eq!(classify_line_endings("a\r\nb\r\n"), LineEndingKind::Crlf);
+        assert_eq!(classify_line_endings("a\rb\r"), LineEndingKind::Cr);
+    }
+
+    #[test]
+    fn classify_line_endings_mixed_and_edge_cases() {
+        assert_eq!(classify_line_endings("a\r\nb\nc\n"), LineEndingKind::Mixed);
+        assert_eq!(classify_line_endings("lone line, no break"), LineEndingKind::None);
+        assert_eq!(classify_line_endings(""), LineEndingKind::None);
+        // A lone CR mixed with CRLF is still mixed.
+        assert_eq!(classify_line_endings("a\r\nb\rc"), LineEndingKind::Mixed);
+    }
+
+    #[test]
+    fn classify_line_endings_binary_wins() {
+        assert_eq!(classify_line_endings("a\0b\r\n"), LineEndingKind::Binary);
+    }
+
+    // --- repo-wide file classification (Files tree) -------------------------
+
+    fn entry(path: &str, kind: RepoFileKind) -> RepoFileEntry {
+        RepoFileEntry { path: PathBuf::from(path), kind }
+    }
+
+    #[test]
+    fn classify_repo_files_tags_each_class() {
+        let cached = "src/main.rs\0README.md\0";
+        let others = "notes.txt\0";
+        let ignored = "target/debug\0";
+        assert_eq!(
+            classify_repo_files(cached, others, ignored),
+            vec![
+                entry("README.md", RepoFileKind::Tracked),
+                entry("notes.txt", RepoFileKind::Untracked),
+                entry("src/main.rs", RepoFileKind::Tracked),
+                entry("target/debug", RepoFileKind::Ignored),
+            ]
+        );
+    }
+
+    #[test]
+    fn classify_repo_files_empty_ignored_when_not_requested() {
+        let cached = "a.txt\0";
+        let others = "b.txt\0";
+        assert_eq!(
+            classify_repo_files(cached, others, ""),
+            vec![
+                entry("a.txt", RepoFileKind::Tracked),
+                entry("b.txt", RepoFileKind::Untracked),
+            ]
+        );
+    }
+
+    #[test]
+    fn classify_repo_files_ignores_blank_segments_and_dedups() {
+        // Trailing NUL yields a final empty segment; a path must never appear
+        // twice even if git somehow lists it in two streams.
+        let cached = "dup.txt\0\0";
+        let others = "dup.txt\0";
+        assert_eq!(
+            classify_repo_files(cached, others, ""),
+            vec![entry("dup.txt", RepoFileKind::Tracked)]
+        );
     }
 
     // --- stash SHA → selector resolution ------------------------------------

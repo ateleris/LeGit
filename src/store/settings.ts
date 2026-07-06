@@ -9,6 +9,8 @@ import {
   setConfirmDiscard,
   setCommitAvatars,
   setDiffSyntaxHighlighting,
+  setSuppressedAutoOpenPanels,
+  setWorkingChangesSectionOrder,
   saveSwitchDirtyBehavior,
   savePullStrategy,
 } from "../lib/commands";
@@ -93,6 +95,8 @@ interface SettingsStore {
   setConfirmDiscard: (confirm: boolean) => Promise<void>;
   setCommitAvatars: (enabled: boolean) => Promise<void>;
   setDiffSyntaxHighlighting: (enabled: boolean) => Promise<void>;
+  setSuppressedAutoOpenPanels: (panels: string[]) => Promise<void>;
+  setWorkingChangesSectionOrder: (order: string[]) => Promise<void>;
   setSwitchDirtyBehavior: (behavior: SwitchDirtyBehavior) => Promise<void>;
   setPullStrategy: (strategy: PullStrategy) => Promise<void>;
 }
@@ -181,6 +185,18 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     await setDiffSyntaxHighlighting(enabled);
     const s = get().settings;
     if (s) set({ settings: { ...s, diff_syntax_highlighting: enabled } });
+  },
+
+  async setSuppressedAutoOpenPanels(panels) {
+    await setSuppressedAutoOpenPanels(panels);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, suppressed_auto_open_panels: panels } });
+  },
+
+  async setWorkingChangesSectionOrder(order) {
+    await setWorkingChangesSectionOrder(order);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, working_changes_section_order: order } });
   },
 
   async setSwitchDirtyBehavior(behavior) {

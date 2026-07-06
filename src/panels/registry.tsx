@@ -12,6 +12,7 @@ import { SearchPanel } from "./Search/SearchPanel";
 import { BlamePanel } from "./Blame/BlamePanel";
 import { FileViewPanel } from "./FileView/FileViewPanel";
 import { FileHistoryPanel } from "./FileHistory/FileHistoryPanel";
+import { FilesPanel } from "./Files/FilesPanel";
 import { GitLogPanel } from "./GitLog/GitLogPanel";
 import { RefsPanel } from "./Refs/RefsPanel";
 import { RepositoriesPanel } from "./Repositories/RepositoriesPanel";
@@ -88,14 +89,21 @@ export const REPO_PANELS: PanelDescriptor[] = [
     id: "search",
     title: "Search",
     scope: "repo",
-    summons: ["commit-details", "changed-files", "blame"],
+    summons: ["commit-details", "changed-files", "blame", "log"],
     defaultPlacement: { direction: "right", referencePanel: "log" },
+  },
+  {
+    id: "files",
+    title: "Files",
+    scope: "repo",
+    summons: ["blame", "file-history", "file-view"],
+    defaultPlacement: { direction: "left", referencePanel: "log" },
   },
   {
     id: "blame",
     title: "Blame",
     scope: "repo",
-    summons: ["commit-details", "changed-files", "file-history"],
+    summons: ["commit-details", "changed-files", "file-history", "log"],
     defaultPlacement: { direction: "right", referencePanel: "log" },
   },
   {
@@ -109,6 +117,7 @@ export const REPO_PANELS: PanelDescriptor[] = [
       "file-view",
       "blame",
       "diff",
+      "log",
     ],
     defaultPlacement: { direction: "right", referencePanel: "log" },
   },
@@ -149,6 +158,24 @@ export const REPO_PANELS: PanelDescriptor[] = [
 
 /** All panels, for menus that need to enumerate both docks. */
 export const ALL_PANELS = [...GLOBAL_PANELS, ...REPO_PANELS];
+
+/**
+ * Detail/secondary panels that appear via `summon` and that the user may opt
+ * out of auto-opening (Settings → "Auto-open panels"): a summon to a suppressed
+ * one degrades to `notifyIfOpen`. Deliberately excludes `log` (Commits), which
+ * the app opens on startup, and non-summoned panels.
+ */
+export const SUPPRESSIBLE_SUMMON_PANELS: string[] = [
+  "commit-details",
+  "changed-files",
+  "working-changes",
+  "diff",
+  "file-view",
+  "file-history",
+  "blame",
+  "compare",
+  "interactive-rebase",
+];
 
 const TAB_COMPONENTS: Record<string, FunctionComponent<IDockviewPanelHeaderProps>> = {
   "confirm-close": ConfirmCloseTab,
@@ -194,6 +221,7 @@ export const REPO_DOCKVIEW_COMPONENTS: Record<
   "interactive-rebase": wrap(InteractiveRebasePanel),
   compare: wrap(ComparePanel),
   search: wrap(SearchPanel),
+  files: wrap(FilesPanel),
   blame: wrap(BlamePanel),
   "file-view": wrap(FileViewPanel),
   "file-history": wrap(FileHistoryPanel),

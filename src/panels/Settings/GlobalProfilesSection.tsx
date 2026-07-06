@@ -10,6 +10,7 @@ import {
   deleteGitProfile,
 } from "../../lib/commands";
 import { Button } from "../shared/buttons";
+import { Section, FieldNote } from "./primitives";
 
 const FORMAT_OPTIONS: { label: string; value: string | null }[] = [
   { label: "ssh", value: "ssh" },
@@ -274,21 +275,3 @@ function Radio({
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ fontSize: "var(--fz-sm)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: 8 }}>
-        {title}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function FieldNote({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: 4 }}>
-      {children}
-    </div>
-  );
-}

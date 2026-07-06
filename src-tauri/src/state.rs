@@ -235,6 +235,16 @@ pub struct GlobalSettings {
     /// parses each hunk's sides on the UI thread, so it is opt-in.
     #[serde(default)]
     pub diff_syntax_highlighting: bool,
+    /// Panel IDs the user has opted out of auto-opening: a `summon` to one of
+    /// these degrades to `notifyIfOpen` (updates it only if already open, never
+    /// pops it open). Empty = every panel auto-opens as before.
+    #[serde(default)]
+    pub suppressed_auto_open_panels: Vec<String>,
+    /// Top-to-bottom order of the Working Changes panel's three sections
+    /// ("unstaged", "staged", "commit"). Empty/partial is normalized on the UI
+    /// side; default is unstaged → staged → commit.
+    #[serde(default)]
+    pub working_changes_section_order: Vec<String>,
     /// User-defined git identity profiles (versioned envelope).
     #[serde(default, rename = "gitProfiles")]
     pub git_profiles_doc: GitProfilesDoc,
@@ -268,6 +278,8 @@ impl Default for GlobalSettings {
             pull_strategy: None,
             commit_avatars: false,
             diff_syntax_highlighting: false,
+            suppressed_auto_open_panels: vec![],
+            working_changes_section_order: vec![],
             git_profiles_doc: GitProfilesDoc::default(),
         }
     }

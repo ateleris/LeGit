@@ -11,6 +11,7 @@ import {
   globalWriteSigning,
 } from "../../lib/commands";
 import { Button } from "../shared/buttons";
+import { Section, FieldNote } from "./primitives";
 
 type Scope = "repo" | "global";
 
@@ -80,7 +81,7 @@ export function SigningSettings({ scope, repoId }: { scope: Scope; repoId?: stri
   const title = isRepo ? "Commit signing (this repo)" : "Commit signing (global)";
 
   if (loading) {
-    return <Section title={title}><span className="legit-subtle">Loading…</span></Section>;
+    return <Section title={title} scope="git"><span className="legit-subtle">Loading…</span></Section>;
   }
   if (!view) return null;
 
@@ -115,7 +116,7 @@ export function SigningSettings({ scope, repoId }: { scope: Scope; repoId?: stri
   };
 
   return (
-    <Section title={title}>
+    <Section title={title} scope="git">
       <FieldNote>
         {isRepo
           ? "writes to: .git/config (this repo only)"
@@ -348,21 +349,3 @@ function ResolvedBadge({
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ fontSize: "var(--fz-sm)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: 8 }}>
-        {title}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function FieldNote({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: 4 }}>
-      {children}
-    </div>
-  );
-}

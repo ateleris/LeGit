@@ -14,8 +14,8 @@
 
 use legit_core::{
     ConflictKind, ConflictSide, FetchOptions, GitBackend, GitCliBackend, GitRunner, MergeOptions,
-    MergeOutcome, OperationId, RebaseOutcome, RemoteProgress, RepoOpState, ResetMode,
-    SequenceOutcome, StashOutcome, SwitchDirtyBehavior, SwitchOutcome,
+    MergeOutcome, OperationId, RebaseOutcome, RemoteProgress, RepoFileEntry, RepoFileKind,
+    RepoOpState, ResetMode, SequenceOutcome, StashOutcome, SwitchDirtyBehavior, SwitchOutcome,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -1176,4 +1176,60 @@ async fn hunk_staging_works_on_crlf_files() {
     // Nothing left unstaged: the whole change was one hunk.
     let unstaged = repo.git(&["diff"]).await;
     assert!(unstaged.trim().is_empty(), "{unstaged:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Files tree — list_repo_files classification and rm_cached, against real git
+// ---------------------------------------------------------------------------
+
+fn kind_of(files: &[RepoFileEntry], rel: &str) -> Option<RepoFileKind> {
+    files
+        .iter()
+        .find(|f| f.path == PathBuf::from(rel))
+        .map(|f| f.kind)
+}
+
+#[tokio::test]
+async fn list_repo_files_classifies_tracked_untracked_ignored() {
+    let repo = TestRepo::init().await;
+    repo.write(".gitignore", "*.log\n");
+    std::fs::create_dir_all(repo.path.join("src")).unwrap();
+    repo.write("src/main.rs", "fn main() {}\n");
+    repo.commit_all("seed").await; // .gitignore + src/main.rs are now tracked
+    repo.write("notes.txt", "todo\n"); // untracked, not ignored
+    repo.write("debug.log", "noise\n"); // ignored by *.log
+
+    // Without ignored: tracked + untracked only, sorted, no debug.log.
+    let files = repo.backend.list_repo_files(false).await.unwrap();
+    assert_eq!(kind_of(&files, ".gitignore"), Some(RepoFileKind::Tracked));
+    assert_eq!(kind_of(&files, "src/main.rs"), Some(RepoFileKind::Tracked));
+    assert_eq!(kind_of(&files, "notes.txt"), Some(RepoFileKind::Untracked));
+    assert_eq!(kind_of(&files, "debug.log"), None, "ignored file leaked in");
+    // Sorted by path.
+    let paths: Vec<_> = files.iter().map(|f| f.path.clone()).collect();
+    let mut sorted = paths.clone();
+    sorted.sort();
+    assert_eq!(paths, sorted, "files not sorted by path");
+
+    // With ignored: debug.log now appears, classified Ignored.
+    let files = repo.backend.list_repo_files(true).await.unwrap();
+    assert_eq!(kind_of(&files, "debug.log"), Some(RepoFileKind::Ignored));
+}
+
+#[tokio::test]
+async fn rm_cached_untracks_but_keeps_file_on_disk() {
+    let repo = TestRepo::init().await;
+    repo.write("secret.env", "TOKEN=abc\n");
+    repo.commit_all("add secret").await;
+    assert_eq!(
+        repo.backend.list_repo_files(false).await.unwrap().pop().map(|f| f.kind),
+        Some(RepoFileKind::Tracked),
+    );
+
+    repo.backend.rm_cached(&[PathBuf::from("secret.env")]).await.unwrap();
+
+    // Still on disk, now untracked (would move to the Untracked group).
+    assert!(repo.exists("secret.env"), "rm --cached deleted the file");
+    let files = repo.backend.list_repo_files(false).await.unwrap();
+    assert_eq!(kind_of(&files, "secret.env"), Some(RepoFileKind::Untracked));
 }

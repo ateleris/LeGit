@@ -14,11 +14,18 @@ export type ViewMode = "tree" | "flat";
  */
 export interface FileTreeEntry {
   path: string;
-  change: FileState;
+  /**
+   * Change status driving the row icon/badge. Omit for a plain file with no
+   * change semantics (the Files tree's tracked files) — it renders a neutral
+   * file icon.
+   */
+  change?: FileState;
   old_path?: string | null;
   additions?: number;
   deletions?: number;
   binary?: boolean;
+  /** Render the row dimmed (the Files tree uses this for ignored files). */
+  dimmed?: boolean;
 }
 
 export interface DirRow {

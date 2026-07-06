@@ -9,6 +9,7 @@ import type { BlameHunk } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { formatRelative } from "../../lib/time";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
+import { LineEndingBadge } from "../shared/LineEndingBadge";
 import { RevPicker } from "../shared/RevPicker";
 import {
   MAX_SYNTAX_CHARS,
@@ -103,6 +104,8 @@ export function BlamePanel() {
     const summon = useSummonStore.getState();
     summon.summon("commit-details", h.sha);
     summon.swapSummon("changed-files", "working-changes", h.sha);
+    // Keep the Commits graph highlight in step (only if that panel is open).
+    summon.notifyIfOpen("log", h.sha);
   };
 
   // Time-travel: blame the file as it was just before this hunk's commit.
@@ -154,6 +157,7 @@ export function BlamePanel() {
         >
           {path} @ {rev ? rev.slice(0, 12) : "working tree"}
         </span>
+        {path && <LineEndingBadge repoId={repo.id} path={path} rev={rev} />}
         <RevPicker
           repoId={repo.id}
           value={revDraft}
