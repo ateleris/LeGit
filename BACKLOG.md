@@ -93,21 +93,6 @@ re-deferred with justification:
   current one.
 - **Git Log panel follow-ups.** Filter/search the log, copy a command, jump
   a toast to its specific log entry (currently it just opens the panel).
-- **Consolidate the file-inspection panels (Diff / Blame / File View).**
-  Considered 2026-07-06, deferred (undecided). These three all view "one file"
-  and currently scatter across the layout when summoned. A 3-way `swapSummon`
-  (like Changed Files ⇄ Working Changes) was floated but is a poor fit: unlike
-  that pair, these are **complementary, not mutually exclusive**, and **Diff is
-  the high-frequency primary** (summoned on every file click from Changed
-  Files / Working Changes / Compare / File History) while Blame/File View are
-  occasional. A shared slot would let occasional actions evict the Diff
-  mid-review and tear down in-progress state (scroll, split/inline, half-staged
-  hunk). Preferred approach if picked up: **default all three into one dockview
-  group as tabs** (consolidated location, switch by tab, nothing evicted,
-  side-by-side still possible) rather than a swap. Heavier alternative: a
-  single "Inspect" panel with a Diff/Blame/View mode toggle over the current
-  `{path, rev, source}` — most "combined" but their inputs differ (Diff needs a
-  `DiffSource`/hunk model) and you lose seeing two at once.
 - **Interactive rebase polish.** The panel ships (reorder via up/down,
   pick/squash/fixup/drop, plan injected via the `printf`-redirect
   `GIT_SEQUENCE_EDITOR`, conflicts through the normal banner). Deferred:
@@ -146,8 +131,6 @@ written only after git confirms via `store`), or a UI prompt. Deferred:
   today, so this only matters if the cap is raised).
 - Rev pickers use a native `<input list>` datalist (Compare); a richer
   dropdown (grouped, fuzzy) could replace it if the native UX is not enough.
-- Blame: the panel accepts a `{ path, rev }` summon payload and offers
-  per-hunk "blame parent" time travel, but has no rev input of its own.
 
 ### Clone / init
 - `--shallow-submodules` pairing when depth + submodules are both set

@@ -4,8 +4,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
 import { usePanelActiveEffect, usePanelFocusEffect } from "../PanelApiContext";
-import { repoCommit, repoConflictEntries, repoDiscard, repoLog, repoResolveTakeSide, repoStage, repoStatus, repoUnstage } from "../../lib/commands";
-import type { Commit, ConflictEntry, DiffRequest, DiffSource, FileStatus } from "../../lib/types";
+import { repoCommit, repoConflictEntries, repoDiscard, repoLog, repoResolveTakeSide, repoStage, repoStatus, repoTrackingStatus, repoUnstage } from "../../lib/commands";
+import type { Commit, ConflictEntry, DiffRequest, DiffSource, FileStatus, TrackingStatus } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { useSummonStore } from "../../store/summon";
 import { notify } from "../../store/notifications";
@@ -110,6 +110,7 @@ export function WorkingChangesPanel() {
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<DiscardRequest | null>(null);
   const [confirmDetachedCommit, setConfirmDetachedCommit] = useState(false);
+  const [confirmAmendPushed, setConfirmAmendPushed] = useState(false);
 
   // Clear the selection when the repo changes — a stale path from the previous
   // repo must not leak into actions or a diff summon for the new repo.
@@ -143,6 +144,19 @@ export function WorkingChangesPanel() {
     staleTime: 5_000,
   });
   const head = headLog[0] ?? null;
+
+  // Tracking status — to warn before amending a commit that's already pushed.
+  // Shares React Query's cache with the Commits panel (same key).
+  const { data: tracking } = useQuery<TrackingStatus | null>({
+    queryKey: [repo?.id, "tracking"],
+    queryFn: () => repoTrackingStatus(repo!.id),
+    enabled: !!repo,
+    staleTime: 5_000,
+  });
+  // HEAD is already published when it has an upstream and no local-only commits
+  // ahead of it (ahead === 0 → the tip is on the remote). Amending then rewrites
+  // pushed history and needs a force-push.
+  const amendingPushed = amend && !!tracking && tracking.ahead === 0;
 
   // Refresh whenever the panel is focused or swapped/summoned into view, so the
   // working tree is re-read after edits made while it wasn't the shown panel.
@@ -324,6 +338,13 @@ export function WorkingChangesPanel() {
       setConfirmDetachedCommit(true);
       return;
     }
+    // Amending an already-pushed commit rewrites published history (force-push
+    // needed, disrupts collaborators). Warn first — like the detached case, a
+    // history-safety warning, deliberately NOT gated by the confirm setting.
+    if (amendingPushed) {
+      setConfirmAmendPushed(true);
+      return;
+    }
     commit();
   };
 
@@ -332,6 +353,12 @@ export function WorkingChangesPanel() {
   useEffect(() => {
     if (!detached) setConfirmDetachedCommit(false);
   }, [detached]);
+
+  // Drop a pending amend-pushed confirmation if it no longer applies (amend
+  // toggled off, or new local commits mean the tip is no longer published).
+  useEffect(() => {
+    if (!amendingPushed) setConfirmAmendPushed(false);
+  }, [amendingPushed]);
 
   // Prefill HEAD's message when turning amend on, but only if the box is empty
   // so typed-but-uncommitted text is never clobbered.
@@ -646,6 +673,37 @@ export function WorkingChangesPanel() {
                   Commit anyway
                 </Button>
                 <button disabled={busy} onClick={() => setConfirmDetachedCommit(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : confirmAmendPushed ? (
+            <div
+              style={{
+                padding: "8px 10px",
+                border: "1px solid var(--panel-border)",
+                borderRadius: 4,
+                background: "var(--button-hover-bg)",
+              }}
+            >
+              <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
+                The last commit is <strong>already pushed</strong>
+                {tracking?.upstream ? <> to <code>{tracking.upstream}</code></> : null}. Amending
+                rewrites it, so you'll need to force-push and it may disrupt anyone who has pulled
+                it. Amend anyway?
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <Button
+                  variant="danger"
+                  disabled={busy}
+                  onClick={() => {
+                    setConfirmAmendPushed(false);
+                    commit();
+                  }}
+                >
+                  Amend anyway
+                </Button>
+                <button disabled={busy} onClick={() => setConfirmAmendPushed(false)}>
                   Cancel
                 </button>
               </div>
