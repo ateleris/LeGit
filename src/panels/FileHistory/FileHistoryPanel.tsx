@@ -85,10 +85,12 @@ function FileHistoryBody() {
   // A full page implies there may be more; short page = end of history.
   const maybeMore = entries.length === PAGE_SIZE * pageCount;
 
-  const openCommit = useCallback((sha: string) => {
+  const openCommit = useCallback((sha: string, path: string) => {
     const summon = useSummonStore.getState();
     summon.summon("commit-details", sha);
-    summon.swapSummon("changed-files", "working-changes", sha);
+    // Carry the file's path so Changed Files pre-selects it (opening its diff)
+    // — we're browsing this file's history, so surface it without an extra click.
+    summon.swapSummon("changed-files", "working-changes", { commitId: sha, selectPath: path });
     // Keep the Commits graph highlight in step (only if that panel is open).
     summon.notifyIfOpen("log", sha);
   }, []);
@@ -166,7 +168,7 @@ function FileHistoryBody() {
                 key={`${entry.commit_id}-${entry.path}`}
                 entry={entry}
                 repoId={repo.id}
-                onOpen={() => openCommit(entry.commit_id)}
+                onOpen={() => openCommit(entry.commit_id, entry.path)}
                 onRestore={() => restore(entry)}
               />
             ))}

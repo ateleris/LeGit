@@ -178,6 +178,7 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "diff.discard.fg", group: "Diff", documentation: "Text of the hunk discard button." },
   { name: "diff.discard.hover.bg", group: "Diff", documentation: "Background of the hunk discard button on hover." },
   { name: "diff.discard.hover.fg", group: "Diff", documentation: "Text of the hunk discard button on hover." },
+  { name: "blame.alt.bg", group: "Blame", documentation: "Background of the alternating (every-other) commit rows in the Blame panel." },
 
   { name: "syntax.keyword", group: "Syntax", documentation: "Keywords (`if`, `fn`, `const`, ...) in the diff viewer's code." },
   { name: "syntax.string", group: "Syntax", documentation: "String, character, and regexp literals." },

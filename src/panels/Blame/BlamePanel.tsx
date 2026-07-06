@@ -190,16 +190,20 @@ export function BlamePanel() {
             {formatAppError(error)}
           </pre>
         ) : (
-          hunks.map((h, i) => (
-            <HunkRow
-              key={`${h.sha}-${h.start_line}`}
-              hunk={h}
-              tinted={i % 2 === 1}
-              segments={segments}
-              onOpen={() => openCommit(h)}
-              onReblameParent={() => reblameParent(h)}
-            />
-          ))
+          // Sized to the widest row (min 100%) so every row's tint/border spans
+          // the full scroll width instead of ending at its own line length.
+          <div style={{ minWidth: "max-content" }}>
+            {hunks.map((h, i) => (
+              <HunkRow
+                key={`${h.sha}-${h.start_line}`}
+                hunk={h}
+                tinted={i % 2 === 1}
+                segments={segments}
+                onOpen={() => openCommit(h)}
+                onReblameParent={() => reblameParent(h)}
+              />
+            ))}
+          </div>
         )}
       </div>
     </div>
@@ -247,7 +251,7 @@ function HunkRow({
       style={{
         display: "flex",
         alignItems: "stretch",
-        background: tinted ? "var(--button-hover-bg)" : "transparent",
+        background: tinted ? "var(--blame-alt-bg)" : "transparent",
         borderBottom: "1px solid var(--panel-border)",
       }}
     >
@@ -258,6 +262,13 @@ function HunkRow({
           display: "flex",
           alignItems: "stretch",
           borderRight: "1px solid var(--panel-border)",
+          // Pinned to the left as the file scrolls horizontally (one shared
+          // scrollbar for the whole file), so the commit stays visible. Needs
+          // an opaque background and a stacking context above the code.
+          position: "sticky",
+          left: 0,
+          zIndex: 1,
+          background: tinted ? "var(--blame-alt-bg)" : "var(--panel-bg)",
         }}
       >
         <button
@@ -286,7 +297,7 @@ function HunkRow({
             {uncommitted ? "" : `${hunk.sha.slice(0, 8)} · ${hunk.author} · ${formatRelative(hunk.timestamp)}`}
           </span>
         </button>
-        {!uncommitted && (
+        {!uncommitted && hunk.has_previous && (
           <button
             onClick={onReblameParent}
             title="Blame at this commit's parent: see the file before this change"
@@ -312,7 +323,8 @@ function HunkRow({
           fontSize: "var(--fz-md)",
           fontFamily: "monospace",
           flex: 1,
-          overflowX: "auto",
+          // No per-hunk scroll: long lines extend the row so the panel body's
+          // single horizontal scrollbar scrolls the whole file at once.
         }}
       >
         {hunk.lines.map((line, i) => (

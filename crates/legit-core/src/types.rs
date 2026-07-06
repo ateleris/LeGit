@@ -585,6 +585,11 @@ pub struct BlameHunk {
     pub start_line: u32,
     /// The hunk's line contents, in file order.
     pub lines: Vec<String>,
+    /// Whether the blamed commit has a prior version of the file (git's
+    /// porcelain `previous` header). False for the commit that introduced the
+    /// file (or a root commit): blaming its parent would fail, so the "blame
+    /// parent" affordance is hidden.
+    pub has_previous: bool,
 }
 
 /// What a commit search matches against. `Message`/`Author` are

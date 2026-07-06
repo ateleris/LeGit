@@ -82,6 +82,15 @@ re-deferred with justification:
   (b) later — smudge on demand (`git lfs smudge`, gated/lazy for size+network)
   to show real content. Also consider a one-line warning when a repo has
   `filter=lfs` in `.gitattributes` but `git-lfs` isn't installed.
+- **Blame "blame parent" across renames.** The reblame-parent button hides
+  when the file has no parent version (`BlameHunk.has_previous`, from git's
+  porcelain `previous` header — fixes the "no such path in `<sha>^`" error on
+  the file-adding commit). Remaining edge: when a hunk's commit **renamed** the
+  file, `has_previous` is true but `reblameParent` blames `<sha>^:<current
+  path>`, which fails because the file had a different name at the parent. The
+  porcelain `previous <sha> <path>` header carries the old path — surface it on
+  `BlameHunk` (e.g. `previous_path`) and reblame at that path instead of the
+  current one.
 - **Git Log panel follow-ups.** Filter/search the log, copy a command, jump
   a toast to its specific log entry (currently it just opens the panel).
 - **Consolidate the file-inspection panels (Diff / Blame / File View).**

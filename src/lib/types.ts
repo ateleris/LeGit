@@ -442,6 +442,9 @@ export interface BlameHunk {
   /** 1-based first line number. */
   start_line: number;
   lines: string[];
+  /** Whether a parent version of the file exists (git porcelain `previous`) —
+   *  false for the commit that added the file, so "blame parent" is hidden. */
+  has_previous: boolean;
 }
 
 /** Summon payload delivered to the Diff panel when a file is selected. */

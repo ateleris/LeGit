@@ -140,6 +140,7 @@
   --diff-gutter-fg: var(--palette-subtle-fg);
   --diff-hunk-header-bg: var(--palette-diff-hunk-header);
   --diff-hunk-header-fg: var(--palette-subtle-fg);
+  --blame-alt-bg: var(--palette-input-bg);
   --diff-edited-bg: var(--palette-diff-hunk-header);
   --op-banner-bg: var(--palette-diff-hunk-header);
   --op-banner-fg: var(--palette-main-fg);

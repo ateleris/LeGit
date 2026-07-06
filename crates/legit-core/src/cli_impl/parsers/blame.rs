@@ -17,6 +17,9 @@ struct Meta {
     author: String,
     timestamp: i64,
     summary: String,
+    /// The porcelain `previous <sha> <path>` header was present for this commit
+    /// — i.e. a parent version of the file exists to blame.
+    has_previous: bool,
 }
 
 /// Parse `git blame --porcelain` output into hunks (consecutive lines of the
@@ -46,6 +49,7 @@ pub fn parse_blame(output: &str) -> Vec<BlameHunk> {
             summary: meta.summary,
             start_line: start,
             lines: std::mem::take(lines),
+            has_previous: meta.has_previous,
         });
     };
 
@@ -77,6 +81,8 @@ pub fn parse_blame(output: &str) -> Vec<BlameHunk> {
             meta.timestamp = v.trim().parse().unwrap_or(0);
         } else if let Some(v) = line.strip_prefix("summary ") {
             meta.summary = v.to_string();
+        } else if line.starts_with("previous ") {
+            meta.has_previous = true;
         }
     }
     flush(&mut hunks, &metas, &current_sha, current_start, &mut pending_lines);
@@ -133,6 +139,19 @@ mod tests {
         assert_eq!(hunks[2].summary, "first");
         assert_eq!(hunks[2].start_line, 4);
         assert_eq!(hunks[2].lines, vec!["line four"]);
+    }
+
+    #[test]
+    fn previous_header_marks_has_previous() {
+        // A has a `previous` header (a parent version exists → can blame parent);
+        // B introduced the file (no `previous` → button should hide).
+        let raw = format!(
+            "{SHA_A} 1 1 1\nauthor A\nauthor-time 1\nsummary changed\nprevious {SHA_B} f.txt\nfilename f.txt\n\tline one\n{SHA_B} 2 2 1\nauthor B\nauthor-time 2\nsummary added\nfilename f.txt\n\tline two\n"
+        );
+        let hunks = parse_blame(&raw);
+        assert_eq!(hunks.len(), 2);
+        assert!(hunks[0].has_previous, "A has a parent version of the file");
+        assert!(!hunks[1].has_previous, "B introduced the file — no previous");
     }
 
     #[test]
