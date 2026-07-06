@@ -49,8 +49,39 @@ re-deferred with justification:
 - **Diff viewer: inline editing of staged diffs.** Unstaged working-tree
   diffs are editable (2026-07-03); staged diffs (new side = index) remain
   read-only — extend if wanted.
+- **Files panel follow-ups.** The Files panel (repo-wide tree, tracked/
+  untracked/ignored, History/Blame/View + ignore/untrack + copy/reveal)
+  shipped 2026-07-06. Deferred:
+  - **Untrack a folder.** The folder context menu offers "Add folder to
+    .gitignore" but not "stop tracking" — `rm_cached` would need `-r` for a
+    directory. Add a recursive untrack if wanted.
+  - **Persist view mode / show-ignored.** Both are ephemeral component state
+    today (tree + hidden on each open); persist in settings if the reset is
+    annoying (mirror `changed_files_view_mode`).
+  - **Nested `.gitignore` / `.git/info/exclude` targets.** Ignore actions
+    always append to the repo-root `.gitignore`; offer the nearest nested
+    `.gitignore` or the private `info/exclude` as alternatives.
+  - **Escape gitignore glob metacharacters in paths.** `gitignore_line`
+    anchors with a leading `/` (neutralising a leading `#`/`!`) but does not
+    escape `*`, `?`, `[` inside a filename — rare, but such a path would become
+    a glob. Escape them for exactness.
 - **Git Log panel follow-ups.** Filter/search the log, copy a command, jump
   a toast to its specific log entry (currently it just opens the panel).
+- **Consolidate the file-inspection panels (Diff / Blame / File View).**
+  Considered 2026-07-06, deferred (undecided). These three all view "one file"
+  and currently scatter across the layout when summoned. A 3-way `swapSummon`
+  (like Changed Files ⇄ Working Changes) was floated but is a poor fit: unlike
+  that pair, these are **complementary, not mutually exclusive**, and **Diff is
+  the high-frequency primary** (summoned on every file click from Changed
+  Files / Working Changes / Compare / File History) while Blame/File View are
+  occasional. A shared slot would let occasional actions evict the Diff
+  mid-review and tear down in-progress state (scroll, split/inline, half-staged
+  hunk). Preferred approach if picked up: **default all three into one dockview
+  group as tabs** (consolidated location, switch by tab, nothing evicted,
+  side-by-side still possible) rather than a swap. Heavier alternative: a
+  single "Inspect" panel with a Diff/Blame/View mode toggle over the current
+  `{path, rev, source}` — most "combined" but their inputs differ (Diff needs a
+  `DiffSource`/hunk model) and you lose seeing two at once.
 - **Interactive rebase polish.** The panel ships (reorder via up/down,
   pick/squash/fixup/drop, plan injected via the `printf`-redirect
   `GIT_SEQUENCE_EDITOR`, conflicts through the normal banner). Deferred:
@@ -105,15 +136,11 @@ written only after git confirms via `store`), or a UI prompt. Deferred:
 
 ## UX / polish
 
-- **Global Settings cleanup.** The Global Settings panel has grown a long
-  flat stack of sections (git path, layout, appearance, commits graph, diff
-  viewer, auto-refresh, confirm, branch switching, mixed endings, line
-  endings, signing, profiles, about). Rework its grouping and layout:
-  cluster related sections (e.g. Appearance + Diff viewer + Commits graph
-  under a visual "Display" group; the git-behaviour ones together), consider
-  collapsible groups or a left-nav/tabbed layout instead of one scroll, and
-  tighten spacing. Pure frontend (`GlobalSettingsPanel.tsx`); no settings-
-  storage change. Keep every control font-relative and token-backed.
+- **Repo Settings visual parity.** The Global Settings cleanup (2026-07-06)
+  gave the global panel collapsible category groups + a shared `SettingsGroup`/
+  `Section` template (`Settings/primitives.tsx`) and a "Git config" pill on
+  git-writing settings. The **Repo Settings** panel still uses the older flat
+  layout; bring it onto the same primitives for consistency if wanted.
 
 ---
 
@@ -129,10 +156,10 @@ Not started. Prepare LeGit for a first tagged release:
   version tag, builds the bundles on each OS runner and attaches them to a
   GitHub Release. Consider `tauri-action`. Include the auto-generated or
   curated changelog.
-- **Repository cleanup.** Remove stray/committed junk (e.g. the tracked
-  `crates/legit-core/src/XXYaRI8C` scratch file), ensure `.gitignore`
-  covers build output, add a README with screenshots + build instructions,
-  a LICENSE, and prune dead files.
+- **Repository cleanup.** Ensure `.gitignore` covers build output, add a
+  README with screenshots + build instructions, a LICENSE, and prune any
+  remaining dead files. (The tracked `crates/legit-core/src/XXYaRI8C` scratch
+  file has been removed.)
 - **Versioning + changelog.** Pick a versioning scheme, seed a CHANGELOG,
   and align the workspace version(s).
 - **Pre-release pass.** Smoke-test a built (non-dev) bundle on each target,

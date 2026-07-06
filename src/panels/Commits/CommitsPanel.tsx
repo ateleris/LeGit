@@ -12,8 +12,8 @@ import {
   minCommitsRowHeight,
 } from "../../store/settings";
 import { useLaneLocks, useLaneLocksStore } from "../../store/laneLocks";
-import { usePanelFocusEffect } from "../PanelApiContext";
-import { useSummonStore } from "../../store/summon";
+import { usePanelFocusEffect, useRestoreVirtualizerScroll } from "../PanelApiContext";
+import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { Button } from "../shared/buttons";
@@ -713,6 +713,30 @@ export function CommitsPanel() {
   useEffect(() => {
     rowVirtualizer.measure();
   }, [ROW_HEIGHT, rowVirtualizer]);
+
+  // Restore scroll (and re-render) when this panel is tab-shown again.
+  useRestoreVirtualizerScroll(rowVirtualizer, parentRef);
+
+  // Adopt an externally-driven selection: File History / Search / Blame push
+  // the commit they act on here via `notifyIfOpen("log", sha)` so the graph
+  // highlight, Commit Details and Changed Files always agree. We only move the
+  // highlight (and scroll to it) — the source panel already summons Commit
+  // Details / Changed Files, so this panel must NOT re-summon them (that would
+  // loop). Refs keep the callback stable so the summon target isn't
+  // re-registered every render. A commit outside the loaded window still sets
+  // the selection (it highlights once a later "load more" brings it in); only
+  // the scroll is skipped.
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const virtualizerRef = useRef(rowVirtualizer);
+  virtualizerRef.current = rowVirtualizer;
+  const adoptSelection = useCallback((payload: unknown) => {
+    if (typeof payload !== "string") return;
+    setSelectedId(payload as CommitId);
+    const idx = rowsRef.current.findIndex((c) => c.id === payload);
+    if (idx >= 0) virtualizerRef.current.scrollToIndex(idx);
+  }, []);
+  useSummonTarget("log", adoptSelection);
 
   // Create-new-branch flow: scroll the target row into view and show the
   // empty branch-name input there; the branch is only created when a name is

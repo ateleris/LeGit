@@ -128,7 +128,7 @@ pub async fn repo_reword_commit(
 /// exist yet (a save creating the file): its parent is verified instead, and
 /// the plain-component check already guarantees the final name itself cannot
 /// traverse.
-fn resolve_repo_relative(root: &Path, rel: &str) -> Result<PathBuf, AppError> {
+pub(crate) fn resolve_repo_relative(root: &Path, rel: &str) -> Result<PathBuf, AppError> {
     let rel_path = Path::new(rel);
     let plain = !rel_path.as_os_str().is_empty()
         && rel_path

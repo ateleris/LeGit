@@ -13,6 +13,12 @@ import { globalLineEndingsView, globalWriteLineEndings, setWarnOnMixedEndings } 
 import { useGitStatusStore } from "../../store/git-status";
 import { SigningSettings } from "./SigningSettings";
 import { GlobalProfilesSection } from "./GlobalProfilesSection";
+import { Section, Row, FieldNote, SettingsGroup, GitConfigPill } from "./primitives";
+import { ALL_PANELS, SUPPRESSIBLE_SUMMON_PANELS } from "../registry";
+import {
+  orderedWorkingChangesSections,
+  WORKING_CHANGES_SECTION_LABELS,
+} from "../WorkingChanges/sectionOrder";
 import {
   useSettingsStore,
   COMMITS_ROW_HEIGHT_DEFAULT,
@@ -56,85 +62,110 @@ export function GlobalSettingsPanel() {
 
   return (
     <div className="legit-panel">
-      <div className="legit-panel__toolbar">
-        <strong>Global Settings (this LeGit install)</strong>
-      </div>
       <div className="legit-panel__body">
-        <Section title="Git executable (default for all repos)">
-          {status ? (
-            <>
-              <Row label="Resolved path" value={<code>{status.resolved_path}</code>} />
-              <Row
-                label="Version"
-                value={
-                  status.version ? (
-                    <code>{status.version.raw}</code>
-                  ) : (
-                    <span className="legit-error">{status.error ?? "(unknown)"}</span>
-                  )
-                }
-              />
-              <Row
-                label="Minimum required"
-                value={
-                  <code>
-                    {status.minimum_required[0]}.{status.minimum_required[1]}.
-                    {status.minimum_required[2]}
-                  </code>
-                }
-              />
-              <Row
-                label="Meets minimum"
-                value={
-                  status.meets_minimum ? (
-                    <span className="legit-success">yes</span>
-                  ) : (
-                    <span className="legit-error">no</span>
-                  )
-                }
-              />
-              <FieldNote>writes to: global settings</FieldNote>
-              <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-                <input
-                  style={{ flex: 1 }}
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  placeholder="/usr/bin/git or leave blank for auto-detect"
-                />
-                <button onClick={browseFor}>Browse…</button>
-                <Button
-                  variant="primary"
-                  disabled={pending}
-                  onClick={() => apply(draft.trim() === "" ? null : draft)}
-                >
-                  Apply
-                </Button>
-                <button onClick={() => apply(null)} disabled={pending}>
-                  Reset
-                </button>
-                <button onClick={() => refresh()} disabled={pending}>
-                  Re-check
-                </button>
-              </div>
-              {error && <pre className="legit-error">{error}</pre>}
-            </>
-          ) : (
-            <span className="legit-subtle">Probing git…</span>
-          )}
-        </Section>
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "6px 14px",
+            alignItems: "center",
+            fontSize: "var(--fz-sm)",
+            color: "var(--subtle-fg)",
+            marginBottom: 18,
+          }}
+        >
+          <span>Most settings apply instantly.</span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <GitConfigPill /> items change your Git configuration.
+          </span>
+        </div>
 
-        <LayoutOrientationSection />
-        <AppearanceSection />
-        <CommitsGraphSection />
-        <DiffViewerSection />
-        <AutoRefreshSection />
-        <ConfirmDiscardSection />
-        <BranchSwitchingSection />
-        <MixedEndingDetectionSection />
-        <LineEndingsGlobalSection />
-        <SigningSettings scope="global" />
-        <GlobalProfilesSection />
-        <AboutSection />
+        <SettingsGroup id="appearance" title="Appearance" caption="How LeGit looks">
+          <GeneralSection />
+          <CommitsGraphSection />
+          <DiffViewerSection />
+          <WorkingChangesLayoutSection />
+        </SettingsGroup>
+
+        <SettingsGroup id="behavior" title="Behavior" caption="How LeGit acts">
+          <AutoOpenPanelsSection />
+          <ConfirmDiscardSection />
+          <BranchSwitchingSection />
+          <AutoRefreshSection />
+          <MixedEndingDetectionSection />
+        </SettingsGroup>
+
+        <SettingsGroup id="git" title="Git" caption="Integration & configuration">
+          <Section title="Git executable (default for all repos)">
+            {status ? (
+              <>
+                <Row label="Resolved path" value={<code>{status.resolved_path}</code>} />
+                <Row
+                  label="Version"
+                  value={
+                    status.version ? (
+                      <code>{status.version.raw}</code>
+                    ) : (
+                      <span className="legit-error">{status.error ?? "(unknown)"}</span>
+                    )
+                  }
+                />
+                <Row
+                  label="Minimum required"
+                  value={
+                    <code>
+                      {status.minimum_required[0]}.{status.minimum_required[1]}.
+                      {status.minimum_required[2]}
+                    </code>
+                  }
+                />
+                <Row
+                  label="Meets minimum"
+                  value={
+                    status.meets_minimum ? (
+                      <span className="legit-success">yes</span>
+                    ) : (
+                      <span className="legit-error">no</span>
+                    )
+                  }
+                />
+                <FieldNote>writes to: global settings</FieldNote>
+                <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                  <input
+                    style={{ flex: 1 }}
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    placeholder="/usr/bin/git or leave blank for auto-detect"
+                  />
+                  <button onClick={browseFor}>Browse…</button>
+                  <Button
+                    variant="primary"
+                    disabled={pending}
+                    onClick={() => apply(draft.trim() === "" ? null : draft)}
+                  >
+                    Apply
+                  </Button>
+                  <button onClick={() => apply(null)} disabled={pending}>
+                    Reset
+                  </button>
+                  <button onClick={() => refresh()} disabled={pending}>
+                    Re-check
+                  </button>
+                </div>
+                {error && <pre className="legit-error">{error}</pre>}
+              </>
+            ) : (
+              <span className="legit-subtle">Probing git…</span>
+            )}
+          </Section>
+          <LineEndingsGlobalSection />
+          <SigningSettings scope="global" />
+          <GlobalProfilesSection />
+        </SettingsGroup>
+
+        <SettingsGroup id="about" title="About">
+          <AboutSection />
+        </SettingsGroup>
       </div>
     </div>
   );
@@ -142,21 +173,29 @@ export function GlobalSettingsPanel() {
 
 function AboutSection() {
   const version = useAppVersion();
-  const status = useGitStatusStore((s) => s.status);
   return (
     <Section title="About">
       <Row label="LeGit" value={version ? `v${version}` : "…"} />
-      {status?.version && <Row label="git" value={<code>{status.version.raw}</code>} />}
     </Section>
   );
 }
 
-function LayoutOrientationSection() {
+// Shared column widths so the control column lines up across the separate
+// General and Commits-graph grids (both start at the same left origin, so
+// identical label + gutter columns make their inputs/buttons align vertically).
+// Em-based: they scale with the grids' --fz-lg font size.
+const SETTINGS_LABEL_COL = "10.5em";
+const SETTINGS_GUTTER_COL = "1.9em"; // matches the link IconButton width
+const SETTINGS_GRID_COLS = `${SETTINGS_LABEL_COL} ${SETTINGS_GUTTER_COL} min-content max-content`;
+
+function GeneralSection() {
   const placement = useSettingsStore((s) => s.settings?.global_region_placement ?? "top");
   const setRegionPlacement = useSettingsStore((s) => s.setRegionPlacement);
+  const fontSize = useSettingsStore((s) => s.settings?.ui_font_size ?? UI_FONT_SIZE_DEFAULT);
+  const setUiFontSize = useSettingsStore((s) => s.setUiFontSize);
   const [saving, setSaving] = useState(false);
 
-  const select = async (p: RegionPlacement) => {
+  const selectPlacement = async (p: RegionPlacement) => {
     if (p === placement || saving) return;
     setSaving(true);
     try {
@@ -166,35 +205,7 @@ function LayoutOrientationSection() {
     }
   };
 
-  return (
-    <Section title="Layout orientation">
-      <FieldNote>writes to: global settings</FieldNote>
-      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-        <Button
-          variant={placement === "top" ? "primary" : "default"}
-          disabled={saving}
-          onClick={() => select("top")}
-        >
-          Top / Bottom
-        </Button>
-        <Button
-          variant={placement === "left" ? "primary" : "default"}
-          disabled={saving}
-          onClick={() => select("left")}
-        >
-          Left / Right
-        </Button>
-      </div>
-    </Section>
-  );
-}
-
-function AppearanceSection() {
-  const fontSize = useSettingsStore((s) => s.settings?.ui_font_size ?? UI_FONT_SIZE_DEFAULT);
-  const setUiFontSize = useSettingsStore((s) => s.setUiFontSize);
-  const [saving, setSaving] = useState(false);
-
-  const save = async (v: number) => {
+  const saveFont = async (v: number) => {
     setSaving(true);
     try {
       await setUiFontSize(v);
@@ -204,22 +215,45 @@ function AppearanceSection() {
   };
 
   return (
-    <Section title="Appearance">
-      <FieldNote>writes to: global settings — base text size for all panels (other sizes scale from it)</FieldNote>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginTop: 8 }}>
+    <Section title="General">
+      <FieldNote>writes to: global settings — base UI size &amp; dock placement for all panels</FieldNote>
+      <div
+        style={{
+          display: "grid",
+          // label · gutter · control · range — shared shape/widths with Commits
+          // graph so the control column aligns across the two sections.
+          gridTemplateColumns: SETTINGS_GRID_COLS,
+          gap: "6px 10px",
+          alignItems: "center",
+          marginTop: 8,
+          width: "fit-content",
+          fontSize: "var(--fz-lg)",
+        }}
+      >
+        <span className="legit-subtle" style={{ gridColumn: 1, gridRow: 1, whiteSpace: "nowrap" }}>Layout orientation</span>
+        <div style={{ gridColumn: "3 / -1", gridRow: 1, display: "flex", gap: 8 }}>
+          <Button variant={placement === "top" ? "primary" : "default"} disabled={saving} onClick={() => selectPlacement("top")}>
+            Top / Bottom
+          </Button>
+          <Button variant={placement === "left" ? "primary" : "default"} disabled={saving} onClick={() => selectPlacement("left")}>
+            Left / Right
+          </Button>
+        </div>
         <NumberField
+          grid
+          row={2}
           label="UI font size"
           value={fontSize}
           min={UI_FONT_SIZE_MIN}
           max={UI_FONT_SIZE_MAX}
           disabled={saving}
-          onCommit={save}
+          onCommit={saveFont}
         />
       </div>
       {fontSize !== UI_FONT_SIZE_DEFAULT && (
         <div style={{ marginTop: 10 }}>
-          <button disabled={saving} onClick={() => save(UI_FONT_SIZE_DEFAULT)}>
-            Reset to default
+          <button disabled={saving} onClick={() => saveFont(UI_FONT_SIZE_DEFAULT)}>
+            Reset font size to default
           </button>
         </div>
       )}
@@ -306,17 +340,25 @@ function CommitsGraphSection() {
   const dotMax = maxCommitsDotRadius(effectiveRowHeight, effectiveLaneWidth);
   const lineMax = maxCommitsLineWidth(effectiveRowHeight, effectiveLaneWidth);
 
-  const isDefault =
-    rowHeight === COMMITS_ROW_HEIGHT_DEFAULT &&
-    laneWidth === COMMITS_LANE_WIDTH_DEFAULT &&
-    dotRadius === COMMITS_DOT_RADIUS_DEFAULT &&
-    lineWidth === COMMITS_LINE_WIDTH_DEFAULT;
-
   return (
     <Section title="Commits graph">
       <FieldNote>writes to: global settings — affects the Commits panel for all repos</FieldNote>
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 16, marginTop: 8 }}>
+      <div
+        style={{
+          display: "grid",
+          // label · link-gutter · input · range — shared widths with General
+          // (see SETTINGS_GRID_COLS) so the input column aligns across sections.
+          gridTemplateColumns: SETTINGS_GRID_COLS,
+          gap: "6px 10px",
+          alignItems: "center",
+          marginTop: 8,
+          width: "fit-content",
+          fontSize: "var(--fz-lg)",
+        }}
+      >
         <NumberField
+          grid
+          row={1}
           label="Line height"
           value={effectiveRowHeight}
           min={rowHeightMin}
@@ -324,6 +366,8 @@ function CommitsGraphSection() {
           disabled={saving}
           onCommit={(v) => save(v, linked ? v : effectiveLaneWidth, dotRadius, lineWidth)}
         />
+        {/* Chain-link spanning the two inputs it governs (rows 1–2), in the
+            gutter column just left of the inputs — Photoshop style. */}
         <IconButton
           aria-pressed={linked}
           title={
@@ -334,23 +378,24 @@ function CommitsGraphSection() {
           onClick={toggleLink}
           disabled={saving}
           style={{
-            // Fixed box (scales with the font) so the two states can never
-            // differ in size — only the fill/colour changes.
+            gridColumn: 2,
+            gridRow: "1 / span 2",
+            justifySelf: "center",
+            alignSelf: "center",
             width: "1.9em",
             height: "1.7em",
             padding: 0,
-            marginLeft: -8,
-            marginRight: -8,
             fontSize: "inherit",
             background: linked ? "var(--accent)" : "transparent",
             color: linked ? "var(--accent-fg)" : "var(--subtle-fg)",
-            // Transparent (not none) when unlinked so toggling doesn't shift layout.
             border: `1px solid ${linked ? "var(--accent)" : "transparent"}`,
           }}
         >
           {linked ? <LinkIcon /> : <UnlinkIcon />}
         </IconButton>
         <NumberField
+          grid
+          row={2}
           label="Graph lane width"
           value={shownLaneWidth}
           // Same font-derived floor as the line height.
@@ -360,6 +405,8 @@ function CommitsGraphSection() {
           onCommit={(v) => save(effectiveRowHeight, v, dotRadius, lineWidth)}
         />
         <NumberField
+          grid
+          row={3}
           label="Commit dot radius"
           value={dotRadius}
           min={COMMITS_DOT_RADIUS_MIN}
@@ -368,6 +415,8 @@ function CommitsGraphSection() {
           onCommit={(v) => save(effectiveRowHeight, effectiveLaneWidth, v, lineWidth)}
         />
         <NumberField
+          grid
+          row={4}
           label="Line width"
           value={lineWidth}
           min={COMMITS_LINE_WIDTH_MIN}
@@ -377,9 +426,6 @@ function CommitsGraphSection() {
           onCommit={(v) => save(effectiveRowHeight, effectiveLaneWidth, dotRadius, v)}
         />
       </div>
-      <FieldNote>
-        Text size follows the global UI font size (see "UI font size" above).
-      </FieldNote>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
         <input
           type="checkbox"
@@ -396,21 +442,6 @@ function CommitsGraphSection() {
         Privacy: when enabled, a hash of each author's email address is sent to
         gravatar.com to look up their avatar. Nothing is sent while this is off.
       </FieldNote>
-      <div style={{ marginTop: 10 }}>
-        <button
-          disabled={saving || isDefault}
-          onClick={() =>
-            save(
-              COMMITS_ROW_HEIGHT_DEFAULT,
-              COMMITS_LANE_WIDTH_DEFAULT,
-              COMMITS_DOT_RADIUS_DEFAULT,
-              COMMITS_LINE_WIDTH_DEFAULT,
-            )
-          }
-        >
-          Reset to defaults
-        </button>
-      </div>
     </Section>
   );
 }
@@ -423,6 +454,8 @@ function NumberField({
   step = 1,
   disabled,
   onCommit,
+  grid = false,
+  row,
 }: {
   label: string;
   value: number;
@@ -432,6 +465,12 @@ function NumberField({
   step?: number;
   disabled?: boolean;
   onCommit: (value: number) => void;
+  /** Render as grid cells (label · input · range) via `display: contents`, so
+   *  multiple fields align in a shared grid. Cells are placed at explicit
+   *  columns 1/3/4 (column 2 is a gutter the caller uses for the link toggle). */
+  grid?: boolean;
+  /** 1-based grid row for this field's cells (grid mode). */
+  row?: number;
 }) {
   // Local draft so typing doesn't clamp/persist mid-edit.
   const [draft, setDraft] = useState(String(value));
@@ -468,26 +507,53 @@ function NumberField({
     return () => el.removeEventListener("change", onChangeNative);
   }, []);
 
+  const input = (
+    <input
+      ref={inputRef}
+      type="number"
+      min={min}
+      max={max}
+      step={step}
+      value={draft}
+      disabled={disabled}
+      style={{ width: grid ? "5em" : 72, ...(grid ? { gridColumn: 3, gridRow: row } : {}) }}
+      onChange={(e) => setDraft(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+      }}
+    />
+  );
+  const range = (
+    <span
+      className="legit-subtle"
+      style={{
+        fontSize: "var(--fz-sm)",
+        fontVariantNumeric: "tabular-nums",
+        ...(grid ? { gridColumn: 4, gridRow: row } : {}),
+      }}
+    >
+      px ({min}–{max})
+    </span>
+  );
+
+  if (grid) {
+    // Cells participate in the parent grid at explicit columns (label 1,
+    // input 3, range 4; column 2 is a gutter the caller uses for the link
+    // toggle) so all fields align regardless of label length.
+    return (
+      <label style={{ display: "contents" }}>
+        <span className="legit-subtle" style={{ gridColumn: 1, gridRow: row }}>{label}</span>
+        {input}
+        {range}
+      </label>
+    );
+  }
+
   return (
     <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fz-lg)" }}>
       <span className="legit-subtle">{label}</span>
-      <input
-        ref={inputRef}
-        type="number"
-        min={min}
-        max={max}
-        step={step}
-        value={draft}
-        disabled={disabled}
-        style={{ width: 72 }}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-        }}
-      />
-      <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
-        px ({min}–{max})
-      </span>
+      {input}
+      {range}
     </label>
   );
 }
@@ -526,6 +592,111 @@ function DiffViewerSection() {
         its own, so constructs opened outside the visible context may colour
         imperfectly. Very large diffs are skipped.
       </FieldNote>
+    </Section>
+  );
+}
+
+/** Stable empty default so the store selector doesn't return a fresh array. */
+const EMPTY_PANELS: string[] = [];
+
+function AutoOpenPanelsSection() {
+  const suppressed = useSettingsStore(
+    (s) => s.settings?.suppressed_auto_open_panels ?? EMPTY_PANELS,
+  );
+  const setSuppressed = useSettingsStore((s) => s.setSuppressedAutoOpenPanels);
+  const [saving, setSaving] = useState(false);
+
+  const titleFor = (id: string) => ALL_PANELS.find((p) => p.id === id)?.title ?? id;
+
+  const toggle = async (id: string, autoOpen: boolean) => {
+    // autoOpen = keep it in the auto-open set (not suppressed).
+    const next = autoOpen
+      ? suppressed.filter((p) => p !== id)
+      : suppressed.includes(id)
+        ? suppressed
+        : [...suppressed, id];
+    setSaving(true);
+    try {
+      await setSuppressed(next);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Auto-open panels">
+      <FieldNote>writes to: global settings — applies to all repos</FieldNote>
+      <FieldNote>
+        When you click a commit, file, or hunk, LeGit opens the matching detail
+        panel. Uncheck one to stop it popping open — it still updates live when
+        you already have it open.
+      </FieldNote>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
+        {SUPPRESSIBLE_SUMMON_PANELS.map((id) => {
+          const autoOpen = !suppressed.includes(id);
+          return (
+            <label
+              key={id}
+              style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fz-lg)", cursor: "pointer" }}
+            >
+              <input
+                type="checkbox"
+                checked={autoOpen}
+                disabled={saving}
+                onChange={() => toggle(id, !autoOpen)}
+              />
+              {titleFor(id)}
+            </label>
+          );
+        })}
+      </div>
+    </Section>
+  );
+}
+
+function WorkingChangesLayoutSection() {
+  const order = orderedWorkingChangesSections(
+    useSettingsStore((s) => s.settings?.working_changes_section_order),
+  );
+  const setOrder = useSettingsStore((s) => s.setWorkingChangesSectionOrder);
+  const [saving, setSaving] = useState(false);
+
+  const move = async (i: number, delta: number) => {
+    const j = i + delta;
+    if (j < 0 || j >= order.length) return;
+    const next = [...order];
+    [next[i], next[j]] = [next[j], next[i]];
+    setSaving(true);
+    try {
+      await setOrder(next);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Working Changes layout">
+      <FieldNote>writes to: global settings — applies to all repos</FieldNote>
+      <FieldNote>
+        Top-to-bottom order of the three Working Changes sections. Reverse them
+        to put Staged first, or move the commit box to the top.
+      </FieldNote>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
+        {order.map((id, i) => (
+          <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--fz-lg)" }}>
+            <span style={{ display: "flex", gap: 2 }}>
+              <IconButton title="Move up" disabled={saving || i === 0} onClick={() => move(i, -1)}>
+                ↑
+              </IconButton>
+              <IconButton title="Move down" disabled={saving || i === order.length - 1} onClick={() => move(i, 1)}>
+                ↓
+              </IconButton>
+            </span>
+            <span style={{ width: "1.5em", textAlign: "right", color: "var(--subtle-fg)" }}>{i + 1}.</span>
+            <span>{WORKING_CHANGES_SECTION_LABELS[id]}</span>
+          </div>
+        ))}
+      </div>
     </Section>
   );
 }
@@ -753,7 +924,7 @@ function LineEndingsGlobalSection() {
 
   usePanelDirty(dirty);
 
-  if (loading) return <Section title="Line endings (global)"><span className="legit-subtle">Loading…</span></Section>;
+  if (loading) return <Section title="Line endings (global)" scope="git"><span className="legit-subtle">Loading…</span></Section>;
   if (!view) return null;
 
   const changes = getChangedValues(
@@ -785,7 +956,7 @@ function LineEndingsGlobalSection() {
   };
 
   return (
-    <Section title="Line endings (global)">
+    <Section title="Line endings (global)" scope="git">
       <FieldNote>writes to: ~/.gitconfig — affects all repos that don't override these values</FieldNote>
 
       <div style={{ marginTop: 10 }}>
@@ -955,30 +1126,3 @@ function ResolvedBadge({
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ fontSize: "var(--fz-sm)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: 8 }}>
-        {title}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 6, padding: "2px 0" }}>
-      <div className="legit-subtle">{label}</div>
-      <div>{value}</div>
-    </div>
-  );
-}
-
-function FieldNote({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: 4 }}>
-      {children}
-    </div>
-  );
-}

@@ -227,6 +227,32 @@ pub async fn set_diff_syntax_highlighting(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn set_suppressed_auto_open_panels(
+    state: tauri::State<'_, AppState>,
+    panels: Vec<String>,
+) -> Result<(), AppError> {
+    {
+        let mut s = state.global_settings.write().await;
+        s.suppressed_auto_open_panels = panels;
+    }
+    state.persist_global_settings().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_working_changes_section_order(
+    state: tauri::State<'_, AppState>,
+    order: Vec<String>,
+) -> Result<(), AppError> {
+    {
+        let mut s = state.global_settings.write().await;
+        s.working_changes_section_order = order;
+    }
+    state.persist_global_settings().await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn save_switch_dirty_behavior(
     state: tauri::State<'_, AppState>,
     behavior: SwitchDirtyBehavior,

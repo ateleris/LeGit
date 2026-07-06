@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
@@ -22,6 +23,10 @@ import { useOpState } from "../../lib/useOpState";
 import { isDetachedHead } from "../../lib/detachedHead";
 import { OpStateBanner } from "./OpStateBanner";
 import { takeSideLabels } from "./conflictLabels";
+import {
+  orderedWorkingChangesSections,
+  type WorkingChangesSection,
+} from "./sectionOrder";
 
 const toEntry = (s: FileStatus): FileTreeEntry => ({ path: s.path, change: s.state });
 
@@ -85,6 +90,10 @@ export function WorkingChangesPanel() {
 
   const viewMode: ViewMode =
     useSettingsStore((s) => s.settings?.changed_files_view_mode) === "tree" ? "tree" : "flat";
+  // User-chosen top-to-bottom order of the three sections (Global Settings).
+  const sectionOrder = orderedWorkingChangesSections(
+    useSettingsStore((s) => s.settings?.working_changes_section_order),
+  );
   // Whether discard actions prompt first (global setting, default on).
   const confirmDiscardEnabled = useSettingsStore((s) => s.settings?.confirm_discard ?? true);
   const setViewMode = useSettingsStore((s) => s.setChangedFilesViewMode);
@@ -415,13 +424,10 @@ export function WorkingChangesPanel() {
       )}
 
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-        {status.length === 0 ? (
-          <div className="legit-panel__body">
-            <span className="legit-subtle">No changes.</span>
-          </div>
-        ) : (
-        <>
+        {(() => {
+          const unstagedSection = (
           <Section
+            key="unstaged"
             title="Unstaged"
             count={unstaged.length}
             actions={
@@ -529,8 +535,10 @@ export function WorkingChangesPanel() {
               }
             />
           </Section>
-
+          );
+          const stagedSection = (
           <Section
+            key="staged"
             title="Staged"
             count={staged.length}
             actions={
@@ -603,10 +611,9 @@ export function WorkingChangesPanel() {
               }
             />
           </Section>
-        </>
-        )}
-
-        <div style={{ flexShrink: 0, borderTop: "1px solid var(--panel-border)", padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+          );
+          const commitComposer = (
+          <div key="commit" style={{ flexShrink: 0, borderTop: "1px solid var(--panel-border)", padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
           <textarea
             value={message}
             onChange={(e) => setMessage(e.target.value)}
@@ -655,6 +662,30 @@ export function WorkingChangesPanel() {
             </div>
           )}
         </div>
+          );
+          const blocks: Record<WorkingChangesSection, ReactNode> = {
+            unstaged: unstagedSection,
+            staged: stagedSection,
+            commit: commitComposer,
+          };
+          // Render sections top-to-bottom in the user's order. When there are
+          // no changes, the two file lists collapse into a single "No changes"
+          // filler shown in the first list slot; the commit composer keeps its
+          // ordered position.
+          let emptyShown = false;
+          return sectionOrder.map((id) => {
+            if (id !== "commit" && status.length === 0) {
+              if (emptyShown) return null;
+              emptyShown = true;
+              return (
+                <div key="empty" className="legit-panel__body" style={{ flex: 1 }}>
+                  <span className="legit-subtle">No changes.</span>
+                </div>
+              );
+            }
+            return blocks[id];
+          });
+        })()}
       </div>
         </div>
       )}

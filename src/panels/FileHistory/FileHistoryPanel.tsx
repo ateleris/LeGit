@@ -89,6 +89,8 @@ function FileHistoryBody() {
     const summon = useSummonStore.getState();
     summon.summon("commit-details", sha);
     summon.swapSummon("changed-files", "working-changes", sha);
+    // Keep the Commits graph highlight in step (only if that panel is open).
+    summon.notifyIfOpen("log", sha);
   }, []);
 
   const restore = useCallback(

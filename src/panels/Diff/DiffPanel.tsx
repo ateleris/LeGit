@@ -17,7 +17,8 @@ import {
   repoUnstageLines,
   repoWriteWorktreeFile,
 } from "../../lib/commands";
-import type { ConflictFileSides, ConflictSide, DiffEntry, DiffRequest } from "../../lib/types";
+import type { ConflictFileSides, ConflictSide, DiffEntry, DiffRequest, DiffSource } from "../../lib/types";
+import { LineEndingBadge } from "../shared/LineEndingBadge";
 import { ThreeWayView } from "./ThreeWayView";
 import { formatAppError } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
@@ -82,6 +83,24 @@ function loadPref<T extends string>(key: string, fallback: T): T {
 }
 
 /** Per-hunk actions offered for a given diff source. Commit diffs are read-only. */
+/**
+ * The two sides to check line endings for, per diff source. `rev`: null =
+ * working tree, ":" = index, else a rev spec. The badge shows the new side,
+ * or "old→new" when they differ.
+ */
+function lineEndingSides(source: DiffSource): { rev: string | null; oldRev: string | null } {
+  switch (source.kind) {
+    case "working_unstaged":
+      return { rev: null, oldRev: ":" }; // working tree vs index
+    case "working_staged":
+      return { rev: ":", oldRev: "HEAD" }; // index vs HEAD
+    case "commit":
+      return { rev: source.commit_id, oldRev: `${source.commit_id}^` }; // commit vs first parent
+    case "commit_range":
+      return { rev: source.to, oldRev: source.from };
+  }
+}
+
 function actionsForSource(req: DiffRequest | null): HunkAction[] {
   if (!req) return [];
   switch (req.source.kind) {
@@ -527,6 +546,10 @@ export function DiffPanel() {
         >
           {request.path}
         </span>
+        {(() => {
+          const s = lineEndingSides(request.source);
+          return <LineEndingBadge repoId={request.repoId} path={request.path} rev={s.rev} oldRev={s.oldRev} />;
+        })()}
         {dirty && (
           <span style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
             <ToolbarButton

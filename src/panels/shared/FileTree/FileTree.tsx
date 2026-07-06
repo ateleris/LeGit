@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  File,
   FileQuestion,
   GitFork,
   Pencil,
@@ -22,6 +23,7 @@ import {
 import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import type { FileState } from "../../../lib/types";
+import { useRestoreVirtualizerScroll } from "../../PanelApiContext";
 import { baseName, flatten, type FileTreeEntry, type Row, type ViewMode } from "./buildTree";
 
 interface FileTreeProps {
@@ -42,6 +44,13 @@ interface FileTreeProps {
   onSelectionChange?: (paths: string[]) => void;
   /** Optional per-file action buttons, revealed on row hover/focus (right edge). */
   renderActions?: (file: FileTreeEntry) => ReactNode;
+  /**
+   * Optional override for the leading status icon of a file row. When omitted,
+   * the icon is derived from `file.change` (or a neutral file icon when the
+   * entry has no change). The Files tree uses this to icon by tracked/
+   * untracked/ignored rather than by change status.
+   */
+  renderFileIcon?: (file: FileTreeEntry) => ReactNode;
   /**
    * Optional per-folder action buttons (tree view), revealed on row hover.
    * Receives every file path under the folder, for bulk stage/unstage.
@@ -68,6 +77,9 @@ function fileTitle(file: FileTreeEntry): string {
   return file.old_path ? `${file.path}\n(renamed from ${file.old_path})` : file.path;
 }
 
+/** Icon/colour for a plain file with no change status (Files-tree tracked file). */
+const PLAIN_FILE_META = { Icon: File, color: "var(--subtle-fg)" } as const;
+
 // Icon per change kind (lucide): + added, pencil modified, trash deleted,
 // swap-arrows renamed, copy copied.
 const STATUS_META: Record<FileState, { Icon: LucideIcon; color: string }> = {
@@ -91,6 +103,7 @@ export function FileTree({
   selectedPaths,
   onSelectionChange,
   renderActions,
+  renderFileIcon,
   renderDirActions,
   onContextMenu,
   onDirContextMenu,
@@ -132,6 +145,9 @@ export function FileTree({
   useEffect(() => {
     rowVirtualizer.measure();
   }, [rowHeight, rowVirtualizer]);
+
+  // Restore scroll (and re-render) when the containing panel is tab-shown again.
+  useRestoreVirtualizerScroll(rowVirtualizer, parentRef);
 
   const toggleDir = useCallback((path: string) => {
     setCollapsed((prev) => {
@@ -306,6 +322,8 @@ export function FileTree({
                 cursor: "pointer",
                 fontSize: "var(--fz-md)",
                 whiteSpace: "nowrap",
+                // Ignored files (Files tree) render dimmed to set them apart.
+                opacity: row.kind === "file" && row.file.dimmed ? 0.55 : 1,
                 background: isSelected
                   ? "var(--graph-row-selected-bg, rgba(255,255,255,0.10))"
                   : isFocused
@@ -335,6 +353,7 @@ export function FileTree({
                   file={row.file}
                   viewMode={viewMode}
                   iconSize={iconSize}
+                  icon={renderFileIcon ? renderFileIcon(row.file) : null}
                   actions={renderActions && (isHovered || isFocused) ? renderActions(row.file) : null}
                 />
               )}
@@ -393,15 +412,19 @@ function FileRowView({
   file,
   viewMode,
   iconSize,
+  icon,
   actions,
 }: {
   file: FileTreeEntry;
   viewMode: ViewMode;
   iconSize: number;
+  /** Caller-supplied leading icon; falls back to the change-derived icon. */
+  icon?: ReactNode;
   actions?: ReactNode;
 }) {
-  const meta = STATUS_META[file.change];
+  const meta = file.change ? STATUS_META[file.change] : PLAIN_FILE_META;
   const Icon = meta.Icon;
+  const statusLabel = file.change ?? "tracked";
   const name = baseName(file.path);
   const dir = file.path.slice(0, file.path.length - name.length);
   const additions = file.additions ?? 0;
@@ -410,11 +433,11 @@ function FileRowView({
   return (
     <>
       <span
-        aria-label={file.change}
-        title={file.change}
+        aria-label={statusLabel}
+        title={statusLabel}
         style={{ flexShrink: 0, width: iconSize, display: "flex", justifyContent: "center" }}
       >
-        <Icon size={iconSize} color={meta.color} />
+        {icon ?? <Icon size={iconSize} color={meta.color} />}
       </span>
 
       {viewMode === "flat" ? (

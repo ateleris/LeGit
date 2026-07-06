@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useActiveRepo } from "../../store/repos";
 import { useSummonStore } from "../../store/summon";
+import { useRestoreVirtualizerScroll } from "../PanelApiContext";
 import { repoSearchCommits, repoSearchPaths } from "../../lib/commands";
 import type { Commit, CommitSearchKind } from "../../lib/types";
 import { formatRelative } from "../../lib/time";
@@ -99,10 +100,15 @@ export function SearchPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [submitted]);
 
+  // Restore scroll (and re-render) when this panel is tab-shown again.
+  useRestoreVirtualizerScroll(virtualizer, parentRef);
+
   const openCommit = (c: Commit) => {
     const summon = useSummonStore.getState();
     summon.summon("commit-details", c.id);
     summon.swapSummon("changed-files", "working-changes", c.id);
+    // Keep the Commits graph highlight in step (only if that panel is open).
+    summon.notifyIfOpen("log", c.id);
   };
 
   const openBlame = (path: string) => {

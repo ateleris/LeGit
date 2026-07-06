@@ -31,6 +31,8 @@ import type {
   DiffSource,
   FileAtRevision,
   FileHistoryEntry,
+  RepoFileEntry,
+  LineEndingKind,
   FetchOptions,
   PullOptions,
   PullStrategy,
@@ -196,6 +198,12 @@ export const setCommitAvatars = (enabled: boolean) =>
 export const setDiffSyntaxHighlighting = (enabled: boolean) =>
   invoke<null>("set_diff_syntax_highlighting", { enabled });
 
+export const setSuppressedAutoOpenPanels = (panels: string[]) =>
+  invoke<null>("set_suppressed_auto_open_panels", { panels });
+
+export const setWorkingChangesSectionOrder = (order: string[]) =>
+  invoke<null>("set_working_changes_section_order", { order });
+
 export const setActiveTheme = (name: string) =>
   invoke<null>("set_active_theme", { name });
 
@@ -340,6 +348,31 @@ export const repoSearchCommits = (
 
 export const repoSearchPaths = (repoId: string, query: string, maxCount: number) =>
   invoke<string[]>("repo_search_paths", { repoId, query, maxCount });
+
+/** Every file in the repo, classified tracked/untracked/(ignored). Files tree. */
+export const repoListFiles = (repoId: string, showIgnored: boolean) =>
+  invoke<RepoFileEntry[]>("repo_list_files", { repoId, showIgnored });
+
+/** Append a path to the repo-root `.gitignore` (`path/` when it's a directory). */
+export const repoAddToGitignore = (repoId: string, path: string, isDir: boolean) =>
+  invoke<void>("repo_add_to_gitignore", { repoId, path, isDir });
+
+/** Stop tracking a file (`git rm --cached`, kept on disk) and ignore it. */
+export const repoUntrackPath = (repoId: string, path: string, isDir: boolean) =>
+  invoke<void>("repo_untrack_path", { repoId, path, isDir });
+
+/** Reveal a repo-relative path in the OS file manager (best effort). */
+export const repoRevealPath = (repoId: string, path: string) =>
+  invoke<void>("repo_reveal_path", { repoId, path });
+
+/** A file's current working-tree content (binary-aware). File View worktree mode. */
+export const repoFileWorktree = (repoId: string, path: string) =>
+  invoke<FileAtRevision>("repo_file_worktree", { repoId, path });
+
+/** Line-ending style of a file side. `rev`: null = working tree, ":" = index,
+ *  else a rev spec (sha / HEAD / <sha>^ / branch). */
+export const repoLineEndingKind = (repoId: string, path: string, rev?: string | null) =>
+  invoke<LineEndingKind>("repo_line_ending_kind", { repoId, path, rev: rev ?? null });
 
 /** Blame `path` - at `rev` when given, else the working tree. */
 export const repoBlame = (repoId: string, path: string, rev?: string | null) =>

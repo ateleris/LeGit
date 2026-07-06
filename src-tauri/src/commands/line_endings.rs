@@ -9,8 +9,11 @@
 use crate::commands::config_util::{
     read_config_all_scopes, write_config_global, write_config_local, ConfigValue,
 };
+use crate::commands::working::resolve_repo_relative;
 use crate::error::AppError;
 use crate::state::AppState;
+use legit_core::classify_line_endings;
+use legit_core::types::LineEndingKind;
 use legit_core::GitRunner;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -252,6 +255,54 @@ fn parse_attr_line(line: &str) -> Option<GitAttrRule> {
     }
 
     Some(GitAttrRule { pattern, text, eol })
+}
+
+/// The line-ending style of a file at a given side, for the Diff / File View /
+/// Blame indicator. `rev` selects the side: `None` = working tree, `":"` = the
+/// index, otherwise a rev spec (a commit sha, `HEAD`, `<sha>^`, a branch, …).
+/// Returns `None` (no indicator) on any failure — a missing file, a path absent
+/// at that rev (e.g. a root commit's parent), a too-large blob, or binary.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_line_ending_kind(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    path: String,
+    rev: Option<String>,
+) -> Result<LineEndingKind, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    let text: Option<String> = match rev.as_deref() {
+        None => read_capped_text(&resolve_repo_relative(&session.path, &path)?).await,
+        Some(spec_rev) => {
+            let runner = session.runner.read().await.clone();
+            // The index is addressed as `:path`; any other rev as `<rev>:path`.
+            let spec = if spec_rev == ":" {
+                format!(":{path}")
+            } else {
+                format!("{spec_rev}:{path}")
+            };
+            match runner.run(&["show", &spec]).await {
+                Ok(o) if o.success && o.stdout.len() <= MAX_LINE_ENDING_BYTES => Some(o.stdout),
+                _ => None,
+            }
+        }
+    };
+    Ok(text.map(|t| classify_line_endings(&t)).unwrap_or(LineEndingKind::None))
+}
+
+/// 2 MB cap: above this the indicator is skipped rather than reading/scanning a
+/// large blob (matches the mixed-ending detector's guard).
+const MAX_LINE_ENDING_BYTES: usize = 2 * 1024 * 1024;
+
+/// Read a working-tree file as text for line-ending classification; `None` if
+/// missing, unreadable, or over the size cap.
+async fn read_capped_text(abs: &Path) -> Option<String> {
+    let meta = tokio::fs::metadata(abs).await.ok()?;
+    if meta.len() > MAX_LINE_ENDING_BYTES as u64 {
+        return None;
+    }
+    let bytes = tokio::fs::read(abs).await.ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 // ---------------------------------------------------------------------------

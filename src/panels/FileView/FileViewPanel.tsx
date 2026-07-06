@@ -6,16 +6,21 @@ import { useActiveRepo } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
 import { useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
-import { repoFileAtRevision } from "../../lib/commands";
+import { repoFileAtRevision, repoFileWorktree } from "../../lib/commands";
 import { formatAppError, type FileAtRevision } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
+import { LineEndingBadge } from "../shared/LineEndingBadge";
 import { baseTheme, readOnly } from "../Diff/DiffEditor";
 import { loadLanguageForPath, syntaxColorTheme } from "../Diff/syntaxLanguages";
 
-/** Summon payload: which file, at which tree-ish. */
+/**
+ * Summon payload: which file, at which tree-ish. Omit `rev` (or pass null) to
+ * view the current working-tree content instead of a committed revision — used
+ * by the Files panel, and the only way to view untracked files.
+ */
 export interface FileViewRequest {
   path: string;
-  rev: string;
+  rev?: string | null;
 }
 
 /** "51234" -> "50.0 KiB" (exact bytes for small values). */
@@ -33,12 +38,10 @@ function formatByteSize(bytes: number): string {
 }
 
 function isFileViewRequest(payload: unknown): payload is FileViewRequest {
-  return (
-    typeof payload === "object" &&
-    payload !== null &&
-    typeof (payload as FileViewRequest).path === "string" &&
-    typeof (payload as FileViewRequest).rev === "string"
-  );
+  if (typeof payload !== "object" || payload === null) return false;
+  const p = payload as FileViewRequest;
+  // `rev` is optional (working-tree mode): accept a string, null, or absent.
+  return typeof p.path === "string" && (p.rev == null || typeof p.rev === "string");
 }
 
 /**
@@ -106,13 +109,20 @@ export function FileViewPanel() {
   }, []);
   useSummonTarget("file-view", onReceive);
 
+  // Working-tree mode when no rev is given: read the file from disk (works for
+  // untracked files too). Keyed under "status" so on-disk edits refresh it;
+  // the revision mode stays under "log" (content at a rev changes with history).
+  const worktree = request != null && request.rev == null;
   const { data, isFetching, isError, error, refetch } = useQuery<FileAtRevision>({
-    // Under the "log" domain: content at a rev changes exactly when history
-    // does (e.g. the rev is rewritten away).
-    queryKey: [repo?.id, "log", "file-at-rev", request?.rev, request?.path],
-    queryFn: () => repoFileAtRevision(repo!.id, request!.rev, request!.path),
+    queryKey: worktree
+      ? [repo?.id, "status", "file-worktree", request?.path]
+      : [repo?.id, "log", "file-at-rev", request?.rev, request?.path],
+    queryFn: () =>
+      worktree
+        ? repoFileWorktree(repo!.id, request!.path)
+        : repoFileAtRevision(repo!.id, request!.rev!, request!.path),
     enabled: !!repo && !!request,
-    staleTime: 60_000,
+    staleTime: worktree ? 5_000 : 60_000,
   });
   const content = data && "Text" in data ? data.Text : null;
   const syntaxEnabled = useSettingsStore((s) => s.settings?.diff_syntax_highlighting ?? false);
@@ -123,7 +133,7 @@ export function FileViewPanel() {
       <div className="legit-panel">
         <div className="legit-panel__body">
           <span className="legit-subtle" style={{ fontSize: "var(--fz-md)" }}>
-            View a file at a revision from the Changed Files context menu.
+            Select a file in Files, or view one at a revision from the Changed Files context menu.
           </span>
         </div>
       </div>
@@ -143,10 +153,11 @@ export function FileViewPanel() {
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
           }}
-          title={`${request.path} @ ${request.rev}`}
+          title={worktree ? `${request.path} (working tree)` : `${request.path} @ ${request.rev}`}
         >
-          {request.path} @ {request.rev.slice(0, 8)}
+          {request.path} {worktree ? "(working tree)" : `@ ${request.rev!.slice(0, 8)}`}
         </span>
+        <LineEndingBadge repoId={repo.id} path={request.path} rev={worktree ? null : request.rev} />
       </div>
 
       <div className="legit-panel__body" style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: 0 }}>

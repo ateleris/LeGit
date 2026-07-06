@@ -648,6 +648,61 @@ async fn search_paths_filters_ls_files_case_insensitively() {
 }
 
 // ---------------------------------------------------------------------------
+// Files tree — list_repo_files / rm_cached
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn list_repo_files_without_ignored_runs_two_ls_files() {
+    // Tracked then untracked, and NO ignored query when show_ignored is false.
+    let fake = FakeExecutor::default();
+    fake.expect(&["ls-files", "-z"], ok("src/main.rs\0"));
+    fake.expect(&["ls-files", "-z", "--others", "--exclude-standard"], ok("notes.txt\0"));
+    let (b, exec) = backend(fake);
+
+    let files = b.list_repo_files(false).await.unwrap();
+    assert_eq!(
+        files,
+        vec![
+            RepoFileEntry { path: PathBuf::from("notes.txt"), kind: RepoFileKind::Untracked },
+            RepoFileEntry { path: PathBuf::from("src/main.rs"), kind: RepoFileKind::Tracked },
+        ],
+    );
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn list_repo_files_with_ignored_adds_third_ls_files() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["ls-files", "-z"], ok("a.txt\0"));
+    fake.expect(&["ls-files", "-z", "--others", "--exclude-standard"], ok(""));
+    fake.expect(
+        &["ls-files", "-z", "--others", "--ignored", "--exclude-standard"],
+        ok("target/x\0"),
+    );
+    let (b, exec) = backend(fake);
+
+    let files = b.list_repo_files(true).await.unwrap();
+    assert_eq!(
+        files,
+        vec![
+            RepoFileEntry { path: PathBuf::from("a.txt"), kind: RepoFileKind::Tracked },
+            RepoFileEntry { path: PathBuf::from("target/x"), kind: RepoFileKind::Ignored },
+        ],
+    );
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn rm_cached_runs_git_rm_cached_with_pathspec() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["rm", "--cached", "--", "secret.env"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.rm_cached(&[PathBuf::from("secret.env")]).await.unwrap();
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
 // compare view — range file list + per-file range diff
 // ---------------------------------------------------------------------------
 

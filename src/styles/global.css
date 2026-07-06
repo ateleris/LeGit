@@ -23,6 +23,11 @@
 ::-webkit-scrollbar-track {
   background: var(--scrollbar-track);
 }
+/* The square where a vertical and horizontal scrollbar meet defaults to white;
+   match it to the track. */
+::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
+}
 
 /* Global UI font scale. `--ui-font-size` is the single base (overridden at
    runtime from Global Settings); the steps are additive offsets so the defaults
@@ -107,6 +112,15 @@ textarea:focus,
 select:focus {
   outline: none;
   border-color: var(--input-focus-border);
+}
+/* Disabled text inputs / selects read as deactivated (mirrors button:disabled).
+ * Without this a disabled <input> keeps its normal chrome — e.g. the Commits
+ * graph "lane width" field when linked to the line height. */
+input:disabled,
+textarea:disabled,
+select:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 /* Native toggles (checkboxes + radios — Settings, Working Changes, Stashes)

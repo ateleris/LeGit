@@ -169,6 +169,46 @@ pub struct FileStatus {
     pub staged: bool,
 }
 
+/// How git regards a file in the repo-wide Files tree. The three classes are
+/// disjoint by git's own definition: a path is either in the index (tracked),
+/// or an "other" file that is either ignored or not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum RepoFileKind {
+    /// In the index (`git ls-files`).
+    Tracked,
+    /// Present in the working tree, not tracked, not ignored.
+    Untracked,
+    /// Matched by a gitignore rule.
+    Ignored,
+}
+
+/// A single file in the repo-wide Files tree (`list_repo_files`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct RepoFileEntry {
+    pub path: PathBuf,
+    pub kind: RepoFileKind,
+}
+
+/// The line-ending style of a file's (or blob's) text — the small indicator
+/// shown in the Diff / File View / Blame panels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum LineEndingKind {
+    /// Only `\n`.
+    Lf,
+    /// Only `\r\n`.
+    Crlf,
+    /// Only lone `\r`.
+    Cr,
+    /// A mix of more than one of the above.
+    Mixed,
+    /// No line breaks at all (empty or single line).
+    None,
+    /// Binary content — no meaningful line endings.
+    Binary,
+}
+
 /// A single file changed by a commit, relative to its first parent (or the
 /// empty tree for a root commit). Backs the Changed Files panel.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]

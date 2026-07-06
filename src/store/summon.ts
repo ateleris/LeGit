@@ -1,7 +1,21 @@
 import { useEffect } from "react";
 import { create } from "zustand";
 import { useDockviewStore } from "./dockview";
+import { useSettingsStore } from "./settings";
 import { REPO_PANELS } from "../panels/registry";
+
+/**
+ * True when the user has opted this panel out of auto-opening (Settings →
+ * "Auto-open panels"). A `summon`/`swapSummon` to a suppressed panel degrades
+ * to `notifyIfOpen`: it updates the panel only if it's already open, never
+ * creates or focuses it. Read lazily (getState) so it always reflects the
+ * current setting.
+ */
+function isSuppressed(panelId: string): boolean {
+  return (
+    useSettingsStore.getState().settings?.suppressed_auto_open_panels?.includes(panelId) ?? false
+  );
+}
 
 type Callback = (payload: unknown) => void;
 
@@ -81,6 +95,13 @@ export const useSummonStore = create<SummonStore>((set, get) => ({
   },
 
   summon(targetId, payload) {
+    // Per-panel "don't auto-open" opt-out: degrade to a notify so the panel
+    // updates only if already open and never pops into view.
+    if (isSuppressed(targetId)) {
+      get().notifyIfOpen(targetId, payload);
+      return;
+    }
+
     const api = useDockviewStore.getState().repoApi;
     if (!api) return;
 
@@ -149,6 +170,13 @@ export const useSummonStore = create<SummonStore>((set, get) => ({
   },
 
   swapSummon(showId, hideId, payload) {
+    // Suppressed target: don't take over the slot or open it — just update it
+    // if it's already open, and leave the sibling (`hideId`) untouched.
+    if (isSuppressed(showId)) {
+      get().notifyIfOpen(showId, payload);
+      return;
+    }
+
     const api = useDockviewStore.getState().repoApi;
     if (!api) return;
     const desc = REPO_PANELS.find((p) => p.id === showId);

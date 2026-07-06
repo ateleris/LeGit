@@ -51,6 +51,12 @@ export interface GlobalSettings {
   commit_avatars?: boolean;
   /** Syntax-highlight code in the diff viewer (default off). */
   diff_syntax_highlighting?: boolean;
+  /** Panel IDs the user opted out of auto-opening: a summon to one degrades to
+   * notifyIfOpen (updates only if already open, never pops open). */
+  suppressed_auto_open_panels?: string[];
+  /** Top-to-bottom order of the Working Changes sections ("unstaged" | "staged"
+   * | "commit"). Normalized on read; default unstaged → staged → commit. */
+  working_changes_section_order?: string[];
   /** User-defined git identity profiles (camelCase key — serde rename). */
   gitProfiles?: GitProfilesDoc;
 }
@@ -342,6 +348,18 @@ export interface CommitFileChange {
   /** True when git reports the file as binary. */
   binary: boolean;
 }
+
+/** How git regards a file in the Files tree (matches legit-core `RepoFileKind`). */
+export type RepoFileKind = "tracked" | "untracked" | "ignored";
+
+/** A file in the repo-wide Files tree (matches legit-core `RepoFileEntry`). */
+export interface RepoFileEntry {
+  path: string;
+  kind: RepoFileKind;
+}
+
+/** Line-ending style of a file/blob (matches legit-core `LineEndingKind`). */
+export type LineEndingKind = "lf" | "crlf" | "cr" | "mixed" | "none" | "binary";
 
 // --- diffs (mirror legit-core `Diff*` types; see bindings.ts) ---
 
