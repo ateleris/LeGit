@@ -141,7 +141,6 @@ export const DEFAULT_THEME: ThemeDocument = {
     "diff.gutter.fg": "subtle-fg",
     "diff.hunk.header.bg": "diff-hunk-header",
     "diff.hunk.header.fg": "subtle-fg",
-    "diff.line.selected.bg": "row-selected-bg",
     "diff.edited.bg": "diff-hunk-header",
     "op.banner.bg": "diff-hunk-header",
     "op.banner.fg": "main-fg",

@@ -17,6 +17,15 @@ function isSuppressed(panelId: string): boolean {
   );
 }
 
+/**
+ * The file-inspection panels. When one of these opens with no remembered
+ * placement, it lands in an already-open companion's group (so the three share
+ * one tabbed group); if none are open, it uses the group Diff opens into by
+ * default. A panel the user has deliberately moved keeps its spot (that memory
+ * is honoured before this).
+ */
+const FILE_INSPECTION_GROUP = ["diff", "file-view", "blame"];
+
 type Callback = (payload: unknown) => void;
 
 export interface FallbackPosition {
@@ -153,6 +162,44 @@ export const useSummonStore = create<SummonStore>((set, get) => ({
         position: { referencePanel: fallback.referencePanel, direction: fallback.direction },
       });
       return;
+    }
+
+    // Case 2c: file-inspection panels (Diff / File View / Blame) collocate —
+    // land in an already-open companion's group, otherwise in the group Diff
+    // opens into by default (so wherever the first of the three opens, the
+    // other two join it as tabs).
+    if (FILE_INSPECTION_GROUP.includes(targetId)) {
+      const companionId = FILE_INSPECTION_GROUP.find(
+        (cid) => cid !== targetId && api.getPanel(cid),
+      );
+      const companionGroup = companionId ? api.getPanel(companionId)?.group : undefined;
+      if (companionGroup) {
+        api.addPanel({
+          id: targetId,
+          component: targetId,
+          title: desc.title,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          position: { referenceGroup: companionGroup.id as any, direction: "within" },
+        });
+        return;
+      }
+      // None of the three open yet — use Diff's default placement for all of
+      // them, guarding against its reference panel being closed.
+      const diffPlacement = REPO_PANELS.find((p) => p.id === "diff")?.defaultPlacement;
+      if (diffPlacement) {
+        const refOpen = diffPlacement.referencePanel
+          ? !!api.getPanel(diffPlacement.referencePanel)
+          : false;
+        api.addPanel({
+          id: targetId,
+          component: targetId,
+          title: desc.title,
+          position: refOpen
+            ? { referencePanel: diffPlacement.referencePanel!, direction: diffPlacement.direction }
+            : { direction: diffPlacement.direction },
+        });
+        return;
+      }
     }
 
     // Case 3: first time or no usable position — use descriptor's default placement.

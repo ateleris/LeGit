@@ -65,6 +65,23 @@ re-deferred with justification:
     anchors with a leading `/` (neutralising a leading `#`/`!`) but does not
     escape `*`, `?`, `[` inside a filename — rare, but such a path would become
     a glob. Escape them for exactness.
+- **Git LFS-aware content views.** LeGit is already LFS-*compatible* for the
+  core workflow: because everything runs through the real `git` CLI (which
+  inherits the user's `git-lfs` install + `git lfs install` filters and PATH),
+  clone/fetch/pull/push/checkout/commit smudge & clean transparently, and LFS
+  HTTPS auth rides the existing credential helper. No LFS code exists and none
+  is required to ship. **Gap:** content views that read committed blobs via
+  `git show <rev>:<path>` / `git diff` do NOT run the smudge filter, so for an
+  LFS-tracked file **File View / Blame / Diff at a revision show the ~3-line LFS
+  pointer** (`version https://git-lfs… / oid … / size …`) instead of the real
+  content (working-tree views are fine — already smudged). The new line-ending
+  badge and binary detection also treat the pointer as ordinary text. Fix
+  options: (a) minimal & safe — detect a pointer blob (starts with
+  `version https://git-lfs.github.com/spec/`) and render a placeholder like
+  "Git LFS object, 42 MB (oid …)", mirroring the existing binary-file handling;
+  (b) later — smudge on demand (`git lfs smudge`, gated/lazy for size+network)
+  to show real content. Also consider a one-line warning when a repo has
+  `filter=lfs` in `.gitattributes` but `git-lfs` isn't installed.
 - **Git Log panel follow-ups.** Filter/search the log, copy a command, jump
   a toast to its specific log entry (currently it just opens the panel).
 - **Consolidate the file-inspection panels (Diff / Blame / File View).**

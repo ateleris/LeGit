@@ -107,6 +107,17 @@ export function ThemeEditorPanel() {
     updateDraftTokens({ ...current.tokens, [token]: makeBinding(paletteRef, filter) });
   };
 
+  // Reset a token to its built-in default by dropping the theme's override, so
+  // it inherits the default binding the same way an unset token does (mirrors
+  // resolveTheme) — rather than writing a redundant explicit copy of the default.
+  const resetToken = (token: string) => {
+    if (!draft) startEditing();
+    const current = (draft ?? activeDoc)!;
+    const next = { ...current.tokens };
+    delete next[token];
+    updateDraftTokens(next);
+  };
+
   // Saves under the draft's name — rename via the Metadata "Name" field.
   const onSave = async () => {
     setError(null);
@@ -335,7 +346,7 @@ export function ThemeEditorPanel() {
                   key={t.name}
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "1fr 1fr 0.6fr 24px",
+                    gridTemplateColumns: "1fr 1fr 0.6fr 20px 24px",
                     alignItems: "center",
                     gap: 6,
                     padding: "2px 0",
@@ -390,6 +401,32 @@ export function ThemeEditorPanel() {
                       </option>
                     ))}
                   </select>
+                  {/* Reset to built-in — only when this theme overrides the
+                      token; removing the override lets it inherit the default. */}
+                  {bound !== undefined ? (
+                    <button
+                      onClick={() => resetToken(t.name)}
+                      disabled={!editing}
+                      title="Reset to built-in default"
+                      aria-label={`Reset ${t.name} to built-in default`}
+                      style={{
+                        width: 20,
+                        height: 20,
+                        padding: 0,
+                        lineHeight: 1,
+                        fontSize: "var(--fz-md)",
+                        background: "transparent",
+                        border: "1px solid var(--panel-border)",
+                        borderRadius: 3,
+                        color: "var(--subtle-fg)",
+                        cursor: editing ? "pointer" : "default",
+                      }}
+                    >
+                      ↺
+                    </button>
+                  ) : (
+                    <span />
+                  )}
                   <span
                     aria-hidden
                     style={{

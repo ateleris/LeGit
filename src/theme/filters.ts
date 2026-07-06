@@ -41,14 +41,26 @@ const mixToward = (c: Rgba, target: { r: number; g: number; b: number }, weight:
 
 export const TOKEN_FILTERS: readonly TokenFilterDef[] = [
   {
+    id: "lighter-soft",
+    label: "Lighter (8%)",
+    css: (v) => `color-mix(in srgb, ${v}, white 8%)`,
+    apply: (c) => mixToward(c, { r: 255, g: 255, b: 255 }, 0.08),
+  },
+  {
     id: "lighter",
-    label: "Lighter",
+    label: "Lighter (15%)",
     css: (v) => `color-mix(in srgb, ${v}, white 15%)`,
     apply: (c) => mixToward(c, { r: 255, g: 255, b: 255 }, 0.15),
   },
   {
+    id: "darker-soft",
+    label: "Darker (8%)",
+    css: (v) => `color-mix(in srgb, ${v}, black 8%)`,
+    apply: (c) => mixToward(c, { r: 0, g: 0, b: 0 }, 0.08),
+  },
+  {
     id: "darker",
-    label: "Darker",
+    label: "Darker (15%)",
     css: (v) => `color-mix(in srgb, ${v}, black 15%)`,
     apply: (c) => mixToward(c, { r: 0, g: 0, b: 0 }, 0.15),
   },

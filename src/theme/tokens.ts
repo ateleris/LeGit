@@ -167,7 +167,6 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "diff.gutter.fg", group: "Diff", documentation: "Line-number gutter text in the Diff panel." },
   { name: "diff.hunk.header.bg", group: "Diff", documentation: "Background of a hunk's `@@` header row." },
   { name: "diff.hunk.header.fg", group: "Diff", documentation: "Text of a hunk's `@@` header row." },
-  { name: "diff.line.selected.bg", group: "Diff", documentation: "Background of lines selected for line-level staging." },
   { name: "diff.edited.bg", group: "Diff", documentation: "Whole-line background for a line with unsaved edits in the editable diff." },
   { name: "op.banner.bg", group: "Working Changes", documentation: "Background of the merge/rebase-in-progress banner." },
   { name: "op.banner.fg", group: "Working Changes", documentation: "Text of the merge/rebase-in-progress banner." },

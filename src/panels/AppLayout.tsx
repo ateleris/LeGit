@@ -22,8 +22,8 @@ const DEFAULT_SIZE_LEFT = 280;
  * mode the divider splits HEIGHT; the floor there is small so the global strip
  * stays compact (a large height floor would force it open and push the main
  * repo region off-screen — that was the earlier breakage). Top-mode width is
- * the full window, so the 500px width requirement is satisfied automatically. */
-const REGION_MIN_WIDTH_BASE = 500;
+ * the full window, so the 700px width requirement is satisfied automatically. */
+const REGION_MIN_WIDTH_BASE = 700;
 const REGION_MIN_HEIGHT_BASE = 60;
 const DIVIDER_SIZE = 12;
 const TAB_BAR_HEIGHT = 32;

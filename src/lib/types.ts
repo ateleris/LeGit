@@ -729,7 +729,13 @@ export interface CommitDetails {
 // --- Theme document shape (matches DESIGN.md §6.3) ---
 
 /** Derived-colour filter applied to a token's palette reference. */
-export type TokenFilterId = "lighter" | "darker" | "faded" | "subtle";
+export type TokenFilterId =
+  | "lighter-soft"
+  | "lighter"
+  | "darker-soft"
+  | "darker"
+  | "faded"
+  | "subtle";
 
 /**
  * A token's binding: either a bare palette name (no filter — the classic

@@ -416,7 +416,8 @@ fn validate_theme(value: &serde_json::Value) -> Result<(), AppError> {
         .ok_or_else(|| AppError::InvalidTheme("missing `tokens` object".into()))?;
     // Filter ids for derived-colour bindings — mirror `TOKEN_FILTERS` in
     // `src/theme/filters.ts`.
-    const KNOWN_FILTERS: [&str; 4] = ["lighter", "darker", "faded", "subtle"];
+    const KNOWN_FILTERS: [&str; 6] =
+        ["lighter-soft", "lighter", "darker-soft", "darker", "faded", "subtle"];
     for (k, v) in tokens {
         // A binding is a bare palette name, or { ref, filter } for derived colours.
         let reference = if let Some(s) = v.as_str() {
