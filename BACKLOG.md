@@ -166,22 +166,12 @@ warnings). Open remainder:
   target, since several code paths differ from `tauri dev` (e.g. the
   `CREATE_NO_WINDOW` git-spawn flag, `windows_subsystem = "windows"`,
   bindings generated only when the app runs).
-- **Analyse bundling a git executable with LeGit.** Investigation, not a
-  decision yet. LeGit currently relies on the user's system `git` (found on
-  PATH) and deliberately inherits its install — this is why LFS, credential
-  helpers, and SSH "just work" (see the runner-env and LFS backlog notes).
-  Bundling our own `git` would remove the "git not installed / too old"
-  failure mode and give a known, tested version, but it's a real trade study.
-  Points to weigh: (a) **what breaks** — a bundled git wouldn't see the user's
-  global config, credential helpers (GCM), `git-lfs` filters, or SSH setup
-  unless we explicitly wire PATH/GIT_EXEC_PATH to still find the system's
-  helpers; risks regressing the very integrations we get for free today.
-  (b) **size / packaging** — a portable git (esp. MinGit on Windows) adds tens
-  of MB per platform and its own update/security burden; on macOS/Linux git is
-  usually already present, so the win is mostly Windows. (c) **fallback model**
-  — prefer bundled but fall back to system, or system-first with bundled only
-  when absent? (d) **version pinning + CVE patching** — we'd own tracking git
-  security releases. (e) **licensing** (GPLv2 redistribution) and how it
-  interacts with our bundle. Deliverable: a written recommendation (bundle /
-  don't / bundle-Windows-only) with the config-inheritance strategy spelled out
-  before any code.
+- **Bundled git: decided — don't bundle.** Trade study written 2026-07-07
+  (`design/2026-07-07-bundled-git-trade-study.md`): bundling breaks the
+  install-relative config LeGit gets for free (GCM in Git-for-Windows'
+  system gitconfig, LFS filters, EOL defaults), adds ~37 MB/arch, and makes
+  LeGit own git CVE patching (actively exploited, e.g. CVE-2025-48384)
+  before an auto-update story exists. The recommended follow-up (polished
+  no-git first-run onboarding in `GitSetupGate`) shipped 2026-07-07. The
+  revisit trigger and the download-on-demand fallback design (Windows-only,
+  system-first, pinned + hash-verified MinGit) are spelled out in the study.
