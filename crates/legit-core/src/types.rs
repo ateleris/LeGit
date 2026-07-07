@@ -167,6 +167,29 @@ pub struct FileStatus {
     pub state: FileState,
     /// Whether the change is staged (in the index). `false` for working-tree-only changes.
     pub staged: bool,
+    /// Added lines for this entry's own diff (index diff when staged, worktree
+    /// diff when not). `None` when git reports no counts for the path
+    /// (untracked, conflicted, binary) — distinct from a genuine `0`.
+    pub additions: Option<u32>,
+    /// Removed lines; same semantics as `additions`.
+    pub deletions: Option<u32>,
+    /// True when git reports the file as binary (numstat `-`/`-`).
+    pub binary: bool,
+}
+
+impl FileStatus {
+    /// A status entry with no line counts yet (the parser's output; counts are
+    /// merged in afterwards from `git diff --numstat`).
+    pub fn new(path: impl Into<PathBuf>, state: FileState, staged: bool) -> Self {
+        Self {
+            path: path.into(),
+            state,
+            staged,
+            additions: None,
+            deletions: None,
+            binary: false,
+        }
+    }
 }
 
 /// How git regards a file in the repo-wide Files tree. The three classes are

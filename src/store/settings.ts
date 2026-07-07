@@ -7,6 +7,8 @@ import {
   saveUiFontSize,
   setWatcherEnabled,
   setConfirmDiscard,
+  setAutoFetchEnabled,
+  setAutoFetchIntervalMinutes,
   setCommitAvatars,
   setDiffSyntaxHighlighting,
   setSuppressedAutoOpenPanels,
@@ -93,6 +95,8 @@ interface SettingsStore {
   setUiFontSize: (size: number) => Promise<void>;
   setWatcherEnabled: (enabled: boolean) => Promise<void>;
   setConfirmDiscard: (confirm: boolean) => Promise<void>;
+  setAutoFetchEnabled: (enabled: boolean) => Promise<void>;
+  setAutoFetchIntervalMinutes: (minutes: number) => Promise<void>;
   setCommitAvatars: (enabled: boolean) => Promise<void>;
   setDiffSyntaxHighlighting: (enabled: boolean) => Promise<void>;
   setSuppressedAutoOpenPanels: (panels: string[]) => Promise<void>;
@@ -173,6 +177,19 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     if (s) {
       set({ settings: { ...s, confirm_discard: confirm } });
     }
+  },
+
+  async setAutoFetchEnabled(enabled) {
+    await setAutoFetchEnabled(enabled);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, auto_fetch_enabled: enabled } });
+  },
+
+  async setAutoFetchIntervalMinutes(minutes) {
+    const clamped = Math.max(1, Math.round(minutes)); // backend re-clamps
+    await setAutoFetchIntervalMinutes(clamped);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, auto_fetch_interval_minutes: clamped } });
   },
 
   async setCommitAvatars(enabled) {

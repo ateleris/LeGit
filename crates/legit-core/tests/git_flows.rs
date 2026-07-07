@@ -13,9 +13,10 @@
 //! autocrlf) locally, so a developer's global config cannot skew outcomes.
 
 use legit_core::{
-    ConflictKind, ConflictSide, FetchOptions, GitBackend, GitCliBackend, GitRunner, MergeOptions,
-    MergeOutcome, OperationId, RebaseOutcome, RemoteProgress, RepoFileEntry, RepoFileKind,
-    RepoOpState, ResetMode, SequenceOutcome, StashOutcome, SwitchDirtyBehavior, SwitchOutcome,
+    ConflictKind, ConflictSide, FetchOptions, FileState, GitBackend, GitCliBackend, GitRunner,
+    MergeOptions, MergeOutcome, OperationId, RebaseOutcome, RemoteProgress, RepoFileEntry,
+    RepoFileKind, RepoOpState, ResetMode, SequenceOutcome, StashOutcome, SwitchDirtyBehavior,
+    SwitchOutcome,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -1232,4 +1233,85 @@ async fn rm_cached_untracks_but_keeps_file_on_disk() {
     assert!(repo.exists("secret.env"), "rm --cached deleted the file");
     let files = repo.backend.list_repo_files(false).await.unwrap();
     assert_eq!(kind_of(&files, "secret.env"), Some(RepoFileKind::Untracked));
+}
+
+// ---------------------------------------------------------------------------
+// status - numstat line counts against real git
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn status_reports_line_counts_per_side() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\ntwo\n");
+    repo.commit_all("base").await;
+
+    // Stage a two-line addition, then remove three lines in the worktree.
+    repo.write("a.txt", "one\ntwo\nthree\nfour\n");
+    repo.git(&["add", "a.txt"]).await;
+    repo.write("a.txt", "one\n");
+    // A staged binary file and an untracked file.
+    std::fs::write(repo.path.join("pic.bin"), b"\x89PNG\0\x01junk").expect("write binary");
+    repo.git(&["add", "pic.bin"]).await;
+    repo.write("untracked.txt", "x\n");
+
+    let status = repo.backend.status().await.unwrap();
+    let find = |path: &str, staged: bool| {
+        status
+            .iter()
+            .find(|s| s.path == PathBuf::from(path) && s.staged == staged)
+            .unwrap_or_else(|| panic!("no entry for {path} staged={staged}"))
+    };
+
+    let staged = find("a.txt", true);
+    assert_eq!((staged.additions, staged.deletions), (Some(2), Some(0)));
+    let unstaged = find("a.txt", false);
+    assert_eq!((unstaged.additions, unstaged.deletions), (Some(0), Some(3)));
+
+    let binary = find("pic.bin", true);
+    assert!(binary.binary, "numstat `-`/`-` must mark the entry binary");
+    assert_eq!((binary.additions, binary.deletions), (None, None));
+
+    let untracked = find("untracked.txt", false);
+    assert_eq!(untracked.state, FileState::Untracked);
+    assert_eq!((untracked.additions, untracked.deletions), (None, None));
+}
+
+#[tokio::test]
+async fn status_counts_work_before_the_first_commit() {
+    // `diff --cached` runs against an unborn HEAD here; the counts must either
+    // come back (git diffs the index against the empty tree) or degrade to
+    // None - status itself must never fail over count enrichment.
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\ntwo\n");
+    repo.git(&["add", "a.txt"]).await;
+
+    let status = repo.backend.status().await.unwrap();
+    assert_eq!(status.len(), 1);
+    assert_eq!(status[0].state, FileState::Added);
+    assert!(status[0].staged);
+    assert!(
+        status[0].additions == Some(2) || status[0].additions.is_none(),
+        "unexpected staged additions: {:?}",
+        status[0].additions
+    );
+}
+
+#[tokio::test]
+async fn status_reports_counts_for_a_staged_rename() {
+    // Rename detection must key counts by the destination path, matching the
+    // porcelain status record (which reports the new path).
+    let repo = TestRepo::init().await;
+    repo.write("old.txt", "one\ntwo\nthree\n");
+    repo.commit_all("base").await;
+    repo.git(&["mv", "old.txt", "new.txt"]).await;
+    repo.write("new.txt", "one\ntwo\nthree\nfour\n");
+    repo.git(&["add", "new.txt"]).await;
+
+    let status = repo.backend.status().await.unwrap();
+    let entry = status
+        .iter()
+        .find(|s| s.path == PathBuf::from("new.txt") && s.staged)
+        .expect("staged rename entry");
+    assert_eq!(entry.state, FileState::Renamed);
+    assert_eq!((entry.additions, entry.deletions), (Some(1), Some(0)));
 }

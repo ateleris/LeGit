@@ -201,6 +201,32 @@ pub async fn set_confirm_discard(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn set_auto_fetch_enabled(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    {
+        let mut s = state.global_settings.write().await;
+        s.auto_fetch_enabled = enabled;
+    }
+    state.persist_global_settings().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_auto_fetch_interval_minutes(
+    state: tauri::State<'_, AppState>,
+    minutes: u32,
+) -> Result<(), AppError> {
+    {
+        let mut s = state.global_settings.write().await;
+        s.auto_fetch_interval_minutes = minutes.max(1);
+    }
+    state.persist_global_settings().await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn set_commit_avatars(
     state: tauri::State<'_, AppState>,
     enabled: bool,

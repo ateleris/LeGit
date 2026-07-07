@@ -18,11 +18,12 @@ use std::path::PathBuf;
 /// Common `diff-tree` flags for both streams. `-M` enables rename detection.
 pub const DIFF_TREE_FLAGS: [&str; 4] = ["--no-commit-id", "-r", "-M", "-z"];
 
-/// Counts parsed from one numstat record.
-struct NumStat {
-    additions: u32,
-    deletions: u32,
-    binary: bool,
+/// Counts parsed from one numstat record. Also reused by the status parser to
+/// merge working-tree / index line counts into `FileStatus` entries.
+pub(crate) struct NumStat {
+    pub(crate) additions: u32,
+    pub(crate) deletions: u32,
+    pub(crate) binary: bool,
 }
 
 /// Parse and merge the `--name-status` and `--numstat` streams into one ordered
@@ -75,8 +76,10 @@ pub fn parse_commit_files(name_status: &str, numstat: &str) -> Vec<CommitFileCha
     result
 }
 
-/// Parse the numstat `-z` stream into `destination path -> counts`.
-fn parse_numstat(numstat: &str) -> HashMap<String, NumStat> {
+/// Parse the numstat `-z` stream into `destination path -> counts`. The format
+/// is identical for `diff-tree --numstat -z` and `diff --numstat -z`, so the
+/// status flow reuses this for working-tree / index counts.
+pub(crate) fn parse_numstat(numstat: &str) -> HashMap<String, NumStat> {
     let mut map = HashMap::new();
     let mut tokens = numstat.split('\0');
 

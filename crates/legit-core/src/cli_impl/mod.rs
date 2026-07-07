@@ -67,6 +67,24 @@ impl<E: GitExecutor> GitCliBackend<E> {
         self.runner.read().await.clone()
     }
 
+    /// `git status` parsed, without line counts — the cheap form for internal
+    /// flows (e.g. `discard`) that only need path classification. The trait's
+    /// `status()` enriches this with numstat counts for the UI.
+    async fn status_entries(&self) -> Result<Vec<FileStatus>, GitError> {
+        let runner = self.runner().await;
+        let output = runner
+            .run(&parsers::status::STATUS_ARGS)
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !output.success {
+            return Err(GitError::CommandFailed {
+                exit_code: output.exit_code.unwrap_or(-1),
+                stderr: output.stderr,
+            });
+        }
+        Ok(parsers::status::parse_status(&output.stdout))
+    }
+
     /// Run a git subcommand (`prefix`) followed by a list of pathspecs. Paths
     /// are passed after the prefix verbatim; the prefix should end with `--` so
     /// they are always treated as pathspecs. Errors on a non-zero exit.
@@ -601,21 +619,41 @@ impl<E: GitExecutor> GitCliBackend<E> {
 #[async_trait]
 impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
     async fn status(&self) -> Result<Vec<FileStatus>, GitError> {
-        let runner = self.runner().await;
+        let mut statuses = self.status_entries().await?;
 
-        let output = runner
-            .run(&parsers::status::STATUS_ARGS)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-
-        if !output.success {
-            return Err(GitError::CommandFailed {
-                exit_code: output.exit_code.unwrap_or(-1),
-                stderr: output.stderr,
-            });
+        // Line counts come from two extra numstat diffs, run only when some
+        // entry can actually carry counts (an all-untracked tree skips both).
+        let need_staged = statuses
+            .iter()
+            .any(|s| s.staged && parsers::status::wants_counts(s));
+        let need_unstaged = statuses
+            .iter()
+            .any(|s| !s.staged && parsers::status::wants_counts(s));
+        if !need_staged && !need_unstaged {
+            return Ok(statuses);
         }
 
-        Ok(parsers::status::parse_status(&output.stdout))
+        // Counts are cosmetic enrichment: a failed numstat run leaves them at
+        // `None` (no badge) rather than failing status itself.
+        let runner = self.runner().await;
+        let staged_counts = if need_staged {
+            match runner.run(&parsers::status::NUMSTAT_STAGED_ARGS).await {
+                Ok(o) if o.success => parsers::commit_files::parse_numstat(&o.stdout),
+                _ => Default::default(),
+            }
+        } else {
+            Default::default()
+        };
+        let unstaged_counts = if need_unstaged {
+            match runner.run(&parsers::status::NUMSTAT_UNSTAGED_ARGS).await {
+                Ok(o) if o.success => parsers::commit_files::parse_numstat(&o.stdout),
+                _ => Default::default(),
+            }
+        } else {
+            Default::default()
+        };
+        parsers::status::apply_numstat(&mut statuses, &staged_counts, &unstaged_counts);
+        Ok(statuses)
     }
 
     async fn log(&self, opts: LogOptions) -> Result<Vec<Commit>, GitError> {
@@ -1122,7 +1160,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         }
         // Classify paths: untracked ones must be removed with `clean`, tracked
         // ones reverted with `restore --worktree` (restore errors on untracked).
-        let status = self.status().await?;
+        // Raw entries suffice — no need to pay for the numstat enrichment here.
+        let status = self.status_entries().await?;
         let untracked: std::collections::HashSet<&std::path::Path> = status
             .iter()
             .filter(|f| f.state == FileState::Untracked)
@@ -1918,12 +1957,22 @@ fn build_tag_args<'a>(
     args
 }
 
+/// Config overrides prepended to fetch/pull: suppress git's post-transfer
+/// auto-maintenance (`gc --auto`). On a large repo that gc keeps repacking
+/// refs in the background for seconds after the command returns; every write
+/// batch trips the filesystem watcher and re-invalidates the log, so the
+/// Commits panel kept refetching long after a fetch. LeGit never needs the
+/// side effect — the user's own git usage still runs maintenance normally.
+const NO_AUTO_MAINTENANCE: [&str; 4] = ["-c", "gc.auto=0", "-c", "maintenance.auto=false"];
+
 /// Build the argument vector for `git fetch`. `--all` wins over a named
 /// remote; an empty remote name means "default remote" (no positional arg).
-/// `--progress` forces the transfer meter onto our (non-TTY) stderr pipe;
+/// `--progress` forces the transfer meter onto our (non-TTY) pipe;
 /// `run_with_op_progress` parses and strips it.
 fn build_fetch_args(opts: &FetchOptions) -> Vec<String> {
-    let mut args: Vec<String> = vec!["fetch".into(), "--progress".into()];
+    let mut args: Vec<String> = NO_AUTO_MAINTENANCE.iter().map(|s| s.to_string()).collect();
+    args.push("fetch".into());
+    args.push("--progress".into());
     if opts.prune {
         args.push("--prune".into());
     }
@@ -1938,7 +1987,9 @@ fn build_fetch_args(opts: &FetchOptions) -> Vec<String> {
 /// Build the argument vector for `git pull`. `Default` passes no integration
 /// flag so the repo's `pull.rebase` config decides.
 fn build_pull_args(opts: &PullOptions) -> Vec<String> {
-    let mut args: Vec<String> = vec!["pull".into(), "--progress".into()];
+    let mut args: Vec<String> = NO_AUTO_MAINTENANCE.iter().map(|s| s.to_string()).collect();
+    args.push("pull".into());
+    args.push("--progress".into());
     match opts.strategy {
         PullStrategy::Default => {}
         PullStrategy::Rebase => args.push("--rebase".into()),
@@ -2814,11 +2865,19 @@ mod tests {
         );
     }
 
+    /// The auto-maintenance suppression both transfer commands must carry
+    /// (post-fetch `gc --auto` churn re-triggered the watcher for seconds).
+    const NO_MAINT: [&str; 4] = ["-c", "gc.auto=0", "-c", "maintenance.auto=false"];
+
+    fn with_no_maint(rest: &[&str]) -> Vec<String> {
+        NO_MAINT.iter().chain(rest).map(|s| s.to_string()).collect()
+    }
+
     #[test]
     fn fetch_args_variants() {
         assert_eq!(
             build_fetch_args(&FetchOptions { all: false, prune: false, remote: None }),
-            vec!["fetch", "--progress"]
+            with_no_maint(&["fetch", "--progress"])
         );
         assert_eq!(
             build_fetch_args(&FetchOptions {
@@ -2826,7 +2885,7 @@ mod tests {
                 prune: true,
                 remote: Some("origin".into())
             }),
-            vec!["fetch", "--progress", "--prune", "origin"]
+            with_no_maint(&["fetch", "--progress", "--prune", "origin"])
         );
         // --all wins over a named remote; empty remote name means default.
         assert_eq!(
@@ -2835,21 +2894,21 @@ mod tests {
                 prune: false,
                 remote: Some("origin".into())
             }),
-            vec!["fetch", "--progress", "--all"]
+            with_no_maint(&["fetch", "--progress", "--all"])
         );
         assert_eq!(
             build_fetch_args(&FetchOptions { all: false, prune: false, remote: Some("".into()) }),
-            vec!["fetch", "--progress"]
+            with_no_maint(&["fetch", "--progress"])
         );
     }
 
     #[test]
     fn pull_args_variants() {
         let mk = |strategy| build_pull_args(&PullOptions { strategy });
-        assert_eq!(mk(PullStrategy::Default), vec!["pull", "--progress"]);
-        assert_eq!(mk(PullStrategy::Rebase), vec!["pull", "--progress", "--rebase"]);
-        assert_eq!(mk(PullStrategy::Merge), vec!["pull", "--progress", "--no-rebase"]);
-        assert_eq!(mk(PullStrategy::FfOnly), vec!["pull", "--progress", "--ff-only"]);
+        assert_eq!(mk(PullStrategy::Default), with_no_maint(&["pull", "--progress"]));
+        assert_eq!(mk(PullStrategy::Rebase), with_no_maint(&["pull", "--progress", "--rebase"]));
+        assert_eq!(mk(PullStrategy::Merge), with_no_maint(&["pull", "--progress", "--no-rebase"]));
+        assert_eq!(mk(PullStrategy::FfOnly), with_no_maint(&["pull", "--progress", "--ff-only"]));
     }
 
     // --- merge/rebase argument construction ---

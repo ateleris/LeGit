@@ -8,6 +8,7 @@ import { repoCommit, repoConflictEntries, repoDiscard, repoLog, repoResolveTakeS
 import type { Commit, ConflictEntry, DiffRequest, DiffSource, FileStatus, TrackingStatus } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { useSummonStore } from "../../store/summon";
+import { useCommitDraftStore } from "../../store/commitDraft";
 import { notify } from "../../store/notifications";
 import { FileTree } from "../shared/FileTree/FileTree";
 import { ToolbarButton } from "../shared/ToolbarButton";
@@ -28,7 +29,36 @@ import {
   type WorkingChangesSection,
 } from "./sectionOrder";
 
-const toEntry = (s: FileStatus): FileTreeEntry => ({ path: s.path, change: s.state });
+const toEntry = (s: FileStatus): FileTreeEntry => ({
+  path: s.path,
+  change: s.state,
+  additions: s.additions ?? undefined,
+  deletions: s.deletions ?? undefined,
+  binary: s.binary,
+});
+
+/** Sum a section's per-file line counts (entries without counts add 0). */
+const sumCounts = (files: FileTreeEntry[]) => {
+  let add = 0;
+  let del = 0;
+  for (const f of files) {
+    add += f.additions ?? 0;
+    del += f.deletions ?? 0;
+  }
+  return { add, del };
+};
+
+/** "+A −D" in the status colours; renders nothing when both are zero. */
+function CountsSummary({ add, del }: { add: number; del: number }) {
+  if (add === 0 && del === 0) return null;
+  return (
+    <span style={{ textTransform: "none", letterSpacing: 0 }}>
+      {add > 0 && <span style={{ color: "var(--status-added)" }}>+{add}</span>}
+      {add > 0 && del > 0 && " "}
+      {del > 0 && <span style={{ color: "var(--status-deleted)" }}>−{del}</span>}
+    </span>
+  );
+}
 
 /** "1 file" / "3 files" for menu labels. */
 const fileCountLabel = (n: number): string => `${n} ${n === 1 ? "file" : "files"}`;
@@ -99,7 +129,17 @@ export function WorkingChangesPanel() {
   const setViewMode = useSettingsStore((s) => s.setChangedFilesViewMode);
   const { rowHeight, iconSize } = useFileRowMetrics();
 
-  const [message, setMessage] = useState("");
+  // The draft commit message lives in a per-repo store, not component state:
+  // this panel shares a dock slot and unmounts whenever the user opens e.g. a
+  // commit, and a typed draft must survive that round-trip.
+  const message = useCommitDraftStore((s) => (repo ? (s.drafts[repo.id] ?? "") : ""));
+  const setDraft = useCommitDraftStore((s) => s.setDraft);
+  const clearDraft = useCommitDraftStore((s) => s.clearDraft);
+  const setMessage = (m: string) => {
+    if (!repo) return;
+    if (m.length === 0) clearDraft(repo.id);
+    else setDraft(repo.id, m);
+  };
   // When set, the commit rewrites HEAD (`git commit --amend`) instead of
   // creating a new commit. Reset after each successful commit.
   const [amend, setAmend] = useState(false);
@@ -166,6 +206,20 @@ export function WorkingChangesPanel() {
 
   const staged = useMemo(() => status.filter((s) => s.staged).map(toEntry), [status]);
   const unstaged = useMemo(() => status.filter((s) => !s.staged).map(toEntry), [status]);
+
+  // Line-count sums for the toolbar (whole panel) and the section headers.
+  // The panel-wide file count is unique paths — a partially staged file has an
+  // entry in both sections but is still one file.
+  const stagedTotals = useMemo(() => sumCounts(staged), [staged]);
+  const unstagedTotals = useMemo(() => sumCounts(unstaged), [unstaged]);
+  const totals = useMemo(
+    () => ({
+      files: new Set(status.map((s) => s.path)).size,
+      add: stagedTotals.add + unstagedTotals.add,
+      del: stagedTotals.del + unstagedTotals.del,
+    }),
+    [status, stagedTotals, unstagedTotals],
+  );
 
   // In-progress merge/rebase state drives the banner; the conflict count
   // gates its Continue button (and the conflict-row menu labels).
@@ -421,7 +475,19 @@ export function WorkingChangesPanel() {
             List
           </button>
         </div>
-        <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>Working changes</span>
+        <span
+          className="legit-subtle"
+          style={{ fontSize: "var(--fz-sm)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}
+        >
+          {totals.files} file{totals.files === 1 ? "" : "s"}
+          {totals.add > 0 && (
+            <> · <span style={{ color: "var(--status-added)" }}>+{totals.add}</span></>
+          )}
+          {totals.del > 0 && (
+            <> <span style={{ color: "var(--status-deleted)" }}>−{totals.del}</span></>
+          )}
+          {" · Working changes"}
+        </span>
       </div>
 
       {isError && (
@@ -457,6 +523,8 @@ export function WorkingChangesPanel() {
             key="unstaged"
             title="Unstaged"
             count={unstaged.length}
+            additions={unstagedTotals.add}
+            deletions={unstagedTotals.del}
             actions={
               unstaged.length > 0 && (
                 <>
@@ -568,6 +636,8 @@ export function WorkingChangesPanel() {
             key="staged"
             title="Staged"
             count={staged.length}
+            additions={stagedTotals.add}
+            deletions={stagedTotals.del}
             actions={
               staged.length > 0 && (
                 <ToolbarButton
@@ -754,11 +824,16 @@ export function WorkingChangesPanel() {
 function Section({
   title,
   count,
+  additions = 0,
+  deletions = 0,
   actions,
   children,
 }: {
   title: string;
   count: number;
+  /** Section-wide line-count sums, shown next to the file count. */
+  additions?: number;
+  deletions?: number;
   actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -780,6 +855,7 @@ function Section({
       >
         <span>{title}</span>
         <span>{count}</span>
+        <CountsSummary add={additions} del={deletions} />
         <span style={{ marginLeft: "auto", display: "flex", gap: 8, textTransform: "none", letterSpacing: 0 }}>
           {actions}
         </span>

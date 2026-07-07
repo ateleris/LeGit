@@ -15,6 +15,7 @@ import { useLaneLocks, useLaneLocksStore } from "../../store/laneLocks";
 import { usePanelFocusEffect, useRestoreVirtualizerScroll } from "../PanelApiContext";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
+import { useDelayedFlag } from "../shared/useDelayedFlag";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { Button } from "../shared/buttons";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
@@ -906,6 +907,10 @@ export function CommitsPanel() {
   // capped by `--max-count`.
   const hasMore = commits.length - stashSelectorById.size >= totalToFetch;
 
+  // The "Loading more…" strip follows the delayed-busy rule: watcher-driven
+  // background refetches settle well within the delay and must not flash it.
+  const showLoadingMore = useDelayedFlag(hasMore && isFetching);
+
   // Infinite scroll: grow the fetch window when the user scrolls the last row
   // into view. The growing queryKey turns `isFetching` true, which guards
   // against re-triggering until the new page has arrived; once the taller list
@@ -1511,8 +1516,8 @@ export function CommitsPanel() {
       </div>
 
       {/* Auto-loads the next page as the last row scrolls into view; the
-          spinner indicates that fetch is in flight. */}
-      {hasMore && isFetching && (
+          spinner indicates that fetch is in flight (debounced ~150ms). */}
+      {showLoadingMore && (
         <div
           style={{
             display: "flex",

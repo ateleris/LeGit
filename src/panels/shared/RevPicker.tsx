@@ -113,7 +113,8 @@ export function RevPicker({
   };
 
   // Dismiss on outside mousedown; the dropdown itself uses onMouseDown so
-  // picking wins over this (and over the input losing focus).
+  // picking wins over this (and over the input losing focus). Capture phase:
+  // a stopPropagation in another panel must not keep the dropdown open.
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
@@ -122,7 +123,7 @@ export function RevPicker({
       if (t && (inputRef.current?.contains(t) || listRef.current?.contains(t))) return;
       close();
     };
-    document.addEventListener("mousedown", onMouseDown, { signal: controller.signal });
+    document.addEventListener("mousedown", onMouseDown, { capture: true, signal: controller.signal });
     window.addEventListener("resize", close, { signal: controller.signal });
     return () => controller.abort();
   }, [open, close]);

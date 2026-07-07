@@ -86,6 +86,8 @@ pub fn run() {
         commands::create_profile_from_repo,
         commands::set_warn_on_mixed_endings,
         commands::set_confirm_discard,
+        commands::set_auto_fetch_enabled,
+        commands::set_auto_fetch_interval_minutes,
         commands::save_switch_dirty_behavior,
         commands::save_pull_strategy,
         commands::set_commit_avatars,

@@ -191,11 +191,17 @@ fn classify_git(rel: &Path, out: &mut BTreeSet<ChangeDomain>) {
         "index" => {
             out.insert(ChangeDomain::Status);
         }
+        // FETCH_HEAD is written by *every* fetch, even one that updated
+        // nothing, and holds no data the UI displays — actual remote-ref
+        // updates arrive as `refs/remotes/*` writes below. Reacting to it
+        // turned each no-op fetch (in-app or external) into a full log
+        // refetch, feeding the post-fetch invalidation churn.
+        "FETCH_HEAD" => {}
         // Ref/HEAD moves → commit graph + branch list. `refs/stash` and
         // `refs/tags` (and `packed-refs`, which may hold either after a
         // pack-refs) additionally drive their own lists — external `git
         // stash`/`git tag` ops refresh live.
-        "HEAD" | "refs" | "packed-refs" | "MERGE_HEAD" | "ORIG_HEAD" | "FETCH_HEAD"
+        "HEAD" | "refs" | "packed-refs" | "MERGE_HEAD" | "ORIG_HEAD"
         | "CHERRY_PICK_HEAD" | "REVERT_HEAD" => {
             out.insert(ChangeDomain::Log);
             out.insert(ChangeDomain::Branches);
@@ -326,6 +332,18 @@ mod tests {
             classify(&gd.join(noise), wt, gd, &Gitignore::empty(), &mut out);
             assert!(out.is_empty(), "{noise} should be ignored, got {out:?}");
         }
+    }
+
+    #[test]
+    fn fetch_head_is_ignored() {
+        // Every fetch writes FETCH_HEAD, updates or not; real remote-ref
+        // changes arrive as refs/remotes/* writes. Reacting here re-fetched
+        // the log after every no-op fetch.
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        let mut out = BTreeSet::new();
+        classify(Path::new("/repo/.git/FETCH_HEAD"), wt, gd, &Gitignore::empty(), &mut out);
+        assert!(out.is_empty(), "got {out:?}");
     }
 
     #[test]

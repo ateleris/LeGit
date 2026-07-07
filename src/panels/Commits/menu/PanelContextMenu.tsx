@@ -209,7 +209,8 @@ function MenuShell({
     setPos({ left, top });
   }, [x, y]);
 
-  // Dismiss on outside mousedown + Escape.
+  // Dismiss on outside mousedown + Escape. Capture phase: a stopPropagation
+  // in another panel (e.g. FileTree action buttons) must not keep the menu open.
   useEffect(() => {
     const controller = new AbortController();
     const onMouseDown = (e: MouseEvent) => {
@@ -219,7 +220,7 @@ function MenuShell({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
-    document.addEventListener("mousedown", onMouseDown, { signal: controller.signal });
+    document.addEventListener("mousedown", onMouseDown, { capture: true, signal: controller.signal });
     document.addEventListener("keydown", onKey, { signal: controller.signal });
     return () => controller.abort();
   }, [onClose]);

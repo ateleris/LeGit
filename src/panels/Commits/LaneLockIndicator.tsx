@@ -109,6 +109,7 @@ function LockMenu({
   const [hover, setHover] = useState(false);
 
   // Dismiss on outside click + Escape (same pattern as the other menus).
+  // Capture phase: a stopPropagation in another panel must not keep it open.
   useEffect(() => {
     const controller = new AbortController();
     const onMouseDown = (e: MouseEvent) => {
@@ -118,7 +119,7 @@ function LockMenu({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
-    document.addEventListener("mousedown", onMouseDown, { signal: controller.signal });
+    document.addEventListener("mousedown", onMouseDown, { capture: true, signal: controller.signal });
     document.addEventListener("keydown", onKey, { signal: controller.signal });
     return () => controller.abort();
   }, [onClose]);

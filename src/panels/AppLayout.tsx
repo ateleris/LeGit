@@ -7,6 +7,7 @@ import { useGitLogStore } from "../store/gitLog";
 import { useRemoteProgressStore } from "../store/remoteProgress";
 import { onGitInvocation, onRemoteProgress } from "../lib/events";
 import { useRepoChangeListener } from "../lib/useRepoChangeListener";
+import { useAutoFetch } from "../lib/useAutoFetch";
 import type { RegionPlacement } from "../lib/types";
 import { GlobalDock } from "./GlobalDock";
 import { RepoDock } from "./RepoDock";
@@ -50,6 +51,9 @@ export function AppLayout() {
 
   // Live refresh from the backend filesystem watcher (primary refresh path).
   useRepoChangeListener();
+
+  // Periodic background auto-fetch of the active repo (opt-in setting).
+  useAutoFetch();
 
   // Feed the Git Log panel with every git invocation the backend reports.
   useEffect(() => {

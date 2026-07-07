@@ -42,6 +42,11 @@ export interface GlobalSettings {
   watcher_enabled?: boolean;
   /** Whether discarding changes asks for confirmation first (default true). */
   confirm_discard?: boolean;
+  /** Periodic background auto-fetch of the active repo's remotes (default off).
+   * Fetch-only and quiet: never pulls/merges, never toasts. */
+  auto_fetch_enabled?: boolean;
+  /** Minutes between background auto-fetches (default 15, minimum 1). */
+  auto_fetch_interval_minutes?: number;
   /** How to handle uncommitted changes when switching branches (null = try_directly). */
   switch_dirty_behavior?: SwitchDirtyBehavior | null;
   /** Pull integration strategy (null = Default: the repo's pull.rebase decides). */
@@ -332,6 +337,16 @@ export interface FileStatus {
   state: FileState;
   /** True when the change is staged (in the index); false for working-tree-only changes. */
   staged: boolean;
+  /**
+   * Added lines for this entry's own diff (index diff when staged, worktree
+   * diff when not). Null when git reports no counts for the path (untracked,
+   * conflicted, binary) — distinct from a genuine 0.
+   */
+  additions: number | null;
+  /** Removed lines; same semantics as `additions`. */
+  deletions: number | null;
+  /** True when git reports the file as binary (numstat `-`/`-`). */
+  binary: boolean;
 }
 
 /** A file changed by a commit, vs its first parent (matches legit-core `CommitFileChange`). */

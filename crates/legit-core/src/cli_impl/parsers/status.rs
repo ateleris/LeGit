@@ -4,9 +4,14 @@
 //! one place (DESIGN-v0.3.md §4.5). `--porcelain=v1` gives a stable, two-column
 //! `XY <path>` record per change; `-z` makes records NUL-separated and disables
 //! path quoting, so paths with spaces/unicode pass through verbatim.
+//!
+//! Line counts are not part of porcelain status: they come from two extra
+//! `git diff --numstat -z` runs (index and working tree) whose parsed maps are
+//! merged into the entries by `apply_numstat`.
 
+use super::commit_files::NumStat;
 use crate::types::{FileState, FileStatus};
-use std::path::PathBuf;
+use std::collections::HashMap;
 
 /// Arguments for the status command, in order. `-z` is required for the NUL
 /// framing this parser assumes. `--untracked-files=all` lists each untracked
@@ -14,6 +19,14 @@ use std::path::PathBuf;
 /// into a single `dir/` entry, which the UI can't stage/diff per file.
 pub const STATUS_ARGS: [&str; 4] =
     ["status", "--porcelain=v1", "-z", "--untracked-files=all"];
+
+/// Line counts for unstaged entries: working tree vs index. `-M` matches the
+/// rename detection porcelain status performs, so a renamed entry's counts are
+/// keyed by the same (destination) path the status record reports.
+pub const NUMSTAT_UNSTAGED_ARGS: [&str; 4] = ["diff", "--numstat", "-M", "-z"];
+
+/// Line counts for staged entries: index vs HEAD.
+pub const NUMSTAT_STAGED_ARGS: [&str; 5] = ["diff", "--numstat", "-M", "-z", "--cached"];
 
 /// Parse the stdout of `git status --porcelain=v1 -z`.
 ///
@@ -51,51 +64,67 @@ pub fn parse_status(output: &str) -> Vec<FileStatus> {
         // Unmerged (conflict) records: either column is `U`, or the both-sides
         // `AA`/`DD` forms. Reported once, not split into staged/unstaged.
         if x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D') {
-            result.push(FileStatus {
-                path: PathBuf::from(path),
-                state: FileState::Conflicted,
-                staged: false,
-            });
+            result.push(FileStatus::new(path, FileState::Conflicted, false));
             continue;
         }
 
         // Untracked / ignored: single entry, never staged.
         if x == '?' {
-            result.push(FileStatus {
-                path: PathBuf::from(path),
-                state: FileState::Untracked,
-                staged: false,
-            });
+            result.push(FileStatus::new(path, FileState::Untracked, false));
             continue;
         }
         if x == '!' {
-            result.push(FileStatus {
-                path: PathBuf::from(path),
-                state: FileState::Ignored,
-                staged: false,
-            });
+            result.push(FileStatus::new(path, FileState::Ignored, false));
             continue;
         }
 
         // Staged change (index column).
         if x != ' ' {
-            result.push(FileStatus {
-                path: PathBuf::from(path),
-                state: map_code(x),
-                staged: true,
-            });
+            result.push(FileStatus::new(path, map_code(x), true));
         }
         // Working-tree change (worktree column).
         if y != ' ' {
-            result.push(FileStatus {
-                path: PathBuf::from(path),
-                state: map_code(y),
-                staged: false,
-            });
+            result.push(FileStatus::new(path, map_code(y), false));
         }
     }
 
     result
+}
+
+/// Whether an entry can carry line counts from the numstat streams. Untracked
+/// and ignored paths never appear in `git diff`; conflicted paths show up in
+/// unmerged form without usable counts. Their counts stay `None` — "no data",
+/// not a misleading `0/0`.
+pub fn wants_counts(status: &FileStatus) -> bool {
+    !matches!(
+        status.state,
+        FileState::Untracked | FileState::Ignored | FileState::Conflicted
+    )
+}
+
+/// Merge the parsed numstat maps into the status entries: staged entries read
+/// from the index-vs-HEAD map, unstaged ones from the worktree-vs-index map.
+/// Entries git reported no counts for keep `None` (see `wants_counts`).
+pub(crate) fn apply_numstat(
+    statuses: &mut [FileStatus],
+    staged: &HashMap<String, NumStat>,
+    unstaged: &HashMap<String, NumStat>,
+) {
+    for st in statuses.iter_mut() {
+        if !wants_counts(st) {
+            continue;
+        }
+        let counts = if st.staged { staged } else { unstaged };
+        let Some(n) = counts.get(st.path.to_string_lossy().as_ref()) else {
+            continue;
+        };
+        if n.binary {
+            st.binary = true;
+        } else {
+            st.additions = Some(n.additions);
+            st.deletions = Some(n.deletions);
+        }
+    }
 }
 
 /// Map a single porcelain status code to a `FileState`. `T` (typechange) folds
@@ -113,6 +142,7 @@ fn map_code(code: char) -> FileState {
 
 #[cfg(test)]
 mod tests {
+    use super::super::commit_files::parse_numstat;
     use super::*;
 
     /// Join porcelain records into a single `-z` stream (trailing NUL included).
@@ -122,30 +152,24 @@ mod tests {
         s
     }
 
+    /// Shorthand for the expected parser output (counts always empty there).
+    fn fs(path: &str, state: FileState, staged: bool) -> FileStatus {
+        FileStatus::new(path, state, staged)
+    }
+
     #[test]
     fn parses_working_tree_modification() {
         let out = stream(&[" M src/main.rs"]);
         assert_eq!(
             parse_status(&out),
-            vec![FileStatus {
-                path: PathBuf::from("src/main.rs"),
-                state: FileState::Modified,
-                staged: false,
-            }]
+            vec![fs("src/main.rs", FileState::Modified, false)]
         );
     }
 
     #[test]
     fn parses_staged_addition() {
         let out = stream(&["A  new.txt"]);
-        assert_eq!(
-            parse_status(&out),
-            vec![FileStatus {
-                path: PathBuf::from("new.txt"),
-                state: FileState::Added,
-                staged: true,
-            }]
-        );
+        assert_eq!(parse_status(&out), vec![fs("new.txt", FileState::Added, true)]);
     }
 
     #[test]
@@ -155,16 +179,8 @@ mod tests {
         assert_eq!(
             parse_status(&out),
             vec![
-                FileStatus {
-                    path: PathBuf::from("file.rs"),
-                    state: FileState::Modified,
-                    staged: true,
-                },
-                FileStatus {
-                    path: PathBuf::from("file.rs"),
-                    state: FileState::Modified,
-                    staged: false,
-                },
+                fs("file.rs", FileState::Modified, true),
+                fs("file.rs", FileState::Modified, false),
             ]
         );
     }
@@ -174,11 +190,7 @@ mod tests {
         let out = stream(&["?? scratch.tmp"]);
         assert_eq!(
             parse_status(&out),
-            vec![FileStatus {
-                path: PathBuf::from("scratch.tmp"),
-                state: FileState::Untracked,
-                staged: false,
-            }]
+            vec![fs("scratch.tmp", FileState::Untracked, false)]
         );
     }
 
@@ -186,14 +198,7 @@ mod tests {
     fn parses_rename_and_consumes_original_path() {
         // `R  new\0old\0` — the original path is a separate field.
         let out = stream(&["R  new.rs", "old.rs"]);
-        assert_eq!(
-            parse_status(&out),
-            vec![FileStatus {
-                path: PathBuf::from("new.rs"),
-                state: FileState::Renamed,
-                staged: true,
-            }]
-        );
+        assert_eq!(parse_status(&out), vec![fs("new.rs", FileState::Renamed, true)]);
     }
 
     #[test]
@@ -201,11 +206,7 @@ mod tests {
         let out = stream(&["UU merged.rs"]);
         assert_eq!(
             parse_status(&out),
-            vec![FileStatus {
-                path: PathBuf::from("merged.rs"),
-                state: FileState::Conflicted,
-                staged: false,
-            }]
+            vec![fs("merged.rs", FileState::Conflicted, false)]
         );
     }
 
@@ -214,11 +215,7 @@ mod tests {
         let out = stream(&[" M dir with spaces/a b.txt"]);
         assert_eq!(
             parse_status(&out),
-            vec![FileStatus {
-                path: PathBuf::from("dir with spaces/a b.txt"),
-                state: FileState::Modified,
-                staged: false,
-            }]
+            vec![fs("dir with spaces/a b.txt", FileState::Modified, false)]
         );
     }
 
@@ -238,5 +235,65 @@ mod tests {
         assert_eq!(parsed[1].state, FileState::Deleted);
         assert!(!parsed[1].staged);
         assert_eq!(parsed[2].state, FileState::Untracked);
+    }
+
+    // -- apply_numstat -------------------------------------------------------
+
+    #[test]
+    fn merges_staged_and_unstaged_counts_separately() {
+        // Same path staged and re-modified: each side gets its own diff's counts.
+        let mut statuses = parse_status(&stream(&["MM file.rs"]));
+        let staged = parse_numstat(&stream(&["3\t1\tfile.rs"]));
+        let unstaged = parse_numstat(&stream(&["2\t0\tfile.rs"]));
+        apply_numstat(&mut statuses, &staged, &unstaged);
+
+        assert!(statuses[0].staged);
+        assert_eq!((statuses[0].additions, statuses[0].deletions), (Some(3), Some(1)));
+        assert!(!statuses[1].staged);
+        assert_eq!((statuses[1].additions, statuses[1].deletions), (Some(2), Some(0)));
+    }
+
+    #[test]
+    fn untracked_and_conflicted_keep_no_counts() {
+        let mut statuses = parse_status(&stream(&["?? new.txt", "UU merged.rs"]));
+        // Even if a numstat stream mentioned the paths, they must stay None.
+        let counts = parse_numstat(&stream(&["9\t9\tnew.txt", "9\t9\tmerged.rs"]));
+        apply_numstat(&mut statuses, &counts, &counts);
+
+        for st in &statuses {
+            assert_eq!(st.additions, None);
+            assert_eq!(st.deletions, None);
+            assert!(!st.binary);
+        }
+    }
+
+    #[test]
+    fn marks_binary_without_counts() {
+        let mut statuses = parse_status(&stream(&[" M pic.bin"]));
+        let unstaged = parse_numstat(&stream(&["-\t-\tpic.bin"]));
+        apply_numstat(&mut statuses, &HashMap::new(), &unstaged);
+
+        assert!(statuses[0].binary);
+        assert_eq!(statuses[0].additions, None);
+        assert_eq!(statuses[0].deletions, None);
+    }
+
+    #[test]
+    fn staged_rename_counts_key_by_destination_path() {
+        // Porcelain reports the new path; `diff --numstat -M -z` keys the
+        // rename record by the destination too, so they line up.
+        let mut statuses = parse_status(&stream(&["R  new.rs", "old.rs"]));
+        let staged = parse_numstat(&stream(&["4\t2\t", "old.rs", "new.rs"]));
+        apply_numstat(&mut statuses, &staged, &HashMap::new());
+
+        assert_eq!((statuses[0].additions, statuses[0].deletions), (Some(4), Some(2)));
+    }
+
+    #[test]
+    fn missing_numstat_entry_keeps_none() {
+        let mut statuses = parse_status(&stream(&[" M file.rs"]));
+        apply_numstat(&mut statuses, &HashMap::new(), &HashMap::new());
+        assert_eq!(statuses[0].additions, None);
+        assert_eq!(statuses[0].deletions, None);
     }
 }

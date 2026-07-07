@@ -1033,6 +1033,69 @@ async fn discard_restores_tracked_and_cleans_untracked() {
 }
 
 // ---------------------------------------------------------------------------
+// status - numstat count enrichment
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn status_enriches_entries_with_numstat_counts() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        ok("MM file.rs\0?? new.txt\0"),
+    );
+    // Staged (index vs HEAD) first, then unstaged (worktree vs index).
+    fake.expect(&["diff", "--numstat", "-M", "-z", "--cached"], ok("3\t1\tfile.rs\0"));
+    fake.expect(&["diff", "--numstat", "-M", "-z"], ok("2\t0\tfile.rs\0"));
+    let (b, exec) = backend(fake);
+
+    let statuses = b.status().await.unwrap();
+    assert_eq!(statuses.len(), 3);
+    assert!(statuses[0].staged);
+    assert_eq!((statuses[0].additions, statuses[0].deletions), (Some(3), Some(1)));
+    assert!(!statuses[1].staged);
+    assert_eq!((statuses[1].additions, statuses[1].deletions), (Some(2), Some(0)));
+    // Untracked: no counts, ever.
+    assert_eq!((statuses[2].additions, statuses[2].deletions), (None, None));
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn status_skips_numstat_for_an_all_untracked_tree() {
+    // No countable entry -> neither diff may run (assert_done catches extras).
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        ok("?? a.txt\0?? b.txt\0"),
+    );
+    let (b, exec) = backend(fake);
+
+    let statuses = b.status().await.unwrap();
+    assert_eq!(statuses.len(), 2);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn status_survives_a_failing_numstat() {
+    // Counts are cosmetic: a failing diff degrades to None, never an error.
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        ok("A  new.txt\0"),
+    );
+    fake.expect(
+        &["diff", "--numstat", "-M", "-z", "--cached"],
+        fail(129, "fatal: bad revision"),
+    );
+    let (b, exec) = backend(fake);
+
+    let statuses = b.status().await.unwrap();
+    assert_eq!(statuses.len(), 1);
+    assert_eq!(statuses[0].additions, None);
+    assert_eq!(statuses[0].deletions, None);
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
 // file_at_revision - binary classification (NUL sniff) + size lookup
 // ---------------------------------------------------------------------------
 

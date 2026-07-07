@@ -141,10 +141,36 @@ written only after git confirms via `store`), or a UI prompt. Deferred:
   list/update/sync.
 - **Worktrees** (add/list/remove), **bisect**.
 
+### Fetch
+- **Auto-fetch follow-ups.** Background auto-fetch shipped 2026-07-07 (global
+  setting, default off; fetch-only `fetch --all` of the **active repo**, quiet,
+  guarded against hidden app / offline / in-progress ops, exponential backoff,
+  session-disable on auth failure). Deferred remainder: optionally fetching
+  the non-active open repos too, a prune toggle for auto-fetch (manual toolbar
+  fetch prunes; auto-fetch deliberately doesn't), and metered-network
+  detection (no good cross-platform signal today). Note: an auto-fetch on a
+  repo whose credentials were never stored can pop the in-app credential
+  prompt once; it is then disabled for the session on the resulting auth
+  failure — a "never prompt from background fetch" broker flag would be
+  cleaner.
+
 ---
 
 ## UX / polish
 
+- **Open repository root in a configurable external editor.** Add a button
+  (e.g. in the repo header / repo menu) that opens the repository root folder in
+  the user's editor of choice. The editor command should be configurable in
+  settings (a git-config-free app setting, e.g. an "External editor" field
+  holding a command template like `code "$ROOT"` or `subl`, with a sensible
+  per-platform default and a way to fall back to the OS "open folder" if
+  unset). Backend spawns the configured command with the repo root; surface
+  clear feedback if the command isn't found. Consider also offering "open file
+  in editor" from file rows later, reusing the same setting.
+- **Draft commit message: survive app restart?** The draft now lives in a
+  per-repo in-memory store (shipped 2026-07-07), so it survives panel unload
+  and repo tab switches but not an app restart. Persist it (e.g. into the
+  per-repo settings doc) only if in-session turns out to be insufficient.
 - **Repo Settings visual parity.** The Global Settings cleanup (2026-07-06)
   gave the global panel collapsible category groups + a shared `SettingsGroup`/
   `Section` template (`Settings/primitives.tsx`) and a "Git config" pill on
@@ -155,23 +181,45 @@ written only after git confirms via `store`), or a UI prompt. Deferred:
 
 ## Release readiness (v0.x → first public release)
 
-Not started. Prepare LeGit for a first tagged release:
-- **Installers / bundles.** Wire up `tauri build` for the target platforms
-  (Windows `.msi`/NSIS, macOS `.dmg`, Linux AppImage/`.deb`); confirm the
-  bundle identifier, icons, product name, and version wiring in
-  `tauri.conf.json` + `Cargo.toml`. Decide on code signing (Windows
-  Authenticode, macOS notarization) or explicitly defer it with a note.
-- **Automatic GitHub releases.** A CI workflow (GitHub Actions) that, on a
-  version tag, builds the bundles on each OS runner and attaches them to a
-  GitHub Release. Consider `tauri-action`. Include the auto-generated or
-  curated changelog.
-- **Repository cleanup.** Ensure `.gitignore` covers build output, add a
-  README with screenshots + build instructions, a LICENSE, and prune any
-  remaining dead files. (The tracked `crates/legit-core/src/XXYaRI8C` scratch
-  file has been removed.)
-- **Versioning + changelog.** Pick a versioning scheme, seed a CHANGELOG,
-  and align the workspace version(s).
-- **Pre-release pass.** Smoke-test a built (non-dev) bundle on each target,
-  since several code paths differ from `tauri dev` (e.g. the
+Mostly shipped (v0.9.0): `tauri build` bundling is wired for all targets
+(Windows `.msi` + NSIS, macOS `.dmg` for Apple Silicon **and** Intel, Linux
+`.deb` + `.AppImage`; identifier `dev.legit.app`, icons, product name);
+versions are semver and aligned across the Cargo workspace,
+`tauri.conf.json`, and `package.json` (bump checklist in `RELEASING.md`); a
+tag push drafts a GitHub Release with all installers attached
+(`.github/workflows/release.yml` via `tauri-action`, reviewed before
+publishing) next to a CI workflow; the README covers features, install, and
+building from source; code signing is explicitly deferred with a note (builds
+are unsigned; the release notes and README document the SmartScreen/Gatekeeper
+warnings). Open remainder:
+- **LICENSE file.** The repo has no LICENSE yet — pick one and add it before
+  the release is public (the Releases page implies redistribution).
+- **README screenshots.** The README has no screenshots; add one or two once
+  the UI is deemed presentable.
+- **Changelog decision.** There is no CHANGELOG file; today the drafted
+  GitHub Release body is the changelog (edited at review time). Decide
+  whether that stays the scheme or a curated `CHANGELOG.md` should be seeded
+  and referenced from the release notes.
+- **Pre-release pass.** Smoke-test the built (non-dev) bundles on each
+  target, since several code paths differ from `tauri dev` (e.g. the
   `CREATE_NO_WINDOW` git-spawn flag, `windows_subsystem = "windows"`,
   bindings generated only when the app runs).
+- **Analyse bundling a git executable with LeGit.** Investigation, not a
+  decision yet. LeGit currently relies on the user's system `git` (found on
+  PATH) and deliberately inherits its install — this is why LFS, credential
+  helpers, and SSH "just work" (see the runner-env and LFS backlog notes).
+  Bundling our own `git` would remove the "git not installed / too old"
+  failure mode and give a known, tested version, but it's a real trade study.
+  Points to weigh: (a) **what breaks** — a bundled git wouldn't see the user's
+  global config, credential helpers (GCM), `git-lfs` filters, or SSH setup
+  unless we explicitly wire PATH/GIT_EXEC_PATH to still find the system's
+  helpers; risks regressing the very integrations we get for free today.
+  (b) **size / packaging** — a portable git (esp. MinGit on Windows) adds tens
+  of MB per platform and its own update/security burden; on macOS/Linux git is
+  usually already present, so the win is mostly Windows. (c) **fallback model**
+  — prefer bundled but fall back to system, or system-first with bundled only
+  when absent? (d) **version pinning + CVE patching** — we'd own tracking git
+  security releases. (e) **licensing** (GPLv2 redistribution) and how it
+  interacts with our bundle. Deliverable: a written recommendation (bundle /
+  don't / bundle-Windows-only) with the config-inheritance strategy spelled out
+  before any code.

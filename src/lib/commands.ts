@@ -192,6 +192,12 @@ export const setWarnOnMixedEndings = (warn: boolean) =>
 export const setConfirmDiscard = (confirm: boolean) =>
   invoke<null>("set_confirm_discard", { confirm });
 
+export const setAutoFetchEnabled = (enabled: boolean) =>
+  invoke<null>("set_auto_fetch_enabled", { enabled });
+
+export const setAutoFetchIntervalMinutes = (minutes: number) =>
+  invoke<null>("set_auto_fetch_interval_minutes", { minutes });
+
 export const setCommitAvatars = (enabled: boolean) =>
   invoke<null>("set_commit_avatars", { enabled });
 

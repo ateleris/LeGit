@@ -92,6 +92,7 @@ export function GlobalSettingsPanel() {
           <ConfirmDiscardSection />
           <BranchSwitchingSection />
           <AutoRefreshSection />
+          <AutoFetchSection />
           <MixedEndingDetectionSection />
         </SettingsGroup>
 
@@ -732,6 +733,87 @@ function AutoRefreshSection() {
       </div>
       <FieldNote>
         When off, the UI refreshes only when a panel or the window regains focus.
+      </FieldNote>
+    </Section>
+  );
+}
+
+function AutoFetchSection() {
+  const enabled = useSettingsStore((s) => s.settings?.auto_fetch_enabled ?? false);
+  const minutes = useSettingsStore((s) => s.settings?.auto_fetch_interval_minutes ?? 15);
+  const setAutoFetchEnabled = useSettingsStore((s) => s.setAutoFetchEnabled);
+  const setAutoFetchIntervalMinutes = useSettingsStore((s) => s.setAutoFetchIntervalMinutes);
+  const [saving, setSaving] = useState(false);
+  const [draft, setDraft] = useState(String(minutes));
+
+  // Follow external changes to the stored value (e.g. settings re-init).
+  useEffect(() => setDraft(String(minutes)), [minutes]);
+
+  const toggle = async () => {
+    setSaving(true);
+    try {
+      await setAutoFetchEnabled(!enabled);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const commitMinutes = async () => {
+    const parsed = Math.round(Number(draft));
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      setDraft(String(minutes));
+      return;
+    }
+    if (parsed === minutes) {
+      setDraft(String(parsed));
+      return;
+    }
+    setSaving(true);
+    try {
+      await setAutoFetchIntervalMinutes(parsed);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Background auto-fetch">
+      <FieldNote>writes to: global settings — fetch-only, never pulls or merges</FieldNote>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <input
+          type="checkbox"
+          id="global-auto-fetch"
+          checked={enabled}
+          onChange={toggle}
+          disabled={saving}
+        />
+        <label htmlFor="global-auto-fetch" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
+          Periodically fetch the active repository's remotes
+        </label>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <label htmlFor="global-auto-fetch-interval" style={{ fontSize: "var(--fz-lg)" }}>
+          Interval (minutes)
+        </label>
+        <input
+          type="number"
+          id="global-auto-fetch-interval"
+          min={1}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commitMinutes}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitMinutes();
+          }}
+          disabled={!enabled || saving}
+          style={{ width: "5em" }}
+        />
+      </div>
+      <FieldNote>
+        Runs quietly in the background: no popups, and the view only refreshes
+        when something actually changed. Skipped while the app is hidden,
+        offline, or an operation is in progress; paused for the session after
+        an authentication failure.
       </FieldNote>
     </Section>
   );

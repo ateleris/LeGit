@@ -63,6 +63,10 @@ fn default_warn_on_mixed_endings() -> bool {
 }
 
 /// Default for the filesystem-watcher toggle: on.
+fn default_auto_fetch_interval() -> u32 {
+    15
+}
+
 fn default_true() -> bool {
     true
 }
@@ -220,6 +224,14 @@ pub struct GlobalSettings {
     /// actions run immediately.
     #[serde(default = "default_true")]
     pub confirm_discard: bool,
+    /// Periodic background auto-fetch of the active repo's remotes. OFF by
+    /// default (network access on a timer is opt-in). Fetch-only and quiet:
+    /// never pulls/merges, never toasts.
+    #[serde(default)]
+    pub auto_fetch_enabled: bool,
+    /// Minutes between background auto-fetches (UI enforces a minimum of 1).
+    #[serde(default = "default_auto_fetch_interval")]
+    pub auto_fetch_interval_minutes: u32,
     /// How to handle uncommitted changes when switching branches. `None` = `TryDirectly`.
     pub switch_dirty_behavior: Option<SwitchDirtyBehavior>,
     /// Pull integration strategy for the sync toolbar. `None` = `Default`
@@ -274,6 +286,8 @@ impl Default for GlobalSettings {
             ui_font_size: default_ui_font_size(),
             watcher_enabled: true,
             confirm_discard: true,
+            auto_fetch_enabled: false,
+            auto_fetch_interval_minutes: default_auto_fetch_interval(),
             switch_dirty_behavior: None,
             pull_strategy: None,
             commit_avatars: false,
