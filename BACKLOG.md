@@ -144,7 +144,7 @@ written only after git confirms via `store`), or a UI prompt. Deferred:
 
 Mostly shipped (v0.9.0): `tauri build` bundling is wired for all targets
 (Windows `.msi` + NSIS, macOS `.dmg` for Apple Silicon **and** Intel, Linux
-`.deb` + `.AppImage`; identifier `dev.legit.app`, icons, product name);
+`.deb` + `.AppImage`; identifier `ch.ateleris.legit`, icons, product name);
 versions are semver and aligned across the Cargo workspace,
 `tauri.conf.json`, and `package.json` (bump checklist in `RELEASING.md`); a
 tag push drafts a GitHub Release with all installers attached
