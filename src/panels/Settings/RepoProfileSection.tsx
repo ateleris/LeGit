@@ -12,6 +12,7 @@ import {
   createProfileFromRepo,
 } from "../../lib/commands";
 import { Button } from "../shared/buttons";
+import { Section, FieldNote } from "./primitives";
 
 const INHERIT = "__inherit__";
 
@@ -42,7 +43,7 @@ export function RepoProfileSection({ repoId }: { repoId: string }) {
   usePanelFocusEffect(load);
 
   if (!status) {
-    return <Section title="Identity profile"><span className="legit-subtle">Loading…</span></Section>;
+    return <Section title="Identity profile" scope="git"><span className="legit-subtle">Loading…</span></Section>;
   }
 
   const m = status.match;
@@ -117,7 +118,7 @@ export function RepoProfileSection({ repoId }: { repoId: string }) {
   const dropdownValue = pending ? pending.profileId : clearPending ? INHERIT : (activeId ?? INHERIT);
 
   return (
-    <Section title="Identity profile">
+    <Section title="Identity profile" scope="git">
       <FieldNote>writes to: .git/config (this repo only)</FieldNote>
 
       <div style={{ marginTop: 8 }}>
@@ -261,25 +262,6 @@ function ConfirmPanel({
         <Button variant="primary" onClick={onConfirm} disabled={busy}>{confirmLabel}</Button>
         <button onClick={onCancel} disabled={busy}>Cancel</button>
       </div>
-    </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ fontSize: "var(--fz-sm)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: 8 }}>
-        {title}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function FieldNote({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: 4 }}>
-      {children}
     </div>
   );
 }

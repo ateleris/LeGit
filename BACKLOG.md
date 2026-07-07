@@ -42,13 +42,6 @@ re-deferred with justification:
   full fidelity would mean fetching both full blobs, parsing each once, and
   mapping by line number. Only worth it if the per-hunk approximation proves
   insufficient in practice.
-- **Theme note: syntax palette vs heavy line tints.** Themes that tint
-  changed-line text strongly (`diff.added.fg`/`diff.removed.fg`) may want
-  their Syntax palette checked for contrast against the line tints - a
-  theme-author concern, no code planned.
-- **Diff viewer: inline editing of staged diffs.** Unstaged working-tree
-  diffs are editable (2026-07-03); staged diffs (new side = index) remain
-  read-only — extend if wanted.
 - **Files panel follow-ups.** The Files panel (repo-wide tree, tracked/
   untracked/ignored, History/Blame/View + ignore/untrack + copy/reveal)
   shipped 2026-07-06. Deferred:
@@ -167,15 +160,6 @@ written only after git confirms via `store`), or a UI prompt. Deferred:
   unset). Backend spawns the configured command with the repo root; surface
   clear feedback if the command isn't found. Consider also offering "open file
   in editor" from file rows later, reusing the same setting.
-- **Draft commit message: survive app restart?** The draft now lives in a
-  per-repo in-memory store (shipped 2026-07-07), so it survives panel unload
-  and repo tab switches but not an app restart. Persist it (e.g. into the
-  per-repo settings doc) only if in-session turns out to be insufficient.
-- **Repo Settings visual parity.** The Global Settings cleanup (2026-07-06)
-  gave the global panel collapsible category groups + a shared `SettingsGroup`/
-  `Section` template (`Settings/primitives.tsx`) and a "Git config" pill on
-  git-writing settings. The **Repo Settings** panel still uses the older flat
-  layout; bring it onto the same primitives for consistency if wanted.
 
 ---
 

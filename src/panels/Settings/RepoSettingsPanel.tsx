@@ -9,6 +9,7 @@ import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
 import { SigningSettings } from "./SigningSettings";
 import { RepoProfileSection } from "./RepoProfileSection";
+import { Section, Row, FieldNote, SettingsGroup, GitConfigPill } from "./primitives";
 import { Button } from "../shared/buttons";
 
 /**
@@ -92,51 +93,73 @@ export function RepoSettingsPanel() {
         </span>
       </div>
       <div className="legit-panel__body">
-        <Section title="Git executable (override for this repo)">
-          <Row
-            label="Global default"
-            value={<code>{globalStatus?.resolved_path ?? "…"}</code>}
-          />
-          {repoSettings?.git_path_override && (
-            <Row
-              label="Current override"
-              value={<code>{repoSettings.git_path_override}</code>}
-            />
-          )}
-          <FieldNote>writes to: repos/&lt;hash&gt;/settings.json (this repo only)</FieldNote>
-          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-            <input
-              style={{ flex: 1 }}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="Leave blank to inherit global default"
-            />
-            <button onClick={browseFor}>Browse…</button>
-            <Button
-              variant="primary"
-              disabled={applying}
-              onClick={() => apply(draft.trim() === "" ? null : draft)}
-            >
-              {draft.trim() === "" ? "Inherit" : "Apply override"}
-            </Button>
-            {repoSettings?.git_path_override && (
-              <button onClick={() => apply(null)} disabled={applying}>
-                Clear override
-              </button>
-            )}
-          </div>
-          {error && <pre className="legit-error" style={{ marginTop: 6 }}>{error}</pre>}
-          {successMsg && (
-            <div className="legit-success" style={{ marginTop: 6, fontSize: "var(--fz-md)" }}>
-              {successMsg}
-            </div>
-          )}
-        </Section>
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "6px 14px",
+            alignItems: "center",
+            fontSize: "var(--fz-sm)",
+            color: "var(--subtle-fg)",
+            marginBottom: 18,
+          }}
+        >
+          <span>Settings here apply to this repository only.</span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <GitConfigPill /> items change this repo's Git configuration.
+          </span>
+        </div>
 
-        <RepoProfileSection repoId={activeRepo.id} />
-        <MixedEndingRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
-        <LineEndingsRepoSection repoId={activeRepo.id} />
-        <SigningSettings scope="repo" repoId={activeRepo.id} />
+        <SettingsGroup id="repo-behavior" title="Behavior" caption="How LeGit acts in this repo">
+          <MixedEndingRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
+        </SettingsGroup>
+
+        <SettingsGroup id="repo-git" title="Git" caption="Integration & configuration">
+          <Section title="Git executable (override for this repo)">
+            <Row
+              label="Global default"
+              value={<code>{globalStatus?.resolved_path ?? "…"}</code>}
+            />
+            {repoSettings?.git_path_override && (
+              <Row
+                label="Current override"
+                value={<code>{repoSettings.git_path_override}</code>}
+              />
+            )}
+            <FieldNote>writes to: repos/&lt;hash&gt;/settings.json (this repo only)</FieldNote>
+            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+              <input
+                style={{ flex: 1 }}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder="Leave blank to inherit global default"
+              />
+              <button onClick={browseFor}>Browse…</button>
+              <Button
+                variant="primary"
+                disabled={applying}
+                onClick={() => apply(draft.trim() === "" ? null : draft)}
+              >
+                {draft.trim() === "" ? "Inherit" : "Apply override"}
+              </Button>
+              {repoSettings?.git_path_override && (
+                <button onClick={() => apply(null)} disabled={applying}>
+                  Clear override
+                </button>
+              )}
+            </div>
+            {error && <pre className="legit-error" style={{ marginTop: 6 }}>{error}</pre>}
+            {successMsg && (
+              <div className="legit-success" style={{ marginTop: 6, fontSize: "var(--fz-md)" }}>
+                {successMsg}
+              </div>
+            )}
+          </Section>
+
+          <RepoProfileSection repoId={activeRepo.id} />
+          <LineEndingsRepoSection repoId={activeRepo.id} />
+          <SigningSettings scope="repo" repoId={activeRepo.id} />
+        </SettingsGroup>
       </div>
     </div>
   );
@@ -235,7 +258,7 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
 
   usePanelDirty(dirty);
 
-  if (loading) return <Section title="Line endings (this repo)"><span className="legit-subtle">Loading…</span></Section>;
+  if (loading) return <Section title="Line endings (this repo)" scope="git"><span className="legit-subtle">Loading…</span></Section>;
   if (!view) return null;
 
   const coversAll = view.gitattributes_covers_all;
@@ -270,7 +293,7 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
   };
 
   return (
-    <Section title="Line endings (this repo)">
+    <Section title="Line endings (this repo)" scope="git">
       <FieldNote>writes to: .git/config (this repo only)</FieldNote>
 
       {coversAll && (
@@ -505,34 +528,6 @@ function ResolvedBadge({
   return (
     <div style={{ marginTop: 4, fontSize: "var(--fz-sm)", color: isResolved ? "var(--success-fg)" : "var(--subtle-fg)" }}>
       {label}: <code>{value}</code>{isResolved ? fromLabel : ""}
-    </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ fontSize: "var(--fz-sm)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: 8 }}>
-        {title}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 6, padding: "2px 0" }}>
-      <div className="legit-subtle">{label}</div>
-      <div>{value}</div>
-    </div>
-  );
-}
-
-function FieldNote({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: 4 }}>
-      {children}
     </div>
   );
 }
