@@ -201,6 +201,20 @@ pub async fn set_confirm_discard(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn set_external_editor_command(
+    state: tauri::State<'_, AppState>,
+    command: Option<String>,
+) -> Result<(), AppError> {
+    {
+        let mut s = state.global_settings.write().await;
+        // Blank means "not configured" — store None so the fallback applies.
+        s.external_editor_command = command.filter(|c| !c.trim().is_empty());
+    }
+    state.persist_global_settings().await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn set_auto_fetch_enabled(
     state: tauri::State<'_, AppState>,
     enabled: bool,

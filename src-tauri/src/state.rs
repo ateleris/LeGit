@@ -232,6 +232,11 @@ pub struct GlobalSettings {
     /// Minutes between background auto-fetches (UI enforces a minimum of 1).
     #[serde(default = "default_auto_fetch_interval")]
     pub auto_fetch_interval_minutes: u32,
+    /// Command template for "open in external editor" (e.g. `code "$ROOT"`);
+    /// `$ROOT` is the repo root, appended when absent. `None`/blank = no
+    /// editor configured — the action opens the folder in the OS file manager.
+    #[serde(default)]
+    pub external_editor_command: Option<String>,
     /// How to handle uncommitted changes when switching branches. `None` = `TryDirectly`.
     pub switch_dirty_behavior: Option<SwitchDirtyBehavior>,
     /// Pull integration strategy for the sync toolbar. `None` = `Default`
@@ -288,6 +293,7 @@ impl Default for GlobalSettings {
             confirm_discard: true,
             auto_fetch_enabled: false,
             auto_fetch_interval_minutes: default_auto_fetch_interval(),
+            external_editor_command: None,
             switch_dirty_behavior: None,
             pull_strategy: None,
             commit_avatars: false,
@@ -340,6 +346,10 @@ pub struct RepoSettings {
     pub git_path_override: Option<String>,
     /// Per-repo override for mixed-ending detection (None = inherit global).
     pub warn_on_mixed_endings: Option<bool>,
+    /// Per-repo override for the external editor command template
+    /// (None = inherit global; same `$ROOT` semantics).
+    #[serde(default)]
+    pub external_editor_command: Option<String>,
     /// Lane locks: pin specific refs to fixed lane indices (versioned envelope).
     #[serde(default, rename = "laneLocks")]
     pub lane_locks_doc: LaneLocksDoc,

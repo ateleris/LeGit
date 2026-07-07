@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useRepoStore } from "../store/repos";
+import { repoOpenInEditor } from "../lib/commands";
+import { editorActionLabel, effectiveEditorTemplate } from "../lib/editorAction";
+import { useSettingsStore } from "../store/settings";
+import { formatAppError } from "../lib/types";
+import { notify } from "../store/notifications";
+import { ExternalEditorIcon } from "../icons";
 import { SectionLabel } from "./Commits/menu/primitives";
 import { IconButton } from "./shared/buttons";
 
@@ -15,14 +21,21 @@ export function RepoOverflowMenu() {
   const closeRepo = useRepoStore((s) => s.closeRepo);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  // Per-row editor labels: a repo-scope override wins over the global template.
+  const repoSettingsMap = useRepoStore((s) => s.repoSettings);
+  const globalEditorTemplate = useSettingsStore(
+    (s) => s.settings?.external_editor_command ?? "",
+  );
 
+  // Capture phase: a stopPropagation in another panel must not keep it open
+  // (same rule as the shared context menus).
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
+    document.addEventListener("mousedown", onDown, { capture: true });
+    return () => document.removeEventListener("mousedown", onDown, { capture: true });
   }, [open]);
 
   if (repos.length === 0) return null;
@@ -59,6 +72,12 @@ export function RepoOverflowMenu() {
           <SectionLabel>Open repositories</SectionLabel>
           {repos.map((r) => {
             const isActive = r.id === activeId;
+            const editorLabel = editorActionLabel(
+              effectiveEditorTemplate(
+                repoSettingsMap[r.id]?.external_editor_command,
+                globalEditorTemplate,
+              ),
+            );
             return (
               <div
                 key={r.id}
@@ -97,6 +116,18 @@ export function RepoOverflowMenu() {
                     {r.path}
                   </div>
                 </div>
+                <IconButton
+                  aria-label={`${editorLabel}: ${r.name}`}
+                  title={editorLabel}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setOpen(false);
+                    repoOpenInEditor(r.id).catch((err) => notify.error(formatAppError(err)));
+                  }}
+                  style={{ color: "inherit", fontSize: "inherit", padding: "0 4px" }}
+                >
+                  <ExternalEditorIcon />
+                </IconButton>
                 <IconButton
                   aria-label={`Close ${r.name}`}
                   onClick={(e) => {

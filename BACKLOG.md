@@ -151,15 +151,13 @@ written only after git confirms via `store`), or a UI prompt. Deferred:
 
 ## UX / polish
 
-- **Open repository root in a configurable external editor.** Add a button
-  (e.g. in the repo header / repo menu) that opens the repository root folder in
-  the user's editor of choice. The editor command should be configurable in
-  settings (a git-config-free app setting, e.g. an "External editor" field
-  holding a command template like `code "$ROOT"` or `subl`, with a sensible
-  per-platform default and a way to fall back to the OS "open folder" if
-  unset). Backend spawns the configured command with the repo root; surface
-  clear feedback if the command isn't found. Consider also offering "open file
-  in editor" from file rows later, reusing the same setting.
+- **Open a single file in the external editor.** "Open in editor" for the repo
+  root shipped 2026-07-07 (Global Settings "External editor" command template;
+  `$ROOT` substitution, PATH/PATHEXT resolution, file-manager fallback —
+  `commands/editor.rs`). Extend it to file rows (Files / Working Changes /
+  Changed Files context menus): a `repo_open_file_in_editor` command reusing
+  the same template with the reserved `$FILE` placeholder (substitute when
+  present, else append the file path).
 
 ---
 

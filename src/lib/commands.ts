@@ -192,6 +192,23 @@ export const setWarnOnMixedEndings = (warn: boolean) =>
 export const setConfirmDiscard = (confirm: boolean) =>
   invoke<null>("set_confirm_discard", { confirm });
 
+export const setExternalEditorCommand = (command: string | null) =>
+  invoke<null>("set_external_editor_command", { command });
+
+/** Open the repo root in the configured external editor (or the OS file
+ * manager when none is configured). */
+export const repoOpenInEditor = (repoId: string) =>
+  invoke<null>("repo_open_in_editor", { repoId });
+
+/** The web URL of the repo's remote page (origin preferred), or null when no
+ * remote is configured / it has no web form. Drives the button state. */
+export const repoRemoteWebUrl = (repoId: string) =>
+  invoke<string | null>("repo_remote_web_url", { repoId });
+
+/** Open the repo's remote hosting page (GitHub/GitLab/…) in the browser. */
+export const repoOpenRemotePage = (repoId: string) =>
+  invoke<null>("repo_open_remote_page", { repoId });
+
 export const setAutoFetchEnabled = (enabled: boolean) =>
   invoke<null>("set_auto_fetch_enabled", { enabled });
 

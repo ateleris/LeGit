@@ -93,6 +93,7 @@ export function GlobalSettingsPanel() {
           <BranchSwitchingSection />
           <AutoRefreshSection />
           <AutoFetchSection />
+          <ExternalEditorSection />
           <MixedEndingDetectionSection />
         </SettingsGroup>
 
@@ -814,6 +815,57 @@ function AutoFetchSection() {
         when something actually changed. Skipped while the app is hidden,
         offline, or an operation is in progress; paused for the session after
         an authentication failure.
+      </FieldNote>
+    </Section>
+  );
+}
+
+function ExternalEditorSection() {
+  const stored = useSettingsStore((s) => s.settings?.external_editor_command ?? "");
+  const setExternalEditorCommand = useSettingsStore((s) => s.setExternalEditorCommand);
+  const [draft, setDraft] = useState(stored ?? "");
+  const [saving, setSaving] = useState(false);
+
+  // Follow external changes to the stored value (e.g. settings re-init).
+  useEffect(() => setDraft(stored ?? ""), [stored]);
+
+  const commit = async () => {
+    const normalized = draft.trim();
+    if (normalized === (stored ?? "").trim()) return;
+    setSaving(true);
+    try {
+      await setExternalEditorCommand(normalized === "" ? null : draft);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const placeholder =
+    navigator.platform.toLowerCase().includes("mac")
+      ? 'e.g. code "$ROOT"  or  /Applications/Sublime Text.app/Contents/SharedSupport/bin/subl'
+      : 'e.g. code "$ROOT"';
+
+  return (
+    <Section title="External editor">
+      <FieldNote>writes to: global settings</FieldNote>
+      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+        <input
+          style={{ flex: 1 }}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+          }}
+          placeholder={placeholder}
+          disabled={saving}
+        />
+      </div>
+      <FieldNote>
+        Command used by "Open in editor" on a repository. <code>$ROOT</code> is
+        replaced by the repository path (appended if the template doesn't
+        mention it); quote it against spaces. Leave blank to open the folder in
+        the system file manager instead.
       </FieldNote>
     </Section>
   );

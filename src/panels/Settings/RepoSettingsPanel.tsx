@@ -2,7 +2,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useState } from "react";
 import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
 import { formatAppError } from "../../lib/types";
-import type { ConfigScope, LineEndingsView, GitAttrRule } from "../../lib/types";
+import type { ConfigScope, LineEndingsView, GitAttrRule, RepoSettings } from "../../lib/types";
 import { setRepoGitPath, repoLineEndingsView, repoWriteLineEndings, updateRepoSettings } from "../../lib/commands";
 import { useGitStatusStore } from "../../store/git-status";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
@@ -112,6 +112,7 @@ export function RepoSettingsPanel() {
 
         <SettingsGroup id="repo-behavior" title="Behavior" caption="How LeGit acts in this repo">
           <MixedEndingRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
+          <ExternalEditorRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
         </SettingsGroup>
 
         <SettingsGroup id="repo-git" title="Git" caption="Integration & configuration">
@@ -162,6 +163,70 @@ export function RepoSettingsPanel() {
         </SettingsGroup>
       </div>
     </div>
+  );
+}
+
+function ExternalEditorRepoSection({
+  repoId,
+  repoSettings,
+}: {
+  repoId: string;
+  repoSettings: RepoSettings | null;
+}) {
+  const globalTemplate = useSettingsStore((s) => s.settings?.external_editor_command ?? "");
+  const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
+  const stored = repoSettings?.external_editor_command ?? "";
+  const [draft, setDraft] = useState(stored);
+  const [saving, setSaving] = useState(false);
+
+  // Follow the stored value on repo switch / external reload.
+  useEffect(() => setDraft(stored), [stored, repoId]);
+
+  const commit = async () => {
+    if (!repoSettings) return;
+    const normalized = draft.trim() === "" ? null : draft;
+    if ((normalized ?? "") === (repoSettings.external_editor_command ?? "")) return;
+    setSaving(true);
+    try {
+      await updateRepoSettings(repoId, { ...repoSettings, external_editor_command: normalized });
+      await loadRepoSettings(repoId);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="External editor (override for this repo)">
+      <Row
+        label="Global default"
+        value={
+          globalTemplate ? (
+            <code>{globalTemplate}</code>
+          ) : (
+            <span className="legit-subtle">(none — opens the file manager)</span>
+          )
+        }
+      />
+      <FieldNote>writes to: repos/&lt;hash&gt;/settings.json (this repo only)</FieldNote>
+      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+        <input
+          style={{ flex: 1 }}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+          }}
+          placeholder='Leave blank to inherit — e.g. idea "$ROOT"'
+          disabled={saving || !repoSettings}
+        />
+      </div>
+      <FieldNote>
+        Used by "Open in editor" for this repository (e.g. a per-language IDE).
+        <code> $ROOT</code> is replaced by the repository path, appended if the
+        template doesn't mention it.
+      </FieldNote>
+    </Section>
   );
 }
 

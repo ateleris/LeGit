@@ -9,6 +9,7 @@ import {
   setConfirmDiscard,
   setAutoFetchEnabled,
   setAutoFetchIntervalMinutes,
+  setExternalEditorCommand,
   setCommitAvatars,
   setDiffSyntaxHighlighting,
   setSuppressedAutoOpenPanels,
@@ -97,6 +98,7 @@ interface SettingsStore {
   setConfirmDiscard: (confirm: boolean) => Promise<void>;
   setAutoFetchEnabled: (enabled: boolean) => Promise<void>;
   setAutoFetchIntervalMinutes: (minutes: number) => Promise<void>;
+  setExternalEditorCommand: (command: string | null) => Promise<void>;
   setCommitAvatars: (enabled: boolean) => Promise<void>;
   setDiffSyntaxHighlighting: (enabled: boolean) => Promise<void>;
   setSuppressedAutoOpenPanels: (panels: string[]) => Promise<void>;
@@ -190,6 +192,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     await setAutoFetchIntervalMinutes(clamped);
     const s = get().settings;
     if (s) set({ settings: { ...s, auto_fetch_interval_minutes: clamped } });
+  },
+
+  async setExternalEditorCommand(command) {
+    const normalized = command && command.trim() !== "" ? command : null;
+    await setExternalEditorCommand(normalized);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, external_editor_command: normalized } });
   },
 
   async setCommitAvatars(enabled) {

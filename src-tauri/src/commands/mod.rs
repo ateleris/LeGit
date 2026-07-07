@@ -1,8 +1,10 @@
 pub mod branches;
+pub mod browser;
 pub mod config_util;
 pub mod console;
 pub mod credentials;
 pub mod diff;
+pub mod editor;
 pub mod files;
 pub mod git_setup;
 pub mod inspect;
@@ -19,9 +21,11 @@ pub mod tags;
 pub mod working;
 
 pub use branches::*;
+pub use browser::*;
 pub use console::*;
 pub use credentials::*;
 pub use diff::*;
+pub use editor::*;
 pub use files::*;
 pub use git_setup::*;
 pub use inspect::*;

@@ -1,7 +1,12 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useRepoStore } from "../store/repos";
 import { formatAppError } from "../lib/types";
+import { repoOpenInEditor, repoOpenRemotePage, repoRemoteWebUrl } from "../lib/commands";
+import { useEditorActionLabel } from "../lib/editorAction";
+import { notify } from "../store/notifications";
+import { ExternalEditorIcon, RemotePageIcon } from "../icons";
 import { ViewMenu } from "./ViewMenu";
 import { RepoOverflowMenu } from "./RepoOverflowMenu";
 
@@ -151,6 +156,34 @@ export function RepoTabBar() {
     }
   };
 
+  const editorLabel = useEditorActionLabel(activeRepoId ?? undefined);
+  const onOpenInEditor = async () => {
+    if (!activeRepoId) return;
+    try {
+      await repoOpenInEditor(activeRepoId);
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
+  };
+
+  // The remote web page of the active repo (null = no remote / no web form).
+  // Keyed under the "remotes" domain so remote add/remove invalidations
+  // refresh the button's enabled state.
+  const { data: remoteWebUrl = null } = useQuery<string | null>({
+    queryKey: [activeRepoId, "remotes", "web-url"],
+    queryFn: () => repoRemoteWebUrl(activeRepoId!),
+    enabled: !!activeRepoId,
+    staleTime: 60_000,
+  });
+  const onOpenRemotePage = async () => {
+    if (!activeRepoId) return;
+    try {
+      await repoOpenRemotePage(activeRepoId);
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
+  };
+
   const byId = new Map(openRepos.map((r) => [r.id, r] as const));
   const orderedIds = order ?? openRepos.map((r) => r.id);
 
@@ -222,6 +255,28 @@ export function RepoTabBar() {
       </div>
       <div className="legit-tabs__actions">
         <RepoOverflowMenu />
+        {activeRepoId && (
+          <>
+            <button
+              className="legit-tabs__icon"
+              onClick={onOpenInEditor}
+              aria-label={editorLabel}
+              title={editorLabel}
+            >
+              <ExternalEditorIcon />
+            </button>
+            <button
+              className="legit-tabs__icon"
+              onClick={onOpenRemotePage}
+              disabled={!remoteWebUrl}
+              aria-label={remoteWebUrl ? `Open ${remoteWebUrl} in browser` : "No remote web page"}
+              title={remoteWebUrl ? `Open ${remoteWebUrl} in browser` : "No remote web page"}
+              style={!remoteWebUrl ? { opacity: 0.4, cursor: "default" } : undefined}
+            >
+              <RemotePageIcon />
+            </button>
+          </>
+        )}
         <button className="legit-tabs__icon" onClick={onAdd} aria-label="Open repository" title="Open repository">
           +
         </button>

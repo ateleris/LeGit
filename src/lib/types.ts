@@ -47,6 +47,10 @@ export interface GlobalSettings {
   auto_fetch_enabled?: boolean;
   /** Minutes between background auto-fetches (default 15, minimum 1). */
   auto_fetch_interval_minutes?: number;
+  /** Command template for "open in external editor" (e.g. `code "$ROOT"`).
+   * $ROOT = repo root, appended when absent; null/blank = open the folder in
+   * the OS file manager instead. */
+  external_editor_command?: string | null;
   /** How to handle uncommitted changes when switching branches (null = try_directly). */
   switch_dirty_behavior?: SwitchDirtyBehavior | null;
   /** Pull integration strategy (null = Default: the repo's pull.rebase decides). */
@@ -69,6 +73,9 @@ export interface GlobalSettings {
 export interface RepoSettings {
   git_path_override: string | null;
   warn_on_mixed_endings: boolean | null;
+  /** Per-repo override for the external editor command template
+   * (null/blank = inherit global; same $ROOT semantics). */
+  external_editor_command?: string | null;
   /** Selected git profile id (null = none / inherit). Intent hint only. */
   git_profile_id?: string | null;
 }

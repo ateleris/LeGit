@@ -19,6 +19,7 @@ import {
   Cloud,
   GitBranch,
   GitBranchPlus,
+  Globe,
   Link2,
   Lock,
   Unlink2,
@@ -27,6 +28,7 @@ import {
   Archive,
   RefreshCw,
   RotateCcw,
+  SquarePen,
   Tag,
   Trash2,
   TriangleAlert,
@@ -73,6 +75,8 @@ export const UnstageIcon = withDefaults(Minus, "UnstageIcon");
 export const DiscardIcon = withDefaults(RotateCcw, "DiscardIcon");
 export const TrashIcon = withDefaults(Trash2, "TrashIcon");
 // Remote sync (Commits panel toolbar).
+export const ExternalEditorIcon = withDefaults(SquarePen, "ExternalEditorIcon");
+export const RemotePageIcon = withDefaults(Globe, "RemotePageIcon");
 export const FetchIcon = withDefaults(RefreshCw, "FetchIcon");
 export const PullIcon = withDefaults(ArrowDownToLine, "PullIcon");
 export const PushIcon = withDefaults(ArrowUpToLine, "PushIcon");
