@@ -1,4 +1,3 @@
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRepoStore } from "../store/repos";
@@ -9,6 +8,7 @@ import { notify } from "../store/notifications";
 import { ExternalEditorIcon, RemotePageIcon } from "../icons";
 import { ViewMenu } from "./ViewMenu";
 import { RepoOverflowMenu } from "./RepoOverflowMenu";
+import { RepoAddMenu } from "./RepoAddMenu";
 
 const DRAG_THRESHOLD = 4; // px before a press becomes a drag
 
@@ -18,7 +18,6 @@ export function RepoTabBar() {
   const refresh = useRepoStore((s) => s.refresh);
   const setActive = useRepoStore((s) => s.setActive);
   const closeRepo = useRepoStore((s) => s.closeRepo);
-  const openRepo = useRepoStore((s) => s.openRepo);
   const reorderRepos = useRepoStore((s) => s.reorderRepos);
   const initialized = useRepoStore((s) => s.initialized);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -145,17 +144,6 @@ export function RepoTabBar() {
     window.addEventListener("pointerup", onUp);
   };
 
-  const onAdd = async () => {
-    try {
-      const selected = await openDialog({ directory: true, multiple: false });
-      if (typeof selected === "string") {
-        await openRepo(selected);
-      }
-    } catch (e) {
-      window.alert(`Could not open repo: ${formatAppError(e)}`);
-    }
-  };
-
   const editorLabel = useEditorActionLabel(activeRepoId ?? undefined);
   const onOpenInEditor = async () => {
     if (!activeRepoId) return;
@@ -277,9 +265,7 @@ export function RepoTabBar() {
             </button>
           </>
         )}
-        <button className="legit-tabs__icon" onClick={onAdd} aria-label="Open repository" title="Open repository">
-          +
-        </button>
+        <RepoAddMenu />
         <ViewMenu />
       </div>
     </div>

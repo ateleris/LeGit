@@ -8,26 +8,6 @@ record); an item that is partially done keeps only its open remainder.
 
 ---
 
-## Review findings deferred (2026-07-05 full-codebase review)
-
-All findings from the review are now closed (second sweep 2026-07-05:
-duplicate-OperationId guard in the runner, 3-way resolve CRLF preservation,
-canonicalize-and-verify in `resolve_repo_relative`, credential-broker trust
-docs + prompt attribution, File View binary classification) except one,
-re-deferred with justification:
-
-- **Runner: non-UTF-8 paths cannot be represented.** The whole `&[&str]` arg
-  surface (and `<rev>:<path>` interpolation via `to_string_lossy`) assumes
-  UTF-8 paths. Re-deferred after scoping: every path crossing IPC is JSON
-  (UTF-8 by construction), so the frontend cannot even express a non-UTF-8
-  path - a real fix means bytes end-to-end (runner + executor trait + every
-  backend signature + an IPC encoding + frontend types), a cross-cutting
-  rewrite. Today a repo with non-UTF-8 filenames fails cleanly (git reports
-  "pathspec did not match" on the lossy-decoded name); nothing corrupts.
-  Revisit only if such repos become a real support case.
-
----
-
 ## Other deferred ideas
 
 - **Live-refresh the diff on external git changes.** The filesystem watcher's
