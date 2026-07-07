@@ -35,9 +35,16 @@
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
+      "icons/256x256.png",
+      "icons/icon.png",
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "linux": {
+      "deb": {
+        "desktopTemplate": "./templates/main.desktop"
+      }
+    },
     "category": "DeveloperTool",
     "shortDescription": "A free, cross-platform Git GUI",
     "longDescription": "LeGit — community-driven Git GUI with first-class Linux support and colorblind-friendly theming.",

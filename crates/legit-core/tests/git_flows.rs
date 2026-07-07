@@ -14,9 +14,9 @@
 
 use legit_core::{
     ConflictKind, ConflictSide, FetchOptions, FileState, GitBackend, GitCliBackend, GitRunner,
-    MergeOptions, MergeOutcome, OperationId, RebaseOutcome, RemoteProgress, RepoFileEntry,
-    RepoFileKind, RepoOpState, ResetMode, SequenceOutcome, StashOutcome, SwitchDirtyBehavior,
-    SwitchOutcome,
+    MergeOptions, MergeOutcome, OperationId, PullOptions, PullStrategy, PushOptions,
+    RebaseOutcome, RemoteProgress, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode,
+    SequenceOutcome, StashOutcome, SwitchDirtyBehavior, SwitchOutcome,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -1314,4 +1314,253 @@ async fn status_reports_counts_for_a_staged_rename() {
         .expect("staged rename entry");
     assert_eq!(entry.state, FileState::Renamed);
     assert_eq!((entry.additions, entry.deletions), (Some(1), Some(0)));
+}
+
+// ---------------------------------------------------------------------------
+// remote flows against ephemeral bare file:// remotes
+//
+// A throwaway bare repo behind a file:// URL exercises the same fetch/push/
+// pull code paths as a network remote (the file:// form forces the real
+// transport instead of the local hardlink optimization) minus authentication,
+// fully offline and CI-safe.
+// ---------------------------------------------------------------------------
+
+/// An ephemeral bare "remote": its tempdir (keep it alive), its path (for
+/// running git against the remote itself), and its file:// URL.
+async fn bare_remote() -> (TempDir, PathBuf, String) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().to_path_buf();
+    let runner = GitRunner::for_repo("git", &path);
+    let out = runner
+        .run(&["init", "--bare", "-b", "main"])
+        .await
+        .expect("spawn git");
+    assert!(out.success, "bare init failed: {}", out.stderr);
+    let url = format!(
+        "file:///{}",
+        path.to_string_lossy().replace('\\', "/").trim_start_matches('/')
+    );
+    (dir, path, url)
+}
+
+fn push_opts(branch: &str, set_upstream: bool, force_with_lease: bool) -> PushOptions {
+    PushOptions {
+        remote: "origin".into(),
+        branch: branch.into(),
+        set_upstream,
+        force_with_lease,
+    }
+}
+
+#[tokio::test]
+async fn push_publishes_branch_and_tracking_counts_ahead() {
+    let (_keep, _, url) = bare_remote().await;
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["remote", "add", "origin", &url]).await;
+
+    // Publish with upstream: tracking must exist and be in sync.
+    repo.backend
+        .push(push_opts("main", true, false), OperationId::new())
+        .await
+        .unwrap();
+    let t = repo.backend.tracking_status().await.unwrap().expect("tracking after publish");
+    assert_eq!(t.upstream, "origin/main");
+    assert_eq!((t.ahead, t.behind), (0, 0));
+
+    // A new local commit shows as ahead=1; pushing again drains it.
+    repo.write("a.txt", "more\n");
+    repo.commit_all("more").await;
+    let t = repo.backend.tracking_status().await.unwrap().unwrap();
+    assert_eq!((t.ahead, t.behind), (1, 0));
+
+    repo.backend
+        .push(push_opts("main", false, false), OperationId::new())
+        .await
+        .unwrap();
+    let t = repo.backend.tracking_status().await.unwrap().unwrap();
+    assert_eq!((t.ahead, t.behind), (0, 0));
+}
+
+#[tokio::test]
+async fn non_fast_forward_push_is_classified_and_lease_force_recovers() {
+    let (_keep, _, url) = bare_remote().await;
+
+    // Writer A publishes the base.
+    let a = TestRepo::init().await;
+    a.write("a.txt", "base\n");
+    a.commit_all("base").await;
+    a.git(&["remote", "add", "origin", &url]).await;
+    a.backend.push(push_opts("main", true, false), OperationId::new()).await.unwrap();
+
+    // Writer B advances the remote past A.
+    let b = TestRepo::init().await;
+    b.git(&["remote", "add", "origin", &url]).await;
+    b.git(&["fetch", "origin"]).await;
+    b.git(&["reset", "--hard", "origin/main"]).await;
+    b.write("a.txt", "from b\n");
+    b.commit_all("b change").await;
+    b.backend.push(push_opts("main", true, false), OperationId::new()).await.unwrap();
+
+    // A commits divergently: a plain push must classify as PushRejected, not
+    // a generic failure (panels rely on the variant for actionable text).
+    a.write("a.txt", "from a\n");
+    a.commit_all("a change").await;
+    let err = a
+        .backend
+        .push(push_opts("main", false, false), OperationId::new())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, legit_core::GitError::PushRejected { .. }), "{err:?}");
+
+    // After fetching (lease info up to date), force-with-lease succeeds.
+    a.backend
+        .fetch(
+            FetchOptions { all: false, prune: false, remote: Some("origin".into()) },
+            OperationId::new(),
+        )
+        .await
+        .unwrap();
+    a.backend
+        .push(push_opts("main", false, true), OperationId::new())
+        .await
+        .unwrap();
+    let t = a.backend.tracking_status().await.unwrap().unwrap();
+    assert_eq!((t.ahead, t.behind), (0, 0));
+}
+
+#[tokio::test]
+async fn fetch_prune_drops_stale_remote_tracking_refs() {
+    let (_keep, bare_path, url) = bare_remote().await;
+
+    // Seed the remote with main + feature.
+    let seed = TestRepo::init().await;
+    seed.write("a.txt", "base\n");
+    seed.commit_all("base").await;
+    seed.git(&["remote", "add", "origin", &url]).await;
+    seed.git(&["push", "origin", "main", "main:refs/heads/feature"]).await;
+
+    // Consumer sees both remote-tracking refs.
+    let repo = TestRepo::init().await;
+    repo.git(&["remote", "add", "origin", &url]).await;
+    let fetch = |prune: bool| {
+        let backend = &repo.backend;
+        async move {
+            backend
+                .fetch(
+                    FetchOptions { all: false, prune, remote: Some("origin".into()) },
+                    OperationId::new(),
+                )
+                .await
+                .unwrap();
+        }
+    };
+    fetch(false).await;
+    repo.git(&["rev-parse", "origin/feature"]).await;
+
+    // The branch dies on the remote; a plain fetch keeps the stale ref, a
+    // pruning fetch removes it.
+    let bare_runner = GitRunner::for_repo("git", &bare_path);
+    let out = bare_runner.run(&["branch", "-D", "feature"]).await.expect("spawn git");
+    assert!(out.success, "{}", out.stderr);
+
+    fetch(false).await;
+    repo.git(&["rev-parse", "origin/feature"]).await; // still there without --prune
+
+    fetch(true).await;
+    let runner = GitRunner::for_repo("git", &repo.path);
+    let gone = runner.run(&["rev-parse", "origin/feature"]).await.expect("spawn git");
+    assert!(!gone.success, "origin/feature should be pruned");
+}
+
+#[tokio::test]
+async fn fetch_all_updates_every_remote() {
+    let (_k1, _, url1) = bare_remote().await;
+    let (_k2, _, url2) = bare_remote().await;
+
+    // Seed both remotes at c1; the consumer learns about them.
+    let seed = TestRepo::init().await;
+    seed.write("a.txt", "one\n");
+    seed.commit_all("c1").await;
+    seed.git(&["remote", "add", "r1", &url1]).await;
+    seed.git(&["remote", "add", "r2", &url2]).await;
+    seed.git(&["push", "r1", "main"]).await;
+    seed.git(&["push", "r2", "main"]).await;
+
+    let repo = TestRepo::init().await;
+    repo.git(&["remote", "add", "r1", &url1]).await;
+    repo.git(&["remote", "add", "r2", &url2]).await;
+
+    // Both remotes advance to c2 while the consumer is stale.
+    seed.write("a.txt", "two\n");
+    seed.commit_all("c2").await;
+    seed.git(&["push", "r1", "main"]).await;
+    seed.git(&["push", "r2", "main"]).await;
+    let c2 = seed.head().await;
+
+    repo.backend
+        .fetch(FetchOptions { all: true, prune: false, remote: None }, OperationId::new())
+        .await
+        .unwrap();
+    assert_eq!(repo.git(&["rev-parse", "r1/main"]).await.trim(), c2);
+    assert_eq!(repo.git(&["rev-parse", "r2/main"]).await.trim(), c2);
+}
+
+#[tokio::test]
+async fn pull_fast_forwards_then_merges_divergence() {
+    let (_keep, _, url) = bare_remote().await;
+
+    // Publisher seeds the remote.
+    let seed = TestRepo::init().await;
+    seed.write("a.txt", "base\n");
+    seed.commit_all("base").await;
+    seed.git(&["remote", "add", "origin", &url]).await;
+    seed.git(&["push", "-u", "origin", "main"]).await;
+
+    // Consumer tracks origin/main.
+    let repo = TestRepo::init().await;
+    repo.git(&["remote", "add", "origin", &url]).await;
+    repo.git(&["fetch", "origin"]).await;
+    repo.git(&["reset", "--hard", "origin/main"]).await;
+    repo.git(&["branch", "--set-upstream-to=origin/main", "main"]).await;
+
+    // Remote advances; a default pull fast-forwards.
+    seed.write("a.txt", "v2\n");
+    seed.commit_all("v2").await;
+    seed.git(&["push", "origin", "main"]).await;
+    let v2 = seed.head().await;
+
+    repo.backend
+        .pull(PullOptions { strategy: PullStrategy::FfOnly }, OperationId::new())
+        .await
+        .unwrap();
+    assert_eq!(repo.head().await, v2);
+    assert_eq!(repo.read("a.txt"), "v2\n");
+
+    // Divergence: local commit in b.txt, remote commit in c.txt. FfOnly must
+    // fail; the Merge strategy integrates with a two-parent merge commit.
+    repo.write("b.txt", "local\n");
+    repo.commit_all("local change").await;
+    seed.write("c.txt", "remote\n");
+    seed.commit_all("remote change").await;
+    seed.git(&["push", "origin", "main"]).await;
+
+    let err = repo
+        .backend
+        .pull(PullOptions { strategy: PullStrategy::FfOnly }, OperationId::new())
+        .await;
+    assert!(err.is_err(), "ff-only pull on divergence must fail");
+
+    repo.backend
+        .pull(PullOptions { strategy: PullStrategy::Merge }, OperationId::new())
+        .await
+        .unwrap();
+    let parents = repo.git(&["rev-list", "--parents", "-1", "HEAD"]).await;
+    assert_eq!(
+        parents.split_whitespace().count(),
+        3,
+        "expected a two-parent merge commit, got: {parents}"
+    );
+    assert!(repo.exists("b.txt") && repo.exists("c.txt"));
 }

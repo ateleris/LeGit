@@ -66,6 +66,17 @@ record); an item that is partially done keeps only its open remainder.
   current one.
 - **Git Log panel follow-ups.** Filter/search the log, copy a command, jump
   a toast to its specific log entry (currently it just opens the panel).
+- **E2E UI tests (tauri-driver) against a dummy repo.** The backend is covered
+  by real-git integration tests in ephemeral tempdir repos (incl. bare
+  `file://` remotes for push/pull/fetch/prune flows, added 2026-07-07); the
+  *UI* has no automated coverage. Idea: drive the built app with
+  `tauri-driver` (WebDriver) on a Linux CI runner against a generated fixture
+  repo — smoke flows like open repo → stage a file → type a message → commit →
+  see it in the log; later clone-via-"+"-menu and conflict-banner flows.
+  Deliberately a separate CI job (heavier: needs a built binary +
+  webkit2gtk-driver); keep it a small smoke suite, not a second test pyramid.
+  Note Windows/macOS WebDriver support in Tauri is spottier — Linux-only is
+  fine for smoke value.
 - **Interactive rebase polish.** The panel ships (reorder via up/down,
   pick/squash/fixup/drop, plan injected via the `printf`-redirect
   `GIT_SEQUENCE_EDITOR`, conflicts through the normal banner). Deferred:
@@ -114,18 +125,6 @@ written only after git confirms via `store`), or a UI prompt. Deferred:
   list/update/sync.
 - **Worktrees** (add/list/remove), **bisect**.
 
-### Fetch
-- **Auto-fetch follow-ups.** Background auto-fetch shipped 2026-07-07 (global
-  setting, default off; fetch-only `fetch --all` of the **active repo**, quiet,
-  guarded against hidden app / offline / in-progress ops, exponential backoff,
-  session-disable on auth failure). Deferred remainder: optionally fetching
-  the non-active open repos too, a prune toggle for auto-fetch (manual toolbar
-  fetch prunes; auto-fetch deliberately doesn't), and metered-network
-  detection (no good cross-platform signal today). Note: an auto-fetch on a
-  repo whose credentials were never stored can pop the in-app credential
-  prompt once; it is then disabled for the session on the resulting auth
-  failure — a "never prompt from background fetch" broker flag would be
-  cleaner.
 
 ---
 
