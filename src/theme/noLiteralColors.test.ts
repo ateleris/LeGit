@@ -22,6 +22,9 @@ const ALLOWED_FILES = new Set([
   // The Theme Editor manipulates literal colours as *data* (default value for
   // a new palette entry, hex normalization fallbacks) — not UI chrome.
   "panels/ThemeEditor/ThemeEditorPanel.tsx",
+  // The dev-build corner ribbon is deliberately NOT themeable (user decision):
+  // it must look the same in every theme and never ships in a release build.
+  "panels/DevRibbon.tsx",
 ]);
 
 const COLOR_LITERAL = /#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)/g;

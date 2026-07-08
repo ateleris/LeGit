@@ -198,7 +198,8 @@ input[type="radio"]:disabled {
 }
 .legit-region-divider.is-collapsed,
 .legit-region-divider--vertical.is-collapsed {
-  cursor: default;
+  /* No resize when collapsed; the whole bar is a click-to-expand target. */
+  cursor: pointer;
 }
 .legit-region-divider__toggle,
 .legit-region-divider__mode {

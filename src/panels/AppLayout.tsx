@@ -28,6 +28,9 @@ const REGION_MIN_WIDTH_BASE = 700;
 const REGION_MIN_HEIGHT_BASE = 60;
 const DIVIDER_SIZE = 12;
 const TAB_BAR_HEIGHT = 32;
+/** Pointer travel (px, drag axis) below which a divider press counts as a
+ * click that toggles the global region rather than a resize drag. */
+const CLICK_DRAG_THRESHOLD = 4;
 
 function saveRegionState(
   placement: RegionPlacement,
@@ -183,10 +186,14 @@ export function AppLayout() {
   const dragging = useRef(false);
   const dragStart = useRef(0);
   const dragStartSize = useRef(0);
+  // Whether the pointer travelled past the click threshold since mousedown -
+  // distinguishes a resize drag from a click-to-toggle on the divider bar.
+  const dragMoved = useRef(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const onDividerMouseDown = useCallback(
     (e: React.MouseEvent) => {
+      dragMoved.current = false;
       if (collapsedRef.current) return;
       dragging.current = true;
       const isTop = placementRef.current === "top";
@@ -197,6 +204,9 @@ export function AppLayout() {
         if (!dragging.current) return;
         const isTopMode = placementRef.current === "top";
         const coord = isTopMode ? ev.clientY : ev.clientX;
+        if (Math.abs(coord - dragStart.current) > CLICK_DRAG_THRESHOLD) {
+          dragMoved.current = true;
+        }
         const container = containerRef.current;
         const totalSize = container
           ? (isTopMode ? container.clientHeight : container.clientWidth)
@@ -227,6 +237,18 @@ export function AppLayout() {
     [debouncedPersist]
   );
 
+  // The whole divider bar toggles the global region: a press-and-release
+  // without crossing the drag threshold is a click. Clicks on the embedded
+  // buttons (toggle, placement mode) are theirs and are ignored here.
+  const onDividerClick = useCallback(
+    (e: React.MouseEvent) => {
+      if ((e.target as HTMLElement).closest("button")) return;
+      if (dragMoved.current) return;
+      toggleCollapsed();
+    },
+    [toggleCollapsed]
+  );
+
   const dividerControls = (
     <button
       className="legit-region-divider__toggle"
@@ -254,6 +276,8 @@ export function AppLayout() {
           <div
             className={`legit-region-divider legit-region-divider--vertical${collapsed ? " is-collapsed" : ""}`}
             onMouseDown={onDividerMouseDown}
+            onClick={onDividerClick}
+            title={collapsed ? "Expand global panels" : "Drag to resize, click to collapse"}
           >
             {dividerControls}
           </div>
@@ -283,6 +307,8 @@ export function AppLayout() {
       <div
         className={`legit-region-divider${collapsed ? " is-collapsed" : ""}`}
         onMouseDown={onDividerMouseDown}
+        onClick={onDividerClick}
+        title={collapsed ? "Expand global panels" : "Drag to resize, click to collapse"}
       >
         {dividerControls}
       </div>

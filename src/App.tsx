@@ -9,6 +9,7 @@ import { GitSetupGate } from "./panels/Setup/GitSetupGate";
 import { AppLayout } from "./panels/AppLayout";
 import { ErrorBoundary } from "./panels/ErrorBoundary";
 import { Toasts } from "./panels/Toasts";
+import { DevRibbon } from "./panels/DevRibbon";
 
 /** Boot progresses through these; the splash subtitle tracks the phase. */
 type BootPhase = "git" | "repos" | "done";
@@ -60,6 +61,7 @@ export function App() {
         <AppLayout />
       </GitSetupGate>
       <Toasts />
+      <DevRibbon />
     </ErrorBoundary>
   );
 }
