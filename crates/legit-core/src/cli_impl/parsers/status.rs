@@ -56,7 +56,13 @@ pub fn parse_status(output: &str) -> Vec<FileStatus> {
             // `1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>`
             b'1' => {
                 let mut fields = record.splitn(9, ' ');
-                if let (Some(xy), Some(path)) = (fields.nth(1), fields.nth(6)) {
+                let (Some(xy), Some(sub)) = (fields.nth(1), fields.next()) else {
+                    continue;
+                };
+                let Some(path) = fields.nth(5) else { continue };
+                if sub.starts_with('S') {
+                    push_submodule_columns(xy, sub, path, &mut result);
+                } else {
                     push_columns(xy, path, &mut result);
                 }
             }
@@ -110,14 +116,47 @@ fn push_columns(xy: &str, path: &str, out: &mut Vec<FileStatus>) {
     }
 }
 
+/// Emit entries for a submodule record (`S<c><m><u>` sub field). The staged
+/// column stages the gitlink pointer, so staged `M`/`T` becomes
+/// `SubmoduleChanged` (add/delete read better as `Added`/`Deleted`). The
+/// worktree `M` covers both pointer moves and dirty contents; only a real
+/// pointer move (`c` flag) yields an entry - dirty-only submodules surface
+/// as a Refs-panel badge, not a pseudo file change.
+fn push_submodule_columns(xy: &str, sub: &str, path: &str, out: &mut Vec<FileStatus>) {
+    let mut chars = xy.chars();
+    let (Some(x), Some(y)) = (chars.next(), chars.next()) else {
+        return;
+    };
+    let pointer_moved = sub.as_bytes().get(1) == Some(&b'C');
+    if x != '.' {
+        let state = match x {
+            'A' => FileState::Added,
+            'D' => FileState::Deleted,
+            _ => FileState::SubmoduleChanged,
+        };
+        out.push(FileStatus::new(path, state, true));
+    }
+    match y {
+        '.' => {}
+        'D' => out.push(FileStatus::new(path, FileState::Deleted, false)),
+        _ if pointer_moved => {
+            out.push(FileStatus::new(path, FileState::SubmoduleChanged, false));
+        }
+        _ => {} // dirty-only
+    }
+}
+
 /// Whether an entry can carry line counts from the numstat streams. Untracked
 /// and ignored paths never appear in `git diff`; conflicted paths show up in
-/// unmerged form without usable counts. Their counts stay `None` — "no data",
-/// not a misleading `0/0`.
+/// unmerged form without usable counts; gitlinks have no meaningful line
+/// counts. Their counts stay `None` — "no data", not a misleading `0/0`.
 pub fn wants_counts(status: &FileStatus) -> bool {
     !matches!(
         status.state,
-        FileState::Untracked | FileState::Ignored | FileState::Conflicted
+        FileState::Untracked
+            | FileState::Ignored
+            | FileState::Conflicted
+            | FileState::SubmoduleChanged
     )
 }
 
@@ -296,22 +335,60 @@ mod tests {
     }
 
     #[test]
-    fn submodule_records_fold_to_modified_for_now() {
-        // Parity with v1: submodule entries stay `Modified` until sub-project
-        // 2 surfaces the `S<c><m><u>` flags as `SubmoduleChanged`.
+    fn submodule_pointer_moves_become_submodule_changed() {
         let out = stream(&[
-            &ord_sub("M.", "SC..", "vendor/staged-bump"),
-            &ord_sub(".M", "S.M.", "vendor/dirty-inside"),
-            &ord_sub(".M", "S..U", "vendor/untracked-inside"),
+            // Staged pointer move: the sub field describes the worktree side,
+            // so a staged-only move reads `M.` with `S...`.
+            &ord_sub("M.", "S...", "vendor/staged-bump"),
+            // Worktree pointer move: the `c` flag.
+            &ord_sub(".M", "SC..", "vendor/moved"),
+            // Staged move + worktree moved again on top.
+            &ord_sub("MM", "SC..", "vendor/both"),
         ]);
         assert_eq!(
             parse_status(&out),
             vec![
-                fs("vendor/staged-bump", FileState::Modified, true),
-                fs("vendor/dirty-inside", FileState::Modified, false),
-                fs("vendor/untracked-inside", FileState::Modified, false),
+                fs("vendor/staged-bump", FileState::SubmoduleChanged, true),
+                fs("vendor/moved", FileState::SubmoduleChanged, false),
+                fs("vendor/both", FileState::SubmoduleChanged, true),
+                fs("vendor/both", FileState::SubmoduleChanged, false),
             ]
         );
+    }
+
+    #[test]
+    fn dirty_only_submodules_produce_no_entry() {
+        // Dirty contents are not a committable superproject change: they show
+        // as a badge on the Refs-panel submodule row, never as a pseudo file
+        // modification (spec 2026-07-08, sub-project 2).
+        let out = stream(&[
+            &ord_sub(".M", "S.M.", "vendor/dirty"),
+            &ord_sub(".M", "S..U", "vendor/untracked"),
+            &ord_sub(".M", "S.MU", "vendor/both-dirty"),
+        ]);
+        assert_eq!(parse_status(&out), vec![]);
+    }
+
+    #[test]
+    fn submodule_add_and_delete_keep_their_states() {
+        let out = stream(&[
+            &ord_sub("A.", "S...", "vendor/new"),
+            &ord_sub("D.", "S...", "vendor/gone-index"),
+            &ord_sub(".D", "S...", "vendor/gone-tree"),
+        ]);
+        assert_eq!(
+            parse_status(&out),
+            vec![
+                fs("vendor/new", FileState::Added, true),
+                fs("vendor/gone-index", FileState::Deleted, true),
+                fs("vendor/gone-tree", FileState::Deleted, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn submodule_changed_wants_no_counts() {
+        assert!(!wants_counts(&fs("vendor/lib", FileState::SubmoduleChanged, true)));
     }
 
     #[test]

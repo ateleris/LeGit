@@ -419,7 +419,43 @@ export interface SubmoduleChange {
   path: string;
   old_sha: string | null;
   new_sha: string | null;
+  /** Submodule worktree has uncommitted content (git's `-dirty` suffix). */
+  dirty: boolean;
 }
+
+/** Orthogonal submodule state flags (mirrors SubmoduleState in types.rs). */
+export interface SubmoduleState {
+  initialized: boolean;
+  populated: boolean;
+  pointer_moved: boolean;
+  dirty_tracked: boolean;
+  dirty_untracked: boolean;
+  conflicted: boolean;
+  orphan_gitlink: boolean;
+  config_drift: boolean;
+}
+
+/** Submodule entry (mirrors SubmoduleInfo in types.rs). */
+export interface SubmoduleInfo {
+  name: string;
+  path: string;
+  url: string | null;
+  gitmodules_url: string | null;
+  branch: string | null;
+  recorded_sha: string | null;
+  checked_out_sha: string | null;
+  head_branch: string | null;
+  state: SubmoduleState;
+}
+
+export interface SubmoduleLogEntry {
+  id: string;
+  subject: string;
+}
+
+export type SubmoduleLog =
+  | { kind: "commits"; commits: SubmoduleLogEntry[] }
+  | { kind: "target_missing" };
 
 export type DiffEntry =
   | { Text: TextDiff }

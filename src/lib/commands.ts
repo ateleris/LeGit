@@ -42,6 +42,8 @@ import type {
   SwitchOutcome,
   SwitchDirtyBehavior,
   StashEntry,
+  SubmoduleInfo,
+  SubmoduleLog,
   TagInfo,
   RemoteTag,
   StashOutcome,
@@ -591,6 +593,18 @@ export const repoCheckoutRemoteBranch = (repoId: string, remoteRef: string) =>
 
 export const repoCheckoutCommit = (repoId: string, sha: string) =>
   invoke<SwitchOutcome>("repo_checkout_commit", { repoId, sha });
+
+// --- submodules ---
+
+export const repoSubmodules = (repoId: string) =>
+  invoke<SubmoduleInfo[]>("repo_submodules", { repoId });
+
+export const repoSubmoduleLog = (
+  repoId: string,
+  path: string,
+  from: string | null,
+  to: string,
+) => invoke<SubmoduleLog>("repo_submodule_log", { repoId, path, from, to });
 
 // --- tags ---
 

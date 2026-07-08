@@ -16,6 +16,7 @@ import { useSettingsStore, UI_FONT_SIZE_DEFAULT } from "../../store/settings";
 import { BranchesSection } from "../Branches/BranchesPanel";
 import { RemotesSection } from "../Remotes/RemotesPanel";
 import { StashesSection } from "../Stashes/StashesPanel";
+import { SubmodulesSection } from "../Submodules/SubmodulesSection";
 import { TagsSection } from "../Tags/TagsSection";
 import { ReflogSection } from "../Reflog/ReflogSection";
 
@@ -35,6 +36,7 @@ const DEFAULT_PANES = [
   { id: "remotes", title: "Remotes", isExpanded: false },
   { id: "tags", title: "Tags", isExpanded: false },
   { id: "stashes", title: "Stashes", isExpanded: true },
+  { id: "submodules", title: "Submodules", isExpanded: false },
   { id: "reflog", title: "Reflog", isExpanded: false },
 ] as const;
 
@@ -43,6 +45,7 @@ const PANE_COMPONENTS: Record<string, FunctionComponent<IPaneviewPanelProps>> = 
   remotes: () => <RemotesSection />,
   tags: () => <TagsSection />,
   stashes: () => <StashesSection />,
+  submodules: () => <SubmodulesSection />,
   reflog: () => <ReflogSection />,
 };
 

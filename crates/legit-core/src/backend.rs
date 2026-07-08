@@ -14,8 +14,8 @@ use crate::types::{
     FetchOptions, FileAtRevision, FileHistoryEntry, FileStatus, HunkOp, LogOptions,
     MergeOptions, MergeOutcome, PullOptions, PushOptions, RebaseOutcome, RebaseStep,
     ReflogEntry, Remote, RemoteTag, RepoFileEntry, RepoOpState, ResetMode, SequenceOutcome, StashApplyOutcome,
-    StashEntry, StashOutcome, SubmoduleInfo, SwitchDirtyBehavior, SwitchOutcome, TagInfo,
-    TrackingStatus,
+    StashEntry, StashOutcome, SubmoduleInfo, SubmoduleLog, SwitchDirtyBehavior, SwitchOutcome,
+    TagInfo, TrackingStatus,
 };
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
@@ -157,7 +157,20 @@ pub trait GitBackend: Send + Sync {
     /// (`git clean -f`).
     async fn discard(&self, paths: &[PathBuf]) -> Result<(), GitError>;
 
+    /// Enumerate the repo's submodules with full state (gitlinks + config +
+    /// dirt flags + per-submodule HEAD probe). Read-only; one status walk.
     async fn submodules(&self) -> Result<Vec<SubmoduleInfo>, GitError>;
+
+    /// Commits between two submodule pointers (`git -C <path> log from..to`),
+    /// or `TargetMissing` when `to` is not in the submodule's object store
+    /// (unfetched pointer target). `from = None` lists from the root (new
+    /// submodule).
+    async fn submodule_log(
+        &self,
+        path: &Path,
+        from: Option<&CommitId>,
+        to: &CommitId,
+    ) -> Result<SubmoduleLog, GitError>;
 
     /// Fetch from remote(s). Cancellable via `op_id`.
     async fn fetch(&self, opts: FetchOptions, op_id: OperationId) -> Result<(), GitError>;

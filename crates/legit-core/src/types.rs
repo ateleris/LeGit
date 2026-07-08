@@ -293,6 +293,9 @@ pub struct SubmoduleChange {
     pub path: PathBuf,
     pub old_sha: Option<CommitId>,
     pub new_sha: Option<CommitId>,
+    /// The submodule worktree has uncommitted content on top of `new_sha`
+    /// (git's `-dirty` suffix on the `Subproject commit` line).
+    pub dirty: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -763,13 +766,66 @@ pub struct CommitDetails {
     pub raw_object: String,
 }
 
-/// Submodule entry as recorded in the superproject.
+/// Orthogonal state flags of one submodule. A struct, not an enum: states
+/// combine freely (detached AND dirty AND pointer-moved). The UI derives a
+/// single display badge by precedence (spec 2026-07-08, "Data model").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, Default)]
+pub struct SubmoduleState {
+    /// Registered in `.git/config` (`submodule.<name>.url` present).
+    pub initialized: bool,
+    /// The worktree is checked out (a git repo exists at the path).
+    pub populated: bool,
+    /// Checked-out HEAD differs from the SHA recorded in the superproject.
+    pub pointer_moved: bool,
+    /// Modified tracked files inside the submodule worktree.
+    pub dirty_tracked: bool,
+    /// Untracked files inside the submodule worktree.
+    pub dirty_untracked: bool,
+    /// The gitlink is unmerged in the superproject.
+    pub conflicted: bool,
+    /// A gitlink with no `.gitmodules` entry.
+    pub orphan_gitlink: bool,
+    /// `.gitmodules` URL and effective (`.git/config`) URL disagree.
+    pub config_drift: bool,
+}
+
+/// Submodule entry as recorded in the superproject. Keyed by `name` (durable
+/// across `git mv`: config sections and `.git/modules/<name>` use it);
+/// displayed by `path`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct SubmoduleInfo {
+    pub name: String,
     pub path: PathBuf,
+    /// Effective URL (`.git/config`); `None` when uninitialized.
     pub url: Option<String>,
+    /// URL declared in `.gitmodules` (for drift detection).
+    pub gitmodules_url: Option<String>,
+    /// `.gitmodules` `branch` field (used by `update --remote`, tier 3).
+    pub branch: Option<String>,
+    /// The gitlink SHA in the superproject index; `None` for a declared-but-
+    /// never-added entry.
     pub recorded_sha: Option<CommitId>,
-    pub initialized: bool,
-    pub dirty: bool,
-    pub detached: bool,
+    /// HEAD of the checked-out submodule; `None` when unpopulated.
+    pub checked_out_sha: Option<CommitId>,
+    /// The submodule's checked-out branch; `None` = detached HEAD (or
+    /// unpopulated).
+    pub head_branch: Option<String>,
+    pub state: SubmoduleState,
+}
+
+/// One commit in a submodule pointer range (`repo_submodule_log`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SubmoduleLogEntry {
+    pub id: CommitId,
+    pub subject: String,
+}
+
+/// Commits between two submodule pointers, or the reason they can't be shown.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SubmoduleLog {
+    Commits { commits: Vec<SubmoduleLogEntry> },
+    /// The target SHA is not present in the submodule's object store - the
+    /// pointer references an unfetched commit.
+    TargetMissing,
 }

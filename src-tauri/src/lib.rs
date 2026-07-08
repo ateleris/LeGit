@@ -108,6 +108,8 @@ pub fn run() {
         commands::repo_rename_branch,
         commands::repo_checkout_remote_branch,
         commands::repo_checkout_commit,
+        commands::repo_submodules,
+        commands::repo_submodule_log,
         commands::repo_tags,
         commands::repo_create_tag,
         commands::repo_delete_tag,

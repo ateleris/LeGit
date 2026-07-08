@@ -712,8 +712,8 @@ async fn diff_files_runs_diff_tree_over_the_given_revs() {
     // unlike commit_files.
     let fake = FakeExecutor::default();
     fake.expect(
-        &["diff-tree", "--no-commit-id", "-r", "-M", "-z", "--name-status", "main", "feature"],
-        ok("M\0a.txt\0A\0b.txt\0"),
+        &["diff-tree", "--no-commit-id", "-r", "-M", "-z", "--raw", "main", "feature"],
+        ok(":100644 100644 aaaaaaa bbbbbbb M\0a.txt\0:000000 100644 0000000 bbbbbbb A\0b.txt\0"),
     );
     fake.expect(
         &["diff-tree", "--no-commit-id", "-r", "-M", "-z", "--numstat", "main", "feature"],
@@ -730,7 +730,7 @@ async fn diff_files_runs_diff_tree_over_the_given_revs() {
 async fn file_diff_commit_range_passes_both_revs() {
     let fake = FakeExecutor::default();
     fake.expect(
-        &["diff", "--no-color", "--no-ext-diff", "-U3", "main", "feature", "--", "a.txt"],
+        &["-c", "diff.submodule=short", "diff", "--no-color", "--no-ext-diff", "-U3", "main", "feature", "--", "a.txt"],
         ok("diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-x\n+y\n"),
     );
     let (b, exec) = backend(fake);
@@ -1172,5 +1172,110 @@ async fn file_history_runs_follow_name_status_with_paging() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].commit_id.as_str(), "aaa");
     assert_eq!(entries[0].path, "src/a.rs");
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
+// submodules - enumeration orchestration
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn submodules_enumerates_without_git_submodule_status() {
+    let sha_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["ls-files", "--stage", "-z"],
+        ok(&format!("100644 {sha_a} 0\tREADME.md\0160000 {sha_a} 0\tlib\0")),
+    );
+    fake.expect(
+        &["config", "-f", ".gitmodules", "-z", "--get-regexp", "^submodule\\."],
+        ok("submodule.lib.path\nlib\0submodule.lib.url\nhttps://x.invalid/lib.git\0"),
+    );
+    fake.expect(
+        &["config", "-z", "--get-regexp", "^submodule\\."],
+        ok("submodule.lib.url\nhttps://x.invalid/lib.git\0submodule.lib.active\ntrue\0"),
+    );
+    fake.expect(
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        ok("1 .M S.M. 160000 160000 160000 aaaaaaa aaaaaaa lib\0"),
+    );
+    fake.expect(&["-C", "lib", "rev-parse", "HEAD"], ok(&format!("{sha_a}\n")));
+    fake.expect(&["-C", "lib", "rev-parse", "--abbrev-ref", "HEAD"], ok("HEAD\n"));
+    let (b, exec) = backend(fake);
+
+    let subs = b.submodules().await.unwrap();
+    assert_eq!(subs.len(), 1);
+    let s = &subs[0];
+    assert_eq!(s.name, "lib");
+    assert!(s.state.initialized && s.state.populated && s.state.dirty_tracked);
+    assert!(!s.state.pointer_moved);
+    assert_eq!(s.head_branch, None, "abbrev-ref HEAD means detached");
+    // assert_done proves no `git submodule status` / describe ever ran.
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn submodules_survives_missing_gitmodules_and_failed_probe() {
+    let sha_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["ls-files", "--stage", "-z"],
+        ok(&format!("160000 {sha_a} 0\tlib\0")),
+    );
+    // No .gitmodules: git config exits 1 - must degrade to empty, not error.
+    fake.expect(
+        &["config", "-f", ".gitmodules", "-z", "--get-regexp", "^submodule\\."],
+        fail(1, ""),
+    );
+    fake.expect(&["config", "-z", "--get-regexp", "^submodule\\."], fail(1, ""));
+    fake.expect(
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        ok(""),
+    );
+    // Unpopulated: the probe fails ("not a git repository").
+    fake.expect(
+        &["-C", "lib", "rev-parse", "HEAD"],
+        fail(128, "fatal: not a git repository"),
+    );
+    let (b, exec) = backend(fake);
+
+    let subs = b.submodules().await.unwrap();
+    assert_eq!(subs.len(), 1);
+    assert!(subs[0].state.orphan_gitlink);
+    assert!(!subs[0].state.populated);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn submodule_log_lists_range_and_flags_missing_target() {
+    let sha_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let sha_b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let fake = FakeExecutor::default();
+    // Target present: existence probe, then the range log.
+    fake.expect(&["-C", "lib", "cat-file", "-e", &format!("{sha_b}^{{commit}}")], ok(""));
+    fake.expect(
+        &["-C", "lib", "log", "--format=%H%x00%s%x00", "--max-count=100", &format!("{sha_a}..{sha_b}")],
+        ok(&format!("{sha_b}\0bump\0")),
+    );
+    // Target missing: the probe fails, no log runs.
+    fake.expect(
+        &["-C", "lib", "cat-file", "-e", &format!("{sha_b}^{{commit}}")],
+        fail(128, "fatal: Not a valid object name"),
+    );
+    let (b, exec) = backend(fake);
+
+    let log = b
+        .submodule_log(Path::new("lib"), Some(&CommitId::new(sha_a)), &CommitId::new(sha_b))
+        .await
+        .unwrap();
+    let SubmoduleLog::Commits { commits } = log else { panic!("{log:?}") };
+    assert_eq!(commits.len(), 1);
+    assert_eq!(commits[0].subject, "bump");
+
+    let log = b
+        .submodule_log(Path::new("lib"), Some(&CommitId::new(sha_a)), &CommitId::new(sha_b))
+        .await
+        .unwrap();
+    assert!(matches!(log, SubmoduleLog::TargetMissing));
     exec.assert_done();
 }

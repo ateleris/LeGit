@@ -13,12 +13,13 @@
 //! autocrlf) locally, so a developer's global config cannot skew outcomes.
 
 use legit_core::{
-    ConflictKind, ConflictSide, FetchOptions, FileState, GitBackend, GitCliBackend, GitRunner,
-    MergeOptions, MergeOutcome, OperationId, PullOptions, PullStrategy, PushOptions,
-    RebaseOutcome, RemoteProgress, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode,
-    SequenceOutcome, StashOutcome, SwitchDirtyBehavior, SwitchOutcome,
+    CommitId, ConflictKind, ConflictSide, DiffEntry, DiffSource, FetchOptions, FileState,
+    GitBackend, GitCliBackend, GitRunner, MergeOptions, MergeOutcome, OperationId, PullOptions,
+    PullStrategy, PushOptions, RebaseOutcome, RemoteProgress, RepoFileEntry, RepoFileKind,
+    RepoOpState, ResetMode, SequenceOutcome, StashOutcome, SubmoduleLog, SwitchDirtyBehavior,
+    SwitchOutcome,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use tempfile::TempDir;
 use tokio::sync::RwLock;
@@ -84,6 +85,24 @@ impl TestRepo {
     async fn head(&self) -> String {
         self.git(&["rev-parse", "HEAD"]).await.trim().to_string()
     }
+}
+
+/// Superproject with one submodule `lib` (its upstream repo returned too).
+/// `protocol.file.allow=always` must ride the invoking command: local config
+/// does not reach git's internal clone (CVE-2022-39253 hardening).
+async fn repo_with_submodule() -> (TestRepo, TestRepo) {
+    let lib = TestRepo::init().await;
+    lib.write("lib.txt", "v1\n");
+    lib.commit_all("lib v1").await;
+
+    let sup = TestRepo::init().await;
+    sup.write("README.md", "super\n");
+    sup.commit_all("base").await;
+    let lib_path = lib.path.to_string_lossy().into_owned();
+    sup.git(&["-c", "protocol.file.allow=always", "submodule", "add", &lib_path, "lib"])
+        .await;
+    sup.git(&["commit", "-m", "add submodule"]).await;
+    (sup, lib)
 }
 
 /// base -> `feature` edits a.txt one way, `main` the other. HEAD ends on main.
@@ -1335,6 +1354,135 @@ async fn status_reports_a_conflict_as_a_single_unstaged_entry() {
     assert_eq!(conflicted[0].state, FileState::Conflicted);
     assert!(!conflicted[0].staged);
     assert_eq!((conflicted[0].additions, conflicted[0].deletions), (None, None));
+}
+
+// ---------------------------------------------------------------------------
+// submodules - enumeration, status classification, diffs, range logs
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn submodules_reports_a_real_submodule() {
+    let (sup, _lib) = repo_with_submodule().await;
+
+    let subs = sup.backend.submodules().await.unwrap();
+    assert_eq!(subs.len(), 1);
+    let s = &subs[0];
+    assert_eq!(s.name, "lib");
+    assert_eq!(s.path, PathBuf::from("lib"));
+    assert!(s.state.initialized && s.state.populated);
+    assert!(!s.state.pointer_moved && !s.state.orphan_gitlink);
+    assert_eq!(s.recorded_sha, s.checked_out_sha);
+    assert!(s.gitmodules_url.is_some());
+
+    // Move the submodule's HEAD: pointer_moved must flip.
+    let sub_path = sup.path.join("lib").to_string_lossy().into_owned();
+    sup.git(&["-C", &sub_path, "commit", "--allow-empty", "-m", "bump"]).await;
+    let subs = sup.backend.submodules().await.unwrap();
+    assert!(subs[0].state.pointer_moved);
+
+    // Untracked file inside: dirty_untracked must flip.
+    sup.write("lib/junk.txt", "x\n");
+    let subs = sup.backend.submodules().await.unwrap();
+    assert!(subs[0].state.dirty_untracked);
+}
+
+#[tokio::test]
+async fn status_classifies_submodule_pointer_moves_and_hides_dirt() {
+    let (sup, _lib) = repo_with_submodule().await;
+    let sub_path = sup.path.join("lib").to_string_lossy().into_owned();
+
+    // Dirty-only (untracked file inside): no status entry for the submodule.
+    sup.write("lib/junk.txt", "x\n");
+    let status = sup.backend.status().await.unwrap();
+    assert!(
+        !status.iter().any(|s| s.path == PathBuf::from("lib")),
+        "dirty-only submodule must not appear in status: {status:?}"
+    );
+
+    // Worktree pointer move: unstaged SubmoduleChanged.
+    sup.git(&["-C", &sub_path, "commit", "--allow-empty", "-m", "bump"]).await;
+    let status = sup.backend.status().await.unwrap();
+    let entry = status
+        .iter()
+        .find(|s| s.path == PathBuf::from("lib"))
+        .expect("pointer move must appear");
+    assert_eq!(entry.state, FileState::SubmoduleChanged);
+    assert!(!entry.staged);
+    assert_eq!((entry.additions, entry.deletions), (None, None));
+
+    // Staged pointer move: staged SubmoduleChanged.
+    sup.git(&["add", "lib"]).await;
+    let status = sup.backend.status().await.unwrap();
+    let entry = status
+        .iter()
+        .find(|s| s.path == PathBuf::from("lib"))
+        .expect("staged move must appear");
+    assert_eq!(entry.state, FileState::SubmoduleChanged);
+    assert!(entry.staged);
+}
+
+#[tokio::test]
+async fn file_diff_returns_a_submodule_entry_for_a_pointer_move() {
+    let (sup, _lib) = repo_with_submodule().await;
+    let sub_path = sup.path.join("lib").to_string_lossy().into_owned();
+    let old = sup.git(&["-C", &sub_path, "rev-parse", "HEAD"]).await.trim().to_string();
+    sup.git(&["-C", &sub_path, "commit", "--allow-empty", "-m", "bump"]).await;
+    let new = sup.git(&["-C", &sub_path, "rev-parse", "HEAD"]).await.trim().to_string();
+
+    let entry = sup
+        .backend
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("lib"), None, 3)
+        .await
+        .unwrap();
+    let DiffEntry::Submodule(sub) = entry else { panic!("expected Submodule: {entry:?}") };
+    assert_eq!(sub.old_sha.as_ref().map(|s| s.as_str().to_string()), Some(old));
+    assert_eq!(sub.new_sha.as_ref().map(|s| s.as_str().to_string()), Some(new));
+    assert!(!sub.dirty);
+}
+
+#[tokio::test]
+async fn commit_files_classifies_a_submodule_bump() {
+    let (sup, _lib) = repo_with_submodule().await;
+    let sub_path = sup.path.join("lib").to_string_lossy().into_owned();
+    sup.git(&["-C", &sub_path, "commit", "--allow-empty", "-m", "bump"]).await;
+    sup.git(&["add", "lib"]).await;
+    sup.git(&["commit", "-m", "bump submodule"]).await;
+
+    let head = sup.head().await;
+    let files = sup.backend.commit_files(&CommitId::new(head)).await.unwrap();
+    let lib = files.iter().find(|f| f.path == PathBuf::from("lib")).expect("lib entry");
+    assert_eq!(lib.change, FileState::SubmoduleChanged);
+}
+
+#[tokio::test]
+async fn submodule_log_reports_the_commits_between_pointers() {
+    let (sup, _lib) = repo_with_submodule().await;
+    let sub_path = sup.path.join("lib").to_string_lossy().into_owned();
+    let old = sup.git(&["-C", &sub_path, "rev-parse", "HEAD"]).await.trim().to_string();
+    sup.git(&["-C", &sub_path, "commit", "--allow-empty", "-m", "bump one"]).await;
+    sup.git(&["-C", &sub_path, "commit", "--allow-empty", "-m", "bump two"]).await;
+    let new = sup.git(&["-C", &sub_path, "rev-parse", "HEAD"]).await.trim().to_string();
+
+    let log = sup
+        .backend
+        .submodule_log(Path::new("lib"), Some(&CommitId::new(old)), &CommitId::new(new))
+        .await
+        .unwrap();
+    let SubmoduleLog::Commits { commits } = log else { panic!("{log:?}") };
+    assert_eq!(commits.len(), 2);
+    assert_eq!(commits[0].subject, "bump two"); // newest first
+
+    // A fabricated SHA is an unfetched target, not an error.
+    let log = sup
+        .backend
+        .submodule_log(
+            Path::new("lib"),
+            None,
+            &CommitId::new("0123456789012345678901234567890123456789"),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(log, SubmoduleLog::TargetMissing));
 }
 
 // ---------------------------------------------------------------------------

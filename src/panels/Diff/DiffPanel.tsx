@@ -20,6 +20,7 @@ import {
 import type { ConflictFileSides, ConflictSide, DiffEntry, DiffRequest, DiffSource } from "../../lib/types";
 import { LineEndingBadge } from "../shared/LineEndingBadge";
 import { ThreeWayView } from "./ThreeWayView";
+import { SubmoduleDiffView } from "./SubmoduleDiffView";
 import { formatAppError } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notify } from "../../store/notifications";
@@ -748,11 +749,7 @@ function DiffBody({
     );
   }
   if ("Submodule" in data) {
-    return (
-      <div className="legit-panel__body">
-        <span className="legit-subtle">Submodule change.</span>
-      </div>
-    );
+    return <SubmoduleDiffView repoId={request.repoId} change={data.Submodule} />;
   }
 
   const text = data.Text;

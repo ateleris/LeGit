@@ -15,7 +15,8 @@ use crate::types::{
     HunkOp, LineEndingKind, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullStrategy, PushOptions,
     RebaseOutcome, RebaseStep, RefDecoration, RefSelector, ReflogEntry, Remote, RemoteTag,
     RepoFileEntry, RepoFileKind, RepoOpState, ResetMode, SequenceOutcome, SignMode, StashApplyOutcome, StashEntry,
-    StashOutcome, SubmoduleInfo, SwitchDirtyBehavior, SwitchOutcome, TagInfo, TrackingStatus,
+    StashOutcome, SubmoduleInfo, SubmoduleLog, SwitchDirtyBehavior, SwitchOutcome, TagInfo,
+    TrackingStatus,
 };
 
 /// Git's well-known empty-tree object id, used as the "before" side when
@@ -124,8 +125,12 @@ impl<E: GitExecutor> GitCliBackend<E> {
         let path_str = path.to_string_lossy().into_owned();
 
         // Common flags: no color/ANSI, no external diff drivers — we need git's
-        // own deterministic unified output for the parser.
+        // own deterministic unified output for the parser. `diff.submodule` is
+        // pinned to `short`: a user's `log`/`diff` config changes gitlink diff
+        // output and breaks parsing (the magit#4538 class of bug).
         let mut args: Vec<String> = vec![
+            "-c".into(),
+            "diff.submodule=short".into(),
             "diff".into(),
             "--no-color".into(),
             "--no-ext-diff".into(),
@@ -785,7 +790,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             }
         };
 
-        let mut name_status = run_diff(from.clone(), to.clone(), "--name-status").await?;
+        let mut raw = run_diff(from.clone(), to.clone(), "--raw").await?;
         let mut numstat = run_diff(from, to.clone(), "--numstat").await?;
 
         // A stash created with --include-untracked keeps its untracked files in a
@@ -795,14 +800,11 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         // and octopus merges have no untracked parent and are unaffected.
         if let Some(untracked) = self.stash_untracked_parent(&runner, &to).await? {
             let u_from = EMPTY_TREE_OID.to_string();
-            name_status.push_str(&run_diff(u_from.clone(), untracked.clone(), "--name-status").await?);
+            raw.push_str(&run_diff(u_from.clone(), untracked.clone(), "--raw").await?);
             numstat.push_str(&run_diff(u_from, untracked, "--numstat").await?);
         }
 
-        Ok(parsers::commit_files::parse_commit_files(
-            &name_status,
-            &numstat,
-        ))
+        Ok(parsers::commit_files::parse_commit_files(&raw, &numstat))
     }
 
     async fn branches(&self) -> Result<Vec<Branch>, GitError> {
@@ -988,9 +990,9 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
                 Ok::<String, GitError>(out.stdout)
             }
         };
-        let name_status = run_diff("--name-status").await?;
+        let raw = run_diff("--raw").await?;
         let numstat = run_diff("--numstat").await?;
-        Ok(parsers::commit_files::parse_commit_files(&name_status, &numstat))
+        Ok(parsers::commit_files::parse_commit_files(&raw, &numstat))
     }
 
     async fn file_diff(
@@ -1260,7 +1262,101 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
     }
 
     async fn submodules(&self) -> Result<Vec<SubmoduleInfo>, GitError> {
-        Err(GitError::NotYet)
+        use parsers::submodules as sub;
+        let runner = self.runner().await;
+
+        let ls = runner
+            .run(&sub::LS_FILES_STAGE_ARGS)
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !ls.success {
+            return Err(GitError::CommandFailed {
+                exit_code: ls.exit_code.unwrap_or(-1),
+                stderr: ls.stderr,
+            });
+        }
+        let gitlinks = sub::parse_gitlinks(&ls.stdout);
+
+        // Both config reads exit non-zero for "no matches / no file" - that
+        // is a normal repo without submodules, never an error.
+        let gitmodules = match runner.run(&sub::GITMODULES_CONFIG_ARGS).await {
+            Ok(o) if o.success => sub::parse_submodule_config(&o.stdout),
+            _ => Default::default(),
+        };
+        let local = match runner.run(&sub::LOCAL_SUBMODULE_CONFIG_ARGS).await {
+            Ok(o) if o.success => sub::parse_submodule_config(&o.stdout),
+            _ => Default::default(),
+        };
+
+        // Dirt flags ride along the one superproject status call - never a
+        // per-submodule status walk (spec: perf discipline).
+        let dirt = match runner.run(&parsers::status::STATUS_ARGS).await {
+            Ok(o) if o.success => sub::parse_status_submodule_flags(&o.stdout),
+            _ => Default::default(),
+        };
+
+        // One probe per gitlink: HEAD sha (failure = unpopulated), then the
+        // branch only for populated ones.
+        let mut probes = std::collections::HashMap::new();
+        for (path, _) in &gitlinks {
+            let p = path.to_string_lossy().into_owned();
+            let head = match runner.run(&["-C", &p, "rev-parse", "HEAD"]).await {
+                Ok(o) if o.success => o.stdout.trim().to_string(),
+                _ => continue,
+            };
+            let head_branch = match runner
+                .run(&["-C", &p, "rev-parse", "--abbrev-ref", "HEAD"])
+                .await
+            {
+                Ok(o) if o.success => {
+                    let b = o.stdout.trim();
+                    // `abbrev-ref HEAD` prints literally `HEAD` when detached.
+                    if b == "HEAD" { None } else { Some(b.to_string()) }
+                }
+                _ => None,
+            };
+            probes.insert(
+                path.clone(),
+                sub::SubmoduleProbe { checked_out_sha: CommitId::new(head), head_branch },
+            );
+        }
+
+        Ok(sub::assemble_submodules(&gitlinks, &gitmodules, &local, &dirt, &probes))
+    }
+
+    async fn submodule_log(
+        &self,
+        path: &Path,
+        from: Option<&CommitId>,
+        to: &CommitId,
+    ) -> Result<SubmoduleLog, GitError> {
+        use parsers::submodules as sub;
+        let runner = self.runner().await;
+        let p = path.to_string_lossy().into_owned();
+
+        // Unfetched pointer target is an expected state, not an error.
+        let probe = format!("{}^{{commit}}", to.as_str());
+        match runner.run(&["-C", &p, "cat-file", "-e", &probe]).await {
+            Ok(o) if o.success => {}
+            Ok(_) => return Ok(SubmoduleLog::TargetMissing),
+            Err(e) => return Err(GitError::Internal(e.to_string())),
+        }
+
+        let range = match from {
+            Some(f) => format!("{}..{}", f.as_str(), to.as_str()),
+            None => to.as_str().to_string(),
+        };
+        let out = runner
+            .run(&["-C", &p, "log", sub::SUBMODULE_LOG_FORMAT, sub::SUBMODULE_LOG_MAX, &range])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if !out.success {
+            return Err(GitError::CommandFailed {
+                exit_code: out.exit_code.unwrap_or(-1),
+                stderr: out.stderr,
+            });
+        }
+        Ok(SubmoduleLog::Commits { commits: sub::parse_submodule_log(&out.stdout) })
     }
 
     async fn fetch(&self, opts: FetchOptions, op_id: OperationId) -> Result<(), GitError> {

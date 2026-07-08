@@ -34,3 +34,13 @@ export function invalidateRepoDomains(
     qc.invalidateQueries({ queryKey: [repoId, domain] });
   }
 }
+
+/** The watcher payloads do not carry a `submodules` domain yet (that lands
+ * with the tier-2 watcher work): submodule-relevant changes classify as
+ * `status` (index, worktree) or `branches`/`log` (HEAD moves). Derive the
+ * domain so the Submodules section refreshes with them. */
+export function withDerivedDomains(domains: string[]): string[] {
+  if (!domains.includes("status") && !domains.includes("branches")) return domains;
+  if (domains.includes("submodules")) return domains;
+  return [...domains, "submodules"];
+}

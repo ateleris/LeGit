@@ -10,6 +10,7 @@ pub mod log;
 pub mod commit;
 pub mod branches;
 pub mod status;
+pub mod submodules;
 pub mod commit_files;
 pub mod diff;
 pub mod tracking;

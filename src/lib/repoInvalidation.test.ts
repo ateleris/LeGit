@@ -5,7 +5,7 @@
 
 import { describe, test, expect, vi } from "vitest";
 import type { QueryClient } from "@tanstack/react-query";
-import { invalidateRepoDomains } from "./repoInvalidation";
+import { invalidateRepoDomains, withDerivedDomains } from "./repoInvalidation";
 
 /** A QueryClient stub that just records the keys it was asked to invalidate. */
 function fakeClient() {
@@ -63,5 +63,20 @@ describe("invalidateRepoDomains", () => {
     invalidateRepoDomains(qc, "r6", ["log"], { coalesce: true });
     spy.mockRestore();
     expect(calls).toEqual([["r6", "log"]]);
+  });
+});
+
+describe("withDerivedDomains", () => {
+  test("adds submodules alongside status", () => {
+    expect(withDerivedDomains(["status"])).toEqual(["status", "submodules"]);
+  });
+  test("adds submodules alongside branches", () => {
+    expect(withDerivedDomains(["branches", "log"])).toEqual(["branches", "log", "submodules"]);
+  });
+  test("leaves unrelated domains alone", () => {
+    expect(withDerivedDomains(["tags"])).toEqual(["tags"]);
+  });
+  test("does not duplicate", () => {
+    expect(withDerivedDomains(["status", "submodules"])).toEqual(["status", "submodules"]);
   });
 });
