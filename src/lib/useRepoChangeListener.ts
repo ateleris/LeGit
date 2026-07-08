@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { onRepoChanged } from "./events";
 import { invalidateRepoDomains } from "./repoInvalidation";
+import { useGitLogStore } from "../store/gitLog";
 
 /**
  * Subscribe to filesystem-watcher events and invalidate the affected react-query
@@ -18,6 +19,10 @@ export function useRepoChangeListener() {
     let unlisten: (() => void) | undefined;
     let disposed = false;
     onRepoChanged((payload) => {
+      // Every emitted batch lands in the Git Log panel (before coalescing, so
+      // the diagnostic view shows what the watcher saw, not what survived
+      // dedup) - this is how a refetch loop's trigger becomes visible.
+      useGitLogStore.getState().addWatcherBatch(payload);
       // domains ∈ ChangeDomain (see types.ts) - matches the query-key suffixes.
       // Coalescing backstop: skip any domain a manual refresh (or an earlier
       // emission of this same change) already invalidated within the window, so

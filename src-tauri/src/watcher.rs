@@ -21,13 +21,26 @@
 //!   it only suppresses redundant refreshes, so `git status` stays authoritative.
 //! - Self-induced events (LeGit's own git ops) also trip the watcher; the
 //!   redundant invalidate is deduped by react-query against the optimistic one.
+//! - Read-only activity used to cause endless refetch loops. On Linux/WSL,
+//!   notify subscribes to IN_OPEN, so LeGit's own read commands fired
+//!   Access(Open) events on HEAD / refs/* / packed-refs; classifying those
+//!   made every refetch trigger the next one. Two guards now break this class
+//!   of loop: read/metadata-only event kinds are dropped (`is_noise_kind`),
+//!   and git-dir events are dropped unless the file's (size, mtime)
+//!   fingerprint actually changed - which also covers no-op touches by
+//!   external tools (AV write-backs, sync clients) on Windows, where every
+//!   modification arrives as an undifferentiated Modify(Any). Tradeoff: a
+//!   same-size rewrite within the filesystem's mtime granularity is swallowed
+//!   - ref files are fixed-size, so this needs sub-granularity double writes
+//!   (only plausible on FAT's 2s stamps; the focus-refetch backstop catches it).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
-use notify::{RecommendedWatcher, RecursiveMode};
+use notify::event::{AccessKind, AccessMode, ModifyKind};
+use notify::{EventKind, RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, RecommendedCache};
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -61,7 +74,17 @@ pub enum ChangeDomain {
 pub struct RepoChangedPayload {
     pub repo_id: String,
     pub domains: Vec<ChangeDomain>,
+    /// First few paths that classified into a domain (relative to the repo;
+    /// git-dir paths are prefixed ".git/"). Capped at [`MAX_TRIGGER_PATHS`];
+    /// `trigger_count` carries the full total. Feeds the Git Log panel so a
+    /// refetch's cause is visible next to the git calls it triggered.
+    pub trigger_paths: Vec<String>,
+    /// Total number of classified paths in the batch.
+    pub trigger_count: u32,
 }
+
+/// Display cap for [`RepoChangedPayload::trigger_paths`].
+const MAX_TRIGGER_PATHS: usize = 8;
 
 /// Owns the live debouncer for one repo. Dropping it stops the watch thread and
 /// all callbacks — that is the entire teardown (used on repo close / app exit).
@@ -82,6 +105,11 @@ impl RepoWatcher {
         let ignore = build_ignore(&worktree);
         let worktree_cb = worktree.clone();
         let git_dir_cb = git_dir.clone();
+        // (size, mtime) per git-dir path, kept across batches: an event whose
+        // file is byte-identical since last time (AV/sync-client attribute or
+        // stream write-backs) is dropped instead of refetching. Bounded by the
+        // number of distinct git-dir paths ever seen (roughly the ref count).
+        let mut seen: HashMap<PathBuf, Option<Fingerprint>> = HashMap::new();
 
         let mut debouncer = new_debouncer(
             DEBOUNCE,
@@ -98,9 +126,37 @@ impl RepoWatcher {
                 };
 
                 let mut domains: BTreeSet<ChangeDomain> = BTreeSet::new();
+                let mut triggers: Vec<String> = Vec::new();
+                let mut trigger_count: u32 = 0;
                 for ev in &events {
+                    // Attribute-only / access noise can never change git data.
+                    // (On Windows these arrive as Modify(Any) and are handled
+                    // by the fingerprint check below instead.)
+                    if is_noise_kind(&ev.event.kind) {
+                        continue;
+                    }
                     for path in &ev.event.paths {
-                        classify(path, &worktree_cb, &git_dir_cb, &ignore, &mut domains);
+                        // Git-dir files: skip unless the content fingerprint
+                        // moved. Also dedupes repeat events for one path, so
+                        // trigger_count counts distinct git-dir paths.
+                        if path.starts_with(&git_dir_cb)
+                            && !fingerprint_changed(&mut seen, path, stat_fingerprint(path))
+                        {
+                            continue;
+                        }
+                        let mut path_domains: BTreeSet<ChangeDomain> = BTreeSet::new();
+                        classify(path, &worktree_cb, &git_dir_cb, &ignore, &mut path_domains);
+                        if path_domains.is_empty() {
+                            continue;
+                        }
+                        trigger_count += 1;
+                        if triggers.len() < MAX_TRIGGER_PATHS {
+                            let rel = display_path(path, &worktree_cb, &git_dir_cb);
+                            if !triggers.contains(&rel) {
+                                triggers.push(rel);
+                            }
+                        }
+                        domains.extend(path_domains);
                     }
                 }
                 if domains.is_empty() {
@@ -110,6 +166,8 @@ impl RepoWatcher {
                 let payload = RepoChangedPayload {
                     repo_id: repo_id.clone(),
                     domains: domains.into_iter().collect(),
+                    trigger_paths: triggers,
+                    trigger_count,
                 };
                 if let Err(e) = app.emit(REPO_CHANGED_EVENT, payload) {
                     tracing::warn!(err = %e, "failed to emit repo-changed event");
@@ -229,6 +287,67 @@ fn classify_git(rel: &Path, out: &mut BTreeSet<ChangeDomain>) {
         }
         _ => {}
     }
+}
+
+/// Event kinds that can never reflect a git data change: pure reads and
+/// attribute-only metadata updates (chmod, timestamps). Real ref/index writes
+/// arrive as Create / Modify(Data) / Modify(Name) / Remove (or CLOSE_WRITE,
+/// see below). Windows reports every modification as Modify(Any), which
+/// deliberately does NOT match here; the fingerprint check covers that
+/// platform.
+///
+/// This filter is what breaks the Linux refetch loop: notify's inotify
+/// backend subscribes to IN_OPEN, so LeGit's own read commands (log,
+/// for-each-ref, rev-list, stash list) fire Access(Open) on HEAD / refs/* /
+/// packed-refs, which used to classify as ref changes and refetch forever.
+fn is_noise_kind(kind: &EventKind) -> bool {
+    match kind {
+        // inotify's CLOSE_WRITE arrives as Access(Close(Write)) and is a real
+        // write signal: never noise.
+        EventKind::Access(AccessKind::Close(AccessMode::Write)) => false,
+        EventKind::Access(_) => true,
+        EventKind::Modify(ModifyKind::Metadata(_)) => true,
+        _ => false,
+    }
+}
+
+/// (size, mtime) of a git-dir file. `None` means the path is gone (or
+/// unreadable), which is itself a distinct, comparable state.
+type Fingerprint = (u64, Option<SystemTime>);
+
+fn stat_fingerprint(path: &Path) -> Option<Fingerprint> {
+    std::fs::metadata(path)
+        .ok()
+        .map(|m| (m.len(), m.modified().ok()))
+}
+
+/// Record `current` for `path` and report whether it differs from the last
+/// batch. First sighting counts as changed (there is nothing to dedupe
+/// against), so a fresh watcher never swallows a real event.
+fn fingerprint_changed(
+    seen: &mut HashMap<PathBuf, Option<Fingerprint>>,
+    path: &Path,
+    current: Option<Fingerprint>,
+) -> bool {
+    match seen.get(path) {
+        Some(prev) if *prev == current => false,
+        _ => {
+            seen.insert(path.to_path_buf(), current);
+            true
+        }
+    }
+}
+
+/// Repo-relative display form of a trigger path: git-dir paths as
+/// ".git/<rel>", worktree paths as-is, anything else verbatim.
+fn display_path(path: &Path, worktree: &Path, git_dir: &Path) -> String {
+    if let Ok(rel) = path.strip_prefix(git_dir) {
+        return Path::new(".git").join(rel).to_string_lossy().into_owned();
+    }
+    if let Ok(rel) = path.strip_prefix(worktree) {
+        return rel.to_string_lossy().into_owned();
+    }
+    path.to_string_lossy().into_owned()
 }
 
 /// Build a gitignore matcher from the repo-root `.gitignore` (cheap; suppresses
@@ -381,5 +500,85 @@ mod tests {
         let mut out = BTreeSet::new();
         classify(Path::new("/repo/.git/MERGE_MSG"), wt, gd, &Gitignore::empty(), &mut out);
         assert_eq!(out.into_iter().collect::<Vec<_>>(), vec![ChangeDomain::OpState]);
+    }
+
+    #[test]
+    fn metadata_and_access_kinds_are_noise() {
+        // notify's inotify backend subscribes to IN_OPEN, so on Linux/WSL
+        // LeGit's own read commands fire Access(Open) on HEAD / refs/* /
+        // packed-refs. Classifying those made every refetch trigger the next
+        // one: an infinite log/branches/tags loop. Reads must be noise.
+        use notify::event::{DataChange, MetadataKind};
+        assert!(is_noise_kind(&EventKind::Access(AccessKind::Open(
+            AccessMode::Any
+        ))));
+        assert!(is_noise_kind(&EventKind::Access(AccessKind::Read)));
+        assert!(is_noise_kind(&EventKind::Modify(ModifyKind::Metadata(
+            MetadataKind::WriteTime
+        ))));
+        // inotify reports CLOSE_WRITE as Access(Close(Write)): a real write.
+        assert!(!is_noise_kind(&EventKind::Access(AccessKind::Close(
+            AccessMode::Write
+        ))));
+        // Real writes and Windows' undifferentiated Modify(Any) must pass.
+        assert!(!is_noise_kind(&EventKind::Modify(ModifyKind::Data(
+            DataChange::Any
+        ))));
+        assert!(!is_noise_kind(&EventKind::Modify(ModifyKind::Any)));
+        assert!(!is_noise_kind(&EventKind::Create(
+            notify::event::CreateKind::Any
+        )));
+        assert!(!is_noise_kind(&EventKind::Remove(
+            notify::event::RemoveKind::Any
+        )));
+    }
+
+    #[test]
+    fn fingerprint_dedupes_unchanged_paths() {
+        let mut seen = HashMap::new();
+        let p = Path::new("/repo/.git/packed-refs");
+        let fp = Some((100, Some(SystemTime::UNIX_EPOCH)));
+
+        // First sighting always fires; identical repeats are dropped.
+        assert!(fingerprint_changed(&mut seen, p, fp));
+        assert!(!fingerprint_changed(&mut seen, p, fp));
+        assert!(!fingerprint_changed(&mut seen, p, fp));
+
+        // A real rewrite (new mtime and/or size) fires again.
+        let newer = SystemTime::UNIX_EPOCH + Duration::from_secs(1);
+        assert!(fingerprint_changed(&mut seen, p, Some((100, Some(newer)))));
+        assert!(fingerprint_changed(&mut seen, p, Some((101, Some(newer)))));
+
+        // Deletion is a distinct state: fires once, then dedupes.
+        assert!(fingerprint_changed(&mut seen, p, None));
+        assert!(!fingerprint_changed(&mut seen, p, None));
+
+        // Recreation after deletion fires.
+        assert!(fingerprint_changed(&mut seen, p, fp));
+    }
+
+    #[test]
+    fn fingerprint_tracks_paths_independently() {
+        let mut seen = HashMap::new();
+        let a = Path::new("/repo/.git/refs/heads/main");
+        let b = Path::new("/repo/.git/refs/heads/dev");
+        let fp = Some((41, Some(SystemTime::UNIX_EPOCH)));
+        assert!(fingerprint_changed(&mut seen, a, fp));
+        assert!(fingerprint_changed(&mut seen, b, fp));
+        assert!(!fingerprint_changed(&mut seen, a, fp));
+    }
+
+    #[test]
+    fn display_path_is_repo_relative() {
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        assert_eq!(
+            display_path(&gd.join("packed-refs"), wt, gd),
+            Path::new(".git").join("packed-refs").to_string_lossy()
+        );
+        assert_eq!(
+            display_path(&wt.join("src/main.rs"), wt, gd),
+            Path::new("src").join("main.rs").to_string_lossy()
+        );
     }
 }

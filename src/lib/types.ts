@@ -115,6 +115,10 @@ export type ChangeDomain =
 export interface RepoChangedPayload {
   repo_id: string;
   domains: ChangeDomain[];
+  /** First few classified trigger paths (repo-relative, capped at 8 by the
+   *  backend); `trigger_count` carries the full total. */
+  trigger_paths: string[];
+  trigger_count: number;
 }
 
 /** A completed git invocation reported by the backend (matches legit-core

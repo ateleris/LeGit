@@ -64,6 +64,16 @@ record); an item that is partially done keeps only its open remainder.
   porcelain `previous <sha> <path>` header carries the old path — surface it on
   `BlameHunk` (e.g. `previous_path`) and reblame at that path instead of the
   current one.
+- **Lane locks: let uncommitted changes and stashes sit on the locked lane.**
+  The lane algorithm reserves locked lanes for the locked ref's first-parent
+  ancestry and keeps everything else off them (`lockedLaneSet` in
+  `src/panels/Commits/graph/lanes.ts`), which pushes the synthetic
+  working-dir row and injected stash nodes onto a free lane even when they
+  belong to the checked-out branch that owns the locked lane. They should be
+  allowed on it: they are part of that branch's line. Approach: extend the
+  ownership pass so the working-dir row (child of HEAD) and stash nodes
+  whose parent commit lies on a locked ref's first-parent line inherit that
+  locked lane instead of being treated as squatters.
 - **Git Log panel follow-ups.** Filter/search the log, copy a command, jump
   a toast to its specific log entry (currently it just opens the panel).
 - **E2E UI tests (tauri-driver) against a dummy repo.** The backend is covered
@@ -104,6 +114,15 @@ The in-app credential prompt ships (2026-07-04): the app binary doubles as a
 profile helpers keep winning where configured); a localhost token-guarded
 broker answers from a session cache, the OS keychain (`keyring` crate,
 written only after git confirms via `store`), or a UI prompt. Deferred:
+- **Recheck the credential manager integration.** A verification pass over
+  the whole chain before release: helper-shim registration lands at the end
+  of the helper list (GCM / profile helpers still win where configured),
+  broker prompt appears when no other helper answers, keychain entries are
+  written only after git confirms, and cached credentials are scoped to the
+  session. Exercise against real remotes (GitHub HTTPS with GCM installed,
+  a remote with no helper configured) on Windows and in WSL/Linux, where the
+  helper landscape differs (no GCM by default; keychain backend is Secret
+  Service).
 - **SSH passphrase prompting** (`SSH_ASKPASS` shim mode): the helper covers
   HTTP(S) only; encrypted SSH keys without an agent still fail
   non-interactively.
@@ -165,6 +184,22 @@ warnings). Open remainder:
   target, since several code paths differ from `tauri dev` (e.g. the
   `CREATE_NO_WINDOW` git-spawn flag, `windows_subsystem = "windows"`,
   bindings generated only when the app runs).
+- **Replace the logo.** New logo drafts exist (SVG iterations, 2026-07-08);
+  once one is final, regenerate the full bundled icon set from it
+  (`npm run tauri icon` from a 1024px source replaces `src-tauri/icons/` —
+  Windows/macOS/Linux sizes + store tiles) and swap the in-app splash asset
+  (`src/assets/legit-logo.png`, used in `App.tsx`). Check the README/release
+  page once screenshots land, so the branding is consistent.
+- **Check the log level in release builds.** `init_tracing` (`lib.rs`)
+  defaults the `EnvFilter` to `info,legit_core=debug,legit_app_lib=debug`
+  whenever `RUST_LOG` is unset — i.e. release builds run with debug-level
+  tracing for our crates. Decide the intended release default (likely plain
+  `info`, or `warn`): verify what the output costs (every git invocation is
+  traced) and where it even goes in a bundled app (`windows_subsystem =
+  "windows"` has no console — is anything writing to a file?). Gate the
+  default on `cfg!(debug_assertions)` so dev keeps the verbose filter and
+  release gets the quiet one; keep `RUST_LOG` as the override for
+  field debugging.
 - **Bundled git: decided — don't bundle.** Trade study written 2026-07-07
   (`design/2026-07-07-bundled-git-trade-study.md`): bundling breaks the
   install-relative config LeGit gets for free (GCM in Git-for-Windows'

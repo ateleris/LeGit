@@ -4,9 +4,10 @@ import { useActiveRepo } from "../../store/repos";
 
 /**
  * Git Log — a live, passive log of every git command the app runs (args, cwd,
- * duration, exit code, and stderr on failure). Distinct from the interactive
- * Git Console; this is read-only history, and where toasts send you for the
- * full detail of a failed command.
+ * duration, exit code, and stderr on failure), interleaved with the watcher
+ * batches that triggered refetches (domains + trigger paths). Distinct from
+ * the interactive Git Console; this is read-only history, and where toasts
+ * send you for the full detail of a failed command.
  */
 export function GitLogPanel() {
   const allEntries = useGitLogStore((s) => s.entries);
@@ -14,10 +15,15 @@ export function GitLogPanel() {
   const repo = useActiveRepo();
   const endRef = useRef<HTMLDivElement | null>(null);
 
-  // Only the active repo's commands — each invocation's `cwd` is its repo's
-  // path, which matches the active repo's `path` for session-run commands.
+  // Only the active repo's entries: an invocation's `cwd` is its repo's path;
+  // a watcher batch carries the repo id directly.
   const entries = useMemo(
-    () => (repo ? allEntries.filter((e) => e.cwd === repo.path) : []),
+    () =>
+      repo
+        ? allEntries.filter((e) =>
+            e.kind === "command" ? e.cwd === repo.path : e.repo_id === repo.id
+          )
+        : [],
     [allEntries, repo]
   );
 
@@ -33,7 +39,7 @@ export function GitLogPanel() {
         style={{ display: "flex", alignItems: "center", gap: 8 }}
       >
         <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
-          {entries.length} command{entries.length === 1 ? "" : "s"}
+          {entries.length} entr{entries.length === 1 ? "y" : "ies"}
         </span>
         <button onClick={clear} disabled={entries.length === 0} style={{ marginLeft: "auto", fontSize: "var(--fz-sm)" }}>
           Clear
@@ -55,37 +61,56 @@ export function GitLogPanel() {
             {repo ? "No git commands for this repository yet." : "No repository selected."}
           </span>
         ) : (
-          entries.map((e) => (
-            <div key={e.id} style={{ padding: "1px 0" }}>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          entries.map((e) =>
+            e.kind === "watcher" ? (
+              <div key={e.id} style={{ padding: "1px 0", display: "flex", alignItems: "baseline", gap: 8 }}>
+                <span aria-hidden style={{ color: "var(--subtle-fg)", flexShrink: 0 }}>
+                  ⟳
+                </span>
                 <span
-                  aria-hidden
-                  style={{ color: e.success ? "var(--success-fg)" : "var(--error-fg)", flexShrink: 0 }}
+                  className="legit-subtle"
+                  style={{ flex: 1, minWidth: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}
                 >
-                  {e.success ? "✓" : "✗"}
-                </span>
-                <span style={{ flex: 1, minWidth: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                  git {e.args.join(" ")}
-                </span>
-                <span className="legit-subtle" style={{ flexShrink: 0, fontSize: "var(--fz-sm)" }}>
-                  {e.duration_ms}ms{e.exit_code != null && e.exit_code !== 0 ? ` · exit ${e.exit_code}` : ""}
+                  watcher: {e.trigger_paths.join(", ")}
+                  {e.trigger_count > e.trigger_paths.length
+                    ? ` (+${e.trigger_count - e.trigger_paths.length} more)`
+                    : ""}
+                  {" → "}
+                  {e.domains.join(", ")}
                 </span>
               </div>
-              {!e.success && e.stderr.trim() && (
-                <pre
-                  style={{
-                    margin: "2px 0 4px 20px",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                    color: "var(--error-fg)",
-                    fontSize: "var(--fz-sm)",
-                  }}
-                >
-                  {e.stderr.trim()}
-                </pre>
-              )}
-            </div>
-          ))
+            ) : (
+              <div key={e.id} style={{ padding: "1px 0" }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                  <span
+                    aria-hidden
+                    style={{ color: e.success ? "var(--success-fg)" : "var(--error-fg)", flexShrink: 0 }}
+                  >
+                    {e.success ? "✓" : "✗"}
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                    git {e.args.join(" ")}
+                  </span>
+                  <span className="legit-subtle" style={{ flexShrink: 0, fontSize: "var(--fz-sm)" }}>
+                    {e.duration_ms}ms{e.exit_code != null && e.exit_code !== 0 ? ` · exit ${e.exit_code}` : ""}
+                  </span>
+                </div>
+                {!e.success && e.stderr.trim() && (
+                  <pre
+                    style={{
+                      margin: "2px 0 4px 20px",
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                      color: "var(--error-fg)",
+                      fontSize: "var(--fz-sm)",
+                    }}
+                  >
+                    {e.stderr.trim()}
+                  </pre>
+                )}
+              </div>
+            )
+          )
         )}
         <div ref={endRef} />
       </div>
