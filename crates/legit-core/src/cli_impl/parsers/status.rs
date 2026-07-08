@@ -1,9 +1,15 @@
-//! Parser for `git status --porcelain=v1 -z` output backing `status()`.
+//! Parser for `git status --porcelain=v2 -z` output backing `status()`.
 //!
 //! The format flags live here next to the parser so the contract is visible in
-//! one place (DESIGN-v0.3.md §4.5). `--porcelain=v1` gives a stable, two-column
-//! `XY <path>` record per change; `-z` makes records NUL-separated and disables
-//! path quoting, so paths with spaces/unicode pass through verbatim.
+//! one place (DESIGN-v0.3.md §4.5). `--porcelain=v2` gives one tagged record
+//! per change (`1` ordinary, `2` rename/copy, `u` unmerged, `?` untracked,
+//! `!` ignored); `-z` makes records NUL-separated and disables path quoting,
+//! so paths with spaces/unicode pass through verbatim. v2 (git 2.11+, stable)
+//! is required because only its `S<c><m><u>` sub-field distinguishes a moved
+//! submodule pointer from a dirty submodule worktree - porcelain v1 reports
+//! both as ` M` (spec: 2026-07-08 submodules architecture, sub-project 1).
+//! The sub-field and mode fields are skipped positionally for now and get
+//! surfaced in sub-project 2.
 //!
 //! Line counts are not part of porcelain status: they come from two extra
 //! `git diff --numstat -z` runs (index and working tree) whose parsed maps are
@@ -18,7 +24,7 @@ use std::collections::HashMap;
 /// file individually; without it git collapses an entirely-untracked directory
 /// into a single `dir/` entry, which the UI can't stage/diff per file.
 pub const STATUS_ARGS: [&str; 4] =
-    ["status", "--porcelain=v1", "-z", "--untracked-files=all"];
+    ["status", "--porcelain=v2", "-z", "--untracked-files=all"];
 
 /// Line counts for unstaged entries: working tree vs index. `-M` matches the
 /// rename detection porcelain status performs, so a renamed entry's counts are
@@ -28,67 +34,80 @@ pub const NUMSTAT_UNSTAGED_ARGS: [&str; 4] = ["diff", "--numstat", "-M", "-z"];
 /// Line counts for staged entries: index vs HEAD.
 pub const NUMSTAT_STAGED_ARGS: [&str; 5] = ["diff", "--numstat", "-M", "-z", "--cached"];
 
-/// Parse the stdout of `git status --porcelain=v1 -z`.
+/// Parse the stdout of `git status --porcelain=v2 -z`.
 ///
-/// Each record is `XY <path>` where `X` is the index (staged) column and `Y`
-/// the working-tree column. A non-blank, non-untracked `X` yields a staged
-/// `FileStatus`; a non-blank `Y` yields a working-tree one — so a path that is
-/// both staged and then re-modified produces two entries. Untracked (`??`) maps
-/// to a single `Untracked` entry, unmerged records (containing `U`, or the
-/// `AA`/`DD` both-sides forms) to a single `Conflicted` entry.
-///
-/// Rename/copy records (`R`/`C`) are followed by a second NUL-terminated field
-/// carrying the original path; it is consumed and ignored (we report the new
-/// path only).
+/// Record tags: `1` ordinary change, `2` rename/copy (the original path is
+/// the next NUL field - consumed and ignored, we report the new path only),
+/// `u` unmerged, `?` untracked, `!` ignored. In `<XY>`, `X` is the index
+/// (staged) column and `Y` the working-tree column, `.` meaning unmodified -
+/// a path both staged and re-modified produces two entries, exactly like the
+/// old v1 parser. `#` headers appear only with `--branch`/`--show-stash`
+/// (never passed); unknown tags are skipped.
 pub fn parse_status(output: &str) -> Vec<FileStatus> {
     let mut result = Vec::new();
     let mut tokens = output.split('\0');
 
-    while let Some(entry) = tokens.next() {
-        // The trailing `-z` separator produces a final empty token; blank
-        // tokens are never valid records.
-        if entry.len() < 3 {
+    while let Some(record) = tokens.next() {
+        // The trailing `-z` separator produces a final empty token.
+        let Some(&tag) = record.as_bytes().first() else {
             continue;
-        }
-        let bytes = entry.as_bytes();
-        let x = bytes[0] as char;
-        let y = bytes[1] as char;
-        // Byte offset 3 is safe: X, Y and the separating space are all ASCII.
-        let path = &entry[3..];
-
-        // Rename/copy carries the original path as the next NUL field — consume it.
-        if x == 'R' || x == 'C' || y == 'R' || y == 'C' {
-            tokens.next();
-        }
-
-        // Unmerged (conflict) records: either column is `U`, or the both-sides
-        // `AA`/`DD` forms. Reported once, not split into staged/unstaged.
-        if x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D') {
-            result.push(FileStatus::new(path, FileState::Conflicted, false));
-            continue;
-        }
-
-        // Untracked / ignored: single entry, never staged.
-        if x == '?' {
-            result.push(FileStatus::new(path, FileState::Untracked, false));
-            continue;
-        }
-        if x == '!' {
-            result.push(FileStatus::new(path, FileState::Ignored, false));
-            continue;
-        }
-
-        // Staged change (index column).
-        if x != ' ' {
-            result.push(FileStatus::new(path, map_code(x), true));
-        }
-        // Working-tree change (worktree column).
-        if y != ' ' {
-            result.push(FileStatus::new(path, map_code(y), false));
+        };
+        match tag {
+            // `1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>`
+            b'1' => {
+                let mut fields = record.splitn(9, ' ');
+                if let (Some(xy), Some(path)) = (fields.nth(1), fields.nth(6)) {
+                    push_columns(xy, path, &mut result);
+                }
+            }
+            // `2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path>` +
+            // the original path as the next NUL field - consume it.
+            b'2' => {
+                tokens.next();
+                let mut fields = record.splitn(10, ' ');
+                if let (Some(xy), Some(path)) = (fields.nth(1), fields.nth(7)) {
+                    push_columns(xy, path, &mut result);
+                }
+            }
+            // `u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>` -
+            // reported once, not split into staged/unstaged (v1's `AA`/`DD`/
+            // `*U` forms all arrive as `u` records here).
+            b'u' => {
+                if let Some(path) = record.splitn(11, ' ').nth(10) {
+                    result.push(FileStatus::new(path, FileState::Conflicted, false));
+                }
+            }
+            // Untracked / ignored: single entry, never staged.
+            b'?' => {
+                if let Some(path) = record.strip_prefix("? ") {
+                    result.push(FileStatus::new(path, FileState::Untracked, false));
+                }
+            }
+            b'!' => {
+                if let Some(path) = record.strip_prefix("! ") {
+                    result.push(FileStatus::new(path, FileState::Ignored, false));
+                }
+            }
+            _ => {}
         }
     }
 
     result
+}
+
+/// Emit the staged (index column) and/or working-tree entry for one record.
+/// `.` means "unmodified on this side" in v2, replacing v1's space.
+fn push_columns(xy: &str, path: &str, out: &mut Vec<FileStatus>) {
+    let mut chars = xy.chars();
+    let (Some(x), Some(y)) = (chars.next(), chars.next()) else {
+        return;
+    };
+    if x != '.' {
+        out.push(FileStatus::new(path, map_code(x), true));
+    }
+    if y != '.' {
+        out.push(FileStatus::new(path, map_code(y), false));
+    }
 }
 
 /// Whether an entry can carry line counts from the numstat streams. Untracked
@@ -152,6 +171,29 @@ mod tests {
         s
     }
 
+    /// Build a v2 ordinary (`1`) record. Only `<XY>` and `<path>` matter to
+    /// the parser; the sub/mode/hash fields are positional filler it skips.
+    fn ord(xy: &str, path: &str) -> String {
+        format!("1 {xy} N... 100644 100644 100644 aaaaaaa bbbbbbb {path}")
+    }
+
+    /// Ordinary record for a submodule entry: `S<c><m><u>` sub field and
+    /// gitlink (160000) modes.
+    fn ord_sub(xy: &str, sub: &str, path: &str) -> String {
+        format!("1 {xy} {sub} 160000 160000 160000 aaaaaaa bbbbbbb {path}")
+    }
+
+    /// Build a v2 rename/copy (`2`) record. The original path travels as the
+    /// next NUL field, so callers pass it as a separate `stream` element.
+    fn ren(xy: &str, score: &str, path: &str) -> String {
+        format!("2 {xy} N... 100644 100644 100644 aaaaaaa bbbbbbb {score} {path}")
+    }
+
+    /// Build a v2 unmerged (`u`) record.
+    fn unm(xy: &str, path: &str) -> String {
+        format!("u {xy} N... 100644 100644 100644 100644 a1 a2 a3 {path}")
+    }
+
     /// Shorthand for the expected parser output (counts always empty there).
     fn fs(path: &str, state: FileState, staged: bool) -> FileStatus {
         FileStatus::new(path, state, staged)
@@ -159,7 +201,7 @@ mod tests {
 
     #[test]
     fn parses_working_tree_modification() {
-        let out = stream(&[" M src/main.rs"]);
+        let out = stream(&[&ord(".M", "src/main.rs")]);
         assert_eq!(
             parse_status(&out),
             vec![fs("src/main.rs", FileState::Modified, false)]
@@ -168,14 +210,14 @@ mod tests {
 
     #[test]
     fn parses_staged_addition() {
-        let out = stream(&["A  new.txt"]);
+        let out = stream(&[&ord("A.", "new.txt")]);
         assert_eq!(parse_status(&out), vec![fs("new.txt", FileState::Added, true)]);
     }
 
     #[test]
     fn splits_staged_and_restaged_modification() {
         // Staged modification then further modified in the working tree.
-        let out = stream(&["MM file.rs"]);
+        let out = stream(&[&ord("MM", "file.rs")]);
         assert_eq!(
             parse_status(&out),
             vec![
@@ -187,7 +229,7 @@ mod tests {
 
     #[test]
     fn parses_untracked() {
-        let out = stream(&["?? scratch.tmp"]);
+        let out = stream(&["? scratch.tmp"]);
         assert_eq!(
             parse_status(&out),
             vec![fs("scratch.tmp", FileState::Untracked, false)]
@@ -195,15 +237,30 @@ mod tests {
     }
 
     #[test]
+    fn parses_ignored() {
+        let out = stream(&["! target/debug"]);
+        assert_eq!(
+            parse_status(&out),
+            vec![fs("target/debug", FileState::Ignored, false)]
+        );
+    }
+
+    #[test]
     fn parses_rename_and_consumes_original_path() {
-        // `R  new\0old\0` — the original path is a separate field.
-        let out = stream(&["R  new.rs", "old.rs"]);
+        // `2 ... new.rs\0old.rs\0` - the original path is a separate field.
+        let out = stream(&[&ren("R.", "R100", "new.rs"), "old.rs"]);
         assert_eq!(parse_status(&out), vec![fs("new.rs", FileState::Renamed, true)]);
     }
 
     #[test]
+    fn parses_worktree_rename() {
+        let out = stream(&[&ren(".R", "R100", "new.rs"), "old.rs"]);
+        assert_eq!(parse_status(&out), vec![fs("new.rs", FileState::Renamed, false)]);
+    }
+
+    #[test]
     fn parses_conflict() {
-        let out = stream(&["UU merged.rs"]);
+        let out = stream(&[&unm("UU", "merged.rs")]);
         assert_eq!(
             parse_status(&out),
             vec![fs("merged.rs", FileState::Conflicted, false)]
@@ -211,12 +268,58 @@ mod tests {
     }
 
     #[test]
+    fn parses_both_sides_conflict_forms() {
+        // v1 special-cased `AA`/`DD`; v2 delivers them as `u` records too.
+        let out = stream(&[&unm("AA", "both-added.rs"), &unm("DD", "both-deleted.rs")]);
+        assert_eq!(
+            parse_status(&out),
+            vec![
+                fs("both-added.rs", FileState::Conflicted, false),
+                fs("both-deleted.rs", FileState::Conflicted, false),
+            ]
+        );
+    }
+
+    #[test]
     fn parses_path_with_spaces() {
-        let out = stream(&[" M dir with spaces/a b.txt"]);
+        let out = stream(&[&ord(".M", "dir with spaces/a b.txt")]);
         assert_eq!(
             parse_status(&out),
             vec![fs("dir with spaces/a b.txt", FileState::Modified, false)]
         );
+    }
+
+    #[test]
+    fn typechange_folds_to_modified() {
+        let out = stream(&[&ord(".T", "link.rs")]);
+        assert_eq!(parse_status(&out), vec![fs("link.rs", FileState::Modified, false)]);
+    }
+
+    #[test]
+    fn submodule_records_fold_to_modified_for_now() {
+        // Parity with v1: submodule entries stay `Modified` until sub-project
+        // 2 surfaces the `S<c><m><u>` flags as `SubmoduleChanged`.
+        let out = stream(&[
+            &ord_sub("M.", "SC..", "vendor/staged-bump"),
+            &ord_sub(".M", "S.M.", "vendor/dirty-inside"),
+            &ord_sub(".M", "S..U", "vendor/untracked-inside"),
+        ]);
+        assert_eq!(
+            parse_status(&out),
+            vec![
+                fs("vendor/staged-bump", FileState::Modified, true),
+                fs("vendor/dirty-inside", FileState::Modified, false),
+                fs("vendor/untracked-inside", FileState::Modified, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn skips_unknown_record_tags() {
+        // `#` headers only appear with --branch/--show-stash (never passed);
+        // anything unrecognized must be skipped, not crash or mis-parse.
+        let out = stream(&["# branch.oid deadbeef", &ord(".M", "a.txt")]);
+        assert_eq!(parse_status(&out), vec![fs("a.txt", FileState::Modified, false)]);
     }
 
     #[test]
@@ -227,7 +330,7 @@ mod tests {
 
     #[test]
     fn parses_multiple_records() {
-        let out = stream(&["A  added.rs", " D removed.rs", "?? untracked.rs"]);
+        let out = stream(&[&ord("A.", "added.rs"), &ord(".D", "removed.rs"), "? untracked.rs"]);
         let parsed = parse_status(&out);
         assert_eq!(parsed.len(), 3);
         assert_eq!(parsed[0].state, FileState::Added);
@@ -242,7 +345,7 @@ mod tests {
     #[test]
     fn merges_staged_and_unstaged_counts_separately() {
         // Same path staged and re-modified: each side gets its own diff's counts.
-        let mut statuses = parse_status(&stream(&["MM file.rs"]));
+        let mut statuses = parse_status(&stream(&[&ord("MM", "file.rs")]));
         let staged = parse_numstat(&stream(&["3\t1\tfile.rs"]));
         let unstaged = parse_numstat(&stream(&["2\t0\tfile.rs"]));
         apply_numstat(&mut statuses, &staged, &unstaged);
@@ -255,7 +358,7 @@ mod tests {
 
     #[test]
     fn untracked_and_conflicted_keep_no_counts() {
-        let mut statuses = parse_status(&stream(&["?? new.txt", "UU merged.rs"]));
+        let mut statuses = parse_status(&stream(&["? new.txt", &unm("UU", "merged.rs")]));
         // Even if a numstat stream mentioned the paths, they must stay None.
         let counts = parse_numstat(&stream(&["9\t9\tnew.txt", "9\t9\tmerged.rs"]));
         apply_numstat(&mut statuses, &counts, &counts);
@@ -269,7 +372,7 @@ mod tests {
 
     #[test]
     fn marks_binary_without_counts() {
-        let mut statuses = parse_status(&stream(&[" M pic.bin"]));
+        let mut statuses = parse_status(&stream(&[&ord(".M", "pic.bin")]));
         let unstaged = parse_numstat(&stream(&["-\t-\tpic.bin"]));
         apply_numstat(&mut statuses, &HashMap::new(), &unstaged);
 
@@ -282,7 +385,7 @@ mod tests {
     fn staged_rename_counts_key_by_destination_path() {
         // Porcelain reports the new path; `diff --numstat -M -z` keys the
         // rename record by the destination too, so they line up.
-        let mut statuses = parse_status(&stream(&["R  new.rs", "old.rs"]));
+        let mut statuses = parse_status(&stream(&[&ren("R.", "R100", "new.rs"), "old.rs"]));
         let staged = parse_numstat(&stream(&["4\t2\t", "old.rs", "new.rs"]));
         apply_numstat(&mut statuses, &staged, &HashMap::new());
 
@@ -291,7 +394,7 @@ mod tests {
 
     #[test]
     fn missing_numstat_entry_keeps_none() {
-        let mut statuses = parse_status(&stream(&[" M file.rs"]));
+        let mut statuses = parse_status(&stream(&[&ord(".M", "file.rs")]));
         apply_numstat(&mut statuses, &HashMap::new(), &HashMap::new());
         assert_eq!(statuses[0].additions, None);
         assert_eq!(statuses[0].deletions, None);

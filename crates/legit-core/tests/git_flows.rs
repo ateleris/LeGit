@@ -1316,6 +1316,27 @@ async fn status_reports_counts_for_a_staged_rename() {
     assert_eq!((entry.additions, entry.deletions), (Some(1), Some(0)));
 }
 
+#[tokio::test]
+async fn status_reports_a_conflict_as_a_single_unstaged_entry() {
+    // Conflicts arrive as porcelain v2 `u` records; the parser must fold each
+    // into exactly one Conflicted entry (never split staged/unstaged, never
+    // duplicated), matching the old v1 behavior for `UU` forms.
+    let repo = TestRepo::init().await;
+    conflicting_branches(&repo).await;
+    let outcome = repo.backend.merge("feature", MergeOptions::default()).await.unwrap();
+    assert!(matches!(outcome, MergeOutcome::Conflicts { .. }), "{outcome:?}");
+
+    let status = repo.backend.status().await.unwrap();
+    let conflicted: Vec<_> = status
+        .iter()
+        .filter(|s| s.path == PathBuf::from("a.txt"))
+        .collect();
+    assert_eq!(conflicted.len(), 1, "one entry for the conflicted path: {status:?}");
+    assert_eq!(conflicted[0].state, FileState::Conflicted);
+    assert!(!conflicted[0].staged);
+    assert_eq!((conflicted[0].additions, conflicted[0].deletions), (None, None));
+}
+
 // ---------------------------------------------------------------------------
 // remote flows against ephemeral bare file:// remotes
 //

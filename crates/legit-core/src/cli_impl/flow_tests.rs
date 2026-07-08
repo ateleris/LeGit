@@ -1019,8 +1019,8 @@ async fn discard_restores_tracked_and_cleans_untracked() {
     let fake = FakeExecutor::default();
     // status: one modified (tracked), one untracked.
     fake.expect(
-        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        ok(" M tracked.txt\0?? untracked.txt\0"),
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        ok("1 .M N... 100644 100644 100644 aaaaaaa bbbbbbb tracked.txt\0? untracked.txt\0"),
     );
     fake.expect(&["restore", "--worktree", "--", "tracked.txt"], ok(""));
     fake.expect(&["clean", "-f", "--", "untracked.txt"], ok(""));
@@ -1040,8 +1040,8 @@ async fn discard_restores_tracked_and_cleans_untracked() {
 async fn status_enriches_entries_with_numstat_counts() {
     let fake = FakeExecutor::default();
     fake.expect(
-        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        ok("MM file.rs\0?? new.txt\0"),
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        ok("1 MM N... 100644 100644 100644 aaaaaaa bbbbbbb file.rs\0? new.txt\0"),
     );
     // Staged (index vs HEAD) first, then unstaged (worktree vs index).
     fake.expect(&["diff", "--numstat", "-M", "-z", "--cached"], ok("3\t1\tfile.rs\0"));
@@ -1064,8 +1064,8 @@ async fn status_skips_numstat_for_an_all_untracked_tree() {
     // No countable entry -> neither diff may run (assert_done catches extras).
     let fake = FakeExecutor::default();
     fake.expect(
-        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        ok("?? a.txt\0?? b.txt\0"),
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        ok("? a.txt\0? b.txt\0"),
     );
     let (b, exec) = backend(fake);
 
@@ -1079,8 +1079,10 @@ async fn status_survives_a_failing_numstat() {
     // Counts are cosmetic: a failing diff degrades to None, never an error.
     let fake = FakeExecutor::default();
     fake.expect(
-        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        ok("A  new.txt\0"),
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        // Mode/hash tokens are positional filler the parser skips; the zeroed
+        // HEAD-side values mirror real git output for a path absent from HEAD.
+        ok("1 A. N... 000000 100644 100644 0000000 bbbbbbb new.txt\0"),
     );
     fake.expect(
         &["diff", "--numstat", "-M", "-z", "--cached"],
