@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useActiveRepo } from "../../store/repos";
+import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { useSettingsStore, useConfirmDestructive } from "../../store/settings";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
@@ -234,6 +234,12 @@ export function ChangedFilesPanel() {
               <FileAtCommitMenuSection
                 file={file}
                 commitShort={selectedId.slice(0, 8)}
+                onOpenSubmodule={() => {
+                  void useRepoStore
+                    .getState()
+                    .openRepo(`${repo!.path}/${file.path}`)
+                    .catch((err: unknown) => notify.error(formatAppError(err)));
+                }}
                 onView={() => handleViewAtCommit(file.path)}
                 onRestore={() => handleRestoreToCommit(file.path)}
                 onHistory={() => useSummonStore.getState().summon("file-history", file.path)}
@@ -261,6 +267,7 @@ export function ChangedFilesPanel() {
 function FileAtCommitMenuSection({
   file,
   commitShort,
+  onOpenSubmodule,
   onView,
   onRestore,
   onHistory,
@@ -269,6 +276,7 @@ function FileAtCommitMenuSection({
 }: {
   file: FileTreeEntry;
   commitShort: string;
+  onOpenSubmodule: () => void;
   onView: () => void;
   onRestore: () => void;
   onHistory: () => void;
@@ -278,6 +286,8 @@ function FileAtCommitMenuSection({
   const confirmDestructive = useConfirmDestructive();
   const menuConfirm = useMenuConfirm();
   const deleted = file.change === "Deleted";
+  // A gitlink has no file content: view/blame/restore would error on it.
+  const submodule = file.change === "SubmoduleChanged";
 
   const requestRestore = () => {
     if (!confirmDestructive) {
@@ -294,15 +304,20 @@ function FileAtCommitMenuSection({
   return (
     <>
       <SectionLabel>{file.path}</SectionLabel>
+      {submodule && (
+        <MenuItem onClick={() => { onClose(); onOpenSubmodule(); }}>
+          Open submodule
+        </MenuItem>
+      )}
       {/* Binary files are viewable too: the backend classifies content and
           the File View panel reports "binary file, N bytes" for them. */}
-      <MenuItem disabled={deleted} onClick={() => { onClose(); onView(); }}>
+      <MenuItem disabled={deleted || submodule} onClick={() => { onClose(); onView(); }}>
         {deleted ? "View file (deleted in this commit)" : "View file at this commit"}
       </MenuItem>
       <MenuItem onClick={() => { onClose(); onHistory(); }}>
         File history
       </MenuItem>
-      <MenuItem disabled={deleted} onClick={() => { onClose(); onBlame(); }}>
+      <MenuItem disabled={deleted || submodule} onClick={() => { onClose(); onBlame(); }}>
         {deleted ? "Blame file (deleted in this commit)" : "Blame file at this commit"}
       </MenuItem>
       <MenuItem disabled={deleted} onClick={requestRestore}>

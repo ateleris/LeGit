@@ -113,6 +113,7 @@ export function RepoSettingsPanel() {
         <SettingsGroup id="repo-behavior" title="Behavior" caption="How LeGit acts in this repo">
           <MixedEndingRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
           <ExternalEditorRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
+          <SubmoduleAutoUpdateSection repoId={activeRepo.id} repoSettings={repoSettings} />
         </SettingsGroup>
 
         <SettingsGroup id="repo-git" title="Git" caption="Integration & configuration">
@@ -285,6 +286,59 @@ function MixedEndingRepoSection({
         <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: 2 }}>
           Effective: <strong>{effective ? "on" : "off"}</strong>
         </div>
+      </div>
+    </Section>
+  );
+}
+
+function SubmoduleAutoUpdateSection({
+  repoId,
+  repoSettings,
+}: {
+  repoId: string;
+  repoSettings: import("../../lib/types").RepoSettings | null;
+}) {
+  const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
+  const [saving, setSaving] = useState(false);
+  // null = default ON.
+  const enabled = repoSettings?.submodule_auto_update ?? true;
+
+  const setEnabled = async (value: boolean) => {
+    if (!repoSettings) return;
+    setSaving(true);
+    try {
+      await updateRepoSettings(repoId, { ...repoSettings, submodule_auto_update: value });
+      await loadRepoSettings(repoId);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Submodules">
+      <FieldNote>writes to: repos/&lt;hash&gt;/settings.json (this repo only)</FieldNote>
+      <label
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginTop: 8,
+          cursor: saving ? "default" : "pointer",
+          opacity: saving ? 0.5 : 1,
+          fontSize: "var(--fz-lg)",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={saving}
+          onChange={(e) => setEnabled(e.target.checked)}
+        />
+        Auto-update submodules after switch/pull
+      </label>
+      <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: 4 }}>
+        Dirty submodules follow the global branch-switch strategy; a conflicting
+        carry-over rolls the submodule back with your changes intact.
       </div>
     </Section>
   );

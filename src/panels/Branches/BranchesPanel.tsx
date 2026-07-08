@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
+import { autoUpdateSubmodules } from "../../lib/submodules";
 import {
   repoBranches,
   repoListRemotes,
@@ -183,6 +184,7 @@ export function BranchesSection() {
       const outcome = await repoSwitchBranch(repo.id, name);
       invalidate();
       notifySwitchOutcome(outcome, name);
+      void autoUpdateSubmodules(queryClient, repo.id);
     } catch (e) {
       setError(formatSwitchError(e));
     } finally {
@@ -198,6 +200,7 @@ export function BranchesSection() {
       const outcome = await repoCheckoutRemoteBranch(repo.id, fullRef);
       invalidate();
       notifySwitchOutcome(outcome, fullRef.replace(/^refs\/remotes\//, ""));
+      void autoUpdateSubmodules(queryClient, repo.id);
     } catch (e) {
       setError(formatSwitchError(e));
     } finally {

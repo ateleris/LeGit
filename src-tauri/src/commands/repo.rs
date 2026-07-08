@@ -8,7 +8,7 @@ use crate::state::{
     RepoSummary,
 };
 use legit_core::{classify_remote_error, GitError, GitRunner, OperationId};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::Manager as _;
 
@@ -92,6 +92,22 @@ async fn start_repo_watcher(state: &AppState, app: &tauri::AppHandle, session: &
 // Commands
 // ---------------------------------------------------------------------------
 
+/// Whether two paths name the same directory, regardless of spelling.
+/// Session paths come from `git rev-parse --show-toplevel` output and
+/// persisted settings, which can disagree in separator style or case (e.g. a
+/// repo reached once via the file dialog and once through a submodule chain).
+/// A literal `PathBuf` comparison then misses the match and a second session
+/// opens for the same repo - so compare filesystem identity instead.
+fn same_dir(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(ca), Ok(cb)) => ca == cb,
+        _ => false,
+    }
+}
+
 /// Probe `probe_path` for its repo top-level, reuse-or-open a session for it, and
 /// update the recent/open/active bookkeeping. Shared by `open_repo`, `repo_init`,
 /// and `repo_clone`.
@@ -111,12 +127,13 @@ async fn register_open_repo(
     }
     let toplevel = PathBuf::from(out.stdout.trim());
 
-    // Reuse an existing session for this canonical path if one is open.
+    // Reuse an existing session for this directory if one is open (identity
+    // comparison - two spellings of one directory must never open twice).
     let existing_summary = {
         let repos = state.repos.read().await;
         repos
             .values()
-            .find(|s| s.path == toplevel)
+            .find(|s| same_dir(&s.path, &toplevel))
             .map(|s| s.summary())
     };
 
@@ -124,6 +141,7 @@ async fn register_open_repo(
         tracing::info!(path = %toplevel.display(), id = %s.id, "open: reusing existing session");
         s
     } else {
+        tracing::info!(probe = %probe_path.display(), toplevel = %toplevel.display(), "open: new session");
         open_session(state, app, git_path, toplevel).await
     };
 
@@ -504,7 +522,11 @@ pub async fn restore_open_repos(
     let mut seen = std::collections::HashSet::new();
     for handle in probe_handles {
         if let Ok(Some(toplevel)) = handle.await {
-            if seen.insert(toplevel.clone()) {
+            // Key the dedup on filesystem identity, not spelling (see
+            // `same_dir`): persisted entries can carry different forms of
+            // the same directory.
+            let key = std::fs::canonicalize(&toplevel).unwrap_or_else(|_| toplevel.clone());
+            if seen.insert(key) {
                 toplevels.push(toplevel);
             }
         }
@@ -525,7 +547,7 @@ pub async fn restore_open_repos(
                     let repos = state.repos.read().await;
                     repos
                         .values()
-                        .find(|s| s.path == toplevel)
+                        .find(|s| same_dir(&s.path, &toplevel))
                         .map(|s| s.summary())
                 };
                 match existing {
@@ -701,6 +723,17 @@ pub async fn unset_lane_lock(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn same_dir_matches_different_spellings_of_one_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = dir.path().to_path_buf();
+        // A non-canonical spelling of the same directory (extra `.` hop).
+        let b = a.join(".");
+        assert!(super::same_dir(&a, &b));
+        // A genuinely different (non-existent) path never matches.
+        assert!(!super::same_dir(&a, &a.join("elsewhere")));
+    }
+
     use super::{build_clone_args, build_init_args};
 
     #[test]

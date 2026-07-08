@@ -1,6 +1,54 @@
 import { useQuery } from "@tanstack/react-query";
 import { repoSubmoduleLog } from "../../lib/commands";
 import type { SubmoduleChange, SubmoduleLog } from "../../lib/types";
+import { formatAppError } from "../../lib/types";
+import { useRepoStore } from "../../store/repos";
+import { notify } from "../../store/notifications";
+import { Button } from "../shared/buttons";
+
+/**
+ * View for a `SubmoduleDirty` working-changes entry: the pointer is unmoved,
+ * so there is no superproject diff to show - the uncommitted changes live in
+ * the submodule's own repository. Explains that and offers to open it.
+ */
+export function SubmoduleDirtyNotice({ repoId, path }: { repoId: string; path: string }) {
+  const openRepo = useRepoStore((s) => s.openRepo);
+  const repoPath = useRepoStore(
+    (s) => s.openRepos.find((r) => r.id === repoId)?.path ?? null,
+  );
+  return (
+    <div
+      className="legit-panel__body"
+      style={{ display: "flex", flexDirection: "column", gap: 10 }}
+    >
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <span style={{ fontSize: "var(--fz-md)", fontFamily: "monospace" }}>{path}</span>
+        <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
+          submodule
+        </span>
+      </div>
+      <span style={{ fontSize: "var(--fz-md)" }}>
+        This submodule has uncommitted changes inside its own repository. They
+        are not part of this repo's changes: committing here would not include
+        them, so there is nothing to stage from this view.
+      </span>
+      <div>
+        <Button
+          variant="primary"
+          disabled={!repoPath}
+          onClick={() => {
+            if (!repoPath) return;
+            void openRepo(`${repoPath}/${path}`).catch((e: unknown) =>
+              notify.error(formatAppError(e)),
+            );
+          }}
+        >
+          Open submodule
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Rich submodule pointer diff (spec 2026-07-08): old -> new SHA, a dirty

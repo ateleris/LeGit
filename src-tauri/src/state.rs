@@ -243,6 +243,9 @@ pub struct GlobalSettings {
     /// (the repo's `pull.rebase` config decides).
     #[serde(default)]
     pub pull_strategy: Option<PullStrategy>,
+    /// `git push --recurse-submodules` guard mode. `None` = off (no flag).
+    #[serde(default)]
+    pub push_recurse_submodules: Option<legit_core::PushRecurseMode>,
     /// Show author avatars (Gravatar) in the commit graph. OFF by default —
     /// enabling it sends hashed author emails to gravatar.com (privacy
     /// opt-in; see BACKLOG/settings copy).
@@ -296,6 +299,7 @@ impl Default for GlobalSettings {
             external_editor_command: None,
             switch_dirty_behavior: None,
             pull_strategy: None,
+            push_recurse_submodules: None,
             commit_avatars: false,
             diff_syntax_highlighting: false,
             suppressed_auto_open_panels: vec![],
@@ -358,6 +362,9 @@ pub struct RepoSettings {
     /// recomputed from live local config (see `commands/profiles.rs`).
     #[serde(default)]
     pub git_profile_id: Option<String>,
+    /// Auto-update submodule pointers after switch/pull (None = default ON).
+    #[serde(default)]
+    pub submodule_auto_update: Option<bool>,
 }
 
 // ---------------------------------------------------------------------------

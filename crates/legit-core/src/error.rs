@@ -25,6 +25,9 @@ pub enum GitError {
     #[error("push rejected: {stderr}")]
     PushRejected { stderr: String },
 
+    #[error("push blocked: the superproject references submodule commits that exist on no remote:\n{stderr}")]
+    UnpushedSubmodules { stderr: String },
+
     #[error("switching would overwrite local changes: {0}")]
     WouldOverwriteLocalChanges(String),
 

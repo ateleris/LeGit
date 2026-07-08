@@ -119,7 +119,12 @@ parser):
 
 **Status:** v2 `S` flags emit `FileState::SubmoduleChanged` for pointer
 moves (the existing `FileTree.tsx:94` icon comes alive). Dirty-inside-only
-shows as a badge on the submodule row, not as a fake file modification.
+emits the informational `FileState::SubmoduleDirty` (amended 2026-07-08
+after real-repo testing: hiding it reproduced the market's invisible-changes
+complaint). A `SubmoduleDirty` entry is visible in Working Changes but never
+offers stage/discard - staging an unmoved gitlink is a no-op and the changes
+live in the submodule's own repo; the entry's diff view explains this and
+offers "Open submodule". The Refs-row dirty badge remains.
 
 **Diff:**
 

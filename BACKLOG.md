@@ -121,8 +121,12 @@ written only after git confirms via `store`), or a UI prompt. Deferred:
   (skipped: fails on servers without reachable-sha1 fetch support).
 
 ### Advanced
-- **Submodules** (the `GitBackend::submodules()` method is a `NotYet` stub) —
-  list/update/sync.
+- **Submodules**: implemented 2026-07-08 (tiers 1-4: state model + display,
+  navigation + ops, lifecycle, safety - see
+  `docs/superpowers/specs/2026-07-08-submodules-architecture-design.md`).
+  Remaining ideas: nested-tree overview (deliberately flat for now),
+  hide-the-Refs-pane-when-no-gitlinks (paneview layouts persist panes),
+  `--shallow-submodules` on clone (see Clone / init above).
 - **Worktrees** (add/list/remove), **bisect**.
 
 

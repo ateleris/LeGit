@@ -317,6 +317,20 @@ pub async fn save_pull_strategy(
     state.persist_global_settings().await
 }
 
+/// Persist the `push --recurse-submodules` guard mode (None = off).
+#[tauri::command]
+#[specta::specta]
+pub async fn save_push_recurse_submodules(
+    state: tauri::State<'_, AppState>,
+    mode: Option<legit_core::PushRecurseMode>,
+) -> Result<(), AppError> {
+    {
+        let mut s = state.global_settings.write().await;
+        s.push_recurse_submodules = mode;
+    }
+    state.persist_global_settings().await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn list_themes(

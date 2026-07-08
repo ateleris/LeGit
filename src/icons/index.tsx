@@ -17,6 +17,7 @@ import {
   Check,
   ChevronDown,
   Cloud,
+  CornerLeftUp,
   GitBranch,
   GitBranchPlus,
   Globe,
@@ -62,6 +63,7 @@ function withDefaults(Base: LucideIcon, displayName: string) {
 export const BranchIcon = withDefaults(GitBranch, "BranchIcon");
 export const BranchPlusIcon = withDefaults(GitBranchPlus, "BranchPlusIcon");
 export const RemoteIcon = withDefaults(Cloud, "RemoteIcon");
+export const SuperprojectIcon = withDefaults(CornerLeftUp, "SuperprojectIcon");
 export const TagIcon = withDefaults(Tag, "TagIcon");
 export const StashIcon = withDefaults(Archive, "StashIcon");
 export const LinkIcon = withDefaults(Link2, "LinkIcon");

@@ -92,6 +92,7 @@ const STATUS_META: Record<FileState, { Icon: LucideIcon; color: string }> = {
   Untracked: { Icon: FileQuestion, color: "var(--subtle-fg)" },
   Ignored: { Icon: FileQuestion, color: "var(--subtle-fg)" },
   SubmoduleChanged: { Icon: GitFork, color: "var(--subtle-fg)" },
+  SubmoduleDirty: { Icon: GitFork, color: "var(--status-modified)" },
 };
 
 export function FileTree({

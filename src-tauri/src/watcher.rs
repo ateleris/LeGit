@@ -54,6 +54,11 @@ pub enum ChangeDomain {
     /// A merge/rebase/cherry-pick/revert started, advanced, or ended
     /// (MERGE_HEAD, MERGE_MSG, rebase-merge/, rebase-apply/, *_HEAD).
     OpState,
+    /// Submodule state changed: a write inside a submodule gitdir
+    /// (`.git/modules/**` HEAD/refs/index). Superproject-side triggers
+    /// (index, `.gitmodules`) already arrive via `Status`, which the frontend
+    /// derives into the submodules query (`withDerivedDomains`).
+    Submodules,
 }
 
 /// Payload for [`REPO_CHANGED_EVENT`]: which repo changed and in which domains.
@@ -219,6 +224,34 @@ fn classify_git(rel: &Path, out: &mut BTreeSet<ChangeDomain>) {
         "MERGE_MSG" => {
             out.insert(ChangeDomain::OpState);
         }
+        // A submodule's gitdir lives at `.git/modules/<name>/...`; the name
+        // defaults to the submodule path, so it may contain slashes - classify
+        // by tail components instead of locating the module boundary.
+        "modules" => {
+            let comps: Vec<String> = rel
+                .components()
+                .skip(1)
+                .filter_map(|c| match c {
+                    Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+                    _ => None,
+                })
+                .collect();
+            // Same noise filter as the superproject gitdir: object database,
+            // reflogs, and FETCH_HEAD churn without UI-visible state changes
+            // (lock files are already filtered above).
+            if comps.iter().any(|c| c == "objects" || c == "logs" || c == "FETCH_HEAD") {
+                return;
+            }
+            if comps
+                .iter()
+                .any(|c| c == "HEAD" || c == "index" || c == "refs" || c == "packed-refs")
+            {
+                out.insert(ChangeDomain::Submodules);
+                // A submodule HEAD move is a pointer move: visible in the
+                // superproject's status as SubmoduleChanged.
+                out.insert(ChangeDomain::Status);
+            }
+        }
         // In-progress merge/rebase state affects all three (conflicts + refs)
         // plus the op-state banner.
         "rebase-merge" | "rebase-apply" => {
@@ -331,6 +364,49 @@ mod tests {
             let mut out = BTreeSet::new();
             classify(&gd.join(noise), wt, gd, &Gitignore::empty(), &mut out);
             assert!(out.is_empty(), "{noise} should be ignored, got {out:?}");
+        }
+    }
+
+    #[test]
+    fn submodule_gitdir_head_move_hits_submodules_domain() {
+        // A commit inside a submodule moves `.git/modules/<name>/HEAD`;
+        // before the Submodules domain that classified as nothing and the UI
+        // went stale.
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        let mut out = BTreeSet::new();
+        classify(Path::new("/repo/.git/modules/lib/HEAD"), wt, gd, &Gitignore::empty(), &mut out);
+        assert!(out.contains(&ChangeDomain::Submodules), "got {out:?}");
+        assert!(out.contains(&ChangeDomain::Status), "pointer move shows in status too");
+    }
+
+    #[test]
+    fn submodule_gitdir_refs_hit_submodules_even_for_slashed_names() {
+        // Submodule names default to their path and may contain slashes:
+        // `.git/modules/vendor/lib/refs/heads/main`.
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        let mut out = BTreeSet::new();
+        classify(
+            Path::new("/repo/.git/modules/vendor/lib/refs/heads/main"),
+            wt, gd, &Gitignore::empty(), &mut out,
+        );
+        assert!(out.contains(&ChangeDomain::Submodules), "got {out:?}");
+    }
+
+    #[test]
+    fn submodule_gitdir_objects_and_locks_stay_quiet() {
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        for noisy in [
+            "/repo/.git/modules/lib/objects/aa/bbcc",
+            "/repo/.git/modules/lib/index.lock",
+            "/repo/.git/modules/lib/logs/HEAD",
+            "/repo/.git/modules/lib/FETCH_HEAD",
+        ] {
+            let mut out = BTreeSet::new();
+            classify(Path::new(noisy), wt, gd, &Gitignore::empty(), &mut out);
+            assert!(out.is_empty(), "{noisy} classified as {out:?}");
         }
     }
 

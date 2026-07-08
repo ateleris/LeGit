@@ -119,9 +119,10 @@ fn push_columns(xy: &str, path: &str, out: &mut Vec<FileStatus>) {
 /// Emit entries for a submodule record (`S<c><m><u>` sub field). The staged
 /// column stages the gitlink pointer, so staged `M`/`T` becomes
 /// `SubmoduleChanged` (add/delete read better as `Added`/`Deleted`). The
-/// worktree `M` covers both pointer moves and dirty contents; only a real
-/// pointer move (`c` flag) yields an entry - dirty-only submodules surface
-/// as a Refs-panel badge, not a pseudo file change.
+/// worktree `M` covers both pointer moves and dirty contents: a real pointer
+/// move (`c` flag) is the committable `SubmoduleChanged`; dirty-only becomes
+/// the informational `SubmoduleDirty` (visible, but never stage/discard -
+/// the changes live inside the submodule's own repo).
 fn push_submodule_columns(xy: &str, sub: &str, path: &str, out: &mut Vec<FileStatus>) {
     let mut chars = xy.chars();
     let (Some(x), Some(y)) = (chars.next(), chars.next()) else {
@@ -142,7 +143,7 @@ fn push_submodule_columns(xy: &str, sub: &str, path: &str, out: &mut Vec<FileSta
         _ if pointer_moved => {
             out.push(FileStatus::new(path, FileState::SubmoduleChanged, false));
         }
-        _ => {} // dirty-only
+        _ => out.push(FileStatus::new(path, FileState::SubmoduleDirty, false)),
     }
 }
 
@@ -157,6 +158,7 @@ pub fn wants_counts(status: &FileStatus) -> bool {
             | FileState::Ignored
             | FileState::Conflicted
             | FileState::SubmoduleChanged
+            | FileState::SubmoduleDirty
     )
 }
 
@@ -357,16 +359,30 @@ mod tests {
     }
 
     #[test]
-    fn dirty_only_submodules_produce_no_entry() {
-        // Dirty contents are not a committable superproject change: they show
-        // as a badge on the Refs-panel submodule row, never as a pseudo file
-        // modification (spec 2026-07-08, sub-project 2).
+    fn dirty_only_submodules_become_submodule_dirty() {
+        // Dirty contents are not a committable superproject change (staging
+        // stages nothing - the pointer is unmoved), but they must still be
+        // VISIBLE: the market's canonical submodule complaint is invisible
+        // changes. `SubmoduleDirty` is informational - the UI offers "open
+        // the submodule", never stage/discard.
         let out = stream(&[
             &ord_sub(".M", "S.M.", "vendor/dirty"),
             &ord_sub(".M", "S..U", "vendor/untracked"),
             &ord_sub(".M", "S.MU", "vendor/both-dirty"),
         ]);
-        assert_eq!(parse_status(&out), vec![]);
+        assert_eq!(
+            parse_status(&out),
+            vec![
+                fs("vendor/dirty", FileState::SubmoduleDirty, false),
+                fs("vendor/untracked", FileState::SubmoduleDirty, false),
+                fs("vendor/both-dirty", FileState::SubmoduleDirty, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn submodule_dirty_wants_no_counts() {
+        assert!(!wants_counts(&fs("vendor/lib", FileState::SubmoduleDirty, false)));
     }
 
     #[test]
