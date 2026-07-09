@@ -971,7 +971,9 @@ export function CommitsPanel() {
       if (commit.id === WORKING_DIR_ID) {
         // Working-dir row → show the staging/commit panel in the shared side
         // slot (swapping out Changed Files). No commit-details for the index.
-        summon.swapSummon("working-changes", "changed-files");
+        // The `null` payload tells the panel to sync the Diff/Merge slot to
+        // its own selection (clearing a stale commit diff).
+        summon.swapSummon("working-changes", "changed-files", null);
         return;
       }
       summon.summon("commit-details", commit.id);

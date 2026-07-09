@@ -795,8 +795,15 @@ export class HunkExpanderMarker extends GutterMarker {
   }
   override toDOM(): HTMLElement {
     const expand = this.onExpand;
-    if (expand === null) return headerBand(this.spanTwoColumns);
-    return expanderPair((dir) => expand(this.hunkIndex, dir), this.spanTwoColumns, this.dirs);
+    const el =
+      expand === null
+        ? headerBand(this.spanTwoColumns)
+        : expanderPair((dir) => expand(this.hunkIndex, dir), this.spanTwoColumns, this.dirs);
+    // Single-column markers cover the cell's padding via the absolute fill
+    // (the number-gutter cells are position: relative); the two-column
+    // variant already uses its own measured overlay.
+    if (!this.spanTwoColumns) el.classList.add("cm-hunk-expander-fill");
+    return el;
   }
 }
 
@@ -1047,7 +1054,7 @@ function mountSplit(
   };
 
   const leftPane = pane(leftEl, left, false, false, true);
-  const rightPane = pane(rightEl, right, true, editable);
+  const rightPane = pane(rightEl, right, true, editable, true);
   const leftView = leftPane.view;
   const rightView = rightPane.view;
 

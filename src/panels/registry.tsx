@@ -40,6 +40,9 @@ export interface PanelDescriptor {
   summons?: string[];
   /** Where to open the panel the first time it's ever opened. */
   defaultPlacement?: DefaultPlacement;
+  /** Panel this one shares a dock slot with: summoning one while the other is
+   *  open takes over its group and closes it (enforced by `summon()`). */
+  swapsWith?: string;
 }
 
 export const GLOBAL_PANELS: PanelDescriptor[] = [
@@ -154,14 +157,16 @@ export const REPO_PANELS: PanelDescriptor[] = [
     title: "Diff",
     scope: "repo",
     defaultPlacement: { direction: "right", referencePanel: "changed-files" },
+    swapsWith: "merge",
   },
   {
     id: "merge",
     title: "Merge",
     scope: "repo",
-    // Shares the Diff panel's spot: conflicted files swapSummon between the
-    // two, so the default placement only matters when neither is open.
+    // Shares the Diff panel's spot (`swapsWith`), so the default placement
+    // only matters when neither is open.
     defaultPlacement: { direction: "right", referencePanel: "changed-files" },
+    swapsWith: "diff",
   },
 ];
 

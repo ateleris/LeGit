@@ -282,6 +282,15 @@ button.legit-region-divider__mode:hover {
   overflow: auto;
   padding: 8px;
 }
+/* Merge panes scroll in lockstep; only the rightmost shows the vertical
+   bar. overflow-y: hidden removes the bar WITHOUT switching Chromium into
+   custom-scrollbar rendering, so the horizontal bar stays native like
+   everywhere else. Programmatic scrollTop (the sync) still works; wheel
+   input is forwarded by the view. */
+.legit-merge-novscroll .cm-editor .cm-scroller {
+  overflow-y: hidden;
+}
+
 .legit-panel__toolbar {
   display: flex;
   gap: 6px;

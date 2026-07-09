@@ -134,6 +134,13 @@ export const useSummonStore = create<SummonStore>((set, get) => ({
       return;
     }
 
+    // Slot sharing: if this panel's swap sibling is open, take over its spot
+    // instead of placing a second panel next to it (e.g. Diff <-> Merge).
+    if (desc.swapsWith && api.getPanel(desc.swapsWith)) {
+      get().swapSummon(targetId, desc.swapsWith, payload);
+      return;
+    }
+
     // Panel is not open — queue payload so it's ready when the panel mounts.
     if (payload !== undefined) {
       set((s) => ({ payloadQueue: { ...s.payloadQueue, [targetId]: payload } }));

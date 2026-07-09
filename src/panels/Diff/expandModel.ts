@@ -12,7 +12,7 @@ export interface HunkExpansion {
 }
 
 /** `@@ -a,b +c,d @@<suffix>` with fresh numbers, keeping the suffix. */
-function renumberHeader(header: string, oldStart: number, oldLines: number, newStart: number, newLines: number): string {
+export function renumberHeader(header: string, oldStart: number, oldLines: number, newStart: number, newLines: number): string {
   const m = header.match(/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@(.*)$/);
   const suffix = m ? m[1] : "";
   return `@@ -${oldStart},${oldLines} +${newStart},${newLines} @@${suffix}`;

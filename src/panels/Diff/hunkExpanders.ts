@@ -91,6 +91,17 @@ export const EXPANDER_THEME = {
     boxSizing: "border-box" as const,
     zIndex: "3",
   },
+  // Fills the entire gutter cell including its padding (the cell is
+  // position: relative), so no background stripe survives beside it.
+  ".cm-hunk-expander-fill": {
+    position: "absolute" as const,
+    left: "0",
+    right: "0",
+    top: "0",
+    bottom: "0",
+    width: "auto",
+    height: "auto",
+  },
   ".cm-hunk-band": {
     background: "var(--diff-hunk-header-bg)",
   },

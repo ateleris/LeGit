@@ -23,18 +23,16 @@ import {
   type DecorationSet,
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { codeFolding, foldEffect, unfoldAll } from "@codemirror/language";
+import { codeFolding, foldEffect, unfoldAll, unfoldEffect } from "@codemirror/language";
 import { EXPAND_STEP, EXPANDER_THEME, expanderPair, headerBand } from "../Diff/hunkExpanders";
 import { baseTheme, NumberMarker, plusMinusIcon, readOnly } from "../Diff/DiffEditor";
 import { loadLanguageForPath, syntaxColorTheme } from "../Diff/syntaxLanguages";
 import {
-  alignedBreakpoints,
   blockSection,
   composeBlockLines,
   foldableRanges,
   locateRegionAnchors,
   markerViewSpans,
-  piecewiseMap,
   regionsFromParsed,
   sideLabel,
   type ConflictSideNames,
@@ -177,30 +175,28 @@ class LineToggleMarker extends GutterMarker {
 
 const mergeTheme = EditorView.theme({
   ...EXPANDER_THEME,
-  ".cm-merge-fold-label": {
-    flex: "1",
-    padding: "0 8px",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
+
   // Every pane reserves the horizontal scrollbar unconditionally: one pane
   // having it and another not would give them different viewport heights,
   // skewing the cross-pane line alignment near the bottom of the scroll.
   ".cm-scroller": { overflowX: "scroll" },
-  // Same metrics as the diff's `@@` hunk-header rows, but with the merge
-  // panel's own neutral band: the bar must never read as one of the sides.
-  ".cm-merge-fold": {
-    display: "flex",
-    alignItems: "center",
-    width: "100%",
-    boxSizing: "border-box",
-    cursor: "pointer",
-    background: "var(--merge-fold-bg)",
+  // The fold row IS the band, exactly like the diff's `@@` header lines:
+  // full editor width, same height/padding/type, gutter cells filled by the
+  // expander and band markers.
+  ".cm-line:has(> .cm-merge-fold)": {
+    backgroundColor: "var(--merge-fold-bg)",
     color: "var(--merge-fold-fg)",
     fontStyle: "italic",
+    display: "flex",
+    alignItems: "center",
+    boxSizing: "border-box",
     height: "calc(var(--fz-lg) * 1.5 + 16px)",
     padding: "0 8px",
+  },
+  ".cm-merge-fold": {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
   ".cm-conflict-check-block": { position: "relative" },
   ".cm-conflict-check-block input": { position: "relative", zIndex: "1" },
@@ -294,6 +290,8 @@ export const MergeView = forwardRef<
   // Pane fractions (Current, [Base], Result, Incoming), persisted.
   const sizesKey = "legit.merge-pane-sizes";
   const applyFoldsRef = useRef<((on: boolean) => void) | null>(null);
+  // Result scroll carried across remounts (save/discard rebuild the doc).
+  const centreScrollRef = useRef(0);
   const foldCommonRef = useRef(foldCommon);
 
   // View-mode toggle applies imperatively - a remount would drop the
@@ -491,6 +489,9 @@ export const MergeView = forwardRef<
       const body = document.createElement("div");
       body.style.flex = "1";
       body.style.minHeight = "0";
+      // One vertical scrollbar for the whole view, on the rightmost pane;
+      // the others scroll in lockstep via the sync.
+      if (i < labels.length - 1) body.classList.add("legit-merge-novscroll");
       col.append(head, body);
       wrap.appendChild(col);
       cols.push(body);
@@ -570,17 +571,106 @@ export const MergeView = forwardRef<
     const gapReveals: Array<{ down: number; up: number }> = [];
     // Which fold slot a placeholder at a given position belongs to, per view.
     const foldSlotByPos = new Map<EditorView, Map<number, number>>();
+    // Each pane's base (un-revealed) fold line-range per slot, for surgery.
+    const foldBases = new Map<EditorView, Map<number, { from: number; to: number }>>();
+    // All mounted panes, filled after construction (surgery + scroll sync).
+    const paneViews: EditorView[] = [];
+    // Live fold bars: their numbers are re-rendered after every expansion
+    // (a reveal moves the boundary the bar ABOVE it describes).
+    const foldBars = new Set<{ el: HTMLElement; view: EditorView; from: number }>();
+    // Sensible directions per slot: the fold at the file start can only be
+    // revealed upward, the one reaching the file end only downward (same
+    // rule as the diff's first/last hunk headers). Identical in every pane.
+    const slotDirs = new Map<number, "both" | "up" | "down">();
 
-    const expandGap = (view: EditorView, from: number, dir: "down" | "up" | "all") => {
+    /** The fold's current (revealed-adjusted) line range in a pane, or null
+     *  when it has shrunk below the placeholder threshold. */
+    const currentFoldRange = (v: EditorView, k: number) => {
+      const b = foldBases.get(v)?.get(k);
+      if (!b) return null;
+      const r = gapReveals[k] ?? { down: 0, up: 0 };
+      const f = b.from + r.down;
+      const t = b.to - r.up;
+      return t - f + 1 >= MIN_REMAINDER ? { f, t } : null;
+    };
+
+    /** The visible chunk (1-based start line + count) below fold `slot` in
+     *  a pane, ending at the next still-active fold or the file end. */
+    const chunkBelow = (
+      v: EditorView,
+      slot: number,
+    ): { start: number; count: number } | null => {
+      const bases = foldBases.get(v);
+      if (!bases) return null;
+      const total = v.state.doc.lines;
+      const own = currentFoldRange(v, slot);
+      if (!own) return null;
+      const start0 = own.t + 1;
+      let end0 = total - 1;
+      for (let j = slot + 1; bases.has(j); j++) {
+        const next = currentFoldRange(v, j);
+        if (next) {
+          end0 = next.f - 1;
+          break;
+        }
+      }
+      return { start: start0 + 1, count: Math.max(0, end0 - start0 + 1) };
+    };
+
+    // Reveal a few more lines of one gap in EVERY pane, surgically: only
+    // the affected fold is replaced (one transaction per pane), so the
+    // scroll anchor never moves — unlike a wholesale re-fold.
+    const expandGap = (view: EditorView, from: number, dir: "down" | "up") => {
       const slot = foldSlotByPos.get(view)?.get(from);
       if (slot === undefined) return;
       const reveal = (gapReveals[slot] ??= { down: 0, up: 0 });
-      if (dir === "all") {
-        reveal.down = Number.MAX_SAFE_INTEGER / 2;
-      } else {
-        reveal[dir] += EXPAND_STEP;
+      const before = { ...reveal };
+      reveal[dir] += EXPAND_STEP;
+      for (const v of paneViews) {
+        const base = foldBases.get(v)?.get(slot);
+        if (!base) continue;
+        const total = v.state.doc.lines;
+        const posRange = (f: number, t: number) => ({
+          from: v.state.doc.line(Math.min(f + 1, total)).from,
+          to: v.state.doc.line(Math.min(t + 1, total)).to,
+        });
+        const effects = [];
+        const slots = foldSlotByPos.get(v);
+        const oldF = base.from + before.down;
+        const oldT = base.to - before.up;
+        if (oldT - oldF + 1 >= MIN_REMAINDER) {
+          const old = posRange(oldF, oldT);
+          effects.push(unfoldEffect.of(old));
+          slots?.delete(old.from);
+        }
+        const newF = base.from + reveal.down;
+        const newT = base.to - reveal.up;
+        if (newT - newF + 1 >= MIN_REMAINDER) {
+          const next = posRange(newF, newT);
+          effects.push(foldEffect.of(next));
+          slots?.set(next.from, slot);
+        }
+        if (effects.length > 0) v.dispatch({ effects });
       }
-      applyFoldsRef.current?.(true);
+      refreshFoldBars();
+    };
+
+    /** Re-render every live bar's numbers (and prune detached ones). */
+    const refreshFoldBars = () => {
+      for (const bar of foldBars) {
+        if (!bar.el.isConnected) {
+          foldBars.delete(bar);
+          continue;
+        }
+        renderFoldBarText(bar.el, bar.view, bar.from);
+      }
+    };
+
+    const renderFoldBarText = (el: HTMLElement, view: EditorView, from: number) => {
+      const slot = foldSlotByPos.get(view)?.get(from);
+      const own = slot !== undefined ? chunkBelow(view, slot) : null;
+      el.textContent =
+        own && own.count > 0 ? `@@ -${own.start},${own.count} +${own.start},${own.count} @@` : "";
     };
 
     /** Line-number gutter that swaps in the gap expander on a fold's first
@@ -591,7 +681,7 @@ export const MergeView = forwardRef<
       lineMarker(view, line) {
         const slot = foldSlotByPos.get(view)?.get(line.from);
         if (slot !== undefined) {
-          return new ExpanderMarkerForGap(view, line.from);
+          return new ExpanderMarkerForGap(view, line.from, slotDirs.get(slot) ?? "both");
         }
         return new NumberMarker(String(view.state.doc.lineAt(line.from).number));
       },
@@ -602,14 +692,17 @@ export const MergeView = forwardRef<
       constructor(
         readonly view: EditorView,
         readonly pos: number,
+        readonly dirs: "both" | "up" | "down",
       ) {
         super();
       }
       override eq(other: ExpanderMarkerForGap): boolean {
-        return other.pos === this.pos && other.view === this.view;
+        return other.pos === this.pos && other.view === this.view && other.dirs === this.dirs;
       }
       override toDOM(): HTMLElement {
-        return expanderPair((dir) => expandGap(this.view, this.pos, dir));
+        const el = expanderPair((dir) => expandGap(this.view, this.pos, dir), false, this.dirs);
+        el.classList.add("cm-hunk-expander-fill");
+        return el;
       }
     }
 
@@ -620,14 +713,14 @@ export const MergeView = forwardRef<
       }),
       placeholderDOM: (view, _onclick, prepared) => {
         const p = prepared as { lines: number; from: number };
-        const el = document.createElement("div");
+        const el = document.createElement("span");
         el.className = "cm-merge-fold";
-        const label = document.createElement("span");
-        label.className = "cm-merge-fold-label";
-        label.textContent = `@@ ${p.lines} hidden line${p.lines === 1 ? "" : "s"} @@`;
-        label.title = "Show all hidden lines";
-        label.addEventListener("click", () => expandGap(view, p.from, "all"));
-        el.appendChild(label);
+        // Like a diff hunk header, the bar describes the visible chunk
+        // BELOW it (both pairs in this pane's own numbering). A fold
+        // reaching the file end has no chunk below - the bar stays an
+        // empty band, like the diff's trailing expander row.
+        renderFoldBarText(el, view, p.from);
+        foldBars.add({ el, view, from: p.from });
         return el;
       },
     });
@@ -694,8 +787,9 @@ export const MergeView = forwardRef<
             onToggleBlockRef.current(i, side),
           );
         },
-        lineMarkerChange: (u) =>
-          u.transactions.some((tr) => tr.effects.some((e) => e.is(selectionRefresh))),
+        // Recompute on every update: selection toggles AND fold changes
+        // must both refresh these cells (band fillers on fold rows).
+        lineMarkerChange: () => true,
       });
       const lineGutter = gutter({
         class: "cm-diff-action-gutter",
@@ -713,8 +807,9 @@ export const MergeView = forwardRef<
           }
           return null;
         },
-        lineMarkerChange: (u) =>
-          u.transactions.some((tr) => tr.effects.some((e) => e.is(selectionRefresh))),
+        // Recompute on every update: selection toggles AND fold changes
+        // must both refresh these cells (band fillers on fold rows).
+        lineMarkerChange: () => true,
       });
       const spacers = spacerField(
         () => starts,
@@ -814,36 +909,78 @@ export const MergeView = forwardRef<
     }
 
     // ------------------------------------------------------------------
-    // Result → sides scroll alignment from the LIVE block ranges.
+    // Unified scrolling: the panes are hard-aligned (equal heights by
+    // spacers/folds), so identity scrollTop sync is exact. The value guard
+    // breaks the async scroll-event echo loop.
     // ------------------------------------------------------------------
-    const anchorTops = (view: EditorView, lines: number[]): number[] =>
-      lines.map((n) => {
-        const lineNo = Math.min(Math.max(n + 1, 1), view.state.doc.lines);
-        return view.lineBlockAt(view.state.doc.line(lineNo).from).top;
-      });
-    const follow = () => {
-      const ranges = resultView.state.field(rangesField);
-      const centerLines = ranges.map(
-        (r) => resultView.state.doc.lineAt(Math.min(r.from, resultView.state.doc.length)).number - 1,
-      );
-      const src = resultView.scrollDOM;
-      const srcMax = src.scrollHeight - src.clientHeight;
-      const srcTops = anchorTops(resultView, centerLines);
-      const targets: Array<[EditorView, number[] | null]> = [
-        [oursView, ours !== null ? sideAnchors.ours : null],
-        [theirsView, theirs !== null ? sideAnchors.theirs : null],
-      ];
-      for (const [dstView, dstAnchors] of targets) {
-        const dst = dstView.scrollDOM;
-        const dstMax = dst.scrollHeight - dst.clientHeight;
-        const { xs, ys } = dstAnchors
-          ? alignedBreakpoints(srcTops, srcMax, anchorTops(dstView, dstAnchors), dstMax)
-          : { xs: [0, Math.max(srcMax, 1)], ys: [0, Math.max(dstMax, 0)] };
-        dst.scrollTop = piecewiseMap(src.scrollTop, xs, ys);
+    paneViews.push(oursView, resultView, theirsView);
+    const syncScroll = (src: EditorView) => {
+      const top = src.scrollDOM.scrollTop;
+      for (const v of paneViews) {
+        if (v !== src && Math.abs(v.scrollDOM.scrollTop - top) > 0.5) {
+          v.scrollDOM.scrollTop = top;
+        }
       }
     };
-    followRef.current = follow;
-    resultView.scrollDOM.addEventListener("scroll", follow);
+    const listeners = paneViews.map((v) => {
+      const fn = () => syncScroll(v);
+      v.scrollDOM.addEventListener("scroll", fn);
+      return [v, fn] as const;
+    });
+    // The hidden-overflow panes cannot wheel-scroll or middle-button-pan
+    // natively; provide both ourselves (the sync mirrors to the others).
+    const wheelListeners = [oursView, resultView].map((v) => {
+      const fn = (e: WheelEvent) => {
+        e.preventDefault();
+        const scale = e.deltaMode === 1 ? 24 : 1;
+        v.scrollDOM.scrollTop += e.deltaY * scale;
+        v.scrollDOM.scrollLeft += e.deltaX * scale;
+      };
+      v.scrollDOM.addEventListener("wheel", fn, { passive: false });
+      return [v, fn] as const;
+    });
+    const panListeners = [oursView, resultView].map((v) => {
+      const el = v.scrollDOM;
+      const onDown = (e: MouseEvent) => {
+        if (e.button !== 1) return;
+        e.preventDefault();
+        const ox = e.clientX;
+        const oy = e.clientY;
+        let cx = ox;
+        let cy = oy;
+        let raf = 0;
+        const move = (m: MouseEvent) => {
+          cx = m.clientX;
+          cy = m.clientY;
+        };
+        const DEAD = 4;
+        const step = () => {
+          const dy = cy - oy;
+          const dx = cx - ox;
+          if (Math.abs(dy) > DEAD) el.scrollTop += dy * 0.15;
+          if (Math.abs(dx) > DEAD) el.scrollLeft += dx * 0.15;
+          raf = requestAnimationFrame(step);
+        };
+        raf = requestAnimationFrame(step);
+        // Pan cursor for the whole gesture, on <body> so it survives the
+        // pointer leaving the pane (the move/up listeners are on window).
+        const prevCursor = document.body.style.cursor;
+        document.body.style.cursor = "all-scroll";
+        const end = () => {
+          cancelAnimationFrame(raf);
+          document.body.style.cursor = prevCursor;
+          window.removeEventListener("mousemove", move);
+          window.removeEventListener("mouseup", end);
+        };
+        window.addEventListener("mousemove", move);
+        window.addEventListener("mouseup", end);
+      };
+      el.addEventListener("mousedown", onDown);
+      return [el, onDown] as const;
+    });
+    followRef.current = () => syncScroll(resultView);
+    resultView.scrollDOM.scrollTop = centreScrollRef.current;
+    syncScroll(resultView);
 
     const recomputeAlignment = () => {
       const doc = resultView.state.doc;
@@ -872,10 +1009,7 @@ export const MergeView = forwardRef<
           (offTheirsRef.current[i] ?? 0) + (regionLens.theirs[i] ?? 0),
         ),
       );
-      const fx = alignRefresh.of(null);
-      resultView.dispatch({ effects: fx });
-      oursView.dispatch({ effects: alignRefresh.of(null) });
-      theirsView.dispatch({ effects: alignRefresh.of(null) });
+      for (const v of paneViews) v.dispatch({ effects: alignRefresh.of(null) });
     };
     recomputeRef.current = recomputeAlignment;
     recomputeAlignment();
@@ -884,18 +1018,28 @@ export const MergeView = forwardRef<
     // stay visible around every block). Ranges are per pane; the result's
     // come from its LIVE tracked blocks so they are correct after surgery.
     const applyFolds = (on: boolean) => {
+      // Captured before any fold dispatch: the transient unfold state must
+      // not be what we anchor to.
+      const keep = resultView.scrollDOM.scrollTop;
       const paneFold = (view: EditorView, starts: number[], lens: number[]) => {
         unfoldAll(view);
         foldSlotByPos.set(view, new Map());
+        foldBases.set(view, new Map());
         if (!on) return;
         const total = view.state.doc.lines;
         const slots = foldSlotByPos.get(view)!;
+        const paneBases = foldBases.get(view)!;
         const effects = [];
         const bases = foldableRanges(starts, lens, total, CONTEXT);
         for (let k = 0; k < bases.length; k++) {
+          paneBases.set(k, bases[k]);
+          slotDirs.set(
+            k,
+            bases[k].from === 0 ? "up" : bases[k].to === total - 1 ? "down" : "both",
+          );
           const reveal = gapReveals[k] ?? { down: 0, up: 0 };
-          let from = bases[k].from + reveal.down;
-          let to = bases[k].to - reveal.up;
+          const from = bases[k].from + reveal.down;
+          const to = bases[k].to - reveal.up;
           if (to - from + 1 < MIN_REMAINDER) continue; // fully / nearly revealed
           const pos = view.state.doc.line(Math.min(from + 1, total)).from;
           slots.set(pos, k);
@@ -921,7 +1065,15 @@ export const MergeView = forwardRef<
         return Math.max(endLine - starts[i], 1);
       });
       paneFold(resultView, starts, lens);
-      resultView.requestMeasure({ read: () => followRef.current?.() });
+      // Full re-applies (view-mode toggle) pin the scroll; expander clicks
+      // go through the surgical path and never get here.
+      resultView.requestMeasure({
+        read: () => null,
+        write: () => {
+          resultView.scrollDOM.scrollTop = keep;
+          followRef.current?.();
+        },
+      });
     };
     applyFoldsRef.current = applyFolds;
     if (foldCommon) applyFolds(true);
@@ -931,7 +1083,10 @@ export const MergeView = forwardRef<
     return () => {
       disposed = true;
       viewsRef.current = null;
-      resultView.scrollDOM.removeEventListener("scroll", follow);
+      centreScrollRef.current = resultView.scrollDOM.scrollTop;
+      for (const [v, fn] of listeners) v.scrollDOM.removeEventListener("scroll", fn);
+      for (const [v, fn] of wheelListeners) v.scrollDOM.removeEventListener("wheel", fn);
+      for (const [el, fn] of panListeners) el.removeEventListener("mousedown", fn);
       oursView.destroy();
       resultView.destroy();
       theirsView.destroy();

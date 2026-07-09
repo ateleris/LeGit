@@ -3,6 +3,7 @@
 // line can show a light background on the whole line plus a stronger background
 // on just the characters that changed.
 
+import { renumberHeader } from "./expandModel";
 import type { TextDiff, DiffLineKind } from "../../lib/types";
 
 export type RowKind = DiffLineKind | "Hunk";
@@ -160,6 +161,24 @@ function gapsAbove(diff: TextDiff): number[] {
   });
 }
 
+/** The header text for hunk `i`, extended over the run of following
+ *  gapless hunks whose headers get skipped: the emitted header must
+ *  describe everything visible below it, like a real diff header would. */
+function mergedHeaderText(diff: TextDiff, i: number, gaps: number[]): string {
+  let last = i;
+  while (last + 1 < diff.hunks.length && gaps[last + 1] === 0) last++;
+  const first = diff.hunks[i];
+  if (last === i) return first.header;
+  const end = diff.hunks[last];
+  return renumberHeader(
+    first.header,
+    first.old_start,
+    end.old_start + end.old_lines - first.old_start,
+    first.new_start,
+    end.new_start + end.new_lines - first.new_start,
+  );
+}
+
 /** Flatten a text diff into interleaved rows for the inline view.
  *  `trailingExpander` appends a synthetic header row (hunkIndex -1) after
  *  the last hunk, carrying the expand-down control for the file tail.
@@ -175,9 +194,10 @@ export function buildRows(
   const gaps = gapsAbove(diff);
   diff.hunks.forEach((hunk, hunkIndex) => {
     if (!(skipGaplessHeaders && gaps[hunkIndex] === 0)) {
+      const header = skipGaplessHeaders ? mergedHeaderText(diff, hunkIndex, gaps) : hunk.header;
       rows.push({
         kind: "Hunk",
-        text: hunkHeaderLabel(hunk.header),
+        text: hunkHeaderLabel(header),
         oldNo: null,
         newNo: null,
         hunkIndex,
@@ -262,7 +282,9 @@ export function buildSplitRows(
   diff.hunks.forEach((hunk, hunkIndex) => {
     // The `@@` header spans both sides (kept aligned), mirroring the inline view.
     if (!(skipGaplessHeaders && gaps[hunkIndex] === 0)) {
-      const label = hunkHeaderLabel(hunk.header);
+      const label = hunkHeaderLabel(
+        skipGaplessHeaders ? mergedHeaderText(diff, hunkIndex, gaps) : hunk.header,
+      );
       left.push({ kind: "Hunk", text: label, no: null, hunkIndex, lineIndex: -1 });
       right.push({ kind: "Hunk", text: label, no: null, hunkIndex, lineIndex: -1 });
     }

@@ -7,7 +7,7 @@ import { usePanelActiveEffect, usePanelFocusEffect } from "../PanelApiContext";
 import { repoCommit, repoConflictEntries, repoDiscard, repoLog, repoResolveTakeSide, repoStage, repoStatus, repoTrackingStatus, repoUnstage } from "../../lib/commands";
 import type { Commit, ConflictEntry, DiffRequest, DiffSource, FileStatus, TrackingStatus } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
-import { useSummonStore } from "../../store/summon";
+import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { useCommitDraftStore } from "../../store/commitDraft";
 import { notify } from "../../store/notifications";
 import { FileTree } from "../shared/FileTree/FileTree";
@@ -321,6 +321,20 @@ export function WorkingChangesPanel() {
     },
     [repo, status],
   );
+
+  // Summoned from the log's working-dir row: the shared Diff/Merge slot may
+  // still show a commit file from Changed Files. Sync it to THIS panel's
+  // selection - show the single selected working file, otherwise clear it.
+  const onSummoned = useCallback(() => {
+    if (selected && selected.paths.length === 1) {
+      syncOpenDiff(null, selected);
+      return;
+    }
+    const store = useSummonStore.getState();
+    store.notifyIfOpen("diff", null);
+    store.notifyIfOpen("merge", null);
+  }, [selected, syncOpenDiff]);
+  useSummonTarget("working-changes", onSummoned);
 
   const selectForMenu = (section: Section, path: string): string[] => {
     if (selected?.section === section && selected.paths.includes(path)) return selected.paths;
