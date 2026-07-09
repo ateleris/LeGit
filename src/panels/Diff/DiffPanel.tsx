@@ -5,6 +5,7 @@ import { useSettingsStore } from "../../store/settings";
 import { useSummonTarget } from "../../store/summon";
 import {
   repoDiff,
+  repoFileAtRevision,
   repoDiscardHunk,
   repoDiscardLines,
   repoReadWorktreeFile,
@@ -36,7 +37,9 @@ import {
   type HunkAction,
   type LineActionOp,
 } from "./DiffEditor";
-import { spliceEdits } from "./editModel";
+import { spliceEdits, splitLines } from "./editModel";
+import { expandDiff, type HunkExpansion } from "./expandModel";
+import { EXPAND_STEP } from "./hunkExpanders";
 
 const ACTION_TITLE: Record<HunkAction, string> = {
   stage: "Stage chunk",
@@ -180,7 +183,96 @@ export function DiffPanel() {
     enabled: !!request && request.repoId === activeRepoId && !dirty,
     staleTime: 5_000,
   });
-  dataRef.current = data;
+  // GitHub-style per-hunk context expansion (chunked view only; the full
+  // view already shows everything). Keyed by hunk index of the CURRENT
+  // data, so it resets whenever the underlying diff changes.
+  const [expansions, setExpansions] = useState<Map<number, HunkExpansion>>(new Map());
+  useEffect(() => {
+    setExpansions(new Map());
+  }, [data]);
+
+  // The new side's full text supplies the real context lines. Where it
+  // lives depends on the source: worktree, the index (`:0`), or a revision.
+  const expandRev = useMemo(() => {
+    switch (request?.source.kind) {
+      case "working_unstaged":
+        return { rev: null as string | null };
+      case "working_staged":
+        return { rev: ":0" };
+      case "commit":
+        return { rev: request.source.commit_id };
+      case "commit_range":
+        return { rev: request.source.to };
+      default:
+        return null;
+    }
+  }, [request?.source]);
+  const { data: expandSource } = useQuery<string | null>({
+    queryKey: [request?.repoId, "diff", "expand-src", request?.path, expandRev?.rev ?? "worktree"],
+    queryFn: async () => {
+      if (expandRev!.rev === null) return repoReadWorktreeFile(request!.repoId, request!.path);
+      const f = await repoFileAtRevision(request!.repoId, expandRev!.rev, request!.path);
+      return "Text" in f ? f.Text : null;
+    },
+    enabled:
+      contextMode === "chunked" &&
+      !!request &&
+      !!expandRev &&
+      !!data &&
+      "Text" in data &&
+      request.repoId === activeRepoId,
+    staleTime: 5_000,
+  });
+
+  // What the editor renders (and the save path splices against): the raw
+  // diff, or the expanded one once the source text is available.
+  const displayData = useMemo<DiffEntry | undefined>(() => {
+    if (!data || !("Text" in data) || expansions.size === 0 || expandSource == null) return data;
+    return { ...data, Text: expandDiff(data.Text, splitLines(expandSource), expansions) };
+  }, [data, expansions, expandSource]);
+  dataRef.current = displayData;
+
+  const trailingExpander = useMemo(() => {
+    if (contextMode !== "chunked" || !displayData || !("Text" in displayData)) return false;
+    if (expandSource == null) return false;
+    const hunks = displayData.Text.hunks;
+    if (hunks.length === 0) return false;
+    const last = hunks[hunks.length - 1];
+    return splitLines(expandSource).length > last.new_start + last.new_lines - 1;
+  }, [contextMode, displayData, expandSource]);
+
+  const onExpandHunk = useCallback((hunkIndex: number, dir: "up" | "down") => {
+    if (dirtyRef.current) {
+      notify.error("Unsaved edits in the diff. Save or discard them first.");
+      return;
+    }
+    setExpansions((prev) => {
+      const next = new Map(prev);
+      // GitHub semantics: a header's ↓ reveals the top of the gap above it
+      // (extends the PREVIOUS hunk downward); ↑ reveals the gap's bottom
+      // (extends THIS hunk upward). The first hunk's gap is bounded by the
+      // file start (up only); the synthetic tail row (-1) extends the last
+      // hunk downward.
+      const lastRef = dataRef.current;
+      const hunkCount = lastRef && "Text" in lastRef ? lastRef.Text.hunks.length : 0;
+      let key: number;
+      let effDir: "up" | "down";
+      if (hunkIndex === -1) {
+        key = hunkCount - 1;
+        effDir = "down";
+      } else if (dir === "down") {
+        key = Math.max(hunkIndex - 1, 0);
+        effDir = hunkIndex - 1 < 0 ? "up" : "down";
+      } else {
+        key = hunkIndex;
+        effDir = "up";
+      }
+      if (key < 0) return prev;
+      const cur = next.get(key) ?? { up: 0, down: 0 };
+      next.set(key, { ...cur, [effDir]: cur[effDir] + EXPAND_STEP });
+      return next;
+    });
+  }, []);
 
   // Editable only for the unstaged working diff: its new side IS the file on
   // disk. Staged diffs (new side = index) and commit diffs stay read-only.
@@ -400,7 +492,9 @@ export function DiffPanel() {
 
       <div style={{ flex: 1, minHeight: 0 }}>
         <DiffBody
-            data={data}
+            data={displayData}
+            onExpandHunk={contextMode === "chunked" ? onExpandHunk : undefined}
+            trailingExpander={trailingExpander}
             mode={mode}
             actions={actions}
             onAction={onAction}
@@ -435,6 +529,8 @@ function DiffBody({
   onSaveRequest,
   editorRef,
   rebuildKey,
+  onExpandHunk,
+  trailingExpander,
   syntaxPath,
 }: {
   data: DiffEntry | undefined;
@@ -450,6 +546,8 @@ function DiffBody({
   onSaveRequest: () => void;
   editorRef: React.MutableRefObject<DiffEditorHandle | null>;
   rebuildKey: number;
+  onExpandHunk?: (hunkIndex: number, dir: "up" | "down") => void;
+  trailingExpander?: boolean;
   syntaxPath: string | null;
 }) {
   const { openMenu, closeMenu } = usePanelContextMenu();
@@ -547,6 +645,8 @@ function DiffBody({
       onDirty={onDirty}
       onSaveRequest={onSaveRequest}
       rebuildKey={rebuildKey}
+      onExpandHunk={onExpandHunk}
+      trailingExpander={trailingExpander}
       syntaxPath={syntaxPath}
     />
   );

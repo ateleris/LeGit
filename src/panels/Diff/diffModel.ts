@@ -152,18 +152,38 @@ function blockSegments(dels: Pending[], adds: Pending[]): { del: Segment[][]; ad
   return { del, add };
 }
 
-/** Flatten a text diff into interleaved rows for the inline view. */
-export function buildRows(diff: TextDiff): DiffRow[] {
+/** Gap above each hunk (0 = contiguous with the previous hunk / file start). */
+function gapsAbove(diff: TextDiff): number[] {
+  return diff.hunks.map((h, i) => {
+    const prevEnd = i > 0 ? diff.hunks[i - 1].new_start + diff.hunks[i - 1].new_lines : 1;
+    return Math.max(0, h.new_start - prevEnd);
+  });
+}
+
+/** Flatten a text diff into interleaved rows for the inline view.
+ *  `trailingExpander` appends a synthetic header row (hunkIndex -1) after
+ *  the last hunk, carrying the expand-down control for the file tail.
+ *  `skipGaplessHeaders` drops a header whose gap is fully revealed (read-
+ *  only diffs: the header carries no actions, so nothing is lost and the
+ *  hunks read as one continuous file). */
+export function buildRows(
+  diff: TextDiff,
+  trailingExpander = false,
+  skipGaplessHeaders = false,
+): DiffRow[] {
   const rows: DiffRow[] = [];
+  const gaps = gapsAbove(diff);
   diff.hunks.forEach((hunk, hunkIndex) => {
-    rows.push({
-      kind: "Hunk",
-      text: hunkHeaderLabel(hunk.header),
-      oldNo: null,
-      newNo: null,
-      hunkIndex,
-      lineIndex: -1,
-    });
+    if (!(skipGaplessHeaders && gaps[hunkIndex] === 0)) {
+      rows.push({
+        kind: "Hunk",
+        text: hunkHeaderLabel(hunk.header),
+        oldNo: null,
+        newNo: null,
+        hunkIndex,
+        lineIndex: -1,
+      });
+    }
 
     let oldNo = hunk.old_start;
     let newNo = hunk.new_start;
@@ -217,6 +237,9 @@ export function buildRows(diff: TextDiff): DiffRow[] {
     });
     flush();
   });
+  if (trailingExpander && diff.hunks.length > 0) {
+    rows.push({ kind: "Hunk", text: "", oldNo: null, newNo: null, hunkIndex: -1, lineIndex: -1 });
+  }
   return rows;
 }
 
@@ -227,15 +250,22 @@ export function buildRows(diff: TextDiff): DiffRow[] {
  * Both arrays always have the same length, with real file line numbers and the
  * same intra-line segments as the inline view.
  */
-export function buildSplitRows(diff: TextDiff): { left: SplitRow[]; right: SplitRow[] } {
+export function buildSplitRows(
+  diff: TextDiff,
+  trailingExpander = false,
+  skipGaplessHeaders = false,
+): { left: SplitRow[]; right: SplitRow[] } {
   const left: SplitRow[] = [];
   const right: SplitRow[] = [];
+  const gaps = gapsAbove(diff);
 
   diff.hunks.forEach((hunk, hunkIndex) => {
     // The `@@` header spans both sides (kept aligned), mirroring the inline view.
-    const label = hunkHeaderLabel(hunk.header);
-    left.push({ kind: "Hunk", text: label, no: null, hunkIndex, lineIndex: -1 });
-    right.push({ kind: "Hunk", text: label, no: null, hunkIndex, lineIndex: -1 });
+    if (!(skipGaplessHeaders && gaps[hunkIndex] === 0)) {
+      const label = hunkHeaderLabel(hunk.header);
+      left.push({ kind: "Hunk", text: label, no: null, hunkIndex, lineIndex: -1 });
+      right.push({ kind: "Hunk", text: label, no: null, hunkIndex, lineIndex: -1 });
+    }
 
     let oldNo = hunk.old_start;
     let newNo = hunk.new_start;
@@ -275,5 +305,9 @@ export function buildSplitRows(diff: TextDiff): { left: SplitRow[]; right: Split
     flush();
   });
 
+  if (trailingExpander && diff.hunks.length > 0) {
+    left.push({ kind: "Hunk", text: "", no: null, hunkIndex: -1, lineIndex: -1 });
+    right.push({ kind: "Hunk", text: "", no: null, hunkIndex: -1, lineIndex: -1 });
+  }
   return { left, right };
 }

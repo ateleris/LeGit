@@ -20,12 +20,12 @@ import {
   WidgetType,
   gutter,
   keymap,
-  lineNumbers,
   type DecorationSet,
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { codeFolding, foldEffect, unfoldAll } from "@codemirror/language";
-import { baseTheme, plusMinusIcon, readOnly } from "../Diff/DiffEditor";
+import { EXPAND_STEP, EXPANDER_THEME, expanderPair, headerBand } from "../Diff/hunkExpanders";
+import { baseTheme, NumberMarker, plusMinusIcon, readOnly } from "../Diff/DiffEditor";
 import { loadLanguageForPath, syntaxColorTheme } from "../Diff/syntaxLanguages";
 import {
   alignedBreakpoints,
@@ -90,6 +90,17 @@ interface BlockRange {
   from: number;
   to: number;
   origin: { ours: number; theirs: number } | null;
+}
+
+/** Fills a gutter cell with the fold bar's band so the bar runs
+ *  uninterrupted across every column. */
+class GutterBandMarker extends GutterMarker {
+  override eq(): boolean {
+    return true;
+  }
+  override toDOM(): HTMLElement {
+    return headerBand(false);
+  }
 }
 
 /** Block checkbox, vertically centred beside the whole region. */
@@ -163,25 +174,16 @@ class LineToggleMarker extends GutterMarker {
   }
 }
 
-/** Folding with a diff-hunk-header-style row: full-width bar stating how
- *  many lines are hidden, click to expand. */
-const mergeFolding = codeFolding({
-  preparePlaceholder: (state, range) => {
-    return state.doc.lineAt(range.to).number - state.doc.lineAt(range.from).number + 1;
-  },
-  placeholderDOM: (_view, onclick, prepared) => {
-    const el = document.createElement("div");
-    el.className = "cm-merge-fold";
-    const n = typeof prepared === "number" ? prepared : 0;
-    el.textContent = `\u22ef ${n} line${n === 1 ? "" : "s"} hidden \u00b7 click to expand`;
-    el.setAttribute("role", "button");
-    el.title = "Expand the hidden lines";
-    el.addEventListener("click", onclick);
-    return el;
-  },
-});
 
 const mergeTheme = EditorView.theme({
+  ...EXPANDER_THEME,
+  ".cm-merge-fold-label": {
+    flex: "1",
+    padding: "0 8px",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
   // Every pane reserves the horizontal scrollbar unconditionally: one pane
   // having it and another not would give them different viewport heights,
   // skewing the cross-pane line alignment near the bottom of the scroll.
@@ -503,6 +505,7 @@ export const MergeView = forwardRef<
     // identical text everywhere, so blocks are the only drift source.
     // ------------------------------------------------------------------
     const CONTEXT = 3;
+    const MIN_REMAINDER = 3;
     const baseLens = parsed.sections
       .filter((sec) => sec.kind === "conflict")
       .map((sec) => ("base" in sec && sec.base ? sec.base.length : 0));
@@ -560,6 +563,76 @@ export const MergeView = forwardRef<
       });
     };
 
+    // Gap reveals: each gap's expander clicks are tracked once, applied to
+    // EVERY pane (the hidden commons are identical text, so a shared reveal
+    // keeps the panes aligned). `down` eats into the gap from its top edge,
+    // `up` from its bottom edge; the leftover collapses below EXPAND_STEP.
+    const gapReveals: Array<{ down: number; up: number }> = [];
+    // Which fold slot a placeholder at a given position belongs to, per view.
+    const foldSlotByPos = new Map<EditorView, Map<number, number>>();
+
+    const expandGap = (view: EditorView, from: number, dir: "down" | "up" | "all") => {
+      const slot = foldSlotByPos.get(view)?.get(from);
+      if (slot === undefined) return;
+      const reveal = (gapReveals[slot] ??= { down: 0, up: 0 });
+      if (dir === "all") {
+        reveal.down = Number.MAX_SAFE_INTEGER / 2;
+      } else {
+        reveal[dir] += EXPAND_STEP;
+      }
+      applyFoldsRef.current?.(true);
+    };
+
+    /** Line-number gutter that swaps in the gap expander on a fold's first
+     *  visible row — same placement and behaviour as the diff's hunk
+     *  headers. */
+    const mergeNumberGutter = gutter({
+      class: "cm-diff-gutter",
+      lineMarker(view, line) {
+        const slot = foldSlotByPos.get(view)?.get(line.from);
+        if (slot !== undefined) {
+          return new ExpanderMarkerForGap(view, line.from);
+        }
+        return new NumberMarker(String(view.state.doc.lineAt(line.from).number));
+      },
+      lineMarkerChange: () => true,
+    });
+
+    class ExpanderMarkerForGap extends GutterMarker {
+      constructor(
+        readonly view: EditorView,
+        readonly pos: number,
+      ) {
+        super();
+      }
+      override eq(other: ExpanderMarkerForGap): boolean {
+        return other.pos === this.pos && other.view === this.view;
+      }
+      override toDOM(): HTMLElement {
+        return expanderPair((dir) => expandGap(this.view, this.pos, dir));
+      }
+    }
+
+    const mergeFolding = codeFolding({
+      preparePlaceholder: (state, range) => ({
+        lines: state.doc.lineAt(range.to).number - state.doc.lineAt(range.from).number + 1,
+        from: range.from,
+      }),
+      placeholderDOM: (view, _onclick, prepared) => {
+        const p = prepared as { lines: number; from: number };
+        const el = document.createElement("div");
+        el.className = "cm-merge-fold";
+        const label = document.createElement("span");
+        label.className = "cm-merge-fold-label";
+        label.textContent = `@@ ${p.lines} hidden line${p.lines === 1 ? "" : "s"} @@`;
+        label.title = "Show all hidden lines";
+        label.addEventListener("click", () => expandGap(view, p.from, "all"));
+        el.appendChild(label);
+        return el;
+      },
+    });
+
+
     // ------------------------------------------------------------------
     // Side panes (read-only stages) with label chips, dim, checkbox gutter
     // and the per-line +/− gutter.
@@ -606,6 +679,7 @@ export const MergeView = forwardRef<
       const checkGutter = gutter({
         class: "cm-conflict-check-gutter",
         lineMarker(view, line) {
+          if (foldSlotByPos.get(view)?.has(line.from)) return new GutterBandMarker();
           const lineNo = view.state.doc.lineAt(line.from).number;
           const i = starts.indexOf(lineNo - 1);
           if (i === -1) return null;
@@ -626,6 +700,7 @@ export const MergeView = forwardRef<
       const lineGutter = gutter({
         class: "cm-diff-action-gutter",
         lineMarker(view, line) {
+          if (foldSlotByPos.get(view)?.has(line.from)) return new GutterBandMarker();
           const lineNo = view.state.doc.lineAt(line.from).number - 1; // 0-based
           for (let i = 0; i < nBlocks; i++) {
             if (lineNo >= starts[i] && lineNo < starts[i] + lens[i]) {
@@ -646,14 +721,14 @@ export const MergeView = forwardRef<
         () => lens,
         () => (side === "ours" ? offOursRef.current : offTheirsRef.current),
       );
-      return [baseTheme, mergeTheme, lineNumbers(), mergeFolding, deco, checkGutter, lineGutter, spacers, ...readOnly];
+      return [baseTheme, mergeTheme, mergeNumberGutter, mergeFolding, deco, checkGutter, lineGutter, spacers, ...readOnly];
     };
 
     const sidePane = (parent: HTMLElement, text: string | null, note: string, ext?: Extension[]) =>
       new EditorView({
         state: EditorState.create({
           doc: text ?? note,
-          extensions: ext ?? [baseTheme, mergeTheme, lineNumbers(), mergeFolding, ...readOnly],
+          extensions: ext ?? [baseTheme, mergeTheme, mergeNumberGutter, mergeFolding, ...readOnly],
         }),
         parent,
       });
@@ -690,7 +765,7 @@ export const MergeView = forwardRef<
         extensions: [
           baseTheme,
           mergeTheme,
-          lineNumbers(),
+          mergeNumberGutter,
           mergeFolding,
           rangesField,
           resultDeco,
@@ -811,14 +886,26 @@ export const MergeView = forwardRef<
     const applyFolds = (on: boolean) => {
       const paneFold = (view: EditorView, starts: number[], lens: number[]) => {
         unfoldAll(view);
+        foldSlotByPos.set(view, new Map());
         if (!on) return;
         const total = view.state.doc.lines;
-        const effects = foldableRanges(starts, lens, total, CONTEXT).map((r) =>
-          foldEffect.of({
-            from: view.state.doc.line(r.from + 1).from,
-            to: view.state.doc.line(Math.min(r.to + 1, total)).to,
-          }),
-        );
+        const slots = foldSlotByPos.get(view)!;
+        const effects = [];
+        const bases = foldableRanges(starts, lens, total, CONTEXT);
+        for (let k = 0; k < bases.length; k++) {
+          const reveal = gapReveals[k] ?? { down: 0, up: 0 };
+          let from = bases[k].from + reveal.down;
+          let to = bases[k].to - reveal.up;
+          if (to - from + 1 < MIN_REMAINDER) continue; // fully / nearly revealed
+          const pos = view.state.doc.line(Math.min(from + 1, total)).from;
+          slots.set(pos, k);
+          effects.push(
+            foldEffect.of({
+              from: pos,
+              to: view.state.doc.line(Math.min(to + 1, total)).to,
+            }),
+          );
+        }
         if (effects.length > 0) view.dispatch({ effects });
       };
       if (ours !== null) paneFold(oursView, sideAnchors.ours, regionLens.ours);

@@ -46,6 +46,9 @@
      overwrites this on the scroller so sticky hunk labels can pin just right
      of the (sticky, overlaying) gutters. 0px until first measure. */
   --cm-gutters-width: 0px;
+  /* Combined width of the diff/merge number gutter columns (measured at
+     runtime by the editor; this is only the pre-measure default). */
+  --cm-number-gutters-width: 0px;
 }
 
 html,

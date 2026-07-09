@@ -40,6 +40,7 @@ import {
   type RowMeta,
 } from "./editModel";
 import { createRowState, type RowState } from "./editableState";
+import { EXPANDER_THEME, expanderPair, headerBand } from "./hunkExpanders";
 import {
   MAX_SYNTAX_CHARS,
   computeSyntaxSegments,
@@ -81,6 +82,12 @@ interface DiffEditorProps {
    *  after discarding edits, where the refetched diff is identical so no other
    *  dependency changes. Scroll position is preserved. */
   rebuildKey?: number;
+  /** Chunked-view context expansion (GitHub-style ↓/↑ on hunk headers).
+   *  Must be mount-stable; absent = no expanders. */
+  onExpandHunk?: (hunkIndex: number, dir: "up" | "down") => void;
+  /** Show the synthetic tail header (expand-down for lines after the last
+   *  hunk). The panel decides from the known file length. */
+  trailingExpander?: boolean;
   /** Repo-relative path used to pick a syntax-highlighting language, or null
    *  when highlighting is off (setting disabled / no file context). */
   syntaxPath?: string | null;
@@ -136,7 +143,7 @@ function segmentsFor(kind: string, text: string, segments?: Segment[]): Segment[
   return segments;
 }
 
-class NumberMarker extends GutterMarker {
+export class NumberMarker extends GutterMarker {
   constructor(private readonly value: string) {
     super();
   }
@@ -268,6 +275,30 @@ const guttersWidthVar = ViewPlugin.define((view) => {
   };
 });
 
+// Combined width of the NUMBER gutter columns only (excludes the action /
+// checkbox gutters) — the hunk expander stretches across exactly these.
+const numberGuttersMeasure = {
+  read(view: EditorView): number {
+    let width = 0;
+    view.scrollDOM.querySelectorAll(".cm-gutter.cm-diff-gutter").forEach((g) => {
+      if (g instanceof HTMLElement) width += g.offsetWidth;
+    });
+    return width;
+  },
+  write(width: number, view: EditorView) {
+    view.scrollDOM.style.setProperty("--cm-number-gutters-width", `${width}px`);
+  },
+};
+
+export const numberGuttersWidthVar = ViewPlugin.define((view) => {
+  view.requestMeasure(numberGuttersMeasure);
+  return {
+    update(update) {
+      if (update.geometryChanged) update.view.requestMeasure(numberGuttersMeasure);
+    },
+  };
+});
+
 /** A line-number gutter that resolves each doc line's row through the row
  *  markers, so numbers stay correct (or blank, for user-inserted lines) while
  *  the document is edited. Read-only docs never change, so this is identical
@@ -275,13 +306,18 @@ const guttersWidthVar = ViewPlugin.define((view) => {
 function lineNumberGutter(
   rowState: RowState,
   getNo: (rowIndex: number) => number | null,
-  cls: string
+  cls: string,
+  expanderFor?: (rowIndex: number) => GutterMarker | null
 ) {
   return gutter({
     class: cls,
     lineMarker(view, line) {
       const lineNo = view.state.doc.lineAt(line.from).number;
       const rowIndex = rowState.rowIndexAtLine(view.state, lineNo);
+      if (rowIndex != null && expanderFor) {
+        const marker = expanderFor(rowIndex);
+        if (marker) return marker;
+      }
       const n = rowIndex == null ? null : getNo(rowIndex);
       return n == null ? null : new NumberMarker(String(n));
     },
@@ -397,6 +433,7 @@ function applySyntaxHighlights(
 
 /** Shared editor chrome (exported for the Merge panel's view). */
 export const baseTheme = EditorView.theme({
+  ...EXPANDER_THEME,
   "&": {
     height: "100%",
     fontSize: "var(--fz-md)",
@@ -484,6 +521,13 @@ export const baseTheme = EditorView.theme({
     padding: "0 4px",
     minWidth: "2.5ch",
     textAlign: "right",
+    // The hunk expander overlay positions against its cell and reaches
+    // into the neighbouring number column - no clipping.
+    position: "relative",
+    overflow: "visible",
+  },
+  ".cm-diff-gutter": {
+    overflow: "visible",
   },
   // Per-line action gutter (between the number gutters and the code). A real
   // gutter, so the buttons are never part of the editable content. Buttons are
@@ -665,7 +709,7 @@ function hunkActionWidget(
   actions: HunkAction[],
   onAction?: (hunkIndex: number, action: HunkAction) => void
 ): (() => WidgetType) | undefined {
-  if (kind !== "Hunk" || actions.length === 0) return undefined;
+  if (kind !== "Hunk" || hunkIndex < 0 || actions.length === 0) return undefined;
   return () => new ActionWidget(hunkIndex, actions, onAction);
 }
 
@@ -686,10 +730,74 @@ function lineActionGutter(
       const lineNo = view.state.doc.lineAt(line.from).number;
       const rowIndex = rowState.rowIndexAtLine(view.state, lineNo);
       const r = rowIndex == null ? null : rows[rowIndex];
+      // Header rows: continue the grey band through this column too.
+      if (r?.kind === "Hunk") return new HeaderBandMarker();
       if (!r || (r.kind !== "Added" && r.kind !== "Removed") || r.lineIndex < 0) return null;
       return new LineActionMarker(lineActionOp, r.hunkIndex, r.lineIndex, onLineAction);
     },
   });
+}
+
+/** Hidden lines directly above each hunk (0 = header has nothing to
+ *  reveal, so no expander is rendered). */
+function hunkGapsAbove(diff: TextDiff): number[] {
+  return diff.hunks.map((h, i) => {
+    const prevEnd = i > 0 ? diff.hunks[i - 1].new_start + diff.hunks[i - 1].new_lines : 1;
+    return Math.max(0, h.new_start - prevEnd);
+  });
+}
+
+/** Buttonless header-band filler for gutter columns that would otherwise
+ *  puncture the hunk header's grey bar (e.g. the per-line action gutter). */
+export class HeaderBandMarker extends GutterMarker {
+  override eq(): boolean {
+    return true;
+  }
+  override toDOM(): HTMLElement {
+    return headerBand(false);
+  }
+}
+
+/** Marker for one header row: first hunk reveals only upward (the gap is
+ *  bounded by the file start), the trailing row (-1) only downward, gaps
+ *  with nothing to reveal keep the band without buttons. */
+function expanderMarker(
+  hunkIndex: number,
+  gapsAbove: number[],
+  onExpand: (hunkIndex: number, dir: "up" | "down") => void,
+  span2: boolean,
+): HunkExpanderMarker {
+  if (hunkIndex === -1) return new HunkExpanderMarker(-1, onExpand, span2, "down");
+  if (gapsAbove[hunkIndex] <= 0) return new HunkExpanderMarker(hunkIndex, null, span2);
+  return new HunkExpanderMarker(hunkIndex, onExpand, span2, hunkIndex === 0 ? "up" : "both");
+}
+
+/** GitHub-style context expander sitting in the number gutter of a hunk
+ *  header row: stacked ↓/↑ buttons revealing more context per click. */
+export class HunkExpanderMarker extends GutterMarker {
+  constructor(
+    readonly hunkIndex: number,
+    /** null = nothing left to reveal: render the band without buttons so
+     *  the header's grey bar still runs across the gutters. */
+    readonly onExpand: ((hunkIndex: number, dir: "up" | "down") => void) | null,
+    readonly spanTwoColumns = false,
+    readonly dirs: "both" | "up" | "down" = "both",
+  ) {
+    super();
+  }
+  override eq(other: HunkExpanderMarker): boolean {
+    return (
+      other.hunkIndex === this.hunkIndex &&
+      other.spanTwoColumns === this.spanTwoColumns &&
+      other.dirs === this.dirs &&
+      (other.onExpand === null) === (this.onExpand === null)
+    );
+  }
+  override toDOM(): HTMLElement {
+    const expand = this.onExpand;
+    if (expand === null) return headerBand(this.spanTwoColumns);
+    return expanderPair((dir) => expand(this.hunkIndex, dir), this.spanTwoColumns, this.dirs);
+  }
 }
 
 /** A `contextmenu` handler that maps the clicked position to its row's hunk and,
@@ -707,7 +815,7 @@ function contextMenuExtension(
       const lineNo = view.state.doc.lineAt(pos).number;
       const rowIndex = rowState.rowIndexAtLine(view.state, lineNo);
       const row = rowIndex == null ? null : rows[rowIndex];
-      if (!row) return false;
+      if (!row || row.hunkIndex < 0) return false;
       e.preventDefault();
       const lineIndex =
         row.lineIndex >= 0 && (row.kind === "Added" || row.kind === "Removed")
@@ -790,20 +898,32 @@ function mountInline(
   editable: boolean,
   onDirty: (() => void) | undefined,
   onSaveRequest: (() => void) | undefined,
-  syntaxPath: string | null
+  syntaxPath: string | null,
+  onExpandHunk?: (hunkIndex: number, dir: "up" | "down") => void,
+  trailingExpander = false
 ): MountedEditor {
-  const rows = buildRows(diff);
+  // Read-only diffs (no hunk actions) drop headers whose gap is gone.
+  const skipGapless = !!onExpandHunk && actions.length === 0;
+  const rows = buildRows(diff, trailingExpander && !!onExpandHunk, skipGapless);
   const doc = rows.map((r) => r.text).join("\n");
   const rowState = createRowState(rows);
+  const gapsAbove = hunkGapsAbove(diff);
+  const expanderFor = onExpandHunk
+    ? (i: number) =>
+        rows[i]?.kind === "Hunk"
+          ? expanderMarker(rows[i].hunkIndex, gapsAbove, onExpandHunk, true)
+          : null
+    : undefined;
   const extensions = [
     baseTheme,
     guttersWidthVar,
+    numberGuttersWidthVar,
     syntaxField,
     rowState.field,
     ...(editable
       ? [rowState.guard, ...editableExtensions(onDirty, onSaveRequest)]
       : readOnly),
-    lineNumberGutter(rowState, (i) => rows[i]?.oldNo ?? null, "cm-diff-gutter cm-diff-gutter-old"),
+    lineNumberGutter(rowState, (i) => rows[i]?.oldNo ?? null, "cm-diff-gutter cm-diff-gutter-old", expanderFor),
     lineNumberGutter(rowState, (i) => rows[i]?.newNo ?? null, "cm-diff-gutter cm-diff-gutter-new"),
     ...(lineActionOp ? [lineActionGutter(rowState, rows, lineActionOp, onLineAction)] : []),
     decorationField((i) => {
@@ -849,9 +969,13 @@ function mountSplit(
   editable: boolean,
   onDirty: (() => void) | undefined,
   onSaveRequest: (() => void) | undefined,
-  syntaxPath: string | null
+  syntaxPath: string | null,
+  onExpandHunk?: (hunkIndex: number, dir: "up" | "down") => void,
+  trailingExpander = false
 ): MountedEditor {
-  const { left, right } = buildSplitRows(diff);
+  const skipGapless = !!onExpandHunk && actions.length === 0;
+  const { left, right } = buildSplitRows(diff, trailingExpander && !!onExpandHunk, skipGapless);
+  const gapsAbove = hunkGapsAbove(diff);
 
   const wrap = document.createElement("div");
   wrap.style.display = "flex";
@@ -877,9 +1001,17 @@ function mountSplit(
     el: HTMLElement,
     rows: SplitRow[],
     withActions: boolean,
-    paneEditable: boolean
+    paneEditable: boolean,
+    withExpanders = false
   ) => {
     const rowState = createRowState(rows);
+    const expanderFor =
+      withExpanders && onExpandHunk
+        ? (i: number) =>
+            rows[i]?.kind === "Hunk"
+              ? expanderMarker(rows[i].hunkIndex, gapsAbove, onExpandHunk, false)
+              : null
+        : undefined;
     const extensions = [
       baseTheme,
       guttersWidthVar,
@@ -888,7 +1020,7 @@ function mountSplit(
       ...(paneEditable
         ? [rowState.guard, ...editableExtensions(onDirty, onSaveRequest)]
         : readOnly),
-      lineNumberGutter(rowState, (i) => rows[i]?.no ?? null, "cm-diff-gutter"),
+      lineNumberGutter(rowState, (i) => rows[i]?.no ?? null, "cm-diff-gutter", expanderFor),
       ...(lineActionOp ? [lineActionGutter(rowState, rows, lineActionOp, onLineAction)] : []),
       decorationField((i) => {
         const r = rows[i];
@@ -914,7 +1046,7 @@ function mountSplit(
     return { view, rowState };
   };
 
-  const leftPane = pane(leftEl, left, false, false);
+  const leftPane = pane(leftEl, left, false, false, true);
   const rightPane = pane(rightEl, right, true, editable);
   const leftView = leftPane.view;
   const rightView = rightPane.view;
@@ -977,6 +1109,8 @@ export const DiffEditor = forwardRef<DiffEditorHandle, DiffEditorProps>(function
     onDirty,
     onSaveRequest,
     rebuildKey = 0,
+    onExpandHunk,
+    trailingExpander = false,
     syntaxPath = null,
   },
   ref
@@ -1000,8 +1134,8 @@ export const DiffEditor = forwardRef<DiffEditorHandle, DiffEditorProps>(function
     const anchor = anchorRef.current;
     const mounted =
       mode === "split"
-        ? mountSplit(host, diff, actions, onAction, onContextMenu, lineActionOp, onLineAction, anchor, editable, onDirty, onSaveRequest, syntaxPath)
-        : mountInline(host, diff, actions, onAction, onContextMenu, lineActionOp, onLineAction, anchor, editable, onDirty, onSaveRequest, syntaxPath);
+        ? mountSplit(host, diff, actions, onAction, onContextMenu, lineActionOp, onLineAction, anchor, editable, onDirty, onSaveRequest, syntaxPath, onExpandHunk, trailingExpander)
+        : mountInline(host, diff, actions, onAction, onContextMenu, lineActionOp, onLineAction, anchor, editable, onDirty, onSaveRequest, syntaxPath, onExpandHunk, trailingExpander);
     mountRef.current = mounted;
     return () => {
       mountRef.current = null;
@@ -1009,7 +1143,7 @@ export const DiffEditor = forwardRef<DiffEditorHandle, DiffEditorProps>(function
     };
     // NOTE: `dirty` is intentionally NOT a dependency: recreating the editor
     // would discard the user's unsaved edits. It only drives the CSS class.
-  }, [diff, mode, actions, onAction, onContextMenu, lineActionOp, onLineAction, editable, onDirty, onSaveRequest, rebuildKey, syntaxPath]);
+  }, [diff, mode, actions, onAction, onContextMenu, lineActionOp, onLineAction, editable, onDirty, onSaveRequest, rebuildKey, onExpandHunk, trailingExpander, syntaxPath]);
 
   return (
     <div
