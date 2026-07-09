@@ -29,6 +29,9 @@ function ghostStyle(disabled: boolean): React.CSSProperties {
     alignItems: "center",
     gap: 4,
     fontSize: "var(--fz-sm)",
+    // Pinned: .legit-panel__toolbar's min-height derives the uniform header
+    // height from exactly these metrics (global.css).
+    lineHeight: 1.2,
     padding: "2px 8px",
     border: "1px solid var(--panel-border)",
     borderRadius: 3,

@@ -1,10 +1,8 @@
-// Pure conflict model for the Diff panel's resolve mode: parse git conflict
-// markers (classic and diff3), build the synthetic TextDiff the existing
-// DiffEditor renders (ours = Removed side, theirs = Added side, commons =
-// Context), rewrite one block for a one-click choice, and reconstruct the
-// full marker file from edited editor regions. No CodeMirror imports.
+// Pure conflict model for the Merge panel: parse git conflict markers
+// (classic and diff3), name the two sides, compose a block's result lines
+// from per-line selections, and provide the anchors/spans the 3-way view
+// needs for result-doc surgery and scroll alignment. No CodeMirror imports.
 
-import type { DiffLine, TextDiff } from "../../lib/types";
 import {
   detectEol,
   hasTrailingNewline,
@@ -123,71 +121,43 @@ export function parseConflicts(text: string): ParsedConflicts {
   };
 }
 
-/**
- * Build the synthetic diff: one hunk per conflict. The common run before a
- * conflict is that hunk's lead context; the common run after the LAST
- * conflict is appended to the last hunk as trailing context. Line numbers
- * count each side's "file as if that side were chosen".
- */
-export function conflictsToDiff(parsed: ParsedConflicts, path: string): TextDiff {
-  const hunks: TextDiff["hunks"] = [];
-  const conflicts = parsed.conflictCount;
-  let oursNo = 1;
-  let theirsNo = 1;
-  let pendingCommon: string[] = [];
-  let index = 0;
-
-  for (const section of parsed.sections) {
-    if (section.kind === "common") {
-      pendingCommon = pendingCommon.concat(section.lines);
-      continue;
-    }
-    const lines: DiffLine[] = [];
-    const oldStart = oursNo;
-    const newStart = theirsNo;
-    for (const l of pendingCommon) {
-      lines.push({ kind: "Context", content: l });
-      oursNo++;
-      theirsNo++;
-    }
-    pendingCommon = [];
-    for (const l of section.ours) {
-      lines.push({ kind: "Removed", content: l });
-      oursNo++;
-    }
-    for (const l of section.theirs) {
-      lines.push({ kind: "Added", content: l });
-      theirsNo++;
-    }
-    index++;
-    hunks.push({
-      old_start: oldStart,
-      old_lines: 0, // fixed up below, after trailing context is attached
-      new_start: newStart,
-      new_lines: 0,
-      header: `Conflict ${index}/${conflicts}: ours '${section.oursLabel}' vs theirs '${section.theirsLabel}'`,
-      lines,
-    });
-  }
-  // Trailing common lines belong to the last hunk as context.
-  if (hunks.length > 0 && pendingCommon.length > 0) {
-    const last = hunks[hunks.length - 1];
-    for (const l of pendingCommon) {
-      last.lines.push({ kind: "Context", content: l });
-      oursNo++;
-      theirsNo++;
-    }
-  }
-  for (const h of hunks) {
-    h.old_lines = h.lines.filter((l) => l.kind !== "Added").length;
-    h.new_lines = h.lines.filter((l) => l.kind !== "Removed").length;
-  }
-  return { old_path: path, new_path: path, hunks };
+/** Resolved display names for the two conflict sides. `null` = unknown;
+ *  the UI falls back to the bare side word (Current / Incoming). */
+export interface ConflictSideNames {
+  ours: string | null;
+  theirs: string | null;
 }
 
-// ---------------------------------------------------------------------------
-// 3-way scroll alignment: conflict anchor lines per pane + piecewise mapping
-// ---------------------------------------------------------------------------
+/**
+ * Turns the raw conflict-marker labels into user-facing side names,
+ * following what other clients converged on: "Current" = the side you are
+ * on, "Incoming" = the side being brought in, each with the real ref name.
+ * `HEAD` (git's usual ours label) is replaced by the current branch name;
+ * during a rebase HEAD is detached, `currentBranch` is null, and the side
+ * deliberately stays unnamed rather than guessing (theirs then carries
+ * "<sha> (message)" straight from the marker, which is exactly right since
+ * rebase inverts ours/theirs relative to intuition).
+ */
+export function conflictSideNames(
+  parsed: ParsedConflicts,
+  currentBranch: string | null,
+): ConflictSideNames {
+  const block = parsed.sections.find(
+    (s): s is ConflictBlock => s.kind === "conflict",
+  );
+  if (!block) return { ours: null, theirs: null };
+  const ours =
+    block.oursLabel === "" || block.oursLabel === "HEAD"
+      ? currentBranch
+      : block.oursLabel;
+  const theirs = block.theirsLabel === "" ? null : block.theirsLabel;
+  return { ours, theirs };
+}
+
+/** "Current 'main'" or the bare side word when the name is unknown. */
+export function sideLabel(word: string, name: string | null): string {
+  return name === null ? word : `${word} '${name}'`;
+}
 
 /** For each conflict, its 0-based start line in the centre (marker) doc and
  *  in each side's "file as if that side were chosen" - the shape of the real
@@ -277,8 +247,6 @@ export function alignedBreakpoints(
   return { xs, ys };
 }
 
-export type ResolveChoice = "ours" | "theirs" | "both";
-
 function joinLines(lines: string[], eol: Eol, trailingNewline: boolean): string {
   const body = lines.map((l) => l.replace(/\r$/, "")).join(eol);
   return trailingNewline && lines.length > 0 ? body + eol : body;
@@ -293,49 +261,170 @@ function conflictMarkerLines(c: ConflictBlock, ours: string[], theirs: string[])
   return out;
 }
 
-/** Rewrite conflict #`conflictIndex` with the chosen side(s); all other
- *  content (including other conflicts) is preserved verbatim. */
-export function resolveBlock(text: string, conflictIndex: number, choice: ResolveChoice): string {
-  const parsed = parseConflicts(text);
-  const out: string[] = [];
-  let index = -1;
-  for (const section of parsed.sections) {
-    if (section.kind === "common") {
-      out.push(...section.lines);
-      continue;
-    }
-    index++;
-    if (index !== conflictIndex) {
-      out.push(...conflictMarkerLines(section, section.ours, section.theirs));
-      continue;
-    }
-    if (choice === "ours" || choice === "both") out.push(...section.ours);
-    if (choice === "theirs" || choice === "both") out.push(...section.theirs);
-  }
-  return joinLines(out, parsed.eol, parsed.trailingNewline);
+/** Per-line inclusion flags for one conflict block (merge view): index i
+ *  covers the region's i-th line. The block checkbox derives from these
+ *  (checked = all true, indeterminate = some). */
+export interface LineSelection {
+  ours: boolean[];
+  theirs: boolean[];
+}
+
+/** The i-th conflict block of a parse (bounds-checked convenience). */
+export function blockSection(parsed: ParsedConflicts, index: number): ConflictBlock {
+  const blocks = parsed.sections.filter(
+    (s): s is ConflictBlock => s.kind === "conflict",
+  );
+  const block = blocks[index];
+  if (!block) throw new Error(`no conflict block ${index}`);
+  return block;
 }
 
 /**
- * Rebuild the full marker file from the edited regions (one per conflict
- * hunk, in order). Region layout mirrors `conflictsToDiff`: lead context,
- * ours, theirs, and (last hunk only) trailing context; every common section
- * is exactly one hunk's lead or the final trail, so this covers the file.
- * diff3 base sections are re-emitted verbatim.
+ * The lines a conflict block contributes to the result document for the
+ * given per-line selection: selected ours lines then selected theirs lines
+ * (document order); no line selected restores the full conflict markers so
+ * nothing is decided implicitly. Region content is the (possibly edited)
+ * source; the section supplies the marker labels.
  */
-export function reconstructResolvedFile(
-  parsed: ParsedConflicts,
-  regions: ResolveRegions[],
-): string {
-  const out: string[] = [];
-  let index = -1;
-  for (const section of parsed.sections) {
-    if (section.kind === "common") continue; // covered by lead/trail regions
-    index++;
-    const r = regions[index];
-    if (!r) continue;
-    out.push(...r.lead);
-    out.push(...conflictMarkerLines(section, r.ours, r.theirs));
-    out.push(...r.trail);
+export function composeBlockLines(
+  region: ResolveRegions,
+  section: ConflictBlock,
+  sel: LineSelection,
+): string[] {
+  const chosen = [
+    ...region.ours.filter((_, i) => sel.ours[i]),
+    ...region.theirs.filter((_, i) => sel.theirs[i]),
+  ];
+  if (chosen.length > 0) return chosen;
+  if (sel.ours.some(Boolean) || sel.theirs.some(Boolean)) {
+    // Selected lines exist but the regions are empty (deletion side chosen):
+    // the block resolves to nothing.
+    return [];
   }
-  return joinLines(out, parsed.eol, parsed.trailingNewline);
+  return conflictMarkerLines(section, region.ours, region.theirs);
+}
+
+/**
+ * Locates each conflict region's 0-based start line in a side document by
+ * CONTENT (sequential search), not by the marker file's structure. The
+ * structural derivation (`conflictAnchors`) assumes the marker file's common
+ * sections match the stage file line-for-line — which stops holding the
+ * moment the user edits/saves commons in the result. An empty or unfindable
+ * region anchors at the running search position (graceful degradation; the
+ * scroll mapping clamps).
+ */
+export function locateRegionAnchors(
+  sideLines: readonly string[],
+  regions: readonly (readonly string[])[],
+): number[] {
+  const anchors: number[] = [];
+  let searchFrom = 0;
+  for (const region of regions) {
+    if (region.length === 0) {
+      anchors.push(Math.min(searchFrom, sideLines.length));
+      continue;
+    }
+    let found = -1;
+    for (let i = searchFrom; i <= sideLines.length - region.length; i++) {
+      let ok = true;
+      for (let j = 0; j < region.length; j++) {
+        if (sideLines[i + j] !== region[j]) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) {
+        found = i;
+        break;
+      }
+    }
+    if (found === -1) {
+      anchors.push(Math.min(searchFrom, sideLines.length));
+      continue;
+    }
+    anchors.push(found);
+    searchFrom = found + region.length;
+  }
+  return anchors;
+}
+
+/** Hide at least this many lines before a fold placeholder pays for its
+ *  own screen row. */
+const MIN_FOLD_LINES = 3;
+
+/**
+ * The foldable common stretches of a pane in "Conflicts" view: everything
+ * between/around the conflict blocks except `context` visible lines on each
+ * side of every block. 0-based inclusive line ranges; gaps smaller than
+ * MIN_FOLD_LINES stay unfolded (a placeholder row would not save space).
+ */
+export function foldableRanges(
+  blockStarts: readonly number[],
+  blockLens: readonly number[],
+  totalLines: number,
+  context: number,
+): Array<{ from: number; to: number }> {
+  const out: Array<{ from: number; to: number }> = [];
+  if (blockStarts.length === 0) return out;
+  const push = (from: number, to: number) => {
+    if (to - from + 1 >= MIN_FOLD_LINES) out.push({ from, to });
+  };
+  push(0, blockStarts[0] - context - 1);
+  for (let i = 0; i < blockStarts.length - 1; i++) {
+    push(
+      blockStarts[i] + blockLens[i] + context,
+      blockStarts[i + 1] - context - 1,
+    );
+  }
+  const last = blockStarts.length - 1;
+  push(blockStarts[last] + blockLens[last] + context, totalLines - 1);
+  return out;
+}
+
+/** Each block's 0-based start line and marker-view line count in the centre
+ *  (marker) document — the initial result-doc surgery spans. */
+export function markerViewSpans(
+  parsed: ParsedConflicts,
+): Array<{ start: number; lines: number }> {
+  const spans: Array<{ start: number; lines: number }> = [];
+  let c = 0;
+  for (const section of parsed.sections) {
+    if (section.kind === "common") {
+      c += section.lines.length;
+      continue;
+    }
+    const lines =
+      1 +
+      section.ours.length +
+      (section.base ? 1 + section.base.length : 0) +
+      1 +
+      section.theirs.length +
+      1;
+    spans.push({ start: c, lines });
+    c += lines;
+  }
+  return spans;
+}
+
+/**
+ * The un-edited `ResolveRegions` straight from a parsed file — the same
+ * lead/trail attribution `conflictsToDiff` uses (commons before a conflict
+ * lead it; the final trailing commons close the last conflict). Used where
+ * no editor holds live regions (the 3-way result preview).
+ */
+export function regionsFromParsed(parsed: ParsedConflicts): ResolveRegions[] {
+  const out: ResolveRegions[] = [];
+  let pending: string[] = [];
+  for (const section of parsed.sections) {
+    if (section.kind === "common") {
+      pending = pending.concat(section.lines);
+      continue;
+    }
+    out.push({ lead: pending, ours: [...section.ours], theirs: [...section.theirs], trail: [] });
+    pending = [];
+  }
+  if (out.length > 0 && pending.length > 0) {
+    out[out.length - 1] = { ...out[out.length - 1], trail: pending };
+  }
+  return out;
 }

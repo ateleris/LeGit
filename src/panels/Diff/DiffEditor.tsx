@@ -35,8 +35,6 @@ import {
 } from "./diffModel";
 import {
   collectHunkNewSideTexts,
-  collectResolveRegionsInline,
-  collectResolveRegionsSplit,
   type PaneDoc,
   type ResolveRegions,
   type RowMeta,
@@ -50,7 +48,7 @@ import {
 } from "./syntaxModel";
 import { loadParserForPath } from "./syntaxLanguages";
 
-export type HunkAction = "stage" | "unstage" | "discard" | "ours" | "theirs" | "both";
+export type HunkAction = "stage" | "unstage" | "discard";
 export type DiffViewMode = "inline" | "split";
 /** Per-line action offered for a working-tree diff (null = read-only commit). */
 export type LineActionOp = "stage" | "unstage" | null;
@@ -83,9 +81,6 @@ interface DiffEditorProps {
    *  after discarding edits, where the refetched diff is identical so no other
    *  dependency changes. Scroll position is preserved. */
   rebuildKey?: number;
-  /** Conflict-resolve rendering: ours/theirs blocks are editable (inline both
-   *  in one doc; split panes divide them) and collected as regions. */
-  resolve?: boolean;
   /** Repo-relative path used to pick a syntax-highlighting language, or null
    *  when highlighting is off (setting disabled / no file context). */
   syntaxPath?: string | null;
@@ -95,37 +90,19 @@ export interface DiffEditorHandle {
   /** Current per-hunk new-side lines from the edited doc, or null if the
    *  editor is not mounted in editable mode. */
   collectHunkTexts(): string[][] | null;
-  /** Per-conflict lead/ours/theirs/trail regions from the edited doc(s), or
-   *  null unless mounted editable in resolve mode. */
-  collectResolveRegions(): ResolveRegions[] | null;
 }
 
 const ACTION_LABEL: Record<HunkAction, string> = {
   stage: "Stage",
   unstage: "Unstage",
   discard: "Discard",
-  ours: "Ours",
-  theirs: "Theirs",
-  both: "Both",
 };
 
-/** Hover text per action ("<label> this hunk" reads wrong for resolves). */
 const ACTION_HOVER: Record<HunkAction, string> = {
   stage: "Stage this hunk",
   unstage: "Unstage this hunk",
   discard: "Discard this hunk",
-  ours: "Take our side for this conflict",
-  theirs: "Take their side for this conflict",
-  both: "Take both sides (ours, then theirs)",
 };
-
-// Resolve mode: ours (Removed) and theirs (Added) are BOTH real working-tree
-// content, so both are editable; in split view the panes divide the kinds
-// (left owns ours, right owns context + theirs; context is shared text and
-// must have exactly one editable home).
-const RESOLVE_INLINE_KINDS: ReadonlySet<string> = new Set(["Context", "Added", "Removed"]);
-const RESOLVE_LEFT_KINDS: ReadonlySet<string> = new Set(["Removed"]);
-const RESOLVE_RIGHT_KINDS: ReadonlySet<string> = new Set(["Context", "Added"]);
 
 const INLINE_CLASS: Record<DiffRow["kind"], string | null> = {
   Added: "cm-diff-added",
@@ -248,7 +225,7 @@ class LineActionMarker extends GutterMarker {
 
 /** A lucide-style plus (stage) or minus (unstage) icon, stroked in currentColor
  *  so it follows the button's `diff.action.*` colour. */
-function plusMinusIcon(plus: boolean): SVGSVGElement {
+export function plusMinusIcon(plus: boolean): SVGSVGElement {
   const NS = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(NS, "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -418,7 +395,7 @@ function applySyntaxHighlights(
   };
 }
 
-/** Shared editor chrome (exported for the 3-way resolve view). */
+/** Shared editor chrome (exported for the Merge panel's view). */
 export const baseTheme = EditorView.theme({
   "&": {
     height: "100%",
@@ -430,6 +407,39 @@ export const baseTheme = EditorView.theme({
     fontFamily:
       'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", monospace',
     lineHeight: "1.5",
+  },
+  ".cm-conflict-side-label": {
+    fontSize: "var(--fz-xs)",
+    fontStyle: "italic",
+    padding: "1px 8px",
+    opacity: "0.9",
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    cursor: "default",
+  },
+  ".cm-conflict-side-label input": {
+    margin: "0",
+    cursor: "pointer",
+  },
+  ".cm-conflict-dim": {
+    opacity: "0.4",
+  },
+  ".cm-conflict-check-gutter": {
+    width: "1.6em",
+  },
+  ".cm-conflict-check-gutter .cm-gutterElement": {
+    overflow: "visible",
+  },
+  ".cm-conflict-check": {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "var(--fz-md)",
+  },
+  ".cm-conflict-check input": {
+    margin: "0",
+    cursor: "pointer",
   },
   ".cm-diff-added": { backgroundColor: "var(--diff-added-bg)", color: "var(--diff-added-fg)" },
   ".cm-diff-removed": {
@@ -545,7 +555,7 @@ export const baseTheme = EditorView.theme({
   },
 });
 
-/** Read-only pane extensions (exported for the 3-way resolve view). */
+/** Read-only pane extensions (exported for the Merge panel's view). */
 export const readOnly = [
   EditorState.readOnly.of(true),
   EditorView.editable.of(false),
@@ -747,8 +757,6 @@ interface MountedEditor {
   destroy: () => void;
   /** Per-hunk new-side lines from the current (possibly edited) document. */
   collect: () => string[][];
-  /** Per-conflict lead/ours/theirs/trail regions (resolve mode's save path). */
-  collectResolve: () => ResolveRegions[];
 }
 
 /** Snapshot a pane's current document + row lookup for the pure collectors. */
@@ -782,12 +790,11 @@ function mountInline(
   editable: boolean,
   onDirty: (() => void) | undefined,
   onSaveRequest: (() => void) | undefined,
-  resolve: boolean,
   syntaxPath: string | null
 ): MountedEditor {
   const rows = buildRows(diff);
   const doc = rows.map((r) => r.text).join("\n");
-  const rowState = createRowState(rows, resolve ? RESOLVE_INLINE_KINDS : undefined);
+  const rowState = createRowState(rows);
   const extensions = [
     baseTheme,
     guttersWidthVar,
@@ -826,8 +833,6 @@ function mountInline(
       view.destroy();
     },
     collect: () => collectFromView(view, rowState, rows, diff.hunks.length),
-    collectResolve: () =>
-      collectResolveRegionsInline(paneDocOf(view, rowState, rows), diff.hunks.length),
   };
 }
 
@@ -844,7 +849,6 @@ function mountSplit(
   editable: boolean,
   onDirty: (() => void) | undefined,
   onSaveRequest: (() => void) | undefined,
-  resolve: boolean,
   syntaxPath: string | null
 ): MountedEditor {
   const { left, right } = buildSplitRows(diff);
@@ -873,10 +877,9 @@ function mountSplit(
     el: HTMLElement,
     rows: SplitRow[],
     withActions: boolean,
-    paneEditable: boolean,
-    paneKinds?: ReadonlySet<string>
+    paneEditable: boolean
   ) => {
-    const rowState = createRowState(rows, paneKinds);
+    const rowState = createRowState(rows);
     const extensions = [
       baseTheme,
       guttersWidthVar,
@@ -911,20 +914,8 @@ function mountSplit(
     return { view, rowState };
   };
 
-  const leftPane = pane(
-    leftEl,
-    left,
-    false,
-    editable && resolve,
-    resolve ? RESOLVE_LEFT_KINDS : undefined
-  );
-  const rightPane = pane(
-    rightEl,
-    right,
-    true,
-    editable,
-    resolve ? RESOLVE_RIGHT_KINDS : undefined
-  );
+  const leftPane = pane(leftEl, left, false, false);
+  const rightPane = pane(rightEl, right, true, editable);
   const leftView = leftPane.view;
   const rightView = rightPane.view;
 
@@ -968,13 +959,6 @@ function mountSplit(
     },
     // Edits land in the right pane; its rows carry the new-side content.
     collect: () => collectFromView(rightView, rightPane.rowState, right, diff.hunks.length),
-    // Resolve mode collects ours from the LEFT pane, the rest from the right.
-    collectResolve: () =>
-      collectResolveRegionsSplit(
-        paneDocOf(leftView, leftPane.rowState, left),
-        paneDocOf(rightView, rightPane.rowState, right),
-        diff.hunks.length
-      ),
   };
 }
 
@@ -993,7 +977,6 @@ export const DiffEditor = forwardRef<DiffEditorHandle, DiffEditorProps>(function
     onDirty,
     onSaveRequest,
     rebuildKey = 0,
-    resolve = false,
     syntaxPath = null,
   },
   ref
@@ -1008,9 +991,7 @@ export const DiffEditor = forwardRef<DiffEditorHandle, DiffEditorProps>(function
   }, [scrollResetKey]);
 
   useImperativeHandle(ref, () => ({
-    collectHunkTexts: () => (editable && !resolve ? mountRef.current?.collect() ?? null : null),
-    collectResolveRegions: () =>
-      editable && resolve ? mountRef.current?.collectResolve() ?? null : null,
+    collectHunkTexts: () => (editable ? mountRef.current?.collect() ?? null : null),
   }));
 
   useEffect(() => {
@@ -1019,8 +1000,8 @@ export const DiffEditor = forwardRef<DiffEditorHandle, DiffEditorProps>(function
     const anchor = anchorRef.current;
     const mounted =
       mode === "split"
-        ? mountSplit(host, diff, actions, onAction, onContextMenu, lineActionOp, onLineAction, anchor, editable, onDirty, onSaveRequest, resolve, syntaxPath)
-        : mountInline(host, diff, actions, onAction, onContextMenu, lineActionOp, onLineAction, anchor, editable, onDirty, onSaveRequest, resolve, syntaxPath);
+        ? mountSplit(host, diff, actions, onAction, onContextMenu, lineActionOp, onLineAction, anchor, editable, onDirty, onSaveRequest, syntaxPath)
+        : mountInline(host, diff, actions, onAction, onContextMenu, lineActionOp, onLineAction, anchor, editable, onDirty, onSaveRequest, syntaxPath);
     mountRef.current = mounted;
     return () => {
       mountRef.current = null;
@@ -1028,7 +1009,7 @@ export const DiffEditor = forwardRef<DiffEditorHandle, DiffEditorProps>(function
     };
     // NOTE: `dirty` is intentionally NOT a dependency: recreating the editor
     // would discard the user's unsaved edits. It only drives the CSS class.
-  }, [diff, mode, actions, onAction, onContextMenu, lineActionOp, onLineAction, editable, onDirty, onSaveRequest, rebuildKey, resolve, syntaxPath]);
+  }, [diff, mode, actions, onAction, onContextMenu, lineActionOp, onLineAction, editable, onDirty, onSaveRequest, rebuildKey, syntaxPath]);
 
   return (
     <div

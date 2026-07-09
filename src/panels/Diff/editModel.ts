@@ -71,7 +71,7 @@ export interface RowMeta {
 }
 
 /** Regions of one conflict hunk collected from the edited editor document
- *  (consumed by conflictModel.reconstructResolvedFile). */
+ *  (consumed by conflictModel.composeResolvedFile). */
 export interface ResolveRegions {
   lead: string[];
   ours: string[];
@@ -95,94 +95,6 @@ function emptyRegions(hunkCount: number): ResolveRegions[] {
     theirs: [],
     trail: [],
   }));
-}
-
-/**
- * Rebuild each conflict hunk's lead/ours/theirs/trail from the edited inline
- * document. Row layout per hunk (from conflictsToDiff + buildRows): header,
- * lead Context run, Removed run (ours), Added run (theirs), trailing Context.
- * Inserted lines (no row marker) join the region the caret was in.
- */
-export function collectResolveRegionsInline(
-  pane: PaneDoc,
-  hunkCount: number,
-): ResolveRegions[] {
-  const out = emptyRegions(hunkCount);
-  let hunk = -1;
-  let phase: ResolvePhase = "lead";
-  for (let i = 0; i < pane.docLines.length; i++) {
-    const rowIndex = pane.rowIndexAt(i);
-    const row = rowIndex != null ? pane.rows[rowIndex] : null;
-    if (row?.kind === "Hunk") {
-      hunk = row.hunkIndex;
-      phase = "lead";
-      continue;
-    }
-    if (hunk < 0) continue;
-    if (row) {
-      if (row.kind === "Removed") phase = "ours";
-      else if (row.kind === "Added") phase = "theirs";
-      else if (row.kind === "Context" && phase !== "lead") phase = "trail";
-    }
-    out[hunk][phase].push(pane.docLines[i]);
-  }
-  return out;
-}
-
-/**
- * Split-view variant: the ours side lives in the LEFT pane (its Removed rows
- * are the editable ones there), lead/theirs/trail in the RIGHT pane. Filler
- * rows advance the phase (so an empty side still classifies what follows as
- * trail) but contribute no text.
- */
-export function collectResolveRegionsSplit(
-  left: PaneDoc,
-  right: PaneDoc,
-  hunkCount: number,
-): ResolveRegions[] {
-  const out = emptyRegions(hunkCount);
-
-  // Right pane: lead context, Added (theirs), trailing context.
-  let hunk = -1;
-  let phase: ResolvePhase = "lead";
-  for (let i = 0; i < right.docLines.length; i++) {
-    const rowIndex = right.rowIndexAt(i);
-    const row = rowIndex != null ? right.rows[rowIndex] : null;
-    if (row?.kind === "Hunk") {
-      hunk = row.hunkIndex;
-      phase = "lead";
-      continue;
-    }
-    if (hunk < 0) continue;
-    if (row) {
-      if (row.kind === "Added" || row.kind === "Filler") phase = "theirs";
-      else if (row.kind === "Context" && phase !== "lead") phase = "trail";
-    }
-    if (row?.kind === "Filler") continue;
-    out[hunk][phase].push(right.docLines[i]);
-  }
-
-  // Left pane: only the Removed run (ours) plus lines inserted inside it.
-  hunk = -1;
-  let inOurs = false;
-  for (let i = 0; i < left.docLines.length; i++) {
-    const rowIndex = left.rowIndexAt(i);
-    const row = rowIndex != null ? left.rows[rowIndex] : null;
-    if (row?.kind === "Hunk") {
-      hunk = row.hunkIndex;
-      inOurs = false;
-      continue;
-    }
-    if (hunk < 0) continue;
-    if (row) {
-      if (row.kind === "Removed" || row.kind === "Filler") inOurs = true;
-      else if (row.kind === "Context") inOurs = false;
-    }
-    if (row?.kind === "Removed" || (row == null && inOurs)) {
-      out[hunk].ours.push(left.docLines[i]);
-    }
-  }
-  return out;
 }
 
 /** Row kinds whose text belongs to the new (working-tree) side of the file. */

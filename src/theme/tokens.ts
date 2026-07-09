@@ -76,6 +76,7 @@ export const PALETTE_CONTRACT: readonly PaletteDescriptor[] = [
   { name: "diff-added-line", documentation: "Whole-line background for an added/modified diff line (light tint)." },
   { name: "diff-removed-line", documentation: "Whole-line background for a removed/modified diff line (light tint)." },
   { name: "diff-hunk-header", documentation: "Background band behind a diff hunk's `@@` header row." },
+  { name: "merge-fold", documentation: "Background band behind the merge view's folded-lines bars (neutral: must not read as either conflict side)." },
   // Syntax highlighting colours (diff viewer code).
   { name: "syn-keyword", documentation: "Syntax: keywords (`if`, `fn`, `const`, ...)." },
   { name: "syn-string", documentation: "Syntax: string, character, and regexp literals." },
@@ -167,6 +168,8 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "diff.gutter.fg", group: "Diff", documentation: "Line-number gutter text in the Diff panel." },
   { name: "diff.hunk.header.bg", group: "Diff", documentation: "Background of a hunk's `@@` header row." },
   { name: "diff.hunk.header.fg", group: "Diff", documentation: "Text of a hunk's `@@` header row." },
+  { name: "merge.fold.bg", group: "Merge", documentation: "Background of the merge view's folded-lines bar." },
+  { name: "merge.fold.fg", group: "Merge", documentation: "Text of the merge view's folded-lines bar." },
   { name: "diff.edited.bg", group: "Diff", documentation: "Whole-line background for a line with unsaved edits in the editable diff." },
   { name: "op.banner.bg", group: "Working Changes", documentation: "Background of the merge/rebase-in-progress banner." },
   { name: "op.banner.fg", group: "Working Changes", documentation: "Text of the merge/rebase-in-progress banner." },

@@ -73,10 +73,11 @@ export function ChangedFilesPanel() {
     setSelectedId(id as CommitId);
     setSelectedPath(null);
     setPendingSelectPath(selectPath);
-    // No file is selected for the new commit yet — clear the Diff panel
-    // (only if it's open). The diff is always tied to a file selection.
+    // No file is selected for the new commit yet — clear the Diff and Merge
+    // panels (only if open). Both are always tied to a file selection.
     // (When `selectPath` is set, the effect below opens the diff once files load.)
     useSummonStore.getState().notifyIfOpen("diff", null);
+    useSummonStore.getState().notifyIfOpen("merge", null);
   }, []);
   useSummonTarget("changed-files", onReceive);
 

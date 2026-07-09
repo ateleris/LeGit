@@ -68,7 +68,8 @@
     "syn-punctuation": "#6e6e6e",
     "syn-constant": "#0070c1",
     "syn-tag": "#800000",
-    "shadow": "#00000040"
+    "shadow": "#00000040",
+    "merge-fold": "#71717a24"
   },
   "tokens": {
     "accent": "accent",
@@ -108,7 +109,7 @@
     "diff.discard.hover.fg": "main-bg",
     "diff.gutter.bg": "panel-bg",
     "diff.gutter.fg": "subtle-fg",
-    "diff.hunk.header.bg": "diff-hunk-header",
+    "diff.hunk.header.bg": "merge-fold",
     "diff.hunk.header.fg": "subtle-fg",
     "blame.alt.bg": "input-bg",
     "diff.edited.bg": "diff-hunk-header",
@@ -208,6 +209,8 @@
     "tab.border": "panel-border",
     "tab.fg": "subtle-fg",
     "tab.strip.bg": "panel-bg",
-    "warning.fg": "warning"
+    "warning.fg": "warning",
+    "merge.fold.bg": "merge-fold",
+    "merge.fold.fg": "subtle-fg"
   }
 }

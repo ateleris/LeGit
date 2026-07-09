@@ -2,11 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   alignedBreakpoints,
   conflictAnchors,
-  conflictsToDiff,
+  conflictSideNames,
+  composeBlockLines,
+  locateRegionAnchors,
+  foldableRanges,
+  markerViewSpans,
+  blockSection,
+  regionsFromParsed,
   parseConflicts,
   piecewiseMap,
-  reconstructResolvedFile,
-  resolveBlock,
 } from "./conflictModel";
 
 const CLASSIC = [
@@ -89,107 +93,6 @@ describe("parseConflicts", () => {
   });
 });
 
-describe("conflictsToDiff", () => {
-  it("maps ours to Removed, theirs to Added, commons to Context", () => {
-    const diff = conflictsToDiff(parseConflicts(CLASSIC), "a.txt");
-    expect(diff.hunks).toHaveLength(1);
-    const h = diff.hunks[0];
-    expect(h.lines.map((l) => l.kind)).toEqual([
-      "Context", // before
-      "Removed", // ours1
-      "Removed", // ours2
-      "Added", // theirs1
-      "Context", // after (trailing common on the last hunk)
-    ]);
-    expect(h.lines.map((l) => l.content)).toEqual([
-      "before", "ours1", "ours2", "theirs1", "after",
-    ]);
-    // ours-side numbering: before(1) ours1(2) ours2(3) after(4)
-    expect(h.old_start).toBe(1);
-    expect(h.old_lines).toBe(4);
-    // theirs-side numbering: before(1) theirs1(2) after(3)
-    expect(h.new_start).toBe(1);
-    expect(h.new_lines).toBe(3);
-    expect(h.header).toContain("Conflict 1/1");
-    expect(h.header).toContain("HEAD");
-    expect(h.header).toContain("feature/x");
-  });
-
-  it("assigns commons between conflicts as the next hunk's lead context", () => {
-    const text = [
-      "<<<<<<< a", "o1", "=======", "t1", ">>>>>>> b",
-      "mid1",
-      "mid2",
-      "<<<<<<< a", "o2", "=======", "t2", ">>>>>>> b",
-    ].join("\n") + "\n";
-    const diff = conflictsToDiff(parseConflicts(text), "a.txt");
-    expect(diff.hunks).toHaveLength(2);
-    expect(diff.hunks[0].lines.map((l) => l.content)).toEqual(["o1", "t1"]);
-    expect(diff.hunks[1].lines.map((l) => l.content)).toEqual(["mid1", "mid2", "o2", "t2"]);
-    // Second hunk's numbering starts after hunk 1 on each side.
-    expect(diff.hunks[1].old_start).toBe(2); // o1(1) mid1(2)...
-    expect(diff.hunks[1].new_start).toBe(2); // t1(1) mid1(2)...
-  });
-});
-
-describe("resolveBlock", () => {
-  it("takes ours / theirs / both and preserves EOL + trailing newline", () => {
-    expect(resolveBlock(CLASSIC, 0, "ours")).toBe("before\nours1\nours2\nafter\n");
-    expect(resolveBlock(CLASSIC, 0, "theirs")).toBe("before\ntheirs1\nafter\n");
-    expect(resolveBlock(CLASSIC, 0, "both")).toBe(
-      "before\nours1\nours2\ntheirs1\nafter\n",
-    );
-    const crlf = CLASSIC.replace(/\n/g, "\r\n");
-    expect(resolveBlock(crlf, 0, "theirs")).toBe("before\r\ntheirs1\r\nafter\r\n");
-    const noTrail = CLASSIC.slice(0, -1);
-    expect(resolveBlock(noTrail, 0, "ours")).toBe("before\nours1\nours2\nafter");
-  });
-
-  it("resolves only the addressed conflict; diff3 base is dropped", () => {
-    const text = [
-      "<<<<<<< a", "o1", "=======", "t1", ">>>>>>> b",
-      "mid",
-      "<<<<<<< a", "o2", "=======", "t2", ">>>>>>> b",
-    ].join("\n") + "\n";
-    expect(resolveBlock(text, 1, "theirs")).toBe(
-      ["<<<<<<< a", "o1", "=======", "t1", ">>>>>>> b", "mid", "t2"].join("\n") + "\n",
-    );
-    expect(resolveBlock(DIFF3, 0, "ours")).toBe("ours\n");
-  });
-});
-
-describe("reconstructResolvedFile", () => {
-  it("rebuilds the marker file from edited regions (diff3 base kept verbatim)", () => {
-    const p = parseConflicts(DIFF3);
-    const out = reconstructResolvedFile(p, [
-      { lead: [], ours: ["ours EDITED"], theirs: ["theirs", "extra"], trail: [] },
-    ]);
-    expect(out).toBe(
-      [
-        "<<<<<<< HEAD",
-        "ours EDITED",
-        "||||||| base123",
-        "orig",
-        "=======",
-        "theirs",
-        "extra",
-        ">>>>>>> feature/x",
-      ].join("\n") + "\n",
-    );
-  });
-
-  it("re-emits edited lead/trail context and preserves CRLF", () => {
-    const p = parseConflicts(CLASSIC.replace(/\n/g, "\r\n"));
-    const out = reconstructResolvedFile(p, [
-      { lead: ["BEFORE"], ours: ["ours1", "ours2"], theirs: ["theirs1"], trail: ["after", "added"] },
-    ]);
-    expect(out).toBe(
-      ["BEFORE", "<<<<<<< HEAD", "ours1", "ours2", "=======", "theirs1", ">>>>>>> feature/x", "after", "added"]
-        .join("\r\n") + "\r\n",
-    );
-  });
-});
-
 describe("conflictAnchors", () => {
   // 3-way scroll sync: for each conflict, the 0-based start line in the
   // centre (marker) doc and in each side's "file as if that side were
@@ -267,5 +170,166 @@ describe("piecewiseMap / alignedBreakpoints", () => {
     const { xs, ys } = alignedBreakpoints([100, 90], 500, [80, 200], 400);
     expect(xs).toEqual([0, 100, 500]);
     expect(ys).toEqual([0, 80, 400]);
+  });
+});
+
+describe("conflictSideNames", () => {
+  it("resolves the HEAD marker to the current branch", () => {
+    const names = conflictSideNames(parseConflicts(CLASSIC), "main");
+    expect(names).toEqual({ ours: "main", theirs: "feature/x" });
+  });
+
+  it("keeps a non-HEAD ours label verbatim", () => {
+    const text = ["<<<<<<< release/1.0", "o", "=======", "t", ">>>>>>> hotfix"].join("\n") + "\n";
+    const names = conflictSideNames(parseConflicts(text), "main");
+    expect(names).toEqual({ ours: "release/1.0", theirs: "hotfix" });
+  });
+
+  it("leaves ours unnamed when HEAD cannot be resolved (detached rebase)", () => {
+    const names = conflictSideNames(parseConflicts(CLASSIC), null);
+    expect(names.ours).toBeNull();
+    expect(names.theirs).toBe("feature/x");
+  });
+
+  it("returns nulls for label-less markers and for no conflicts", () => {
+    const bare = ["<<<<<<<", "o", "=======", "t", ">>>>>>>"].join("\n") + "\n";
+    expect(conflictSideNames(parseConflicts(bare), null)).toEqual({ ours: null, theirs: null });
+    expect(conflictSideNames(parseConflicts("just text\n"), "main")).toEqual({
+      ours: null,
+      theirs: null,
+    });
+  });
+});
+
+describe("regionsFromParsed", () => {
+  it("mirrors conflictsToDiff's lead/trail attribution", () => {
+    const text = [
+      "before",
+      "<<<<<<< HEAD", "o1", "=======", "t1", ">>>>>>> feature/x",
+      "mid",
+      "<<<<<<< HEAD", "o2", "=======", "t2", ">>>>>>> feature/x",
+      "after",
+    ].join("\n") + "\n";
+    const regions = regionsFromParsed(parseConflicts(text));
+    expect(regions).toEqual([
+      { lead: ["before"], ours: ["o1"], theirs: ["t1"], trail: [] },
+      { lead: ["mid"], ours: ["o2"], theirs: ["t2"], trail: ["after"] },
+    ]);
+  });
+});
+
+describe("composeBlockLines / markerViewSpans (merge view model)", () => {
+  const TEXT3 = [
+    "before",
+    "<<<<<<< HEAD", "o1", "o2", "=======", "t1", ">>>>>>> feature/x",
+    "mid",
+    "<<<<<<< HEAD", "o3", "=======", "t3", ">>>>>>> feature/x",
+  ].join("\n") + "\n";
+
+  it("composes selected lines in document order (ours then theirs)", () => {
+    const parsed = parseConflicts(TEXT3);
+    const regions = regionsFromParsed(parsed);
+    expect(
+      composeBlockLines(regions[0], blockSection(parsed, 0), {
+        ours: [true, false],
+        theirs: [true],
+      }),
+    ).toEqual(["o1", "t1"]);
+    expect(
+      composeBlockLines(regions[0], blockSection(parsed, 0), {
+        ours: [false, true],
+        theirs: [false],
+      }),
+    ).toEqual(["o2"]);
+  });
+
+  it("no selected lines restores the conflict markers", () => {
+    const parsed = parseConflicts(TEXT3);
+    const regions = regionsFromParsed(parsed);
+    expect(
+      composeBlockLines(regions[0], blockSection(parsed, 0), {
+        ours: [false, false],
+        theirs: [false],
+      }),
+    ).toEqual(["<<<<<<< HEAD", "o1", "o2", "=======", "t1", ">>>>>>> feature/x"]);
+  });
+
+  it("markerViewSpans gives each block's start line and marker-view length", () => {
+    const parsed = parseConflicts(TEXT3);
+    expect(markerViewSpans(parsed)).toEqual([
+      { start: 1, lines: 6 },
+      { start: 8, lines: 5 },
+    ]);
+  });
+});
+
+describe("locateRegionAnchors", () => {
+  it("matches the structural anchors on a pristine merge file", () => {
+    const text = [
+      "before",
+      "<<<<<<< HEAD", "o1", "o2", "=======", "t1", ">>>>>>> b",
+      "mid",
+      "<<<<<<< HEAD", "o3", "=======", "t3", ">>>>>>> b",
+      "after",
+    ].join("\n") + "\n";
+    const parsed = parseConflicts(text);
+    const regions = regionsFromParsed(parsed);
+    // The ours stage file: commons + ours regions.
+    const oursDoc = ["before", "o1", "o2", "mid", "o3", "after"];
+    expect(
+      locateRegionAnchors(oursDoc, regions.map((r) => r.ours)),
+    ).toEqual(conflictAnchors(parsed).ours);
+  });
+
+  it("finds regions even when the marker file's commons were edited", () => {
+    // The side doc is unchanged; the searcher only depends on region content.
+    const oursDoc = ["before", "o1", "o2", "mid", "o3", "after"];
+    expect(locateRegionAnchors(oursDoc, [["o1", "o2"], ["o3"]])).toEqual([1, 4]);
+  });
+
+  it("resolves duplicate region content sequentially", () => {
+    const doc = ["x", "dup", "y", "dup", "z"];
+    expect(locateRegionAnchors(doc, [["dup"], ["dup"]])).toEqual([1, 3]);
+  });
+
+  it("anchors an empty region after the previous match", () => {
+    const doc = ["a", "o1", "b"];
+    expect(locateRegionAnchors(doc, [["o1"], []])).toEqual([1, 2]);
+  });
+
+  it("falls back to the search position when a region is missing", () => {
+    const doc = ["a", "o1", "b"];
+    expect(locateRegionAnchors(doc, [["o1"], ["edited-away"]])).toEqual([1, 2]);
+  });
+});
+
+describe("foldableRanges", () => {
+  it("folds the stretches between blocks, keeping context lines", () => {
+    // blocks at 10 (3 lines) and 40 (2 lines), 60 lines total, context 3
+    expect(
+      foldableRanges([10, 40], [3, 2], 60, 3),
+    ).toEqual([
+      { from: 0, to: 6 },   // leading: 0..6 hidden (7,8,9 = context)
+      { from: 16, to: 36 }, // between: after 10+3+3 .. before 40-3
+      { from: 45, to: 59 }, // trailing: after 40+2+3
+    ]);
+  });
+
+  it("skips gaps too small to be worth a placeholder", () => {
+    // 2-line leading gap and a 1-line inter-block gap stay unfolded;
+    // only the 3-line trailing stretch folds.
+    expect(foldableRanges([5, 12], [2, 2], 20, 3)).toEqual([
+      { from: 17, to: 19 },
+    ]);
+  });
+
+  it("handles a block at the start and end of the file", () => {
+    expect(foldableRanges([0], [3], 30, 3)).toEqual([{ from: 6, to: 29 }]);
+    expect(foldableRanges([27], [3], 30, 3)).toEqual([{ from: 0, to: 23 }]);
+  });
+
+  it("returns nothing for no blocks or fully covered files", () => {
+    expect(foldableRanges([], [], 100, 3)).toEqual([]);
+    expect(foldableRanges([0], [10], 10, 3)).toEqual([]);
   });
 });

@@ -287,6 +287,23 @@ button.legit-region-divider__mode:hover {
   border-bottom: 1px solid var(--panel-border);
   background: var(--panel-header-bg);
   color: var(--panel-header-fg);
+  /* Uniform header height across all panels: text-only toolbars (Git Log)
+     must not render shorter than toolbars with controls (Commits, Working
+     Changes). Sized to the standard compact toolbar control - fz-sm text at
+     line-height 1.2 (pinned in shared/buttons.tsx ghostStyle) + 2x2px
+     control padding + 2x1px control border (the 19px constant includes this
+     bar's own 12px padding and 1px bottom border; border-box). Scales with
+     the global UI font size. */
+  min-height: calc(var(--fz-sm) * 1.2 + 19px);
+}
+/* Bare native buttons inside a toolbar (e.g. Git Log's "Clear") pick up the
+   fat global `button` base and would make their bar taller than everyone
+   else's - normalize them to the same compact metrics ghost buttons and the
+   segmented toggles already use inline. */
+.legit-panel__toolbar button {
+  padding: 2px 8px;
+  font-size: var(--fz-sm);
+  line-height: 1.2;
 }
 
 /* Repository tab strip. Three regions:

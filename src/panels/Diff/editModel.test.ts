@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   applyEol,
   collectHunkNewSideTexts,
-  collectResolveRegionsInline,
-  collectResolveRegionsSplit,
   detectEol,
   hasTrailingNewline,
   splitLines,
@@ -155,86 +153,5 @@ describe("collectHunkNewSideTexts", () => {
     const rowAt = (i: number) => (i <= 2 ? i : 4);
     const out = collectHunkNewSideTexts(docLines, rowAt, rows, 1);
     expect(out).toEqual([["ctx1", "ctx2"]]);
-  });
-});
-
-describe("collectResolveRegions (inline)", () => {
-  // Rows of one conflict hunk: header, lead ctx, ours(2), theirs(1), trail ctx.
-  const rows: RowMeta[] = [
-    { kind: "Hunk", hunkIndex: 0 },
-    { kind: "Context", hunkIndex: 0 },
-    { kind: "Removed", hunkIndex: 0 },
-    { kind: "Removed", hunkIndex: 0 },
-    { kind: "Added", hunkIndex: 0 },
-    { kind: "Context", hunkIndex: 0 },
-  ];
-  const doc = ["HEADER", "before", "ours1", "ours2", "theirs1", "after"];
-
-  it("splits an unedited doc into lead/ours/theirs/trail", () => {
-    const out = collectResolveRegionsInline(
-      { docLines: doc, rowIndexAt: (i) => i, rows },
-      1,
-    );
-    expect(out).toEqual([
-      { lead: ["before"], ours: ["ours1", "ours2"], theirs: ["theirs1"], trail: ["after"] },
-    ]);
-  });
-
-  it("attributes inserted lines to the region they were typed in", () => {
-    // A line inserted after ours2 (doc line index 4) and one after theirs1.
-    const edited = ["HEADER", "before", "ours1", "ours2", "ours3-new", "theirs1", "t-new", "after"];
-    const rowAt = (i: number) =>
-      i <= 3 ? i : i === 4 ? null : i === 5 ? 4 : i === 6 ? null : 5;
-    const out = collectResolveRegionsInline({ docLines: edited, rowIndexAt: rowAt, rows }, 1);
-    expect(out[0].ours).toEqual(["ours1", "ours2", "ours3-new"]);
-    expect(out[0].theirs).toEqual(["theirs1", "t-new"]);
-    expect(out[0].trail).toEqual(["after"]);
-  });
-});
-
-describe("collectResolveRegions (split)", () => {
-  it("takes ours from the left pane, lead/theirs/trail from the right", () => {
-    // Left rows: header, ctx, Removed x2, ctx. Right: header, ctx, Added, Filler, ctx.
-    const leftRows: RowMeta[] = [
-      { kind: "Hunk", hunkIndex: 0 },
-      { kind: "Context", hunkIndex: 0 },
-      { kind: "Removed", hunkIndex: 0 },
-      { kind: "Removed", hunkIndex: 0 },
-      { kind: "Context", hunkIndex: 0 },
-    ];
-    const rightRows: RowMeta[] = [
-      { kind: "Hunk", hunkIndex: 0 },
-      { kind: "Context", hunkIndex: 0 },
-      { kind: "Added", hunkIndex: 0 },
-      { kind: "Filler", hunkIndex: 0 },
-      { kind: "Context", hunkIndex: 0 },
-    ];
-    const out = collectResolveRegionsSplit(
-      { docLines: ["H", "before", "ours1", "ours2-edit", "after"], rowIndexAt: (i) => i, rows: leftRows },
-      { docLines: ["H", "before", "theirs1", "", "after"], rowIndexAt: (i) => i, rows: rightRows },
-      1,
-    );
-    expect(out).toEqual([
-      { lead: ["before"], ours: ["ours1", "ours2-edit"], theirs: ["theirs1"], trail: ["after"] },
-    ]);
-  });
-
-  it("an empty theirs side (all fillers on the right) still classifies trail", () => {
-    const leftRows: RowMeta[] = [
-      { kind: "Hunk", hunkIndex: 0 },
-      { kind: "Removed", hunkIndex: 0 },
-      { kind: "Context", hunkIndex: 0 },
-    ];
-    const rightRows: RowMeta[] = [
-      { kind: "Hunk", hunkIndex: 0 },
-      { kind: "Filler", hunkIndex: 0 },
-      { kind: "Context", hunkIndex: 0 },
-    ];
-    const out = collectResolveRegionsSplit(
-      { docLines: ["H", "mine", "after"], rowIndexAt: (i) => i, rows: leftRows },
-      { docLines: ["H", "", "after"], rowIndexAt: (i) => i, rows: rightRows },
-      1,
-    );
-    expect(out[0]).toEqual({ lead: [], ours: ["mine"], theirs: [], trail: ["after"] });
   });
 });

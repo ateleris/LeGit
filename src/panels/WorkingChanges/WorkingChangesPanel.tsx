@@ -265,9 +265,15 @@ export function WorkingChangesPanel() {
       const source: DiffSource =
         section === "staged" ? { kind: "working_staged" } : { kind: "working_unstaged" };
       const change = status.find((s) => s.path === path)?.state;
-      useSummonStore
-        .getState()
-        .summon("diff", { repoId: repo.id, path, source, change } satisfies DiffRequest);
+      // Conflicted files open the dedicated Merge panel; everything else the
+      // Diff panel. The two share one dock slot (swapSummon closes the other).
+      if (change === "Conflicted") {
+        useSummonStore.getState().swapSummon("merge", "diff", { repoId: repo.id, path });
+      } else {
+        useSummonStore
+          .getState()
+          .swapSummon("diff", "merge", { repoId: repo.id, path, source, change } satisfies DiffRequest);
+      }
     },
     [repo, status],
   );
@@ -294,16 +300,23 @@ export function WorkingChangesPanel() {
         const source: DiffSource =
           next.section === "staged" ? { kind: "working_staged" } : { kind: "working_unstaged" };
         const change = status.find((s) => s.path === next.paths[0])?.state;
-        store.notifyIfOpen("diff", {
-          repoId: repo.id,
-          path: next.paths[0],
-          source,
-          change,
-        } satisfies DiffRequest);
+        if (change === "Conflicted") {
+          store.notifyIfOpen("merge", { repoId: repo.id, path: next.paths[0] });
+          store.notifyIfOpen("diff", null);
+        } else {
+          store.notifyIfOpen("diff", {
+            repoId: repo.id,
+            path: next.paths[0],
+            source,
+            change,
+          } satisfies DiffRequest);
+          store.notifyIfOpen("merge", null);
+        }
         return;
       }
       if (prev && prev.paths.length === 1 && !next?.paths.includes(prev.paths[0])) {
         store.notifyIfOpen("diff", null);
+        store.notifyIfOpen("merge", null);
       }
     },
     [repo, status],

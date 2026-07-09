@@ -28,6 +28,7 @@
   --palette-diff-added-line: #3498db33;
   --palette-diff-removed-line: #e58e2633;
   --palette-diff-hunk-header: #4a9eff24;
+  --palette-merge-fold: #9aa0a626;
   --palette-syn-keyword: #569cd6;
   --palette-syn-string: #ce9178;
   --palette-syn-number: #b5cea8;
@@ -138,8 +139,10 @@
   --diff-removed-word-bg: var(--palette-danger);
   --diff-gutter-bg: var(--palette-panel-bg);
   --diff-gutter-fg: var(--palette-subtle-fg);
-  --diff-hunk-header-bg: var(--palette-diff-hunk-header);
+  --diff-hunk-header-bg: var(--palette-merge-fold);
   --diff-hunk-header-fg: var(--palette-subtle-fg);
+  --merge-fold-bg: var(--palette-merge-fold);
+  --merge-fold-fg: var(--palette-subtle-fg);
   --blame-alt-bg: var(--palette-input-bg);
   --diff-edited-bg: var(--palette-diff-hunk-header);
   --op-banner-bg: var(--palette-diff-hunk-header);

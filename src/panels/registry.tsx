@@ -6,6 +6,7 @@ import { CommitDetailsPanel } from "./CommitDetails/CommitDetailsPanel";
 import { ChangedFilesPanel } from "./ChangedFiles/ChangedFilesPanel";
 import { WorkingChangesPanel } from "./WorkingChanges/WorkingChangesPanel";
 import { DiffPanel } from "./Diff/DiffPanel";
+import { MergePanel } from "./Merge/MergePanel";
 import { InteractiveRebasePanel } from "./InteractiveRebase/InteractiveRebasePanel";
 import { ComparePanel } from "./Compare/ComparePanel";
 import { SearchPanel } from "./Search/SearchPanel";
@@ -154,6 +155,14 @@ export const REPO_PANELS: PanelDescriptor[] = [
     scope: "repo",
     defaultPlacement: { direction: "right", referencePanel: "changed-files" },
   },
+  {
+    id: "merge",
+    title: "Merge",
+    scope: "repo",
+    // Shares the Diff panel's spot: conflicted files swapSummon between the
+    // two, so the default placement only matters when neither is open.
+    defaultPlacement: { direction: "right", referencePanel: "changed-files" },
+  },
 ];
 
 /** All panels, for menus that need to enumerate both docks. */
@@ -170,6 +179,7 @@ export const SUPPRESSIBLE_SUMMON_PANELS: string[] = [
   "changed-files",
   "working-changes",
   "diff",
+  "merge",
   "file-view",
   "file-history",
   "blame",
@@ -218,6 +228,7 @@ export const REPO_DOCKVIEW_COMPONENTS: Record<
   "changed-files": wrap(ChangedFilesPanel),
   "working-changes": wrap(WorkingChangesPanel),
   diff: wrap(DiffPanel),
+  merge: wrap(MergePanel),
   "interactive-rebase": wrap(InteractiveRebasePanel),
   compare: wrap(ComparePanel),
   search: wrap(SearchPanel),

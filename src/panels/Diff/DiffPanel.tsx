@@ -4,12 +4,10 @@ import { useRepoStore } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
 import { useSummonTarget } from "../../store/summon";
 import {
-  repoConflictFileSides,
   repoDiff,
   repoDiscardHunk,
   repoDiscardLines,
   repoReadWorktreeFile,
-  repoResolveTakeSide,
   repoStage,
   repoStageHunk,
   repoStageLines,
@@ -17,9 +15,8 @@ import {
   repoUnstageLines,
   repoWriteWorktreeFile,
 } from "../../lib/commands";
-import type { ConflictFileSides, ConflictSide, DiffEntry, DiffRequest, DiffSource } from "../../lib/types";
+import type { DiffEntry, DiffRequest, DiffSource } from "../../lib/types";
 import { LineEndingBadge } from "../shared/LineEndingBadge";
-import { ThreeWayView } from "./ThreeWayView";
 import { SubmoduleDiffView, SubmoduleDirtyNotice } from "./SubmoduleDiffView";
 import { formatAppError } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
@@ -39,36 +36,19 @@ import {
   type HunkAction,
   type LineActionOp,
 } from "./DiffEditor";
-import { applyEol, spliceEdits } from "./editModel";
-import {
-  conflictsToDiff,
-  parseConflicts,
-  reconstructResolvedFile,
-  resolveBlock,
-  type ParsedConflicts,
-} from "./conflictModel";
+import { spliceEdits } from "./editModel";
 
 const ACTION_TITLE: Record<HunkAction, string> = {
   stage: "Stage chunk",
   unstage: "Unstage chunk",
   discard: "Discard chunk",
-  ours: "Take ours",
-  theirs: "Take theirs",
-  both: "Take both",
 };
 
 const LINE_LABEL: Record<HunkAction, string> = {
   stage: "Stage line",
   unstage: "Unstage line",
   discard: "Discard line",
-  ours: "Take ours",
-  theirs: "Take theirs",
-  both: "Take both",
 };
-
-/** Module-level so the array identity is stable (it sits in the editor's
- *  mount-effect dependencies; a per-render literal would remount every render). */
-const RESOLVE_ACTIONS: HunkAction[] = ["ours", "theirs", "both"];
 
 type ContextMode = "chunked" | "full";
 
@@ -180,53 +160,6 @@ export function DiffPanel() {
 
   const context = contextMode === "full" ? FULL_FILE_CONTEXT : CHUNKED_CONTEXT;
 
-  // Conflicted working-tree file: the panel renders resolve mode instead of a
-  // regular diff (same summon flow; the row's change state rides along).
-  const resolveMode =
-    !!request && request.source.kind === "working_unstaged" && request.change === "Conflicted";
-  const resolveModeRef = useRef(resolveMode);
-  resolveModeRef.current = resolveMode;
-
-  const {
-    data: conflictText,
-    isError: isConflictReadError,
-    error: conflictReadError,
-    isFetching: isFetchingConflict,
-  } = useQuery<string>({
-    // Under the "diff" domain so all existing invalidations refresh it.
-    queryKey: [request?.repoId, "diff", "resolve", request?.path],
-    queryFn: () => repoReadWorktreeFile(request!.repoId, request!.path),
-    enabled: resolveMode && !!request && request.repoId === activeRepoId && !dirty,
-    staleTime: 5_000,
-  });
-  const parsed = useMemo(
-    () => (resolveMode && conflictText != null ? parseConflicts(conflictText) : null),
-    [resolveMode, conflictText],
-  );
-
-  // 3-way resolve view (ours | result | theirs) — session-scoped preference.
-  const [threeWay, setThreeWay] = useState(false);
-  // Optional base (stage 1) pane inside the 3-way view.
-  const [showBase, setShowBase] = useState(false);
-  const threeWayActive = resolveMode && threeWay;
-  const threeWayActiveRef = useRef(threeWayActive);
-  threeWayActiveRef.current = threeWayActive;
-  // The centre pane's current text, reported on every edit; the save path
-  // writes it wholesale (the centre doc IS the full file).
-  const threeWayTextRef = useRef<string | null>(null);
-  const { data: sides } = useQuery<ConflictFileSides>({
-    queryKey: [request?.repoId, "diff", "sides", request?.path],
-    queryFn: () => repoConflictFileSides(request!.repoId, request!.path),
-    enabled: threeWayActive && !!request && request.repoId === activeRepoId && !dirty,
-    staleTime: 5_000,
-  });
-  const parsedRef = useRef<ParsedConflicts | null>(null);
-  parsedRef.current = parsed;
-  const resolveDiff = useMemo(
-    () => (parsed && request ? conflictsToDiff(parsed, request.path) : null),
-    [parsed, request?.path], // eslint-disable-line react-hooks/exhaustive-deps
-  );
-
   const {
     data,
     isFetching,
@@ -244,7 +177,7 @@ export function DiffPanel() {
     // refetches are deferred entirely: a refetch rebuilds the editor and would
     // silently discard the user's unsaved edits (React Query keeps the cached
     // data, and pending invalidations run when re-enabled after save/discard).
-    enabled: !!request && request.repoId === activeRepoId && !dirty && !resolveMode,
+    enabled: !!request && request.repoId === activeRepoId && !dirty,
     staleTime: 5_000,
   });
   dataRef.current = data;
@@ -316,42 +249,11 @@ export function DiffPanel() {
     [request, queryClient]
   );
 
-  // Write the edited document back to the file. Resolve mode reconstructs the
-  // whole marker file from the edited regions; a normal diff reads the
-  // on-disk baseline and splices each hunk's new-side text into it.
+  // Write the edited document back to the file: read the on-disk baseline
+  // and splice each hunk's new-side text into it.
   const onSave = useCallback(async () => {
     if (savingRef.current) return;
     const req = requestRef.current;
-    if (resolveModeRef.current) {
-      savingRef.current = true;
-      try {
-        // 3-way: the centre pane is the whole file, but the editor document
-        // joins lines with "\n" regardless of the file — re-instate the real
-        // EOL (parseConflicts recorded it) or a CRLF file saves as LF.
-        // Marker view: reassemble the file from the edited editor regions
-        // (joinLines applies the recorded EOL there).
-        let next: string | null = null;
-        if (threeWayActiveRef.current) {
-          const text = threeWayTextRef.current;
-          const parsedNow = parsedRef.current;
-          next = text != null && parsedNow ? applyEol(text, parsedNow.eol) : text;
-        } else {
-          const regions = editorRef.current?.collectResolveRegions();
-          const parsedNow = parsedRef.current;
-          if (regions && parsedNow) next = reconstructResolvedFile(parsedNow, regions);
-        }
-        if (!req || next == null) return;
-        await repoWriteWorktreeFile(req.repoId, req.path, next);
-        setDirty(false);
-        setRebuildKey((k) => k + 1);
-        invalidateRepoDomains(queryClient, req.repoId, ["status", "diff", "op_state"]);
-      } catch (e) {
-        notify.error(formatAppError(e));
-      } finally {
-        savingRef.current = false;
-      }
-      return;
-    }
     const entry = dataRef.current;
     const texts = editorRef.current?.collectHunkTexts();
     if (!req || !entry || !("Text" in entry) || !texts) return;
@@ -387,50 +289,6 @@ export function DiffPanel() {
 
   const onDirty = useCallback(() => setDirty(true), []);
 
-  // One-click block resolution: rewrite that conflict in the file and let the
-  // refetch re-render with one fewer conflict. hunkIndex === conflict index.
-  // The file is re-read at action time so a stale view can never misresolve.
-  const onResolveChoice = useCallback(async (hunkIndex: number, action: HunkAction) => {
-    const req = requestRef.current;
-    if (!req) return;
-    if (dirtyRef.current) {
-      notify.error("Unsaved edits in the diff. Save or discard them first.");
-      return;
-    }
-    if (action !== "ours" && action !== "theirs" && action !== "both") return;
-    try {
-      const current = await repoReadWorktreeFile(req.repoId, req.path);
-      const next = resolveBlock(current, hunkIndex, action);
-      await repoWriteWorktreeFile(req.repoId, req.path, next);
-      invalidateRepoDomains(queryClient, req.repoId, ["status", "diff", "op_state"]);
-    } catch (e) {
-      notify.error(formatAppError(e));
-    }
-  }, [queryClient]);
-
-  // Whole-file actions (also the only offering for non-UTF-8 conflicts).
-  const onTakeSide = useCallback(async (side: ConflictSide) => {
-    const req = requestRef.current;
-    if (!req) return;
-    try {
-      await repoResolveTakeSide(req.repoId, req.path, side);
-      invalidateRepoDomains(queryClient, req.repoId, ["status", "log", "diff", "op_state"]);
-    } catch (e) {
-      notify.error(formatAppError(e));
-    }
-  }, [queryClient]);
-
-  const onMarkResolved = useCallback(async () => {
-    const req = requestRef.current;
-    if (!req) return;
-    try {
-      await repoStage(req.repoId, [req.path]);
-      invalidateRepoDomains(queryClient, req.repoId, ["status", "log", "diff", "op_state"]);
-    } catch (e) {
-      notify.error(formatAppError(e));
-    }
-  }, [queryClient]);
-
   const chooseMode = (next: DiffViewMode) => {
     setMode(next);
     localStorage.setItem(MODE_KEY, next);
@@ -460,7 +318,7 @@ export function DiffPanel() {
   return (
     <PanelContextMenuProvider baseline={baseline}>
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
-      <PanelLoadingBar active={isFetching || isFetchingConflict} />
+      <PanelLoadingBar active={isFetching} />
       <div
         className="legit-panel__toolbar"
         style={{ display: "flex", alignItems: "center", gap: 8 }}
@@ -473,67 +331,14 @@ export function DiffPanel() {
             Split
           </button>
         </div>
-        {!resolveMode && (
-          <div style={{ display: "flex" }}>
-            <button onClick={() => chooseContext("chunked")} aria-pressed={contextMode === "chunked"} style={segStyle(contextMode === "chunked", "left")}>
-              Chunks
-            </button>
-            <button onClick={() => chooseContext("full")} aria-pressed={contextMode === "full"} style={segStyle(contextMode === "full", "right")}>
-              Full file
-            </button>
-          </div>
-        )}
-        {resolveMode && (
-          <span style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-            <button
-              onClick={() => setThreeWay((t) => !t)}
-              aria-pressed={threeWay}
-              disabled={dirty}
-              title="Show ours | result | theirs side by side (the real index stages)"
-              style={{ ...segStyle(threeWay, "left"), borderRadius: 3 }}
-            >
-              3-way
-            </button>
-            {threeWay && (
-              <button
-                onClick={() => setShowBase((b) => !b)}
-                aria-pressed={showBase}
-                disabled={dirty}
-                title="Also show the merge base (stage 1) next to the result"
-                style={{ ...segStyle(showBase, "left"), borderRadius: 3 }}
-              >
-                Base
-              </button>
-            )}
-            <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
-              {parsed
-                ? `${parsed.conflictCount} conflict${parsed.conflictCount === 1 ? "" : "s"}`
-                : "conflicted"}
-            </span>
-            <ToolbarButton
-              label="Take ours"
-              title="Resolve the whole file with our side"
-              disabled={dirty}
-              onClick={() => onTakeSide("ours")}
-            />
-            <ToolbarButton
-              label="Take theirs"
-              title="Resolve the whole file with their side"
-              disabled={dirty}
-              onClick={() => onTakeSide("theirs")}
-            />
-            <ToolbarButton
-              label="Mark resolved"
-              title={
-                parsed && parsed.conflictCount > 0
-                  ? "Stage the file as-is (conflict markers remain!)"
-                  : "Stage the file as resolved"
-              }
-              disabled={dirty}
-              onClick={onMarkResolved}
-            />
-          </span>
-        )}
+        <div style={{ display: "flex" }}>
+          <button onClick={() => chooseContext("chunked")} aria-pressed={contextMode === "chunked"} style={segStyle(contextMode === "chunked", "left")}>
+            Chunks
+          </button>
+          <button onClick={() => chooseContext("full")} aria-pressed={contextMode === "full"} style={segStyle(contextMode === "full", "right")}>
+            Full file
+          </button>
+        </div>
         <span
           className="legit-subtle"
           style={{
@@ -587,68 +392,14 @@ export function DiffPanel() {
         </div>
       )}
 
-      {isError && !resolveMode && (
+      {isError && (
         <pre className="legit-error" style={{ margin: "8px 12px", fontSize: "var(--fz-md)" }}>
           {formatAppError(error)}
         </pre>
       )}
-      {resolveMode && isConflictReadError && (
-        <pre className="legit-error" style={{ margin: "8px 12px", fontSize: "var(--fz-md)" }}>
-          {formatAppError(conflictReadError)}
-        </pre>
-      )}
 
       <div style={{ flex: 1, minHeight: 0 }}>
-        {resolveMode ? (
-          isConflictReadError ? (
-            <div className="legit-panel__body">
-              <span className="legit-subtle">
-                This conflicted file cannot be shown as text. Use Take ours / Take theirs above.
-              </span>
-            </div>
-          ) : threeWay && conflictText != null ? (
-            sides ? (
-              <ThreeWayView
-                ours={sides.ours}
-                theirs={sides.theirs}
-                base={sides.base}
-                showBase={showBase}
-                content={conflictText}
-                rebuildKey={rebuildKey}
-                onDirty={onDirty}
-                onSaveRequest={onSave}
-                onDocChange={(text) => {
-                  threeWayTextRef.current = text;
-                }}
-                syntaxPath={syntaxPath}
-              />
-            ) : null
-          ) : parsed && parsed.conflictCount === 0 ? (
-            <div className="legit-panel__body">
-              <span className="legit-subtle">
-                No conflict markers left in this file. Use Mark resolved to stage it.
-              </span>
-            </div>
-          ) : parsed && resolveDiff ? (
-            <DiffEditor
-              ref={editorRef}
-              diff={resolveDiff}
-              mode={mode}
-              actions={RESOLVE_ACTIONS}
-              onAction={onResolveChoice}
-              lineActionOp={null}
-              scrollResetKey={`${request.repoId}|${request.path}|resolve`}
-              editable
-              resolve
-              syntaxPath={syntaxPath}
-              dirty={dirty}
-              onDirty={onDirty}
-              onSaveRequest={onSave}
-              rebuildKey={rebuildKey}
-            />
-          ) : null
-        ) : (
-          <DiffBody
+        <DiffBody
             data={data}
             mode={mode}
             actions={actions}
@@ -664,7 +415,6 @@ export function DiffPanel() {
             rebuildKey={rebuildKey}
             syntaxPath={syntaxPath}
           />
-        )}
       </div>
     </div>
     </PanelContextMenuProvider>
