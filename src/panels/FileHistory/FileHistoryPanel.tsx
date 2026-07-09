@@ -19,6 +19,7 @@ import {
   useMenuConfirm,
 } from "../Commits/menu/PanelContextMenu";
 import { MenuItem, SectionLabel, Separator } from "../Commits/menu/primitives";
+import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
 
 /** Page size for the history walk; a "Load more" footer fetches the next page. */
 const PAGE_SIZE = 200;
@@ -239,6 +240,7 @@ function HistoryRow({
         >
           Diff in this commit
         </MenuItem>
+        <CopyPathMenuSection path={entry.path} onClose={closeMenu} />
         <Separator />
         <MenuItem
           onClick={() => {

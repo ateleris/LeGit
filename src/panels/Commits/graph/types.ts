@@ -27,6 +27,13 @@ export interface LaneResult {
 export interface CommitForGraph {
   id: string;
   parentIds: string[];
+  /**
+   * Synthetic nodes only (working-dir row, injected stashes): when the
+   * node's first parent is owned by a locked lane, the node may sit on
+   * that lane instead of being pushed to a free one. Never set for real
+   * commits — a branch tip forked off a locked branch must not inherit.
+   */
+  inheritsParentLane?: boolean;
 }
 
 /**

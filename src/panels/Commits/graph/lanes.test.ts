@@ -672,3 +672,68 @@ describe("computeLanes — first-parent ownership", () => {
     for (const lane of r.assignments.values()) expect(lane).not.toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Synthetic nodes (working-dir row, injected stashes) may sit on a locked
+// lane when their first parent is owned by it. The `inheritsParentLane`
+// flag confines this to synthetic nodes — a regular branch tip forked off a
+// locked branch must NOT jump onto the locked lane.
+// ---------------------------------------------------------------------------
+
+describe("computeLanes — synthetic nodes inherit locked lanes", () => {
+  const LOCKS: LockMap = { "refs/heads/main": 0 };
+  const refs: RefsAtCommit = new Map([["T", ["refs/heads/main"]]]);
+
+  test("flagged working-dir row inherits HEAD's locked lane", () => {
+    const commits: CommitForGraph[] = [
+      { id: "WD", parentIds: ["T"], inheritsParentLane: true },
+      ...makeCommits([
+        ["T", "B"],
+        ["B", "R"],
+        ["R"],
+      ]),
+    ];
+    const r = computeLanes(commits, LOCKS, refs);
+    expect(r.assignments.get("WD")).toBe(0);
+  });
+
+  test("flagged stash with an owned base inherits the locked lane", () => {
+    const commits: CommitForGraph[] = [
+      ...makeCommits([["T", "B"]]),
+      { id: "ST", parentIds: ["B"], inheritsParentLane: true },
+      ...makeCommits([
+        ["B", "R"],
+        ["R"],
+      ]),
+    ];
+    const r = computeLanes(commits, LOCKS, refs);
+    expect(r.assignments.get("ST")).toBe(0);
+  });
+
+  test("flagged stash with an unowned base stays off the locked lane", () => {
+    // F is a feature commit off R, not on main's first-parent line.
+    const commits: CommitForGraph[] = [
+      ...makeCommits([["T", "B"]]),
+      { id: "ST", parentIds: ["F"], inheritsParentLane: true },
+      ...makeCommits([
+        ["F", "R"],
+        ["B", "R"],
+        ["R"],
+      ]),
+    ];
+    const r = computeLanes(commits, LOCKS, refs);
+    expect(r.assignments.get("ST")).not.toBe(0);
+    expect(r.assignments.get("ST")).toBe(r.assignments.get("F"));
+  });
+
+  test("unflagged child of an owned commit does not inherit (regression guard)", () => {
+    const commits = makeCommits([
+      ["FT", "T"], // normal branch tip forked off main's locked tip
+      ["T", "B"],
+      ["B", "R"],
+      ["R"],
+    ]);
+    const r = computeLanes(commits, LOCKS, refs);
+    expect(r.assignments.get("FT")).not.toBe(0);
+  });
+});

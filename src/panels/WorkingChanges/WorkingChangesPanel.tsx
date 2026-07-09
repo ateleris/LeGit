@@ -18,6 +18,7 @@ import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
 import { StageIcon, UnstageIcon } from "../../icons";
 import { PanelContextMenuProvider, type BaselineEntry } from "../Commits/menu/PanelContextMenu";
 import { MenuItem } from "../Commits/menu/primitives";
+import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { useOpState } from "../../lib/useOpState";
@@ -602,6 +603,7 @@ export function WorkingChangesPanel() {
                         File history
                       </MenuItem>
                     )}
+                    {!many && <CopyPathMenuSection path={f.path} onClose={closeMenu} />}
                   </>,
                 );
               }}
@@ -684,6 +686,9 @@ export function WorkingChangesPanel() {
                       >
                         File history
                       </MenuItem>
+                    )}
+                    {targets.length === 1 && (
+                      <CopyPathMenuSection path={f.path} onClose={closeMenu} />
                     )}
                   </>,
                 );

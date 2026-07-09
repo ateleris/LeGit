@@ -22,6 +22,7 @@ import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
 import { PanelContextMenuProvider, useMenuConfirm } from "../Commits/menu/PanelContextMenu";
 import { MenuItem, SectionLabel } from "../Commits/menu/primitives";
+import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
 
 /**
  * Files panel — the whole repository working tree as a browsable file list,
@@ -109,15 +110,6 @@ export function FilesPanel() {
     },
     [repo, queryClient],
   );
-
-  const copyPath = useCallback(async (path: string) => {
-    try {
-      await navigator.clipboard.writeText(path);
-      notify.success(`Copied ${path}`);
-    } catch (e) {
-      notify.error(formatAppError(e));
-    }
-  }, []);
 
   const reveal = useCallback(
     async (path: string) => {
@@ -234,7 +226,6 @@ export function FilesPanel() {
                     onHistory={() => useSummonStore.getState().summon("file-history", file.path)}
                     onBlame={() => useSummonStore.getState().summon("blame", file.path)}
                     onView={() => viewInFileView(file.path)}
-                    onCopyPath={() => copyPath(file.path)}
                     onReveal={() => reveal(file.path)}
                     onAddToGitignore={() =>
                       onIgnored(() => repoAddToGitignore(repo.id, file.path, false), `Ignored ${file.path}`)
@@ -251,7 +242,6 @@ export function FilesPanel() {
                   e,
                   <DirMenuSection
                     dirPath={dirPath}
-                    onCopyPath={() => copyPath(dirPath)}
                     onReveal={() => reveal(dirPath)}
                     onAddToGitignore={() =>
                       onIgnored(() => repoAddToGitignore(repo.id, dirPath, true), `Ignored ${dirPath}/`)
@@ -287,7 +277,6 @@ function FileMenuSection({
   onHistory,
   onBlame,
   onView,
-  onCopyPath,
   onReveal,
   onAddToGitignore,
   onUntrack,
@@ -298,7 +287,6 @@ function FileMenuSection({
   onHistory: () => void;
   onBlame: () => void;
   onView: () => void;
-  onCopyPath: () => void;
   onReveal: () => void;
   onAddToGitignore: () => void;
   onUntrack: () => void;
@@ -324,7 +312,7 @@ function FileMenuSection({
         {tracked ? "Blame" : "Blame (untracked)"}
       </MenuItem>
       <MenuItem onClick={() => { onClose(); onView(); }}>View file</MenuItem>
-      <MenuItem onClick={() => { onClose(); onCopyPath(); }}>Copy path</MenuItem>
+      <CopyPathMenuSection path={path} onClose={onClose} />
       <MenuItem onClick={() => { onClose(); onReveal(); }}>Reveal in file manager</MenuItem>
       {tracked ? (
         <MenuItem onClick={requestUntrack}>
@@ -340,13 +328,11 @@ function FileMenuSection({
 /** Context-menu section for a folder row: ignore the whole folder, copy, reveal. */
 function DirMenuSection({
   dirPath,
-  onCopyPath,
   onReveal,
   onAddToGitignore,
   onClose,
 }: {
   dirPath: string;
-  onCopyPath: () => void;
   onReveal: () => void;
   onAddToGitignore: () => void;
   onClose: () => void;
@@ -355,7 +341,7 @@ function DirMenuSection({
     <>
       <SectionLabel>{dirPath}/</SectionLabel>
       <MenuItem onClick={() => { onClose(); onAddToGitignore(); }}>Add folder to .gitignore</MenuItem>
-      <MenuItem onClick={() => { onClose(); onCopyPath(); }}>Copy path</MenuItem>
+      <CopyPathMenuSection path={dirPath} onClose={onClose} />
       <MenuItem onClick={() => { onClose(); onReveal(); }}>Reveal in file manager</MenuItem>
     </>
   );

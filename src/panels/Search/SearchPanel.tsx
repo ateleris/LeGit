@@ -10,6 +10,9 @@ import { formatRelative } from "../../lib/time";
 import { Button } from "../shared/buttons";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
+import { PanelContextMenuProvider } from "../Commits/menu/PanelContextMenu";
+import { MenuItem, SectionLabel } from "../Commits/menu/primitives";
+import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
 
 type SearchKind = CommitSearchKind | "paths";
 
@@ -132,6 +135,8 @@ export function SearchPanel() {
   const busy = fetchingCommits || fetchingPaths;
 
   return (
+    <PanelContextMenuProvider baseline={[]}>
+      {({ openMenu, closeMenu }) => (
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
       <PanelLoadingBar active={busy} />
       <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -225,12 +230,23 @@ export function SearchPanel() {
                   <button
                     key={p}
                     onClick={() => openBlame(p)}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      openFileHistory(p);
-                    }}
+                    onContextMenu={(e) =>
+                      openMenu(
+                        e,
+                        <>
+                          <SectionLabel>{p}</SectionLabel>
+                          <MenuItem onClick={() => { closeMenu(); openFileHistory(p); }}>
+                            File history
+                          </MenuItem>
+                          <MenuItem onClick={() => { closeMenu(); openBlame(p); }}>
+                            Blame
+                          </MenuItem>
+                          <CopyPathMenuSection path={p} onClose={closeMenu} />
+                        </>,
+                      )
+                    }
                     style={positioned}
-                    title={`Blame ${p} (right-click for history)`}
+                    title={`Blame ${p}`}
                   >
                     <span
                       style={{
@@ -256,5 +272,7 @@ export function SearchPanel() {
         )}
       </div>
     </div>
+      )}
+    </PanelContextMenuProvider>
   );
 }

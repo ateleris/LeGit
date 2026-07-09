@@ -7,6 +7,9 @@ import { repoDiffFiles, repoMergeBase } from "../../lib/commands";
 import type { CommitFileChange, DiffRequest } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { Button } from "../shared/buttons";
+import { PanelContextMenuProvider } from "../Commits/menu/PanelContextMenu";
+import { SectionLabel } from "../Commits/menu/primitives";
+import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { RevPicker } from "../shared/RevPicker";
 
@@ -140,6 +143,8 @@ export function ComparePanel() {
   }
 
   return (
+    <PanelContextMenuProvider baseline={[]}>
+      {({ openMenu, closeMenu }) => (
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
       <PanelLoadingBar active={isFetching} />
       <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -214,6 +219,15 @@ export function ComparePanel() {
             <button
               key={`${f.path}|${f.old_path ?? ""}`}
               onClick={() => openFileDiff(f)}
+              onContextMenu={(e) =>
+                openMenu(
+                  e,
+                  <>
+                    <SectionLabel>{f.path}</SectionLabel>
+                    <CopyPathMenuSection path={f.path} onClose={closeMenu} />
+                  </>,
+                )
+              }
               title={f.old_path ? `${f.old_path} → ${f.path}` : f.path}
               style={{
                 display: "flex",
@@ -253,6 +267,8 @@ export function ComparePanel() {
         )}
       </div>
     </div>
+      )}
+    </PanelContextMenuProvider>
   );
 }
 

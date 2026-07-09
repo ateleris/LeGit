@@ -838,9 +838,16 @@ export function CommitsPanel() {
   // and the synthetic working-dir row alike. Nothing is special-cased out of the
   // graph: each node's parents drive its lane and edges through the one
   // algorithm. The working-dir row hangs off HEAD and a stash hangs off its base
-  // exactly as any childless commit would.
+  // exactly as any childless commit would. Synthetic nodes are flagged so
+  // they may sit on a locked lane when their parent owns it (they belong to
+  // that branch's line) instead of being pushed off by the lane reservation.
   const { assignments, edges: allEdges } = useMemo((): LaneResult => {
-    const forGraph = rows.map((c) => ({ id: c.id, parentIds: c.parents }));
+    const forGraph = rows.map((c) => ({
+      id: c.id,
+      parentIds: c.parents,
+      inheritsParentLane:
+        c.id === WORKING_DIR_ID || stashSelectorById.has(c.id) || undefined,
+    }));
     const prevIds = prevRowIdsRef.current;
     const isPrefixAppend =
       prevIds !== undefined &&
@@ -856,7 +863,7 @@ export function CommitsPanel() {
     prevAssignmentsRef.current = result.assignments;
     prevRowIdsRef.current = forGraph.map((c) => c.id);
     return result;
-  }, [rows, lockMap, refsAt]);
+  }, [rows, lockMap, refsAt, stashSelectorById]);
 
   // Outgoing edge lookup: edges originating at each commit (child → parent).
   const edgesByCommit = useMemo(() => {

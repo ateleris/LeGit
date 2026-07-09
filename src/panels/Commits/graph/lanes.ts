@@ -111,6 +111,20 @@ function computeOwnership(
       cur = c.parentIds[0];
     }
   }
+
+  // Synthetic nodes (working-dir row, injected stashes) belong to the line
+  // they hang off: when flagged and their first parent is owned, they
+  // inherit its lane instead of being pushed to a free one by the locked-
+  // lane reservation. Owner lookups only hit real commits (a synthetic
+  // node is never another synthetic node's parent), so a single pass over
+  // the fully-built map suffices regardless of input order.
+  for (const c of commits) {
+    if (!c.inheritsParentLane || owner.has(c.id)) continue;
+    const firstParent = c.parentIds[0];
+    if (firstParent === undefined) continue;
+    const lane = owner.get(firstParent);
+    if (lane !== undefined) owner.set(c.id, lane);
+  }
   return owner;
 }
 

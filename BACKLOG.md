@@ -64,16 +64,6 @@ record); an item that is partially done keeps only its open remainder.
   porcelain `previous <sha> <path>` header carries the old path — surface it on
   `BlameHunk` (e.g. `previous_path`) and reblame at that path instead of the
   current one.
-- **Lane locks: let uncommitted changes and stashes sit on the locked lane.**
-  The lane algorithm reserves locked lanes for the locked ref's first-parent
-  ancestry and keeps everything else off them (`lockedLaneSet` in
-  `src/panels/Commits/graph/lanes.ts`), which pushes the synthetic
-  working-dir row and injected stash nodes onto a free lane even when they
-  belong to the checked-out branch that owns the locked lane. They should be
-  allowed on it: they are part of that branch's line. Approach: extend the
-  ownership pass so the working-dir row (child of HEAD) and stash nodes
-  whose parent commit lies on a locked ref's first-parent line inherit that
-  locked lane instead of being treated as squatters.
 - **Git Log panel follow-ups.** Filter/search the log, copy a command, jump
   a toast to its specific log entry (currently it just opens the panel).
 - **E2E UI tests (tauri-driver) against a dummy repo.** The backend is covered
@@ -149,16 +139,6 @@ written only after git confirms via `store`), or a UI prompt. Deferred:
 
 ## UX / polish
 
-- **Uniform copy-path actions across all file-listing panels.** Every panel
-  that lists files (Files, Working Changes, Changed Files, commit-details
-  file lists, ...) must offer the same pair of context-menu entries:
-  "Copy relative path" (repo-relative, as git reports it) and "Copy absolute
-  path" (repo root + relative path, OS-native separators). The Files panel
-  already has copy-path actions; align its wording/behaviour with the pair
-  and extract a shared menu-section component (same pattern as
-  `StashMenuSection`) plus shared clipboard/path-joining helpers, so the
-  options can't drift between panels and any future file-listing panel gets
-  them by using the shared section.
 - **Open a single file in the external editor.** "Open in editor" for the repo
   root shipped 2026-07-07 (Global Settings "External editor" command template;
   `$ROOT` substitution, PATH/PATHEXT resolution, file-manager fallback —

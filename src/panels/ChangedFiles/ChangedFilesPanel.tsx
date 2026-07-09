@@ -19,6 +19,7 @@ import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
 import { PanelContextMenuProvider, useMenuConfirm } from "../Commits/menu/PanelContextMenu";
 import { MenuItem, SectionLabel } from "../Commits/menu/primitives";
+import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
 import type { FileViewRequest } from "../FileView/FileViewPanel";
 
 /**
@@ -302,6 +303,7 @@ function FileAtCommitMenuSection({
       <MenuItem onClick={() => { onClose(); onHistory(); }}>
         File history
       </MenuItem>
+      <CopyPathMenuSection path={file.path} onClose={onClose} />
       <MenuItem disabled={deleted} onClick={() => { onClose(); onBlame(); }}>
         {deleted ? "Blame file (deleted in this commit)" : "Blame file at this commit"}
       </MenuItem>
