@@ -291,8 +291,18 @@ fn load_global_settings_sync(path: &std::path::Path) -> GlobalSettings {
 }
 
 fn init_tracing() {
+    // Dev builds keep verbose per-crate tracing (every git invocation is
+    // traced); release builds default to plain `info`. Release binaries run
+    // with `windows_subsystem = "windows"` (no console), so stdout logging
+    // is discarded anyway - the quiet default avoids paying the formatting
+    // cost per event. `RUST_LOG` stays as the override for field debugging.
+    let default_filter = if cfg!(debug_assertions) {
+        "info,legit_core=debug,legit_app_lib=debug"
+    } else {
+        "info"
+    };
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,legit_core=debug,legit_app_lib=debug"));
+        .unwrap_or_else(|_| EnvFilter::new(default_filter));
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(true)

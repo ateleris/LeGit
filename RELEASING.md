@@ -7,8 +7,12 @@ LeGit uses Tauri's built-in bundler. Each platform must be built natively — cr
 1. Decide on the version number (semver, e.g. `0.9.0`)
 2. Update `Cargo.toml` → `[workspace.package] version = "0.9.0"`
 3. Update `src-tauri/tauri.conf.json` → `"version": "0.9.0"`
-4. Commit: `git commit -am "chore: bump version to 0.9.0"`
-5. Tag: `git tag v0.9.0`
+4. Smoke-test **upgrade over the previous version** on Windows: with the
+   previous release installed, run the new NSIS `.exe` — it must replace the
+   old install (one entry in Apps, new version, `themes/` intact). See
+   "Windows upgrade behaviour" below for the cross-format caveats.
+5. Commit: `git commit -am "chore: bump version to 0.9.0"`
+6. Tag: `git tag v0.9.0`
 
 ## Automated release (recommended)
 
@@ -61,6 +65,34 @@ Artifacts are written to `src-tauri/target/release/bundle/`.
 4. Write release notes (features, fixes, known issues)
 5. Attach all artifacts listed above from each platform build
 6. Publish the release
+
+## Windows upgrade behaviour
+
+Verified against Tauri bundler 2.11.4 (live-tested 2026-07-09 for the NSIS
+paths; MSI paths verified from the WiX template and MSI property tables):
+
+- **NSIS `.exe` over NSIS** (per-user → per-user): works, including silent
+  (`/S`). The installer kills a running `legit-app.exe` **by process name**
+  (any instance of the current user, dev builds included) before replacing
+  files. Downgrades are also allowed (`allowDowngrades` defaults to true).
+- **MSI over MSI** (per-machine): works via WiX major upgrade. This depends
+  on a stable `UpgradeCode`, which Tauri derives from the product name
+  ("LeGit"); it is **pinned** in `tauri.conf.json`
+  (`bundle.windows.wix.upgradeCode`) so renaming the product can never break
+  upgrades. Never change that value.
+- **NSIS `.exe` while an MSI install exists**: the per-user NSIS installer
+  detects the per-machine MSI (DisplayName + Publisher match in HKLM) and
+  tries `msiexec /x` on it — without elevation this **fails with "unable to
+  uninstall"** and the install aborts. This is what broke installing over a
+  previous version in 0.9.0. Workaround for users: uninstall the MSI version
+  first (elevated), then run the `.exe`.
+- **MSI while an NSIS install exists**: the MSI has no logic to remove an
+  NSIS install — the result is two side-by-side entries in Apps.
+
+Both installers are shipped deliberately (decision 2026-07-09): the NSIS
+`.exe` is the default download for users, the `.msi` serves per-machine /
+managed deployments. Release notes must present the `.exe` first and note
+that switching formats requires uninstalling the other one first.
 
 ## Notes
 

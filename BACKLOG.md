@@ -182,23 +182,11 @@ publishing) next to a CI workflow; the README covers features, install, and
 building from source; code signing is explicitly deferred with a note (builds
 are unsigned; the release notes and README document the SmartScreen/Gatekeeper
 warnings). Open remainder:
-- **Fix installing over a previous version (uninstaller step fails).**
-  Installing LeGit on a machine that already has an older version breaks in
-  the installer's remove-previous-version step (Windows). Reproduce with two
-  bundled versions (old installed, run the new `.msi` and the NSIS `.exe`),
-  capture the exact error, and root-cause it. Suspects: the Tauri/WiX upgrade
-  logic (stable `UpgradeCode` derived from the `ch.ateleris.legit`
-  identifier - must not change between releases), a mismatch between the
-  `.msi` and NSIS installs (one variant not detecting/removing the other, or
-  a stale uninstaller registry entry pointing at a missing uninstaller), and
-  files locked by a running LeGit instance during uninstall. Also verify
-  Tauri's NSIS `installMode` and WiX upgrade settings in `tauri.conf.json`,
-  and add "upgrade over previous version" to the pre-release smoke pass
-  below.
 - **LICENSE file.** The repo has no LICENSE yet — pick one and add it before
   the release is public (the Releases page implies redistribution).
 - **README screenshots.** The README has no screenshots; add one or two once
-  the UI is deemed presentable.
+  the UI is deemed presentable (and check the README/release page branding
+  matches the new logo, swapped in 2026-07-09).
 - **Changelog decision.** There is no CHANGELOG file; today the drafted
   GitHub Release body is the changelog (edited at review time). Decide
   whether that stays the scheme or a curated `CHANGELOG.md` should be seeded
@@ -207,22 +195,6 @@ warnings). Open remainder:
   target, since several code paths differ from `tauri dev` (e.g. the
   `CREATE_NO_WINDOW` git-spawn flag, `windows_subsystem = "windows"`,
   bindings generated only when the app runs).
-- **Replace the logo.** New logo drafts exist (SVG iterations, 2026-07-08);
-  once one is final, regenerate the full bundled icon set from it
-  (`npm run tauri icon` from a 1024px source replaces `src-tauri/icons/` —
-  Windows/macOS/Linux sizes + store tiles) and swap the in-app splash asset
-  (`src/assets/legit-logo.png`, used in `App.tsx`). Check the README/release
-  page once screenshots land, so the branding is consistent.
-- **Check the log level in release builds.** `init_tracing` (`lib.rs`)
-  defaults the `EnvFilter` to `info,legit_core=debug,legit_app_lib=debug`
-  whenever `RUST_LOG` is unset — i.e. release builds run with debug-level
-  tracing for our crates. Decide the intended release default (likely plain
-  `info`, or `warn`): verify what the output costs (every git invocation is
-  traced) and where it even goes in a bundled app (`windows_subsystem =
-  "windows"` has no console — is anything writing to a file?). Gate the
-  default on `cfg!(debug_assertions)` so dev keeps the verbose filter and
-  release gets the quiet one; keep `RUST_LOG` as the override for
-  field debugging.
 - **Bundled git: decided — don't bundle.** Trade study written 2026-07-07
   (`design/2026-07-07-bundled-git-trade-study.md`): bundling breaks the
   install-relative config LeGit gets for free (GCM in Git-for-Windows'

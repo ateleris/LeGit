@@ -50,6 +50,9 @@
     "longDescription": "LeGit — community-driven Git GUI with first-class Linux support and colorblind-friendly theming.",
     "resources": { "../themes/*.legit-theme.json": "themes/" },
     "windows": {
+      "wix": {
+        "upgradeCode": "60af9dc1-85b5-5b4f-bdac-58610790074f"
+      },
       "nsis": {
         "installMode": "currentUser"
       }
