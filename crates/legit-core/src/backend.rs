@@ -319,6 +319,13 @@ pub trait GitBackend: Send + Sync {
     /// Delete a local branch. `force = true` maps to `-D`; `false` uses `-d`.
     async fn delete_branch(&self, name: &str, force: bool) -> Result<(), GitError>;
 
+    /// Delete a branch on `remote` (`git push <remote> --delete
+    /// refs/heads/<name>`; the explicit refs/heads/ can never take a
+    /// same-named tag). The local branch is untouched — local and remote
+    /// deletion are separate, deliberate actions, like tags. Network op:
+    /// cancellable, auth/rejection classified.
+    async fn delete_remote_branch(&self, remote: &str, name: &str, op_id: OperationId) -> Result<(), GitError>;
+
     /// Rename a local branch (`git branch -m <old> <new>`).
     async fn rename_branch(&self, old_name: &str, new_name: &str) -> Result<(), GitError>;
 

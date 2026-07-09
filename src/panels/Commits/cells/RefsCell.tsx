@@ -65,6 +65,8 @@ interface RefsCellProps {
   onBranchDelete?: (name: string, force: boolean) => void;
   /** Called when checking out a remote-tracking branch (passes the full remote ref, e.g. `origin/feature-x`). */
   onRemoteCheckout?: (remoteRef: string) => void;
+  /** Delete the branch on its remote (`git push --delete`); local untouched. */
+  onRemoteBranchDelete?: (remoteRef: string) => void;
   /** Current branch (merge/rebase menu labels); null when HEAD is detached. */
   currentBranch?: string | null;
   /** Hide merge/rebase entries while a merge/rebase is already running. */
@@ -78,7 +80,7 @@ interface RefsCellProps {
 const CHIP_GAP = 3;
 
 /** Renders ref decoration chips for a commit row. */
-export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, renamingBranch, onBranchRenameSave, onBranchRenameCancel, creatingBranch, onCreateBranchSave, onCreateBranchCancel, creatingTag, onCreateTagSave, onCreateTagCancel, pushedTags, tagTargetsOnRemote, tagRemote, tagRemotes, onTagPush, onTagDelete, onTagDeleteRemote, onBranchCheckout, onBranchRename, onBranchSetUpstream, upstreamCandidatesFor, onBranchDelete, onRemoteCheckout, currentBranch, opInProgress, onBranchMerge, onBranchRebaseOnto }: RefsCellProps) {
+export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, renamingBranch, onBranchRenameSave, onBranchRenameCancel, creatingBranch, onCreateBranchSave, onCreateBranchCancel, creatingTag, onCreateTagSave, onCreateTagCancel, pushedTags, tagTargetsOnRemote, tagRemote, tagRemotes, onTagPush, onTagDelete, onTagDeleteRemote, onBranchCheckout, onBranchRename, onBranchSetUpstream, upstreamCandidatesFor, onBranchDelete, onRemoteCheckout, onRemoteBranchDelete, currentBranch, opInProgress, onBranchMerge, onBranchRebaseOnto }: RefsCellProps) {
   const { openMenu, closeMenu } = usePanelContextMenu();
   const [visibleCount, setVisibleCount] = useState(Number.MAX_SAFE_INTEGER);
   const [popover, setPopover] = useState<{ x: number; y: number } | null>(null);
@@ -227,6 +229,7 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
             currentBranch={currentBranch ?? null}
             opInProgress={opInProgress ?? false}
             onCheckout={() => { closeMenu(); onRemoteCheckout?.(remoteName); }}
+            onDeleteRemote={() => { closeMenu(); onRemoteBranchDelete?.(remoteName); }}
             onMerge={(options) => { closeMenu(); onBranchMerge?.(remoteName, options); }}
             onRebaseOnto={() => { closeMenu(); onBranchRebaseOnto?.(remoteName); }}
           />

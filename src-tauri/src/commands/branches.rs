@@ -2,7 +2,7 @@
 //! See DESIGN-v0.2.md §D.3 for repo-scoped command patterns.
 
 use crate::{error::AppError, state::AppState};
-use legit_core::SwitchOutcome;
+use legit_core::{OperationId, SwitchOutcome};
 
 #[tauri::command]
 #[specta::specta]
@@ -86,6 +86,23 @@ pub async fn repo_delete_branch(
     session
         .backend
         .delete_branch(&name, force)
+        .await
+        .map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_delete_remote_branch(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    remote: String,
+    name: String,
+    op_id: String,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .delete_remote_branch(&remote, &name, OperationId(op_id))
         .await
         .map_err(AppError::Git)
 }

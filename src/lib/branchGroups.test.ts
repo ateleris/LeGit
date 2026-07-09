@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupRemoteBranches, shortRemoteBranchName } from "./branchGroups";
+import { groupRemoteBranches, shortRemoteBranchName, splitRemoteRef } from "./branchGroups";
 import type { Branch } from "./types";
 
 const remoteBranch = (name: string): Branch => ({
@@ -61,5 +61,32 @@ describe("shortRemoteBranchName", () => {
 
   it("leaves a non-matching name untouched", () => {
     expect(shortRemoteBranchName("origin/main", "upstream")).toBe("origin/main");
+  });
+});
+
+describe("splitRemoteRef", () => {
+  it("splits at the configured remote, not the first slash", () => {
+    expect(splitRemoteRef("my/remote/feat/x", ["my/remote", "origin"])).toEqual({
+      remote: "my/remote",
+      branch: "feat/x",
+    });
+  });
+
+  it("prefers the longest matching remote", () => {
+    expect(splitRemoteRef("origin/two/b", ["origin", "origin/two"])).toEqual({
+      remote: "origin/two",
+      branch: "b",
+    });
+  });
+
+  it("falls back to the first slash for an unknown remote", () => {
+    expect(splitRemoteRef("gone/main", ["origin"])).toEqual({
+      remote: "gone",
+      branch: "main",
+    });
+  });
+
+  it("returns null for a name without a slash", () => {
+    expect(splitRemoteRef("origin", ["origin"])).toBeNull();
   });
 });

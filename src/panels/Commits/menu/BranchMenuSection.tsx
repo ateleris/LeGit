@@ -156,6 +156,7 @@ export function RemoteBranchMenuSection({
   onCheckout,
   onMerge,
   onRebaseOnto,
+  onDeleteRemote,
 }: {
   remoteName: string;
   currentBranch: string | null;
@@ -163,7 +164,22 @@ export function RemoteBranchMenuSection({
   onCheckout: () => void;
   onMerge: (options: MergeOptions) => void;
   onRebaseOnto: () => void;
+  /** Delete the branch ON THE REMOTE (`git push --delete`); any local
+   *  counterpart is untouched — like remote tag deletion, a separate,
+   *  deliberate action. */
+  onDeleteRemote: () => void;
 }) {
+  const confirmDestructive = useConfirmDestructive();
+  const menuConfirm = useMenuConfirm();
+
+  const requestDeleteRemote = () => {
+    if (!confirmDestructive) {
+      onDeleteRemote();
+      return;
+    }
+    menuConfirm(`Delete remote branch '${remoteName}'?`, onDeleteRemote);
+  };
+
   return (
     <>
       <SectionLabel>{remoteName}</SectionLabel>
@@ -176,6 +192,9 @@ export function RemoteBranchMenuSection({
         onMerge={onMerge}
         onRebaseOnto={onRebaseOnto}
       />
+      <MenuItem onClick={requestDeleteRemote}>
+        {confirmDestructive ? "Delete on remote…" : "Delete on remote"}
+      </MenuItem>
     </>
   );
 }

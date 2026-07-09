@@ -100,8 +100,29 @@ async fn repo_with_submodule() -> (TestRepo, TestRepo) {
     sup.write("README.md", "super\n");
     sup.commit_all("base").await;
     let lib_path = lib.path.to_string_lossy().into_owned();
-    sup.git(&["-c", "protocol.file.allow=always", "submodule", "add", &lib_path, "lib"])
-        .await;
+    // `-c core.autocrlf=false` must ride the add itself (like
+    // protocol.file.allow): the internal clone checks files out, and under a
+    // Windows-global autocrlf=true they would land as CRLF, breaking every
+    // content assertion in the submodule flows.
+    sup.git(&[
+        "-c", "protocol.file.allow=always",
+        "-c", "core.autocrlf=false",
+        "submodule", "add", &lib_path, "lib",
+    ])
+    .await;
+    // The clone is a fresh repo reading the OS-global config for everything
+    // after the add — pin the same local settings TestRepo::init pins
+    // (identity, no signing, no autocrlf) so later checkouts/stashes/commits
+    // inside the submodule behave like every other test repo.
+    for args in [
+        ["-C", "lib", "config", "user.name", "LeGit Test"].as_slice(),
+        &["-C", "lib", "config", "user.email", "test@example.invalid"],
+        &["-C", "lib", "config", "commit.gpgsign", "false"],
+        &["-C", "lib", "config", "tag.gpgsign", "false"],
+        &["-C", "lib", "config", "core.autocrlf", "false"],
+    ] {
+        sup.git(args).await;
+    }
     sup.git(&["commit", "-m", "add submodule"]).await;
     (sup, lib)
 }
@@ -1890,6 +1911,45 @@ async fn push_publishes_branch_and_tracking_counts_ahead() {
         .unwrap();
     let t = repo.backend.tracking_status().await.unwrap().unwrap();
     assert_eq!((t.ahead, t.behind), (0, 0));
+}
+
+#[tokio::test]
+async fn delete_remote_branch_removes_it_from_the_remote_only() {
+    let (_keep, remote_path, url) = bare_remote().await;
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["remote", "add", "origin", &url]).await;
+    repo.backend.push(push_opts("main", true, false), OperationId::new()).await.unwrap();
+
+    // Publish a second branch, plus a same-named tag on the remote: the
+    // deletion must address refs/heads/ explicitly so it can never take the
+    // tag instead of the branch.
+    repo.git(&["branch", "feature"]).await;
+    repo.backend.push(push_opts("feature", false, false), OperationId::new()).await.unwrap();
+    repo.git(&["tag", "feature"]).await;
+    repo.git(&["push", "origin", "refs/tags/feature"]).await;
+
+    repo.backend
+        .delete_remote_branch("origin", "feature", OperationId::new())
+        .await
+        .unwrap();
+
+    // On the remote: branch gone, tag and main still present. The local
+    // branch must be untouched.
+    let remote_runner = GitRunner::for_repo("git", &remote_path);
+    let refs = remote_runner
+        .run(&["for-each-ref", "--format=%(refname)"])
+        .await
+        .expect("spawn git");
+    assert!(refs.success, "{}", refs.stderr);
+    let names: Vec<&str> = refs.stdout.lines().collect();
+    assert!(!names.contains(&"refs/heads/feature"), "branch still on remote: {names:?}");
+    assert!(names.contains(&"refs/heads/main"), "{names:?}");
+    assert!(names.contains(&"refs/tags/feature"), "tag must survive: {names:?}");
+
+    let local = repo.git(&["branch", "--list", "feature"]).await;
+    assert!(local.contains("feature"), "local branch must survive");
 }
 
 #[tokio::test]

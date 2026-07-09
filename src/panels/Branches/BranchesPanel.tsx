@@ -12,15 +12,17 @@ import {
   repoRenameBranch,
   repoCreateBranch,
   repoCheckoutRemoteBranch,
+  repoDeleteRemoteBranch,
   repoMerge,
   repoRebase,
   repoSetUpstream,
 } from "../../lib/commands";
-import { groupRemoteBranches, shortRemoteBranchName } from "../../lib/branchGroups";
+import { groupRemoteBranches, shortRemoteBranchName, splitRemoteRef } from "../../lib/branchGroups";
 import { ChevronDownIcon } from "../../icons";
 import { Button } from "../shared/buttons";
 import { notifySwitchOutcome, formatSwitchError } from "../../lib/switchFeedback";
 import { notifyMergeOutcome, notifyOpError, notifyRebaseOutcome } from "../../lib/mergeFeedback";
+import { notify } from "../../store/notifications";
 import { OP_DOMAINS, useOpState } from "../../lib/useOpState";
 import { useConfirmDestructive } from "../../store/settings";
 import type { Branch, MergeOptions, Remote } from "../../lib/types";
@@ -232,6 +234,24 @@ export function BranchesSection() {
   const opState = useOpState(repo?.id);
   const opInProgress = !!opState && opState.kind !== "none";
 
+  // Deletes the branch ON THE REMOTE only (`git push --delete`) — any local
+  // counterpart is untouched, mirroring remote tag deletion.
+  const handleDeleteRemoteBranch = useCallback(async (remoteRef: string) => {
+    if (!repo) return;
+    const split = splitRemoteRef(remoteRef, remotes.map((r) => r.name));
+    if (!split) return;
+    setBusy(true);
+    try {
+      await repoDeleteRemoteBranch(repo.id, split.remote, split.branch, crypto.randomUUID());
+      notify.success(`Deleted '${split.branch}' on ${split.remote}`);
+      invalidateRepoDomains(queryClient, repo.id, AFFECTED_DOMAINS);
+    } catch (e) {
+      notify.error(formatAppError(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [repo, remotes, queryClient]);
+
   const handleMerge = useCallback(async (target: string, options: MergeOptions) => {
     if (!repo) return;
     setBusy(true);
@@ -360,6 +380,7 @@ export function BranchesSection() {
                           onCheckout={() => { closeMenu(); doRemoteCheckout(b.name); }}
                           onMerge={(options) => { closeMenu(); handleMerge(b.name, options); }}
                           onRebaseOnto={() => { closeMenu(); handleRebaseOnto(b.name); }}
+                          onDeleteRemote={() => { closeMenu(); void handleDeleteRemoteBranch(b.name); }}
                         />,
                       )
                     }

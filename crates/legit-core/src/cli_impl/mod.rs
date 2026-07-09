@@ -2047,6 +2047,22 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         self.run_simple(&["branch", flag, name]).await
     }
 
+    async fn delete_remote_branch(
+        &self,
+        remote: &str,
+        name: &str,
+        op_id: OperationId,
+    ) -> Result<(), GitError> {
+        let runner = self.runner().await;
+        let args = vec![
+            "push".to_string(),
+            remote.to_string(),
+            "--delete".to_string(),
+            format!("refs/heads/{name}"),
+        ];
+        self.run_remote(&runner, &args, op_id).await
+    }
+
     async fn rename_branch(&self, old_name: &str, new_name: &str) -> Result<(), GitError> {
         self.run_simple(&["branch", "-m", old_name, new_name]).await
     }

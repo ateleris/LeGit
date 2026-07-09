@@ -53,6 +53,7 @@ import {
   repoCreateTag,
   repoDeleteTag,
   repoPushTag,
+  repoDeleteRemoteBranch,
   repoDeleteRemoteTag,
   repoRemoteTags,
 } from "../../lib/commands";
@@ -65,6 +66,7 @@ import type { Branch, Commit, CommitId, FileStatus, MergeOptions, PullStrategy, 
 import { useRemoteProgressStore } from "../../store/remoteProgress";
 import { formatAppError, gitErrorKind } from "../../lib/types";
 import { notify } from "../../store/notifications";
+import { splitRemoteRef } from "../../lib/branchGroups";
 import { BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon } from "../../icons";
 import { formatFull, formatRelative } from "../../lib/time";
 import { RefsCell } from "./cells/RefsCell";
@@ -526,6 +528,21 @@ export function CommitsPanel() {
   });
   const tagRemote = useMemo(() => pickTagRemote(remotesList), [remotesList]);
   const remoteNames = useMemo(() => remotesList.map((r) => r.name), [remotesList]);
+
+  // Deletes the branch ON THE REMOTE only (`git push --delete`) — any local
+  // counterpart is untouched, mirroring remote tag deletion.
+  const handleRemoteBranchDelete = useCallback(async (remoteRef: string) => {
+    if (!repo) return;
+    const split = splitRemoteRef(remoteRef, remoteNames);
+    if (!split) return;
+    try {
+      await repoDeleteRemoteBranch(repo.id, split.remote, split.branch, crypto.randomUUID());
+      notify.success(`Deleted '${split.branch}' on ${split.remote}`);
+      invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
+  }, [repo, remoteNames, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
   const { data: remoteTags = [] } = useQuery<RemoteTag[]>({
     queryKey: [repo?.id, "remote-tags", tagRemote],
     queryFn: () => repoRemoteTags(repo!.id, tagRemote!, crypto.randomUUID()),
@@ -1286,6 +1303,7 @@ export function CommitsPanel() {
                               onCheckout={() => { closeMenu(); handleRemoteCheckout(name); }}
                               onMerge={(options) => { closeMenu(); handleMerge(name, options); }}
                               onRebaseOnto={() => { closeMenu(); handleRebaseOnto(name); }}
+                              onDeleteRemote={() => { closeMenu(); void handleRemoteBranchDelete(name); }}
                             />
                           </Fragment>
                         ))}
@@ -1360,6 +1378,7 @@ export function CommitsPanel() {
                             upstreamCandidatesFor={upstreamCandidatesFor}
                             onBranchDelete={handleBranchDelete}
                             onRemoteCheckout={handleRemoteCheckout}
+                            onRemoteBranchDelete={handleRemoteBranchDelete}
                             currentBranch={currentBranchName}
                             opInProgress={opInProgress}
                             onBranchMerge={handleMerge}

@@ -21,11 +21,10 @@ export function groupRemoteBranches(
   remoteBranches: Branch[],
   remotes: readonly string[],
 ): RemoteBranchGroup[] {
-  const longestFirst = [...remotes].sort((a, b) => b.length - a.length);
   const byRemote = new Map<string, Branch[]>();
   for (const branch of remoteBranches) {
     const remote =
-      longestFirst.find((r) => branch.name.startsWith(`${r}/`)) ??
+      splitRemoteRef(branch.name, remotes)?.remote ??
       branch.name.split("/", 1)[0];
     const group = byRemote.get(remote);
     if (group) group.push(branch);
@@ -50,4 +49,22 @@ export function groupRemoteBranches(
 /** Branch name without its remote prefix ("origin/feat/x" → "feat/x"). */
 export function shortRemoteBranchName(name: string, remote: string): string {
   return name.startsWith(`${remote}/`) ? name.slice(remote.length + 1) : name;
+}
+
+/**
+ * Splits a remote-tracking ref ("origin/feat/x") into its remote and branch
+ * parts, matching the longest known remote first (a remote name can itself
+ * contain "/"). Unknown prefixes fall back to the first path segment; a name
+ * without any slash cannot be split and yields null.
+ */
+export function splitRemoteRef(
+  name: string,
+  remotes: readonly string[],
+): { remote: string; branch: string } | null {
+  const longestFirst = [...remotes].sort((a, b) => b.length - a.length);
+  const known = longestFirst.find((r) => name.startsWith(`${r}/`));
+  const remote = known ?? name.split("/", 1)[0];
+  if (name.length <= remote.length + 1) return null;
+  if (!name.startsWith(`${remote}/`)) return null;
+  return { remote, branch: name.slice(remote.length + 1) };
 }

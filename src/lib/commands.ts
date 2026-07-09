@@ -590,6 +590,9 @@ export const repoSwitchBranch = (repoId: string, name: string) =>
 export const repoDeleteBranch = (repoId: string, name: string, force: boolean) =>
   invoke<void>("repo_delete_branch", { repoId, name, force });
 
+export const repoDeleteRemoteBranch = (repoId: string, remote: string, name: string, opId: string) =>
+  invoke<void>("repo_delete_remote_branch", { repoId, remote, name, opId });
+
 export const repoRenameBranch = (repoId: string, oldName: string, newName: string) =>
   invoke<void>("repo_rename_branch", { repoId, oldName, newName });
 
