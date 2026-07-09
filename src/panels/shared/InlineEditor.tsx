@@ -17,7 +17,7 @@ export function InlineEditor({
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       <span style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)" }}>{label}</span>
       {children}
-      <div style={{ display: "flex", gap: 6 }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         <Button variant="primary" disabled={disabled} onClick={onSave}>
           Save
         </Button>

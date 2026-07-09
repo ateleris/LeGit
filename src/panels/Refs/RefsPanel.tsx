@@ -18,6 +18,7 @@ import { RemotesSection } from "../Remotes/RemotesPanel";
 import { StashesSection } from "../Stashes/StashesPanel";
 import { TagsSection } from "../Tags/TagsSection";
 import { ReflogSection } from "../Reflog/ReflogSection";
+import { sanitizePaneviewLayout } from "./refsLayout";
 
 const LAYOUT_KEY = "legit.refs-paneview";
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -117,22 +118,34 @@ export function RefsPanel() {
     const raw = localStorage.getItem(LAYOUT_KEY);
     if (raw) {
       try {
-        // The serialized layout carries each pane's headerSize (from when it
-        // was saved) and headerComponent reference — override both with the
-        // current values, so the font-derived height applies and layouts
-        // saved before the custom header existed don't resurrect dockview's
-        // default header (fixed-size arrow, no theme tokens).
-        const json = JSON.parse(raw);
-        if (Array.isArray(json?.views)) {
-          for (const view of json.views) {
-            view.headerSize = headerSize;
-            if (view?.data) view.data.headerComponent = "default";
-          }
+        // Sanitized before fromJSON: views whose pane component no longer
+        // exists are dropped (they make fromJSON throw halfway, leaving
+        // zombie panes the default set would then stack on top of - every
+        // pane appeared twice), ids are deduplicated, and each view's
+        // headerSize/headerComponent is patched to the current values (the
+        // font-derived height must apply, and layouts saved before the
+        // custom header existed must not resurrect dockview's default one).
+        const json = sanitizePaneviewLayout(
+          JSON.parse(raw),
+          (name) => name in PANE_COMPONENTS,
+          headerSize,
+        );
+        if (json) {
+          api.fromJSON(json as Parameters<typeof api.fromJSON>[0]);
+          restored = api.panels.length > 0;
         }
-        api.fromJSON(json);
-        restored = api.panels.length > 0;
       } catch (e) {
         console.warn("could not restore refs paneview layout, using default", e);
+        // A restore that threw mid-flight leaves partially-built zombie
+        // panes behind; remove them so the default panes below don't stack
+        // on top of them, and drop the poisoned layout so the next launch
+        // starts clean instead of failing the same way forever.
+        try {
+          for (const panel of [...api.panels]) api.removePanel(panel);
+        } catch (cleanupError) {
+          console.warn("could not clear partially restored panes", cleanupError);
+        }
+        try { localStorage.removeItem(LAYOUT_KEY); } catch { /* quota */ }
       }
     }
     if (!restored) {

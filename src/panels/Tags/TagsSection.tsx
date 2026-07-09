@@ -223,13 +223,13 @@ export function TagsSection() {
           >
             New tag at HEAD
           </span>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <input
               value={createName}
               onChange={(e) => setCreateName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && doCreate()}
               placeholder="name"
-              style={{ fontSize: "var(--fz-md)", fontFamily: "monospace", flex: 1 }}
+              style={{ fontSize: "var(--fz-md)", fontFamily: "monospace", flex: 1, minWidth: 0 }}
             />
             <Button variant="primary" disabled={busy || !createName.trim()} onClick={doCreate}>
               Tag
@@ -330,7 +330,7 @@ function TagRow({
       </div>
 
       {confirming !== null ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           <span style={{ fontSize: "var(--fz-md)", flex: 1 }}>
             {confirming === "remote"
               ? `Delete this tag from ${remote}?`
@@ -344,7 +344,7 @@ function TagRow({
           </button>
         </div>
       ) : (
-        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
           <ToolbarButton
             label={pushed ? "Pushed" : remote ? `Push to ${remote}` : "Push"}
             title={

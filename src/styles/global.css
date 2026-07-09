@@ -72,6 +72,9 @@ button {
   border-radius: 4px;
   padding: 4px 10px;
   cursor: pointer;
+  /* Labels never wrap inside a button - narrow containers wrap whole
+     buttons onto the next line (flex-wrap) instead. */
+  white-space: nowrap;
 }
 button:hover:not(:disabled) {
   background: var(--button-hover-bg);

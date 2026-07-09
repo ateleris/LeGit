@@ -149,6 +149,16 @@ written only after git confirms via `store`), or a UI prompt. Deferred:
 
 ## UX / polish
 
+- **Uniform copy-path actions across all file-listing panels.** Every panel
+  that lists files (Files, Working Changes, Changed Files, commit-details
+  file lists, ...) must offer the same pair of context-menu entries:
+  "Copy relative path" (repo-relative, as git reports it) and "Copy absolute
+  path" (repo root + relative path, OS-native separators). The Files panel
+  already has copy-path actions; align its wording/behaviour with the pair
+  and extract a shared menu-section component (same pattern as
+  `StashMenuSection`) plus shared clipboard/path-joining helpers, so the
+  options can't drift between panels and any future file-listing panel gets
+  them by using the shared section.
 - **Open a single file in the external editor.** "Open in editor" for the repo
   root shipped 2026-07-07 (Global Settings "External editor" command template;
   `$ROOT` substitution, PATH/PATHEXT resolution, file-manager fallback —
@@ -172,6 +182,19 @@ publishing) next to a CI workflow; the README covers features, install, and
 building from source; code signing is explicitly deferred with a note (builds
 are unsigned; the release notes and README document the SmartScreen/Gatekeeper
 warnings). Open remainder:
+- **Fix installing over a previous version (uninstaller step fails).**
+  Installing LeGit on a machine that already has an older version breaks in
+  the installer's remove-previous-version step (Windows). Reproduce with two
+  bundled versions (old installed, run the new `.msi` and the NSIS `.exe`),
+  capture the exact error, and root-cause it. Suspects: the Tauri/WiX upgrade
+  logic (stable `UpgradeCode` derived from the `ch.ateleris.legit`
+  identifier - must not change between releases), a mismatch between the
+  `.msi` and NSIS installs (one variant not detecting/removing the other, or
+  a stale uninstaller registry entry pointing at a missing uninstaller), and
+  files locked by a running LeGit instance during uninstall. Also verify
+  Tauri's NSIS `installMode` and WiX upgrade settings in `tauri.conf.json`,
+  and add "upgrade over previous version" to the pre-release smoke pass
+  below.
 - **LICENSE file.** The repo has no LICENSE yet — pick one and add it before
   the release is public (the Releases page implies redistribution).
 - **README screenshots.** The README has no screenshots; add one or two once

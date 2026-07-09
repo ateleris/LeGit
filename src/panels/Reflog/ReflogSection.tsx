@@ -195,7 +195,7 @@ function ReflogRow({
       </div>
 
       {confirmingReset ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           <span style={{ fontSize: "var(--fz-md)", flex: 1 }}>
             Hard-reset to {entry.sha.slice(0, 8)}? Uncommitted changes will be discarded.
           </span>
@@ -207,7 +207,7 @@ function ReflogRow({
           </button>
         </div>
       ) : (
-        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
           <button disabled={busy} onClick={onCheckout} title="Check out this commit (detached HEAD)">
             Checkout
           </button>

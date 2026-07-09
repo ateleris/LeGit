@@ -231,7 +231,7 @@ export function RemotesSection() {
                     <span style={{ fontSize: "var(--fz-md)" }}>
                       Remove remote <strong>{r.name}</strong>? Its remote-tracking refs will be deleted.
                     </span>
-                    <div style={{ display: "flex", gap: 6 }}>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                       <Button variant="danger" disabled={busy} onClick={() => doRemove(r.name)}>
                         Remove
                       </Button>
@@ -242,7 +242,7 @@ export function RemotesSection() {
                   </div>
                 ) : (
                   <>
-                    <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
                       <strong style={{ fontSize: "var(--fz-lg)" }}>{r.name}</strong>
                       {busyNet === `fetch:${r.name}` || busyNet === `prune:${r.name}` ? (
                         <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", display: "flex", alignItems: "center", gap: 6 }}>
@@ -338,18 +338,18 @@ function AddRemoteForm({
       <span style={{ fontSize: "var(--fz-sm)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)" }}>
         Add remote
       </span>
-      <div style={{ display: "flex", gap: 6 }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="name (e.g. origin)"
-          style={{ ...inputStyle, flex: "0 0 30%" }}
+          style={{ ...inputStyle, flex: "0 1 30%", minWidth: 0 }}
         />
         <input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           placeholder="URL (https://… or git@…)"
-          style={{ ...inputStyle, flex: 1 }}
+          style={{ ...inputStyle, flex: 1, minWidth: 0 }}
         />
         <Button
           variant="primary"

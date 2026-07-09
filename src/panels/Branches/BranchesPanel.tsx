@@ -377,20 +377,20 @@ export function BranchesSection() {
           }}
         >
           <SectionLabel>New branch</SectionLabel>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <input
               value={createName}
               onChange={(e) => setCreateName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && doCreate()}
               placeholder="name"
-              style={{ ...monoInput, flex: "0 0 35%" }}
+              style={{ ...monoInput, flex: "0 1 35%", minWidth: 0 }}
             />
             <input
               value={createFrom}
               onChange={(e) => setCreateFrom(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && doCreate()}
               placeholder="from (branch / tag / SHA, or blank for HEAD)"
-              style={{ ...monoInput, flex: 1 }}
+              style={{ ...monoInput, flex: 1, minWidth: 0 }}
             />
             <Button
               variant="primary"
@@ -559,7 +559,7 @@ function LocalBranchRow({
           <span style={{ fontSize: "var(--fz-md)" }}>
             Delete <strong>{branch.name}</strong>?
           </span>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <Button variant="danger" disabled={busy} onClick={() => onDoDelete(false)}>
               Delete
             </Button>
@@ -572,7 +572,7 @@ function LocalBranchRow({
           </div>
         </div>
       ) : (
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span
             style={{ fontSize: "var(--fz-lg)", fontFamily: "monospace", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
           >
@@ -582,7 +582,7 @@ function LocalBranchRow({
             {branch.name}
           </span>
           <DivergenceBadge branch={branch} />
-          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+          <div style={{ display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap" }}>
             {!branch.is_current && (
               <button disabled={busy} onClick={onCheckout}>
                 Checkout
@@ -629,6 +629,7 @@ function RemoteBranchRow({
         display: "flex",
         alignItems: "center",
         gap: 8,
+        flexWrap: "wrap",
       }}
     >
       <span
@@ -646,7 +647,17 @@ function RemoteBranchRow({
       {trackingBranch ? (
         <>
           <DivergenceBadge branch={trackingBranch} />
-          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", flexShrink: 0 }}>
+          <span
+            className="legit-subtle"
+            style={{
+              fontSize: "var(--fz-sm)",
+              flexShrink: 0,
+              maxWidth: "100%",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
             tracking: {trackingBranch.name}
           </span>
         </>

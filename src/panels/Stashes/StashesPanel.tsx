@@ -282,13 +282,13 @@ export function StashesSection() {
           }}
         >
           <SectionLabel>New stash</SectionLabel>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <input
               value={createMsg}
               onChange={(e) => setCreateMsg(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && doCreate()}
               placeholder="message (optional)"
-              style={{ ...monoInput, flex: 1 }}
+              style={{ ...monoInput, flex: 1, minWidth: 0 }}
             />
             <Button variant="primary" disabled={busy} onClick={doCreate}>
               Stash
@@ -467,7 +467,7 @@ function StashRow({
           />
         </InlineEditor>
       ) : confirmingDrop ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           <span style={{ fontSize: "var(--fz-md)", flex: 1 }}>
             Drop this stash?
           </span>
@@ -479,7 +479,7 @@ function StashRow({
           </button>
         </div>
       ) : (
-        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
           <button disabled={busy} onClick={onViewDiff}>View diff</button>
           <button disabled={busy} onClick={onApply}>Apply</button>
           <button disabled={busy} onClick={onPop}>Pop</button>
