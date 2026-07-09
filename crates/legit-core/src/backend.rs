@@ -14,8 +14,9 @@ use crate::types::{
     FetchOptions, FileAtRevision, FileHistoryEntry, FileStatus, HunkOp, LogOptions,
     MergeOptions, MergeOutcome, PullOptions, PushOptions, RebaseOutcome, RebaseStep,
     ReflogEntry, Remote, RemoteTag, RepoFileEntry, RepoOpState, ResetMode, SequenceOutcome, StashApplyOutcome,
-    StashEntry, StashOutcome, SubmoduleInfo, SwitchDirtyBehavior, SwitchOutcome, TagInfo,
-    TrackingStatus,
+    StashEntry, StashOutcome, SubmoduleAutoUpdateResult, SubmoduleGitdirInfo, SubmoduleInfo,
+    SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy, SwitchDirtyBehavior,
+    SwitchOutcome, TagInfo, TrackingStatus,
 };
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
@@ -157,7 +158,108 @@ pub trait GitBackend: Send + Sync {
     /// (`git clean -f`).
     async fn discard(&self, paths: &[PathBuf]) -> Result<(), GitError>;
 
+    /// Enumerate the repo's submodules with full state (gitlinks + config +
+    /// dirt flags + per-submodule HEAD probe). Read-only; one status walk.
     async fn submodules(&self) -> Result<Vec<SubmoduleInfo>, GitError>;
+
+    /// Commits between two submodule pointers (`git -C <path> log from..to`),
+    /// or `TargetMissing` when `to` is not in the submodule's object store
+    /// (unfetched pointer target). `from = None` lists from the root (new
+    /// submodule).
+    async fn submodule_log(
+        &self,
+        path: &Path,
+        from: Option<&CommitId>,
+        to: &CommitId,
+    ) -> Result<SubmoduleLog, GitError>;
+
+    /// Register submodules in `.git/config` (`git submodule init`). Empty
+    /// `paths` = all.
+    async fn submodule_init(&self, paths: &[PathBuf]) -> Result<(), GitError>;
+
+    /// Check out the recorded SHA (`git submodule update`), optionally
+    /// registering (`--init`) and recursing. May fetch - cancellable.
+    async fn submodule_update(
+        &self,
+        opts: SubmoduleUpdateOptions,
+        op_id: OperationId,
+    ) -> Result<(), GitError>;
+
+    /// Copy `.gitmodules` URLs into `.git/config` and the submodules' origin
+    /// remotes (`git submodule sync`). Empty `paths` = all.
+    async fn submodule_sync(&self, paths: &[PathBuf], recursive: bool) -> Result<(), GitError>;
+
+    /// Fetch inside one submodule (`git -C <path> fetch`). Cancellable.
+    async fn submodule_fetch(&self, path: &Path, op_id: OperationId) -> Result<(), GitError>;
+
+    /// The superproject working tree containing this repo, or `None` when the
+    /// repo is not checked out as a submodule
+    /// (`git rev-parse --show-superproject-working-tree`).
+    async fn superproject_path(&self) -> Result<Option<PathBuf>, GitError>;
+
+    /// Add a submodule (`git submodule add [-b <branch>] -- <url> <path>`).
+    /// Clones - cancellable. Relative URLs resolve against origin (git-native).
+    async fn submodule_add(
+        &self,
+        url: &str,
+        path: &Path,
+        branch: Option<&str>,
+        op_id: OperationId,
+    ) -> Result<(), GitError>;
+
+    /// Change a submodule's URL in `.gitmodules` and immediately `sync` it
+    /// into the local config and the submodule's origin remote.
+    async fn submodule_set_url(&self, path: &Path, url: &str) -> Result<(), GitError>;
+
+    /// Set (`Some`) or clear (`None` = remote default) the `.gitmodules`
+    /// branch used by `update --remote`.
+    async fn submodule_set_branch(&self, path: &Path, branch: Option<&str>) -> Result<(), GitError>;
+
+    /// Fetch and integrate each submodule's tracked branch
+    /// (`update --remote` + strategy), then STAGE the moved pointers -
+    /// `--remote` moves the worktree but never the index. Dirty submodules
+    /// follow `behavior` with the same never-lose-changes guarantees as
+    /// `submodule_auto_update` (rollback on a conflicted carry-over). Empty
+    /// `paths` = all submodules. Per-submodule outcomes; cancellable.
+    async fn submodule_update_remote(
+        &self,
+        paths: &[PathBuf],
+        strategy: SubmoduleUpdateStrategy,
+        behavior: SwitchDirtyBehavior,
+        op_id: OperationId,
+    ) -> Result<Vec<SubmoduleAutoUpdateResult>, GitError>;
+
+    /// Remove a submodule the safe way (magit semantics): refuse if its
+    /// worktree is dirty/conflicted, absorb an embedded gitdir, `deinit -f`,
+    /// then `git rm -f` (stages the `.gitmodules` edit). The gitdir under
+    /// `.git/modules/<name>` is deliberately KEPT - see
+    /// `submodule_gitdir_info` / `submodule_delete_gitdir`.
+    async fn submodule_remove(&self, path: &Path) -> Result<(), GitError>;
+
+    /// Inspect a removed submodule's retained gitdir: `None` when it does
+    /// not exist; `unpushed = true` when local branches hold commits on no
+    /// remote (deletion would destroy them).
+    async fn submodule_gitdir_info(&self, name: &str)
+        -> Result<Option<SubmoduleGitdirInfo>, GitError>;
+
+    /// Permanently delete `.git/modules/<name>`. The caller confirms first
+    /// (destructive; unpushed commits are gone for good).
+    async fn submodule_delete_gitdir(&self, name: &str) -> Result<(), GitError>;
+
+    /// Create and switch to a branch at the submodule's current (typically
+    /// detached) HEAD - the one-click escape from detached-HEAD work loss.
+    async fn submodule_create_branch(&self, path: &Path, name: &str) -> Result<(), GitError>;
+
+    /// After a superproject switch/pull moved submodule pointers, bring the
+    /// populated submodules to their recorded SHAs. Dirty submodules follow
+    /// `behavior` (the global switch strategy); a conflicted auto-stash pop
+    /// ROLLS the submodule BACK (changes reapplied on their original base).
+    /// Per-submodule atomicity: failures are reported per entry, the batch
+    /// continues. Local changes are never lost in any path.
+    async fn submodule_auto_update(
+        &self,
+        behavior: SwitchDirtyBehavior,
+    ) -> Result<Vec<SubmoduleAutoUpdateResult>, GitError>;
 
     /// Fetch from remote(s). Cancellable via `op_id`.
     async fn fetch(&self, opts: FetchOptions, op_id: OperationId) -> Result<(), GitError>;

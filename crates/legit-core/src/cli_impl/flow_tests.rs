@@ -712,8 +712,8 @@ async fn diff_files_runs_diff_tree_over_the_given_revs() {
     // unlike commit_files.
     let fake = FakeExecutor::default();
     fake.expect(
-        &["diff-tree", "--no-commit-id", "-r", "-M", "-z", "--name-status", "main", "feature"],
-        ok("M\0a.txt\0A\0b.txt\0"),
+        &["diff-tree", "--no-commit-id", "-r", "-M", "-z", "--raw", "main", "feature"],
+        ok(":100644 100644 aaaaaaa bbbbbbb M\0a.txt\0:000000 100644 0000000 bbbbbbb A\0b.txt\0"),
     );
     fake.expect(
         &["diff-tree", "--no-commit-id", "-r", "-M", "-z", "--numstat", "main", "feature"],
@@ -730,7 +730,7 @@ async fn diff_files_runs_diff_tree_over_the_given_revs() {
 async fn file_diff_commit_range_passes_both_revs() {
     let fake = FakeExecutor::default();
     fake.expect(
-        &["diff", "--no-color", "--no-ext-diff", "-U3", "main", "feature", "--", "a.txt"],
+        &["-c", "diff.submodule=short", "diff", "--no-color", "--no-ext-diff", "-U3", "main", "feature", "--", "a.txt"],
         ok("diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-x\n+y\n"),
     );
     let (b, exec) = backend(fake);
@@ -1019,8 +1019,8 @@ async fn discard_restores_tracked_and_cleans_untracked() {
     let fake = FakeExecutor::default();
     // status: one modified (tracked), one untracked.
     fake.expect(
-        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        ok(" M tracked.txt\0?? untracked.txt\0"),
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        ok("1 .M N... 100644 100644 100644 aaaaaaa bbbbbbb tracked.txt\0? untracked.txt\0"),
     );
     fake.expect(&["restore", "--worktree", "--", "tracked.txt"], ok(""));
     fake.expect(&["clean", "-f", "--", "untracked.txt"], ok(""));
@@ -1040,8 +1040,8 @@ async fn discard_restores_tracked_and_cleans_untracked() {
 async fn status_enriches_entries_with_numstat_counts() {
     let fake = FakeExecutor::default();
     fake.expect(
-        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        ok("MM file.rs\0?? new.txt\0"),
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        ok("1 MM N... 100644 100644 100644 aaaaaaa bbbbbbb file.rs\0? new.txt\0"),
     );
     // Staged (index vs HEAD) first, then unstaged (worktree vs index).
     fake.expect(&["diff", "--numstat", "-M", "-z", "--cached"], ok("3\t1\tfile.rs\0"));
@@ -1064,8 +1064,8 @@ async fn status_skips_numstat_for_an_all_untracked_tree() {
     // No countable entry -> neither diff may run (assert_done catches extras).
     let fake = FakeExecutor::default();
     fake.expect(
-        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        ok("?? a.txt\0?? b.txt\0"),
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        ok("? a.txt\0? b.txt\0"),
     );
     let (b, exec) = backend(fake);
 
@@ -1079,8 +1079,10 @@ async fn status_survives_a_failing_numstat() {
     // Counts are cosmetic: a failing diff degrades to None, never an error.
     let fake = FakeExecutor::default();
     fake.expect(
-        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        ok("A  new.txt\0"),
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        // Mode/hash tokens are positional filler the parser skips; the zeroed
+        // HEAD-side values mirror real git output for a path absent from HEAD.
+        ok("1 A. N... 000000 100644 100644 0000000 bbbbbbb new.txt\0"),
     );
     fake.expect(
         &["diff", "--numstat", "-M", "-z", "--cached"],
@@ -1170,5 +1172,389 @@ async fn file_history_runs_follow_name_status_with_paging() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].commit_id.as_str(), "aaa");
     assert_eq!(entries[0].path, "src/a.rs");
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
+// submodules - enumeration orchestration
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn submodules_enumerates_without_git_submodule_status() {
+    let sha_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["ls-files", "--stage", "-z"],
+        ok(&format!("100644 {sha_a} 0\tREADME.md\0160000 {sha_a} 0\tlib\0")),
+    );
+    fake.expect(
+        &["config", "-f", ".gitmodules", "-z", "--get-regexp", "^submodule\\."],
+        ok("submodule.lib.path\nlib\0submodule.lib.url\nhttps://x.invalid/lib.git\0"),
+    );
+    fake.expect(
+        &["config", "-z", "--get-regexp", "^submodule\\."],
+        ok("submodule.lib.url\nhttps://x.invalid/lib.git\0submodule.lib.active\ntrue\0"),
+    );
+    fake.expect(
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        ok("1 .M S.M. 160000 160000 160000 aaaaaaa aaaaaaa lib\0"),
+    );
+    fake.expect(
+        &["-C", "lib", "rev-parse", "--show-prefix", "HEAD"],
+        ok(&format!("\n{sha_a}\n")),
+    );
+    fake.expect(&["-C", "lib", "rev-parse", "--abbrev-ref", "HEAD"], ok("HEAD\n"));
+    let (b, exec) = backend(fake);
+
+    let subs = b.submodules().await.unwrap();
+    assert_eq!(subs.len(), 1);
+    let s = &subs[0];
+    assert_eq!(s.name, "lib");
+    assert!(s.state.initialized && s.state.populated && s.state.dirty_tracked);
+    assert!(!s.state.pointer_moved);
+    assert_eq!(s.head_branch, None, "abbrev-ref HEAD means detached");
+    // assert_done proves no `git submodule status` / describe ever ran.
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn submodules_survives_missing_gitmodules_and_failed_probe() {
+    let sha_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["ls-files", "--stage", "-z"],
+        ok(&format!("160000 {sha_a} 0\tlib\0")),
+    );
+    // No .gitmodules: git config exits 1 - must degrade to empty, not error.
+    fake.expect(
+        &["config", "-f", ".gitmodules", "-z", "--get-regexp", "^submodule\\."],
+        fail(1, ""),
+    );
+    fake.expect(&["config", "-z", "--get-regexp", "^submodule\\."], fail(1, ""));
+    fake.expect(
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        ok(""),
+    );
+    // Unpopulated empty dir: git walks up into the superproject and reports
+    // a non-empty prefix - the probe must classify that as unpopulated (and
+    // must NOT go on to ask for the branch).
+    fake.expect(
+        &["-C", "lib", "rev-parse", "--show-prefix", "HEAD"],
+        ok("lib/\ncccccccccccccccccccccccccccccccccccccccc\n"),
+    );
+    let (b, exec) = backend(fake);
+
+    let subs = b.submodules().await.unwrap();
+    assert_eq!(subs.len(), 1);
+    assert!(subs[0].state.orphan_gitlink);
+    assert!(!subs[0].state.populated);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn submodule_log_lists_range_and_flags_missing_target() {
+    let sha_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let sha_b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let fake = FakeExecutor::default();
+    // Target present: existence probe, then the range log.
+    fake.expect(&["-C", "lib", "cat-file", "-e", &format!("{sha_b}^{{commit}}")], ok(""));
+    fake.expect(
+        &["-C", "lib", "log", "--format=%H%x00%s%x00", "--max-count=100", &format!("{sha_a}..{sha_b}")],
+        ok(&format!("{sha_b}\0bump\0")),
+    );
+    // Target missing: the probe fails, no log runs.
+    fake.expect(
+        &["-C", "lib", "cat-file", "-e", &format!("{sha_b}^{{commit}}")],
+        fail(128, "fatal: Not a valid object name"),
+    );
+    let (b, exec) = backend(fake);
+
+    let log = b
+        .submodule_log(Path::new("lib"), Some(&CommitId::new(sha_a)), &CommitId::new(sha_b))
+        .await
+        .unwrap();
+    let SubmoduleLog::Commits { commits } = log else { panic!("{log:?}") };
+    assert_eq!(commits.len(), 1);
+    assert_eq!(commits[0].subject, "bump");
+
+    let log = b
+        .submodule_log(Path::new("lib"), Some(&CommitId::new(sha_a)), &CommitId::new(sha_b))
+        .await
+        .unwrap();
+    assert!(matches!(log, SubmoduleLog::TargetMissing));
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
+// submodule operations
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn submodule_update_builds_flags_and_pathspec() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["submodule", "update", "--init", "--recursive", "--", "lib"],
+        ok(""),
+    );
+    // No flags, no paths: bare bulk update.
+    fake.expect(&["submodule", "update"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.submodule_update(
+        SubmoduleUpdateOptions {
+            init: true,
+            recursive: true,
+            paths: vec![PathBuf::from("lib")],
+        },
+        OperationId("op1".into()),
+    )
+    .await
+    .unwrap();
+    b.submodule_update(SubmoduleUpdateOptions::default(), OperationId("op2".into()))
+        .await
+        .unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn submodule_init_sync_fetch_build_expected_argv() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["submodule", "init", "--", "lib"], ok(""));
+    fake.expect(&["submodule", "sync", "--recursive", "--", "lib"], ok(""));
+    fake.expect(&["-C", "lib", "fetch"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.submodule_init(&[PathBuf::from("lib")]).await.unwrap();
+    b.submodule_sync(&[PathBuf::from("lib")], true).await.unwrap();
+    b.submodule_fetch(Path::new("lib"), OperationId("op".into())).await.unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn superproject_path_maps_empty_output_to_none() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "--show-superproject-working-tree"], ok("/home/u/super\n"));
+    fake.expect(&["rev-parse", "--show-superproject-working-tree"], ok("\n"));
+    let (b, exec) = backend(fake);
+
+    assert_eq!(
+        b.superproject_path().await.unwrap(),
+        Some(PathBuf::from("/home/u/super"))
+    );
+    assert_eq!(b.superproject_path().await.unwrap(), None);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn discard_resets_submodule_pointers_via_submodule_update() {
+    let fake = FakeExecutor::default();
+    // status: a moved submodule pointer, a modified file, an untracked file.
+    fake.expect(
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        ok("1 .M SC.. 160000 160000 160000 aaaaaaa bbbbbbb lib\01 .M N... 100644 100644 100644 aaaaaaa bbbbbbb tracked.txt\0? untracked.txt\0"),
+    );
+    fake.expect(&["restore", "--worktree", "--", "tracked.txt"], ok(""));
+    fake.expect(&["clean", "-f", "--", "untracked.txt"], ok(""));
+    // The gitlink is NOT restore-able: it goes through submodule update.
+    // --no-fetch: discarding must never touch the network; --checkout is the
+    // explicit non-integrating mode.
+    fake.expect(
+        &["submodule", "update", "--checkout", "--no-fetch", "--", "lib"],
+        ok(""),
+    );
+    let (b, exec) = backend(fake);
+
+    b.discard(&[
+        PathBuf::from("lib"),
+        PathBuf::from("tracked.txt"),
+        PathBuf::from("untracked.txt"),
+    ])
+    .await
+    .unwrap();
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
+// submodule lifecycle: add / set-url / set-branch
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn submodule_add_builds_branch_flag_and_operands() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["submodule", "add", "-b", "main", "--", "https://x.invalid/lib.git", "vendor/lib"],
+        ok(""),
+    );
+    fake.expect(
+        &["submodule", "add", "--", "https://x.invalid/lib.git", "lib"],
+        ok(""),
+    );
+    let (b, exec) = backend(fake);
+
+    b.submodule_add("https://x.invalid/lib.git", Path::new("vendor/lib"), Some("main"), OperationId("a".into()))
+        .await
+        .unwrap();
+    b.submodule_add("https://x.invalid/lib.git", Path::new("lib"), None, OperationId("b".into()))
+        .await
+        .unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn submodule_set_url_syncs_afterwards() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["submodule", "set-url", "--", "lib", "https://new.invalid/lib.git"], ok(""));
+    // set-url edits .gitmodules only: without sync the local config and the
+    // submodule's origin keep the old URL.
+    fake.expect(&["submodule", "sync", "--", "lib"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.submodule_set_url(Path::new("lib"), "https://new.invalid/lib.git").await.unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn submodule_set_branch_sets_and_clears() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["submodule", "set-branch", "--branch", "dev", "--", "lib"], ok(""));
+    fake.expect(&["submodule", "set-branch", "--default", "--", "lib"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.submodule_set_branch(Path::new("lib"), Some("dev")).await.unwrap();
+    b.submodule_set_branch(Path::new("lib"), None).await.unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn submodule_update_remote_integrates_then_stages_pointers() {
+    let sha_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let fake = FakeExecutor::default();
+    // -- submodules() enumeration: one clean, initialized submodule --
+    fake.expect(&["ls-files", "--stage", "-z"], ok(&format!("160000 {sha_a} 0\tlib\0")));
+    fake.expect(
+        &["config", "-f", ".gitmodules", "-z", "--get-regexp", "^submodule\\."],
+        ok("submodule.lib.path\nlib\0submodule.lib.url\nu\0"),
+    );
+    fake.expect(&["config", "-z", "--get-regexp", "^submodule\\."], ok("submodule.lib.url\nu\0"));
+    fake.expect(&["status", "--porcelain=v2", "-z", "--untracked-files=all"], ok(""));
+    fake.expect(&["-C", "lib", "rev-parse", "--show-prefix", "HEAD"], ok(&format!("\n{sha_a}\n")));
+    fake.expect(&["-C", "lib", "rev-parse", "--abbrev-ref", "HEAD"], ok("main\n"));
+    // -- clean: per-path remote move with the strategy flag, then stage --
+    fake.expect(&["submodule", "update", "--remote", "--rebase", "--", "lib"], ok(""));
+    fake.expect(&["add", "--", "lib"], ok(""));
+    let (b, exec) = backend(fake);
+
+    let results = b
+        .submodule_update_remote(
+            &[PathBuf::from("lib")],
+            SubmoduleUpdateStrategy::Rebase,
+            SwitchDirtyBehavior::AutoStash,
+            OperationId("a".into()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(results.len(), 1);
+    assert!(matches!(results[0].status, SubmoduleAutoUpdateStatus::Updated), "{results:?}");
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
+// submodule remove - magit-grade staged sequence
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn submodule_remove_runs_absorb_deinit_rm_in_order() {
+    let fake = FakeExecutor::default();
+    // Clean submodule: the full sequence runs, gitdir deletion NEVER runs here.
+    fake.expect(
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        ok("1 .M SC.. 160000 160000 160000 aaaaaaa bbbbbbb other\0"),
+    );
+    fake.expect(&["submodule", "absorbgitdirs", "--", "lib"], ok(""));
+    fake.expect(&["submodule", "deinit", "-f", "--", "lib"], ok(""));
+    fake.expect(&["rm", "-f", "--", "lib"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.submodule_remove(Path::new("lib")).await.unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn submodule_remove_refuses_dirty_without_running_anything() {
+    let fake = FakeExecutor::default();
+    // Dirty (untracked content inside): refuse BEFORE any mutation.
+    fake.expect(
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        ok("1 .M S..U 160000 160000 160000 aaaaaaa aaaaaaa lib\0"),
+    );
+    let (b, exec) = backend(fake);
+
+    let err = b.submodule_remove(Path::new("lib")).await.unwrap_err();
+    assert!(
+        matches!(err, GitError::WouldOverwriteLocalChanges(_)),
+        "{err:?}"
+    );
+    // assert_done proves absorb/deinit/rm never ran.
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
+// submodule auto-update - rollback sequencing (the tier-4 data-safety core)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn submodule_auto_update_pop_conflict_rolls_back_and_reapplies() {
+    let rec = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; // recorded (new)
+    let old = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; // checked out (old)
+    let stash = "cccccccccccccccccccccccccccccccccccccccc";
+    let fake = FakeExecutor::default();
+    // -- submodules() enumeration --
+    fake.expect(&["ls-files", "--stage", "-z"], ok(&format!("160000 {rec} 0\tlib\0")));
+    fake.expect(
+        &["config", "-f", ".gitmodules", "-z", "--get-regexp", "^submodule\\."],
+        ok("submodule.lib.path\nlib\0submodule.lib.url\nu\0"),
+    );
+    fake.expect(&["config", "-z", "--get-regexp", "^submodule\\."], ok("submodule.lib.url\nu\0"));
+    fake.expect(
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        // Pointer moved AND tracked modifications inside.
+        ok("1 .M SCM. 160000 160000 160000 aaaaaaa bbbbbbb lib\0"),
+    );
+    fake.expect(&["-C", "lib", "rev-parse", "--show-prefix", "HEAD"], ok(&format!("\n{old}\n")));
+    fake.expect(&["-C", "lib", "rev-parse", "--abbrev-ref", "HEAD"], ok("HEAD\n"));
+    // -- auto-stash (tip-compare verified) --
+    fake.expect(&["-C", "lib", "rev-parse", "-q", "--verify", "refs/stash"], fail(1, ""));
+    fake.expect(
+        &["-C", "lib", "stash", "push", "--include-untracked", "-m", "legit: auto-stash before submodule update"],
+        ok("Saved"),
+    );
+    fake.expect(&["-C", "lib", "rev-parse", "-q", "--verify", "refs/stash"], ok(&format!("{stash}\n")));
+    // -- update to recorded, pop by SHA-resolved selector: CONFLICT --
+    fake.expect(&["submodule", "update", "--", "lib"], ok(""));
+    fake.expect(&["-C", "lib", "stash", "list", "--format=%H %gd"], ok(&format!("{stash} stash@{{0}}\n")));
+    fake.expect(&["-C", "lib", "stash", "pop", "stash@{0}"], fail(1, "CONFLICT (content): merge conflict"));
+    // -- ROLLBACK: hard-reset to old (stash survived the pop), pop cleanly --
+    fake.expect(&["-C", "lib", "reset", "--hard", old], ok(""));
+    fake.expect(&["-C", "lib", "stash", "list", "--format=%H %gd"], ok(&format!("{stash} stash@{{0}}\n")));
+    fake.expect(&["-C", "lib", "stash", "pop", "stash@{0}"], ok("Dropped"));
+    let (b, exec) = backend(fake);
+
+    let results = b.submodule_auto_update(SwitchDirtyBehavior::AutoStash).await.unwrap();
+    assert_eq!(results.len(), 1);
+    assert!(
+        matches!(results[0].status, SubmoduleAutoUpdateStatus::RolledBack { .. }),
+        "{results:?}"
+    );
+    // assert_done: no bare `stash pop`, no second update, nothing after the
+    // clean reapply.
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn submodule_create_branch_switches_with_c() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["-C", "lib", "switch", "-c", "fix/detached"], ok(""));
+    let (b, exec) = backend(fake);
+    b.submodule_create_branch(Path::new("lib"), "fix/detached").await.unwrap();
     exec.assert_done();
 }

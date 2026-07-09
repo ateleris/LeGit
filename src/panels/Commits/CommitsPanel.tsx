@@ -19,6 +19,7 @@ import { useDelayedFlag } from "../shared/useDelayedFlag";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { Button } from "../shared/buttons";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
+import { autoUpdateSubmodules } from "../../lib/submodules";
 import {
   consoleCancel,
   repoBranches,
@@ -379,6 +380,7 @@ export function CommitsPanel() {
       const outcome = await repoSwitchBranch(repo.id, name);
       invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
       notifySwitchOutcome(outcome, name);
+      void autoUpdateSubmodules(queryClient, repo.id);
     } catch (e) {
       notifySwitchError(e);
     }
@@ -438,6 +440,7 @@ export function CommitsPanel() {
       const outcome = await repoCheckoutRemoteBranch(repo.id, remoteRef);
       invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
       notifySwitchOutcome(outcome, remoteRef);
+      void autoUpdateSubmodules(queryClient, repo.id);
     } catch (e) {
       notifySwitchError(e);
     }
@@ -449,6 +452,7 @@ export function CommitsPanel() {
       const outcome = await repoCheckoutCommit(repo.id, sha);
       invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
       notifySwitchOutcome(outcome, sha.slice(0, 8));
+      void autoUpdateSubmodules(queryClient, repo.id);
     } catch (e) {
       notifySwitchError(e);
     }
@@ -1648,6 +1652,9 @@ function RemoteSyncToolbar({
   // config decides). Picking one in the caret menu changes the default for
   // every future pull, not just the next one.
   const pullStrategy = useSettingsStore((s) => s.settings?.pull_strategy ?? "Default");
+  const pushRecurseSubmodules = useSettingsStore(
+    (st) => st.settings?.push_recurse_submodules ?? null,
+  );
   const setPullStrategy = useSettingsStore((s) => s.setPullStrategy);
 
   // Latest --progress update for the in-flight op (cleared when it settles).
@@ -1701,6 +1708,11 @@ function RemoteSyncToolbar({
               "Push rejected — the remote has commits you don't have. Pull first, " +
                 "or use Force-push (with lease).",
             );
+          } else if (kindErr === "UnpushedSubmodules") {
+            notify.error(
+              "Push blocked: a submodule has commits that exist on no remote. " +
+                "Push inside the submodule first, or set the guard to on-demand.",
+            );
           } else {
             notify.error(formatAppError(e));
           }
@@ -1725,7 +1737,16 @@ function RemoteSyncToolbar({
     runSync("fetch", (opId) => repoFetch(repoId, { all: true, prune: true, remote: null }, opId), "Fetched");
 
   const doPull = () =>
-    runSync("pull", (opId) => repoPull(repoId, { strategy: pullStrategy }, opId), "Pulled");
+    runSync(
+      "pull",
+      (opId) =>
+        repoPull(repoId, { strategy: pullStrategy }, opId).then((r) => {
+          // A pull can move submodule pointers exactly like a switch does.
+          void autoUpdateSubmodules(queryClient, repoId);
+          return r;
+        }),
+      "Pulled",
+    );
 
   const doPush = (forceWithLease: boolean, remoteOverride?: string) => {
     setMenuOpen(false);
@@ -1736,6 +1757,7 @@ function RemoteSyncToolbar({
       branch: currentBranch.name,
       set_upstream: !hasUpstream,
       force_with_lease: forceWithLease,
+      recurse_submodules: pushRecurseSubmodules,
     };
     return runSync(
       "push",

@@ -13,10 +13,14 @@ import {
 } from "../lib/commands";
 import type { CloneOptions, InitOptions } from "../lib/commands";
 import type { RepoId, RepoSettings, RepoSummary } from "../lib/types";
+import { pickNextActive, pushActivation } from "./repoActivation";
 
 interface RepoStore {
   openRepos: RepoSummary[];
   activeRepoId: RepoId | null;
+  /** Most-recent-first repo activation history (session-local). Closing the
+   * active tab returns to the previously used repo, not the first tab. */
+  activationHistory: RepoId[];
   initialized: boolean;
 
   /** Cached repo-scope settings, keyed by RepoId. */
@@ -62,6 +66,7 @@ interface RepoStore {
 export const useRepoStore = create<RepoStore>((set, get) => ({
   openRepos: [],
   activeRepoId: null,
+  activationHistory: [],
   initialized: false,
   repoSettings: {},
 
@@ -72,6 +77,7 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
       set({
         openRepos: restored.repos,
         activeRepoId: restored.active_id,
+        activationHistory: restored.active_id ? [restored.active_id] : [],
         initialized: true,
       });
       // Pre-load settings for the active repo.
@@ -99,13 +105,27 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
         }
       }
       for (const r of open) if (present.has(r.id)) ordered.push(r);
+      // Keep the active id if still present; otherwise return to the most
+      // recently used open repo (MRU), not the first tab.
+      const stillActive = s.activeRepoId && ordered.some((r) => r.id === s.activeRepoId);
+      const nextActive = stillActive
+        ? s.activeRepoId
+        : pickNextActive(
+            s.activationHistory,
+            ordered.map((r) => r.id),
+          );
+      if (!stillActive) {
+        // The switch came from a close, not a click: persist it so a restart
+        // restores the same repo.
+        setActiveRepoCmd(nextActive).catch((e) => console.warn("persist active failed", e));
+      }
       return {
         openRepos: ordered,
-        // Keep active id if still present; otherwise pick the first repo.
-        activeRepoId:
-          s.activeRepoId && ordered.some((r) => r.id === s.activeRepoId)
-            ? s.activeRepoId
-            : ordered[0]?.id ?? null,
+        activeRepoId: nextActive,
+        // Drop closed repos so the history cannot resurrect stale ids.
+        activationHistory: s.activationHistory.filter((id) =>
+          ordered.some((r) => r.id === id),
+        ),
         initialized: true,
       };
     });
@@ -132,10 +152,7 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
   async openRepo(path: string) {
     const summary = await openRepoCmd(path);
     await get().refresh();
-    set({ activeRepoId: summary.id });
-    setActiveRepoCmd(summary.id).catch((e) => console.warn("persist active failed", e));
-    // Pre-load repo settings so the Repo Settings panel is ready.
-    get().loadRepoSettings(summary.id);
+    get().setActive(summary.id);
     return summary;
   },
 
@@ -143,18 +160,14 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
     const summary = await repoInitCmd(path, profileId, options);
     if (!summary) return null; // bare init: created, nothing to open
     await get().refresh();
-    set({ activeRepoId: summary.id });
-    setActiveRepoCmd(summary.id).catch((e) => console.warn("persist active failed", e));
-    get().loadRepoSettings(summary.id);
+    get().setActive(summary.id);
     return summary;
   },
 
   async cloneRepo(url, parentDir, name, profileId, opId, options) {
     const summary = await repoCloneCmd(url, parentDir, name, profileId, opId, options);
     await get().refresh();
-    set({ activeRepoId: summary.id });
-    setActiveRepoCmd(summary.id).catch((e) => console.warn("persist active failed", e));
-    get().loadRepoSettings(summary.id);
+    get().setActive(summary.id);
     return summary;
   },
 
@@ -164,7 +177,10 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
   },
 
   setActive(id: RepoId | null) {
-    set({ activeRepoId: id });
+    set((s) => ({
+      activeRepoId: id,
+      activationHistory: id ? pushActivation(s.activationHistory, id) : s.activationHistory,
+    }));
     setActiveRepoCmd(id).catch((e) => console.warn("persist active failed", e));
     // Eagerly load settings for the newly-active repo if not cached.
     if (id && !get().repoSettings[id]) {

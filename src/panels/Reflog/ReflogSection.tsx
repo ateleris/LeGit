@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
+import { autoUpdateSubmodules } from "../../lib/submodules";
 import { repoCheckoutCommit, repoReflog, repoReset } from "../../lib/commands";
 import { notify } from "../../store/notifications";
 import { useConfirmDestructive } from "../../store/settings";
@@ -61,6 +62,7 @@ export function ReflogSection() {
       const outcome = await repoCheckoutCommit(repo.id, e.sha);
       invalidate();
       notifySwitchOutcome(outcome, e.sha.slice(0, 8));
+      void autoUpdateSubmodules(queryClient, repo.id);
     } catch (err) {
       setError(formatSwitchError(err));
     } finally {

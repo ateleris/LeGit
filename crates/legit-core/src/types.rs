@@ -158,7 +158,14 @@ pub enum FileState {
     Untracked,
     Ignored,
     Conflicted,
+    /// A submodule whose recorded pointer moved (staged or working-tree) - a
+    /// real, committable superproject change.
     SubmoduleChanged,
+    /// A submodule with uncommitted changes INSIDE its worktree but an
+    /// unmoved pointer. Informational: nothing here is stageable or
+    /// committable from the superproject - the changes live in the
+    /// submodule's own repo.
+    SubmoduleDirty,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -293,6 +300,9 @@ pub struct SubmoduleChange {
     pub path: PathBuf,
     pub old_sha: Option<CommitId>,
     pub new_sha: Option<CommitId>,
+    /// The submodule worktree has uncommitted content on top of `new_sha`
+    /// (git's `-dirty` suffix on the `Subproject commit` line).
+    pub dirty: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -726,6 +736,21 @@ pub struct PushOptions {
     pub set_upstream: bool,
     /// Force-push but refuse to clobber unseen remote commits (`--force-with-lease`).
     pub force_with_lease: bool,
+    /// Submodule guard (`--recurse-submodules=check|on-demand`); `None` = no
+    /// flag (git default / user config).
+    #[serde(default)]
+    pub recurse_submodules: Option<PushRecurseMode>,
+}
+
+/// `git push --recurse-submodules` mode - the pre-push guard against
+/// publishing a superproject that references unpushed submodule commits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum PushRecurseMode {
+    /// Abort the push when referenced submodule commits are on no remote.
+    Check,
+    /// Push the needed submodule branches first, then the superproject.
+    OnDemand,
 }
 
 /// Ahead/behind tracking status for the current branch relative to its upstream.
@@ -763,13 +788,130 @@ pub struct CommitDetails {
     pub raw_object: String,
 }
 
-/// Submodule entry as recorded in the superproject.
+/// Orthogonal state flags of one submodule. A struct, not an enum: states
+/// combine freely (detached AND dirty AND pointer-moved). The UI derives a
+/// single display badge by precedence (spec 2026-07-08, "Data model").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, Default)]
+pub struct SubmoduleState {
+    /// Registered in `.git/config` (`submodule.<name>.url` present).
+    pub initialized: bool,
+    /// The worktree is checked out (a git repo exists at the path).
+    pub populated: bool,
+    /// Checked-out HEAD differs from the SHA recorded in the superproject.
+    pub pointer_moved: bool,
+    /// Modified tracked files inside the submodule worktree.
+    pub dirty_tracked: bool,
+    /// Untracked files inside the submodule worktree.
+    pub dirty_untracked: bool,
+    /// The gitlink is unmerged in the superproject.
+    pub conflicted: bool,
+    /// A gitlink with no `.gitmodules` entry.
+    pub orphan_gitlink: bool,
+    /// `.gitmodules` URL and effective (`.git/config`) URL disagree.
+    pub config_drift: bool,
+}
+
+/// Submodule entry as recorded in the superproject. Keyed by `name` (durable
+/// across `git mv`: config sections and `.git/modules/<name>` use it);
+/// displayed by `path`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct SubmoduleInfo {
+    pub name: String,
     pub path: PathBuf,
+    /// Effective URL (`.git/config`); `None` when uninitialized.
     pub url: Option<String>,
+    /// URL declared in `.gitmodules` (for drift detection).
+    pub gitmodules_url: Option<String>,
+    /// `.gitmodules` `branch` field (used by `update --remote`, tier 3).
+    pub branch: Option<String>,
+    /// The gitlink SHA in the superproject index; `None` for a declared-but-
+    /// never-added entry.
     pub recorded_sha: Option<CommitId>,
-    pub initialized: bool,
-    pub dirty: bool,
-    pub detached: bool,
+    /// HEAD of the checked-out submodule; `None` when unpopulated.
+    pub checked_out_sha: Option<CommitId>,
+    /// The submodule's checked-out branch; `None` = detached HEAD (or
+    /// unpopulated).
+    pub head_branch: Option<String>,
+    pub state: SubmoduleState,
+}
+
+/// One commit in a submodule pointer range (`repo_submodule_log`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SubmoduleLogEntry {
+    pub id: CommitId,
+    pub subject: String,
+}
+
+/// Commits between two submodule pointers, or the reason they can't be shown.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SubmoduleLog {
+    Commits { commits: Vec<SubmoduleLogEntry> },
+    /// The target SHA is not present in the submodule's object store - the
+    /// pointer references an unfetched commit.
+    TargetMissing,
+}
+
+/// Options for `submodule update`. Empty `paths` = all submodules.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, Default)]
+pub struct SubmoduleUpdateOptions {
+    /// Also register new submodules (`--init`).
+    pub init: bool,
+    /// Recurse into nested submodules (`--recursive`).
+    pub recursive: bool,
+    pub paths: Vec<PathBuf>,
+}
+
+/// Integration mode for `submodule update --remote`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SubmoduleUpdateStrategy {
+    /// Detach at the fetched commit (git's default).
+    #[default]
+    Checkout,
+    /// Rebase the current branch onto the fetched commit.
+    Rebase,
+    /// Merge the fetched commit into the current branch.
+    Merge,
+}
+
+/// State of a removed submodule's retained gitdir (`.git/modules/<name>`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SubmoduleGitdirInfo {
+    pub path: PathBuf,
+    /// Commits on local branches that are on no remote - deleting the gitdir
+    /// would destroy them permanently.
+    pub unpushed: bool,
+}
+
+/// Per-submodule outcome of the post-switch/pull auto-update. Data, not an
+/// error: partial success crosses IPC as outcomes (house rule).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SubmoduleAutoUpdateStatus {
+    /// Clean submodule checked out at the recorded SHA.
+    Updated,
+    /// Dirty submodule updated with the local changes carried over
+    /// (TryDirectly carry, or a clean auto-stash pop).
+    ChangesCarried,
+    /// Updated; the changes were deliberately left parked in the
+    /// submodule's stash (StashAndKeep).
+    ChangesStashed,
+    /// The auto-stash pop conflicted: the submodule was rolled back to its
+    /// previous commit and the changes reapplied cleanly there. Nothing was
+    /// lost; the pointer remains un-updated.
+    RolledBack { message: String },
+    /// Worst case: rollback's own pop failed too. The changes are SAFE in
+    /// the submodule's stash; the submodule sits at its previous commit.
+    ChangesInStash { message: String },
+    /// The update could not run (conflicted submodule, checkout refused,
+    /// fetch failure, ...). The submodule was left untouched.
+    Skipped { message: String },
+}
+
+/// One submodule's auto-update outcome.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SubmoduleAutoUpdateResult {
+    pub path: PathBuf,
+    pub status: SubmoduleAutoUpdateStatus,
 }

@@ -16,9 +16,11 @@ import {
   setWorkingChangesSectionOrder,
   saveSwitchDirtyBehavior,
   savePullStrategy,
+  savePushRecurseSubmodules,
 } from "../lib/commands";
 import { reapplyPanelConstraints } from "./dockview";
 import type {
+  PushRecurseMode,
   GlobalSettings,
   PullStrategy,
   RegionPlacement,
@@ -105,6 +107,7 @@ interface SettingsStore {
   setWorkingChangesSectionOrder: (order: string[]) => Promise<void>;
   setSwitchDirtyBehavior: (behavior: SwitchDirtyBehavior) => Promise<void>;
   setPullStrategy: (strategy: PullStrategy) => Promise<void>;
+  setPushRecurseSubmodules: (mode: PushRecurseMode | null) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
@@ -235,6 +238,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     await savePullStrategy(strategy);
     const s = get().settings;
     if (s) set({ settings: { ...s, pull_strategy: strategy } });
+  },
+
+  async setPushRecurseSubmodules(mode) {
+    await savePushRecurseSubmodules(mode);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, push_recurse_submodules: mode } });
   },
 
   async setUiFontSize(size) {

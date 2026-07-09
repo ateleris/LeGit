@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useActiveRepo } from "../../store/repos";
+import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
 import { usePanelActiveEffect, usePanelFocusEffect } from "../PanelApiContext";
 import { repoCommit, repoConflictEntries, repoDiscard, repoLog, repoResolveTakeSide, repoStage, repoStatus, repoTrackingStatus, repoUnstage } from "../../lib/commands";
@@ -368,6 +368,14 @@ export function WorkingChangesPanel() {
       setSelected(next);
       syncOpenDiff(selected, next);
     });
+  // Open a submodule row's repo as a peer tab (sessions dedupe by toplevel).
+  const openSubmodule = (path: string) => {
+    void useRepoStore
+      .getState()
+      .openRepo(`${repo!.path}/${path}`)
+      .catch((err: unknown) => notify.error(formatAppError(err)));
+  };
+
   const doDiscard = (paths: string[]) =>
     run(async () => {
       await repoDiscard(repo!.id, paths);
@@ -532,12 +540,19 @@ export function WorkingChangesPanel() {
                   <ToolbarButton
                     label="Discard all"
                     disabled={busy}
-                    onClick={() => requestDiscard(unstaged.map((f) => f.path), "all unstaged files")}
+                    onClick={() =>
+                      requestDiscard(
+                        unstaged.filter((f) => f.change !== "SubmoduleDirty").map((f) => f.path),
+                        "all unstaged files",
+                      )
+                    }
                   />
                   <ToolbarButton
                     label="Stage all"
                     disabled={busy}
-                    onClick={() => stage(unstaged.map((f) => f.path))}
+                    onClick={() =>
+                      stage(unstaged.filter((f) => f.change !== "SubmoduleDirty").map((f) => f.path))
+                    }
                   />
                 </>
               )
@@ -555,6 +570,25 @@ export function WorkingChangesPanel() {
               onContextMenu={(f, e) => {
                 const targets = selectForMenu("unstaged", f.path);
                 const many = targets.length > 1;
+                if (f.change === "SubmoduleDirty" && !many) {
+                  openMenu(
+                    e,
+                    <>
+                      <MenuItem onClick={() => { closeMenu(); openSubmodule(f.path); }}>
+                        Open submodule
+                      </MenuItem>
+                      <MenuItem
+                        onClick={() => {
+                          closeMenu();
+                          useSummonStore.getState().summon("file-history", f.path);
+                        }}
+                      >
+                        File history
+                      </MenuItem>
+                    </>,
+                  );
+                  return;
+                }
                 openMenu(
                   e,
                   <>
@@ -571,6 +605,11 @@ export function WorkingChangesPanel() {
                         </MenuItem>
                       </>
                     )}
+                    {!many && f.change === "SubmoduleChanged" && (
+                      <MenuItem onClick={() => { closeMenu(); openSubmodule(f.path); }}>
+                        Open submodule
+                      </MenuItem>
+                    )}
                     <MenuItem onClick={() => { stage(targets); closeMenu(); }}>
                       {many ? `Stage ${targets.length} selected` : "Stage"}
                     </MenuItem>
@@ -583,7 +622,7 @@ export function WorkingChangesPanel() {
                         ? "Delete file"
                         : "Discard changes"}
                     </MenuItem>
-                    {!many && f.change !== "Untracked" && (
+                    {!many && f.change !== "Untracked" && f.change !== "SubmoduleChanged" && (
                       <MenuItem
                         onClick={() => {
                           closeMenu();
@@ -607,11 +646,15 @@ export function WorkingChangesPanel() {
                   </>,
                 );
               }}
-              renderActions={(f) => (
-                <IconButton title="Stage" disabled={busy} onClick={() => stage([f.path])}>
-                  <StageIcon />
-                </IconButton>
-              )}
+              renderActions={(f) =>
+                // A dirty-inside submodule has nothing stageable (the pointer
+                // is unmoved) - no stage button, the row is informational.
+                f.change === "SubmoduleDirty" ? null : (
+                  <IconButton title="Stage" disabled={busy} onClick={() => stage([f.path])}>
+                    <StageIcon />
+                  </IconButton>
+                )
+              }
               renderDirActions={(paths) => (
                 <IconButton title={`Stage folder (${fileCountLabel(paths.length)})`} disabled={busy} onClick={() => stage(paths)}>
                   <StageIcon />
@@ -664,10 +707,15 @@ export function WorkingChangesPanel() {
                 openMenu(
                   e,
                   <>
+                    {targets.length === 1 && f.change === "SubmoduleChanged" && (
+                      <MenuItem onClick={() => { closeMenu(); openSubmodule(f.path); }}>
+                        Open submodule
+                      </MenuItem>
+                    )}
                     <MenuItem onClick={() => { unstage(targets); closeMenu(); }}>
                       {targets.length > 1 ? `Unstage ${targets.length} selected` : "Unstage"}
                     </MenuItem>
-                    {targets.length === 1 && f.change !== "Added" && (
+                    {targets.length === 1 && f.change !== "Added" && f.change !== "SubmoduleChanged" && (
                       <MenuItem
                         onClick={() => {
                           closeMenu();

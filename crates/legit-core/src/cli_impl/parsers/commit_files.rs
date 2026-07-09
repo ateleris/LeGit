@@ -1,15 +1,19 @@
 //! Parser for the files changed by a commit, backing `commit_files()`.
 //!
-//! Combines two `git diff-tree -M -z` streams — `--name-status` (change kind +
+//! Combines two `git diff-tree -M -z` streams — `--raw` (modes + change kind +
 //! path(s), with rename/copy detection) and `--numstat` (added/deleted line
-//! counts, or `-` for binary) — keyed by the destination path. The format flags
+//! counts, or `-` for binary) — keyed by the destination path. `--raw` rather
+//! than `--name-status` because only the raw records carry the mode fields
+//! that identify gitlinks (`160000`), which classify submodule pointer bumps
+//! as `SubmoduleChanged` (spec 2026-07-08, sub-project 2). The format flags
 //! live next to the parser so the contract is visible in one place
 //! (DESIGN-v0.3.md §4.5).
 //!
 //! `-z` framing (verified against git):
-//!   name-status: `M\0<path>\0`, rename/copy `R100\0<old>\0<new>\0`
-//!   numstat:     `<add>\t<del>\t<path>\0`, binary `-\t-\t<path>\0`,
-//!                rename `<add>\t<del>\t\0<old>\0<new>\0`
+//!   raw:     `:<oldmode> <newmode> <oldsha> <newsha> <status>\0<path>\0`,
+//!            rename/copy `... R100\0<old>\0<new>\0`
+//!   numstat: `<add>\t<del>\t<path>\0`, binary `-\t-\t<path>\0`,
+//!            rename `<add>\t<del>\t\0<old>\0<new>\0`
 
 use crate::types::{CommitFileChange, FileState};
 use std::collections::HashMap;
@@ -26,22 +30,27 @@ pub(crate) struct NumStat {
     pub(crate) binary: bool,
 }
 
-/// Parse and merge the `--name-status` and `--numstat` streams into one ordered
-/// list (name-status order, which git sorts by path). Files present in
-/// name-status but absent from numstat default to `0/0` non-binary.
-pub fn parse_commit_files(name_status: &str, numstat: &str) -> Vec<CommitFileChange> {
+/// Parse and merge the `--raw` and `--numstat` streams into one ordered list
+/// (raw order, which git sorts by path). Files present in the raw stream but
+/// absent from numstat default to `0/0` non-binary.
+pub fn parse_commit_files(raw: &str, numstat: &str) -> Vec<CommitFileChange> {
     let counts = parse_numstat(numstat);
 
     let mut result = Vec::new();
-    let mut tokens = name_status.split('\0');
+    let mut tokens = raw.split('\0');
 
-    while let Some(status) = tokens.next() {
-        if status.is_empty() {
-            continue;
-        }
-        // First byte is the change kind; renames/copies carry a similarity
-        // score (e.g. `R100`) that we don't surface.
-        let kind = status.as_bytes()[0] as char;
+    while let Some(meta) = tokens.next() {
+        // `:<oldmode> <newmode> <oldsha> <newsha> <status>` - path(s) follow
+        // as separate NUL fields. Skip anything not shaped like a raw record.
+        let Some(meta) = meta.strip_prefix(':') else { continue };
+        let mut fields = meta.split(' ');
+        let old_mode = fields.next().unwrap_or("");
+        let new_mode = fields.next().unwrap_or("");
+        let status = fields.nth(2).unwrap_or(""); // skip the two shas
+        let Some(&kind_byte) = status.as_bytes().first() else { continue };
+        // Renames/copies carry a similarity score (e.g. `R100`) we don't
+        // surface.
+        let kind = kind_byte as char;
 
         let (path, old_path) = if kind == 'R' || kind == 'C' {
             // `R100\0<old>\0<new>\0` — old then new.
@@ -62,9 +71,18 @@ pub fn parse_commit_files(name_status: &str, numstat: &str) -> Vec<CommitFileCha
             (p.to_string(), None)
         };
 
+        // A modified gitlink is a submodule pointer bump; adds/deletes of a
+        // gitlink read better as plain Added/Deleted (matches status).
+        let gitlink = old_mode == "160000" || new_mode == "160000";
+        let change = if gitlink && matches!(kind, 'M' | 'T') {
+            FileState::SubmoduleChanged
+        } else {
+            map_kind(kind)
+        };
+
         let stat = counts.get(&path);
         result.push(CommitFileChange {
-            change: map_kind(kind),
+            change,
             old_path,
             additions: stat.map(|s| s.additions).unwrap_or(0),
             deletions: stat.map(|s| s.deletions).unwrap_or(0),
@@ -142,9 +160,19 @@ mod tests {
         s
     }
 
+    /// Build a raw diff-tree metadata token (`-z`: path(s) follow as separate
+    /// NUL fields, passed by the caller through `z(...)`).
+    fn raw(old_mode: &str, new_mode: &str, status: &str) -> String {
+        format!(":{old_mode} {new_mode} aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb {status}")
+    }
+
     #[test]
     fn parses_modify_add_delete() {
-        let ns = z(&["A", "added.txt", "D", "del.txt", "M", "keep.txt"]);
+        let ns = z(&[
+            &raw("000000", "100644", "A"), "added.txt",
+            &raw("100644", "000000", "D"), "del.txt",
+            &raw("100644", "100644", "M"), "keep.txt",
+        ]);
         let nm = z(&["1\t0\tadded.txt", "0\t1\tdel.txt", "3\t2\tkeep.txt"]);
         let files = parse_commit_files(&ns, &nm);
         assert_eq!(files.len(), 3);
@@ -160,8 +188,8 @@ mod tests {
 
     #[test]
     fn parses_rename_with_old_and_new_paths() {
-        // R100\0old\0new\0  +  numstat rename: "0\t0\t"\0old\0new\0
-        let ns = z(&["R100", "orig.txt", "moved.txt"]);
+        // raw R100\0old\0new\0  +  numstat rename: "0\t0\t"\0old\0new\0
+        let ns = z(&[&raw("100644", "100644", "R100"), "orig.txt", "moved.txt"]);
         let nm = z(&["0\t0\t", "orig.txt", "moved.txt"]);
         let files = parse_commit_files(&ns, &nm);
         assert_eq!(files.len(), 1);
@@ -173,7 +201,7 @@ mod tests {
 
     #[test]
     fn parses_rename_with_content_change_counts() {
-        let ns = z(&["R86", "a/old.rs", "b/new.rs"]);
+        let ns = z(&[&raw("100644", "100644", "R86"), "a/old.rs", "b/new.rs"]);
         let nm = z(&["4\t2\t", "a/old.rs", "b/new.rs"]);
         let files = parse_commit_files(&ns, &nm);
         assert_eq!(files[0].change, FileState::Renamed);
@@ -183,7 +211,7 @@ mod tests {
 
     #[test]
     fn marks_binary_files() {
-        let ns = z(&["M", "pic.bin"]);
+        let ns = z(&[&raw("100644", "100644", "M"), "pic.bin"]);
         let nm = z(&["-\t-\tpic.bin"]);
         let files = parse_commit_files(&ns, &nm);
         assert_eq!(files.len(), 1);
@@ -193,7 +221,7 @@ mod tests {
 
     #[test]
     fn handles_path_with_spaces() {
-        let ns = z(&["M", "dir with spaces/a b.txt"]);
+        let ns = z(&[&raw("100644", "100644", "M"), "dir with spaces/a b.txt"]);
         let nm = z(&["2\t1\tdir with spaces/a b.txt"]);
         let files = parse_commit_files(&ns, &nm);
         assert_eq!(files[0].path, PathBuf::from("dir with spaces/a b.txt"));
@@ -202,8 +230,8 @@ mod tests {
 
     #[test]
     fn defaults_counts_when_numstat_missing() {
-        // name-status present but numstat empty (shouldn't normally happen).
-        let files = parse_commit_files(&z(&["M", "keep.txt"]), "");
+        // raw stream present but numstat empty (shouldn't normally happen).
+        let files = parse_commit_files(&z(&[&raw("100644", "100644", "M"), "keep.txt"]), "");
         assert_eq!(files.len(), 1);
         assert_eq!((files[0].additions, files[0].deletions), (0, 0));
         assert!(!files[0].binary);
@@ -218,10 +246,32 @@ mod tests {
     #[test]
     fn root_commit_all_added() {
         // diff against the empty tree: every file is an addition.
-        let ns = z(&["A", "keep.txt", "A", "src/main.rs"]);
+        let ns = z(&[
+            &raw("000000", "100644", "A"), "keep.txt",
+            &raw("000000", "100644", "A"), "src/main.rs",
+        ]);
         let nm = z(&["3\t0\tkeep.txt", "10\t0\tsrc/main.rs"]);
         let files = parse_commit_files(&ns, &nm);
         assert_eq!(files.len(), 2);
         assert!(files.iter().all(|f| f.change == FileState::Added));
+    }
+
+    #[test]
+    fn gitlink_modification_becomes_submodule_changed() {
+        let ns = z(&[&raw("160000", "160000", "M"), "vendor/lib"]);
+        let nm = z(&["0\t0\tvendor/lib"]);
+        let files = parse_commit_files(&ns, &nm);
+        assert_eq!(files[0].change, FileState::SubmoduleChanged);
+    }
+
+    #[test]
+    fn gitlink_add_and_delete_stay_added_deleted() {
+        let ns = z(&[
+            &raw("000000", "160000", "A"), "vendor/new",
+            &raw("160000", "000000", "D"), "vendor/gone",
+        ]);
+        let files = parse_commit_files(&ns, "");
+        assert_eq!(files[0].change, FileState::Added);
+        assert_eq!(files[1].change, FileState::Deleted);
     }
 }

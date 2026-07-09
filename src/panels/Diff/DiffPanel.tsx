@@ -20,6 +20,7 @@ import {
 import type { ConflictFileSides, ConflictSide, DiffEntry, DiffRequest, DiffSource } from "../../lib/types";
 import { LineEndingBadge } from "../shared/LineEndingBadge";
 import { ThreeWayView } from "./ThreeWayView";
+import { SubmoduleDiffView, SubmoduleDirtyNotice } from "./SubmoduleDiffView";
 import { formatAppError } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notify } from "../../store/notifications";
@@ -738,6 +739,13 @@ function DiffBody({
     [actions, onAction, onLineAction, openMenu, closeMenu]
   );
 
+  // A dirty-inside submodule has no superproject diff (unmoved pointer, and
+  // untracked-only dirt yields empty diff output) - render the explanatory
+  // notice from the known state instead of whatever the diff text parsed to.
+  if (request.change === "SubmoduleDirty") {
+    return <SubmoduleDirtyNotice repoId={request.repoId} path={request.path} />;
+  }
+
   if (!data) return null;
 
   if ("Binary" in data) {
@@ -748,11 +756,7 @@ function DiffBody({
     );
   }
   if ("Submodule" in data) {
-    return (
-      <div className="legit-panel__body">
-        <span className="legit-subtle">Submodule change.</span>
-      </div>
-    );
+    return <SubmoduleDiffView repoId={request.repoId} change={data.Submodule} />;
   }
 
   const text = data.Text;

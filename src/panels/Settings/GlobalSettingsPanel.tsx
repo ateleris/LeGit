@@ -8,7 +8,7 @@ import { useAppVersion } from "../../lib/appVersion";
 /** localStorage key for the line-height ↔ lane-width link toggle (default on). */
 const LANE_LINK_KEY = "legit.commits-lane-link";
 import { formatAppError } from "../../lib/types";
-import type { ConfigScope, LineEndingsView, RegionPlacement, SwitchDirtyBehavior } from "../../lib/types";
+import type { ConfigScope, LineEndingsView, PushRecurseMode, RegionPlacement, SwitchDirtyBehavior } from "../../lib/types";
 import { globalLineEndingsView, globalWriteLineEndings, setWarnOnMixedEndings } from "../../lib/commands";
 import { useGitStatusStore } from "../../store/git-status";
 import { SigningSettings } from "./SigningSettings";
@@ -91,6 +91,7 @@ export function GlobalSettingsPanel() {
           <AutoOpenPanelsSection />
           <ConfirmDiscardSection />
           <BranchSwitchingSection />
+          <PushGuardSection />
           <AutoRefreshSection />
           <AutoFetchSection />
           <ExternalEditorSection />
@@ -905,6 +906,51 @@ function ConfirmDiscardSection() {
         removing remotes or themes. When off, these run immediately without a
         prompt.
       </FieldNote>
+    </Section>
+  );
+}
+
+function PushGuardSection() {
+  const mode = useSettingsStore((s) => s.settings?.push_recurse_submodules ?? null);
+  const setPushRecurseSubmodules = useSettingsStore((s) => s.setPushRecurseSubmodules);
+  const [saving, setSaving] = useState(false);
+
+  const select = async (m: PushRecurseMode | null) => {
+    if (m === mode || saving) return;
+    setSaving(true);
+    try {
+      await setPushRecurseSubmodules(m);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Submodule push guard">
+      <FieldNote>writes to: global settings — applies to all repos</FieldNote>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: saving ? "default" : "pointer" }}>
+          <input type="radio" checked={mode === null} onChange={() => select(null)} disabled={saving} />
+          <span style={{ fontSize: "var(--fz-lg)" }}>Off</span>
+          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
+            — pushes never look at submodules (git default)
+          </span>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: saving ? "default" : "pointer" }}>
+          <input type="radio" checked={mode === "check"} onChange={() => select("check")} disabled={saving} />
+          <span style={{ fontSize: "var(--fz-lg)" }}>Check</span>
+          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
+            — block the push when it references submodule commits that exist on no remote
+          </span>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: saving ? "default" : "pointer" }}>
+          <input type="radio" checked={mode === "on_demand"} onChange={() => select("on_demand")} disabled={saving} />
+          <span style={{ fontSize: "var(--fz-lg)" }}>On demand</span>
+          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
+            — push the needed submodule branches first, then the superproject
+          </span>
+        </label>
+      </div>
     </Section>
   );
 }

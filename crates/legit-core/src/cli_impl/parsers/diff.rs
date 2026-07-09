@@ -9,7 +9,9 @@
 //! a `\ No newline at end of file` marker may follow any side's last line — it
 //! is not itself a diff line and is skipped.
 
-use crate::types::{BinaryDiff, DiffEntry, DiffHunk, DiffLine, DiffLineKind, TextDiff};
+use crate::types::{
+    BinaryDiff, CommitId, DiffEntry, DiffHunk, DiffLine, DiffLineKind, SubmoduleChange, TextDiff,
+};
 use std::path::PathBuf;
 
 /// Parse one file's unified-diff text into a `DiffEntry`.
@@ -59,10 +61,59 @@ pub fn parse_file_diff(stdout: &str) -> DiffEntry {
         }
     }
 
+    if let Some(sub) = submodule_change(stdout) {
+        return DiffEntry::Submodule(sub);
+    }
+
     DiffEntry::Text(TextDiff {
         old_path,
         new_path,
         hunks,
+    })
+}
+
+/// Detect a gitlink diff: EVERY changed (`+`/`-`) line is a
+/// `Subproject commit <sha>[-dirty]` line (with `diff.submodule=short`
+/// pinned, that is the only shape gitlink diffs take; a dirty-only diff has
+/// no `index ... 160000` line, so the mode header cannot be required).
+fn submodule_change(stdout: &str) -> Option<SubmoduleChange> {
+    let mut old_sha = None;
+    let mut new_sha = None;
+    let mut dirty = false;
+    let mut changed = 0usize;
+    let mut subproject = 0usize;
+    for line in stdout.lines() {
+        if line.starts_with("---") || line.starts_with("+++") {
+            continue;
+        }
+        match line.as_bytes().first() {
+            Some(b'-') => {
+                changed += 1;
+                if let Some(sha) = line.strip_prefix("-Subproject commit ") {
+                    subproject += 1;
+                    old_sha = Some(CommitId::new(sha.trim_end().trim_end_matches("-dirty")));
+                }
+            }
+            Some(b'+') => {
+                changed += 1;
+                if let Some(sha) = line.strip_prefix("+Subproject commit ") {
+                    subproject += 1;
+                    dirty = sha.trim_end().ends_with("-dirty");
+                    new_sha = Some(CommitId::new(sha.trim_end().trim_end_matches("-dirty")));
+                }
+            }
+            _ => {}
+        }
+    }
+    if changed == 0 || changed != subproject {
+        return None;
+    }
+    let (old_p, new_p) = git_header_paths(stdout);
+    Some(SubmoduleChange {
+        path: new_p.or(old_p)?,
+        old_sha,
+        new_sha,
+        dirty,
     })
 }
 
@@ -264,6 +315,71 @@ mod tests {
             DiffEntry::Text(t) => t,
             other => panic!("expected Text, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_submodule_pointer_diff() {
+        let raw = "diff --git a/vendor/lib b/vendor/lib\n\
+                   index aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa..bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 160000\n\
+                   --- a/vendor/lib\n\
+                   +++ b/vendor/lib\n\
+                   @@ -1 +1 @@\n\
+                   -Subproject commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\
+                   +Subproject commit bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n";
+        let entry = parse_file_diff(raw);
+        let DiffEntry::Submodule(sub) = entry else { panic!("expected Submodule: {entry:?}") };
+        assert_eq!(sub.path, PathBuf::from("vendor/lib"));
+        assert_eq!(
+            sub.old_sha.as_ref().map(|s| s.as_str()),
+            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
+        assert_eq!(
+            sub.new_sha.as_ref().map(|s| s.as_str()),
+            Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        );
+        assert!(!sub.dirty);
+    }
+
+    #[test]
+    fn parses_dirty_submodule_diff_without_index_line() {
+        // Dirty-only gitlink diffs carry a `-dirty` suffix and NO index line.
+        let raw = "diff --git a/vendor/lib b/vendor/lib\n\
+                   --- a/vendor/lib\n\
+                   +++ b/vendor/lib\n\
+                   @@ -1 +1 @@\n\
+                   -Subproject commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\
+                   +Subproject commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-dirty\n";
+        let DiffEntry::Submodule(sub) = parse_file_diff(raw) else { panic!() };
+        assert!(sub.dirty);
+        assert_eq!(sub.old_sha, sub.new_sha);
+    }
+
+    #[test]
+    fn parses_new_submodule_diff() {
+        let raw = "diff --git a/vendor/lib b/vendor/lib\n\
+                   new file mode 160000\n\
+                   index 0000000000000000000000000000000000000000..bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n\
+                   --- /dev/null\n\
+                   +++ b/vendor/lib\n\
+                   @@ -0,0 +1 @@\n\
+                   +Subproject commit bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n";
+        let DiffEntry::Submodule(sub) = parse_file_diff(raw) else { panic!() };
+        assert_eq!(sub.old_sha, None);
+        assert!(sub.new_sha.is_some());
+    }
+
+    #[test]
+    fn text_mentioning_subproject_lines_is_not_a_submodule_diff() {
+        // A text diff where only SOME changed lines look like Subproject
+        // lines must stay a text diff.
+        let raw = "diff --git a/notes.md b/notes.md\n\
+                   index aaaaaaa..bbbbbbb 100644\n\
+                   --- a/notes.md\n\
+                   +++ b/notes.md\n\
+                   @@ -1,2 +1,2 @@\n\
+                   -Subproject commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\
+                   +some other line\n";
+        assert!(matches!(parse_file_diff(raw), DiffEntry::Text(_)));
     }
 
     #[test]

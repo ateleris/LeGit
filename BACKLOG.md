@@ -130,8 +130,12 @@ written only after git confirms via `store`), or a UI prompt. Deferred:
   (skipped: fails on servers without reachable-sha1 fetch support).
 
 ### Advanced
-- **Submodules** (the `GitBackend::submodules()` method is a `NotYet` stub) —
-  list/update/sync.
+- **Submodules**: implemented 2026-07-08 (tiers 1-4: state model + display,
+  navigation + ops, lifecycle, safety - see
+  `docs/superpowers/specs/2026-07-08-submodules-architecture-design.md`).
+  Remaining ideas: nested-tree overview (deliberately flat for now),
+  hide-the-Refs-pane-when-no-gitlinks (paneview layouts persist panes),
+  `--shallow-submodules` on clone (see Clone / init above).
 - **Worktrees** (add/list/remove), **bisect**.
 
 
@@ -139,6 +143,17 @@ written only after git confirms via `store`), or a UI prompt. Deferred:
 
 ## UX / polish
 
+- **Improve the merge window.** (Requested 2026-07-09; exact scope to be
+  defined with Simon before starting.) Today there is no merge window at
+  all: merging is a set of fire-immediately context-menu entries
+  (`BranchMenuSection` — merge ff-auto / no-ff / ff-only / squash → calls
+  `repoMerge` from BranchesPanel / RefsCell). Likely direction: a proper
+  merge dialog that shows what is about to happen before running it —
+  source/target branches, the commits that would come in (`git log
+  target..source`), ff-or-merge-commit prediction, options (ff mode,
+  squash, commit message for merge commits) in one place instead of four
+  menu entries, and a conflict heads-up where cheaply detectable. Follow
+  the panel/summon patterns; keep the quick menu entries as shortcuts.
 - **Open a single file in the external editor.** "Open in editor" for the repo
   root shipped 2026-07-07 (Global Settings "External editor" command template;
   `$ROOT` substitution, PATH/PATHEXT resolution, file-manager fallback —

@@ -37,11 +37,18 @@ import type {
   PullOptions,
   PullStrategy,
   PushOptions,
+  PushRecurseMode,
   TrackingStatus,
   Remote,
   SwitchOutcome,
   SwitchDirtyBehavior,
   StashEntry,
+  SubmoduleAutoUpdateResult,
+  SubmoduleGitdirInfo,
+  SubmoduleInfo,
+  SubmoduleLog,
+  SubmoduleUpdateOptions,
+  SubmoduleUpdateStrategy,
   TagInfo,
   RemoteTag,
   StashOutcome,
@@ -592,6 +599,78 @@ export const repoCheckoutRemoteBranch = (repoId: string, remoteRef: string) =>
 export const repoCheckoutCommit = (repoId: string, sha: string) =>
   invoke<SwitchOutcome>("repo_checkout_commit", { repoId, sha });
 
+// --- submodules ---
+
+export const repoSubmodules = (repoId: string) =>
+  invoke<SubmoduleInfo[]>("repo_submodules", { repoId });
+
+export const repoSubmoduleLog = (
+  repoId: string,
+  path: string,
+  from: string | null,
+  to: string,
+) => invoke<SubmoduleLog>("repo_submodule_log", { repoId, path, from, to });
+
+export const repoSubmoduleInit = (repoId: string, paths: string[]) =>
+  invoke<void>("repo_submodule_init", { repoId, paths });
+
+export const repoSubmoduleUpdate = (
+  repoId: string,
+  opts: SubmoduleUpdateOptions,
+  opId: string,
+) => invoke<void>("repo_submodule_update", { repoId, opts, opId });
+
+export const repoSubmoduleSync = (repoId: string, paths: string[], recursive: boolean) =>
+  invoke<void>("repo_submodule_sync", { repoId, paths, recursive });
+
+export const repoSubmoduleFetch = (repoId: string, path: string, opId: string) =>
+  invoke<void>("repo_submodule_fetch", { repoId, path, opId });
+
+export const repoSuperproject = (repoId: string) =>
+  invoke<string | null>("repo_superproject", { repoId });
+
+export const repoSubmoduleAdd = (
+  repoId: string,
+  url: string,
+  path: string,
+  branch: string | null,
+  opId: string,
+) => invoke<void>("repo_submodule_add", { repoId, url, path, branch, opId });
+
+export const repoSubmoduleSetUrl = (repoId: string, path: string, url: string) =>
+  invoke<void>("repo_submodule_set_url", { repoId, path, url });
+
+export const repoSubmoduleSetBranch = (repoId: string, path: string, branch: string | null) =>
+  invoke<void>("repo_submodule_set_branch", { repoId, path, branch });
+
+export const repoSubmoduleUpdateRemote = (
+  repoId: string,
+  paths: string[],
+  strategy: SubmoduleUpdateStrategy,
+  opId: string,
+) =>
+  invoke<SubmoduleAutoUpdateResult[]>("repo_submodule_update_remote", {
+    repoId,
+    paths,
+    strategy,
+    opId,
+  });
+
+export const repoSubmoduleRemove = (repoId: string, path: string) =>
+  invoke<void>("repo_submodule_remove", { repoId, path });
+
+export const repoSubmoduleGitdirInfo = (repoId: string, name: string) =>
+  invoke<SubmoduleGitdirInfo | null>("repo_submodule_gitdir_info", { repoId, name });
+
+export const repoSubmoduleDeleteGitdir = (repoId: string, name: string) =>
+  invoke<void>("repo_submodule_delete_gitdir", { repoId, name });
+
+export const repoSubmoduleCreateBranch = (repoId: string, path: string, name: string) =>
+  invoke<void>("repo_submodule_create_branch", { repoId, path, name });
+
+export const repoSubmoduleAutoUpdate = (repoId: string) =>
+  invoke<SubmoduleAutoUpdateResult[]>("repo_submodule_auto_update", { repoId });
+
 // --- tags ---
 
 export const repoTags = (repoId: string) => invoke<TagInfo[]>("repo_tags", { repoId });
@@ -661,6 +740,9 @@ export const repoStashBranch = (repoId: string, stashSha: string, branchName: st
 
 export const saveSwitchDirtyBehavior = (behavior: SwitchDirtyBehavior) =>
   invoke<void>("save_switch_dirty_behavior", { behavior });
+
+export const savePushRecurseSubmodules = (mode: PushRecurseMode | null) =>
+  invoke<void>("save_push_recurse_submodules", { mode });
 
 export const savePullStrategy = (strategy: PullStrategy) =>
   invoke<void>("save_pull_strategy", { strategy });

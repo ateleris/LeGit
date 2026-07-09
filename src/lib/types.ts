@@ -55,6 +55,8 @@ export interface GlobalSettings {
   switch_dirty_behavior?: SwitchDirtyBehavior | null;
   /** Pull integration strategy (null = Default: the repo's pull.rebase decides). */
   pull_strategy?: PullStrategy | null;
+  /** `push --recurse-submodules` guard mode (null = off). */
+  push_recurse_submodules?: PushRecurseMode | null;
   /** Show author Gravatars in the commit graph. OFF by default — enabling it
    * sends hashed author emails to gravatar.com. */
   commit_avatars?: boolean;
@@ -78,6 +80,8 @@ export interface RepoSettings {
   external_editor_command?: string | null;
   /** Selected git profile id (null = none / inherit). Intent hint only. */
   git_profile_id?: string | null;
+  /** Auto-update submodule pointers after switch/pull (null = default ON). */
+  submodule_auto_update?: boolean | null;
 }
 
 export interface RestoreResult {
@@ -109,7 +113,8 @@ export type ChangeDomain =
   | "branches"
   | "stashes"
   | "tags"
-  | "op_state";
+  | "op_state"
+  | "submodules";
 
 /** Payload of the `legit://repo-changed` event emitted by the FS watcher. */
 export interface RepoChangedPayload {
@@ -340,7 +345,10 @@ export type FileState =
   | "Untracked"
   | "Ignored"
   | "Conflicted"
-  | "SubmoduleChanged";
+  | "SubmoduleChanged"
+  /** Uncommitted changes INSIDE the submodule, pointer unmoved. Informational:
+   * nothing is stageable from the superproject. */
+  | "SubmoduleDirty";
 
 /** A single changed path in the working tree (matches legit-core `FileStatus`). */
 export interface FileStatus {
@@ -423,6 +431,73 @@ export interface SubmoduleChange {
   path: string;
   old_sha: string | null;
   new_sha: string | null;
+  /** Submodule worktree has uncommitted content (git's `-dirty` suffix). */
+  dirty: boolean;
+}
+
+/** Orthogonal submodule state flags (mirrors SubmoduleState in types.rs). */
+export interface SubmoduleState {
+  initialized: boolean;
+  populated: boolean;
+  pointer_moved: boolean;
+  dirty_tracked: boolean;
+  dirty_untracked: boolean;
+  conflicted: boolean;
+  orphan_gitlink: boolean;
+  config_drift: boolean;
+}
+
+/** Submodule entry (mirrors SubmoduleInfo in types.rs). */
+export interface SubmoduleInfo {
+  name: string;
+  path: string;
+  url: string | null;
+  gitmodules_url: string | null;
+  branch: string | null;
+  recorded_sha: string | null;
+  checked_out_sha: string | null;
+  head_branch: string | null;
+  state: SubmoduleState;
+}
+
+export interface SubmoduleLogEntry {
+  id: string;
+  subject: string;
+}
+
+export type SubmoduleLog =
+  | { kind: "commits"; commits: SubmoduleLogEntry[] }
+  | { kind: "target_missing" };
+
+/** Options for `git submodule update` (mirrors SubmoduleUpdateOptions). */
+export interface SubmoduleUpdateOptions {
+  init: boolean;
+  recursive: boolean;
+  paths: string[];
+}
+
+/** Integration mode for `submodule update --remote`. */
+export type SubmoduleUpdateStrategy = "checkout" | "rebase" | "merge";
+
+/** Retained gitdir of a removed submodule. */
+export interface SubmoduleGitdirInfo {
+  path: string;
+  /** Local commits on no remote - deleting the gitdir destroys them. */
+  unpushed: boolean;
+}
+
+/** Per-submodule outcome of the post-switch/pull auto-update. */
+export type SubmoduleAutoUpdateStatus =
+  | { kind: "updated" }
+  | { kind: "changes_carried" }
+  | { kind: "changes_stashed" }
+  | { kind: "rolled_back"; message: string }
+  | { kind: "changes_in_stash"; message: string }
+  | { kind: "skipped"; message: string };
+
+export interface SubmoduleAutoUpdateResult {
+  path: string;
+  status: SubmoduleAutoUpdateStatus;
 }
 
 export type DiffEntry =
@@ -692,7 +767,12 @@ export interface PushOptions {
   set_upstream: boolean;
   /** Force-push without clobbering unseen remote commits (--force-with-lease). */
   force_with_lease: boolean;
+  /** Submodule guard (--recurse-submodules=check|on-demand); null = no flag. */
+  recurse_submodules?: PushRecurseMode | null;
 }
+
+/** `git push --recurse-submodules` guard mode (mirrors PushRecurseMode). */
+export type PushRecurseMode = "check" | "on_demand";
 
 /** Ahead/behind of the current branch vs its upstream (null = detached / no upstream). */
 export interface TrackingStatus {

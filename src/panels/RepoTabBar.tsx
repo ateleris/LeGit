@@ -2,10 +2,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRepoStore } from "../store/repos";
 import { formatAppError } from "../lib/types";
-import { repoOpenInEditor, repoOpenRemotePage, repoRemoteWebUrl } from "../lib/commands";
+import { repoOpenInEditor, repoOpenRemotePage, repoRemoteWebUrl, repoSuperproject } from "../lib/commands";
 import { useEditorActionLabel } from "../lib/editorAction";
 import { notify } from "../store/notifications";
-import { ExternalEditorIcon, RemotePageIcon } from "../icons";
+import { ExternalEditorIcon, RemotePageIcon, SuperprojectIcon } from "../icons";
 import { ViewMenu } from "./ViewMenu";
 import { RepoOverflowMenu } from "./RepoOverflowMenu";
 import { RepoAddMenu } from "./RepoAddMenu";
@@ -172,6 +172,25 @@ export function RepoTabBar() {
     }
   };
 
+  // The superproject working tree when the active repo is a submodule
+  // checkout (null otherwise). The value only changes when the repo is
+  // re-parented on disk, so a long staleTime is fine.
+  const openRepoFromStore = useRepoStore((s) => s.openRepo);
+  const { data: superprojectPath = null } = useQuery<string | null>({
+    queryKey: [activeRepoId, "superproject"],
+    queryFn: () => repoSuperproject(activeRepoId!),
+    enabled: !!activeRepoId,
+    staleTime: 300_000,
+  });
+  const onOpenSuperproject = async () => {
+    if (!superprojectPath) return;
+    try {
+      await openRepoFromStore(superprojectPath);
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
+  };
+
   const byId = new Map(openRepos.map((r) => [r.id, r] as const));
   const orderedIds = order ?? openRepos.map((r) => r.id);
 
@@ -245,6 +264,16 @@ export function RepoTabBar() {
         <RepoOverflowMenu />
         {activeRepoId && (
           <>
+            {superprojectPath && (
+              <button
+                className="legit-tabs__icon"
+                onClick={onOpenSuperproject}
+                aria-label={`Open superproject ${superprojectPath}`}
+                title={`This repo is a submodule - open its superproject (${superprojectPath})`}
+              >
+                <SuperprojectIcon />
+              </button>
+            )}
             <button
               className="legit-tabs__icon"
               onClick={onOpenInEditor}
