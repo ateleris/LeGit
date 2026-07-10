@@ -1714,7 +1714,9 @@ function RemoteSyncToolbar({
       try {
         await fn(opId);
         notify.success(successMsg);
-        invalidateRepoDomains(queryClient, repoId, ["log", "branches", "status", "tracking"]);
+        // "tags" because push/pull/fetch move remote-tracking refs, which the
+        // tag list's per-tag `target_on_remote` flag is computed against.
+        invalidateRepoDomains(queryClient, repoId, ["log", "branches", "status", "tracking", "tags"]);
       } catch (e) {
         if (cancelRequestedRef.current) {
           // User cancelled — the failure is expected, no toast.

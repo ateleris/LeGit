@@ -274,7 +274,14 @@ fn classify_git(rel: &Path, out: &mut BTreeSet<ChangeDomain>) {
             if first == "packed-refs" || rel.starts_with("refs/stash") {
                 out.insert(ChangeDomain::Stashes);
             }
-            if first == "packed-refs" || rel.starts_with("refs/tags") {
+            // Remote-tracking refs drive the tags query too: each tag's
+            // `target_on_remote` flag is computed against them, so a
+            // push/fetch must refresh the tag list (else "Push tag" stays
+            // disabled after pushing the tagged commit).
+            if first == "packed-refs"
+                || rel.starts_with("refs/tags")
+                || rel.starts_with("refs/remotes")
+            {
                 out.insert(ChangeDomain::Tags);
             }
         }
@@ -450,6 +457,31 @@ mod tests {
         let mut out = BTreeSet::new();
         classify(Path::new("/repo/.git/refs/heads/main"), wt, gd, &Gitignore::empty(), &mut out);
         assert!(!out.contains(&ChangeDomain::Stashes), "got {out:?}");
+    }
+
+    #[test]
+    fn remote_ref_change_includes_tags_domain() {
+        // A push/fetch moves refs/remotes/<remote>/<branch>; the tags query's
+        // per-tag `target_on_remote` flag depends on remote-tracking refs, so
+        // it must refetch (the disabled "Push tag (commit not on remote)"
+        // entry stayed stale after pushing the tagged commit).
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        let mut out = BTreeSet::new();
+        classify(Path::new("/repo/.git/refs/remotes/origin/main"), wt, gd, &Gitignore::empty(), &mut out);
+        assert!(out.contains(&ChangeDomain::Tags), "got {out:?}");
+        assert!(out.contains(&ChangeDomain::Log));
+        assert!(out.contains(&ChangeDomain::Branches));
+    }
+
+    #[test]
+    fn local_branch_ref_change_does_not_include_tags() {
+        // Local head moves don't affect `target_on_remote` - no tags refetch.
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        let mut out = BTreeSet::new();
+        classify(Path::new("/repo/.git/refs/heads/main"), wt, gd, &Gitignore::empty(), &mut out);
+        assert!(!out.contains(&ChangeDomain::Tags), "got {out:?}");
     }
 
     #[test]

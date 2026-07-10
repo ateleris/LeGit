@@ -148,17 +148,6 @@ written only after git confirms via `store`), or a UI prompt. Deferred:
 
 ## UX / polish
 
-- **Per-file stash: pop + polish remainders.** Shipped 2026-07-10: "Stash
-  file"/"Stash N selected" on Working Changes rows (pathspec `stash push
-  --include-untracked`, tip-compare outcome, hidden during ops - git refuses
-  over unmerged entries), and per-file APPLY via the existing "Restore file
-  to this commit" on a stash's file list, relabelled "Apply file from
-  stash…" when the shown commit is a stash. Open:
-  - *Per-file pop* (apply one file AND remove it from the stash): needs
-    stash rewriting (re-create the entry without the path) - invasive,
-    deliberately not shipped.
-  - *Optional message for per-file stash*: entries currently stash with
-    git's default WIP subject; add a message prompt if wanted.
 - **Conflict-resolution flow follow-ups.** The 2026-07-10 overhaul shipped
   (mark-resolved guard, reopen-conflict via `update-index --unresolve`,
   marker warning badges staged+unstaged, side-select header checkboxes
@@ -229,10 +218,6 @@ warnings). Open remainder:
 - **README screenshots.** The README has no screenshots; add one or two once
   the UI is deemed presentable (and check the README/release page branding
   matches the new logo, swapped in 2026-07-09).
-- **Changelog decision.** There is no CHANGELOG file; today the drafted
-  GitHub Release body is the changelog (edited at review time). Decide
-  whether that stays the scheme or a curated `CHANGELOG.md` should be seeded
-  and referenced from the release notes.
 - **Pre-release pass.** Smoke-test the built (non-dev) bundles on each
   target, since several code paths differ from `tauri dev` (e.g. the
   `CREATE_NO_WINDOW` git-spawn flag, `windows_subsystem = "windows"`,
