@@ -10,6 +10,14 @@ record); an item that is partially done keeps only its open remainder.
 
 ## Other deferred ideas
 
+- **Backlog review + current-state review.** Go through this file top to
+  bottom: drop items that have shipped in the meantime (several sections
+  predate the v0.9.x work), re-prioritise what remains, and write a short
+  review of the current state of the app (what works, what is rough, what
+  the next milestone should be). Added 2026-07-09, around the v0.9.2
+  release, as the backlog has accumulated across many sessions and no
+  longer reflects reality.
+
 - **Live-refresh the diff on external git changes.** The filesystem watcher's
   emitted domains (backend) don't include `diff`, so an external `git`
   stage/unstage while the app is open doesn't refresh an open diff (in-app
@@ -143,6 +151,47 @@ written only after git confirms via `store`), or a UI prompt. Deferred:
 
 ## UX / polish
 
+- **Per-file stash / apply / pop.** (Requested 2026-07-10.) Today stashing is
+  all-or-nothing (whole working changes; whole stash on apply/pop). Check and
+  design the single-file granularity:
+  - *Stash single files*: `git stash push [-u] -- <pathspec>` supports this
+    natively - a "Stash file"/"Stash selected" entry in the Working Changes
+    row menu; keep the auto-stash tip-compare convention (`stash_created`)
+    since a pathspec push can also be a no-op.
+  - *Apply/pop single files out of a stash*: no native support - approach is
+    `git restore --source=<stash-sha> [--staged] -- <path>` (or
+    `checkout <sha> -- <path>`), which overwrites rather than merges and
+    doesn't drop anything from the stash; pop-semantics for one file would
+    need a follow-up "remove path from stash" (re-create the stash without
+    the path), which is invasive - likely ship apply-only per file first.
+  - Address stashes by commit SHA as everywhere (stash mutations must never
+    use positional selectors), and route entries through `StashMenuSection`
+    so row/chip menus stay in parity.
+- **Conflict-resolution flow follow-ups.** The 2026-07-10 overhaul shipped
+  (mark-resolved guard, reopen-conflict via `update-index --unresolve`,
+  marker warning badges staged+unstaged, side-select header checkboxes
+  replacing the toolbar take buttons, resolution-invisible toast, op-state
+  strip hold-disabled-until-refresh; spec:
+  `docs/superpowers/specs/2026-07-10-conflict-resolution-safety-design.md`).
+  Open remainders:
+  - *Working Changes "Mark resolved" menu entry is unguarded*: the
+    conflict-row menu stages the file directly (`repoStage`) with no
+    markers check - deliberate for now (the warning badge catches it right
+    after); decide whether it should get the same confirm as the Merge
+    panel, which would need a file-content read at menu-action time.
+  - *Header checkbox alignment is measured once per view build*: a global
+    font-size change while the merge view is open rebuilds the view (props
+    change), so it re-measures in practice, but if a path appears where the
+    gutter width changes without a rebuild the header box could drift.
+  - *Verification pass pending*: vitest suites + manual end-to-end run of
+    the whole flow (guard -> badge -> reopen -> checkboxes -> abort hold)
+    from PowerShell; WSL-side cargo/tsc are green.
+- **Op-state indicator for background repos.** (Deferred 2026-07-10 from the
+  global op-state strip work.) The strip under the repo tab bar surfaces only
+  the *active* repo's in-progress merge/rebase/cherry-pick/revert; a repo in
+  a background tab can also be mid-operation with no visible hint. Idea: a
+  small badge/dot on the repo tab when that repo's `op_state` is not `none`
+  (needs a per-repo op-state subscription, not just the active one).
 - **Improve the merge window.** (Requested 2026-07-09; exact scope to be
   defined with Simon before starting.) Today there is no merge window at
   all: merging is a set of fire-immediately context-menu entries

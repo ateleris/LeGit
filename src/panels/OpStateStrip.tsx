@@ -1,8 +1,9 @@
-import { useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { useConfirmDestructive } from "../../store/settings";
-import { invalidateRepoDomains } from "../../lib/repoInvalidation";
-import { OP_DOMAINS } from "../../lib/useOpState";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useConfirmDestructive } from "../store/settings";
+import { useRepoStore } from "../store/repos";
+import { invalidateRepoDomains } from "../lib/repoInvalidation";
+import { OP_DOMAINS, useOpState } from "../lib/useOpState";
 import {
   repoCherryPickAbort,
   repoCherryPickContinue,
@@ -15,17 +16,18 @@ import {
   repoRevertAbort,
   repoRevertContinue,
   repoRevertSkip,
-} from "../../lib/commands";
-import type { RepoOpState } from "../../lib/types";
+  repoStatus,
+} from "../lib/commands";
+import type { FileStatus, RepoOpState } from "../lib/types";
 import {
   notifyMergeOutcome,
   notifyOpError,
   notifyRebaseOutcome,
   notifySequenceOutcome,
-} from "../../lib/mergeFeedback";
-import { ToolbarButton } from "../shared/ToolbarButton";
+} from "../lib/mergeFeedback";
+import { ToolbarButton } from "./shared/ToolbarButton";
 
-/** What the banner shows and can do per in-progress operation kind. */
+/** What the strip shows and can do per in-progress operation kind. */
 const OP_META = {
   merge: { noun: "merge", canSkip: false },
   rebase: { noun: "rebase", canSkip: true },
@@ -34,10 +36,39 @@ const OP_META = {
 } as const;
 
 /**
- * "Operation in progress" banner at the top of Working Changes: what is
- * running (merge / rebase / cherry-pick / revert), how many conflicts remain,
- * Continue / Skip / Abort. Abort is destructive (discards resolutions):
- * inline confirm, gated by the global destructive-confirmation setting.
+ * App-chrome surface for the active repo's in-progress operation: rendered by
+ * AppLayout directly below the repo tab bar, so a merge / rebase / cherry-pick
+ * / revert is always visible and abortable no matter which panels are open.
+ * Renders nothing while no operation is in progress.
+ */
+export function OpStateStrip() {
+  const activeRepoId = useRepoStore((s) => s.activeRepoId);
+  const opState = useOpState(activeRepoId ?? undefined);
+  const opActive = !!opState && opState.kind !== "none";
+
+  // Same key + fetcher as Working Changes, so the cache is shared; this own
+  // subscription keeps the conflict count watcher-fresh when that panel is
+  // closed. Only fetched while an operation is actually in progress.
+  const { data: status = [] } = useQuery<FileStatus[]>({
+    queryKey: [activeRepoId, "status"],
+    queryFn: () => repoStatus(activeRepoId!),
+    enabled: !!activeRepoId && opActive,
+    staleTime: 5_000,
+  });
+  const conflictCount = useMemo(
+    () => status.filter((s) => s.state === "Conflicted").length,
+    [status],
+  );
+
+  if (!activeRepoId || !opState || opState.kind === "none") return null;
+  return <OpStateBanner repoId={activeRepoId} opState={opState} conflictCount={conflictCount} />;
+}
+
+/**
+ * "Operation in progress" banner: what is running (merge / rebase /
+ * cherry-pick / revert), how many conflicts remain, Continue / Skip / Abort.
+ * Abort is destructive (discards resolutions): inline confirm, gated by the
+ * global destructive-confirmation setting.
  */
 export function OpStateBanner({
   repoId,
@@ -63,18 +94,38 @@ export function OpStateBanner({
     runningRef.current = true;
     // Delayed busy state (150ms) so fast operations never flicker the UI.
     const busyTimer = window.setTimeout(() => setBusy(true), 150);
+    let ok = false;
     try {
       await fn();
+      ok = true;
     } catch (e) {
       notifyOpError(e);
     } finally {
       window.clearTimeout(busyTimer);
-      runningRef.current = false;
-      setBusy(false);
-      setConfirmingAbort(false);
       invalidateRepoDomains(queryClient, repoId, OP_DOMAINS);
+      if (ok) {
+        // Success means the op state is about to change (usually to "none",
+        // unmounting the banner). Hold the current rendering DISABLED until
+        // the refreshed state arrives - flipping back to live Continue/Abort
+        // buttons during the refetch gap reads as "the abort didn't work".
+        // The opState effect below re-enables if the banner stays mounted.
+        setBusy(true);
+      } else {
+        runningRef.current = false;
+        setBusy(false);
+        setConfirmingAbort(false);
+      }
     }
   };
+
+  // A genuinely new op state re-enables the banner (e.g. rebase continue
+  // advancing to the next conflicted step). React-query structurally shares
+  // unchanged data, so this fires only when the state actually changed.
+  useEffect(() => {
+    runningRef.current = false;
+    setBusy(false);
+    setConfirmingAbort(false);
+  }, [opState]);
 
   const target =
     opState.kind === "merge"

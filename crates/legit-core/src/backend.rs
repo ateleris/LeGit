@@ -516,4 +516,25 @@ pub trait GitBackend: Send + Sync {
     /// `git checkout --ours|--theirs -- <path>` + `git add`; for a
     /// delete-conflict where the chosen side deleted the file, `git rm -f`.
     async fn resolve_take_side(&self, path: &Path, side: ConflictSide) -> Result<(), GitError>;
+
+    /// Paths whose conflict was resolved and staged during the in-progress
+    /// operation (`git ls-files --resolve-undo`) - the candidates for
+    /// `conflict_reopen`. The record persists until the merge commit.
+    async fn resolve_undo_paths(&self) -> Result<Vec<String>, GitError>;
+
+    /// Staged paths whose staged content still contains leftover conflict
+    /// markers (`git diff --cached --check`, exit 2 = findings, not failure).
+    async fn staged_marker_paths(&self) -> Result<Vec<String>, GitError>;
+
+    /// Modified-but-unstaged paths whose worktree content still contains
+    /// leftover conflict markers (`git diff --check`) - e.g. a staged
+    /// resolution that was unstaged again. Also matches currently conflicted
+    /// paths; callers filter those (they are already surfaced as conflicts).
+    async fn unstaged_marker_paths(&self) -> Result<Vec<String>, GitError>;
+
+    /// Reopen a resolved-and-staged conflict: `git update-index --unresolve`
+    /// restores the index stages from the resolve-undo record, then
+    /// `git checkout -m -- <path>` regenerates the conflict markers in the
+    /// worktree (discarding the staged resolution).
+    async fn conflict_reopen(&self, path: &Path) -> Result<(), GitError>;
 }

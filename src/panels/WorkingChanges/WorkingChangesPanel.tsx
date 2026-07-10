@@ -2,10 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
-import { useSettingsStore } from "../../store/settings";
+import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
 import { usePanelActiveEffect, usePanelFocusEffect } from "../PanelApiContext";
-import { repoCommit, repoConflictEntries, repoDiscard, repoLog, repoResolveTakeSide, repoStage, repoStatus, repoTrackingStatus, repoUnstage } from "../../lib/commands";
-import type { Commit, ConflictEntry, DiffRequest, DiffSource, FileStatus, TrackingStatus } from "../../lib/types";
+import { repoCommit, repoConflictEntries, repoConflictReopen, repoDiscard, repoLog, repoResolveTakeSide, repoResolveUndoPaths, repoStage, repoStagedMarkerPaths, repoStatus, repoTrackingStatus, repoUnstage, repoUnstagedMarkerPaths } from "../../lib/commands";
+import type { Commit, ConflictEntry, ConflictSide, DiffRequest, DiffSource, FileStatus, TrackingStatus } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { useCommitDraftStore } from "../../store/commitDraft";
@@ -15,20 +15,44 @@ import { ToolbarButton } from "../shared/ToolbarButton";
 import { Button, IconButton } from "../shared/buttons";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
-import { StageIcon, UnstageIcon } from "../../icons";
-import { PanelContextMenuProvider, type BaselineEntry } from "../Commits/menu/PanelContextMenu";
+import { StageIcon, UnstageIcon, WarningIcon } from "../../icons";
+import { PanelContextMenuProvider, useMenuConfirm, type BaselineEntry } from "../Commits/menu/PanelContextMenu";
 import { MenuItem } from "../Commits/menu/primitives";
 import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
+import { notifyResolutionInvisible } from "../../lib/mergeFeedback";
 import { useOpState } from "../../lib/useOpState";
 import { isDetachedHead } from "../../lib/detachedHead";
-import { OpStateBanner } from "./OpStateBanner";
 import { takeSideLabels } from "./conflictLabels";
 import {
   orderedWorkingChangesSections,
   type WorkingChangesSection,
 } from "./sectionOrder";
+
+/**
+ * "Reopen conflict" entry for a row (staged or unstaged again) that was a
+ * conflict resolution: restores the conflicted state, discarding the current
+ * resolution. Destructive, so it inline-confirms per the global
+ * destructive-confirmation setting (a hook-using component because the menu
+ * content is built inline).
+ */
+function ReopenConflictMenuItem({ onReopen }: { onReopen: () => void }) {
+  const confirmDestructive = useConfirmDestructive();
+  const menuConfirm = useMenuConfirm();
+  const request = () => {
+    if (!confirmDestructive) {
+      onReopen();
+      return;
+    }
+    menuConfirm("Reopen conflict? The current resolution will be discarded.", onReopen);
+  };
+  return (
+    <MenuItem onClick={request}>
+      {confirmDestructive ? "Reopen conflict…" : "Reopen conflict"}
+    </MenuItem>
+  );
+}
 
 const toEntry = (s: FileStatus): FileTreeEntry => ({
   path: s.path,
@@ -222,13 +246,47 @@ export function WorkingChangesPanel() {
     [status, stagedTotals, unstagedTotals],
   );
 
-  // In-progress merge/rebase state drives the banner; the conflict count
-  // gates its Continue button (and the conflict-row menu labels).
-  const opState = useOpState(repo?.id);
+  // Conflict count drives the conflict-row menu labels; the in-progress
+  // merge/rebase banner itself is app chrome now (OpStateStrip in AppLayout).
   const conflictCount = useMemo(
     () => status.filter((s) => s.state === "Conflicted").length,
     [status],
   );
+
+  // An in-progress op gates the resolution-safety features below: that's the
+  // window where staged conflict markers are accidents and git's resolve-undo
+  // record exists. Both queries are idle otherwise.
+  const opState = useOpState(repo?.id);
+  const opActive = !!opState && opState.kind !== "none";
+
+  // Files whose content still holds leftover conflict markers - the
+  // "accidentally marked resolved" warning. Checked on both sides so the
+  // warning follows the file when it is unstaged again; on the unstaged side
+  // it only decorates non-Conflicted rows (conflicts already show as such).
+  const { data: stagedMarkerPaths = [] } = useQuery<string[]>({
+    queryKey: [repo?.id, "status", "staged-markers"],
+    queryFn: () => repoStagedMarkerPaths(repo!.id),
+    enabled: !!repo && opActive,
+    staleTime: 5_000,
+  });
+  const stagedMarkerSet = useMemo(() => new Set(stagedMarkerPaths), [stagedMarkerPaths]);
+  const { data: unstagedMarkerPaths = [] } = useQuery<string[]>({
+    queryKey: [repo?.id, "status", "unstaged-markers"],
+    queryFn: () => repoUnstagedMarkerPaths(repo!.id),
+    enabled: !!repo && opActive,
+    staleTime: 5_000,
+  });
+  const unstagedMarkerSet = useMemo(() => new Set(unstagedMarkerPaths), [unstagedMarkerPaths]);
+
+  // Paths whose conflict was resolved & staged during this op (git's
+  // resolve-undo record) - eligible for "Reopen conflict".
+  const { data: undoPaths = [] } = useQuery<string[]>({
+    queryKey: [repo?.id, "op_state", "resolve-undo"],
+    queryFn: () => repoResolveUndoPaths(repo!.id),
+    enabled: !!repo && opActive,
+    staleTime: 5_000,
+  });
+  const reopenable = useMemo(() => new Set(undoPaths), [undoPaths]);
 
   // Conflict kinds for delete-aware Take-ours/theirs labels; only fetched
   // while conflicts exist (the cheap ls-files -u otherwise never runs).
@@ -395,6 +453,22 @@ export function WorkingChangesPanel() {
       setSelected(next);
       syncOpenDiff(selected, next);
     });
+  // Reopen a resolved-and-staged conflict (restores the unmerged stages and
+  // regenerates the markers), then bring the Merge panel up for the file.
+  const reopenConflict = (path: string) =>
+    run(async () => {
+      await repoConflictReopen(repo!.id, path);
+      useSummonStore.getState().summon("merge", { repoId: repo!.id, path });
+    });
+
+  // Whole-file take from the conflict-row menu; a resolution identical to
+  // HEAD vanishes from status entirely, so it carries the explanatory note.
+  const takeSide = (path: string, side: ConflictSide) =>
+    run(async () => {
+      await repoResolveTakeSide(repo!.id, path, side);
+      await notifyResolutionInvisible(repo!.id, path);
+    });
+
   // Open a submodule row's repo as a peer tab (sessions dedupe by toplevel).
   const openSubmodule = (path: string) => {
     void useRepoStore
@@ -499,9 +573,6 @@ export function WorkingChangesPanel() {
           onContextMenu={(e) => openMenu(e)}
         >
       <PanelLoadingBar active={isFetching} />
-      {repo && opState && opState.kind !== "none" && (
-        <OpStateBanner repoId={repo.id} opState={opState} conflictCount={conflictCount} />
-      )}
       <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <div style={{ display: "flex" }}>
           <button onClick={() => setViewMode("tree")} aria-pressed={viewMode === "tree"} style={segStyle(viewMode === "tree", "left")}>
@@ -621,10 +692,10 @@ export function WorkingChangesPanel() {
                   <>
                     {!many && f.change === "Conflicted" && (
                       <>
-                        <MenuItem onClick={() => { run(() => repoResolveTakeSide(repo!.id, f.path, "ours")); closeMenu(); }}>
+                        <MenuItem onClick={() => { void takeSide(f.path, "ours"); closeMenu(); }}>
                           {takeSideLabels(conflictKinds.get(f.path)).ours}
                         </MenuItem>
-                        <MenuItem onClick={() => { run(() => repoResolveTakeSide(repo!.id, f.path, "theirs")); closeMenu(); }}>
+                        <MenuItem onClick={() => { void takeSide(f.path, "theirs"); closeMenu(); }}>
                           {takeSideLabels(conflictKinds.get(f.path)).theirs}
                         </MenuItem>
                         <MenuItem onClick={() => { stage([f.path]); closeMenu(); }}>
@@ -636,6 +707,14 @@ export function WorkingChangesPanel() {
                       <MenuItem onClick={() => { closeMenu(); openSubmodule(f.path); }}>
                         Open submodule
                       </MenuItem>
+                    )}
+                    {!many && f.change !== "Conflicted" && opActive && reopenable.has(f.path) && (
+                      <ReopenConflictMenuItem
+                        onReopen={() => {
+                          closeMenu();
+                          void reopenConflict(f.path);
+                        }}
+                      />
                     )}
                     <MenuItem onClick={() => { stage(targets); closeMenu(); }}>
                       {many ? `Stage ${targets.length} selected` : "Stage"}
@@ -673,6 +752,19 @@ export function WorkingChangesPanel() {
                   </>,
                 );
               }}
+              // An unstaged (formerly staged) resolution that still holds
+              // markers keeps the conflict triangle; genuinely Conflicted
+              // rows already derive it from their status.
+              renderFileIcon={(f) =>
+                opActive && f.change !== "Conflicted" && unstagedMarkerSet.has(f.path) ? (
+                  <span
+                    title="File content still contains conflict markers"
+                    style={{ display: "inline-flex", color: "var(--status-conflicted)" }}
+                  >
+                    <WarningIcon size={iconSize} />
+                  </span>
+                ) : null
+              }
               renderActions={(f) =>
                 // A dirty-inside submodule has nothing stageable (the pointer
                 // is unmoved) - no stage button, the row is informational.
@@ -739,6 +831,14 @@ export function WorkingChangesPanel() {
                         Open submodule
                       </MenuItem>
                     )}
+                    {targets.length === 1 && opActive && reopenable.has(f.path) && (
+                      <ReopenConflictMenuItem
+                        onReopen={() => {
+                          closeMenu();
+                          void reopenConflict(f.path);
+                        }}
+                      />
+                    )}
                     <MenuItem onClick={() => { unstage(targets); closeMenu(); }}>
                       {targets.length > 1 ? `Unstage ${targets.length} selected` : "Unstage"}
                     </MenuItem>
@@ -768,6 +868,19 @@ export function WorkingChangesPanel() {
                   </>,
                 );
               }}
+              // A staged resolution that still holds conflict markers keeps
+              // reading as conflicted: the warning triangle replaces the
+              // status icon, same position and colour as during the conflict.
+              renderFileIcon={(f) =>
+                opActive && stagedMarkerSet.has(f.path) ? (
+                  <span
+                    title="Staged content still contains conflict markers"
+                    style={{ display: "inline-flex", color: "var(--status-conflicted)" }}
+                  >
+                    <WarningIcon size={iconSize} />
+                  </span>
+                ) : null
+              }
               renderActions={(f) => (
                 <IconButton title="Unstage" disabled={busy} onClick={() => unstage([f.path])}>
                   <UnstageIcon />

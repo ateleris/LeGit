@@ -562,6 +562,29 @@ export const repoConflictEntries = (repoId: string) =>
 export const repoResolveTakeSide = (repoId: string, path: string, side: ConflictSide) =>
   invoke<null>("repo_resolve_take_side", { repoId, path, side });
 
+/** Paths whose conflict was resolved & staged during the in-progress
+ *  operation (git's resolve-undo record) - reopenable via
+ *  repoConflictReopen until the merge is committed. */
+export const repoResolveUndoPaths = (repoId: string) =>
+  invoke<string[]>("repo_resolve_undo_paths", { repoId });
+
+/** Staged paths whose staged content still contains leftover conflict
+ *  markers (`git diff --cached --check`). */
+export const repoStagedMarkerPaths = (repoId: string) =>
+  invoke<string[]>("repo_staged_marker_paths", { repoId });
+
+/** Modified-but-unstaged paths whose worktree content still contains
+ *  leftover conflict markers (`git diff --check`) - e.g. a staged resolution
+ *  that was unstaged again. Also matches currently conflicted paths; callers
+ *  filter those. */
+export const repoUnstagedMarkerPaths = (repoId: string) =>
+  invoke<string[]>("repo_unstaged_marker_paths", { repoId });
+
+/** Reopen a resolved-and-staged conflict: restores the unmerged index stages
+ *  and regenerates the markers in the worktree (discards the resolution). */
+export const repoConflictReopen = (repoId: string, path: string) =>
+  invoke<null>("repo_conflict_reopen", { repoId, path });
+
 export const repoCommit = (repoId: string, message: string, amend = false) =>
   invoke<string>("repo_commit", { repoId, message, amend });
 

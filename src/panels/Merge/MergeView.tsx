@@ -247,6 +247,8 @@ export const MergeView = forwardRef<
     selectionsRef: React.RefObject<LineSelection[]>;
     onToggleLine: (block: number, side: "ours" | "theirs", line: number) => void;
     onToggleBlock: (block: number, side: "ours" | "theirs") => void;
+    /** Header checkbox: select/clear this side across ALL conflict blocks. */
+    onToggleSideAll: (side: "ours" | "theirs") => void;
     onDirty: () => void;
     onSaveRequest: () => void;
     /** Bumped after save/discard: rebuild the result doc from `content`. */
@@ -265,6 +267,7 @@ export const MergeView = forwardRef<
     selectionsRef,
     onToggleLine,
     onToggleBlock,
+    onToggleSideAll,
     onDirty,
     onSaveRequest,
     rebuildKey,
@@ -278,6 +281,10 @@ export const MergeView = forwardRef<
   onToggleLineRef.current = onToggleLine;
   const onToggleBlockRef = useRef(onToggleBlock);
   onToggleBlockRef.current = onToggleBlock;
+  const onToggleSideAllRef = useRef(onToggleSideAll);
+  onToggleSideAllRef.current = onToggleSideAll;
+  // Set during build; refreshes the header checkboxes after selection changes.
+  const updateHeaderChecksRef = useRef<(() => void) | null>(null);
   const onDirtyRef = useRef(onDirty);
   onDirtyRef.current = onDirty;
   const onSaveRef = useRef(onSaveRequest);
@@ -433,6 +440,7 @@ export const MergeView = forwardRef<
 
     const cols: HTMLDivElement[] = [];
     const colWraps: HTMLDivElement[] = [];
+    const heads: HTMLDivElement[] = [];
     labels.forEach((label, i) => {
       if (i > 0) {
         const sash = document.createElement("div");
@@ -496,6 +504,7 @@ export const MergeView = forwardRef<
       wrap.appendChild(col);
       cols.push(body);
       colWraps.push(col);
+      heads.push(head);
     });
     host.appendChild(wrap);
 
@@ -851,6 +860,58 @@ export const MergeView = forwardRef<
     );
 
     // ------------------------------------------------------------------
+    // Header checkboxes: select/clear a whole side across ALL blocks, the
+    // bulk counterpart of the per-block gutter checkbox. Each is positioned
+    // over its pane's checkbox-gutter column so header and gutter boxes
+    // line up; the label moves right of it.
+    // ------------------------------------------------------------------
+    const headerBoxes: { box: HTMLInputElement; side: "ours" | "theirs" }[] = [];
+    const attachHeaderCheck = (
+      head: HTMLDivElement,
+      view: EditorView,
+      side: "ours" | "theirs",
+    ) => {
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.title = "Include this whole side in the result (all conflicts)";
+      box.style.position = "absolute";
+      box.style.top = "50%";
+      box.style.transform = "translateY(-50%)";
+      box.style.margin = "0";
+      box.addEventListener("change", () => onToggleSideAllRef.current(side));
+      head.style.position = "relative";
+      head.appendChild(box);
+      headerBoxes.push({ box, side });
+      // Align with the gutter checkboxes once CodeMirror has measured them.
+      requestAnimationFrame(() => {
+        const gutterEl = view.dom.querySelector(".cm-conflict-check-gutter");
+        if (!gutterEl || !head.isConnected) return;
+        const g = gutterEl.getBoundingClientRect();
+        const h = head.getBoundingClientRect();
+        if (g.width === 0) return;
+        const left = g.left - h.left + (g.width - box.offsetWidth) / 2;
+        if (left > 0) {
+          box.style.left = `${left}px`;
+          head.style.paddingLeft = `${left + box.offsetWidth + 6}px`;
+        }
+      });
+    };
+    if (ours !== null) attachHeaderCheck(heads[0], oursView, "ours");
+    if (theirs !== null) attachHeaderCheck(heads[centreCol + 1], theirsView, "theirs");
+
+    const updateHeaderChecks = () => {
+      for (const { box, side } of headerBoxes) {
+        const flags = sel().flatMap((s) => s[side]);
+        const all = flags.length > 0 && flags.every(Boolean);
+        const some = flags.some(Boolean);
+        box.checked = all;
+        box.indeterminate = some && !all;
+      }
+    };
+    updateHeaderChecks();
+    updateHeaderChecksRef.current = updateHeaderChecks;
+
+    // ------------------------------------------------------------------
     // Result pane: editable, with the block-range field.
     // ------------------------------------------------------------------
     const followRef: { current: (() => void) | null } = { current: null };
@@ -1083,6 +1144,7 @@ export const MergeView = forwardRef<
     return () => {
       disposed = true;
       viewsRef.current = null;
+      updateHeaderChecksRef.current = null;
       centreScrollRef.current = resultView.scrollDOM.scrollTop;
       for (const [v, fn] of listeners) v.scrollDOM.removeEventListener("scroll", fn);
       for (const [v, fn] of wheelListeners) v.scrollDOM.removeEventListener("wheel", fn);
@@ -1127,6 +1189,7 @@ export const MergeView = forwardRef<
         }),
       });
       for (const v of sides) v.dispatch({ effects: selectionRefresh.of(null) });
+      updateHeaderChecksRef.current?.();
     },
     scrollToBlock(index: number) {
       const mounted = viewsRef.current;

@@ -56,6 +56,7 @@ describe("merge gap expander (integration)", () => {
           selectionsRef={selectionsRef}
           onToggleLine={() => {}}
           onToggleBlock={() => {}}
+          onToggleSideAll={() => {}}
           onDirty={() => {}}
           onSaveRequest={() => {}}
           rebuildKey={0}

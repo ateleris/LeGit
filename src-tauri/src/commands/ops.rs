@@ -254,3 +254,48 @@ pub async fn repo_resolve_take_side(
         .await
         .map_err(AppError::Git)
 }
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_resolve_undo_paths(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<Vec<String>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.resolve_undo_paths().await.map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_staged_marker_paths(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<Vec<String>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.staged_marker_paths().await.map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_unstaged_marker_paths(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<Vec<String>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.unstaged_marker_paths().await.map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_conflict_reopen(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    path: String,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .conflict_reopen(&PathBuf::from(path))
+        .await
+        .map_err(AppError::Git)
+}

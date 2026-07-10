@@ -4,6 +4,14 @@ LeGit is a desktop **git GUI**: a **Tauri 2.x** app with a **Rust** backend and 
 **React + TypeScript** frontend. The canonical spec lives in `design/DESIGN-v0.*.md`
 (plus dated design notes in `design/`); code comments reference its `§` sections.
 
+## Test repo
+
+A scratch git repository for manual testing lives at `../LeGit-Test`
+(`/mnt/c/NOT_WORK/LeGit-Test`). It is used to reproduce git states (merges,
+rebases, conflicts) while developing. Inspect its state before mutating it -
+it may hold a repro the user set up on purpose; never reset/abort/clean it
+without asking.
+
 ## Layout
 
 - `crates/legit-core/` — pure git logic, UI-agnostic.

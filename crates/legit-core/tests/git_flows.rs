@@ -192,6 +192,78 @@ async fn merge_abort_restores_pre_merge_state() {
 }
 
 #[tokio::test]
+async fn staged_resolution_reopen_restores_the_conflict() {
+    // Encodes the reopen-flow assumptions against real git: staging a
+    // resolution records resolve-undo (REUC) info that persists until the
+    // merge commit, `update-index --unresolve` restores the unmerged stages
+    // from it, and `checkout -m` regenerates the markers in the worktree.
+    let repo = TestRepo::init().await;
+    conflicting_branches(&repo).await;
+    repo.backend.merge("feature", MergeOptions::default()).await.unwrap();
+
+    // Resolve + stage: no longer conflicted, but recorded as resolve-undo.
+    repo.write("a.txt", "resolved\n");
+    repo.backend.stage(&[PathBuf::from("a.txt")]).await.unwrap();
+    assert!(repo.backend.conflict_entries().await.unwrap().is_empty());
+    assert_eq!(repo.backend.resolve_undo_paths().await.unwrap(), vec!["a.txt"]);
+
+    repo.backend.conflict_reopen(Path::new("a.txt")).await.unwrap();
+
+    // Conflicted again, markers regenerated, previous resolution gone.
+    let entries = repo.backend.conflict_entries().await.unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].path, "a.txt");
+    let content = repo.read("a.txt");
+    assert!(content.contains("<<<<<<<"), "{content}");
+    assert!(!content.contains("resolved"), "{content}");
+}
+
+#[tokio::test]
+async fn unstaged_resolution_keeps_the_warning_and_reopens() {
+    // Encodes the assumptions behind warning/reopening on the UNSTAGED side:
+    // the resolve-undo record survives `restore --staged` (LeGit's unstage),
+    // and `diff --check` (worktree side) flags the markers once the staged
+    // resolution moves back to unstaged.
+    let repo = TestRepo::init().await;
+    conflicting_branches(&repo).await;
+    repo.backend.merge("feature", MergeOptions::default()).await.unwrap();
+
+    // Stage as-is (markers included), then unstage again.
+    repo.backend.stage(&[PathBuf::from("a.txt")]).await.unwrap();
+    repo.backend.unstage(&[PathBuf::from("a.txt")]).await.unwrap();
+
+    // Markers now sit on the worktree side only; still reopenable.
+    assert!(repo.backend.staged_marker_paths().await.unwrap().is_empty());
+    assert_eq!(repo.backend.unstaged_marker_paths().await.unwrap(), vec!["a.txt"]);
+    assert_eq!(repo.backend.resolve_undo_paths().await.unwrap(), vec!["a.txt"]);
+
+    repo.backend.conflict_reopen(Path::new("a.txt")).await.unwrap();
+    let entries = repo.backend.conflict_entries().await.unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].path, "a.txt");
+    assert!(repo.read("a.txt").contains("<<<<<<<"));
+}
+
+#[tokio::test]
+async fn staged_conflict_markers_are_detected() {
+    // Encodes the `diff --cached --check` assumptions: exit 2 with
+    // `<path>:<line>: leftover conflict marker` lines when staged content
+    // still holds markers; clean once properly resolved.
+    let repo = TestRepo::init().await;
+    conflicting_branches(&repo).await;
+    repo.backend.merge("feature", MergeOptions::default()).await.unwrap();
+
+    // Stage the file as-is - markers and all (the accidental "Mark resolved").
+    repo.backend.stage(&[PathBuf::from("a.txt")]).await.unwrap();
+    assert_eq!(repo.backend.staged_marker_paths().await.unwrap(), vec!["a.txt"]);
+
+    // A real resolution clears the flag.
+    repo.write("a.txt", "resolved\n");
+    repo.backend.stage(&[PathBuf::from("a.txt")]).await.unwrap();
+    assert!(repo.backend.staged_marker_paths().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn merge_fast_forward_then_already_up_to_date() {
     let repo = TestRepo::init().await;
     repo.write("a.txt", "base\n");

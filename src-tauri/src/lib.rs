@@ -188,6 +188,10 @@ pub fn run() {
         commands::repo_op_state,
         commands::repo_conflict_entries,
         commands::repo_resolve_take_side,
+        commands::repo_resolve_undo_paths,
+        commands::repo_staged_marker_paths,
+        commands::repo_unstaged_marker_paths,
+        commands::repo_conflict_reopen,
         commands::repo_commit,
         commands::repo_reword_commit,
         commands::repo_fetch,
@@ -255,6 +259,25 @@ pub fn run() {
                 builtin_themes_dir,
             );
             app.manage(state);
+
+            // Dev builds are visually distinct from the installed release:
+            // "LeGit DEV" window title (the Windows taskbar label follows the
+            // window title) and a DEV-ribbon icon. Release bundles keep the
+            // product name and icons from tauri.conf.json untouched.
+            #[cfg(debug_assertions)]
+            if let Some(win) = app.get_webview_window("main") {
+                if let Err(e) = win.set_title("LeGit DEV") {
+                    tracing::warn!(err = %e, "failed to set dev window title");
+                }
+                match tauri::image::Image::from_bytes(include_bytes!("../icons/icon-dev.png")) {
+                    Ok(icon) => {
+                        if let Err(e) = win.set_icon(icon) {
+                            tracing::warn!(err = %e, "failed to set dev window icon");
+                        }
+                    }
+                    Err(e) => tracing::warn!(err = %e, "failed to decode the dev icon"),
+                }
+            }
 
             // In-app credential prompt: start the broker and point every git
             // invocation's credential machinery at it. Registered BEFORE any

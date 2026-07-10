@@ -452,6 +452,21 @@ impl<E: GitExecutor> GitCliBackend<E> {
         Ok(())
     }
 
+    /// Run a `git diff [--cached] --check` invocation and parse the flagged
+    /// leftover-conflict-marker paths. `--check` exits 2 when it found
+    /// problems - that is the data this returns, not a failure; anything
+    /// else non-zero is an error.
+    async fn run_marker_check(&self, args: &[&str]) -> Result<Vec<String>, GitError> {
+        let (code, stdout, stderr) = self.run_classified(args).await?;
+        if code != 0 && code != 2 {
+            return Err(GitError::CommandFailed {
+                exit_code: code,
+                stderr: stderr.trim().to_string(),
+            });
+        }
+        Ok(parsers::resolve::parse_leftover_markers(&stdout))
+    }
+
     /// Move ONE submodule: to the recorded SHA (`submodule update`) or to its
     /// tracked remote branch (`submodule update --remote` + strategy, which
     /// fetches - run as a cancellable remote op).
@@ -2508,6 +2523,49 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         }
         // Stage the taken side to mark the path resolved.
         self.run_pathspec(&["add", "--"], &[path.to_path_buf()]).await
+    }
+
+    async fn resolve_undo_paths(&self) -> Result<Vec<String>, GitError> {
+        let (code, stdout, stderr) = self
+            .run_classified(&parsers::resolve::LS_FILES_RESOLVE_UNDO_ARGS)
+            .await?;
+        if code != 0 {
+            return Err(GitError::CommandFailed {
+                exit_code: code,
+                stderr: stderr.trim().to_string(),
+            });
+        }
+        parsers::resolve::parse_resolve_undo(&stdout)
+    }
+
+    async fn staged_marker_paths(&self) -> Result<Vec<String>, GitError> {
+        self.run_marker_check(&parsers::resolve::DIFF_CACHED_CHECK_ARGS)
+            .await
+    }
+
+    async fn unstaged_marker_paths(&self) -> Result<Vec<String>, GitError> {
+        self.run_marker_check(&parsers::resolve::DIFF_CHECK_ARGS).await
+    }
+
+    async fn conflict_reopen(&self, path: &Path) -> Result<(), GitError> {
+        let p = path.to_string_lossy().into_owned();
+        self.run_simple(&["update-index", "--unresolve", "--", &p])
+            .await?;
+        // Regenerate the conflict markers in the worktree. If this fails the
+        // reopen half-happened (stages restored, worktree still holds the old
+        // resolution) - the user must learn both facts.
+        self.run_simple(&["checkout", "-m", "--", &p])
+            .await
+            .map_err(|e| {
+                append_error_note(
+                    e,
+                    &format!(
+                        "Note: the conflict stages for '{p}' were restored (the file shows as \
+                         conflicted again), but regenerating the conflict markers in the file \
+                         failed - its content is still the previous resolution."
+                    ),
+                )
+            })
     }
 }
 
