@@ -551,6 +551,8 @@ function LocalBranchRow({
   return (
     <div
       onContextMenu={onContextMenu}
+      data-testid="branch-row"
+      data-branch={branch.name}
       style={{
         border: "1px solid var(--panel-border)",
         borderRadius: 4,

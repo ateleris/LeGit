@@ -45,7 +45,7 @@ export function ViewMenu() {
     isOpen: boolean,
     onClick: () => void
   ) => (
-    <MenuItem key={id} onClick={onClick}>
+    <MenuItem key={id} testId={`view-menu-${id}`} onClick={onClick}>
       <span style={{ display: "inline-flex", justifyContent: "center", width: "1.5em" }}>
         {isOpen ? <CheckIcon /> : null}
       </span>
@@ -55,7 +55,7 @@ export function ViewMenu() {
 
   return (
     <div ref={ref} style={{ position: "relative" }}>
-      <button onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}>
+      <button data-testid="view-menu-button" onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}>
         View ▾
       </button>
       {open && (

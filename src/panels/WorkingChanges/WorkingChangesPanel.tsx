@@ -728,6 +728,7 @@ export function WorkingChangesPanel() {
             key="unstaged"
             grow={growOf("unstaged")}
             sectionRef={refOf("unstaged")}
+            testId="wc-unstaged"
             title="Unstaged"
             count={unstaged.length}
             additions={unstagedTotals.add}
@@ -912,6 +913,7 @@ export function WorkingChangesPanel() {
             key="staged"
             grow={growOf("staged")}
             sectionRef={refOf("staged")}
+            testId="wc-staged"
             title="Staged"
             count={staged.length}
             additions={stagedTotals.add}
@@ -1103,7 +1105,7 @@ export function WorkingChangesPanel() {
                 <input type="checkbox" checked={amend} disabled={!head || busy} onChange={(e) => toggleAmend(e.target.checked)} />
                 Amend last commit
               </label>
-              <Button variant="primary" disabled={!canCommit} onClick={requestCommit} style={{ marginLeft: "auto" }}>
+              <Button variant="primary" data-testid="commit-button" disabled={!canCommit} onClick={requestCommit} style={{ marginLeft: "auto" }}>
                 {amend ? "Amend" : "Commit"} {!amend && staged.length > 0 ? `(${staged.length})` : ""}
               </Button>
             </div>
@@ -1167,6 +1169,7 @@ function Section({
   children,
   grow = 1,
   sectionRef,
+  testId,
 }: {
   title: string;
   count: number;
@@ -1178,10 +1181,13 @@ function Section({
   /** Flex share of the panel height (the unstaged/staged split). */
   grow?: number;
   sectionRef?: React.Ref<HTMLDivElement>;
+  /** Stable hook for the E2E suite (scopes file-row selectors per section). */
+  testId?: string;
 }) {
   return (
     <div
       ref={sectionRef}
+      data-testid={testId}
       style={{ flex: `${grow} 1 0%`, minHeight: 0, display: "flex", flexDirection: "column" }}
     >
       <div

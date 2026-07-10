@@ -207,6 +207,7 @@ export function OpStateBanner({
 
   return (
     <div
+      data-testid="op-state-banner"
       style={{
         display: "flex",
         alignItems: "center",

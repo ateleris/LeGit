@@ -270,6 +270,8 @@ export function FileTree({
             <div
               key={vItem.key}
               data-index={vItem.index}
+              data-testid={row.kind === "file" ? "file-row" : "dir-row"}
+              data-path={row.path}
               // Activate on mousedown (not click) so selection switches atomically
               // with focus — otherwise the old selection lingers for a frame until
               // mouseup. Ignore non-primary buttons (right-click opens the menu).

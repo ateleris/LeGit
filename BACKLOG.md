@@ -74,17 +74,14 @@ record); an item that is partially done keeps only its open remainder.
   current one.
 - **Git Log panel follow-ups.** Filter/search the log, copy a command, jump
   a toast to its specific log entry (currently it just opens the panel).
-- **E2E UI tests (tauri-driver) against a dummy repo.** The backend is covered
-  by real-git integration tests in ephemeral tempdir repos (incl. bare
-  `file://` remotes for push/pull/fetch/prune flows, added 2026-07-07); the
-  *UI* has no automated coverage. Idea: drive the built app with
-  `tauri-driver` (WebDriver) on a Linux CI runner against a generated fixture
-  repo — smoke flows like open repo → stage a file → type a message → commit →
-  see it in the log; later clone-via-"+"-menu and conflict-banner flows.
-  Deliberately a separate CI job (heavier: needs a built binary +
-  webkit2gtk-driver); keep it a small smoke suite, not a second test pyramid.
-  Note Windows/macOS WebDriver support in Tauri is spottier — Linux-only is
-  fine for smoke value.
+- **E2E UI tests — extensions.** The tauri-driver + WebdriverIO smoke suite
+  shipped 2026-07-10 (`e2e/`, `e2e-tests` CI job on Linux: stage→commit and
+  merge-conflict-banner flows; see
+  `docs/superpowers/specs/2026-07-10-e2e-ui-tests-design.md`). Deferred
+  extensions, to be added only once the suite has proven stable in CI:
+  clone-via-"+"-menu flow, branch create/switch flow. Keep it a small smoke
+  suite, not a second test pyramid; Linux-only remains fine (Windows/macOS
+  WebDriver support in Tauri is spottier).
 - **Interactive rebase polish.** The panel ships (reorder via up/down,
   pick/squash/fixup/drop, plan injected via the `printf`-redirect
   `GIT_SEQUENCE_EDITOR`, conflicts through the normal banner). Deferred:
