@@ -211,6 +211,7 @@ export function RepoTabBar() {
             <div
               key={repo.id}
               role="tab"
+              data-testid="repo-tab"
               aria-selected={isActive}
               ref={(el) => {
                 if (el) tabEls.current.set(repo.id, el);

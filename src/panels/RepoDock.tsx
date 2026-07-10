@@ -204,8 +204,26 @@ export function openRepoPanel(api: DockviewApi | null, id: string) {
   if (!desc) return;
   const existing = api.getPanel(id);
   if (existing) {
+    // A panel can live in a hidden group (the console group starts collapsed
+    // via setVisible(false)); focus alone would not reveal it.
+    if (!existing.group.api.isVisible) existing.group.api.setVisible(true);
     existing.focus();
     return;
   }
-  api.addPanel({ id: desc.id, component: desc.id, title: desc.title });
+  // Without an explicit position dockview adds to the ACTIVE group, which on
+  // a fresh layout can be the hidden console group — the panel would open
+  // invisibly. Use the descriptor's default placement (guarding against its
+  // reference panel being closed), mirroring summon()'s fallback.
+  const placement = desc.defaultPlacement;
+  const refOpen = placement?.referencePanel ? !!api.getPanel(placement.referencePanel) : false;
+  api.addPanel({
+    id: desc.id,
+    component: desc.id,
+    title: desc.title,
+    position: placement
+      ? refOpen
+        ? { referencePanel: placement.referencePanel!, direction: placement.direction }
+        : { direction: placement.direction }
+      : undefined,
+  });
 }

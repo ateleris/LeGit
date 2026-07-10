@@ -4,7 +4,9 @@ import { browser, $, expect } from "@wdio/globals";
 
 describe("conflict: merge with conflicts shows the op-state banner", () => {
   it("launches and opens the conflict fixture repo", async () => {
-    const tab = $('div[role="tab"]');
+    // (dockview panel tabs also have role="tab" - the dedicated testid keeps
+    // this from matching the "Repositories" panel tab.)
+    const tab = $('[data-testid="repo-tab"]');
     await tab.waitForDisplayed({ timeout: 30_000 });
     await expect(tab).toHaveText(expect.stringContaining("conflict"));
   });

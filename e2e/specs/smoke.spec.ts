@@ -10,7 +10,9 @@ const COMMIT_MESSAGE = "e2e: smoke commit";
 describe("smoke: stage and commit", () => {
   it("launches and opens the fixture repo", async () => {
     // First render after startup + restore_open_repos can take a while on CI.
-    const tab = $('div[role="tab"]');
+    // (dockview panel tabs also have role="tab" - the dedicated testid keeps
+    // this from matching the "Repositories" panel tab.)
+    const tab = $('[data-testid="repo-tab"]');
     await tab.waitForDisplayed({ timeout: 30_000 });
     await expect(tab).toHaveText(expect.stringContaining("smoke"));
   });
@@ -41,19 +43,21 @@ describe("smoke: stage and commit", () => {
     await commitBtn.click();
 
     // The new commit appears at the top of the log and the synthetic
-    // working-dir row disappears (tree is clean again).
+    // working-dir row disappears (tree is clean again). Read the subjects
+    // atomically via execute(): element handles from $$() go stale while the
+    // log re-renders after the commit, which made per-element getText() throw.
+    const logSubjects = () =>
+      browser.execute(() =>
+        Array.from(document.querySelectorAll('[data-testid="commit-subject"]')).map(
+          (el) => el.textContent ?? "",
+        ),
+      );
     await browser.waitUntil(
-      async () => {
-        const subjects = await $$('[data-testid="commit-subject"]').map((s) => s.getText());
-        return subjects.some((t) => t.includes(COMMIT_MESSAGE));
-      },
+      async () => (await logSubjects()).some((t) => t.includes(COMMIT_MESSAGE)),
       { timeout: 15_000, timeoutMsg: "new commit did not appear in the log" },
     );
     await browser.waitUntil(
-      async () => {
-        const subjects = await $$('[data-testid="commit-subject"]').map((s) => s.getText());
-        return !subjects.some((t) => t.includes("Uncommitted changes"));
-      },
+      async () => !(await logSubjects()).some((t) => t.includes("Uncommitted changes")),
       { timeout: 15_000, timeoutMsg: "working-dir row did not disappear after commit" },
     );
   });
