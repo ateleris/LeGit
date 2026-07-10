@@ -21,6 +21,7 @@ import {
   gutter,
   keymap,
   type DecorationSet,
+  type ViewUpdate,
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { codeFolding, foldEffect, unfoldAll, unfoldEffect } from "@codemirror/language";
@@ -351,11 +352,18 @@ export const MergeView = forwardRef<
       update(value, tr) {
         let next = value;
         if (tr.docChanged) {
-          next = next.map((r) => ({
-            ...r,
-            from: tr.changes.mapPos(r.from, -1),
-            to: tr.changes.mapPos(r.to, 1),
-          }));
+          // Boundary insertions belong to the surrounding CONTEXT, not the
+          // block: text typed exactly at a block's edge (e.g. at the start
+          // of the line right below it) must stay outside the range, or the
+          // next block surgery replaces it along with the block.
+          next = next.map((r) => {
+            const from = tr.changes.mapPos(r.from, 1);
+            return {
+              ...r,
+              from,
+              to: Math.max(tr.changes.mapPos(r.to, -1), from),
+            };
+          });
         }
         for (const e of tr.effects) {
           if (e.is(setBlockRange)) {
@@ -682,6 +690,35 @@ export const MergeView = forwardRef<
         own && own.count > 0 ? `@@ -${own.start},${own.count} +${own.start},${own.count} @@` : "";
     };
 
+    // Result-doc edits (block surgery, manual typing) move the folds through
+    // CodeMirror's own decoration mapping; the bookkeeping keyed by absolute
+    // positions must follow, or the gutter swaps the shifted folds' expanders
+    // for plain line numbers and the fold bars describe stale chunks.
+    const remapFoldBookkeeping = (u: ViewUpdate) => {
+      const slots = foldSlotByPos.get(u.view);
+      if (slots && slots.size > 0) {
+        const moved = new Map<number, number>();
+        for (const [pos, slot] of slots) moved.set(u.changes.mapPos(pos), slot);
+        foldSlotByPos.set(u.view, moved);
+      }
+      const bases = foldBases.get(u.view);
+      if (bases && bases.size > 0) {
+        const oldDoc = u.startState.doc;
+        const mapLine = (line0: number, edge: "from" | "to") => {
+          const old = oldDoc.line(Math.min(line0 + 1, oldDoc.lines));
+          const pos = u.changes.mapPos(edge === "from" ? old.from : old.to);
+          return u.state.doc.lineAt(pos).number - 1;
+        };
+        for (const [slot, b] of bases) {
+          bases.set(slot, { from: mapLine(b.from, "from"), to: mapLine(b.to, "to") });
+        }
+      }
+      for (const bar of foldBars) {
+        if (bar.view === u.view) bar.from = u.changes.mapPos(bar.from);
+      }
+      refreshFoldBars();
+    };
+
     /** Line-number gutter that swaps in the gap expander on a fold's first
      *  visible row — same placement and behaviour as the diff's hunk
      *  headers. */
@@ -947,9 +984,12 @@ export const MergeView = forwardRef<
           ]),
           EditorView.updateListener.of((u) => {
             if (u.docChanged) {
+              remapFoldBookkeeping(u);
               onDirtyRef.current();
               // Edits can change block heights (spacers) and the result's
               // geometry; re-pad, then re-align the sides once measurable.
+              // The alignRefresh dispatch also redraws the gutters with the
+              // remapped fold positions.
               queueMicrotask(() => recomputeRef.current?.());
               u.view.requestMeasure({ read: () => followRef.current?.() });
             }
@@ -1178,13 +1218,36 @@ export const MergeView = forwardRef<
         : null;
       const range = result.state.field(rangesField)[index];
       if (!range) return;
+      const doc = result.state.doc;
+      let from = range.from;
+      let to = Math.min(range.to, doc.length);
+      if (range.origin === null) {
+        // Markers still present: replace only the marker span itself, so
+        // manual edits that drifted INTO the tracked range (lines typed
+        // below ">>>>>>>" after an Enter at its end) survive the surgery.
+        let markerFrom = -1;
+        let markerTo = -1;
+        for (let pos = from; pos < to; ) {
+          const line = doc.lineAt(pos);
+          if (markerFrom === -1 && line.text.startsWith("<<<<<<<")) markerFrom = line.from;
+          if (line.text.startsWith(">>>>>>>")) {
+            markerTo = Math.min(line.to + 1, doc.length);
+            break;
+          }
+          pos = line.to + 1;
+        }
+        if (markerFrom !== -1 && markerTo !== -1) {
+          from = markerFrom;
+          to = markerTo;
+        }
+      }
       const insert = lines.length > 0 ? `${lines.join("\n")}\n` : "";
       result.dispatch({
-        changes: { from: range.from, to: Math.min(range.to, result.state.doc.length), insert },
+        changes: { from, to, insert },
         effects: setBlockRange.of({
           index,
-          from: range.from,
-          to: range.from + insert.length,
+          from,
+          to: from + insert.length,
           origin,
         }),
       });
