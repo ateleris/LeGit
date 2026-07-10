@@ -10,7 +10,8 @@ import { mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { E2E_HOME, SCREENSHOT_DIR, seedForSpec } from "./fixtures.ts";
 
-const APP_BINARY = path.resolve(import.meta.dirname, "../src-tauri/target/debug/legit-app");
+// Workspace build: the target dir lives at the repo root, not under src-tauri.
+const APP_BINARY = path.resolve(import.meta.dirname, "../target/debug/legit-app");
 
 let tauriDriver: ChildProcess | undefined;
 
