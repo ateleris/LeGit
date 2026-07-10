@@ -34,7 +34,7 @@ function MergeRebaseItems({
   return (
     <>
       <Separator />
-      <MenuItem onClick={() => onMerge({ ff: "auto", squash: false })}>
+      <MenuItem testId="menu-merge" onClick={() => onMerge({ ff: "auto", squash: false })}>
         Merge '{targetLabel}' into '{currentBranch}'
       </MenuItem>
       <MenuItem onClick={() => onMerge({ ff: "no_ff", squash: false })}>

@@ -37,7 +37,7 @@ function Toast({ toast, onDismiss }: { toast: Notification; onDismiss: () => voi
         }}
         title="Open the Git Log for details"
       >
-        {toast.message}
+        <span className="legit-toast__msg">{toast.message}</span>
       </button>
       <button className="legit-toast__close" onClick={onDismiss} aria-label="Dismiss">
         ×

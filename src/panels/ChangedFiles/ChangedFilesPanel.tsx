@@ -5,13 +5,15 @@ import { useSettingsStore, useConfirmDestructive } from "../../store/settings";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import {
+  repoApplyStashFile,
   repoCommitDetails,
   repoCommitFiles,
   repoRestoreFileAtRevision,
+  repoStashes,
 } from "../../lib/commands";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notify } from "../../store/notifications";
-import type { CommitDetails, CommitFileChange, CommitId, DiffRequest } from "../../lib/types";
+import type { CommitDetails, CommitFileChange, CommitId, DiffRequest, StashEntry } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { FileTree } from "../shared/FileTree/FileTree";
@@ -105,6 +107,20 @@ export function ChangedFilesPanel() {
 
   usePanelFocusEffect(useCallback(() => { refetch(); }, [refetch]));
 
+  // Whether the shown "commit" is a stash entry (openStashDiff routes stash
+  // SHAs here) - per-file restore then reads as "apply from stash". Shares
+  // the stashes query cache with the Stashes panel.
+  const { data: stashes = [] } = useQuery<StashEntry[]>({
+    queryKey: [repo?.id, "stashes"],
+    queryFn: () => repoStashes(repo!.id),
+    enabled: !!repo && !!selectedId,
+    staleTime: 5_000,
+  });
+  const isStash = useMemo(
+    () => stashes.some((s) => s.stash_sha === selectedId),
+    [stashes, selectedId],
+  );
+
   const totals = useMemo(() => {
     let add = 0;
     let del = 0;
@@ -157,14 +173,24 @@ export function ChangedFilesPanel() {
     async (path: string) => {
       if (!repo || !selectedId) return;
       try {
-        await repoRestoreFileAtRevision(repo.id, selectedId, path);
+        // Stash applies land unstaged (matching whole-stash apply); commit
+        // restores keep their established staged behavior.
+        if (isStash) {
+          await repoApplyStashFile(repo.id, selectedId, path);
+        } else {
+          await repoRestoreFileAtRevision(repo.id, selectedId, path);
+        }
         invalidateRepoDomains(queryClient, repo.id, ["status", "diff"]);
-        notify.success(`Restored ${path} to ${selectedId.slice(0, 8)} (staged)`);
+        notify.success(
+          isStash
+            ? `Applied ${path} from the stash (unstaged)`
+            : `Restored ${path} to ${selectedId.slice(0, 8)} (staged)`,
+        );
       } catch (e) {
         notify.error(formatAppError(e));
       }
     },
-    [repo, selectedId, queryClient],
+    [repo, selectedId, queryClient, isStash],
   );
 
   if (!repo || !selectedId) {
@@ -236,6 +262,7 @@ export function ChangedFilesPanel() {
               <FileAtCommitMenuSection
                 file={file}
                 commitShort={selectedId.slice(0, 8)}
+                stash={isStash}
                 onOpenSubmodule={() => {
                   void useRepoStore
                     .getState()
@@ -269,6 +296,7 @@ export function ChangedFilesPanel() {
 function FileAtCommitMenuSection({
   file,
   commitShort,
+  stash,
   onOpenSubmodule,
   onView,
   onRestore,
@@ -278,6 +306,8 @@ function FileAtCommitMenuSection({
 }: {
   file: FileTreeEntry;
   commitShort: string;
+  /** The shown "commit" is a stash entry - restore reads as "apply". */
+  stash: boolean;
   onOpenSubmodule: () => void;
   onView: () => void;
   onRestore: () => void;
@@ -297,11 +327,23 @@ function FileAtCommitMenuSection({
       onRestore();
       return;
     }
-    menuConfirm(`Overwrite ${file.path} with its content at ${commitShort}?`, () => {
-      onClose();
-      onRestore();
-    });
+    menuConfirm(
+      stash
+        ? `Overwrite ${file.path} with its stashed version?`
+        : `Overwrite ${file.path} with its content at ${commitShort}?`,
+      () => {
+        onClose();
+        onRestore();
+      },
+    );
   };
+  const restoreLabel = stash
+    ? confirmDestructive
+      ? "Apply file from stash…"
+      : "Apply file from stash"
+    : confirmDestructive
+      ? "Restore file to this commit…"
+      : "Restore file to this commit";
 
   return (
     <>
@@ -325,10 +367,10 @@ function FileAtCommitMenuSection({
       </MenuItem>
       <MenuItem disabled={deleted} onClick={requestRestore}>
         {deleted
-          ? "Restore file (deleted in this commit)"
-          : confirmDestructive
-            ? "Restore file to this commit…"
-            : "Restore file to this commit"}
+          ? stash
+            ? "Apply file (deleted in this stash)"
+            : "Restore file (deleted in this commit)"
+          : restoreLabel}
       </MenuItem>
     </>
   );

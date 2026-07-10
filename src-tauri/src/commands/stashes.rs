@@ -33,6 +33,39 @@ pub async fn repo_create_stash(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn repo_create_stash_paths(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    message: Option<String>,
+    paths: Vec<String>,
+) -> Result<StashOutcome, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    let paths: Vec<std::path::PathBuf> = paths.into_iter().map(Into::into).collect();
+    session
+        .backend
+        .create_stash_paths(message.as_deref(), &paths)
+        .await
+        .map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_apply_stash_file(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    stash_sha: String,
+    path: String,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .apply_stash_file(&stash_sha, std::path::Path::new(&path))
+        .await
+        .map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn repo_apply_stash(
     state: tauri::State<'_, AppState>,
     repo_id: String,

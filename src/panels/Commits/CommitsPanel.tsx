@@ -1459,6 +1459,7 @@ export function CommitsPanel() {
                       return (
                         <span
                           key="subject"
+                          data-testid="commit-subject"
                           style={{
                             display: "flex",
                             alignItems: "center",

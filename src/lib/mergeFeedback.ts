@@ -5,6 +5,28 @@
 import type { MergeOutcome, RebaseOutcome, SequenceOutcome } from "./types";
 import { formatAppError, gitErrorKind } from "./types";
 import { notify } from "../store/notifications";
+import { repoStatus } from "./commands";
+
+/**
+ * After resolving a conflict (mark resolved / take side): when the staged
+ * resolution is identical to HEAD - e.g. every conflict was resolved with the
+ * current side - git has NO change to report, so the file vanishes from
+ * Working Changes entirely. Without this note that reads as data loss.
+ * Best-effort: a status failure here must not fail the resolution.
+ */
+export async function notifyResolutionInvisible(repoId: string, path: string) {
+  try {
+    const status = await repoStatus(repoId);
+    if (!status.some((s) => s.path === path)) {
+      notify.info(
+        `Resolved '${path}' - the result is identical to your branch, so it ` +
+          `won't appear as a change. Conclude the operation from the banner.`,
+      );
+    }
+  } catch {
+    /* the resolution itself succeeded; skip the note */
+  }
+}
 
 export function notifyMergeOutcome(outcome: MergeOutcome, target: string) {
   switch (outcome.kind) {

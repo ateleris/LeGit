@@ -635,7 +635,12 @@ button.legit-tab__close:hover {
   font: inherit;
   cursor: pointer;
   padding: 8px 10px;
-  /* clamp long stderr; full detail lives in the Git Log */
+}
+/* Clamp long stderr; full detail lives in the Git Log. The clamp sits on an
+   inner element WITHOUT padding: on a padded box, overflow:hidden clips at
+   the border box, so the line after the clamp peeks through the bottom
+   padding as a half-cut line. */
+.legit-toast__msg {
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;

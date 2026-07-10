@@ -10,6 +10,7 @@ import { useRepoChangeListener } from "../lib/useRepoChangeListener";
 import { useAutoFetch } from "../lib/useAutoFetch";
 import type { RegionPlacement } from "../lib/types";
 import { GlobalDock } from "./GlobalDock";
+import { OpStateStrip } from "./OpStateStrip";
 import { RepoDock } from "./RepoDock";
 import { RepoTabBar } from "./RepoTabBar";
 import { CredentialPromptHost } from "./CredentialPrompt";
@@ -283,6 +284,7 @@ export function AppLayout() {
           </div>
           <div style={{ flex: 1, minWidth: collapsed ? 0 : MIN_WIDTH, display: "flex", flexDirection: "column" }}>
             <RepoTabBar />
+            <OpStateStrip />
             <div className="legit-repo-region" style={{ flex: 1, minHeight: 0 }}>
               <RepoDock />
             </div>
@@ -313,6 +315,7 @@ export function AppLayout() {
         {dividerControls}
       </div>
       <RepoTabBar />
+      <OpStateStrip />
       <div className="legit-repo-region" style={{ flex: 1, minHeight: 0 }}>
         <RepoDock />
       </div>

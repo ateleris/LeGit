@@ -10,6 +10,14 @@ record); an item that is partially done keeps only its open remainder.
 
 ## Other deferred ideas
 
+- **Backlog review + current-state review.** Go through this file top to
+  bottom: drop items that have shipped in the meantime (several sections
+  predate the v0.9.x work), re-prioritise what remains, and write a short
+  review of the current state of the app (what works, what is rough, what
+  the next milestone should be). Added 2026-07-09, around the v0.9.2
+  release, as the backlog has accumulated across many sessions and no
+  longer reflects reality.
+
 - **Live-refresh the diff on external git changes.** The filesystem watcher's
   emitted domains (backend) don't include `diff`, so an external `git`
   stage/unstage while the app is open doesn't refresh an open diff (in-app
@@ -66,17 +74,14 @@ record); an item that is partially done keeps only its open remainder.
   current one.
 - **Git Log panel follow-ups.** Filter/search the log, copy a command, jump
   a toast to its specific log entry (currently it just opens the panel).
-- **E2E UI tests (tauri-driver) against a dummy repo.** The backend is covered
-  by real-git integration tests in ephemeral tempdir repos (incl. bare
-  `file://` remotes for push/pull/fetch/prune flows, added 2026-07-07); the
-  *UI* has no automated coverage. Idea: drive the built app with
-  `tauri-driver` (WebDriver) on a Linux CI runner against a generated fixture
-  repo — smoke flows like open repo → stage a file → type a message → commit →
-  see it in the log; later clone-via-"+"-menu and conflict-banner flows.
-  Deliberately a separate CI job (heavier: needs a built binary +
-  webkit2gtk-driver); keep it a small smoke suite, not a second test pyramid.
-  Note Windows/macOS WebDriver support in Tauri is spottier — Linux-only is
-  fine for smoke value.
+- **E2E UI tests — extensions.** The tauri-driver + WebdriverIO smoke suite
+  shipped 2026-07-10 (`e2e/`, `e2e-tests` CI job on Linux: stage→commit and
+  merge-conflict-banner flows; see
+  `docs/superpowers/specs/2026-07-10-e2e-ui-tests-design.md`). Deferred
+  extensions, to be added only once the suite has proven stable in CI:
+  clone-via-"+"-menu flow, branch create/switch flow. Keep it a small smoke
+  suite, not a second test pyramid; Linux-only remains fine (Windows/macOS
+  WebDriver support in Tauri is spottier).
 - **Interactive rebase polish.** The panel ships (reorder via up/down,
   pick/squash/fixup/drop, plan injected via the `printf`-redirect
   `GIT_SEQUENCE_EDITOR`, conflicts through the normal banner). Deferred:
@@ -143,6 +148,48 @@ written only after git confirms via `store`), or a UI prompt. Deferred:
 
 ## UX / polish
 
+- **Per-file stash: pop + polish remainders.** Shipped 2026-07-10: "Stash
+  file"/"Stash N selected" on Working Changes rows (pathspec `stash push
+  --include-untracked`, tip-compare outcome, hidden during ops - git refuses
+  over unmerged entries), and per-file APPLY via the existing "Restore file
+  to this commit" on a stash's file list, relabelled "Apply file from
+  stash…" when the shown commit is a stash. Open:
+  - *Per-file pop* (apply one file AND remove it from the stash): needs
+    stash rewriting (re-create the entry without the path) - invasive,
+    deliberately not shipped.
+  - *Optional message for per-file stash*: entries currently stash with
+    git's default WIP subject; add a message prompt if wanted.
+- **Conflict-resolution flow follow-ups.** The 2026-07-10 overhaul shipped
+  (mark-resolved guard, reopen-conflict via `update-index --unresolve`,
+  marker warning badges staged+unstaged, side-select header checkboxes
+  replacing the toolbar take buttons, resolution-invisible toast, op-state
+  strip hold-disabled-until-refresh; spec:
+  `docs/superpowers/specs/2026-07-10-conflict-resolution-safety-design.md`).
+  Open remainders:
+  - *Working Changes "Mark resolved" menu entry is unguarded*: the
+    conflict-row menu stages the file directly (`repoStage`) with no
+    markers check - deliberate for now (the warning badge catches it right
+    after); decide whether it should get the same confirm as the Merge
+    panel, which would need a file-content read at menu-action time.
+  - *Header checkbox alignment is measured once per view build*: a global
+    font-size change while the merge view is open rebuilds the view (props
+    change), so it re-measures in practice, but if a path appears where the
+    gutter width changes without a rebuild the header box could drift.
+  - *Verification pass pending*: vitest suites + manual end-to-end run of
+    everything from 2026-07-10 (guard -> badge -> reopen -> side-select
+    checkboxes incl. gutter alignment -> resolution-invisible toast ->
+    abort hold-disabled; plus the toast line-clamp fix, the dev build's
+    "LeGit DEV" title + ribbon icon (regenerable via
+    `scripts/make-dev-icon.py`), and the draggable unstaged/staged split
+    in Working Changes - works in every section order incl. the commit
+    composer between the two file sections) from PowerShell; WSL-side
+    cargo/tsc are green.
+- **Op-state indicator for background repos.** (Deferred 2026-07-10 from the
+  global op-state strip work.) The strip under the repo tab bar surfaces only
+  the *active* repo's in-progress merge/rebase/cherry-pick/revert; a repo in
+  a background tab can also be mid-operation with no visible hint. Idea: a
+  small badge/dot on the repo tab when that repo's `op_state` is not `none`
+  (needs a per-repo op-state subscription, not just the active one).
 - **Improve the merge window.** (Requested 2026-07-09; exact scope to be
   defined with Simon before starting.) Today there is no merge window at
   all: merging is a set of fire-immediately context-menu entries

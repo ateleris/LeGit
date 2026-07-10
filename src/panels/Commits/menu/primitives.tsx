@@ -7,10 +7,13 @@ export function MenuItem({
   children,
   onClick,
   disabled,
+  testId,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   disabled?: boolean;
+  /** Stable hook for the E2E suite. */
+  testId?: string;
 }) {
   const [hover, setHover] = useState(false);
   // A real <button> (keyboard focus + Enter activation), with the global CSS
@@ -19,6 +22,7 @@ export function MenuItem({
     <button
       type="button"
       role="menuitem"
+      data-testid={testId}
       disabled={disabled}
       onClick={onClick}
       onMouseEnter={() => setHover(true)}

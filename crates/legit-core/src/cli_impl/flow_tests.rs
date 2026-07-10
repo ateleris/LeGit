@@ -1558,3 +1558,268 @@ async fn submodule_create_branch_switches_with_c() {
     b.submodule_create_branch(Path::new("lib"), "fix/detached").await.unwrap();
     exec.assert_done();
 }
+
+// ---------------------------------------------------------------------------
+// conflict reopen + staged-marker check
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn conflict_reopen_unresolves_then_regenerates_markers() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["update-index", "--unresolve", "--", "a.txt"], ok(""));
+    fake.expect(&["checkout", "-m", "--", "a.txt"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.conflict_reopen(Path::new("a.txt")).await.unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn conflict_reopen_unresolve_failure_stops_before_checkout() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["update-index", "--unresolve", "--", "a.txt"],
+        fail(1, "fatal: no resolve-undo information"),
+    );
+    let (b, exec) = backend(fake);
+
+    let err = b.conflict_reopen(Path::new("a.txt")).await.unwrap_err();
+    assert!(matches!(err, GitError::CommandFailed { .. }), "{err:?}");
+    // assert_done: checkout -m must NOT run when the unresolve failed.
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn conflict_reopen_checkout_failure_reports_partial_state() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["update-index", "--unresolve", "--", "a.txt"], ok(""));
+    fake.expect(
+        &["checkout", "-m", "--", "a.txt"],
+        fail(128, "fatal: unable to write file"),
+    );
+    let (b, exec) = backend(fake);
+
+    let err = b.conflict_reopen(Path::new("a.txt")).await.unwrap_err();
+    // The user must learn both facts: primary failure + the restored stages.
+    let GitError::CommandFailed { stderr, .. } = &err else {
+        panic!("expected CommandFailed, got {err:?}");
+    };
+    assert!(stderr.contains("unable to write file"), "{stderr}");
+    assert!(stderr.contains("conflict stages for 'a.txt' were restored"), "{stderr}");
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn staged_marker_paths_exit_2_is_findings_not_error() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["diff", "--cached", "--check"],
+        out(2, "a.txt:2: trailing whitespace.\na.txt:4: leftover conflict marker\n", ""),
+    );
+    let (b, exec) = backend(fake);
+
+    assert_eq!(b.staged_marker_paths().await.unwrap(), vec!["a.txt"]);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn staged_marker_paths_clean_exit_is_empty() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["diff", "--cached", "--check"], ok(""));
+    let (b, exec) = backend(fake);
+
+    assert_eq!(b.staged_marker_paths().await.unwrap(), Vec::<String>::new());
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn resolve_undo_paths_lists_recorded_paths() {
+    let fake = FakeExecutor::default();
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    fake.expect(
+        &["ls-files", "--resolve-undo", "-z"],
+        ok(&format!("100644 {sha} 1\ta.txt\0100644 {sha} 2\ta.txt\0100644 {sha} 3\ta.txt\0")),
+    );
+    let (b, exec) = backend(fake);
+
+    assert_eq!(b.resolve_undo_paths().await.unwrap(), vec!["a.txt"]);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn unstaged_marker_paths_checks_the_worktree_side() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["diff", "--check"],
+        out(2, "a.txt:1: leftover conflict marker\n", ""),
+    );
+    let (b, exec) = backend(fake);
+
+    assert_eq!(b.unstaged_marker_paths().await.unwrap(), vec!["a.txt"]);
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
+// create_stash_paths - pathspec stash with tip-compare outcome
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn stash_paths_isolates_the_index_around_the_push() {
+    // The full dance: save the index (write-tree), reset it to HEAD so the
+    // pathspec push cannot embed other files' staged changes in the stash,
+    // push, restore the index, and reset the stashed paths' index entries.
+    let stash = "cccccccccccccccccccccccccccccccccccccccc";
+    let tree = "dddddddddddddddddddddddddddddddddddddddd";
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], fail(1, ""));
+    fake.expect(&["write-tree"], ok(&format!("{tree}\n")));
+    fake.expect(&["read-tree", "HEAD"], ok(""));
+    fake.expect(&["stash", "push", "--include-untracked", "--", "a.txt", "b.txt"], ok("Saved"));
+    fake.expect(&["read-tree", tree], ok(""));
+    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], ok(&format!("{stash}\n")));
+    fake.expect(&["reset", "-q", "--", "a.txt", "b.txt"], ok(""));
+    let (b, exec) = backend(fake);
+
+    let outcome = b
+        .create_stash_paths(None, &[PathBuf::from("a.txt"), PathBuf::from("b.txt")])
+        .await
+        .unwrap();
+    assert_eq!(outcome, StashOutcome::Created);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn stash_paths_clean_pathspec_is_nothing_to_stash() {
+    let stash = "cccccccccccccccccccccccccccccccccccccccc";
+    let tree = "dddddddddddddddddddddddddddddddddddddddd";
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], ok(&format!("{stash}\n")));
+    fake.expect(&["write-tree"], ok(&format!("{tree}\n")));
+    fake.expect(&["read-tree", "HEAD"], ok(""));
+    // Exit 0 with "No local changes to save" - the tip not moving is the
+    // only reliable signal that nothing was stashed.
+    fake.expect(
+        &["stash", "push", "--include-untracked", "-m", "msg", "--", "a.txt"],
+        ok("No local changes to save\n"),
+    );
+    fake.expect(&["read-tree", tree], ok(""));
+    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], ok(&format!("{stash}\n")));
+    let (b, exec) = backend(fake);
+
+    let outcome = b
+        .create_stash_paths(Some("msg"), &[PathBuf::from("a.txt")])
+        .await
+        .unwrap();
+    assert_eq!(outcome, StashOutcome::NothingToStash);
+    // assert_done: NO trailing `reset` - nothing was stashed, so the
+    // restored index is already correct.
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn stash_paths_push_failure_still_restores_the_index() {
+    let tree = "dddddddddddddddddddddddddddddddddddddddd";
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], fail(1, ""));
+    fake.expect(&["write-tree"], ok(&format!("{tree}\n")));
+    fake.expect(&["read-tree", "HEAD"], ok(""));
+    fake.expect(
+        &["stash", "push", "--include-untracked", "--", "a.txt"],
+        fail(1, "error: pathspec did not match"),
+    );
+    // The saved index is restored even though the push failed.
+    fake.expect(&["read-tree", tree], ok(""));
+    let (b, exec) = backend(fake);
+
+    let err = b
+        .create_stash_paths(None, &[PathBuf::from("a.txt")])
+        .await
+        .unwrap_err();
+    assert!(matches!(err, GitError::CommandFailed { .. }), "{err:?}");
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
+// restore_file_at_revision - stash-untracked fallback
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn restore_file_present_in_rev_checks_out_directly() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "-q", "--verify", "abc123:a.txt"], ok("blobsha\n"));
+    fake.expect(&["checkout", "abc123", "--", "a.txt"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.restore_file_at_revision("abc123", Path::new("a.txt")).await.unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn restore_stash_untracked_file_falls_back_to_the_third_parent() {
+    // A file stashed from untracked state lives only in stash^3; the restore
+    // must detect the miss and check out from the untracked parent instead.
+    let stash = "cccccccccccccccccccccccccccccccccccccccc";
+    let base = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let index = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let untracked = "dddddddddddddddddddddddddddddddddddddddd";
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "-q", "--verify", &format!("{stash}:new.txt")], fail(1, ""));
+    fake.expect(
+        &["rev-list", "--parents", "-n", "1", stash],
+        ok(&format!("{stash} {base} {index} {untracked}\n")),
+    );
+    fake.expect(&["stash", "list", "--format=%H"], ok(&format!("{stash}\n")));
+    fake.expect(
+        &["rev-parse", "-q", "--verify", &format!("{untracked}:new.txt")],
+        ok("blobsha\n"),
+    );
+    fake.expect(&["checkout", untracked, "--", "new.txt"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.restore_file_at_revision(stash, Path::new("new.txt")).await.unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn apply_stash_file_restores_worktree_only() {
+    // Per-file stash apply matches whole-stash apply: unstaged, so
+    // `restore --source --worktree`, never a checkout (which would stage).
+    let stash = "cccccccccccccccccccccccccccccccccccccccc";
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "-q", "--verify", &format!("{stash}:a.txt")], ok("blobsha\n"));
+    fake.expect(
+        &["restore", &format!("--source={stash}"), "--worktree", "--", "a.txt"],
+        ok(""),
+    );
+    let (b, exec) = backend(fake);
+
+    b.apply_stash_file(stash, Path::new("a.txt")).await.unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn apply_stash_file_untracked_falls_back_to_the_third_parent() {
+    let stash = "cccccccccccccccccccccccccccccccccccccccc";
+    let base = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let index = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let untracked = "dddddddddddddddddddddddddddddddddddddddd";
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "-q", "--verify", &format!("{stash}:new.txt")], fail(1, ""));
+    fake.expect(
+        &["rev-list", "--parents", "-n", "1", stash],
+        ok(&format!("{stash} {base} {index} {untracked}\n")),
+    );
+    fake.expect(&["stash", "list", "--format=%H"], ok(&format!("{stash}\n")));
+    fake.expect(
+        &["rev-parse", "-q", "--verify", &format!("{untracked}:new.txt")],
+        ok("blobsha\n"),
+    );
+    fake.expect(
+        &["restore", &format!("--source={untracked}"), "--worktree", "--", "new.txt"],
+        ok(""),
+    );
+    let (b, exec) = backend(fake);
+
+    b.apply_stash_file(stash, Path::new("new.txt")).await.unwrap();
+    exec.assert_done();
+}

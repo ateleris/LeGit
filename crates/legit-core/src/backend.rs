@@ -374,6 +374,26 @@ pub trait GitBackend: Send + Sync {
         keep_index: bool,
     ) -> Result<StashOutcome, GitError>;
 
+    /// Stash only the given paths (`git stash push -- <pathspec>`), taking
+    /// each file's FULL change (staged and unstaged halves). Always passes
+    /// `--include-untracked` so untracked selections stash too (a bare
+    /// pathspec push errors on paths git doesn't track). A pathspec matching
+    /// only clean files returns `NothingToStash` (git exits 0 there), decided
+    /// by the stash-tip compare, never the exit code.
+    async fn create_stash_paths(
+        &self,
+        message: Option<&str>,
+        paths: &[PathBuf],
+    ) -> Result<StashOutcome, GitError>;
+
+    /// Apply ONE file from a stash to the working tree, without touching the
+    /// index (matching whole-stash apply, which lands changes unstaged) and
+    /// without removing anything from the stash. Files stashed from
+    /// untracked state are found in the stash's third parent and come back
+    /// untracked. Overwrites the current worktree copy - the
+    /// destructive-confirm gate lives in the UI.
+    async fn apply_stash_file(&self, stash_sha: &str, path: &Path) -> Result<(), GitError>;
+
     /// Apply a stash without removing it (`git stash apply`). `stash_sha` is the
     /// stash's commit SHA; it is resolved to the *current* `stash@{N}` selector at
     /// call time, so the action is immune to reflog reordering between when the
@@ -516,4 +536,25 @@ pub trait GitBackend: Send + Sync {
     /// `git checkout --ours|--theirs -- <path>` + `git add`; for a
     /// delete-conflict where the chosen side deleted the file, `git rm -f`.
     async fn resolve_take_side(&self, path: &Path, side: ConflictSide) -> Result<(), GitError>;
+
+    /// Paths whose conflict was resolved and staged during the in-progress
+    /// operation (`git ls-files --resolve-undo`) - the candidates for
+    /// `conflict_reopen`. The record persists until the merge commit.
+    async fn resolve_undo_paths(&self) -> Result<Vec<String>, GitError>;
+
+    /// Staged paths whose staged content still contains leftover conflict
+    /// markers (`git diff --cached --check`, exit 2 = findings, not failure).
+    async fn staged_marker_paths(&self) -> Result<Vec<String>, GitError>;
+
+    /// Modified-but-unstaged paths whose worktree content still contains
+    /// leftover conflict markers (`git diff --check`) - e.g. a staged
+    /// resolution that was unstaged again. Also matches currently conflicted
+    /// paths; callers filter those (they are already surfaced as conflicts).
+    async fn unstaged_marker_paths(&self) -> Result<Vec<String>, GitError>;
+
+    /// Reopen a resolved-and-staged conflict: `git update-index --unresolve`
+    /// restores the index stages from the resolve-undo record, then
+    /// `git checkout -m -- <path>` regenerates the conflict markers in the
+    /// worktree (discarding the staged resolution).
+    async fn conflict_reopen(&self, path: &Path) -> Result<(), GitError>;
 }

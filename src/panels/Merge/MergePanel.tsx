@@ -19,6 +19,7 @@ import {
 import type { Branch, ConflictFileSides, ConflictSide } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
+import { notifyResolutionInvisible } from "../../lib/mergeFeedback";
 import { notify } from "../../store/notifications";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { ToolbarButton } from "../shared/ToolbarButton";
@@ -78,6 +79,11 @@ export function MergePanel() {
   };
   const [rebuildKey, setRebuildKey] = useState(0);
   const [pending, setPending] = useState<MergeRequest | null>(null);
+  // Mark-resolved guard: blocks remaining in the result at click time.
+  const [confirmUnresolved, setConfirmUnresolved] = useState<number | null>(null);
+  // True after THIS panel staged the file - corrects the "use Mark resolved"
+  // guidance once the resolution is already staged.
+  const [stagedNotice, setStagedNotice] = useState(false);
   const [navIndex, setNavIndex] = useState(0);
   const viewRef = useRef<MergeViewHandle | null>(null);
   const savingRef = useRef(false);
@@ -189,7 +195,25 @@ export function MergePanel() {
     [applySelection],
   );
 
-  const onDirty = useCallback(() => setDirty(true), []);
+  const onDirty = useCallback(() => {
+    setDirty(true);
+    // Editing invalidates a pending "stage anyway?" count and the
+    // "already staged" guidance.
+    setConfirmUnresolved(null);
+    setStagedNotice(false);
+  }, []);
+
+  // Header checkbox: select/clear one side across ALL blocks (per-line and
+  // per-block toggles still refine afterwards; both sides may be selected).
+  const onToggleSideAll = useCallback((side: "ours" | "theirs") => {
+    const cur = selectionsRef.current;
+    const flags = cur.flatMap((s) => s[side]);
+    const all = flags.length > 0 && flags.every(Boolean);
+    const next = cur.map((s) => ({ ...s, [side]: s[side].map(() => !all) }));
+    selectionsRef.current = next;
+    setSelections(next);
+    for (let i = 0; i < next.length; i++) viewRef.current?.applyBlock(i);
+  }, []);
 
   const onTakeSide = useCallback(
     async (side: ConflictSide) => {
@@ -199,8 +223,10 @@ export function MergePanel() {
         await repoResolveTakeSide(req.repoId, req.path, side);
         // The whole-file choice supersedes any in-editor result.
         setDirty(false);
+        setStagedNotice(true);
         setRebuildKey((k) => k + 1);
         invalidateRepoDomains(queryClient, req.repoId, ["status", "log", "diff", "op_state"]);
+        await notifyResolutionInvisible(req.repoId, req.path);
       } catch (e) {
         notify.error(formatAppError(e));
       }
@@ -211,7 +237,7 @@ export function MergePanel() {
   // The single confirming action: write the result document to the file and
   // stage it as resolved. There is no intermediate Save - the result lives
   // in the editor until the merge for this file is confirmed here.
-  const onMarkResolved = useCallback(async () => {
+  const doMarkResolved = useCallback(async () => {
     if (savingRef.current) return;
     const req = requestRef.current;
     if (!req) return;
@@ -227,14 +253,37 @@ export function MergePanel() {
       }
       await repoStage(req.repoId, [req.path]);
       setDirty(false);
+      setStagedNotice(true);
       setRebuildKey((k) => k + 1);
       invalidateRepoDomains(queryClient, req.repoId, ["status", "log", "diff", "op_state"]);
+      await notifyResolutionInvisible(req.repoId, req.path);
     } catch (e) {
       notify.error(formatAppError(e));
     } finally {
       savingRef.current = false;
     }
   }, [queryClient]);
+
+  // Guard: staging a result that still parses to conflict blocks is almost
+  // always a mistake - inline confirm instead of a hard block (markers can be
+  // intentional, and detection is heuristic). Gates on the re-parsed editor
+  // text, never the selection counter: resolving a block by deleting both
+  // sides is valid but counts as "unaddressed" there.
+  const onMarkResolved = useCallback(() => {
+    const text = viewRef.current?.getText();
+    const remaining = text != null ? parseConflicts(text).conflictCount : 0;
+    if (remaining > 0) {
+      setConfirmUnresolved(remaining);
+      return;
+    }
+    void doMarkResolved();
+  }, [doMarkResolved]);
+  // Stale per-file state must not survive a file switch (edits clear these
+  // in onDirty).
+  useEffect(() => {
+    setConfirmUnresolved(null);
+    setStagedNotice(false);
+  }, [request]);
 
   const conflictCount = parsed?.conflictCount ?? 0;
   const resolvedCount = selections.filter(
@@ -322,16 +371,6 @@ export function MergePanel() {
         )}
         <span style={{ display: "flex", gap: 4, marginLeft: "auto", flexShrink: 0 }}>
           <ToolbarButton
-            label={`Take ${sideLabel("current", sideNames?.ours ?? null)}`}
-            title="Resolve the whole file with the current side (replaces the result)"
-            onClick={() => onTakeSide("ours")}
-          />
-          <ToolbarButton
-            label={`Take ${sideLabel("incoming", sideNames?.theirs ?? null)}`}
-            title="Resolve the whole file with the incoming side (replaces the result)"
-            onClick={() => onTakeSide("theirs")}
-          />
-          <ToolbarButton
             label="Mark resolved"
             title={
               resolvedCount < conflictCount
@@ -342,6 +381,26 @@ export function MergePanel() {
           />
         </span>
       </div>
+
+      {confirmUnresolved !== null && (
+        <div
+          className="legit-panel__toolbar"
+          style={{ display: "flex", alignItems: "center", gap: 8 }}
+        >
+          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
+            {confirmUnresolved} conflict{confirmUnresolved === 1 ? "" : "s"} still unresolved -
+            stage anyway?
+          </span>
+          <ToolbarButton
+            label="Stage anyway"
+            onClick={() => {
+              setConfirmUnresolved(null);
+              void doMarkResolved();
+            }}
+          />
+          <ToolbarButton label="Cancel" onClick={() => setConfirmUnresolved(null)} />
+        </div>
+      )}
 
       {pending !== null && (
         <div
@@ -364,15 +423,34 @@ export function MergePanel() {
       )}
 
       {isReadError ? (
-        <div className="legit-panel__body">
+        // Not renderable as text (binary): whole-file take is the only
+        // resolution here - the one place the take buttons remain.
+        <div
+          className="legit-panel__body"
+          style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-start" }}
+        >
           <span className="legit-subtle">
-            This conflicted file cannot be shown as text. Use the take buttons above.
+            This conflicted file cannot be shown as text. Resolve it by taking one side:
+          </span>
+          <span style={{ display: "flex", gap: 4 }}>
+            <ToolbarButton
+              label={`Take ${sideLabel("current", sideNames?.ours ?? null)}`}
+              title="Resolve the whole file with the current side"
+              onClick={() => onTakeSide("ours")}
+            />
+            <ToolbarButton
+              label={`Take ${sideLabel("incoming", sideNames?.theirs ?? null)}`}
+              title="Resolve the whole file with the incoming side"
+              onClick={() => onTakeSide("theirs")}
+            />
           </span>
         </div>
       ) : parsed && conflictCount === 0 ? (
         <div className="legit-panel__body">
           <span className="legit-subtle">
-            No conflict markers left in this file. Use Mark resolved to stage it.
+            {stagedNotice
+              ? "Resolved and staged. Reopen the conflict from the file's context menu in Working Changes if needed."
+              : "No conflict markers left in this file. Use Mark resolved to stage it."}
           </span>
         </div>
       ) : parsed && content != null && sides ? (
@@ -386,6 +464,7 @@ export function MergePanel() {
           selectionsRef={selectionsRef}
           onToggleLine={onToggleLine}
           onToggleBlock={onToggleBlock}
+          onToggleSideAll={onToggleSideAll}
           onDirty={onDirty}
           onSaveRequest={onMarkResolved}
           rebuildKey={rebuildKey}
