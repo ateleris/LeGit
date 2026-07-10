@@ -76,9 +76,22 @@ function seedAppData(repoPath: string): void {
   );
 }
 
+/**
+ * Wipe all per-app state so sessions stay hermetic. The WebKit profile
+ * (localStorage - which persists dockview layouts) lives under the XDG dirs
+ * too, so without this a panel opened in one spec leaks into the next
+ * session's layout.
+ */
+function resetAppState(): void {
+  for (const d of [".local", ".cache", ".config"]) {
+    rmSync(path.join(E2E_HOME, d), { recursive: true, force: true });
+  }
+}
+
 /** Build the fixture matching the spec file about to run and point the app at it. */
 export function seedForSpec(specPath: string): void {
   const name = path.basename(specPath.replace(/^file:\/\//, ""));
+  resetAppState();
   const repo = name.startsWith("conflict") ? buildConflictFixture() : buildSmokeFixture();
   seedAppData(repo);
 }

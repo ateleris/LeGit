@@ -1,7 +1,8 @@
 // Core smoke: the app launches, opens the fixture repo, and a stage -> commit
 // round-trip lands in the log. Exercises UI -> IPC -> GitRunner -> real git ->
 // watcher/React Query refresh in one pass.
-import { browser, $, $$, expect } from "@wdio/globals";
+import { browser, $ } from "@wdio/globals";
+import { waitForTextContent } from "../helpers.ts";
 
 // The fixture (e2e/fixtures.ts buildSmokeFixture): repo "smoke", 2 commits
 // ("initial commit", "add readme"), notes.txt modified but unstaged.
@@ -10,11 +11,12 @@ const COMMIT_MESSAGE = "e2e: smoke commit";
 describe("smoke: stage and commit", () => {
   it("launches and opens the fixture repo", async () => {
     // First render after startup + restore_open_repos can take a while on CI.
-    // (dockview panel tabs also have role="tab" - the dedicated testid keeps
-    // this from matching the "Repositories" panel tab.)
-    const tab = $('[data-testid="repo-tab"]');
-    await tab.waitForDisplayed({ timeout: 30_000 });
-    await expect(tab).toHaveText(expect.stringContaining("smoke"));
+    await $('[data-testid="repo-tab"]').waitForDisplayed({ timeout: 30_000 });
+    await waitForTextContent(
+      '[data-testid="repo-tab"]',
+      "smoke",
+      "repo tab did not show the fixture repo name",
+    );
   });
 
   it("shows the uncommitted-changes row and opens Working Changes", async () => {
