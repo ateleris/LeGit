@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
 import { usePanelActiveEffect, usePanelFocusEffect } from "../PanelApiContext";
-import { repoCommit, repoConflictEntries, repoConflictReopen, repoDiscard, repoLog, repoResolveTakeSide, repoResolveUndoPaths, repoStage, repoStagedMarkerPaths, repoStatus, repoTrackingStatus, repoUnstage, repoUnstagedMarkerPaths } from "../../lib/commands";
+import { repoCommit, repoConflictEntries, repoConflictReopen, repoCreateStashPaths, repoDiscard, repoLog, repoResolveTakeSide, repoResolveUndoPaths, repoStage, repoStagedMarkerPaths, repoStatus, repoTrackingStatus, repoUnstage, repoUnstagedMarkerPaths } from "../../lib/commands";
 import type { Commit, ConflictEntry, ConflictSide, DiffRequest, DiffSource, FileStatus, TrackingStatus } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
@@ -527,6 +527,33 @@ export function WorkingChangesPanel() {
       await notifyResolutionInvisible(repo!.id, path);
     });
 
+  // Stash specific files - each file's FULL change (staged + unstaged
+  // halves), untracked included. Not destructive (the changes live on in the
+  // stash), so no confirm. Not offered while an op is in progress: git
+  // refuses pathspec stashes over unmerged entries.
+  const stashFiles = (paths: string[]) =>
+    run(async () => {
+      const outcome = await repoCreateStashPaths(repo!.id, undefined, paths);
+      invalidateRepoDomains(queryClient, repo!.id, ["stashes"]);
+      if (outcome.kind === "nothing_to_stash") {
+        notify.info("Nothing to stash - the selected files have no local changes.");
+      }
+    });
+  // Rows a pathspec stash can take: gitlinks have no stashable content and
+  // conflicted rows are refused by git.
+  const stashablePaths = (section: FileTreeEntry[], targets: string[]) => {
+    const set = new Set(targets);
+    return section
+      .filter((e) => set.has(e.path))
+      .filter(
+        (e) =>
+          e.change !== "SubmoduleDirty" &&
+          e.change !== "SubmoduleChanged" &&
+          e.change !== "Conflicted",
+      )
+      .map((e) => e.path);
+  };
+
   // Open a submodule row's repo as a peer tab (sessions dedupe by toplevel).
   const openSubmodule = (path: string) => {
     void useRepoStore
@@ -801,6 +828,18 @@ export function WorkingChangesPanel() {
                         ? "Delete file"
                         : "Discard changes"}
                     </MenuItem>
+                    {!opActive && stashablePaths(unstaged, targets).length > 0 && (
+                      <MenuItem
+                        onClick={() => {
+                          void stashFiles(stashablePaths(unstaged, targets));
+                          closeMenu();
+                        }}
+                      >
+                        {many
+                          ? `Stash ${stashablePaths(unstaged, targets).length} selected`
+                          : "Stash file"}
+                      </MenuItem>
+                    )}
                     {!many && f.change !== "Untracked" && f.change !== "SubmoduleChanged" && (
                       <MenuItem
                         onClick={() => {
@@ -917,6 +956,18 @@ export function WorkingChangesPanel() {
                     <MenuItem onClick={() => { unstage(targets); closeMenu(); }}>
                       {targets.length > 1 ? `Unstage ${targets.length} selected` : "Unstage"}
                     </MenuItem>
+                    {!opActive && stashablePaths(staged, targets).length > 0 && (
+                      <MenuItem
+                        onClick={() => {
+                          void stashFiles(stashablePaths(staged, targets));
+                          closeMenu();
+                        }}
+                      >
+                        {targets.length > 1
+                          ? `Stash ${stashablePaths(staged, targets).length} selected`
+                          : "Stash file"}
+                      </MenuItem>
+                    )}
                     {targets.length === 1 && f.change !== "Added" && f.change !== "SubmoduleChanged" && (
                       <MenuItem
                         onClick={() => {

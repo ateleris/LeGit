@@ -745,6 +745,54 @@ impl<E: GitExecutor> GitCliBackend<E> {
     /// created an entry: `git stash push` exits **0** with "No local changes to
     /// save" (on stdout) for a clean tree, so neither the exit code nor stderr
     /// can tell — only a changed stash tip can.
+    /// The revision that actually holds `path`'s content for a per-file
+    /// restore/apply: `rev` itself, or - when the path is absent there and
+    /// `rev` is an untracked-bearing stash - the stash's third parent
+    /// (files stashed from UNTRACKED state live only in that tree, which is
+    /// why a plain checkout at the stash SHA fails on them; the stash's
+    /// file list already includes them, so acting on them must work too).
+    /// Falls back to `rev` when neither has the path, so the caller's git
+    /// command reports the proper "does not exist at revision" error.
+    async fn resolve_file_content_source(
+        &self,
+        rev: &str,
+        path: &Path,
+    ) -> Result<String, GitError> {
+        let runner = self.runner().await;
+        let spec = format!("{rev}:{}", path.to_string_lossy());
+        let in_rev = runner
+            .run(&["rev-parse", "-q", "--verify", &spec])
+            .await
+            .map_err(|e| GitError::Internal(e.to_string()))?;
+        if in_rev.success {
+            return Ok(rev.to_string());
+        }
+        if let Some(untracked) = self.stash_untracked_parent(&runner, rev).await? {
+            let u_spec = format!("{untracked}:{}", path.to_string_lossy());
+            let in_untracked = runner
+                .run(&["rev-parse", "-q", "--verify", &u_spec])
+                .await
+                .map_err(|e| GitError::Internal(e.to_string()))?;
+            if in_untracked.success {
+                return Ok(untracked);
+            }
+        }
+        Ok(rev.to_string())
+    }
+
+    /// Tree object of the current index (`git write-tree`) - used to save
+    /// and restore the index around a pathspec stash.
+    async fn write_tree(&self) -> Result<String, GitError> {
+        let (code, stdout, stderr) = self.run_classified(&["write-tree"]).await?;
+        if code != 0 {
+            return Err(GitError::CommandFailed {
+                exit_code: code,
+                stderr: stderr.trim().to_string(),
+            });
+        }
+        Ok(stdout.trim().to_string())
+    }
+
     async fn stash_tip(&self) -> Result<Option<String>, GitError> {
         let runner = self.runner().await;
         let output = runner
@@ -1495,8 +1543,22 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
     async fn restore_file_at_revision(&self, rev: &str, path: &Path) -> Result<(), GitError> {
         // A pathspec checkout touches index + worktree and never refuses on
         // local changes - the destructive-confirm gate lives in the UI.
-        self.run_pathspec(&["checkout", rev, "--"], std::slice::from_ref(&path.to_path_buf()))
+        let source = self.resolve_file_content_source(rev, path).await?;
+        self.run_pathspec(&["checkout", &source, "--"], std::slice::from_ref(&path.to_path_buf()))
             .await
+    }
+
+    async fn apply_stash_file(&self, stash_sha: &str, path: &Path) -> Result<(), GitError> {
+        // Per-file counterpart of `git stash apply`, which lands changes
+        // UNSTAGED - so this writes the worktree only (`restore --source`),
+        // never the index. Untracked-stashed files come back untracked.
+        let source = self.resolve_file_content_source(stash_sha, path).await?;
+        let src_arg = format!("--source={source}");
+        self.run_pathspec(
+            &["restore", &src_arg, "--worktree", "--"],
+            std::slice::from_ref(&path.to_path_buf()),
+        )
+        .await
     }
 
     async fn file_history(
@@ -2211,6 +2273,76 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         self.run_simple(&args).await?;
         let tip_after = self.stash_tip().await?;
         if stash_created(tip_before.as_deref(), tip_after.as_deref()).is_some() {
+            Ok(StashOutcome::Created)
+        } else {
+            Ok(StashOutcome::NothingToStash)
+        }
+    }
+
+    async fn create_stash_paths(
+        &self,
+        message: Option<&str>,
+        paths: &[PathBuf],
+    ) -> Result<StashOutcome, GitError> {
+        let mut prefix = vec!["stash", "push", "--include-untracked"];
+        if let Some(msg) = message.filter(|m| !m.is_empty()) {
+            prefix.push("-m");
+            prefix.push(msg);
+        }
+        prefix.push("--");
+
+        // Same tip-compare outcome as create_stash: a pathspec matching only
+        // clean files exits 0 ("No local changes to save") without stashing.
+        let tip_before = self.stash_tip().await?;
+
+        // `git stash push -- <pathspec>` embeds the ENTIRE index in the stash
+        // entry: other files' staged changes ride along invisibly (they stay
+        // staged locally, but the stash lists them and a later pop can
+        // resurrect a staged change discarded in the meantime - verified
+        // against the real binary). Isolate the index around the push: save
+        // it, reset it to HEAD (worktree untouched) so the push can only
+        // capture the named paths, then restore it.
+        let saved_index = self.write_tree().await?;
+        self.run_simple(&["read-tree", "HEAD"]).await?;
+        let push = self.run_pathspec(&prefix, paths).await;
+        // The index is ALWAYS restored, also when the push failed. Losing the
+        // restore never loses content (the worktree holds it) - staged
+        // changes would merely show as unstaged - but the user must be told.
+        let restore = self.run_simple(&["read-tree", &saved_index]).await;
+        match (push, restore) {
+            (Err(pe), Err(_)) => {
+                return Err(append_error_note(
+                    pe,
+                    "Note: restoring the index afterwards also failed - staged changes may \
+                     now show as unstaged (file contents are intact).",
+                ));
+            }
+            (Err(pe), Ok(())) => return Err(pe),
+            (Ok(()), Err(re)) => {
+                return Err(append_error_note(
+                    re,
+                    "Note: the stash itself was created, but restoring the index failed - \
+                     staged changes may now show as unstaged (file contents are intact).",
+                ));
+            }
+            (Ok(()), Ok(())) => {}
+        }
+
+        let tip_after = self.stash_tip().await?;
+        if stash_created(tip_before.as_deref(), tip_after.as_deref()).is_some() {
+            // The restored index still carries the stashed paths' old staged
+            // content; reset those entries to HEAD - their content lives in
+            // the stash now. `reset -q` tolerates paths HEAD never had
+            // (stashed-from-untracked).
+            self.run_pathspec(&["reset", "-q", "--"], paths)
+                .await
+                .map_err(|e| {
+                    append_error_note(
+                        e,
+                        "Note: the stash was created, but the stashed paths' index entries \
+                         could not be reset - they may still show staged content.",
+                    )
+                })?;
             Ok(StashOutcome::Created)
         } else {
             Ok(StashOutcome::NothingToStash)

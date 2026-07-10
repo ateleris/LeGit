@@ -151,22 +151,17 @@ written only after git confirms via `store`), or a UI prompt. Deferred:
 
 ## UX / polish
 
-- **Per-file stash / apply / pop.** (Requested 2026-07-10.) Today stashing is
-  all-or-nothing (whole working changes; whole stash on apply/pop). Check and
-  design the single-file granularity:
-  - *Stash single files*: `git stash push [-u] -- <pathspec>` supports this
-    natively - a "Stash file"/"Stash selected" entry in the Working Changes
-    row menu; keep the auto-stash tip-compare convention (`stash_created`)
-    since a pathspec push can also be a no-op.
-  - *Apply/pop single files out of a stash*: no native support - approach is
-    `git restore --source=<stash-sha> [--staged] -- <path>` (or
-    `checkout <sha> -- <path>`), which overwrites rather than merges and
-    doesn't drop anything from the stash; pop-semantics for one file would
-    need a follow-up "remove path from stash" (re-create the stash without
-    the path), which is invasive - likely ship apply-only per file first.
-  - Address stashes by commit SHA as everywhere (stash mutations must never
-    use positional selectors), and route entries through `StashMenuSection`
-    so row/chip menus stay in parity.
+- **Per-file stash: pop + polish remainders.** Shipped 2026-07-10: "Stash
+  file"/"Stash N selected" on Working Changes rows (pathspec `stash push
+  --include-untracked`, tip-compare outcome, hidden during ops - git refuses
+  over unmerged entries), and per-file APPLY via the existing "Restore file
+  to this commit" on a stash's file list, relabelled "Apply file from
+  stash…" when the shown commit is a stash. Open:
+  - *Per-file pop* (apply one file AND remove it from the stash): needs
+    stash rewriting (re-create the entry without the path) - invasive,
+    deliberately not shipped.
+  - *Optional message for per-file stash*: entries currently stash with
+    git's default WIP subject; add a message prompt if wanted.
 - **Conflict-resolution flow follow-ups.** The 2026-07-10 overhaul shipped
   (mark-resolved guard, reopen-conflict via `update-index --unresolve`,
   marker warning badges staged+unstaged, side-select header checkboxes

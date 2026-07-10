@@ -744,12 +744,32 @@ export const repoCreateStash = (
     keepIndex,
   });
 
+/** Stash only the given paths (each file's full change, staged + unstaged;
+ *  untracked included). A pathspec matching only clean files returns
+ *  `nothing_to_stash`. */
+export const repoCreateStashPaths = (
+  repoId: string,
+  message: string | undefined,
+  paths: string[],
+) =>
+  invoke<StashOutcome>("repo_create_stash_paths", {
+    repoId,
+    message: message ?? null,
+    paths,
+  });
+
 // Stash mutations address the stash by its commit SHA (stable), not the
 // positional `stash@{N}` selector (which shifts on every create/drop/pop,
 // including ones made outside the app). The backend resolves the SHA to the
 // current selector at action time, so a stale UI can never hit the wrong stash.
 export const repoApplyStash = (repoId: string, stashSha: string) =>
   invoke<StashApplyOutcome>("repo_apply_stash", { repoId, stashSha });
+
+/** Apply ONE file from a stash to the working tree (unstaged, matching
+ *  whole-stash apply); the stash keeps the file. Overwrites the current
+ *  worktree copy. */
+export const repoApplyStashFile = (repoId: string, stashSha: string, path: string) =>
+  invoke<null>("repo_apply_stash_file", { repoId, stashSha, path });
 
 export const repoPopStash = (repoId: string, stashSha: string) =>
   invoke<StashApplyOutcome>("repo_pop_stash", { repoId, stashSha });

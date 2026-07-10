@@ -1658,3 +1658,168 @@ async fn unstaged_marker_paths_checks_the_worktree_side() {
     assert_eq!(b.unstaged_marker_paths().await.unwrap(), vec!["a.txt"]);
     exec.assert_done();
 }
+
+// ---------------------------------------------------------------------------
+// create_stash_paths - pathspec stash with tip-compare outcome
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn stash_paths_isolates_the_index_around_the_push() {
+    // The full dance: save the index (write-tree), reset it to HEAD so the
+    // pathspec push cannot embed other files' staged changes in the stash,
+    // push, restore the index, and reset the stashed paths' index entries.
+    let stash = "cccccccccccccccccccccccccccccccccccccccc";
+    let tree = "dddddddddddddddddddddddddddddddddddddddd";
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], fail(1, ""));
+    fake.expect(&["write-tree"], ok(&format!("{tree}\n")));
+    fake.expect(&["read-tree", "HEAD"], ok(""));
+    fake.expect(&["stash", "push", "--include-untracked", "--", "a.txt", "b.txt"], ok("Saved"));
+    fake.expect(&["read-tree", tree], ok(""));
+    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], ok(&format!("{stash}\n")));
+    fake.expect(&["reset", "-q", "--", "a.txt", "b.txt"], ok(""));
+    let (b, exec) = backend(fake);
+
+    let outcome = b
+        .create_stash_paths(None, &[PathBuf::from("a.txt"), PathBuf::from("b.txt")])
+        .await
+        .unwrap();
+    assert_eq!(outcome, StashOutcome::Created);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn stash_paths_clean_pathspec_is_nothing_to_stash() {
+    let stash = "cccccccccccccccccccccccccccccccccccccccc";
+    let tree = "dddddddddddddddddddddddddddddddddddddddd";
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], ok(&format!("{stash}\n")));
+    fake.expect(&["write-tree"], ok(&format!("{tree}\n")));
+    fake.expect(&["read-tree", "HEAD"], ok(""));
+    // Exit 0 with "No local changes to save" - the tip not moving is the
+    // only reliable signal that nothing was stashed.
+    fake.expect(
+        &["stash", "push", "--include-untracked", "-m", "msg", "--", "a.txt"],
+        ok("No local changes to save\n"),
+    );
+    fake.expect(&["read-tree", tree], ok(""));
+    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], ok(&format!("{stash}\n")));
+    let (b, exec) = backend(fake);
+
+    let outcome = b
+        .create_stash_paths(Some("msg"), &[PathBuf::from("a.txt")])
+        .await
+        .unwrap();
+    assert_eq!(outcome, StashOutcome::NothingToStash);
+    // assert_done: NO trailing `reset` - nothing was stashed, so the
+    // restored index is already correct.
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn stash_paths_push_failure_still_restores_the_index() {
+    let tree = "dddddddddddddddddddddddddddddddddddddddd";
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], fail(1, ""));
+    fake.expect(&["write-tree"], ok(&format!("{tree}\n")));
+    fake.expect(&["read-tree", "HEAD"], ok(""));
+    fake.expect(
+        &["stash", "push", "--include-untracked", "--", "a.txt"],
+        fail(1, "error: pathspec did not match"),
+    );
+    // The saved index is restored even though the push failed.
+    fake.expect(&["read-tree", tree], ok(""));
+    let (b, exec) = backend(fake);
+
+    let err = b
+        .create_stash_paths(None, &[PathBuf::from("a.txt")])
+        .await
+        .unwrap_err();
+    assert!(matches!(err, GitError::CommandFailed { .. }), "{err:?}");
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
+// restore_file_at_revision - stash-untracked fallback
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn restore_file_present_in_rev_checks_out_directly() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "-q", "--verify", "abc123:a.txt"], ok("blobsha\n"));
+    fake.expect(&["checkout", "abc123", "--", "a.txt"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.restore_file_at_revision("abc123", Path::new("a.txt")).await.unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn restore_stash_untracked_file_falls_back_to_the_third_parent() {
+    // A file stashed from untracked state lives only in stash^3; the restore
+    // must detect the miss and check out from the untracked parent instead.
+    let stash = "cccccccccccccccccccccccccccccccccccccccc";
+    let base = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let index = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let untracked = "dddddddddddddddddddddddddddddddddddddddd";
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "-q", "--verify", &format!("{stash}:new.txt")], fail(1, ""));
+    fake.expect(
+        &["rev-list", "--parents", "-n", "1", stash],
+        ok(&format!("{stash} {base} {index} {untracked}\n")),
+    );
+    fake.expect(&["stash", "list", "--format=%H"], ok(&format!("{stash}\n")));
+    fake.expect(
+        &["rev-parse", "-q", "--verify", &format!("{untracked}:new.txt")],
+        ok("blobsha\n"),
+    );
+    fake.expect(&["checkout", untracked, "--", "new.txt"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.restore_file_at_revision(stash, Path::new("new.txt")).await.unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn apply_stash_file_restores_worktree_only() {
+    // Per-file stash apply matches whole-stash apply: unstaged, so
+    // `restore --source --worktree`, never a checkout (which would stage).
+    let stash = "cccccccccccccccccccccccccccccccccccccccc";
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "-q", "--verify", &format!("{stash}:a.txt")], ok("blobsha\n"));
+    fake.expect(
+        &["restore", &format!("--source={stash}"), "--worktree", "--", "a.txt"],
+        ok(""),
+    );
+    let (b, exec) = backend(fake);
+
+    b.apply_stash_file(stash, Path::new("a.txt")).await.unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn apply_stash_file_untracked_falls_back_to_the_third_parent() {
+    let stash = "cccccccccccccccccccccccccccccccccccccccc";
+    let base = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let index = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let untracked = "dddddddddddddddddddddddddddddddddddddddd";
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "-q", "--verify", &format!("{stash}:new.txt")], fail(1, ""));
+    fake.expect(
+        &["rev-list", "--parents", "-n", "1", stash],
+        ok(&format!("{stash} {base} {index} {untracked}\n")),
+    );
+    fake.expect(&["stash", "list", "--format=%H"], ok(&format!("{stash}\n")));
+    fake.expect(
+        &["rev-parse", "-q", "--verify", &format!("{untracked}:new.txt")],
+        ok("blobsha\n"),
+    );
+    fake.expect(
+        &["restore", &format!("--source={untracked}"), "--worktree", "--", "new.txt"],
+        ok(""),
+    );
+    let (b, exec) = backend(fake);
+
+    b.apply_stash_file(stash, Path::new("new.txt")).await.unwrap();
+    exec.assert_done();
+}

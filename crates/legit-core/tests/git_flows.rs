@@ -2205,3 +2205,130 @@ async fn pull_fast_forwards_then_merges_divergence() {
     );
     assert!(repo.exists("b.txt") && repo.exists("c.txt"));
 }
+
+#[tokio::test]
+async fn stash_paths_takes_only_the_given_files() {
+    // Encodes the pathspec-stash assumptions: `stash push -- <paths>` takes
+    // the named files (untracked included via --include-untracked) and
+    // leaves other changes in place; a pathspec matching only clean files
+    // exits 0 without stashing (tip-compare decides the outcome).
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base a\n");
+    repo.write("b.txt", "base b\n");
+    repo.commit_all("base").await;
+    repo.write("a.txt", "changed a\n");
+    repo.write("b.txt", "changed b\n");
+    repo.write("new.txt", "untracked\n");
+
+    let outcome = repo
+        .backend
+        .create_stash_paths(
+            Some("partial"),
+            &[PathBuf::from("a.txt"), PathBuf::from("new.txt")],
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome, StashOutcome::Created);
+    assert_eq!(repo.read("a.txt"), "base a\n");
+    assert!(!repo.exists("new.txt"));
+    assert_eq!(repo.read("b.txt"), "changed b\n");
+
+    // The just-stashed path is clean now - nothing further to stash there.
+    let outcome = repo
+        .backend
+        .create_stash_paths(None, &[PathBuf::from("a.txt")])
+        .await
+        .unwrap();
+    assert_eq!(outcome, StashOutcome::NothingToStash);
+
+    // Popping the entry brings exactly the stashed files back.
+    let stashes = repo.backend.stashes().await.unwrap();
+    assert_eq!(stashes.len(), 1);
+    repo.backend.pop_stash(&stashes[0].stash_sha.0).await.unwrap();
+    assert_eq!(repo.read("a.txt"), "changed a\n");
+    assert!(repo.exists("new.txt"));
+    assert_eq!(repo.read("b.txt"), "changed b\n");
+}
+
+#[tokio::test]
+async fn stash_paths_leaves_other_staged_changes_out_of_the_stash() {
+    // The reason create_stash_paths isolates the index: a plain pathspec
+    // `stash push` embeds the ENTIRE index in the stash entry, so another
+    // file's staged change rides along - and popping the stash after that
+    // change was discarded resurrects it. The isolation dance must prevent
+    // exactly that.
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base a\n");
+    repo.write("c.txt", "base c\n");
+    repo.commit_all("base").await;
+
+    // a.txt: staged foreign change. c.txt: staged + unstaged halves.
+    repo.write("a.txt", "base a\nstaged a\n");
+    repo.backend.stage(&[PathBuf::from("a.txt")]).await.unwrap();
+    repo.write("c.txt", "base c\nstaged c\n");
+    repo.backend.stage(&[PathBuf::from("c.txt")]).await.unwrap();
+    repo.write("c.txt", "base c\nstaged c\nunstaged c\n");
+
+    let outcome = repo
+        .backend
+        .create_stash_paths(None, &[PathBuf::from("c.txt")])
+        .await
+        .unwrap();
+    assert_eq!(outcome, StashOutcome::Created);
+
+    // a.txt is untouched and STILL STAGED; c.txt fully gone from the tree.
+    let porcelain = repo.git(&["status", "--porcelain"]).await;
+    assert_eq!(porcelain.trim(), "M  a.txt", "{porcelain}");
+
+    // Discard a.txt's staged change, then pop: it must NOT come back.
+    repo.git(&["restore", "--staged", "a.txt"]).await;
+    repo.git(&["restore", "a.txt"]).await;
+    let stashes = repo.backend.stashes().await.unwrap();
+    repo.backend.pop_stash(&stashes[0].stash_sha.0).await.unwrap();
+    assert_eq!(repo.read("a.txt"), "base a\n");
+    assert_eq!(repo.read("c.txt"), "base c\nstaged c\nunstaged c\n");
+}
+
+#[tokio::test]
+async fn stashed_untracked_file_can_be_applied_per_file() {
+    // A file stashed from UNTRACKED state is stored in the stash's third
+    // parent, not the stash commit's tree - restore_file_at_revision must
+    // fall back there (a plain checkout at the stash SHA fails on it).
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.write("new.txt", "untracked content\n");
+
+    let outcome = repo
+        .backend
+        .create_stash_paths(None, &[PathBuf::from("new.txt")])
+        .await
+        .unwrap();
+    assert_eq!(outcome, StashOutcome::Created);
+    assert!(!repo.exists("new.txt"));
+
+    let stashes = repo.backend.stashes().await.unwrap();
+    repo.backend
+        .apply_stash_file(&stashes[0].stash_sha.0, Path::new("new.txt"))
+        .await
+        .unwrap();
+    assert_eq!(repo.read("new.txt"), "untracked content\n");
+    // Unstaged apply: the file comes back exactly as it left - untracked.
+    let porcelain = repo.git(&["status", "--porcelain"]).await;
+    assert_eq!(porcelain.trim(), "?? new.txt", "{porcelain}");
+
+    // A tracked file applies unstaged too (whole-stash apply semantics).
+    repo.write("a.txt", "base\nmodified\n");
+    repo.backend
+        .create_stash_paths(None, &[PathBuf::from("a.txt")])
+        .await
+        .unwrap();
+    let stashes = repo.backend.stashes().await.unwrap();
+    repo.backend
+        .apply_stash_file(&stashes[0].stash_sha.0, Path::new("a.txt"))
+        .await
+        .unwrap();
+    let porcelain = repo.git(&["status", "--porcelain"]).await;
+    assert!(porcelain.contains(" M a.txt"), "{porcelain}");
+    assert_eq!(repo.read("a.txt"), "base\nmodified\n");
+}

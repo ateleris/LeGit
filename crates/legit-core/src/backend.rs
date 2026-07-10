@@ -374,6 +374,26 @@ pub trait GitBackend: Send + Sync {
         keep_index: bool,
     ) -> Result<StashOutcome, GitError>;
 
+    /// Stash only the given paths (`git stash push -- <pathspec>`), taking
+    /// each file's FULL change (staged and unstaged halves). Always passes
+    /// `--include-untracked` so untracked selections stash too (a bare
+    /// pathspec push errors on paths git doesn't track). A pathspec matching
+    /// only clean files returns `NothingToStash` (git exits 0 there), decided
+    /// by the stash-tip compare, never the exit code.
+    async fn create_stash_paths(
+        &self,
+        message: Option<&str>,
+        paths: &[PathBuf],
+    ) -> Result<StashOutcome, GitError>;
+
+    /// Apply ONE file from a stash to the working tree, without touching the
+    /// index (matching whole-stash apply, which lands changes unstaged) and
+    /// without removing anything from the stash. Files stashed from
+    /// untracked state are found in the stash's third parent and come back
+    /// untracked. Overwrites the current worktree copy - the
+    /// destructive-confirm gate lives in the UI.
+    async fn apply_stash_file(&self, stash_sha: &str, path: &Path) -> Result<(), GitError>;
+
     /// Apply a stash without removing it (`git stash apply`). `stash_sha` is the
     /// stash's commit SHA; it is resolved to the *current* `stash@{N}` selector at
     /// call time, so the action is immune to reflog reordering between when the
