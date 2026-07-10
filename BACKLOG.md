@@ -184,8 +184,14 @@ written only after git confirms via `store`), or a UI prompt. Deferred:
     change), so it re-measures in practice, but if a path appears where the
     gutter width changes without a rebuild the header box could drift.
   - *Verification pass pending*: vitest suites + manual end-to-end run of
-    the whole flow (guard -> badge -> reopen -> checkboxes -> abort hold)
-    from PowerShell; WSL-side cargo/tsc are green.
+    everything from 2026-07-10 (guard -> badge -> reopen -> side-select
+    checkboxes incl. gutter alignment -> resolution-invisible toast ->
+    abort hold-disabled; plus the toast line-clamp fix, the dev build's
+    "LeGit DEV" title + ribbon icon (regenerable via
+    `scripts/make-dev-icon.py`), and the draggable unstaged/staged split
+    in Working Changes - works in every section order incl. the commit
+    composer between the two file sections) from PowerShell; WSL-side
+    cargo/tsc are green.
 - **Op-state indicator for background repos.** (Deferred 2026-07-10 from the
   global op-state strip work.) The strip under the repo tab bar surfaces only
   the *active* repo's in-progress merge/rebase/cherry-pick/revert; a repo in

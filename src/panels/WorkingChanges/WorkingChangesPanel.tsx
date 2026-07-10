@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
@@ -53,6 +53,13 @@ function ReopenConflictMenuItem({ onReopen }: { onReopen: () => void }) {
     </MenuItem>
   );
 }
+
+/** Persisted unstaged/staged height split (fraction of the first file
+ *  section in render order) + its clamp, so neither list can be squeezed
+ *  away entirely. */
+const SPLIT_KEY = "legit.workingChanges.split";
+const SPLIT_MIN = 0.15;
+const SPLIT_MAX = 0.85;
 
 const toEntry = (s: FileStatus): FileTreeEntry => ({
   path: s.path,
@@ -153,6 +160,57 @@ export function WorkingChangesPanel() {
   const confirmDiscardEnabled = useSettingsStore((s) => s.settings?.confirm_discard ?? true);
   const setViewMode = useSettingsStore((s) => s.setChangedFilesViewMode);
   const { rowHeight, iconSize } = useFileRowMetrics();
+
+  // Height split between the two file sections (fraction taken by the FIRST
+  // one in the render order), draggable via the sash between them and
+  // persisted. The commit composer keeps its natural height. During a drag
+  // the flex weights are set directly on the DOM (no re-render per
+  // mousemove); state + storage are committed once on release.
+  const [splitFrac, setSplitFrac] = useState(() => {
+    const v = Number(localStorage.getItem(SPLIT_KEY));
+    return Number.isFinite(v) && v >= SPLIT_MIN && v <= SPLIT_MAX ? v : 0.5;
+  });
+  const firstFileRef = useRef<HTMLDivElement | null>(null);
+  const secondFileRef = useRef<HTMLDivElement | null>(null);
+  const onSplitMouseDown = useCallback((e: React.MouseEvent) => {
+    const first = firstFileRef.current;
+    const second = secondFileRef.current;
+    if (!first || !second) return;
+    e.preventDefault();
+    // Fraction of the COMBINED flexible height (the two file sections); the
+    // commit composer between them is fixed, so the first section's top and
+    // the combined height are both constant for the whole drag.
+    const top = first.getBoundingClientRect().top;
+    const total =
+      first.getBoundingClientRect().height + second.getBoundingClientRect().height;
+    if (total < 1) return;
+    let frac = 0.5;
+    const onMove = (ev: MouseEvent) => {
+      frac = Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, (ev.clientY - top) / total));
+      first.style.flexGrow = String(frac);
+      second.style.flexGrow = String(1 - frac);
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      setSplitFrac(frac);
+      try {
+        localStorage.setItem(SPLIT_KEY, String(frac));
+      } catch {
+        /* quota */
+      }
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, []);
+  const resetSplit = useCallback(() => {
+    setSplitFrac(0.5);
+    try {
+      localStorage.removeItem(SPLIT_KEY);
+    } catch {
+      /* quota */
+    }
+  }, []);
 
   // The draft commit message lives in a per-repo store, not component state:
   // this panel shares a dock slot and unmounts whenever the user opens e.g. a
@@ -625,9 +683,24 @@ export function WorkingChangesPanel() {
 
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         {(() => {
+          // The two file sections share the remaining height per the
+          // draggable split. The sash sits on the FIRST file section's
+          // bottom edge - with the commit composer ordered between the two,
+          // dragging it still reallocates the file sections' shares (the
+          // fixed-height composer just rides along).
+          const fileIds = sectionOrder.filter(
+            (id): id is "unstaged" | "staged" => id !== "commit",
+          );
+          const growOf = (id: "unstaged" | "staged") =>
+            id === fileIds[0] ? splitFrac : 1 - splitFrac;
+          const refOf = (id: "unstaged" | "staged") =>
+            id === fileIds[0] ? firstFileRef : secondFileRef;
+          const sashBeforeId = sectionOrder[sectionOrder.indexOf(fileIds[0]) + 1];
           const unstagedSection = (
           <Section
             key="unstaged"
+            grow={growOf("unstaged")}
+            sectionRef={refOf("unstaged")}
             title="Unstaged"
             count={unstaged.length}
             additions={unstagedTotals.add}
@@ -798,6 +871,8 @@ export function WorkingChangesPanel() {
           const stagedSection = (
           <Section
             key="staged"
+            grow={growOf("staged")}
+            sectionRef={refOf("staged")}
             title="Staged"
             count={staged.length}
             additions={stagedTotals.add}
@@ -1004,6 +1079,24 @@ export function WorkingChangesPanel() {
                 </div>
               );
             }
+            if (id === sashBeforeId && status.length > 0) {
+              return (
+                <Fragment key={id}>
+                  <div
+                    onMouseDown={onSplitMouseDown}
+                    onDoubleClick={resetSplit}
+                    title="Drag to resize, double-click to reset"
+                    style={{
+                      flexShrink: 0,
+                      height: 5,
+                      cursor: "row-resize",
+                      background: "var(--panel-border)",
+                    }}
+                  />
+                  {blocks[id]}
+                </Fragment>
+              );
+            }
             return blocks[id];
           });
         })()}
@@ -1021,6 +1114,8 @@ function Section({
   deletions = 0,
   actions,
   children,
+  grow = 1,
+  sectionRef,
 }: {
   title: string;
   count: number;
@@ -1029,9 +1124,15 @@ function Section({
   deletions?: number;
   actions?: React.ReactNode;
   children: React.ReactNode;
+  /** Flex share of the panel height (the unstaged/staged split). */
+  grow?: number;
+  sectionRef?: React.Ref<HTMLDivElement>;
 }) {
   return (
-    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+    <div
+      ref={sectionRef}
+      style={{ flex: `${grow} 1 0%`, minHeight: 0, display: "flex", flexDirection: "column" }}
+    >
       <div
         style={{
           flexShrink: 0,
