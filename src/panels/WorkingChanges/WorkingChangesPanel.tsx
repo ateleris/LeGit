@@ -21,6 +21,7 @@ import { MenuItem } from "../Commits/menu/primitives";
 import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
 import { OpenInEditorMenuItem } from "../shared/OpenInEditorMenuItem";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
+import { usePanelRunner } from "../shared/usePanelRunner";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notifyResolutionInvisible } from "../../lib/mergeFeedback";
 import { useOpState } from "../../lib/useOpState";
@@ -231,7 +232,6 @@ export function WorkingChangesPanel() {
   // at once (a partially-staged file shares its path across both). Drives both
   // row highlighting and the bulk context-menu actions.
   const [selected, setSelected] = useState<Selection | null>(null);
-  const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<DiscardRequest | null>(null);
   const [confirmDetachedCommit, setConfirmDetachedCommit] = useState(false);
   const [confirmAmendPushed, setConfirmAmendPushed] = useState(false);
@@ -469,31 +469,11 @@ export function WorkingChangesPanel() {
     invalidateRepoDomains(queryClient, repo.id, ["status", "log", "branches", "diff", "op_state"]);
   }, [repo, queryClient]);
 
-  // Re-entry guard for `run` — blocks double-clicks immediately, independent
-  // of the *visual* busy state below (which is deliberately delayed).
-  const runningRef = useRef(false);
-
-  const run = useCallback(
-    async (fn: () => Promise<unknown>) => {
-      if (!repo || runningRef.current) return;
-      runningRef.current = true;
-      // Delay the visual busy state: staging/unstaging usually completes in a
-      // few dozen ms, and flipping every button to disabled-dimmed for a
-      // single frame reads as UI flicker. Slow operations still dim.
-      const busyTimer = window.setTimeout(() => setBusy(true), 150);
-      try {
-        await fn();
-        refresh();
-      } catch (e) {
-        notify.error(formatAppError(e));
-      } finally {
-        window.clearTimeout(busyTimer);
-        runningRef.current = false;
-        setBusy(false);
-      }
-    },
-    [repo, refresh],
-  );
+  const { busy, run } = usePanelRunner({
+    enabled: !!repo,
+    onSuccess: refresh,
+    onError: (e) => notify.error(formatAppError(e)),
+  });
 
   // Staging/unstaging moves files between the two lists; the selection follows
   // them (see moveSelection). Discarding removes them outright, so they're

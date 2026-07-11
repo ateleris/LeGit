@@ -1,10 +1,10 @@
 //! The `GitBackend` trait — the contract between the UI/command layer and
 //! the implementation that actually performs Git operations.
 //!
-//! In v0.1 the only implementation is `GitCliBackend` (DESIGN.md §4.3) and
-//! its trait methods are deliberately stubs: the Console panel exercises Git
-//! directly through the runner. v1 panels will drive each method as real
-//! parsing is added.
+//! The only implementation is `GitCliBackend` (DESIGN.md §4.3), which runs
+//! the real `git` CLI through `GitRunner`. The trait exists so composed
+//! flows can be tested against a scripted executor and so the command layer
+//! never depends on how git is invoked.
 
 use crate::error::GitError;
 use crate::runner::OperationId;

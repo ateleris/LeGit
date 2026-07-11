@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { PanelError } from "../shared/PanelError";
 import { useQuery } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useConfirmDestructive } from "../../store/settings";
@@ -155,9 +156,7 @@ function FileHistoryBody() {
 
       <div className="legit-panel__body" style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 0 }}>
         {isError ? (
-          <pre className="legit-error" style={{ margin: 8, fontSize: "var(--fz-md)" }}>
-            {formatAppError(error)}
-          </pre>
+          <PanelError error={error} margin={8} />
         ) : entries.length === 0 && !isFetching ? (
           <span className="legit-subtle" style={{ display: "block", padding: 8, fontSize: "var(--fz-md)" }}>
             No history for this file.

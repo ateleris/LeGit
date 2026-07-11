@@ -1,8 +1,12 @@
 //! `GitCliBackend` — the CLI-backed `GitBackend` implementation.
 //!
-//! Per DESIGN-v0.3.md, `log()` and `commit_details()` are implemented here.
-//! Other trait methods remain as `NotYet` stubs until their respective panels
-//! are built.
+//! Every trait method shells out through the executor seam (`GitExecutor`;
+//! `GitRunner` in production) and hands raw text to the pure parsers in
+//! `parsers/`. Composed flows (auto-stash switch, conflict handling,
+//! submodule updates, ...) live here and are tested at two levels:
+//! `flow_tests.rs` scripts exact command sequences against a `FakeExecutor`,
+//! and `tests/git_flows.rs` validates the encoded git-behavior assumptions
+//! against the real binary.
 
 use crate::backend::GitBackend;
 use crate::error::GitError;
@@ -85,14 +89,8 @@ impl<E: GitExecutor> GitCliBackend<E> {
         let runner = self.runner().await;
         let output = runner
             .run(&parsers::status::STATUS_ARGS)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !output.success {
-            return Err(GitError::CommandFailed {
-                exit_code: output.exit_code.unwrap_or(-1),
-                stderr: output.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&output)?;
         Ok(parsers::status::parse_status(&output.stdout))
     }
 
@@ -108,14 +106,8 @@ impl<E: GitExecutor> GitCliBackend<E> {
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let output = runner
             .run(&arg_refs)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !output.success {
-            return Err(GitError::CommandFailed {
-                exit_code: output.exit_code.unwrap_or(-1),
-                stderr: output.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&output)?;
         Ok(())
     }
 
@@ -178,14 +170,8 @@ impl<E: GitExecutor> GitCliBackend<E> {
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let output = runner
             .run(&arg_refs)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !output.success {
-            return Err(GitError::CommandFailed {
-                exit_code: output.exit_code.unwrap_or(-1),
-                stderr: output.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&output)?;
         // Untracked files don't appear in `git diff` at all (empty output), so a
         // diff of one would read as "no changes". Show the whole file as added by
         // diffing it against the empty side instead. Two cases produce this:
@@ -211,11 +197,13 @@ impl<E: GitExecutor> GitCliBackend<E> {
     }
 
     /// True when `path` is not tracked by git (so `git diff` shows nothing).
+    /// A FAILED `ls-files` also has empty stdout - that is an error, not
+    /// "untracked" (encoded in `file_diff_untracked_probe_failure_...`).
     async fn is_untracked(&self, runner: &E, path: &str) -> Result<bool, GitError> {
         let out = runner
             .run(&["ls-files", "-z", "--", path])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
+        Self::ensure_success(&out)?;
         Ok(out.stdout.is_empty())
     }
 
@@ -240,8 +228,7 @@ impl<E: GitExecutor> GitCliBackend<E> {
         ];
         let out = runner
             .run(&args)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
         // `--no-index` exits 0 (identical) or 1 (differ). Anything else (e.g.
         // the path no longer exists / belongs to another repo) is treated as
         // "no diff" rather than a hard error — this is a best-effort fallback.
@@ -275,14 +262,8 @@ impl<E: GitExecutor> GitCliBackend<E> {
         ];
         let out = runner
             .run(&args)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !out.success {
-            return Err(GitError::CommandFailed {
-                exit_code: out.exit_code.unwrap_or(-1),
-                stderr: out.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&out)?;
         Ok(out.stdout)
     }
 
@@ -295,14 +276,8 @@ impl<E: GitExecutor> GitCliBackend<E> {
     ) -> Result<String, GitError> {
         let rev = runner
             .run(&["rev-list", "--parents", "-n", "1", sha])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !rev.success {
-            return Err(GitError::CommandFailed {
-                exit_code: rev.exit_code.unwrap_or(-1),
-                stderr: rev.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&rev)?;
         Ok(rev
             .stdout
             .split_whitespace()
@@ -329,8 +304,7 @@ impl<E: GitExecutor> GitCliBackend<E> {
     ) -> Result<Option<String>, GitError> {
         let rev = runner
             .run(&["rev-list", "--parents", "-n", "1", sha])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
         if !rev.success {
             return Ok(None);
         }
@@ -342,13 +316,31 @@ impl<E: GitExecutor> GitCliBackend<E> {
 
         let list = runner
             .run(&["stash", "list", "--format=%H"])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
         if !list.success {
             return Ok(None);
         }
         let is_stash = list.stdout.lines().any(|l| l.trim() == sha);
         Ok(is_stash.then_some(untracked))
+    }
+
+    /// Run `diff-tree <DIFF_TREE_FLAGS> <kind> <from> <to>` and return its
+    /// stdout - the one primitive behind `commit_files` and `diff_files`.
+    async fn diff_tree(&self, from: &str, to: &str, kind: &str) -> Result<String, GitError> {
+        let mut args = vec!["diff-tree"];
+        args.extend_from_slice(&parsers::commit_files::DIFF_TREE_FLAGS);
+        args.push(kind);
+        args.push(from);
+        args.push(to);
+        self.run_checked(&args).await
+    }
+
+    /// Whether `sha` is an entry in `git stash list`. The 3-parent commit
+    /// shape alone is ambiguous (an octopus merge has it too), so stash
+    /// handling must confirm membership.
+    async fn is_stash_commit(&self, sha: &str) -> Result<bool, GitError> {
+        let list = self.run_checked(&["stash", "list", "--format=%H"]).await?;
+        Ok(list.lines().any(|l| l.trim() == sha))
     }
 
     /// Which diff a working-tree operation reads from: staging/discarding act on
@@ -371,14 +363,8 @@ impl<E: GitExecutor> GitCliBackend<E> {
         let runner = self.runner().await;
         let output = runner
             .run_with_stdin(args, patch)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !output.success {
-            return Err(GitError::CommandFailed {
-                exit_code: output.exit_code.unwrap_or(-1),
-                stderr: output.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&output)?;
         Ok(())
     }
 
@@ -395,8 +381,7 @@ impl<E: GitExecutor> GitCliBackend<E> {
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let output = runner
             .run_with_op_progress(&arg_refs, op_id)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
         if !output.success {
             return Err(classify_remote_error(
                 output.exit_code.unwrap_or(-1),
@@ -406,8 +391,6 @@ impl<E: GitExecutor> GitCliBackend<E> {
         Ok(())
     }
 
-    /// Run a non-network git invocation and map a non-zero exit to
-    /// `CommandFailed` (used by the remote-management mutations).
     /// Run args and return (exit_code, stdout, stderr) with 0 for success:
     /// the classifier-friendly shape for merge/rebase commands, whose non-zero
     /// exits may still be successful *outcomes* (conflicts).
@@ -415,8 +398,7 @@ impl<E: GitExecutor> GitCliBackend<E> {
         let runner = self.runner().await;
         let out = runner
             .run(args)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
         let code = if out.success { 0 } else { out.exit_code.unwrap_or(-1) };
         Ok((code, out.stdout, out.stderr))
     }
@@ -431,25 +413,38 @@ impl<E: GitExecutor> GitCliBackend<E> {
         let runner = self.runner().await;
         let out = runner
             .run_with_env(args, extra_env)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
         let code = if out.success { 0 } else { out.exit_code.unwrap_or(-1) };
         Ok((code, out.stdout, out.stderr))
     }
 
+    /// Run args and map a non-zero exit to `CommandFailed`, discarding output.
     async fn run_simple(&self, args: &[&str]) -> Result<(), GitError> {
+        self.run_checked(args).await.map(|_| ())
+    }
+
+    /// Run args, map a non-zero exit to `CommandFailed`, and return stdout on
+    /// success - the read-path counterpart to `run_simple`.
+    async fn run_checked(&self, args: &[&str]) -> Result<String, GitError> {
         let runner = self.runner().await;
-        let output = runner
-            .run(args)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !output.success {
-            return Err(GitError::CommandFailed {
+        let output = runner.run(args).await?;
+        Self::ensure_success(&output)?;
+        Ok(output.stdout)
+    }
+
+    /// Map a non-zero exit to `CommandFailed` - the single place this variant
+    /// is built for unclassified failures, so exit-code/stderr handling cannot
+    /// drift between methods. Flows that classify non-zero exits as outcomes
+    /// (merge, rebase, stash apply) go through `run_classified` instead.
+    fn ensure_success(output: &crate::runner::RunOutput) -> Result<(), GitError> {
+        if output.success {
+            Ok(())
+        } else {
+            Err(GitError::CommandFailed {
                 exit_code: output.exit_code.unwrap_or(-1),
-                stderr: output.stderr,
-            });
+                stderr: output.stderr.clone(),
+            })
         }
-        Ok(())
     }
 
     /// Run a `git diff [--cached] --check` invocation and parse the flagged
@@ -542,18 +537,21 @@ impl<E: GitExecutor> GitCliBackend<E> {
                 }
             }
             SwitchDirtyBehavior::AutoStash | SwitchDirtyBehavior::StashAndKeep => {
-                // Stash inside the submodule, verified by tip comparison
-                // (never by exit code: `stash push` exits 0 on a clean tree).
-                let stash_tip = |o: Option<crate::runner::RunOutput>| -> Option<String> {
+                // Stash inside the submodule, verified by a marker-matched
+                // stash-list diff (never by exit code: `stash push` exits 0
+                // on a clean tree; never by the tip alone: a concurrently
+                // created entry must not be adopted and later popped).
+                const SUB_MARKER: &str = "legit: auto-stash before submodule update";
+                let sub_list = |o: Option<crate::runner::RunOutput>| -> String {
                     match o {
-                        Some(out) if out.success => Some(out.stdout.trim().to_string()),
-                        _ => None,
+                        Some(out) if out.success => out.stdout,
+                        _ => String::new(),
                     }
                 };
                 let runner = self.runner().await;
-                let before = stash_tip(
+                let before = sub_list(
                     runner
-                        .run(&["-C", &p, "rev-parse", "-q", "--verify", "refs/stash"])
+                        .run(&["-C", &p, "stash", "list", "--format=%H %s"])
                         .await
                         .ok(),
                 );
@@ -566,21 +564,21 @@ impl<E: GitExecutor> GitCliBackend<E> {
                         "push",
                         "--include-untracked",
                         "-m",
-                        "legit: auto-stash before submodule update",
+                        SUB_MARKER,
                     ])
                     .await
                 {
                     return skip(format!("could not stash local changes: {e}"));
                 }
                 let runner = self.runner().await;
-                let after = stash_tip(
+                let after = sub_list(
                     runner
-                        .run(&["-C", &p, "rev-parse", "-q", "--verify", "refs/stash"])
+                        .run(&["-C", &p, "stash", "list", "--format=%H %s"])
                         .await
                         .ok(),
                 );
                 drop(runner);
-                let Some(stash_sha) = stash_created(before.as_deref(), after.as_deref()) else {
+                let Some(stash_sha) = find_created_stash(&before, &after, SUB_MARKER) else {
                     // Race: tree turned out clean - just move.
                     return match self.move_submodule(&p, mv, op_id).await {
                         Ok(()) => SubmoduleAutoUpdateStatus::Updated,
@@ -644,14 +642,8 @@ impl<E: GitExecutor> GitCliBackend<E> {
         let runner = self.runner().await;
         let list = runner
             .run(&["-C", p, "stash", "list", "--format=%H %gd"])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !list.success {
-            return Err(GitError::CommandFailed {
-                exit_code: list.exit_code.unwrap_or(-1),
-                stderr: list.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&list)?;
         let Some(selector) = find_stash_selector(&list.stdout, stash_sha) else {
             return Err(GitError::Internal(format!(
                 "auto-stash {stash_sha} vanished from the submodule stash list"
@@ -676,14 +668,8 @@ impl<E: GitExecutor> GitCliBackend<E> {
         let runner = self.runner().await;
         let out = runner
             .run(&["rev-parse", "--absolute-git-dir"])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !out.success {
-            return Err(GitError::CommandFailed {
-                exit_code: out.exit_code.unwrap_or(-1),
-                stderr: out.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&out)?;
         let gitdir = PathBuf::from(out.stdout.trim()).join("modules").join(name_path);
         Ok(gitdir.is_dir().then_some(gitdir))
     }
@@ -696,13 +682,12 @@ impl<E: GitExecutor> GitCliBackend<E> {
         let runner = self.runner().await;
         let output = runner
             .run(args)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
         if output.success {
             return Ok(StashApplyOutcome::Clean);
         }
-        let combined = format!("{}\n{}", output.stdout, output.stderr);
-        if combined.to_lowercase().contains("conflict") {
+        if stash_apply_left_conflicts(&output.stdout, &output.stderr) {
+            let combined = format!("{}\n{}", output.stdout, output.stderr);
             Ok(StashApplyOutcome::Conflicts {
                 message: combined.trim().to_string(),
             })
@@ -725,14 +710,8 @@ impl<E: GitExecutor> GitCliBackend<E> {
         let runner = self.runner().await;
         let output = runner
             .run(&["stash", "list", "--format=%H %gd"])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !output.success {
-            return Err(GitError::CommandFailed {
-                exit_code: output.exit_code.unwrap_or(-1),
-                stderr: output.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&output)?;
         find_stash_selector(&output.stdout, stash_sha).ok_or_else(|| {
             GitError::RefNotFound(format!(
                 "{stash_sha} is not (or no longer) a stash entry — the stash list may have changed"
@@ -740,11 +719,6 @@ impl<E: GitExecutor> GitCliBackend<E> {
         })
     }
 
-    /// The current `refs/stash` tip, or `None` when there are no stash entries.
-    /// This is how the auto-stash logic decides whether a `stash push` actually
-    /// created an entry: `git stash push` exits **0** with "No local changes to
-    /// save" (on stdout) for a clean tree, so neither the exit code nor stderr
-    /// can tell — only a changed stash tip can.
     /// The revision that actually holds `path`'s content for a per-file
     /// restore/apply: `rev` itself, or - when the path is absent there and
     /// `rev` is an untracked-bearing stash - the stash's third parent
@@ -762,8 +736,7 @@ impl<E: GitExecutor> GitCliBackend<E> {
         let spec = format!("{rev}:{}", path.to_string_lossy());
         let in_rev = runner
             .run(&["rev-parse", "-q", "--verify", &spec])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
         if in_rev.success {
             return Ok(rev.to_string());
         }
@@ -771,8 +744,7 @@ impl<E: GitExecutor> GitCliBackend<E> {
             let u_spec = format!("{untracked}:{}", path.to_string_lossy());
             let in_untracked = runner
                 .run(&["rev-parse", "-q", "--verify", &u_spec])
-                .await
-                .map_err(|e| GitError::Internal(e.to_string()))?;
+                .await?;
             if in_untracked.success {
                 return Ok(untracked);
             }
@@ -793,12 +765,18 @@ impl<E: GitExecutor> GitCliBackend<E> {
         Ok(stdout.trim().to_string())
     }
 
+    /// The current `refs/stash` tip, or `None` when there are no stash entries.
+    /// This is how `create_stash`/`create_stash_paths` decide whether a
+    /// `stash push` actually created an entry: `git stash push` exits **0**
+    /// with "No local changes to save" (on stdout) for a clean tree, so
+    /// neither the exit code nor stderr can tell — only a changed stash tip
+    /// can. (Flows that go on to POP the created entry use the stronger
+    /// `find_created_stash` list-diff instead.)
     async fn stash_tip(&self) -> Result<Option<String>, GitError> {
         let runner = self.runner().await;
         let output = runner
             .run(&["rev-parse", "-q", "--verify", "refs/stash"])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
         if output.success {
             Ok(Some(output.stdout.trim().to_string()))
         } else {
@@ -821,8 +799,7 @@ impl<E: GitExecutor> GitCliBackend<E> {
         let runner = self.runner().await;
         let output = runner
             .run(args)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
         if !output.success {
             return Err(classify_switch_error(
                 output.exit_code.unwrap_or(-1),
@@ -837,12 +814,14 @@ impl<E: GitExecutor> GitCliBackend<E> {
     /// `git` itself, e.g. `&["switch", "main"]` or `&["switch", "--detach", "abc123"]`.
     ///
     /// With `AutoStash` / `StashAndKeep`, "did we actually stash" is detected
-    /// by comparing the `refs/stash` tip before and after the push (see
-    /// `stash_tip`), and the created entry is addressed *by its SHA* — never a
-    /// bare `stash pop`, which would pop an unrelated pre-existing stash when
-    /// nothing was auto-stashed or when the list shifted in between. The two
-    /// modes differ only after a successful switch: `AutoStash` pops the entry
-    /// (changes travel along), `StashAndKeep` leaves it parked.
+    /// by diffing the full stash list before and after the push and matching
+    /// the marker message (see `find_created_stash` - the tip alone cannot
+    /// tell our entry from one created concurrently), and the created entry
+    /// is addressed *by its SHA* — never a bare `stash pop`, which would pop
+    /// an unrelated pre-existing stash when nothing was auto-stashed or when
+    /// the list shifted in between. The two modes differ only after a
+    /// successful switch: `AutoStash` pops the entry (changes travel along),
+    /// `StashAndKeep` leaves it parked.
     async fn run_with_auto_stash(
         &self,
         behavior: SwitchDirtyBehavior,
@@ -855,12 +834,12 @@ impl<E: GitExecutor> GitCliBackend<E> {
 
         let target = switch_args.last().copied().unwrap_or("?");
         let msg = format!("legit: auto-stash before switching to {}", target);
-        let tip_before = self.stash_tip().await?;
+        let list_before = self.run_checked(STASH_LIST_SUBJECT_ARGS).await?;
         self.run_simple(&["stash", "push", "--include-untracked", "-m", &msg])
             .await?;
-        let tip_after = self.stash_tip().await?;
+        let list_after = self.run_checked(STASH_LIST_SUBJECT_ARGS).await?;
         // The SHA of the entry *we* created; `None` when the tree was clean.
-        let created = stash_created(tip_before.as_deref(), tip_after.as_deref());
+        let created = find_created_stash(&list_before, &list_after, &msg);
 
         if let Err(switch_err) = self.run_switch(switch_args).await {
             // Roll back: restore the auto-stash onto the original branch. It
@@ -987,15 +966,9 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
 
         let output = runner
             .run(&args)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
 
-        if !output.success {
-            return Err(GitError::CommandFailed {
-                exit_code: output.exit_code.unwrap_or(-1),
-                stderr: output.stderr,
-            });
-        }
+        Self::ensure_success(&output)?;
 
         let mut commits = parsers::log::parse_log(&output.stdout).map_err(GitError::from)?;
 
@@ -1016,15 +989,9 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
 
         let cat_output = runner
             .run(&["cat-file", "-p", id.as_str()])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
 
-        if !cat_output.success {
-            return Err(GitError::CommandFailed {
-                exit_code: cat_output.exit_code.unwrap_or(-1),
-                stderr: cat_output.stderr,
-            });
-        }
+        Self::ensure_success(&cat_output)?;
 
         let mut parsed =
             parsers::commit::parse_cat_file(id.as_str(), &cat_output.stdout)
@@ -1033,8 +1000,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         if parsed.has_signature_header {
             let verify_output = runner
                 .run(&["verify-commit", "--raw", id.as_str()])
-                .await
-                .map_err(|e| GitError::Internal(e.to_string()))?;
+                .await?;
             // verify-commit exits non-zero for bad/unknown sigs — that's still
             // useful data, so we parse stderr regardless of exit code.
             let verification =
@@ -1049,53 +1015,37 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
     }
 
     async fn commit_files(&self, id: &CommitId) -> Result<Vec<CommitFileChange>, GitError> {
-        let runner = self.runner().await;
-
-        // Resolve the first parent. `rev-list --parents -n 1 <sha>` prints
+        // Resolve the parents ONCE. `rev-list --parents -n 1 <sha>` prints
         // `<sha> <parent1> <parent2> …`; a root commit prints only `<sha>`, so
         // we diff against the empty tree. Using an explicit `<from> <to>` pair
         // (rather than a bare commit) makes the diff first-parent for merges
-        // and avoids diff-tree's empty default output for merge commits.
-        let from = self.first_parent(&runner, id.as_str()).await?;
-        let to = id.as_str().to_string();
+        // and avoids diff-tree's empty default output for merge commits. The
+        // 4th token, when present, is a potential stash untracked-files parent.
+        let parents = self
+            .run_checked(&["rev-list", "--parents", "-n", "1", id.as_str()])
+            .await?;
+        let from = parents
+            .split_whitespace()
+            .nth(1)
+            .unwrap_or(EMPTY_TREE_OID)
+            .to_string();
+        let untracked_candidate = parents.split_whitespace().nth(3).map(str::to_string);
+        let to = id.as_str();
 
-        let flags = parsers::commit_files::DIFF_TREE_FLAGS;
-
-        // diff-tree <from> <to> for a given output kind (--name-status / --numstat).
-        let run_diff = |from: String, to: String, kind: &'static str| {
-            let runner = runner.clone();
-            async move {
-                let mut args = vec!["diff-tree"];
-                args.extend_from_slice(&flags);
-                args.push(kind);
-                args.push(&from);
-                args.push(&to);
-                let out = runner
-                    .run(&args)
-                    .await
-                    .map_err(|e| GitError::Internal(e.to_string()))?;
-                if !out.success {
-                    return Err(GitError::CommandFailed {
-                        exit_code: out.exit_code.unwrap_or(-1),
-                        stderr: out.stderr,
-                    });
-                }
-                Ok::<String, GitError>(out.stdout)
-            }
-        };
-
-        let mut raw = run_diff(from.clone(), to.clone(), "--raw").await?;
-        let mut numstat = run_diff(from, to.clone(), "--numstat").await?;
+        let mut raw = self.diff_tree(&from, to, "--raw").await?;
+        let mut numstat = self.diff_tree(&from, to, "--numstat").await?;
 
         // A stash created with --include-untracked keeps its untracked files in a
         // separate 3rd-parent commit, NOT in the stash commit's own tree — so the
         // diff above misses them entirely. Append them as additions (empty tree →
         // untracked parent) so the stash's full contents show. Ordinary commits
-        // and octopus merges have no untracked parent and are unaffected.
-        if let Some(untracked) = self.stash_untracked_parent(&runner, &to).await? {
-            let u_from = EMPTY_TREE_OID.to_string();
-            raw.push_str(&run_diff(u_from.clone(), untracked.clone(), "--raw").await?);
-            numstat.push_str(&run_diff(u_from, untracked, "--numstat").await?);
+        // are unaffected; a 3-parent octopus merge is filtered out by the
+        // stash-list membership check.
+        if let Some(untracked) = untracked_candidate {
+            if self.is_stash_commit(to).await? {
+                raw.push_str(&self.diff_tree(EMPTY_TREE_OID, &untracked, "--raw").await?);
+                numstat.push_str(&self.diff_tree(EMPTY_TREE_OID, &untracked, "--numstat").await?);
+            }
         }
 
         Ok(parsers::commit_files::parse_commit_files(&raw, &numstat))
@@ -1107,15 +1057,9 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
 
         let output = runner
             .run(&["for-each-ref", &fmt_arg, "refs/heads", "refs/remotes"])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
 
-        if !output.success {
-            return Err(GitError::CommandFailed {
-                exit_code: output.exit_code.unwrap_or(-1),
-                stderr: output.stderr,
-            });
-        }
+        Self::ensure_success(&output)?;
 
         Ok(parsers::branches::parse_branches(&output.stdout))
     }
@@ -1131,14 +1075,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         args.push(&path_str);
         let output = runner
             .run(&args)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !output.success {
-            return Err(GitError::CommandFailed {
-                exit_code: output.exit_code.unwrap_or(-1),
-                stderr: output.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&output)?;
         Ok(parsers::blame::parse_blame(&output.stdout))
     }
 
@@ -1146,8 +1084,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let runner = self.runner().await;
         let output = runner
             .run(&["merge-base", a, b])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
         // Exit 1 = no common ancestor (unrelated histories) - that is an
         // answer, not an error. Unknown revs etc. exit 128 and are errors.
         match output.exit_code {
@@ -1197,14 +1134,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
 
         let output = runner
             .run(&args)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !output.success {
-            return Err(GitError::CommandFailed {
-                exit_code: output.exit_code.unwrap_or(-1),
-                stderr: output.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&output)?;
         parsers::log::parse_log(&output.stdout).map_err(GitError::from)
     }
 
@@ -1212,14 +1143,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let runner = self.runner().await;
         let output = runner
             .run(&["ls-files", "-z"])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !output.success {
-            return Err(GitError::CommandFailed {
-                exit_code: output.exit_code.unwrap_or(-1),
-                stderr: output.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&output)?;
         Ok(filter_paths(&output.stdout, query, max_count as usize))
     }
 
@@ -1233,14 +1158,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             async move {
                 let out = runner
                     .run(args)
-                    .await
-                    .map_err(|e| GitError::Internal(e.to_string()))?;
-                if !out.success {
-                    return Err(GitError::CommandFailed {
-                        exit_code: out.exit_code.unwrap_or(-1),
-                        stderr: out.stderr,
-                    });
-                }
+                    .await?;
+                Self::ensure_success(&out)?;
                 Ok::<String, GitError>(out.stdout)
             }
         };
@@ -1259,33 +1178,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
     }
 
     async fn diff_files(&self, from: &str, to: &str) -> Result<Vec<CommitFileChange>, GitError> {
-        let runner = self.runner().await;
-        let flags = parsers::commit_files::DIFF_TREE_FLAGS;
-        let run_diff = |kind: &'static str| {
-            let runner = runner.clone();
-            let from = from.to_string();
-            let to = to.to_string();
-            async move {
-                let mut args = vec!["diff-tree"];
-                args.extend_from_slice(&flags);
-                args.push(kind);
-                args.push(&from);
-                args.push(&to);
-                let out = runner
-                    .run(&args)
-                    .await
-                    .map_err(|e| GitError::Internal(e.to_string()))?;
-                if !out.success {
-                    return Err(GitError::CommandFailed {
-                        exit_code: out.exit_code.unwrap_or(-1),
-                        stderr: out.stderr,
-                    });
-                }
-                Ok::<String, GitError>(out.stdout)
-            }
-        };
-        let raw = run_diff("--raw").await?;
-        let numstat = run_diff("--numstat").await?;
+        let raw = self.diff_tree(from, to, "--raw").await?;
+        let numstat = self.diff_tree(from, to, "--numstat").await?;
         Ok(parsers::commit_files::parse_commit_files(&raw, &numstat))
     }
 
@@ -1351,26 +1245,14 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let output = runner
             .run(&arg_refs)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !output.success {
-            return Err(GitError::CommandFailed {
-                exit_code: output.exit_code.unwrap_or(-1),
-                stderr: output.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&output)?;
 
         // Resolve the resulting commit id.
         let head = runner
             .run(&["rev-parse", "HEAD"])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !head.success {
-            return Err(GitError::CommandFailed {
-                exit_code: head.exit_code.unwrap_or(-1),
-                stderr: head.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&head)?;
         Ok(CommitId::new(head.stdout.trim().to_string()))
     }
 
@@ -1380,14 +1262,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         // v1 rewords HEAD only — resolve the tip and reject anything else.
         let head = runner
             .run(&["rev-parse", "HEAD"])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !head.success {
-            return Err(GitError::CommandFailed {
-                exit_code: head.exit_code.unwrap_or(-1),
-                stderr: head.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&head)?;
         if head.stdout.trim() != id.0 {
             return Err(GitError::RewordNotHead);
         }
@@ -1397,14 +1273,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         // remote-tracking ref; empty output means the commit is already pushed.
         let pushed = runner
             .run(&["rev-list", "-n", "1", &id.0, "--not", "--remotes"])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !pushed.success {
-            return Err(GitError::CommandFailed {
-                exit_code: pushed.exit_code.unwrap_or(-1),
-                stderr: pushed.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&pushed)?;
         if pushed.stdout.trim().is_empty() {
             return Err(GitError::RewordPushed);
         }
@@ -1413,26 +1283,14 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         // folding any staged changes, preserving the original author.
         let output = runner
             .run(&["commit", "--amend", "--only", "-m", message])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !output.success {
-            return Err(GitError::CommandFailed {
-                exit_code: output.exit_code.unwrap_or(-1),
-                stderr: output.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&output)?;
 
         // Resolve the rewritten commit's new id.
         let new_head = runner
             .run(&["rev-parse", "HEAD"])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !new_head.success {
-            return Err(GitError::CommandFailed {
-                exit_code: new_head.exit_code.unwrap_or(-1),
-                stderr: new_head.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&new_head)?;
         Ok(CommitId::new(new_head.stdout.trim().to_string()))
     }
 
@@ -1510,8 +1368,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let spec = format!("{rev}:{}", path.to_string_lossy());
         let output = runner
             .run(&["show", &spec])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
         if !output.success {
             return Err(GitError::CommandFailed {
                 exit_code: output.exit_code.unwrap_or(-1),
@@ -1526,8 +1383,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         // became a 3-byte U+FFFD), hence the explicit `cat-file -s`.
         let size = runner
             .run(&["cat-file", "-s", &spec])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
         if !size.success {
             return Err(GitError::CommandFailed {
                 exit_code: size.exit_code.unwrap_or(-1),
@@ -1583,8 +1439,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         args.push(&path_str);
         let output = runner
             .run(&args)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
         if !output.success {
             return Err(GitError::CommandFailed {
                 exit_code: output.exit_code.unwrap_or(-1),
@@ -1600,14 +1455,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
 
         let ls = runner
             .run(&sub::LS_FILES_STAGE_ARGS)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !ls.success {
-            return Err(GitError::CommandFailed {
-                exit_code: ls.exit_code.unwrap_or(-1),
-                stderr: ls.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&ls)?;
         let gitlinks = sub::parse_gitlinks(&ls.stdout);
 
         // Both config reads exit non-zero for "no matches / no file" - that
@@ -1695,14 +1544,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         };
         let out = runner
             .run(&["-C", &p, "log", sub::SUBMODULE_LOG_FORMAT, sub::SUBMODULE_LOG_MAX, &range])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !out.success {
-            return Err(GitError::CommandFailed {
-                exit_code: out.exit_code.unwrap_or(-1),
-                stderr: out.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&out)?;
         Ok(SubmoduleLog::Commits { commits: sub::parse_submodule_log(&out.stdout) })
     }
 
@@ -1765,14 +1608,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let runner = self.runner().await;
         let out = runner
             .run(&["rev-parse", "--show-superproject-working-tree"])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !out.success {
-            return Err(GitError::CommandFailed {
-                exit_code: out.exit_code.unwrap_or(-1),
-                stderr: out.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&out)?;
         let path = out.stdout.trim();
         Ok(if path.is_empty() { None } else { Some(PathBuf::from(path)) })
     }
@@ -1875,14 +1712,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let runner = self.runner().await;
         let status = runner
             .run(&parsers::status::STATUS_ARGS)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !status.success {
-            return Err(GitError::CommandFailed {
-                exit_code: status.exit_code.unwrap_or(-1),
-                stderr: status.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&status)?;
         let dirt = parsers::submodules::parse_status_submodule_flags(&status.stdout);
         if let Some(d) = dirt.get(path) {
             if d.dirty_tracked || d.dirty_untracked || d.conflicted {
@@ -1987,8 +1818,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         // Current branch (short). A detached HEAD makes symbolic-ref fail → None.
         let br = runner
             .run(&["symbolic-ref", "--quiet", "--short", "HEAD"])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
         if !br.success {
             return Ok(None);
         }
@@ -2005,8 +1835,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
                 "--symbolic-full-name",
                 "@{upstream}",
             ])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
         if !up.success {
             return Ok(None);
         }
@@ -2019,14 +1848,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let range = format!("{upstream}...HEAD");
         let counts = runner
             .run(&["rev-list", "--left-right", "--count", &range])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !counts.success {
-            return Err(GitError::CommandFailed {
-                exit_code: counts.exit_code.unwrap_or(-1),
-                stderr: counts.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&counts)?;
         let (behind, ahead) =
             parsers::tracking::parse_rev_list_counts(&counts.stdout).unwrap_or((0, 0));
 
@@ -2042,14 +1865,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let runner = self.runner().await;
         let output = runner
             .run(&parsers::remotes::REMOTE_LIST_ARGS)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !output.success {
-            return Err(GitError::CommandFailed {
-                exit_code: output.exit_code.unwrap_or(-1),
-                stderr: output.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&output)?;
         Ok(parsers::remotes::parse_remotes(&output.stdout))
     }
 
@@ -2108,8 +1925,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let runner = self.runner().await;
         let local_exists = runner
             .run(&["rev-parse", "-q", "--verify", &local_ref])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?
+            .await?
             .success;
         let args: &[&str] = if local_exists {
             &["switch", local]
@@ -2149,14 +1965,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let fmt_arg = format!("--format={}", parsers::tags::TAGS_FORMAT);
         let output = runner
             .run(&["for-each-ref", &fmt_arg, "refs/tags"])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !output.success {
-            return Err(GitError::CommandFailed {
-                exit_code: output.exit_code.unwrap_or(-1),
-                stderr: output.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&output)?;
         let mut tags = parsers::tags::parse_tags(&output.stdout);
         if !tags.is_empty() {
             // Mark tags whose target commit is not reachable from any
@@ -2219,8 +2029,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let runner = self.runner().await;
         let output = runner
             .run_with_op(&["ls-remote", "--tags", remote], op_id)
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
         if !output.success {
             return Err(classify_remote_error(
                 output.exit_code.unwrap_or(-1),
@@ -2236,15 +2045,9 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
 
         let output = runner
             .run(&["stash", "list", &fmt_arg])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
+            .await?;
 
-        if !output.success {
-            return Err(GitError::CommandFailed {
-                exit_code: output.exit_code.unwrap_or(-1),
-                stderr: output.stderr,
-            });
-        }
+        Self::ensure_success(&output)?;
 
         Ok(parsers::stash::parse_stashes(&output.stdout))
     }
@@ -2443,8 +2246,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             let spec = format!(":{stage}:{}", path.to_string_lossy());
             let output = runner
                 .run(&["show", &spec])
-                .await
-                .map_err(|e| GitError::Internal(e.to_string()))?;
+                .await?;
             if output.success {
                 sides[i] = Some(output.stdout);
             }
@@ -2534,14 +2336,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let count_arg = format!("-n{max_count}");
         let output = runner
             .run(&["reflog", &count_arg, &fmt_arg])
-            .await
-            .map_err(|e| GitError::Internal(e.to_string()))?;
-        if !output.success {
-            return Err(GitError::CommandFailed {
-                exit_code: output.exit_code.unwrap_or(-1),
-                stderr: output.stderr,
-            });
-        }
+            .await?;
+        Self::ensure_success(&output)?;
         Ok(parsers::reflog::parse_reflog(&output.stdout))
     }
 
@@ -2888,6 +2684,37 @@ fn classify_repo_files(cached: &str, others: &str, ignored: &str) -> Vec<RepoFil
     entries
 }
 
+/// Whether a file's bytes hold MIXED (CRLF + bare-LF) line endings:
+/// `Some(true)` mixed, `Some(false)` uniform (incl. no newlines at all),
+/// `None` binary (NUL in the leading 512 bytes - git's heuristic). The LF of
+/// a CRLF pair never counts as a bare LF, and old-Mac lone CRs count as
+/// neither. Pure sibling of `classify_line_endings`; backs the
+/// mixed-endings warning.
+pub fn mixed_endings_in_bytes(bytes: &[u8]) -> Option<bool> {
+    let probe = &bytes[..bytes.len().min(512)];
+    if probe.contains(&0u8) {
+        return None;
+    }
+    let mut has_crlf = false;
+    let mut has_lf_only = false;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'\r' && i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
+            has_crlf = true;
+            i += 2;
+        } else if bytes[i] == b'\n' {
+            has_lf_only = true;
+            i += 1;
+        } else {
+            i += 1;
+        }
+        if has_crlf && has_lf_only {
+            return Some(true);
+        }
+    }
+    Some(false)
+}
+
 /// Classify the line-ending style of some text (the Diff/File View/Blame
 /// indicator). Binary is detected by a NUL byte in the leading window (git's
 /// heuristic). Pure so it's unit-tested. Backs `repo_line_ending_kind`.
@@ -2943,6 +2770,36 @@ fn filter_paths(ls_files_stdout: &str, query: &str, max: usize) -> Vec<PathBuf> 
 /// created entry's SHA. In particular, an unchanged tip with a pre-existing
 /// stash must return `None`, or a later restore would touch the user's own
 /// stash.
+/// The SHA of the entry OUR just-run `stash push -m <marker>` created, or
+/// `None` when the tree was clean. Diffs the full stash list (`--format=%H %s`
+/// stdout, newest first) instead of the tip, and requires the new entry's
+/// subject to carry our marker message: an entry created concurrently by
+/// another process must never be adopted as ours - the auto-stash flows POP
+/// or DROP the detected entry, so adopting a foreign one moves someone
+/// else's data. Tip-compare (`stash_created`) remains correct where only
+/// "did anything get stashed" is needed and nothing is popped.
+/// The list format `find_created_stash` consumes: one entry per line,
+/// `<sha> <subject>`, newest first (kept next to its parser per convention).
+const STASH_LIST_SUBJECT_ARGS: &[&str] = &["stash", "list", "--format=%H %s"];
+
+fn find_created_stash(before_list: &str, after_list: &str, marker: &str) -> Option<String> {
+    let before: std::collections::HashSet<&str> = before_list
+        .lines()
+        .filter_map(|l| l.trim().split(' ').next())
+        .filter(|s| !s.is_empty())
+        .collect();
+    for line in after_list.lines() {
+        let line = line.trim();
+        let Some((sha, subject)) = line.split_once(' ') else {
+            continue;
+        };
+        if !before.contains(sha) && subject.contains(marker) {
+            return Some(sha.to_string());
+        }
+    }
+    None
+}
+
 fn stash_created(tip_before: Option<&str>, tip_after: Option<&str>) -> Option<String> {
     match tip_after {
         Some(after) if tip_before != Some(after) => Some(after.to_string()),
@@ -3058,6 +2915,21 @@ fn compose_output(stdout: &str, stderr: &str) -> String {
         msg.push_str(err);
     }
     msg
+}
+
+/// True when a failed `stash apply`/`pop` indicates the stash WAS applied but
+/// left conflicts (git keeps the entry; guidance is "resolve, then drop"), as
+/// opposed to a failure where nothing was applied at all. Keyed to git's
+/// actual phrases - the merge machinery's `CONFLICT (...)` lines, the index
+/// `needs merge` state, and the untracked-collision message. A bare token
+/// match ("conflict") would misfire on pathnames and on would-be-overwritten
+/// failures. Encoded in tests, validated against the real binary in
+/// `git_flows.rs`.
+fn stash_apply_left_conflicts(stdout: &str, stderr: &str) -> bool {
+    let combined = format!("{stdout}\n{stderr}");
+    combined.contains("CONFLICT (")
+        || combined.contains("needs merge")
+        || combined.contains("could not restore untracked files from stash")
 }
 
 /// Split `git merge`'s exit-1 ambiguity: conflicts are an OUTCOME (merge in
@@ -3340,6 +3212,198 @@ mod tests {
     #[test]
     fn stash_created_dirty_tree_with_prior_stash() {
         assert_eq!(stash_created(Some("old"), Some("new")), Some("new".into()));
+    }
+
+    // --- auto-stash: which entry did OUR push create? ------------------------
+    // Set-diff over the full stash list plus a marker-message match, so an
+    // entry created concurrently by another process is never adopted (and
+    // later popped/dropped) as ours - the tip alone cannot tell them apart.
+
+    const MARKER: &str = "legit: auto-stash before switching to feature";
+
+    #[test]
+    fn find_created_stash_clean_tree_is_none() {
+        let list = "aaa On main: WIP\n";
+        assert_eq!(find_created_stash(list, list, MARKER), None);
+    }
+
+    #[test]
+    fn find_created_stash_picks_the_new_marker_entry() {
+        let before = "aaa On main: WIP\n";
+        let after = format!("bbb On main: {MARKER}\naaa On main: WIP\n");
+        assert_eq!(find_created_stash(before, &after, MARKER), Some("bbb".into()));
+    }
+
+    #[test]
+    fn find_created_stash_ignores_a_concurrent_foreign_entry() {
+        // Another process stashed between our push and the list read: its
+        // entry is the tip, ours sits below. Tip-compare would adopt "ccc"
+        // and pop someone else's stash; the marker match must pick "bbb".
+        let before = "aaa On main: WIP\n";
+        let after = format!("ccc On main: WIP other\nbbb On main: {MARKER}\naaa On main: WIP\n");
+        assert_eq!(find_created_stash(before, &after, MARKER), Some("bbb".into()));
+    }
+
+    #[test]
+    fn find_created_stash_foreign_entry_only_is_none() {
+        // Clean tree for US (push saved nothing), but a foreign stash
+        // appeared concurrently: nothing of ours to pop.
+        let before = "aaa On main: WIP\n";
+        let after = "ccc On main: WIP other\naaa On main: WIP\n";
+        assert_eq!(find_created_stash(before, after, MARKER), None);
+    }
+
+    #[test]
+    fn find_created_stash_pre_existing_marker_entry_is_not_adopted() {
+        // A leftover auto-stash from an earlier crash carries the marker but
+        // predates our push: it is in `before`, so it must not be adopted.
+        let list = format!("bbb On main: {MARKER}\naaa On main: WIP\n");
+        assert_eq!(find_created_stash(&list, &list, MARKER), None);
+    }
+
+    #[test]
+    fn find_created_stash_empty_before_list() {
+        let after = format!("bbb On main: {MARKER}\n");
+        assert_eq!(find_created_stash("", &after, MARKER), Some("bbb".into()));
+    }
+
+    // --- sequencer (cherry-pick / revert) output classification --------------
+    // The exit-1 ambiguity: a paused sequencer (conflicts) is an OUTCOME, a
+    // bad revision or dirty tree is an error. Same treatment as the tested
+    // merge/rebase siblings.
+
+    #[test]
+    fn sequence_exit_zero_is_completed() {
+        let r = classify_sequence_output(0, "[main abc] applied\n", "");
+        assert_eq!(r.unwrap(), SequenceOutcome::Completed);
+    }
+
+    #[test]
+    fn sequence_conflict_phrases_are_the_conflicts_outcome() {
+        for stderr in [
+            "error: could not apply abc123... subject",
+            "error: could not revert abc123... subject",
+            "CONFLICT (content): Merge conflict in a.txt",
+            "error: you have unmerged files",
+            "The previous cherry-pick is now empty, possibly due to conflict resolution.",
+        ] {
+            let r = classify_sequence_output(1, "", stderr);
+            assert!(
+                matches!(r, Ok(SequenceOutcome::Conflicts { .. })),
+                "{stderr:?} -> {r:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sequence_overwrite_and_bad_rev_classify_as_errors() {
+        let r = classify_sequence_output(
+            1,
+            "",
+            "error: Your local changes to the following files would be overwritten by merge:",
+        );
+        assert!(matches!(r, Err(GitError::WouldOverwriteLocalChanges(_))), "{r:?}");
+        let r = classify_sequence_output(128, "", "fatal: bad revision 'nope'");
+        assert!(matches!(r, Err(GitError::RefNotFound(_))), "{r:?}");
+        let r = classify_sequence_output(128, "", "fatal: something else entirely");
+        assert!(matches!(r, Err(GitError::CommandFailed { exit_code: 128, .. })), "{r:?}");
+    }
+
+    // --- interactive rebase todo validation ----------------------------------
+
+    #[test]
+    fn rebase_todo_renders_keywords_in_order() {
+        let plan = vec![
+            RebaseStep::Pick { sha: CommitId::new("aaa111") },
+            RebaseStep::Squash { sha: CommitId::new("bbb222") },
+            RebaseStep::Fixup { sha: CommitId::new("ccc333") },
+            RebaseStep::Drop { sha: CommitId::new("ddd444") },
+        ];
+        let todo = build_rebase_todo(&plan).unwrap();
+        // LITERAL backslash-n separators, not newlines: the todo is injected
+        // through `GIT_SEQUENCE_EDITOR="printf '%s' ... >"`-style shell
+        // expansion, where printf expands the \n escapes into real newlines.
+        assert_eq!(todo, r"pick aaa111\nsquash bbb222\nfixup ccc333\ndrop ddd444\n");
+    }
+
+    #[test]
+    fn rebase_todo_rejects_bad_plans() {
+        assert!(build_rebase_todo(&[]).is_err(), "empty plan");
+        assert!(
+            build_rebase_todo(&[RebaseStep::Squash { sha: CommitId::new("aaa111") }]).is_err(),
+            "leading squash has nothing to meld into"
+        );
+        // A leading DROP does not count as the first kept step.
+        assert!(
+            build_rebase_todo(&[
+                RebaseStep::Drop { sha: CommitId::new("aaa111") },
+                RebaseStep::Fixup { sha: CommitId::new("bbb222") },
+            ])
+            .is_err(),
+            "fixup after only drops still has nothing to meld into"
+        );
+        assert!(
+            build_rebase_todo(&[RebaseStep::Pick { sha: CommitId::new("not-hex!") }]).is_err(),
+            "non-hex sha must be rejected (it would be injected into the todo file)"
+        );
+    }
+
+    // --- stash apply/pop: conflict vs plain failure --------------------------
+
+    #[test]
+    fn stash_apply_conflict_marker_lines_classify_as_conflicts() {
+        assert!(stash_apply_left_conflicts(
+            "Auto-merging a.txt\nCONFLICT (content): Merge conflict in a.txt\n",
+            ""
+        ));
+        assert!(stash_apply_left_conflicts("", "a.txt: needs merge\n"));
+        assert!(stash_apply_left_conflicts(
+            "",
+            "error: could not restore untracked files from stash\n"
+        ));
+    }
+
+    #[test]
+    fn stash_apply_conflicty_pathname_is_not_a_conflict() {
+        // "conflict" appearing only inside a pathname (or the would-be-
+        // overwritten failure, where NOTHING was applied) must stay an error:
+        // the guidance for real conflicts is "resolve, then drop", which
+        // would be wrong here.
+        assert!(!stash_apply_left_conflicts(
+            "",
+            "error: Your local changes to the following files would be overwritten by merge:\n\tconflicts.md\nPlease commit your changes or stash them before you merge.\n"
+        ));
+        assert!(!stash_apply_left_conflicts("", "fatal: ambiguous argument 'stash@{9}'\n"));
+    }
+
+    // --- mixed line-ending detection ------------------------------------------
+
+    #[test]
+    fn mixed_endings_pure_and_mixed() {
+        assert_eq!(mixed_endings_in_bytes(b"a\r\nb\r\n"), Some(false));
+        assert_eq!(mixed_endings_in_bytes(b"a\nb\n"), Some(false));
+        assert_eq!(mixed_endings_in_bytes(b"a\r\nb\n"), Some(true));
+        assert_eq!(mixed_endings_in_bytes(b""), Some(false));
+        assert_eq!(mixed_endings_in_bytes(b"no newline at all"), Some(false));
+    }
+
+    #[test]
+    fn mixed_endings_lone_cr_is_not_lf() {
+        // Old-Mac CR endings are neither CRLF nor LF: a CR+LF file mix still
+        // reports mixed, but CR alone does not create a false LF sighting.
+        assert_eq!(mixed_endings_in_bytes(b"a\rb\r"), Some(false));
+        assert_eq!(mixed_endings_in_bytes(b"a\r\nb\rc\r\n"), Some(false));
+    }
+
+    #[test]
+    fn mixed_endings_binary_is_none() {
+        assert_eq!(mixed_endings_in_bytes(b"ab\0cd\r\nx\n"), None);
+    }
+
+    #[test]
+    fn mixed_endings_crlf_never_counts_as_lf() {
+        // The LF in a CRLF pair must not read as a bare LF.
+        assert_eq!(mixed_endings_in_bytes(b"\r\n\r\n\r\n"), Some(false));
     }
 
     // --- line-ending classification -----------------------------------------

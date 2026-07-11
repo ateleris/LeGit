@@ -110,10 +110,11 @@ impl RepoWatcher {
         let ignore = build_ignore(&worktree);
         let worktree_cb = worktree.clone();
         let git_dir_cb = git_dir.clone();
-        // (size, mtime) per git-dir path, kept across batches: an event whose
-        // file is byte-identical since last time (AV/sync-client attribute or
-        // stream write-backs) is dropped instead of refetching. Bounded by the
-        // number of distinct git-dir paths ever seen (roughly the ref count).
+        // (size, mtime) per DOMAIN-RELEVANT git-dir path, kept across batches:
+        // an event whose file is byte-identical since last time (AV/sync-client
+        // attribute or stream write-backs) is dropped instead of refetching.
+        // Only paths that classify to a domain enter the map (see
+        // `path_contribution`), so it is bounded by roughly the ref count.
         let mut seen: HashMap<PathBuf, Option<Fingerprint>> = HashMap::new();
 
         let mut debouncer = new_debouncer(
@@ -141,16 +142,14 @@ impl RepoWatcher {
                         continue;
                     }
                     for path in &ev.event.paths {
-                        // Git-dir files: skip unless the content fingerprint
-                        // moved. Also dedupes repeat events for one path, so
-                        // trigger_count counts distinct git-dir paths.
-                        if path.starts_with(&git_dir_cb)
-                            && !fingerprint_changed(&mut seen, path, stat_fingerprint(path))
-                        {
-                            continue;
-                        }
-                        let mut path_domains: BTreeSet<ChangeDomain> = BTreeSet::new();
-                        classify(path, &worktree_cb, &git_dir_cb, &ignore, &mut path_domains);
+                        let path_domains = path_contribution(
+                            path,
+                            &worktree_cb,
+                            &git_dir_cb,
+                            &ignore,
+                            &mut seen,
+                            stat_fingerprint,
+                        );
                         if path_domains.is_empty() {
                             continue;
                         }
@@ -361,6 +360,36 @@ fn stat_fingerprint(path: &Path) -> Option<Fingerprint> {
         .map(|m| (m.len(), m.modified().ok()))
 }
 
+/// One batch path's contribution to the emitted domains: classify FIRST, and
+/// only for paths that resolve to a domain apply the git-dir fingerprint
+/// gate. The ordering is load-bearing: the `seen` map lives for the whole
+/// session, and loose objects / `logs/` / lockfiles classify to no domain -
+/// fingerprinting them before classifying grew the map without bound (one
+/// entry per object ever written) and paid a stat per irrelevant path. The
+/// "bounded by roughly the ref count" property only holds post-classify.
+/// `fingerprint` is injected so the decision is testable without a
+/// filesystem.
+fn path_contribution(
+    path: &Path,
+    worktree: &Path,
+    git_dir: &Path,
+    ignore: &Gitignore,
+    seen: &mut HashMap<PathBuf, Option<Fingerprint>>,
+    fingerprint: impl Fn(&Path) -> Option<Fingerprint>,
+) -> BTreeSet<ChangeDomain> {
+    let mut path_domains = BTreeSet::new();
+    classify(path, worktree, git_dir, ignore, &mut path_domains);
+    if path_domains.is_empty() {
+        return path_domains;
+    }
+    // Git-dir files: suppress unless the content fingerprint moved (dedupes
+    // AV/sync-client attribute write-backs and repeat events for one path).
+    if path.starts_with(git_dir) && !fingerprint_changed(seen, path, fingerprint(path)) {
+        path_domains.clear();
+    }
+    path_domains
+}
+
 /// Record `current` for `path` and report whether it differs from the last
 /// batch. First sighting counts as changed (there is nothing to dedupe
 /// against), so a fresh watcher never swallows a real event.
@@ -409,6 +438,66 @@ mod tests {
         let mut out = BTreeSet::new();
         classify(&worktree.join(path), worktree, git_dir, ignore, &mut out);
         out.into_iter().collect()
+    }
+
+    // --- path_contribution: classify-before-fingerprint ordering -----------
+    // The fingerprint map lives for the whole session; only domain-relevant
+    // git-dir paths may enter it. Fingerprinting before classifying grew it
+    // without bound (one entry per loose object / lockfile ever written).
+
+    #[test]
+    fn path_contribution_ignores_loose_objects_and_keeps_map_empty() {
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        let mut seen = HashMap::new();
+        let out = path_contribution(
+            Path::new("/repo/.git/objects/ab/cdef0123"),
+            wt,
+            gd,
+            &Gitignore::empty(),
+            &mut seen,
+            |_| Some((1, None)),
+        );
+        assert!(out.is_empty());
+        assert!(seen.is_empty(), "irrelevant paths must not enter the fingerprint map");
+    }
+
+    #[test]
+    fn path_contribution_fingerprint_gates_relevant_git_dir_paths() {
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        let refs = Path::new("/repo/.git/refs/heads/main");
+        let mut seen = HashMap::new();
+        // First sighting: domains reported, path recorded.
+        let first =
+            path_contribution(refs, wt, gd, &Gitignore::empty(), &mut seen, |_| Some((1, None)));
+        assert!(!first.is_empty());
+        assert_eq!(seen.len(), 1);
+        // Same fingerprint again: deduped.
+        let second =
+            path_contribution(refs, wt, gd, &Gitignore::empty(), &mut seen, |_| Some((1, None)));
+        assert!(second.is_empty(), "unchanged fingerprint must suppress the path");
+        // Changed fingerprint: reported again.
+        let third =
+            path_contribution(refs, wt, gd, &Gitignore::empty(), &mut seen, |_| Some((2, None)));
+        assert!(!third.is_empty());
+    }
+
+    #[test]
+    fn path_contribution_worktree_paths_bypass_the_fingerprint_map() {
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        let mut seen = HashMap::new();
+        let out = path_contribution(
+            Path::new("/repo/src/main.rs"),
+            wt,
+            gd,
+            &Gitignore::empty(),
+            &mut seen,
+            |_| None,
+        );
+        assert_eq!(out.into_iter().collect::<Vec<_>>(), vec![ChangeDomain::Status]);
+        assert!(seen.is_empty());
     }
 
     #[test]

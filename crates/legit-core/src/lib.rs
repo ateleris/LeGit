@@ -13,7 +13,9 @@ pub mod runner;
 pub mod types;
 
 pub use backend::GitBackend;
-pub use cli_impl::{classify_line_endings, classify_remote_error, GitCliBackend};
+pub use cli_impl::{
+    classify_line_endings, classify_remote_error, mixed_endings_in_bytes, GitCliBackend,
+};
 pub use executor::GitExecutor;
 pub use error::{GitError, ParseError};
 pub use progress::RemoteProgress;

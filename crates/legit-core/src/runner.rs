@@ -153,9 +153,6 @@ pub enum RunnerError {
     #[error("git executable not found at {0}")]
     GitNotFound(PathBuf),
 
-    #[error("operation cancelled")]
-    Cancelled,
-
     #[error("operation id {0} is already in flight")]
     DuplicateOperation(OperationId),
 }

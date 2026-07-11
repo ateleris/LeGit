@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import { PanelError } from "../shared/PanelError";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
@@ -16,6 +17,7 @@ import {
 import type { Remote } from "../../lib/types";
 import { formatAppError, gitErrorKind } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
+import { usePanelRunner } from "../shared/usePanelRunner";
 import { InlineEditor } from "../shared/InlineEditor";
 import { Button } from "../shared/buttons";
 import { useConfirmDestructive } from "../../store/settings";
@@ -56,7 +58,6 @@ export function RemotesSection() {
   }, [refetch]);
   usePanelFocusEffect(reload);
 
-  const [busy, setBusy] = useState(false);
   // Network op in flight, as `"fetch:<name>"` / `"prune:<name>"` (for the row spinner).
   const [busyNet, setBusyNet] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -69,31 +70,25 @@ export function RemotesSection() {
   const opIdRef = useRef<string | null>(null);
   const cancelRequestedRef = useRef(false);
 
-  // A blocking, non-network mutation (add/remove/rename/set-url). Returns whether
-  // it succeeded so callers can close their inline editor only on success.
-  const runMut = useCallback(
-    async (fn: () => Promise<unknown>): Promise<boolean> => {
-      if (!repo) return false;
-      setBusy(true);
-      setError(null);
-      try {
-        await fn();
-        invalidateRepoDomains(queryClient, repo.id, AFFECTED_DOMAINS);
-        return true;
-      } catch (e) {
-        setError(formatAppError(e));
-        return false;
-      } finally {
-        setBusy(false);
-      }
-    },
-    [repo, queryClient],
-  );
+  // A blocking, non-network mutation (add/remove/rename/set-url). Returns
+  // whether it succeeded so callers can close their inline editor only on
+  // success. Delayed busy + double-click guard per convention.
+  const { busy, run: runMut } = usePanelRunner({
+    enabled: !!repo,
+    onStart: () => setError(null),
+    onSuccess: () => invalidateRepoDomains(queryClient, repo!.id, AFFECTED_DOMAINS),
+    onError: (e) => setError(formatAppError(e)),
+  });
 
   // A cancellable network op (fetch / prune). `tag` is `"fetch:<name>"` etc.
+  // Bespoke (not usePanelRunner): the row spinner needs the tag identity and
+  // a cancel must suppress the error toast. Immediate busy is the network-op
+  // convention; the ref guard still blocks double-clicks.
+  const netRunningRef = useRef(false);
   const runNet = useCallback(
     async (tag: string, fn: (opId: string) => Promise<unknown>) => {
-      if (!repo) return;
+      if (!repo || netRunningRef.current) return;
+      netRunningRef.current = true;
       const opId = crypto.randomUUID();
       opIdRef.current = opId;
       cancelRequestedRef.current = false;
@@ -111,6 +106,7 @@ export function RemotesSection() {
           );
         }
       } finally {
+        netRunningRef.current = false;
         setBusyNet(null);
         opIdRef.current = null;
       }
@@ -180,9 +176,7 @@ export function RemotesSection() {
       <PanelLoadingBar active={isFetching} />
       <div className="legit-panel__body" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {error && (
-          <pre className="legit-error" style={{ margin: 0, fontSize: "var(--fz-md)" }}>
-            {error}
-          </pre>
+          <PanelError error={error} margin={0} />
         )}
 
         {remotes.length === 0 ? (

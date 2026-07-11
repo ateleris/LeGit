@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useConfirmDestructive } from "../store/settings";
 import { useRepoStore } from "../store/repos";
@@ -26,6 +26,7 @@ import {
   notifySequenceOutcome,
 } from "../lib/mergeFeedback";
 import { ToolbarButton } from "./shared/ToolbarButton";
+import { usePanelRunner } from "./shared/usePanelRunner";
 
 /** What the strip shows and can do per in-progress operation kind. */
 const OP_META = {
@@ -82,50 +83,31 @@ export function OpStateBanner({
   const queryClient = useQueryClient();
   const confirmDestructive = useConfirmDestructive();
   const [confirmingAbort, setConfirmingAbort] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const runningRef = useRef(false);
+  // Success means the op state is about to change (usually to "none",
+  // unmounting the banner): HOLD the rendering disabled until the refreshed
+  // state arrives - flipping back to live Continue/Abort buttons during the
+  // refetch gap reads as "the abort didn't work". The opState effect below
+  // releases if the banner stays mounted.
+  const { busy, run, release } = usePanelRunner({
+    holdBusyOnSuccess: true,
+    onSettled: () => invalidateRepoDomains(queryClient, repoId, OP_DOMAINS),
+    onError: (e) => {
+      notifyOpError(e);
+      setConfirmingAbort(false);
+    },
+  });
 
   if (opState.kind === "none") return null;
   const kind = opState.kind;
   const meta = OP_META[kind];
 
-  const run = async (fn: () => Promise<void>) => {
-    if (runningRef.current) return;
-    runningRef.current = true;
-    // Delayed busy state (150ms) so fast operations never flicker the UI.
-    const busyTimer = window.setTimeout(() => setBusy(true), 150);
-    let ok = false;
-    try {
-      await fn();
-      ok = true;
-    } catch (e) {
-      notifyOpError(e);
-    } finally {
-      window.clearTimeout(busyTimer);
-      invalidateRepoDomains(queryClient, repoId, OP_DOMAINS);
-      if (ok) {
-        // Success means the op state is about to change (usually to "none",
-        // unmounting the banner). Hold the current rendering DISABLED until
-        // the refreshed state arrives - flipping back to live Continue/Abort
-        // buttons during the refetch gap reads as "the abort didn't work".
-        // The opState effect below re-enables if the banner stays mounted.
-        setBusy(true);
-      } else {
-        runningRef.current = false;
-        setBusy(false);
-        setConfirmingAbort(false);
-      }
-    }
-  };
-
   // A genuinely new op state re-enables the banner (e.g. rebase continue
   // advancing to the next conflicted step). React-query structurally shares
   // unchanged data, so this fires only when the state actually changed.
   useEffect(() => {
-    runningRef.current = false;
-    setBusy(false);
+    release();
     setConfirmingAbort(false);
-  }, [opState]);
+  }, [opState, release]);
 
   const target =
     opState.kind === "merge"

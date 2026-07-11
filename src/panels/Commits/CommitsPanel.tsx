@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { PanelError } from "../shared/PanelError";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useActiveRepo } from "../../store/repos";
@@ -23,50 +24,26 @@ import { autoUpdateSubmodules } from "../../lib/submodules";
 import {
   consoleCancel,
   repoBranches,
-  repoCheckoutCommit,
-  repoCheckoutRemoteBranch,
   repoCreateBranch,
-  repoDeleteBranch,
   repoFetch,
   repoListRemotes,
   repoLog,
   repoPull,
   repoPush,
-  repoRenameBranch,
-  repoRewordCommit,
   repoStatus,
-  repoMerge,
-  repoRebase,
-  repoCherryPick,
-  repoReset,
-  repoRevert,
-  repoSetUpstream,
-  repoSwitchBranch,
   repoTrackingStatus,
-  repoCreateStash,
-  repoApplyStash,
-  repoPopStash,
-  repoDropStash,
-  repoRenameStash,
   repoStashBranch,
   repoTags,
-  repoCreateTag,
-  repoDeleteTag,
-  repoPushTag,
-  repoDeleteRemoteBranch,
-  repoDeleteRemoteTag,
   repoRemoteTags,
 } from "../../lib/commands";
 import { pushedTagNames, pickTagRemote } from "../../lib/tags";
 import { openStashDiff } from "../Stashes/StashesPanel";
-import { notifySwitchOutcome, notifySwitchError } from "../../lib/switchFeedback";
-import { notifyMergeOutcome, notifyOpError, notifyRebaseOutcome, notifySequenceOutcome } from "../../lib/mergeFeedback";
-import { OP_DOMAINS, useOpState } from "../../lib/useOpState";
+import { notifySwitchError } from "../../lib/switchFeedback";
+import { useOpState } from "../../lib/useOpState";
 import type { Branch, Commit, CommitId, FileStatus, MergeOptions, PullStrategy, PushOptions, Remote, RemoteTag, ResetMode, Signature, TagInfo, TrackingStatus } from "../../lib/types";
 import { useRemoteProgressStore } from "../../store/remoteProgress";
 import { formatAppError, gitErrorKind } from "../../lib/types";
 import { notify } from "../../store/notifications";
-import { splitRemoteRef } from "../../lib/branchGroups";
 import { BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon } from "../../icons";
 import { formatFull, formatRelative } from "../../lib/time";
 import { RefsCell } from "./cells/RefsCell";
@@ -77,6 +54,13 @@ import { computeLanes } from "./graph/lanes";
 import { computeEdgeSpans } from "./graph/spans";
 import { pickHeadCommitId } from "./headId";
 import type { LaneEdge, LaneIndex, LaneResult, LockMap, RefsAtCommit } from "./graph/types";
+import {
+  buildLockMap,
+  buildRefsAt,
+  buildStashSelectorById,
+  buildUpstreamMap,
+} from "./commitRows";
+import { BRANCH_DOMAINS, useCommitActions } from "./useCommitActions";
 import { useColumnState } from "./columns/useColumnState";
 import { ColumnHeader } from "./columns/ColumnHeader";
 import { LaneLockIndicator } from "./LaneLockIndicator";
@@ -228,23 +212,7 @@ export function CommitsPanel() {
   // Build a conflict-free LockMap for the lane algorithm. §H.5 says the
   // backend storage is permissive; if two locks claim the same lane (e.g.
   // from a hand-edited settings.json), the first one wins.
-  const lockMap = useMemo((): LockMap => {
-    const map: LockMap = {};
-    const claimedLanes = new Set<number>();
-    for (const lock of rawLocks) {
-      if (claimedLanes.has(lock.laneIndex)) {
-        console.warn(
-          `[LeGit] Lane lock conflict: lane ${lock.laneIndex} claimed by "${lock.refName}" ` +
-          `but already held by "${Object.entries(map).find(([, v]) => v === lock.laneIndex)?.[0]}". ` +
-          `Ignoring this lock. Edit repo settings to resolve.`
-        );
-        continue;
-      }
-      map[lock.refName] = lock.laneIndex;
-      claimedLanes.add(lock.laneIndex);
-    }
-    return map;
-  }, [rawLocks]);
+  const lockMap = useMemo((): LockMap => buildLockMap(rawLocks), [rawLocks]);
 
   const queryKey = [repo?.id, "log", totalToFetch];
 
@@ -288,18 +256,7 @@ export function CommitsPanel() {
   });
 
   // Full local ref → full upstream ref (e.g. refs/heads/dev → refs/remotes/origin/dev).
-  const upstreamMap = useMemo((): Map<string, string> => {
-    const map = new Map<string, string>();
-    for (const b of branches) {
-      if (!b.is_remote && b.upstream) {
-        map.set(`refs/heads/${b.name}`, b.upstream);
-      }
-    }
-    return map;
-  }, [branches]);
-
-  // Switching can create/consume an auto-stash, so "stashes" is invalidated too.
-  const BRANCH_DOMAINS = ["branches", "log", "status", "tracking", "stashes"] as const;
+  const upstreamMap = useMemo(() => buildUpstreamMap(branches), [branches]);
 
   // Merge/rebase entry points need the current branch NAME for labels and are
   // hidden while an operation is already in progress. (Distinct from the
@@ -311,122 +268,64 @@ export function CommitsPanel() {
   const opState = useOpState(repo?.id);
   const opInProgress = !!opState && opState.kind !== "none";
 
-  const handleMerge = useCallback(async (target: string, options: MergeOptions) => {
-    if (!repo) return;
-    try {
-      const outcome = await repoMerge(repo.id, target, options);
-      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
-      notifyMergeOutcome(outcome, target);
-    } catch (e) {
-      // A failed merge can still leave state behind; refresh either way.
-      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
-      notifyOpError(e);
-    }
-  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Tags: the local list (drives the row menus), the configured remotes (to
+  // pick the tag-push target). ls-remote (below) is a network call — long
+  // staleTime, no retry.
+  const { data: tags = [] } = useQuery<TagInfo[]>({
+    queryKey: [repo?.id, "tags"],
+    queryFn: () => repoTags(repo!.id),
+    enabled: !!repo,
+    staleTime: 5_000,
+  });
+  const { data: remotesList = [] } = useQuery<Remote[]>({
+    queryKey: [repo?.id, "remotes"],
+    queryFn: () => repoListRemotes(repo!.id),
+    enabled: !!repo,
+    staleTime: 5_000,
+  });
+  const tagRemote = useMemo(() => pickTagRemote(remotesList), [remotesList]);
+  const remoteNames = useMemo(() => remotesList.map((r) => r.name), [remotesList]);
 
-  // Cherry-pick / revert / reset (undo & history rewriting). Conflicts pause
-  // git's sequencer and surface via the Working Changes op-state banner; a
-  // failed op can still leave state behind, so refresh either way.
-  const handleCherryPick = useCallback(async (sha: string) => {
-    if (!repo) return;
-    try {
-      const outcome = await repoCherryPick(repo.id, sha);
-      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
-      notifySequenceOutcome(outcome, "cherry-pick", sha.slice(0, 8));
-    } catch (e) {
-      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
-      notifyOpError(e);
-    }
-  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleRevert = useCallback(async (sha: string) => {
-    if (!repo) return;
-    try {
-      const outcome = await repoRevert(repo.id, sha);
-      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
-      notifySequenceOutcome(outcome, "revert", sha.slice(0, 8));
-    } catch (e) {
-      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
-      notifyOpError(e);
-    }
-  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleReset = useCallback(async (sha: string, mode: ResetMode) => {
-    if (!repo) return;
-    try {
-      await repoReset(repo.id, sha, mode);
-      // Reset also moves the branch relative to its upstream.
-      invalidateRepoDomains(queryClient, repo.id, [...OP_DOMAINS, "tracking"]);
-      notify.info(`Reset (${mode}) to ${sha.slice(0, 8)}.`);
-    } catch (e) {
-      invalidateRepoDomains(queryClient, repo.id, [...OP_DOMAINS, "tracking"]);
-      notifyOpError(e);
-    }
-  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleRebaseOnto = useCallback(async (onto: string) => {
-    if (!repo) return;
-    try {
-      const outcome = await repoRebase(repo.id, onto);
-      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
-      notifyRebaseOutcome(outcome, onto);
-    } catch (e) {
-      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
-      notifyOpError(e);
-    }
-  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleBranchCheckout = useCallback(async (name: string) => {
-    if (!repo) return;
-    try {
-      const outcome = await repoSwitchBranch(repo.id, name);
-      invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
-      notifySwitchOutcome(outcome, name);
-      void autoUpdateSubmodules(queryClient, repo.id);
-    } catch (e) {
-      notifySwitchError(e);
-    }
-  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+  // All mutating row/menu actions (merge, sequencer, branch/tag/stash ops,
+  // checkouts) live in this hook; every returned callback is stable.
+  const actions = useCommitActions(repo, remoteNames);
+  const {
+    handleMerge,
+    handleCherryPick,
+    handleRevert,
+    handleReset,
+    handleRebaseOnto,
+    handleBranchCheckout,
+    handleBranchDelete,
+    handleSetUpstream,
+    handleRemoteCheckout,
+    handleCommitCheckout,
+    handleRemoteBranchDelete,
+    handleTagPush,
+    handleTagDelete,
+    handleTagDeleteRemote,
+    handleStashApply,
+    handleStashPop,
+    handleStashDrop,
+    handleCreateStash,
+  } = actions;
 
   // Branch rename happens in place, inside the branch's ref chip.
   const handleBranchRename = useCallback((name: string) => {
     setRenamingBranch(name);
   }, []);
 
-  const handleBranchRenameSave = useCallback(async (oldName: string, newName: string) => {
-    setRenamingBranch(null);
-    if (!repo) return;
-    try {
-      await repoRenameBranch(repo.id, oldName, newName);
-      invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
-    } catch (e) {
-      notify.error(formatAppError(e));
-    }
-  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+  const handleBranchRenameSave = useCallback(
+    async (oldName: string, newName: string) => {
+      setRenamingBranch(null);
+      await actions.handleBranchRenameSave(oldName, newName);
+    },
+    [actions],
+  );
 
   const handleBranchRenameCancel = useCallback(() => {
     setRenamingBranch(null);
   }, []);
-
-  const handleBranchDelete = useCallback(async (name: string, force: boolean) => {
-    if (!repo) return;
-    try {
-      await repoDeleteBranch(repo.id, name, force);
-      invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
-    } catch (e) {
-      notify.error(formatAppError(e));
-    }
-  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleSetUpstream = useCallback(async (branch: string, upstream: string | null) => {
-    if (!repo) return;
-    try {
-      await repoSetUpstream(repo.id, branch, upstream);
-      invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
-    } catch (e) {
-      notify.error(formatAppError(e));
-    }
-  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Existing same-name remote-tracking branches a local branch could track —
   // the candidates offered by the "Set upstream to …" menu entries.
@@ -435,30 +334,6 @@ export function CommitsPanel() {
       branches.filter((b) => b.is_remote && b.name.endsWith(`/${name}`)).map((b) => b.name),
     [branches],
   );
-
-  const handleRemoteCheckout = useCallback(async (remoteRef: string) => {
-    if (!repo) return;
-    try {
-      const outcome = await repoCheckoutRemoteBranch(repo.id, remoteRef);
-      invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
-      notifySwitchOutcome(outcome, remoteRef);
-      void autoUpdateSubmodules(queryClient, repo.id);
-    } catch (e) {
-      notifySwitchError(e);
-    }
-  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleCommitCheckout = useCallback(async (sha: string) => {
-    if (!repo) return;
-    try {
-      const outcome = await repoCheckoutCommit(repo.id, sha);
-      invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
-      notifySwitchOutcome(outcome, sha.slice(0, 8));
-      void autoUpdateSubmodules(queryClient, repo.id);
-    } catch (e) {
-      notifySwitchError(e);
-    }
-  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The current local branch and its tip — v1 rewords HEAD only.
   const currentBranch = useMemo(
@@ -489,60 +364,26 @@ export function CommitsPanel() {
   // edited — a multi-line body (everything after the first line) is preserved
   // verbatim. For a stash, the whole reflog subject is the message. On failure
   // the editor stays open (toast carries the error) so the draft isn't lost.
-  const handleSubjectEditSave = useCallback(async (commit: Commit, value: string) => {
-    if (!repo || !subjectEdit) return;
-    setSubjectBusy(true);
-    try {
-      if (subjectEdit.kind === "reword") {
-        const lines = commit.message.split("\n");
-        const body = lines.slice(1).join("\n");
-        const newMessage = body.length > 0 ? `${value}\n${body}` : value;
-        await repoRewordCommit(repo.id, commit.id, newMessage);
-        invalidateRepoDomains(queryClient, repo.id, ["log", "branches", "tracking"]);
-      } else {
-        await repoRenameStash(repo.id, commit.id, value);
-        invalidateRepoDomains(queryClient, repo.id, STASH_DOMAINS);
+  const handleSubjectEditSave = useCallback(
+    async (commit: Commit, value: string) => {
+      if (!subjectEdit) return;
+      setSubjectBusy(true);
+      try {
+        if (subjectEdit.kind === "reword") {
+          await actions.rewordCommit(commit, value);
+        } else {
+          await actions.renameStash(commit.id, value);
+        }
+        setSubjectEdit(null);
+      } catch (e) {
+        notify.error(formatAppError(e));
+      } finally {
+        setSubjectBusy(false);
       }
-      setSubjectEdit(null);
-    } catch (e) {
-      notify.error(formatAppError(e));
-    } finally {
-      setSubjectBusy(false);
-    }
-  }, [repo, subjectEdit, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+    },
+    [subjectEdit, actions],
+  );
 
-  // Tags: the local list (drives the row menus), the configured remotes (to
-  // pick the tag-push target), and the remote's tags (drives the "pushed"
-  // indicator). ls-remote is a network call — long staleTime, no retry.
-  const { data: tags = [] } = useQuery<TagInfo[]>({
-    queryKey: [repo?.id, "tags"],
-    queryFn: () => repoTags(repo!.id),
-    enabled: !!repo,
-    staleTime: 5_000,
-  });
-  const { data: remotesList = [] } = useQuery<Remote[]>({
-    queryKey: [repo?.id, "remotes"],
-    queryFn: () => repoListRemotes(repo!.id),
-    enabled: !!repo,
-    staleTime: 5_000,
-  });
-  const tagRemote = useMemo(() => pickTagRemote(remotesList), [remotesList]);
-  const remoteNames = useMemo(() => remotesList.map((r) => r.name), [remotesList]);
-
-  // Deletes the branch ON THE REMOTE only (`git push --delete`) — any local
-  // counterpart is untouched, mirroring remote tag deletion.
-  const handleRemoteBranchDelete = useCallback(async (remoteRef: string) => {
-    if (!repo) return;
-    const split = splitRemoteRef(remoteRef, remoteNames);
-    if (!split) return;
-    try {
-      await repoDeleteRemoteBranch(repo.id, split.remote, split.branch, crypto.randomUUID());
-      notify.success(`Deleted '${split.branch}' on ${split.remote}`);
-      invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
-    } catch (e) {
-      notify.error(formatAppError(e));
-    }
-  }, [repo, remoteNames, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
   const { data: remoteTags = [] } = useQuery<RemoteTag[]>({
     queryKey: [repo?.id, "remote-tags", tagRemote],
     queryFn: () => repoRemoteTags(repo!.id, tagRemote!, crypto.randomUUID()),
@@ -558,105 +399,25 @@ export function CommitsPanel() {
     [tags],
   );
 
-  const TAG_DOMAINS = ["tags", "log"] as const;
-
-  const handleTagPush = useCallback(async (name: string, remote: string) => {
-    if (!repo) return;
-    try {
-      await repoPushTag(repo.id, remote, name, crypto.randomUUID());
-      notify.success(`Pushed tag '${name}' to ${remote}`);
-      invalidateRepoDomains(queryClient, repo.id, ["remote-tags"]);
-    } catch (e) {
-      notify.error(formatAppError(e));
-    }
-  }, [repo, queryClient]);
-
-  const handleTagDelete = useCallback(async (name: string) => {
-    if (!repo) return;
-    try {
-      await repoDeleteTag(repo.id, name);
-      invalidateRepoDomains(queryClient, repo.id, TAG_DOMAINS);
-    } catch (e) {
-      notify.error(formatAppError(e));
-    }
-  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Deletes the tag ON THE REMOTE only — local/remote deletion are separate,
-  // deliberate actions (GitKraken-style).
-  const handleTagDeleteRemote = useCallback(async (name: string, remote: string) => {
-    if (!repo) return;
-    try {
-      await repoDeleteRemoteTag(repo.id, remote, name, crypto.randomUUID());
-      notify.success(`Deleted tag '${name}' from ${remote}`);
-      invalidateRepoDomains(queryClient, repo.id, ["remote-tags"]);
-    } catch (e) {
-      notify.error(formatAppError(e));
-    }
-  }, [repo, queryClient]);
-
   // Create-new-tag flow: the input shows on the clicked row; the (lightweight)
   // tag is only created when a name is confirmed.
   const handleCreateTagStart = useCallback((commitId: CommitId) => {
     setTagCreation({ rowId: commitId });
   }, []);
 
-  const handleCreateTagSave = useCallback(async (name: string, message: string | null) => {
-    const creation = tagCreation;
-    setTagCreation(null);
-    if (!repo || !creation) return;
-    try {
-      await repoCreateTag(repo.id, name, creation.rowId, message ?? undefined);
-      invalidateRepoDomains(queryClient, repo.id, TAG_DOMAINS);
-    } catch (e) {
-      notify.error(formatAppError(e));
-    }
-  }, [repo, tagCreation, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+  const handleCreateTagSave = useCallback(
+    async (name: string, message: string | null) => {
+      const creation = tagCreation;
+      setTagCreation(null);
+      if (!creation) return;
+      await actions.createTag(name, creation.rowId, message);
+    },
+    [tagCreation, actions],
+  );
 
   const handleCreateTagCancel = useCallback(() => {
     setTagCreation(null);
   }, []);
-
-  // Stash actions address the stash by its commit SHA (the injected node's id).
-  // The SHA is stable; the backend resolves it to the current `stash@{N}` at
-  // action time, so a stale list can never hit the wrong stash. Toasts use
-  // generic wording — the rendered selector may already be outdated.
-  const STASH_DOMAINS = ["stashes", "log", "status"] as const;
-
-  const handleStashApply = useCallback(async (sha: string) => {
-    if (!repo) return;
-    try {
-      const outcome = await repoApplyStash(repo.id, sha);
-      invalidateRepoDomains(queryClient, repo.id, STASH_DOMAINS);
-      if (outcome.kind === "conflicts") {
-        notify.info("Applying the stash produced conflicts — resolve them in your working tree.");
-      }
-    } catch (e) {
-      notify.error(formatAppError(e));
-    }
-  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleStashPop = useCallback(async (sha: string) => {
-    if (!repo) return;
-    try {
-      const outcome = await repoPopStash(repo.id, sha);
-      invalidateRepoDomains(queryClient, repo.id, STASH_DOMAINS);
-      if (outcome.kind === "conflicts") {
-        notify.info("Popping the stash produced conflicts — the stash was kept; resolve them in your working tree.");
-      }
-    } catch (e) {
-      notify.error(formatAppError(e));
-    }
-  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleStashDrop = useCallback(async (sha: string) => {
-    if (!repo) return;
-    try {
-      await repoDropStash(repo.id, sha);
-      invalidateRepoDomains(queryClient, repo.id, STASH_DOMAINS);
-    } catch (e) {
-      notify.error(formatAppError(e));
-    }
-  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Stash rename happens in place: the stash row's subject (which shows the
   // stash message) becomes an input.
@@ -664,19 +425,6 @@ export function CommitsPanel() {
     setSubjectEdit({ kind: "stashRename", id: sha });
     setSubjectBusy(false);
   }, []);
-
-  const handleCreateStash = useCallback(async (includeUntracked: boolean) => {
-    if (!repo) return;
-    try {
-      const outcome = await repoCreateStash(repo.id, undefined, includeUntracked, false);
-      invalidateRepoDomains(queryClient, repo.id, STASH_DOMAINS);
-      if (outcome.kind === "nothing_to_stash") {
-        notify.info("Nothing to stash — the working tree is clean.");
-      }
-    } catch (e) {
-      notify.error(formatAppError(e));
-    }
-  }, [repo, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refetch = useCallback(() => {
     if (repo) {
@@ -804,36 +552,14 @@ export function CommitsPanel() {
     setBranchCreation(null);
   }, []);
 
-  // Build the refsAt map (commitId -> [refName,...]) from log decorations.
-  // Branch and tag refs feed the lane algorithm (via §H locks in Phase 6).
-  const refsAt = useMemo((): RefsAtCommit => {
-    const map = new Map<string, string[]>();
-    for (const commit of commits) {
-      const refs: string[] = [];
-      for (const dec of commit.decorations ?? []) {
-        // `headOf` carries the checked-out branch's ref — git folds it into
-        // `HEAD -> refs/heads/x` and emits no separate `branch` decoration, so
-        // include it here or a lock on the current branch reserves an empty lane.
-        if (dec.type === "branch" || dec.type === "headOf") refs.push(dec.value);
-        else if (dec.type === "tag") refs.push(dec.value);
-      }
-      if (refs.length > 0) map.set(commit.id, refs);
-    }
-    return map;
-  }, [commits]);
+  // refsAt map (commitId -> [refName,...]) from log decorations: branch and
+  // tag refs feed the lane algorithm (via §H locks in Phase 6).
+  const refsAt = useMemo((): RefsAtCommit => buildRefsAt(commits), [commits]);
 
   // Stash nodes (synthetic commits the backend injects into the log). Maps the
   // stash's commit id → its reflog selector (e.g. "stash@{0}"), driving the
   // distinct diamond dot and the stash context-menu actions.
-  const stashSelectorById = useMemo((): Map<string, string> => {
-    const map = new Map<string, string>();
-    for (const commit of commits) {
-      for (const dec of commit.decorations ?? []) {
-        if (dec.type === "stash") map.set(commit.id, dec.value);
-      }
-    }
-    return map;
-  }, [commits]);
+  const stashSelectorById = useMemo(() => buildStashSelectorById(commits), [commits]);
 
   // Stability refs for load-more. previousAssignments are reused ONLY when the
   // new rows are a pure bottom-append of the previous ones (pagination): i.e.
@@ -1059,9 +785,7 @@ export function CommitsPanel() {
 
 
       {isError && (
-        <pre className="legit-error" style={{ margin: "8px 12px", fontSize: "var(--fz-md)" }}>
-          {formatAppError(error)}
-        </pre>
+        <PanelError error={error} />
       )}
 
       {/* Column headers — sticky above the virtualised list */}

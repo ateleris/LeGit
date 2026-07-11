@@ -5,6 +5,13 @@ panels, test coverage) done with five parallel review passes; every finding
 listed here was spot-verified against the code before inclusion. Companion to
 `2026-07-11-state-of-the-app.md`.
 
+**Status: IMPLEMENTED same day** - all of A (correctness), B (structural),
+C (dead code/docs), E (test gaps incl. P2/P3), and F1-F3 (e2e specs) are
+applied. Only section D (deliberately deferred items) remains open, plus:
+vitest suites need a PowerShell run, e2e specs prove themselves on CI, and
+`crates/legit-providers` (unreferenced workspace member) awaits a
+keep-or-delete decision.
+
 Legend: [core] crates/legit-core, [tauri] src-tauri, [fe] frontend.
 
 ---

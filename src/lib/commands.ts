@@ -243,12 +243,6 @@ export const setWorkingChangesSectionOrder = (order: string[]) =>
 export const setActiveTheme = (name: string) =>
   invoke<null>("set_active_theme", { name });
 
-export const saveGlobalLayout = (layout: unknown) =>
-  invoke<null>("save_global_layout", { layout });
-
-export const saveRepoLayout = (layout: unknown) =>
-  invoke<null>("save_repo_layout", { layout });
-
 export const saveRegionState = (
   placement: import("./types").RegionPlacement,
   sizeTop: number | null,
@@ -642,9 +636,6 @@ export const repoSubmoduleLog = (
   from: string | null,
   to: string,
 ) => invoke<SubmoduleLog>("repo_submodule_log", { repoId, path, from, to });
-
-export const repoSubmoduleInit = (repoId: string, paths: string[]) =>
-  invoke<void>("repo_submodule_init", { repoId, paths });
 
 export const repoSubmoduleUpdate = (
   repoId: string,

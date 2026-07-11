@@ -59,8 +59,6 @@ pub fn run() {
         commands::get_repo_settings,
         commands::update_repo_settings,
         commands::set_active_theme,
-        commands::save_global_layout,
-        commands::save_repo_layout,
         commands::save_region_state,
         commands::list_themes,
         commands::load_theme,

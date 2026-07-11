@@ -18,6 +18,7 @@ import type { Remote, RemoteTag, TagInfo } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { RemoteIcon, TagIcon } from "../../icons";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
+import { usePanelRunner } from "../shared/usePanelRunner";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { Button } from "../shared/buttons";
 import { useConfirmDestructive } from "../../store/settings";
@@ -68,7 +69,6 @@ export function TagsSection() {
   const reload = useCallback(() => { refetch(); }, [refetch]);
   usePanelFocusEffect(reload);
 
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createName, setCreateName] = useState("");
   const [createMsg, setCreateMsg] = useState("");
@@ -78,27 +78,12 @@ export function TagsSection() {
     { name: string; remote: boolean } | null
   >(null);
 
-  // Delayed busy + re-entry guard (see CLAUDE.md: fast ops must not flicker).
-  const runningRef = useRef(false);
-  const run = useCallback(
-    async (fn: () => Promise<unknown>) => {
-      if (!repo || runningRef.current) return;
-      runningRef.current = true;
-      const busyTimer = window.setTimeout(() => setBusy(true), 150);
-      setError(null);
-      try {
-        await fn();
-        invalidateRepoDomains(queryClient, repo.id, AFFECTED_DOMAINS);
-      } catch (e) {
-        setError(formatAppError(e));
-      } finally {
-        window.clearTimeout(busyTimer);
-        runningRef.current = false;
-        setBusy(false);
-      }
-    },
-    [repo, queryClient],
-  );
+  const { busy, run } = usePanelRunner({
+    enabled: !!repo,
+    onStart: () => setError(null),
+    onSuccess: () => invalidateRepoDomains(queryClient, repo!.id, AFFECTED_DOMAINS),
+    onError: (e) => setError(formatAppError(e)),
+  });
 
   const doCreate = () =>
     run(async () => {

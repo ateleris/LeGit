@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react";
+import { PanelError } from "../shared/PanelError";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
@@ -29,6 +30,7 @@ import type { Branch, MergeOptions, Remote } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { InlineEditor } from "../shared/InlineEditor";
+import { usePanelRunner } from "../shared/usePanelRunner";
 import { PanelContextMenuProvider } from "../Commits/menu/PanelContextMenu";
 import { BranchMenuSection, RemoteBranchMenuSection } from "../Commits/menu/BranchMenuSection";
 
@@ -82,7 +84,6 @@ export function BranchesSection() {
   const reload = useCallback(() => { refetch(); }, [refetch]);
   usePanelFocusEffect(reload);
 
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [edit, setEdit] = useState<EditState>(null);
   const [draftName, setDraftName] = useState("");
@@ -94,27 +95,38 @@ export function BranchesSection() {
     invalidateRepoDomains(queryClient, repo.id, AFFECTED_DOMAINS);
   }, [queryClient, repo]);
 
-  // Delayed busy + re-entry guard (see CLAUDE.md: fast ops must not flicker).
   // Rename/delete/create/set-upstream are near-instant local git calls.
-  const runningRef = useRef(false);
-  const runMut = useCallback(async (fn: () => Promise<unknown>): Promise<boolean> => {
-    if (!repo || runningRef.current) return false;
-    runningRef.current = true;
-    const busyTimer = window.setTimeout(() => setBusy(true), 150);
-    setError(null);
-    try {
-      await fn();
-      invalidate();
-      return true;
-    } catch (e) {
-      setError(formatAppError(e));
-      return false;
-    } finally {
-      window.clearTimeout(busyTimer);
-      runningRef.current = false;
-      setBusy(false);
-    }
-  }, [repo, invalidate]);
+  const { busy: mutBusy, run: runMut } = usePanelRunner({
+    enabled: !!repo,
+    onStart: () => setError(null),
+    onSuccess: invalidate,
+    onError: (e) => setError(formatAppError(e)),
+  });
+  // Checkouts get their own runner: same delayed-busy/guard, but switch
+  // failures classify through formatSwitchError (WouldOverwrite... etc.).
+  const { busy: switchBusy, run: runSwitch } = usePanelRunner({
+    enabled: !!repo,
+    onStart: () => setError(null),
+    onSuccess: invalidate,
+    onError: (e) => setError(formatSwitchError(e)),
+  });
+  // Merge/rebase: notify-based feedback, and a failed attempt can still
+  // leave op state behind - domains refresh on settle either way.
+  const { busy: opBusy, run: runOp } = usePanelRunner({
+    enabled: !!repo,
+    onSettled: () => {
+      if (repo) invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
+    },
+    onError: notifyOpError,
+  });
+  // Remote-branch deletion is a genuine network op: busy may show
+  // immediately per convention (delayMs 0), guard still applies.
+  const { busy: netBusy, run: runNet } = usePanelRunner({
+    enabled: !!repo,
+    delayMs: 0,
+    onError: (e) => notify.error(formatAppError(e)),
+  });
+  const busy = mutBusy || switchBusy || opBusy || netBusy;
 
   const localBranches = branches.filter((b) => !b.is_remote);
   const remoteBranches = branches.filter((b) => b.is_remote);
@@ -179,36 +191,20 @@ export function BranchesSection() {
   };
 
   const doCheckout = async (name: string) => {
-    if (!repo) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const outcome = await repoSwitchBranch(repo.id, name);
-      invalidate();
+    await runSwitch(async () => {
+      const outcome = await repoSwitchBranch(repo!.id, name);
       notifySwitchOutcome(outcome, name);
-      void autoUpdateSubmodules(queryClient, repo.id);
-    } catch (e) {
-      setError(formatSwitchError(e));
-    } finally {
-      setBusy(false);
-    }
+      void autoUpdateSubmodules(queryClient, repo!.id);
+    });
   };
 
   const doRemoteCheckout = useCallback(async (fullRef: string) => {
-    if (!repo) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const outcome = await repoCheckoutRemoteBranch(repo.id, fullRef);
-      invalidate();
+    await runSwitch(async () => {
+      const outcome = await repoCheckoutRemoteBranch(repo!.id, fullRef);
       notifySwitchOutcome(outcome, fullRef.replace(/^refs\/remotes\//, ""));
-      void autoUpdateSubmodules(queryClient, repo.id);
-    } catch (e) {
-      setError(formatSwitchError(e));
-    } finally {
-      setBusy(false);
-    }
-  }, [repo, invalidate]);
+      void autoUpdateSubmodules(queryClient, repo!.id);
+    });
+  }, [repo, runSwitch, queryClient]);
 
   const doSetUpstream = async (name: string, upstream: string | null) => {
     await runMut(() => repoSetUpstream(repo!.id, name, upstream));
@@ -240,48 +236,26 @@ export function BranchesSection() {
     if (!repo) return;
     const split = splitRemoteRef(remoteRef, remotes.map((r) => r.name));
     if (!split) return;
-    setBusy(true);
-    try {
+    await runNet(async () => {
       await repoDeleteRemoteBranch(repo.id, split.remote, split.branch, crypto.randomUUID());
       notify.success(`Deleted '${split.branch}' on ${split.remote}`);
       invalidateRepoDomains(queryClient, repo.id, AFFECTED_DOMAINS);
-    } catch (e) {
-      notify.error(formatAppError(e));
-    } finally {
-      setBusy(false);
-    }
-  }, [repo, remotes, queryClient]);
+    });
+  }, [repo, remotes, queryClient, runNet]);
 
   const handleMerge = useCallback(async (target: string, options: MergeOptions) => {
-    if (!repo) return;
-    setBusy(true);
-    try {
-      const outcome = await repoMerge(repo.id, target, options);
-      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
+    await runOp(async () => {
+      const outcome = await repoMerge(repo!.id, target, options);
       notifyMergeOutcome(outcome, target);
-    } catch (e) {
-      // A failed merge can still leave state behind; refresh either way.
-      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
-      notifyOpError(e);
-    } finally {
-      setBusy(false);
-    }
-  }, [repo, queryClient]);
+    });
+  }, [repo, runOp]);
 
   const handleRebaseOnto = useCallback(async (onto: string) => {
-    if (!repo) return;
-    setBusy(true);
-    try {
-      const outcome = await repoRebase(repo.id, onto);
-      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
+    await runOp(async () => {
+      const outcome = await repoRebase(repo!.id, onto);
       notifyRebaseOutcome(outcome, onto);
-    } catch (e) {
-      invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
-      notifyOpError(e);
-    } finally {
-      setBusy(false);
-    }
-  }, [repo, queryClient]);
+    });
+  }, [repo, runOp]);
 
   if (!repo) {
     return (
@@ -303,9 +277,7 @@ export function BranchesSection() {
         style={{ display: "flex", flexDirection: "column", gap: 10 }}
       >
         {error && (
-          <pre className="legit-error" style={{ margin: 0, fontSize: "var(--fz-md)" }}>
-            {error}
-          </pre>
+          <PanelError error={error} margin={0} />
         )}
 
         {localBranches.length > 0 && (

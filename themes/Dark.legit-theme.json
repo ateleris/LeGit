@@ -76,7 +76,6 @@
     "accent.fg": "accent-fg",
     "app.bg": "main-bg",
     "app.fg": "main-fg",
-    "branch.current.fg": "accent",
     "button.active.bg": {
       "ref": "accent",
       "filter": "subtle"
@@ -90,7 +89,6 @@
     "button.primary.bg": "accent",
     "button.primary.fg": "accent-fg",
     "button.primary.hover.bg": "accent-hover",
-    "commit.signed.indicator": "success",
     "console.bg": "console-bg",
     "console.fg": "main-fg",
     "console.prompt.fg": "accent",
@@ -148,7 +146,6 @@
     "panel-tab.active.bg": "input-bg",
     "panel-tab.active.fg": "main-fg",
     "panel-tab.bg": "panel-bg",
-    "panel-tab.border": "panel-border",
     "panel-tab.fg": "subtle-fg",
     "panel.bg": "panel-bg",
     "panel.border": "panel-border",

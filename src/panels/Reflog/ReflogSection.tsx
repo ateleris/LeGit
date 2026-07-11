@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { PanelError } from "../shared/PanelError";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
@@ -12,6 +13,7 @@ import type { ReflogEntry } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { formatRelative } from "../../lib/time";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
+import { usePanelRunner } from "../shared/usePanelRunner";
 import { Button } from "../shared/buttons";
 
 const MAX_ENTRIES = 200;
@@ -42,8 +44,20 @@ export function ReflogSection() {
   const reload = useCallback(() => { refetch(); }, [refetch]);
   usePanelFocusEffect(reload);
 
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Two runners, one per error classification (checkout failures go through
+  // the switch classifier). Delayed busy + double-click guard per convention.
+  const { busy: switchBusy, run: runSwitch } = usePanelRunner({
+    enabled: !!repo,
+    onStart: () => setError(null),
+    onError: (e) => setError(formatSwitchError(e)),
+  });
+  const { busy: resetBusy, run: runReset } = usePanelRunner({
+    enabled: !!repo,
+    onStart: () => setError(null),
+    onError: (e) => setError(formatAppError(e)),
+  });
+  const busy = switchBusy || resetBusy;
   const confirmDestructive = useConfirmDestructive();
   // Keyed by selector: unlike stashes, a reflog entry's sha can appear many
   // times (checkout back and forth), so the selector is the unique row key.
@@ -54,37 +68,21 @@ export function ReflogSection() {
     invalidateRepoDomains(queryClient, repo.id, AFFECTED_DOMAINS);
   }, [queryClient, repo]);
 
-  const doCheckout = async (e: ReflogEntry) => {
-    if (!repo) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const outcome = await repoCheckoutCommit(repo.id, e.sha);
+  const doCheckout = (e: ReflogEntry) =>
+    runSwitch(async () => {
+      const outcome = await repoCheckoutCommit(repo!.id, e.sha);
       invalidate();
       notifySwitchOutcome(outcome, e.sha.slice(0, 8));
-      void autoUpdateSubmodules(queryClient, repo.id);
-    } catch (err) {
-      setError(formatSwitchError(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+      void autoUpdateSubmodules(queryClient, repo!.id);
+    });
 
-  const doReset = async (e: ReflogEntry) => {
-    if (!repo) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await repoReset(repo.id, e.sha, "hard");
+  const doReset = (e: ReflogEntry) =>
+    runReset(async () => {
+      await repoReset(repo!.id, e.sha, "hard");
       invalidate();
       setConfirmReset(null);
       notify.info(`Hard-reset to ${e.sha.slice(0, 8)} (${e.selector}).`);
-    } catch (err) {
-      setError(formatAppError(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+    });
 
   const requestReset = (e: ReflogEntry) => {
     setError(null);
@@ -110,9 +108,7 @@ export function ReflogSection() {
         style={{ display: "flex", flexDirection: "column", gap: 4 }}
       >
         {error && (
-          <pre className="legit-error" style={{ margin: 0, fontSize: "var(--fz-md)" }}>
-            {error}
-          </pre>
+          <PanelError error={error} margin={0} />
         )}
 
         {entries.length === 0 ? (

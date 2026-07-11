@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { PanelError } from "../shared/PanelError";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { useSettingsStore, useConfirmDestructive } from "../../store/settings";
@@ -238,9 +239,7 @@ export function ChangedFilesPanel() {
       </div>
 
       {isError && (
-        <pre className="legit-error" style={{ margin: "8px 12px", fontSize: "var(--fz-md)" }}>
-          {formatAppError(error)}
-        </pre>
+        <PanelError error={error} />
       )}
 
       {!isError && files.length === 0 && !isFetching && (

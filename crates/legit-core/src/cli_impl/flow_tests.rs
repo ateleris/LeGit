@@ -158,15 +158,51 @@ async fn switch_try_directly_runs_only_the_switch() {
 async fn switch_auto_stash_dirty_tree_pops_the_created_entry() {
     let fake = FakeExecutor::default();
     // No prior stash -> push creates one -> switch -> pop that exact entry.
-    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], fail(1, ""));
+    fake.expect(&["stash", "list", "--format=%H %s"], ok(""));
     fake.expect(
         &["stash", "push", "--include-untracked", "-m", STASH_PUSH_MSG],
         ok("Saved working directory and index state"),
     );
-    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], ok("aaa111\n"));
+    fake.expect(
+        &["stash", "list", "--format=%H %s"],
+        ok(&format!("aaa111 On main: {STASH_PUSH_MSG}\n")),
+    );
     fake.expect(&["switch", "feature"], ok("Switched to branch 'feature'"));
     fake.expect(&["stash", "list", "--format=%H %gd"], ok("aaa111 stash@{0}\n"));
     fake.expect(&["stash", "pop", "stash@{0}"], ok("Dropped refs/stash@{0}"));
+    let (b, exec) = backend(fake);
+
+    let outcome = b
+        .switch_branch("feature", SwitchDirtyBehavior::AutoStash)
+        .await
+        .unwrap();
+    assert_eq!(outcome, SwitchOutcome::Clean);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn switch_auto_stash_ignores_concurrently_created_foreign_stash() {
+    // A stash created by ANOTHER process lands between our push and the list
+    // read: it is the tip, ours sits below. The pop must address OUR entry
+    // (matched by the marker message), never adopt the foreign tip.
+    let fake = FakeExecutor::default();
+    fake.expect(&["stash", "list", "--format=%H %s"], ok(""));
+    fake.expect(
+        &["stash", "push", "--include-untracked", "-m", STASH_PUSH_MSG],
+        ok("Saved"),
+    );
+    fake.expect(
+        &["stash", "list", "--format=%H %s"],
+        ok(&format!(
+            "fff999 On main: WIP from another client\naaa111 On main: {STASH_PUSH_MSG}\n"
+        )),
+    );
+    fake.expect(&["switch", "feature"], ok(""));
+    fake.expect(
+        &["stash", "list", "--format=%H %gd"],
+        ok("fff999 stash@{0}\naaa111 stash@{1}\n"),
+    );
+    fake.expect(&["stash", "pop", "stash@{1}"], ok(""));
     let (b, exec) = backend(fake);
 
     let outcome = b
@@ -183,12 +219,18 @@ async fn switch_auto_stash_clean_tree_never_touches_preexisting_stash() {
     // clean tree; with a pre-existing stash the tip is unchanged, so nothing
     // may be popped after the switch.
     let fake = FakeExecutor::default();
-    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], ok("zzz999\n"));
+    fake.expect(
+        &["stash", "list", "--format=%H %s"],
+        ok("zzz999 On main: WIP on main\n"),
+    );
     fake.expect(
         &["stash", "push", "--include-untracked", "-m", STASH_PUSH_MSG],
         ok("No local changes to save"),
     );
-    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], ok("zzz999\n"));
+    fake.expect(
+        &["stash", "list", "--format=%H %s"],
+        ok("zzz999 On main: WIP on main\n"),
+    );
     fake.expect(&["switch", "feature"], ok(""));
     // Deliberately NO stash list / pop steps - popping here would eat the
     // user's own stash entry.
@@ -205,12 +247,15 @@ async fn switch_auto_stash_clean_tree_never_touches_preexisting_stash() {
 #[tokio::test]
 async fn switch_failure_rolls_the_auto_stash_back() {
     let fake = FakeExecutor::default();
-    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], fail(1, ""));
+    fake.expect(&["stash", "list", "--format=%H %s"], ok(""));
     fake.expect(
         &["stash", "push", "--include-untracked", "-m", STASH_PUSH_MSG],
         ok("Saved"),
     );
-    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], ok("aaa111\n"));
+    fake.expect(
+        &["stash", "list", "--format=%H %s"],
+        ok(&format!("aaa111 On main: {STASH_PUSH_MSG}\n")),
+    );
     fake.expect(
         &["switch", "feature"],
         fail(128, "fatal: invalid reference: feature"),
@@ -232,12 +277,15 @@ async fn switch_failure_rolls_the_auto_stash_back() {
 #[tokio::test]
 async fn switch_failure_with_failed_rollback_reports_both() {
     let fake = FakeExecutor::default();
-    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], fail(1, ""));
+    fake.expect(&["stash", "list", "--format=%H %s"], ok(""));
     fake.expect(
         &["stash", "push", "--include-untracked", "-m", STASH_PUSH_MSG],
         ok("Saved"),
     );
-    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], ok("aaa111\n"));
+    fake.expect(
+        &["stash", "list", "--format=%H %s"],
+        ok(&format!("aaa111 On main: {STASH_PUSH_MSG}\n")),
+    );
     fake.expect(
         &["switch", "feature"],
         fail(128, "fatal: invalid reference: feature"),
@@ -261,12 +309,15 @@ async fn switch_failure_with_failed_rollback_reports_both() {
 #[tokio::test]
 async fn switch_stash_and_keep_leaves_the_entry_parked() {
     let fake = FakeExecutor::default();
-    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], fail(1, ""));
+    fake.expect(&["stash", "list", "--format=%H %s"], ok(""));
     fake.expect(
         &["stash", "push", "--include-untracked", "-m", STASH_PUSH_MSG],
         ok("Saved"),
     );
-    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], ok("aaa111\n"));
+    fake.expect(
+        &["stash", "list", "--format=%H %s"],
+        ok(&format!("aaa111 On main: {STASH_PUSH_MSG}\n")),
+    );
     fake.expect(&["switch", "feature"], ok(""));
     // No pop: the WIP deliberately stays in the stash.
     let (b, exec) = backend(fake);
@@ -282,12 +333,15 @@ async fn switch_stash_and_keep_leaves_the_entry_parked() {
 #[tokio::test]
 async fn switch_pop_conflict_is_an_outcome_not_an_error() {
     let fake = FakeExecutor::default();
-    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], fail(1, ""));
+    fake.expect(&["stash", "list", "--format=%H %s"], ok(""));
     fake.expect(
         &["stash", "push", "--include-untracked", "-m", STASH_PUSH_MSG],
         ok("Saved"),
     );
-    fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], ok("aaa111\n"));
+    fake.expect(
+        &["stash", "list", "--format=%H %s"],
+        ok(&format!("aaa111 On main: {STASH_PUSH_MSG}\n")),
+    );
     fake.expect(&["switch", "feature"], ok(""));
     fake.expect(&["stash", "list", "--format=%H %gd"], ok("aaa111 stash@{0}\n"));
     fake.expect(
@@ -741,6 +795,30 @@ async fn file_diff_commit_range_passes_both_revs() {
     };
     let entry = b.file_diff(&source, Path::new("a.txt"), None, 3).await.unwrap();
     assert!(matches!(entry, DiffEntry::Text(_)), "{entry:?}");
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn file_diff_untracked_probe_failure_is_an_error_not_untracked() {
+    // A failing `ls-files` also has empty stdout - that must surface as the
+    // failure it is, NOT read as "path is untracked" (which would silently
+    // fall through to `diff --no-index`). Encoded per the house rule that
+    // exit-code assumptions live in tests.
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["-c", "diff.submodule=short", "diff", "--no-color", "--no-ext-diff", "-U3", "--", "a.txt"],
+        ok(""),
+    );
+    fake.expect(&["ls-files", "-z", "--", "a.txt"], fail(128, "fatal: not a git repository"));
+    let (b, exec) = backend(fake);
+
+    let res = b
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("a.txt"), None, 3)
+        .await;
+    assert!(
+        matches!(res, Err(GitError::CommandFailed { exit_code: 128, .. })),
+        "expected CommandFailed, got {res:?}"
+    );
     exec.assert_done();
 }
 
@@ -1522,13 +1600,16 @@ async fn submodule_auto_update_pop_conflict_rolls_back_and_reapplies() {
     );
     fake.expect(&["-C", "lib", "rev-parse", "--show-prefix", "HEAD"], ok(&format!("\n{old}\n")));
     fake.expect(&["-C", "lib", "rev-parse", "--abbrev-ref", "HEAD"], ok("HEAD\n"));
-    // -- auto-stash (tip-compare verified) --
-    fake.expect(&["-C", "lib", "rev-parse", "-q", "--verify", "refs/stash"], fail(1, ""));
+    // -- auto-stash (marker-matched list-diff verified) --
+    fake.expect(&["-C", "lib", "stash", "list", "--format=%H %s"], ok(""));
     fake.expect(
         &["-C", "lib", "stash", "push", "--include-untracked", "-m", "legit: auto-stash before submodule update"],
         ok("Saved"),
     );
-    fake.expect(&["-C", "lib", "rev-parse", "-q", "--verify", "refs/stash"], ok(&format!("{stash}\n")));
+    fake.expect(
+        &["-C", "lib", "stash", "list", "--format=%H %s"],
+        ok(&format!("{stash} On main: legit: auto-stash before submodule update\n")),
+    );
     // -- update to recorded, pop by SHA-resolved selector: CONFLICT --
     fake.expect(&["submodule", "update", "--", "lib"], ok(""));
     fake.expect(&["-C", "lib", "stash", "list", "--format=%H %gd"], ok(&format!("{stash} stash@{{0}}\n")));
@@ -1821,5 +1902,200 @@ async fn apply_stash_file_untracked_falls_back_to_the_third_parent() {
     let (b, exec) = backend(fake);
 
     b.apply_stash_file(stash, Path::new("new.txt")).await.unwrap();
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
+// branch / tag / remote management — exact-argv contracts for the mutating
+// (and partly destructive) commands that previously had no flow coverage
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn create_branch_with_and_without_start_point() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["branch", "feat"], ok(""));
+    fake.expect(&["branch", "hotfix", "v1.2"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.create_branch("feat", None).await.unwrap();
+    b.create_branch("hotfix", Some("v1.2")).await.unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn delete_branch_safe_vs_force_flag() {
+    // -d refuses unmerged branches; -D is the destructive override. The two
+    // must never swap.
+    let fake = FakeExecutor::default();
+    fake.expect(&["branch", "-d", "merged"], ok(""));
+    fake.expect(&["branch", "-D", "wip"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.delete_branch("merged", false).await.unwrap();
+    b.delete_branch("wip", true).await.unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn delete_branch_failure_surfaces_stderr() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["branch", "-d", "feat"],
+        fail(1, "error: the branch 'feat' is not fully merged"),
+    );
+    let (b, exec) = backend(fake);
+
+    let err = b.delete_branch("feat", false).await.unwrap_err();
+    assert!(
+        matches!(&err, GitError::CommandFailed { stderr, .. } if stderr.contains("not fully merged")),
+        "{err:?}"
+    );
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn rename_branch_uses_move_not_copy() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["branch", "-m", "old", "new"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.rename_branch("old", "new").await.unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn checkout_commit_detaches_via_switch() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["switch", "--detach", "abc123"], ok(""));
+    let (b, exec) = backend(fake);
+
+    let outcome = b
+        .checkout_commit("abc123", SwitchDirtyBehavior::TryDirectly)
+        .await
+        .unwrap();
+    assert_eq!(outcome, SwitchOutcome::Clean);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn create_tag_lightweight_vs_annotated() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["tag", "v1", "abc123"], ok(""));
+    fake.expect(&["tag", "-a", "v2", "-m", "release two", "def456"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.create_tag("v1", Some("abc123"), None).await.unwrap();
+    b.create_tag("v2", Some("def456"), Some("release two")).await.unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn delete_tag_is_local_only() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["tag", "-d", "v1"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.delete_tag("v1").await.unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn push_tag_uses_the_full_refspec() {
+    // `refs/tags/` avoids ambiguity with a same-named branch.
+    let fake = FakeExecutor::default();
+    fake.expect(&["push", "origin", "refs/tags/v1"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.push_tag("origin", "v1", OperationId("op".into())).await.unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn delete_remote_tag_pushes_a_delete_refspec() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["push", "origin", "--delete", "refs/tags/v1"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.delete_remote_tag("origin", "v1", OperationId("op".into()))
+        .await
+        .unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn remote_management_argv_contracts() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["remote", "add", "upstream", "https://x.invalid/r.git"], ok(""));
+    fake.expect(&["remote", "rename", "upstream", "mirror"], ok(""));
+    fake.expect(&["remote", "set-url", "mirror", "https://y.invalid/r.git"], ok(""));
+    fake.expect(
+        &["remote", "set-url", "--push", "mirror", "ssh://y.invalid/r.git"],
+        ok(""),
+    );
+    fake.expect(&["remote", "remove", "mirror"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.add_remote("upstream", "https://x.invalid/r.git").await.unwrap();
+    b.rename_remote("upstream", "mirror").await.unwrap();
+    b.set_remote_url("mirror", "https://y.invalid/r.git", false).await.unwrap();
+    b.set_remote_url("mirror", "ssh://y.invalid/r.git", true).await.unwrap();
+    b.remove_remote("mirror").await.unwrap();
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
+// fetch / pull / merge — full command sequences (previously only arg-builder
+// units + real-git coverage)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn fetch_suppresses_auto_maintenance_and_shows_progress() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["-c", "gc.auto=0", "-c", "maintenance.auto=false", "fetch", "--progress", "origin"],
+        ok(""),
+    );
+    let (b, exec) = backend(fake);
+
+    b.fetch(
+        FetchOptions { all: false, prune: false, remote: Some("origin".into()) },
+        OperationId("op".into()),
+    )
+    .await
+    .unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn pull_default_lets_repo_config_decide() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["-c", "gc.auto=0", "-c", "maintenance.auto=false", "pull", "--progress"],
+        ok(""),
+    );
+    let (b, exec) = backend(fake);
+
+    b.pull(PullOptions { strategy: PullStrategy::Default }, OperationId("op".into()))
+        .await
+        .unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn merge_ff_auto_passes_no_edit_and_classifies_clean() {
+    // --no-edit: the runner's hardened GIT_EDITOR=false would otherwise fail
+    // a merge-commit merge.
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["merge", "--no-edit", "feature"],
+        ok("Merge made by the 'ort' strategy."),
+    );
+    let (b, exec) = backend(fake);
+
+    let outcome = b
+        .merge("feature", MergeOptions { ff: FfMode::Auto, squash: false })
+        .await
+        .unwrap();
+    assert_eq!(outcome, MergeOutcome::Merged);
     exec.assert_done();
 }

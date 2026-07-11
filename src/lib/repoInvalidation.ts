@@ -35,12 +35,23 @@ export function invalidateRepoDomains(
   }
 }
 
-/** The watcher payloads do not carry a `submodules` domain yet (that lands
- * with the tier-2 watcher work): submodule-relevant changes classify as
- * `status` (index, worktree) or `branches`/`log` (HEAD moves). Derive the
- * domain so the Submodules section refreshes with them. */
+/** Frontend query domains the watcher cannot emit directly, derived from the
+ * domains it does:
+ * - `submodules`: superproject-side triggers (index, `.gitmodules`) classify
+ *   as `status`, HEAD moves as `branches` - derive so the Submodules section
+ *   refreshes with them. (Writes inside a submodule's own gitdir DO arrive
+ *   as a real `submodules` watcher domain.)
+ * - `tracking`: ahead/behind counts change whenever refs move, e.g. an
+ *   EXTERNAL `git fetch` updating remote-tracking refs (`branches`).
+ *   `tracking` is a frontend query domain only, so without this derivation
+ *   the sync toolbar goes stale until an in-app action. */
 export function withDerivedDomains(domains: string[]): string[] {
-  if (!domains.includes("status") && !domains.includes("branches")) return domains;
-  if (domains.includes("submodules")) return domains;
-  return [...domains, "submodules"];
+  const out = [...domains];
+  if ((out.includes("status") || out.includes("branches")) && !out.includes("submodules")) {
+    out.push("submodules");
+  }
+  if (out.includes("branches") && !out.includes("tracking")) {
+    out.push("tracking");
+  }
+  return out;
 }

@@ -13,10 +13,10 @@
 //! autocrlf) locally, so a developer's global config cannot skew outcomes.
 
 use legit_core::{
-    CommitId, ConflictKind, ConflictSide, DiffEntry, DiffSource, FetchOptions, FileState,
+    CommitId, GitError, ConflictKind, ConflictSide, DiffEntry, DiffSource, FetchOptions, FileState,
     GitBackend, GitCliBackend, GitRunner, MergeOptions, MergeOutcome, OperationId, PullOptions,
     PullStrategy, PushOptions, PushRecurseMode, RebaseOutcome, RemoteProgress, RepoFileEntry, RepoFileKind,
-    RepoOpState, ResetMode, SequenceOutcome, StashOutcome, SubmoduleAutoUpdateStatus,
+    RepoOpState, ResetMode, SequenceOutcome, StashApplyOutcome, StashOutcome, SubmoduleAutoUpdateStatus,
     SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy, SwitchDirtyBehavior,
     SwitchOutcome,
 };
@@ -2251,6 +2251,41 @@ async fn stash_paths_takes_only_the_given_files() {
 }
 
 #[tokio::test]
+async fn stash_pop_with_conflicting_tree_reports_conflicts_outcome() {
+    // Validates the phrases `stash_apply_left_conflicts` keys on against the
+    // real binary: a pop onto a conflicting tree must classify as the
+    // Conflicts OUTCOME (stash applied with markers, git keeps the entry),
+    // never a plain error.
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+
+    repo.write("a.txt", "stashed change\n");
+    let outcome = repo.backend.create_stash(Some("mine"), true, false).await.unwrap();
+    assert_eq!(outcome, StashOutcome::Created);
+
+    // Commit a different change to the same lines so the pop conflicts.
+    repo.write("a.txt", "committed change\n");
+    repo.commit_all("collider").await;
+
+    let stashes = repo.backend.stashes().await.unwrap();
+    assert_eq!(stashes.len(), 1);
+    let result = repo
+        .backend
+        .pop_stash(&stashes[0].stash_sha.0)
+        .await
+        .unwrap();
+    assert!(
+        matches!(result, StashApplyOutcome::Conflicts { .. }),
+        "expected Conflicts outcome, got {result:?}"
+    );
+    // The stash entry survives a conflicted pop (guidance: resolve, then drop).
+    assert_eq!(repo.backend.stashes().await.unwrap().len(), 1);
+    // And the working tree holds the conflict markers.
+    assert!(repo.read("a.txt").contains("<<<<<<<"));
+}
+
+#[tokio::test]
 async fn stash_paths_leaves_other_staged_changes_out_of_the_stash() {
     // The reason create_stash_paths isolates the index: a plain pathspec
     // `stash push` embeds the ENTIRE index in the stash entry, so another
@@ -2331,4 +2366,176 @@ async fn stashed_untracked_file_can_be_applied_per_file() {
     let porcelain = repo.git(&["status", "--porcelain"]).await;
     assert!(porcelain.contains(" M a.txt"), "{porcelain}");
     assert_eq!(repo.read("a.txt"), "base\nmodified\n");
+}
+
+// ---------------------------------------------------------------------------
+// branch / tag / remote management against the real binary — validates the
+// exit-code and behavior assumptions the flow tests encode
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn branch_create_rename_delete_roundtrip() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "x\n");
+    repo.commit_all("base").await;
+
+    repo.backend.create_branch("feat", None).await.unwrap();
+    let names = |bs: &[legit_core::Branch]| -> Vec<String> {
+        bs.iter().filter(|b| !b.is_remote).map(|b| b.name.clone()).collect()
+    };
+    assert!(names(&repo.backend.branches().await.unwrap()).contains(&"feat".to_string()));
+
+    repo.backend.rename_branch("feat", "feature/x").await.unwrap();
+    let branches = repo.backend.branches().await.unwrap();
+    let local = names(&branches);
+    assert!(local.contains(&"feature/x".to_string()), "{local:?}");
+    assert!(!local.contains(&"feat".to_string()));
+
+    // Safe delete works on a merged (same-tip) branch.
+    repo.backend.delete_branch("feature/x", false).await.unwrap();
+    assert!(!names(&repo.backend.branches().await.unwrap()).contains(&"feature/x".to_string()));
+}
+
+#[tokio::test]
+async fn delete_branch_safe_refuses_unmerged_force_deletes() {
+    // Encodes the -d vs -D contract: git refuses an unmerged branch with -d
+    // (that refusal is the data-loss guard) and obeys -D.
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+
+    repo.backend.create_branch("wip", None).await.unwrap();
+    repo.backend
+        .switch_branch("wip", SwitchDirtyBehavior::TryDirectly)
+        .await
+        .unwrap();
+    repo.write("a.txt", "wip work\n");
+    repo.commit_all("wip commit").await;
+    repo.backend
+        .switch_branch("main", SwitchDirtyBehavior::TryDirectly)
+        .await
+        .unwrap();
+
+    let err = repo.backend.delete_branch("wip", false).await.unwrap_err();
+    assert!(
+        matches!(&err, GitError::CommandFailed { stderr, .. } if stderr.contains("not fully merged")),
+        "safe delete must refuse an unmerged branch, got {err:?}"
+    );
+    // The branch survived the refused delete.
+    assert!(repo
+        .backend
+        .branches()
+        .await
+        .unwrap()
+        .iter()
+        .any(|b| !b.is_remote && b.name == "wip"));
+
+    repo.backend.delete_branch("wip", true).await.unwrap();
+    assert!(!repo
+        .backend
+        .branches()
+        .await
+        .unwrap()
+        .iter()
+        .any(|b| !b.is_remote && b.name == "wip"));
+}
+
+#[tokio::test]
+async fn checkout_commit_detaches_head() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("first").await;
+    let first = repo.git(&["rev-parse", "HEAD"]).await.trim().to_string();
+    repo.write("a.txt", "two\n");
+    repo.commit_all("second").await;
+
+    let outcome = repo
+        .backend
+        .checkout_commit(&first, SwitchDirtyBehavior::TryDirectly)
+        .await
+        .unwrap();
+    assert_eq!(outcome, SwitchOutcome::Clean);
+    // HEAD is detached at the first commit.
+    let head = repo.git(&["rev-parse", "HEAD"]).await.trim().to_string();
+    assert_eq!(head, first);
+    let sym = repo.git(&["rev-parse", "--abbrev-ref", "HEAD"]).await.trim().to_string();
+    assert_eq!(sym, "HEAD", "expected detached HEAD");
+    assert_eq!(repo.read("a.txt"), "one\n");
+}
+
+#[tokio::test]
+async fn tag_create_delete_roundtrip_lightweight_and_annotated() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "x\n");
+    repo.commit_all("base").await;
+
+    repo.backend.create_tag("v1", None, None).await.unwrap();
+    repo.backend.create_tag("v2", None, Some("second release")).await.unwrap();
+    let tags = repo.backend.tags().await.unwrap();
+    let v1 = tags.iter().find(|t| t.name == "v1").expect("v1 exists");
+    let v2 = tags.iter().find(|t| t.name == "v2").expect("v2 exists");
+    assert!(!v1.annotated, "plain tag must be lightweight");
+    assert!(v2.annotated, "message tag must be annotated");
+
+    repo.backend.delete_tag("v1").await.unwrap();
+    let names: Vec<String> =
+        repo.backend.tags().await.unwrap().iter().map(|t| t.name.clone()).collect();
+    assert!(!names.contains(&"v1".to_string()));
+    assert!(names.contains(&"v2".to_string()));
+}
+
+#[tokio::test]
+async fn tag_push_and_remote_delete_roundtrip() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "x\n");
+    repo.commit_all("base").await;
+    let (_dir, remote_path, url) = bare_remote().await;
+    repo.backend.add_remote("origin", &url).await.unwrap();
+    // The tag's target must exist on the remote first.
+    repo.git(&["push", "origin", "HEAD:refs/heads/main"]).await;
+
+    repo.backend.create_tag("v1", None, None).await.unwrap();
+    repo.backend
+        .push_tag("origin", "v1", OperationId("push-tag".into()))
+        .await
+        .unwrap();
+    let remote_runner = GitRunner::for_repo("git", &remote_path);
+    let listed = remote_runner.run(&["tag", "--list"]).await.unwrap().stdout;
+    assert!(listed.lines().any(|l| l.trim() == "v1"), "{listed}");
+
+    repo.backend
+        .delete_remote_tag("origin", "v1", OperationId("del-tag".into()))
+        .await
+        .unwrap();
+    let listed = remote_runner.run(&["tag", "--list"]).await.unwrap().stdout;
+    assert!(!listed.lines().any(|l| l.trim() == "v1"), "{listed}");
+    // Local tag untouched: remote deletion is a separate, deliberate action.
+    assert!(repo.backend.tags().await.unwrap().iter().any(|t| t.name == "v1"));
+}
+
+#[tokio::test]
+async fn remote_management_roundtrip() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "x\n");
+    repo.commit_all("base").await;
+
+    repo.backend.add_remote("upstream", "https://x.invalid/r.git").await.unwrap();
+    repo.backend.rename_remote("upstream", "mirror").await.unwrap();
+    repo.backend
+        .set_remote_url("mirror", "https://y.invalid/r.git", false)
+        .await
+        .unwrap();
+    repo.backend
+        .set_remote_url("mirror", "ssh://y.invalid/push.git", true)
+        .await
+        .unwrap();
+
+    let remotes = repo.backend.list_remotes().await.unwrap();
+    assert_eq!(remotes.len(), 1);
+    assert_eq!(remotes[0].name, "mirror");
+    assert_eq!(remotes[0].fetch_url, "https://y.invalid/r.git");
+    assert_eq!(remotes[0].push_url, "ssh://y.invalid/push.git");
+
+    repo.backend.remove_remote("mirror").await.unwrap();
+    assert!(repo.backend.list_remotes().await.unwrap().is_empty());
 }

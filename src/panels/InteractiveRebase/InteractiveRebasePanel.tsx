@@ -10,6 +10,7 @@ import { OP_DOMAINS, useOpState } from "../../lib/useOpState";
 import { notifyOpError, notifyRebaseOutcome } from "../../lib/mergeFeedback";
 import { Button, IconButton } from "../shared/buttons";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
+import { usePanelRunner } from "../shared/usePanelRunner";
 
 /** One editable plan row (UI order = todo order, oldest first). */
 interface PlanRow {
@@ -50,8 +51,14 @@ export function InteractiveRebasePanel() {
 
   const [base, setBase] = useState<string | null>(null);
   const [rows, setRows] = useState<PlanRow[]>([]);
-  const [busy, setBusy] = useState(false);
-  const runningRef = useRef(false);
+  const { busy, run } = usePanelRunner({
+    enabled: !!repo,
+    onError: notifyOpError,
+    // Even a failed start can leave op state behind; refresh either way.
+    onSettled: () => {
+      if (repo) invalidateRepoDomains(queryClient, repo.id, [...OP_DOMAINS, "tracking"]);
+    },
+  });
 
   // Reset when the active repo changes — the base belongs to the old repo.
   const prevRepoId = useRef(repo?.id);
@@ -120,23 +127,14 @@ export function InteractiveRebasePanel() {
   });
 
   const start = async () => {
-    if (!repo || !base || runningRef.current) return;
-    runningRef.current = true;
-    const busyTimer = window.setTimeout(() => setBusy(true), 150);
-    try {
+    if (!base) return;
+    await run(async () => {
       const plan: RebaseStep[] = rows.map((r) => ({ action: r.action, sha: r.sha }));
-      const outcome = await repoRebaseInteractive(repo.id, base, plan);
+      const outcome = await repoRebaseInteractive(repo!.id, base, plan);
       notifyRebaseOutcome(outcome, base.slice(0, 8));
       setBase(null);
       setRows([]);
-    } catch (e) {
-      notifyOpError(e);
-    } finally {
-      window.clearTimeout(busyTimer);
-      runningRef.current = false;
-      setBusy(false);
-      invalidateRepoDomains(queryClient, repo.id, [...OP_DOMAINS, "tracking"]);
-    }
+    });
   };
 
   if (!repo) {

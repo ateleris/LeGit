@@ -68,14 +68,11 @@ export const TagIcon = withDefaults(Tag, "TagIcon");
 export const StashIcon = withDefaults(Archive, "StashIcon");
 export const LinkIcon = withDefaults(Link2, "LinkIcon");
 export const UnlinkIcon = withDefaults(Unlink2, "UnlinkIcon");
-export const LockIcon = withDefaults(Lock, "LockIcon");
 export const CheckIcon = withDefaults(Check, "CheckIcon");
 export const WarningIcon = withDefaults(TriangleAlert, "WarningIcon");
 // Working Changes row actions.
 export const StageIcon = withDefaults(Plus, "StageIcon");
 export const UnstageIcon = withDefaults(Minus, "UnstageIcon");
-export const DiscardIcon = withDefaults(RotateCcw, "DiscardIcon");
-export const TrashIcon = withDefaults(Trash2, "TrashIcon");
 // Remote sync (Commits panel toolbar).
 export const ExternalEditorIcon = withDefaults(SquarePen, "ExternalEditorIcon");
 export const RemotePageIcon = withDefaults(Globe, "RemotePageIcon");

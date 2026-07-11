@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { PanelError } from "../shared/PanelError";
 import { useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useActiveRepo } from "../../store/repos";
@@ -176,9 +177,7 @@ export function SearchPanel() {
         style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 2 }}
       >
         {isError && (
-          <pre className="legit-error" style={{ margin: 0, fontSize: "var(--fz-md)" }}>
-            {String((error as Error)?.message ?? error)}
-          </pre>
+          <PanelError error={error} margin={0} />
         )}
         {!submitted ? (
           <span className="legit-subtle" style={{ fontSize: "var(--fz-md)" }}>

@@ -44,37 +44,10 @@ pub async fn set_active_theme(
     state: tauri::State<'_, AppState>,
     name: String,
 ) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         s.active_theme = Some(name);
-    }
-    state.persist_global_settings().await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn save_global_layout(
-    state: tauri::State<'_, AppState>,
-    layout: serde_json::Value,
-) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
-        s.global_dock_layout = Some(layout);
-    }
-    state.persist_global_settings().await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn save_repo_layout(
-    state: tauri::State<'_, AppState>,
-    layout: serde_json::Value,
-) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
-        s.repo_dock_layout = Some(layout);
-    }
-    state.persist_global_settings().await
+    })
+    .await
 }
 
 /// Persist the region layout state (divider sizes, collapse, placement).
@@ -88,14 +61,13 @@ pub async fn save_region_state(
     size_left: Option<f64>,
     collapsed: bool,
 ) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         s.global_region_placement = placement;
         s.global_region_size_top = size_top;
         s.global_region_size_left = size_left;
         s.global_dock_collapsed = collapsed;
-    }
-    state.persist_global_settings().await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -104,11 +76,10 @@ pub async fn save_column_preferences(
     state: tauri::State<'_, AppState>,
     prefs: serde_json::Value,
 ) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         s.column_preferences = prefs;
-    }
-    state.persist_global_settings().await
+    })
+    .await
 }
 
 /// Persist the Changed Files panel's view mode (`"tree"` | `"flat"`).
@@ -118,11 +89,10 @@ pub async fn save_changed_files_view_mode(
     state: tauri::State<'_, AppState>,
     mode: String,
 ) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         s.changed_files_view_mode = Some(mode);
-    }
-    state.persist_global_settings().await
+    })
+    .await
 }
 
 /// Persist the global UI font size (px), clamped to a sane range.
@@ -133,11 +103,10 @@ pub async fn save_ui_font_size(
     size: f64,
 ) -> Result<f64, AppError> {
     let clamped = size.clamp(8.0, 24.0);
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         s.ui_font_size = clamped;
-    }
-    state.persist_global_settings().await?;
+    })
+    .await?;
     Ok(clamped)
 }
 
@@ -156,8 +125,7 @@ pub async fn save_commits_graph_metrics(
     dot_radius: f64,
     line_width: f64,
 ) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         // The row must clear a ref chip, which scales with the UI font size;
         // lane width shares the same font-derived floor.
         let min_rh = min_commits_row_height(s.ui_font_size);
@@ -169,8 +137,8 @@ pub async fn save_commits_graph_metrics(
         // Line width can't exceed half the smaller cell dimension or the stroke
         // would overflow the cell / neighbouring lane — same bound as the dot.
         s.commits_line_width = line_width.clamp(1.0, max_commits_dot_radius(rh, lw));
-    }
-    state.persist_global_settings().await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -179,11 +147,10 @@ pub async fn set_warn_on_mixed_endings(
     state: tauri::State<'_, AppState>,
     warn: bool,
 ) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         s.warn_on_mixed_endings = warn;
-    }
-    state.persist_global_settings().await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -192,11 +159,10 @@ pub async fn set_confirm_discard(
     state: tauri::State<'_, AppState>,
     confirm: bool,
 ) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         s.confirm_discard = confirm;
-    }
-    state.persist_global_settings().await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -205,12 +171,11 @@ pub async fn set_external_editor_command(
     state: tauri::State<'_, AppState>,
     command: Option<String>,
 ) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         // Blank means "not configured" — store None so the fallback applies.
         s.external_editor_command = command.filter(|c| !c.trim().is_empty());
-    }
-    state.persist_global_settings().await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -219,11 +184,10 @@ pub async fn set_auto_fetch_enabled(
     state: tauri::State<'_, AppState>,
     enabled: bool,
 ) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         s.auto_fetch_enabled = enabled;
-    }
-    state.persist_global_settings().await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -232,11 +196,10 @@ pub async fn set_auto_fetch_interval_minutes(
     state: tauri::State<'_, AppState>,
     minutes: u32,
 ) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         s.auto_fetch_interval_minutes = minutes.max(1);
-    }
-    state.persist_global_settings().await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -245,11 +208,10 @@ pub async fn set_commit_avatars(
     state: tauri::State<'_, AppState>,
     enabled: bool,
 ) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         s.commit_avatars = enabled;
-    }
-    state.persist_global_settings().await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -258,11 +220,10 @@ pub async fn set_diff_syntax_highlighting(
     state: tauri::State<'_, AppState>,
     enabled: bool,
 ) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         s.diff_syntax_highlighting = enabled;
-    }
-    state.persist_global_settings().await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -271,11 +232,10 @@ pub async fn set_suppressed_auto_open_panels(
     state: tauri::State<'_, AppState>,
     panels: Vec<String>,
 ) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         s.suppressed_auto_open_panels = panels;
-    }
-    state.persist_global_settings().await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -284,11 +244,10 @@ pub async fn set_working_changes_section_order(
     state: tauri::State<'_, AppState>,
     order: Vec<String>,
 ) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         s.working_changes_section_order = order;
-    }
-    state.persist_global_settings().await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -297,11 +256,10 @@ pub async fn save_switch_dirty_behavior(
     state: tauri::State<'_, AppState>,
     behavior: SwitchDirtyBehavior,
 ) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         s.switch_dirty_behavior = Some(behavior);
-    }
-    state.persist_global_settings().await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -310,11 +268,10 @@ pub async fn save_pull_strategy(
     state: tauri::State<'_, AppState>,
     strategy: legit_core::PullStrategy,
 ) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         s.pull_strategy = Some(strategy);
-    }
-    state.persist_global_settings().await
+    })
+    .await
 }
 
 /// Persist the `push --recurse-submodules` guard mode (None = off).
@@ -324,11 +281,10 @@ pub async fn save_push_recurse_submodules(
     state: tauri::State<'_, AppState>,
     mode: Option<legit_core::PushRecurseMode>,
 ) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         s.push_recurse_submodules = mode;
-    }
-    state.persist_global_settings().await
+    })
+    .await
 }
 
 #[tauri::command]

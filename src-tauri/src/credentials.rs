@@ -378,11 +378,7 @@ async fn handle_get(
         .flatten();
     if let Some(hit) = stored {
         if wanted_user.as_deref().is_none_or(|u| u == hit.username) {
-            broker
-                .session_cache
-                .lock()
-                .unwrap()
-                .insert(key, hit.clone());
+            lock(&broker.session_cache).insert(key, hit.clone());
             return ShimResponse {
                 username: Some(hit.username),
                 password: Some(hit.password),
@@ -394,11 +390,7 @@ async fn handle_get(
     // 3. Prompt the user.
     let request_id = uuid::Uuid::new_v4().to_string();
     let (tx, rx) = oneshot::channel();
-    broker
-        .pending
-        .lock()
-        .unwrap()
-        .insert(request_id.clone(), tx);
+    lock(&broker.pending).insert(request_id.clone(), tx);
     let _ = broker.app.emit(
         CREDENTIAL_REQUEST_EVENT,
         CredentialRequestPayload {

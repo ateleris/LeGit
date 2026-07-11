@@ -10,14 +10,8 @@ use thiserror::Error;
 #[derive(Debug, Error, Clone, Serialize, Deserialize, Type)]
 #[serde(tag = "kind", content = "details")]
 pub enum GitError {
-    #[error("not a git repository: {0}")]
-    NotARepo(String),
-
     #[error("reference not found: {0}")]
     RefNotFound(String),
-
-    #[error("merge conflict: {0}")]
-    MergeConflict(String),
 
     #[error("authentication failed: {0}")]
     AuthFailed(String),
@@ -31,12 +25,6 @@ pub enum GitError {
     #[error("switching would overwrite local changes: {0}")]
     WouldOverwriteLocalChanges(String),
 
-    #[error("operation cancelled")]
-    Cancelled,
-
-    #[error("operation timed out")]
-    TimedOut,
-
     #[error("git command failed (exit {exit_code}): {stderr}")]
     CommandFailed { exit_code: i32, stderr: String },
 
@@ -45,9 +33,6 @@ pub enum GitError {
 
     #[error("git executable not available: {0}")]
     GitUnavailable(String),
-
-    #[error("operation not yet implemented in v0.1")]
-    NotYet,
 
     #[error("only the latest commit (HEAD) can be reworded")]
     RewordNotHead,
@@ -78,5 +63,44 @@ impl ParseError {
 impl From<ParseError> for GitError {
     fn from(value: ParseError) -> Self {
         GitError::Parse(value.message)
+    }
+}
+
+/// Classify runner-level failures instead of flattening them: a missing git
+/// binary must reach the UI as `GitUnavailable` (actionable), everything
+/// else as `Internal`. (Cancellation is not an error at this level - the
+/// runner reports a killed child as a normal non-zero `RunOutput`.)
+impl From<crate::runner::RunnerError> for GitError {
+    fn from(value: crate::runner::RunnerError) -> Self {
+        use crate::runner::RunnerError;
+        match value {
+            RunnerError::GitNotFound(path) => {
+                GitError::GitUnavailable(path.to_string_lossy().into_owned())
+            }
+            other => GitError::Internal(other.to_string()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runner::RunnerError;
+    use std::path::PathBuf;
+
+    #[test]
+    fn runner_git_not_found_maps_to_git_unavailable() {
+        let err: GitError = RunnerError::GitNotFound(PathBuf::from("/nope/git")).into();
+        assert!(
+            matches!(err, GitError::GitUnavailable(_)),
+            "GitNotFound must classify as GitUnavailable, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn other_runner_errors_map_to_internal() {
+        let spawn = RunnerError::Spawn(std::io::Error::other("boom"));
+        let err: GitError = spawn.into();
+        assert!(matches!(err, GitError::Internal(_)));
     }
 }

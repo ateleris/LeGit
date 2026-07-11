@@ -3,6 +3,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import type { GitStatus } from "../../lib/types";
 import { useGitStatusStore } from "../../store/git-status";
+import { copyText } from "../../lib/clipboard";
 import { Button } from "../shared/buttons";
 
 interface Props {
@@ -170,7 +171,9 @@ function CopyableCommand({ command, note }: { command: string; note?: string }) 
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(command);
+      // copyText, not navigator.clipboard directly: it falls back to the
+      // hidden-textarea path in webviews where the async API is blocked.
+      await copyText(command);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     } catch {

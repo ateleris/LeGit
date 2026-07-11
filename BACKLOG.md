@@ -130,9 +130,19 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   (needs per-commit message injection), warning when the plan rewrites
   pushed commits. (Reword beyond HEAD as a standalone feature was dropped
   2026-07-05 by decision - not planned.)
-- **E2E extensions** (only once the suite has proven stable in CI):
-  clone-via-"+"-menu flow, branch create/switch flow. Keep it a small smoke
-  suite; Linux-only remains fine.
+- **E2E extensions.** Discard-with-confirm, branch create/switch, and stash
+  create/pop specs added 2026-07-11 (awaiting their first CI runs). Still
+  open: clone-via-"+"-menu flow, and push/pull against a local bare-remote
+  fixture (`buildRemoteFixture`). Keep it a small smoke suite; Linux-only
+  remains fine.
+- **Frontend consolidation (from the 2026-07-11 hardening review, section
+  D).** Deliberately parked: shared Popover/useDismissable for the 6
+  hand-rolled dropdowns, shared composite file-row menu section, STALE
+  query-time constants, summon-registry cross-check test, fixed-px padding
+  sweep, theme.css value-equality test, GlobalSettingsPanel split (1309
+  lines), GitBackend naming normalization (batch with the next backend
+  feature). Also decide keep-or-delete for the unreferenced
+  `crates/legit-providers` workspace member.
 - **Submodules:** nested-tree overview (deliberately flat for now);
   hide-the-Refs-pane-when-no-gitlinks (paneview layouts persist panes);
   `--shallow-submodules` on clone when depth + submodules are both set

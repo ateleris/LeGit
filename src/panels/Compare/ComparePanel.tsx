@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { PanelError } from "../shared/PanelError";
 import { useQuery } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
@@ -192,14 +193,10 @@ export function ComparePanel() {
 
       <div className="legit-panel__body" style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 2 }}>
         {isError && (
-          <pre className="legit-error" style={{ margin: 0, fontSize: "var(--fz-md)" }}>
-            {String((error as Error)?.message ?? error)}
-          </pre>
+          <PanelError error={error} margin={0} />
         )}
         {resolveError && (
-          <pre className="legit-error" style={{ margin: 0, fontSize: "var(--fz-md)" }}>
-            {resolveError}
-          </pre>
+          <PanelError error={resolveError} margin={0} />
         )}
         {!range ? (
           !resolveError && (

@@ -101,7 +101,6 @@
   --panel-tab-fg: var(--palette-subtle-fg);
   --panel-tab-active-bg: var(--palette-input-bg);
   --panel-tab-active-fg: var(--palette-main-fg);
-  --panel-tab-border: var(--palette-panel-border);
   --button-bg: var(--palette-panel-bg);
   --button-fg: var(--palette-main-fg);
   --button-hover-bg: var(--palette-input-bg);
@@ -167,8 +166,6 @@
   --diff-discard-fg: var(--palette-main-bg);
   --diff-discard-hover-bg: var(--palette-danger-hover);
   --diff-discard-hover-fg: var(--palette-main-bg);
-  --branch-current-fg: var(--palette-accent);
-  --commit-signed-indicator: var(--palette-success);
   --ref-branch-bg: var(--palette-ref-branch-bg);
   --ref-branch-border: var(--palette-ref-branch-border);
   --ref-branch-fg: var(--palette-ref-branch-fg);

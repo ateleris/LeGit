@@ -62,7 +62,7 @@ fn default_warn_on_mixed_endings() -> bool {
     true
 }
 
-/// Default for the filesystem-watcher toggle: on.
+/// Default minutes between background auto-fetches.
 fn default_auto_fetch_interval() -> u32 {
     15
 }
@@ -176,11 +176,6 @@ pub struct GlobalSettings {
     pub active_open_repo: Option<String>,
     /// Name of the active theme.
     pub active_theme: Option<String>,
-    /// Serialized dockview layout for the global region (Repositories, Theme
-    /// Editor, Global Settings).
-    pub global_dock_layout: Option<serde_json::Value>,
-    /// Serialized dockview layout for the repo region (Console, Repo Settings).
-    pub repo_dock_layout: Option<serde_json::Value>,
     /// Whether the global region sits above (top) or to the left (left) of the
     /// repo region.
     pub global_region_placement: RegionPlacement,
@@ -278,8 +273,6 @@ impl Default for GlobalSettings {
             currently_open: vec![],
             active_open_repo: None,
             active_theme: None,
-            global_dock_layout: None,
-            repo_dock_layout: None,
             global_region_placement: RegionPlacement::Top,
             global_region_size_top: None,
             global_region_size_left: None,
@@ -342,7 +335,7 @@ impl Default for LaneLocksDoc {
 
 /// Settings that persist for a specific repo. On disk as
 /// `<app-data>/repos/<hash>/settings.json`. Loaded into the `RepoSession`
-/// when the repo is opened; dropped on close.
+/// when the repo is opened; persisted eagerly on each change.
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Default)]
 #[serde(default)]
 pub struct RepoSettings {
@@ -380,7 +373,8 @@ pub struct RepoSession {
     /// backend without rebuilding either (DESIGN-v0.3.md §C.5/F.3).
     pub runner: Arc<RwLock<Arc<GitRunner>>>,
     pub backend: Arc<dyn GitBackend>,
-    /// Repo-scoped settings loaded on open; flushed on close.
+    /// Repo-scoped settings loaded on open; persisted eagerly on each change
+    /// (close does not flush).
     pub settings: Arc<RwLock<RepoSettings>>,
     /// On-disk path for `repos/<hash>/settings.json`.
     pub settings_path: PathBuf,
@@ -482,6 +476,29 @@ impl AppState {
             .get(repo_id)
             .cloned()
             .ok_or_else(|| AppError::UnknownRepo(repo_id.to_string()))
+    }
+
+    /// Apply `mutate` to the global settings under the write lock, then
+    /// persist - the single mutate-then-persist path for every `set_*`
+    /// command, so the ordering (and the persist itself) cannot be forgotten.
+    pub async fn mutate_global(
+        &self,
+        mutate: impl FnOnce(&mut GlobalSettings),
+    ) -> Result<(), AppError> {
+        {
+            let mut settings = self.global_settings.write().await;
+            mutate(&mut settings);
+        }
+        self.persist_global_settings().await
+    }
+
+    /// Persist `session`'s current repo settings - the single call point for
+    /// the `repo_data_paths` + `persist_repo_settings` pair, so the four
+    /// arguments cannot drift apart between commands.
+    pub async fn persist_session_settings(&self, session: &RepoSession) -> Result<(), AppError> {
+        let settings = session.settings.read().await.clone();
+        let (repo_dir, _) = self.repo_data_paths(&session.path);
+        persist_repo_settings(&settings, &repo_dir, &session.settings_path, &session.path).await
     }
 
     pub async fn persist_global_settings(&self) -> Result<(), AppError> {

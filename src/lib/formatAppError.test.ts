@@ -26,8 +26,8 @@ describe("formatAppError", () => {
   });
 
   it("labels unit GitError variants readably", () => {
-    expect(formatAppError({ kind: "Git", details: { kind: "Cancelled" } })).toBe(
-      "Operation cancelled.",
+    expect(formatAppError({ kind: "Git", details: { kind: "RewordNotHead" } })).toBe(
+      "Only the latest commit (HEAD) can be reworded.",
     );
   });
 

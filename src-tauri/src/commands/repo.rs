@@ -4,7 +4,7 @@
 
 use crate::error::AppError;
 use crate::state::{
-    load_repo_settings_sync, persist_repo_settings, AppState, LaneLock, RepoSession, RepoSettings,
+    load_repo_settings_sync, AppState, LaneLock, RepoSession, RepoSettings,
     RepoSummary,
 };
 use legit_core::{classify_remote_error, GitError, GitRunner, OperationId};
@@ -44,18 +44,27 @@ pub async fn open_session(
     global_git_path: PathBuf,
     toplevel: PathBuf,
 ) -> RepoSummary {
-    let (_, settings_path) = state.repo_data_paths(&toplevel);
-    let repo_settings = load_repo_settings_sync(&settings_path);
-    let resolved_git = resolve_repo_git_path(&repo_settings, &global_git_path);
+    // Reuse-or-insert under ONE `repos` write guard: two concurrent opens of
+    // the same directory (double-click, open racing restore) must never both
+    // miss the lookup and create twin sessions + watchers. No await happens
+    // while the guard is held; the watcher starts outside it (it runs git).
+    let session = {
+        let mut repos = state.repos.write().await;
+        if let Some(existing) = repos.values().find(|s| same_dir(&s.path, &toplevel)) {
+            tracing::info!(path = %toplevel.display(), id = %existing.id, "open: reusing existing session");
+            return existing.summary();
+        }
+        let (_, settings_path) = state.repo_data_paths(&toplevel);
+        let repo_settings = load_repo_settings_sync(&settings_path);
+        let resolved_git = resolve_repo_git_path(&repo_settings, &global_git_path);
 
-    let runner = Arc::new(GitRunner::for_repo(resolved_git, &toplevel));
-    let session = Arc::new(RepoSession::new(toplevel, runner, repo_settings, settings_path));
+        let runner = Arc::new(GitRunner::for_repo(resolved_git, &toplevel));
+        let session = Arc::new(RepoSession::new(toplevel, runner, repo_settings, settings_path));
+        repos.insert(session.id.clone(), session.clone());
+        session
+    };
+    tracing::info!(path = %session.path.display(), id = %session.id, "open: new session");
     let summary = session.summary();
-    state
-        .repos
-        .write()
-        .await
-        .insert(session.id.clone(), session.clone());
     start_repo_watcher(state, app, &session).await;
     summary
 }
@@ -127,36 +136,23 @@ async fn register_open_repo(
     }
     let toplevel = PathBuf::from(out.stdout.trim());
 
-    // Reuse an existing session for this directory if one is open (identity
-    // comparison - two spellings of one directory must never open twice).
-    let existing_summary = {
-        let repos = state.repos.read().await;
-        repos
-            .values()
-            .find(|s| same_dir(&s.path, &toplevel))
-            .map(|s| s.summary())
-    };
+    // open_session reuses an existing session for this directory (identity
+    // comparison, atomically with the insert) or creates one.
+    let summary = open_session(state, app, git_path, toplevel).await;
 
-    let summary = if let Some(s) = existing_summary {
-        tracing::info!(path = %toplevel.display(), id = %s.id, "open: reusing existing session");
-        s
-    } else {
-        tracing::info!(probe = %probe_path.display(), toplevel = %toplevel.display(), "open: new session");
-        open_session(state, app, git_path, toplevel).await
-    };
-
-    {
-        let mut settings = state.global_settings.write().await;
-        let p = summary.path.clone();
-        settings.last_open_repos.retain(|other| other != &p);
-        settings.last_open_repos.insert(0, p.clone());
-        settings.last_open_repos.truncate(20);
-        if !settings.currently_open.iter().any(|x| x == &p) {
-            settings.currently_open.push(p.clone());
-        }
-        settings.active_open_repo = Some(p);
-    }
-    state.persist_global_settings().await.ok();
+    state
+        .mutate_global(|settings| {
+            let p = summary.path.clone();
+            settings.last_open_repos.retain(|other| other != &p);
+            settings.last_open_repos.insert(0, p.clone());
+            settings.last_open_repos.truncate(20);
+            if !settings.currently_open.iter().any(|x| x == &p) {
+                settings.currently_open.push(p.clone());
+            }
+            settings.active_open_repo = Some(p);
+        })
+        .await
+        .ok();
 
     Ok(summary)
 }
@@ -377,13 +373,16 @@ pub async fn close_repo(
     state.watchers.lock().unwrap().remove(&repo_id);
 
     if let Some(path) = path {
-        let mut settings = state.global_settings.write().await;
-        settings.currently_open.retain(|p| p != &path);
-        if settings.active_open_repo.as_deref() == Some(path.as_str()) {
-            settings.active_open_repo = settings.currently_open.last().cloned();
-        }
+        state
+            .mutate_global(|settings| {
+                settings.currently_open.retain(|p| p != &path);
+                if settings.active_open_repo.as_deref() == Some(path.as_str()) {
+                    settings.active_open_repo = settings.currently_open.last().cloned();
+                }
+            })
+            .await
+            .ok();
     }
-    state.persist_global_settings().await.ok();
     Ok(())
 }
 
@@ -403,11 +402,10 @@ pub async fn set_active_repo(
     } else {
         None
     };
-    {
-        let mut settings = state.global_settings.write().await;
-        settings.active_open_repo = path;
-    }
-    state.persist_global_settings().await.ok();
+    state
+        .mutate_global(|settings| settings.active_open_repo = path)
+        .await
+        .ok();
     Ok(())
 }
 
@@ -421,11 +419,10 @@ pub async fn set_watcher_enabled(
     app: tauri::AppHandle,
     enabled: bool,
 ) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         s.watcher_enabled = enabled;
-    }
-    state.persist_global_settings().await.ok();
+    })
+    .await.ok();
 
     if enabled {
         let sessions: Vec<Arc<RepoSession>> =
@@ -543,17 +540,9 @@ pub async fn restore_open_repos(
             let git_path = git_path.clone();
             tokio::spawn(async move {
                 let state = app.state::<AppState>();
-                let existing = {
-                    let repos = state.repos.read().await;
-                    repos
-                        .values()
-                        .find(|s| same_dir(&s.path, &toplevel))
-                        .map(|s| s.summary())
-                };
-                match existing {
-                    Some(s) => s,
-                    None => open_session(&state, &app, git_path, toplevel).await,
-                }
+                // open_session reuses-or-creates atomically, so a restore
+                // racing a manual open of the same repo cannot double-open.
+                open_session(&state, &app, git_path, toplevel).await
             })
         })
         .collect();
@@ -571,31 +560,27 @@ pub async fn restore_open_repos(
         active_id = summaries.first().map(|s| s.id.clone());
     }
 
-    {
-        let mut settings = state.global_settings.write().await;
-        // Merge instead of overwrite: keep any paths that were opened while
-        // restore was running (they weren't in our snapshot), in their order.
-        let mut merged = still_valid;
-        for p in &settings.currently_open {
-            if !snapshot.contains(p) && !merged.contains(p) {
-                merged.push(p.clone());
+    state
+        .mutate_global(|settings| {
+            // Merge instead of overwrite: keep any paths that were opened while
+            // restore was running (they weren't in our snapshot), in their order.
+            let mut merged = still_valid;
+            for p in &settings.currently_open {
+                if !snapshot.contains(p) && !merged.contains(p) {
+                    merged.push(p.clone());
+                }
             }
-        }
-        settings.currently_open = merged;
-        // Keep active consistent with the list: clear it when nothing
-        // restored, rather than leaving a pointer at a repo that is gone.
-        settings.active_open_repo = active_id
-            .as_ref()
-            .and_then(|id| summaries.iter().find(|s| &s.id == id))
-            .map(|s| s.path.clone())
-            .or_else(|| {
-                settings
-                    .currently_open
-                    .first()
-                    .cloned()
-            });
-    }
-    state.persist_global_settings().await.ok();
+            settings.currently_open = merged;
+            // Keep active consistent with the list: clear it when nothing
+            // restored, rather than leaving a pointer at a repo that is gone.
+            settings.active_open_repo = active_id
+                .as_ref()
+                .and_then(|id| summaries.iter().find(|s| &s.id == id))
+                .map(|s| s.path.clone())
+                .or_else(|| settings.currently_open.first().cloned());
+        })
+        .await
+        .ok();
 
     Ok(RestoreResult {
         repos: summaries,
@@ -619,17 +604,18 @@ pub async fn set_open_repos_order(
             .filter_map(|id| repos.get(id).map(|s| s.summary().path))
             .collect()
     };
-    {
-        let mut settings = state.global_settings.write().await;
-        let mut next = ordered_paths;
-        for p in &settings.currently_open {
-            if !next.contains(p) {
-                next.push(p.clone());
+    state
+        .mutate_global(|settings| {
+            let mut next = ordered_paths;
+            for p in &settings.currently_open {
+                if !next.contains(p) {
+                    next.push(p.clone());
+                }
             }
-        }
-        settings.currently_open = next;
-    }
-    state.persist_global_settings().await.ok();
+            settings.currently_open = next;
+        })
+        .await
+        .ok();
     Ok(())
 }
 
@@ -656,10 +642,9 @@ pub async fn update_repo_settings(
     let session = state.get_session(&repo_id).await?;
     {
         let mut s = session.settings.write().await;
-        *s = settings.clone();
+        *s = settings;
     }
-    let (repo_dir, _) = state.repo_data_paths(&session.path);
-    persist_repo_settings(&settings, &repo_dir, &session.settings_path, &session.path).await
+    state.persist_session_settings(&session).await
 }
 
 /// Return all lane locks for an open repo.
@@ -688,18 +673,17 @@ pub async fn set_lane_lock(
         return Err(AppError::InvalidLockIndex(lane_index));
     }
     let session = state.get_session(&repo_id).await?;
-    let settings = {
+    let locks = {
         let mut s = session.settings.write().await;
         if let Some(existing) = s.lane_locks_doc.locks.iter_mut().find(|l| l.ref_name == ref_name) {
             existing.lane_index = lane_index;
         } else {
             s.lane_locks_doc.locks.push(LaneLock { ref_name, lane_index });
         }
-        s.clone()
+        s.lane_locks_doc.locks.clone()
     };
-    let (repo_dir, _) = state.repo_data_paths(&session.path);
-    persist_repo_settings(&settings, &repo_dir, &session.settings_path, &session.path).await?;
-    Ok(settings.lane_locks_doc.locks)
+    state.persist_session_settings(&session).await?;
+    Ok(locks)
 }
 
 /// Remove a lane lock by ref name. Returns the updated lock list (no-op if not found).
@@ -711,14 +695,13 @@ pub async fn unset_lane_lock(
     ref_name: String,
 ) -> Result<Vec<LaneLock>, AppError> {
     let session = state.get_session(&repo_id).await?;
-    let settings = {
+    let locks = {
         let mut s = session.settings.write().await;
         s.lane_locks_doc.locks.retain(|l| l.ref_name != ref_name);
-        s.clone()
+        s.lane_locks_doc.locks.clone()
     };
-    let (repo_dir, _) = state.repo_data_paths(&session.path);
-    persist_repo_settings(&settings, &repo_dir, &session.settings_path, &session.path).await?;
-    Ok(settings.lane_locks_doc.locks)
+    state.persist_session_settings(&session).await?;
+    Ok(locks)
 }
 
 #[cfg(test)]

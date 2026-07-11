@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { PanelError } from "../shared/PanelError";
 import { useQuery } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
@@ -6,7 +7,6 @@ import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { repoBlame } from "../../lib/commands";
 import type { BlameHunk } from "../../lib/types";
-import { formatAppError } from "../../lib/types";
 import { formatRelative } from "../../lib/time";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { LineEndingBadge } from "../shared/LineEndingBadge";
@@ -186,9 +186,7 @@ export function BlamePanel() {
 
       <div className="legit-panel__body" style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 0 }}>
         {isError ? (
-          <pre className="legit-error" style={{ margin: 8, fontSize: "var(--fz-md)" }}>
-            {formatAppError(error)}
-          </pre>
+          <PanelError error={error} margin={8} />
         ) : (
           // Sized to the widest row (min 100%) so every row's tint/border spans
           // the full scroll width instead of ending at its own line length.

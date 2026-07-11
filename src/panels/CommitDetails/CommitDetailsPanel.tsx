@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { PanelError } from "../shared/PanelError";
 import { useQuery } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useSummonTarget } from "../../store/summon";
@@ -7,7 +8,6 @@ import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { repoCommitDetails } from "../../lib/commands";
 import { formatFull, formatRelative } from "../../lib/time";
 import type { CommitDetails, CommitId, SignatureVerification } from "../../lib/types";
-import { formatAppError } from "../../lib/types";
 import { signaturePresentation } from "../../lib/signature";
 
 /** Commit Details panel — receives a CommitId payload from the summon mechanism. */
@@ -57,9 +57,7 @@ export function CommitDetailsPanel() {
       <PanelLoadingBar active={isFetching} />
 
       {isError && (
-        <pre className="legit-error" style={{ margin: "8px 12px", fontSize: "var(--fz-md)" }}>
-          {formatAppError(error)}
-        </pre>
+        <PanelError error={error} />
       )}
 
       {data && <CommitView details={data} />}

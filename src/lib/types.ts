@@ -16,24 +16,24 @@ export interface RepoSummary {
 
 export type RegionPlacement = "top" | "left";
 
+// Field optionality mirrors the generated bindings.ts exactly (serde default
+// = optional), so swapping this hand-mirror for bindings.ts stays a no-op.
 export interface GlobalSettings {
   git_path_override: string | null;
-  last_open_repos: string[];
-  currently_open: string[];
+  last_open_repos?: string[];
+  currently_open?: string[];
   active_open_repo: string | null;
   active_theme: string | null;
-  global_dock_layout: unknown | null;
-  repo_dock_layout: unknown | null;
   global_region_placement: RegionPlacement;
   global_region_size_top: number | null;
   global_region_size_left: number | null;
   global_dock_collapsed: boolean;
-  warn_on_mixed_endings: boolean;
+  warn_on_mixed_endings?: boolean;
   column_preferences?: unknown;
-  commits_row_height: number;
-  commits_lane_width: number;
-  commits_dot_radius: number;
-  commits_line_width: number;
+  commits_row_height?: number;
+  commits_lane_width?: number;
+  commits_dot_radius?: number;
+  commits_line_width?: number;
   /** Remembered Changed Files panel view mode ("tree" | "flat"). */
   changed_files_view_mode?: string | null;
   /** Global UI font size (px) — base for the panel text scale and min sizes. */
@@ -52,7 +52,7 @@ export interface GlobalSettings {
    * appended when absent. null/blank = use the OS file manager instead. */
   external_editor_command?: string | null;
   /** How to handle uncommitted changes when switching branches (null = try_directly). */
-  switch_dirty_behavior?: SwitchDirtyBehavior | null;
+  switch_dirty_behavior: SwitchDirtyBehavior | null;
   /** Pull integration strategy (null = Default: the repo's pull.rebase decides). */
   pull_strategy?: PullStrategy | null;
   /** `push --recurse-submodules` guard mode (null = off). */
@@ -177,9 +177,6 @@ export type AppError =
 
 /** Human-readable labels for `GitError` variants that carry no message. */
 const GIT_ERROR_LABELS: Record<string, string> = {
-  Cancelled: "Operation cancelled.",
-  TimedOut: "Operation timed out.",
-  NotYet: "This operation is not implemented yet.",
   RewordNotHead: "Only the latest commit (HEAD) can be reworded.",
   RewordPushed:
     "This commit has already been pushed; rewording would rewrite published history.",

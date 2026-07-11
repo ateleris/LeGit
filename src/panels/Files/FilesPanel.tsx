@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { PanelError } from "../shared/PanelError";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileCheck, FilePlus, FileX } from "lucide-react";
 import type { ReactNode } from "react";
@@ -196,9 +197,7 @@ export function FilesPanel() {
           </div>
 
           {isError && (
-            <pre className="legit-error" style={{ margin: "8px 12px", fontSize: "var(--fz-md)" }}>
-              {formatAppError(error)}
-            </pre>
+            <PanelError error={error} />
           )}
 
           {!isError && treeFiles.length === 0 && !isFetching && (

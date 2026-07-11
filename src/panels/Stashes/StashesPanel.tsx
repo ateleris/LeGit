@@ -21,6 +21,7 @@ import { formatAppError } from "../../lib/types";
 import { formatRelative } from "../../lib/time";
 import { StashIcon } from "../../icons";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
+import { usePanelRunner } from "../shared/usePanelRunner";
 import { InlineEditor } from "../shared/InlineEditor";
 import { Button } from "../shared/buttons";
 
@@ -64,7 +65,19 @@ export function StashesSection() {
   const reload = useCallback(() => { refetch(); }, [refetch]);
   usePanelFocusEffect(reload);
 
-  const [busy, setBusy] = useState(false);
+  // Two runners, one per error classification: stash-branch failures go
+  // through the switch classifier (it checks out the new branch).
+  const { busy: mutBusy, run } = usePanelRunner({
+    enabled: !!repo,
+    onStart: () => setError(null),
+    onError: (e) => setError(formatAppError(e)),
+  });
+  const { busy: branchBusy, run: runBranch } = usePanelRunner({
+    enabled: !!repo,
+    onStart: () => setError(null),
+    onError: (e) => setError(formatSwitchError(e)),
+  });
+  const busy = mutBusy || branchBusy;
   const [error, setError] = useState<string | null>(null);
   const [createMsg, setCreateMsg] = useState("");
   // Default on: a stash should capture the full working state, untracked files
@@ -102,49 +115,32 @@ export function StashesSection() {
   // `git stash branch`: new branch at the stash's base, stash applied and
   // dropped on success — the escape hatch when a plain apply would conflict.
   const doBranch = async (sha: string) => {
-    if (!repo) return;
     const name = draftBranch.trim();
     if (!name) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await repoStashBranch(repo.id, sha, name);
-      invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
+    await runBranch(async () => {
+      await repoStashBranch(repo!.id, sha, name);
+      invalidateRepoDomains(queryClient, repo!.id, BRANCH_DOMAINS);
       setBranching(null);
       notify.info(`Created branch '${name}' from the stash and checked it out.`);
-    } catch (e) {
-      setError(formatSwitchError(e));
-    } finally {
-      setBusy(false);
-    }
+    });
   };
 
   // Rename via drop + re-store (see the backend): the stash keeps its content
   // but moves to stash@{0}. The list refetch reflects the new order.
   const doRename = async (sha: string) => {
-    if (!repo) return;
     const next = draftMsg.trim();
     if (!next) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await repoRenameStash(repo.id, sha, next);
+    await run(async () => {
+      await repoRenameStash(repo!.id, sha, next);
       invalidate();
       setRenaming(null);
-    } catch (e) {
-      setError(formatAppError(e));
-    } finally {
-      setBusy(false);
-    }
+    });
   };
 
-  const doCreate = async () => {
-    if (!repo) return;
-    setBusy(true);
-    setError(null);
-    try {
+  const doCreate = () =>
+    run(async () => {
       const outcome = await repoCreateStash(
-        repo.id,
+        repo!.id,
         createMsg.trim() || undefined,
         includeUntracked,
         keepIndex,
@@ -157,54 +153,33 @@ export function StashesSection() {
         setIncludeUntracked(false);
         setKeepIndex(false);
       }
-    } catch (e) {
-      setError(formatAppError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+    });
 
   // Apply or pop, surfacing a merge conflict as an info toast (the op partially
   // succeeded; on a pop, git keeps the stash so it reappears after refetch).
   // Actions address the stash by SHA; the selector is only for the toast text.
-  const doApplyOrPop = async (
+  const doApplyOrPop = (
     sha: string,
     selector: string,
     fn: (repoId: string, sha: string) => Promise<{ kind: string; message?: string }>,
     verb: string,
-  ) => {
-    if (!repo) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const outcome = await fn(repo.id, sha);
+  ) =>
+    run(async () => {
+      const outcome = await fn(repo!.id, sha);
       invalidate();
       if (outcome.kind === "conflicts") {
         notify.info(
           `${verb} ${selector} produced conflicts — resolve them in your working tree.`,
         );
       }
-    } catch (e) {
-      setError(formatAppError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+    });
 
-  const doDrop = async (sha: string) => {
-    if (!repo) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await repoDropStash(repo.id, sha);
+  const doDrop = (sha: string) =>
+    run(async () => {
+      await repoDropStash(repo!.id, sha);
       invalidate();
       setConfirmDrop(null);
-    } catch (e) {
-      setError(formatAppError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+    });
 
   if (!repo) {
     return (

@@ -13,7 +13,7 @@
 use crate::commands::config_util::{read_config_scope, write_config_local};
 use crate::commands::signing;
 use crate::error::AppError;
-use crate::state::{persist_repo_settings, AppState, GitProfile};
+use crate::state::{AppState, GitProfile};
 use legit_core::{GitError, GitRunner};
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -399,13 +399,11 @@ async fn set_repo_profile_id(
     session: &crate::state::RepoSession,
     profile_id: Option<String>,
 ) -> Result<(), AppError> {
-    let settings = {
+    {
         let mut s = session.settings.write().await;
         s.git_profile_id = profile_id;
-        s.clone()
-    };
-    let (repo_dir, _) = state.repo_data_paths(&session.path);
-    persist_repo_settings(&settings, &repo_dir, &session.settings_path, &session.path).await
+    }
+    state.persist_session_settings(session).await
 }
 
 // ---------------------------------------------------------------------------
@@ -428,11 +426,10 @@ pub async fn create_git_profile(
     profile: GitProfile,
 ) -> Result<GitProfile, AppError> {
     let created = GitProfile { id: Uuid::new_v4().to_string(), ..profile };
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         s.git_profiles_doc.profiles.push(created.clone());
-    }
-    state.persist_global_settings().await?;
+    })
+    .await?;
     Ok(created)
 }
 
@@ -443,6 +440,8 @@ pub async fn update_git_profile(
     state: tauri::State<'_, AppState>,
     profile: GitProfile,
 ) -> Result<(), AppError> {
+    // Not `mutate_global`: the unknown-profile early return must happen
+    // BEFORE anything persists.
     {
         let mut s = state.global_settings.write().await;
         let slot = s
@@ -463,11 +462,10 @@ pub async fn delete_git_profile(
     state: tauri::State<'_, AppState>,
     profile_id: String,
 ) -> Result<(), AppError> {
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         s.git_profiles_doc.profiles.retain(|p| p.id != profile_id);
-    }
-    state.persist_global_settings().await
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -573,11 +571,10 @@ pub async fn create_profile_from_repo(
         auth_ssh_key,
         credential_helper: local.credential_helper.clone(),
     };
-    {
-        let mut s = state.global_settings.write().await;
+    state.mutate_global(|s| {
         s.git_profiles_doc.profiles.push(profile.clone());
-    }
-    state.persist_global_settings().await?;
+    })
+    .await?;
     set_repo_profile_id(&state, &session, Some(profile.id.clone())).await?;
     Ok(profile)
 }

@@ -85,6 +85,44 @@ describe("built-in Dark theme is the default theme", () => {
   });
 });
 
+// The reverse direction: every contract token must be CONSUMED somewhere
+// (`var(--token)` in a component/inline style, a CSS rule, or a `--dv-*`
+// mapping). A token nobody reads still shows up as an editable control in
+// the Theme Editor and does nothing - and once the contract is public,
+// removing it breaks user themes. Catch it before it ships instead.
+describe("every contract token is consumed", () => {
+  const SRC = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+  function listSourceFiles(dir: string): string[] {
+    const out: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) out.push(...listSourceFiles(full));
+      else if (/\.(ts|tsx|css)$/.test(entry.name) && !/\.test\./.test(entry.name)) out.push(full);
+    }
+    return out;
+  }
+
+  it("every token in TOKEN_CONTRACT is referenced via var() outside theme.css", () => {
+    const consumed = new Set<string>();
+    for (const file of listSourceFiles(SRC)) {
+      // theme.css only *defines* the fallbacks; a token referenced nowhere
+      // else is still dead. (applyTheme writes vars generically, so it
+      // cannot "consume" any specific token either.)
+      if (file.replace(/\\/g, "/").endsWith("styles/theme.css")) continue;
+      const text = readFileSync(file, "utf8");
+      for (const m of text.matchAll(/var\(\s*(--[a-zA-Z0-9-]+)/g)) consumed.add(m[1]);
+    }
+    const dead = TOKEN_CONTRACT.filter((t) => !consumed.has(tokenVar(t.name))).map(
+      (t) => t.name,
+    );
+    expect(
+      dead,
+      `Tokens defined in TOKEN_CONTRACT but consumed nowhere (dead Theme Editor controls):\n${dead.join("\n")}`,
+    ).toEqual([]);
+  });
+});
+
 // A bogus token name behind a `var()` fallback (e.g. the historical
 // `var(--fg, #ccc)` — `--fg` never existed) silently un-themes a colour: the
 // fallback becomes the *only* value and the litmus test breaks. Every

@@ -122,7 +122,6 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "panel-tab.fg", group: "Panel Tabs", documentation: "Inactive panel tab text." },
   { name: "panel-tab.active.bg", group: "Panel Tabs", documentation: "Active panel tab background." },
   { name: "panel-tab.active.fg", group: "Panel Tabs", documentation: "Active panel tab text." },
-  { name: "panel-tab.border", group: "Panel Tabs", documentation: "Panel tab strip border." },
 
   { name: "button.bg", group: "Controls", documentation: "Default button background." },
   { name: "button.fg", group: "Controls", documentation: "Default button text." },
@@ -198,8 +197,6 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
 
   { name: "menu.hover.bg", group: "Menus", documentation: "Background of a hovered context-menu item." },
 
-  { name: "branch.current.fg", group: "Refs", documentation: "Colour of the current branch label." },
-  { name: "commit.signed.indicator", group: "Refs", documentation: "Signed-commit indicator colour." },
 
   { name: "ref.branch.bg", group: "Refs", documentation: "Local branch chip fill." },
   { name: "ref.branch.border", group: "Refs", documentation: "Local branch chip border." },

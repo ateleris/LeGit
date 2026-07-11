@@ -12,9 +12,8 @@ use crate::commands::config_util::{
 use crate::commands::working::resolve_repo_relative;
 use crate::error::AppError;
 use crate::state::AppState;
-use legit_core::classify_line_endings;
 use legit_core::types::LineEndingKind;
-use legit_core::GitRunner;
+use legit_core::{classify_line_endings, mixed_endings_in_bytes, GitRunner};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::{Path, PathBuf};
@@ -54,6 +53,69 @@ pub struct LineEndingsView {
 }
 
 // ---------------------------------------------------------------------------
+// View assembly (shared by the read and write commands)
+// ---------------------------------------------------------------------------
+
+/// The effective mixed-endings warning toggle: repo override, else global.
+async fn effective_warn(state: &AppState, session: &crate::state::RepoSession) -> bool {
+    let repo_s = session.settings.read().await;
+    let global_s = state.global_settings.read().await;
+    repo_s.warn_on_mixed_endings.unwrap_or(global_s.warn_on_mixed_endings)
+}
+
+/// Assemble the full repo-scope view: configs at all scopes, `.gitattributes`
+/// rules, and (when the warning is enabled) the mixed-endings file scan.
+async fn build_repo_view(
+    state: &AppState,
+    session: &crate::state::RepoSession,
+    runner: &GitRunner,
+) -> LineEndingsView {
+    let autocrlf = read_config_all_scopes(runner, "core.autocrlf").await;
+    let eol = read_config_all_scopes(runner, "core.eol").await;
+    let (gitattributes, gitattributes_covers_all) = read_gitattributes(&session.path).await;
+    let mixed = if effective_warn(state, session).await {
+        detect_mixed_endings(runner, &session.path).await
+    } else {
+        vec![]
+    };
+
+    LineEndingsView {
+        autocrlf_local: autocrlf.local,
+        autocrlf_global: autocrlf.global,
+        autocrlf_system: autocrlf.system,
+        autocrlf_resolved: autocrlf.resolved,
+        eol_local: eol.local,
+        eol_global: eol.global,
+        eol_system: eol.system,
+        eol_resolved: eol.resolved,
+        gitattributes,
+        gitattributes_covers_all,
+        mixed_ending_files: mixed,
+    }
+}
+
+/// Assemble the global-scope view: no local scope, no `.gitattributes`, no
+/// mixed-endings scan (they only exist inside a repo).
+async fn build_global_view(runner: &GitRunner) -> LineEndingsView {
+    let autocrlf = read_config_all_scopes(runner, "core.autocrlf").await;
+    let eol = read_config_all_scopes(runner, "core.eol").await;
+
+    LineEndingsView {
+        autocrlf_local: ConfigValue::unset(),
+        autocrlf_global: autocrlf.global,
+        autocrlf_system: autocrlf.system,
+        autocrlf_resolved: autocrlf.resolved,
+        eol_local: ConfigValue::unset(),
+        eol_global: eol.global,
+        eol_system: eol.system,
+        eol_resolved: eol.resolved,
+        gitattributes: vec![],
+        gitattributes_covers_all: false,
+        mixed_ending_files: vec![],
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tauri commands
 // ---------------------------------------------------------------------------
 
@@ -66,34 +128,7 @@ pub async fn repo_line_endings_view(
 ) -> Result<LineEndingsView, AppError> {
     let session = state.get_session(&repo_id).await?;
     let runner = session.runner.read().await.clone();
-    let warn = {
-        let repo_s = session.settings.read().await;
-        let global_s = state.global_settings.read().await;
-        repo_s.warn_on_mixed_endings.unwrap_or(global_s.warn_on_mixed_endings)
-    };
-
-    let autocrlf = read_config_all_scopes(&runner, "core.autocrlf").await;
-    let eol = read_config_all_scopes(&runner, "core.eol").await;
-    let (gitattributes, gitattributes_covers_all) = read_gitattributes(&session.path).await;
-    let mixed = if warn {
-        detect_mixed_endings(&runner, &session.path).await
-    } else {
-        vec![]
-    };
-
-    Ok(LineEndingsView {
-        autocrlf_local: autocrlf.local,
-        autocrlf_global: autocrlf.global,
-        autocrlf_system: autocrlf.system,
-        autocrlf_resolved: autocrlf.resolved,
-        eol_local: eol.local,
-        eol_global: eol.global,
-        eol_system: eol.system,
-        eol_resolved: eol.resolved,
-        gitattributes,
-        gitattributes_covers_all,
-        mixed_ending_files: mixed,
-    })
+    Ok(build_repo_view(&state, &session, &runner).await)
 }
 
 /// Read line-ending information at global scope (no repo required).
@@ -105,22 +140,7 @@ pub async fn global_line_endings_view(
 ) -> Result<LineEndingsView, AppError> {
     let git_path = state.git_path.read().await.clone();
     let runner = GitRunner::unbound(&git_path);
-    let config = read_config_all_scopes(&runner, "core.autocrlf").await;
-    let eol = read_config_all_scopes(&runner, "core.eol").await;
-
-    Ok(LineEndingsView {
-        autocrlf_local: ConfigValue::unset(),
-        autocrlf_global: config.global,
-        autocrlf_system: config.system,
-        autocrlf_resolved: config.resolved,
-        eol_local: ConfigValue::unset(),
-        eol_global: eol.global,
-        eol_system: eol.system,
-        eol_resolved: eol.resolved,
-        gitattributes: vec![],
-        gitattributes_covers_all: false,
-        mixed_ending_files: vec![],
-    })
+    Ok(build_global_view(&runner).await)
 }
 
 /// Write `core.autocrlf` and `core.eol` to the repo's `.git/config`.
@@ -137,34 +157,7 @@ pub async fn repo_write_line_endings(
     let runner = session.runner.read().await.clone();
     write_config_local(&runner, "core.autocrlf", autocrlf.as_deref()).await?;
     write_config_local(&runner, "core.eol", eol.as_deref()).await?;
-
-    let warn = {
-        let repo_s = session.settings.read().await;
-        let global_s = state.global_settings.read().await;
-        repo_s.warn_on_mixed_endings.unwrap_or(global_s.warn_on_mixed_endings)
-    };
-    let autocrlf_v = read_config_all_scopes(&runner, "core.autocrlf").await;
-    let eol_v = read_config_all_scopes(&runner, "core.eol").await;
-    let (gitattributes, gitattributes_covers_all) = read_gitattributes(&session.path).await;
-    let mixed = if warn {
-        detect_mixed_endings(&runner, &session.path).await
-    } else {
-        vec![]
-    };
-
-    Ok(LineEndingsView {
-        autocrlf_local: autocrlf_v.local,
-        autocrlf_global: autocrlf_v.global,
-        autocrlf_system: autocrlf_v.system,
-        autocrlf_resolved: autocrlf_v.resolved,
-        eol_local: eol_v.local,
-        eol_global: eol_v.global,
-        eol_system: eol_v.system,
-        eol_resolved: eol_v.resolved,
-        gitattributes,
-        gitattributes_covers_all,
-        mixed_ending_files: mixed,
-    })
+    Ok(build_repo_view(&state, &session, &runner).await)
 }
 
 /// Write `core.autocrlf` and `core.eol` to `~/.gitconfig`.
@@ -180,23 +173,7 @@ pub async fn global_write_line_endings(
     let runner = GitRunner::unbound(&git_path);
     write_config_global(&runner, "core.autocrlf", autocrlf.as_deref()).await?;
     write_config_global(&runner, "core.eol", eol.as_deref()).await?;
-
-    let config = read_config_all_scopes(&runner, "core.autocrlf").await;
-    let eol_v = read_config_all_scopes(&runner, "core.eol").await;
-
-    Ok(LineEndingsView {
-        autocrlf_local: ConfigValue::unset(),
-        autocrlf_global: config.global,
-        autocrlf_system: config.system,
-        autocrlf_resolved: config.resolved,
-        eol_local: ConfigValue::unset(),
-        eol_global: eol_v.global,
-        eol_system: eol_v.system,
-        eol_resolved: eol_v.resolved,
-        gitattributes: vec![],
-        gitattributes_covers_all: false,
-        mixed_ending_files: vec![],
-    })
+    Ok(build_global_view(&runner).await)
 }
 
 // ---------------------------------------------------------------------------
@@ -309,6 +286,9 @@ async fn read_capped_text(abs: &Path) -> Option<String> {
 // Mixed-ending detection
 // ---------------------------------------------------------------------------
 
+/// Scan every tracked file for mixed endings. IO orchestration only - the
+/// byte-level decision is `legit_core::mixed_endings_in_bytes` (pure, tested
+/// next to `classify_line_endings`).
 async fn detect_mixed_endings(runner: &GitRunner, repo_root: &Path) -> Vec<String> {
     let out = match runner.run(&["ls-files", "-z"]).await {
         Ok(o) if o.success => o,
@@ -329,40 +309,13 @@ async fn detect_mixed_endings(runner: &GitRunner, repo_root: &Path) -> Vec<Strin
 }
 
 /// Returns `Some(true)` if the file has mixed CRLF+LF endings,
-/// `Some(false)` if uniform, `None` if binary or unreadable.
+/// `Some(false)` if uniform, `None` if binary, unreadable, or over the
+/// 2 MB cap (matches `repo_line_ending_kind`'s guard).
 async fn is_mixed_endings(path: &PathBuf) -> Option<bool> {
-    // Size guard: skip files over 2 MB.
     let meta = tokio::fs::metadata(path).await.ok()?;
-    if meta.len() > 2 * 1024 * 1024 {
+    if meta.len() > MAX_LINE_ENDING_BYTES as u64 {
         return None;
     }
-
     let bytes = tokio::fs::read(path).await.ok()?;
-
-    // Binary detection: null bytes in the first 512 bytes → skip.
-    let probe = &bytes[..bytes.len().min(512)];
-    if probe.contains(&0u8) {
-        return None;
-    }
-
-    let mut has_crlf = false;
-    let mut has_lf_only = false;
-    let mut i = 0usize;
-
-    while i < bytes.len() {
-        if bytes[i] == b'\r' && i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
-            has_crlf = true;
-            i += 2;
-        } else if bytes[i] == b'\n' {
-            has_lf_only = true;
-            i += 1;
-        } else {
-            i += 1;
-        }
-        if has_crlf && has_lf_only {
-            return Some(true);
-        }
-    }
-
-    Some(false)
+    mixed_endings_in_bytes(&bytes)
 }

@@ -70,13 +70,24 @@ describe("withDerivedDomains", () => {
   test("adds submodules alongside status", () => {
     expect(withDerivedDomains(["status"])).toEqual(["status", "submodules"]);
   });
-  test("adds submodules alongside branches", () => {
-    expect(withDerivedDomains(["branches", "log"])).toEqual(["branches", "log", "submodules"]);
+  test("adds submodules and tracking alongside branches", () => {
+    expect(withDerivedDomains(["branches", "log"])).toEqual([
+      "branches",
+      "log",
+      "submodules",
+      "tracking",
+    ]);
   });
   test("leaves unrelated domains alone", () => {
     expect(withDerivedDomains(["tags"])).toEqual(["tags"]);
   });
   test("does not duplicate", () => {
     expect(withDerivedDomains(["status", "submodules"])).toEqual(["status", "submodules"]);
+  });
+  test("external ref moves refresh the ahead/behind counter", () => {
+    // An external `git fetch` classifies as branches only; the tracking
+    // query domain must be derived or the sync toolbar goes stale.
+    expect(withDerivedDomains(["branches"])).toEqual(["branches", "submodules", "tracking"]);
+    expect(withDerivedDomains(["status"])).not.toContain("tracking");
   });
 });

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { PanelError } from "../shared/PanelError";
 import { useQuery } from "@tanstack/react-query";
 import { EditorState, StateEffect } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
@@ -7,7 +8,7 @@ import { useSettingsStore } from "../../store/settings";
 import { useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { repoFileAtRevision, repoFileWorktree } from "../../lib/commands";
-import { formatAppError, type FileAtRevision } from "../../lib/types";
+import type { FileAtRevision } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { LineEndingBadge } from "../shared/LineEndingBadge";
 import { baseTheme, readOnly } from "../Diff/DiffEditor";
@@ -162,9 +163,7 @@ export function FileViewPanel() {
 
       <div className="legit-panel__body" style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: 0 }}>
         {isError ? (
-          <pre className="legit-error" style={{ margin: 8, fontSize: "var(--fz-md)" }}>
-            {formatAppError(error)}
-          </pre>
+          <PanelError error={error} margin={8} />
         ) : data && "Binary" in data ? (
           <span className="legit-subtle" style={{ display: "block", padding: 8, fontSize: "var(--fz-md)" }}>
             Binary file, {formatByteSize(data.Binary.size_bytes)}. No text content to show.
