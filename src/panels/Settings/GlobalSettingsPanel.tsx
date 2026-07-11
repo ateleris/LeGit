@@ -863,10 +863,11 @@ function ExternalEditorSection() {
         />
       </div>
       <FieldNote>
-        Command used by "Open in editor" on a repository. <code>$ROOT</code> is
-        replaced by the repository path (appended if the template doesn't
-        mention it); quote it against spaces. Leave blank to open the folder in
-        the system file manager instead.
+        Command used by "Open in editor" on a repository or a file.{" "}
+        <code>$ROOT</code> is replaced by the repository path and{" "}
+        <code>$FILE</code> by the file path (appended if the template doesn't
+        mention them); quote them against spaces. Leave blank to use the
+        system file manager instead.
       </FieldNote>
     </Section>
   );

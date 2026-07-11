@@ -19,6 +19,7 @@ import { StageIcon, UnstageIcon, WarningIcon } from "../../icons";
 import { PanelContextMenuProvider, useMenuConfirm, type BaselineEntry } from "../Commits/menu/PanelContextMenu";
 import { MenuItem } from "../Commits/menu/primitives";
 import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
+import { OpenInEditorMenuItem } from "../shared/OpenInEditorMenuItem";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notifyResolutionInvisible } from "../../lib/mergeFeedback";
@@ -862,6 +863,9 @@ export function WorkingChangesPanel() {
                       </MenuItem>
                     )}
                     {!many && <CopyPathMenuSection path={f.path} onClose={closeMenu} />}
+                    {!many && f.change !== "Deleted" && f.change !== "SubmoduleChanged" && (
+                      <OpenInEditorMenuItem path={f.path} onClose={closeMenu} />
+                    )}
                   </>,
                 );
               }}
@@ -992,6 +996,9 @@ export function WorkingChangesPanel() {
                     )}
                     {targets.length === 1 && (
                       <CopyPathMenuSection path={f.path} onClose={closeMenu} />
+                    )}
+                    {targets.length === 1 && f.change !== "Deleted" && f.change !== "SubmoduleChanged" && (
+                      <OpenInEditorMenuItem path={f.path} onClose={closeMenu} />
                     )}
                   </>,
                 );

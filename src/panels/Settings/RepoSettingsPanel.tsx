@@ -224,8 +224,9 @@ function ExternalEditorRepoSection({
       </div>
       <FieldNote>
         Used by "Open in editor" for this repository (e.g. a per-language IDE).
-        <code> $ROOT</code> is replaced by the repository path, appended if the
-        template doesn't mention it.
+        <code> $ROOT</code> is replaced by the repository path and
+        <code> $FILE</code> by the file path, each appended if the template
+        doesn't mention it.
       </FieldNote>
     </Section>
   );

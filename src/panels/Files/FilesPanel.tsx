@@ -23,6 +23,7 @@ import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
 import { PanelContextMenuProvider, useMenuConfirm } from "../Commits/menu/PanelContextMenu";
 import { MenuItem, SectionLabel } from "../Commits/menu/primitives";
 import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
+import { OpenInEditorMenuItem } from "../shared/OpenInEditorMenuItem";
 
 /**
  * Files panel — the whole repository working tree as a browsable file list,
@@ -313,6 +314,7 @@ function FileMenuSection({
       </MenuItem>
       <MenuItem onClick={() => { onClose(); onView(); }}>View file</MenuItem>
       <CopyPathMenuSection path={path} onClose={onClose} />
+      <OpenInEditorMenuItem path={path} onClose={onClose} />
       <MenuItem onClick={() => { onClose(); onReveal(); }}>Reveal in file manager</MenuItem>
       {tracked ? (
         <MenuItem onClick={requestUntrack}>

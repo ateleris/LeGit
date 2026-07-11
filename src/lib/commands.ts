@@ -207,6 +207,12 @@ export const setExternalEditorCommand = (command: string | null) =>
 export const repoOpenInEditor = (repoId: string) =>
   invoke<null>("repo_open_in_editor", { repoId });
 
+/** Open one working-tree file in the configured external editor (same
+ * template, `$FILE` = absolute file path; reveal in the OS file manager when
+ * none is configured). */
+export const repoOpenFileInEditor = (repoId: string, path: string) =>
+  invoke<null>("repo_open_file_in_editor", { repoId, path });
+
 /** The web URL of the repo's remote page (origin preferred), or null when no
  * remote is configured / it has no web form. Drives the button state. */
 export const repoRemoteWebUrl = (repoId: string) =>

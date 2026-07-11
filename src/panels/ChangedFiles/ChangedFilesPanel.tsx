@@ -22,6 +22,7 @@ import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
 import { PanelContextMenuProvider, useMenuConfirm } from "../Commits/menu/PanelContextMenu";
 import { MenuItem, SectionLabel } from "../Commits/menu/primitives";
 import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
+import { OpenInEditorMenuItem } from "../shared/OpenInEditorMenuItem";
 import type { FileViewRequest } from "../FileView/FileViewPanel";
 
 /**
@@ -362,6 +363,11 @@ function FileAtCommitMenuSection({
         File history
       </MenuItem>
       <CopyPathMenuSection path={file.path} onClose={onClose} />
+      {/* Opens the current working-tree file (not the content at this
+          commit); a deleted row has no working-tree file to open. */}
+      {!deleted && !submodule && (
+        <OpenInEditorMenuItem path={file.path} onClose={onClose} />
+      )}
       <MenuItem disabled={deleted || submodule} onClick={() => { onClose(); onBlame(); }}>
         {deleted ? "Blame file (deleted in this commit)" : "Blame file at this commit"}
       </MenuItem>

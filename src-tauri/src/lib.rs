@@ -90,6 +90,7 @@ pub fn run() {
         commands::set_auto_fetch_interval_minutes,
         commands::set_external_editor_command,
         commands::repo_open_in_editor,
+        commands::repo_open_file_in_editor,
         commands::repo_remote_web_url,
         commands::repo_open_remote_page,
         commands::save_switch_dirty_behavior,

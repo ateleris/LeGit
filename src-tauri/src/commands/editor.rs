@@ -1,11 +1,13 @@
-//! Open the repository root in the user's configured external editor.
+//! Open the repository root — or a single file — in the user's configured
+//! external editor.
 //!
 //! The Global Settings "External editor" value is a command template like
 //! `code "$ROOT"` or just `subl`: `$ROOT` is replaced by the absolute repo
 //! root; a template that never mentions `$ROOT` gets the root appended as the
-//! final argument. `$FILE` is reserved for a future "open file in editor"
-//! action. With no editor configured, the command falls back to opening the
-//! folder in the OS file manager.
+//! final argument. The same template drives "open file in editor": `$FILE` is
+//! replaced by the absolute file path where present, otherwise the file is
+//! appended as the final argument. With no editor configured, the commands
+//! fall back to the OS file manager (open the folder / reveal the file).
 //!
 //! The template parsing and PATH resolution are pure functions with unit
 //! tests below — the spawn itself is fire-and-forget (editors are long-lived;
@@ -72,6 +74,35 @@ fn build_editor_invocation(template: &str, root: &Path) -> Result<Vec<String>, S
     }
     if !substituted {
         tokens.push(root_str.into_owned());
+    }
+    Ok(tokens)
+}
+
+/// Build the invocation for opening one file: `$ROOT` and `$FILE` substitute
+/// inside tokens (post-tokenize, so paths with spaces never re-split); a
+/// template that never mentions `$FILE` gets the file appended as the final
+/// argument — so an open-repo template like `code "$ROOT"` still delivers the
+/// file (folder + file in one window).
+fn build_editor_file_invocation(
+    template: &str,
+    root: &Path,
+    file: &Path,
+) -> Result<Vec<String>, String> {
+    let root_str = root.to_string_lossy();
+    let file_str = file.to_string_lossy();
+    let mut tokens = tokenize_template(template)?;
+    let mut file_substituted = false;
+    for t in tokens.iter_mut() {
+        if t.contains("$ROOT") {
+            *t = t.replace("$ROOT", &root_str);
+        }
+        if t.contains("$FILE") {
+            *t = t.replace("$FILE", &file_str);
+            file_substituted = true;
+        }
+    }
+    if !file_substituted {
+        tokens.push(file_str.into_owned());
     }
     Ok(tokens)
 }
@@ -206,18 +237,14 @@ fn open_directory(dir: &Path) -> Result<(), AppError> {
     }
 }
 
-/// Open the repo root in the configured external editor, or in the OS file
-/// manager when no editor is configured. The repo-scope override wins over
-/// the global template (None/blank = inherit).
-#[tauri::command]
-#[specta::specta]
-pub async fn repo_open_in_editor(
-    state: tauri::State<'_, AppState>,
-    repo_id: String,
-) -> Result<(), AppError> {
-    let session = state.get_session(&repo_id).await?;
+/// The effective editor template for a repo: the repo-scope override wins
+/// over the global template (None/blank = inherit). Blank = none configured.
+async fn effective_editor_template(
+    state: &AppState,
+    session: &crate::state::RepoSession,
+) -> String {
     let repo_template = session.settings.read().await.external_editor_command.clone();
-    let template = match repo_template.filter(|t| !t.trim().is_empty()) {
+    match repo_template.filter(|t| !t.trim().is_empty()) {
         Some(t) => t,
         None => state
             .global_settings
@@ -226,12 +253,52 @@ pub async fn repo_open_in_editor(
             .external_editor_command
             .clone()
             .unwrap_or_default(),
-    };
+    }
+}
+
+/// Open the repo root in the configured external editor, or in the OS file
+/// manager when no editor is configured.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_open_in_editor(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    let template = effective_editor_template(&state, &session).await;
 
     if template.trim().is_empty() {
         return open_directory(&session.path);
     }
     let tokens = build_editor_invocation(&template, &session.path).map_err(AppError::Io)?;
+    spawn_editor(&tokens, &session.path)
+}
+
+/// Open one working-tree file in the configured external editor (same
+/// template, `$FILE` = absolute file path), or reveal it in the OS file
+/// manager when no editor is configured. Errors clearly when the file is
+/// gone from the working tree (e.g. a deleted row in Changed Files).
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_open_file_in_editor(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    path: String,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    let abs = crate::commands::working::resolve_repo_relative(&session.path, &path)?;
+    if !abs.is_file() {
+        return Err(AppError::Io(format!(
+            "{path} does not exist in the working tree"
+        )));
+    }
+
+    let template = effective_editor_template(&state, &session).await;
+    if template.trim().is_empty() {
+        return crate::commands::files::reveal_in_file_manager(&abs);
+    }
+    let tokens =
+        build_editor_file_invocation(&template, &session.path, &abs).map_err(AppError::Io)?;
     spawn_editor(&tokens, &session.path)
 }
 
@@ -276,6 +343,63 @@ mod tests {
     fn quoted_root_with_spaces_stays_one_token() {
         let tokens = build_editor_invocation(r#"code "$ROOT""#, Path::new("/a b/c")).unwrap();
         assert_eq!(tokens, vec!["code", "/a b/c"]);
+    }
+
+    #[test]
+    fn file_invocation_substitutes_file_inside_tokens() {
+        let tokens = build_editor_file_invocation(
+            r#"ed --goto="$FILE""#,
+            Path::new("/repo"),
+            Path::new("/repo/src/a.ts"),
+        )
+        .unwrap();
+        assert_eq!(tokens, vec!["ed", "--goto=/repo/src/a.ts"]);
+    }
+
+    #[test]
+    fn file_invocation_appends_file_when_no_placeholder() {
+        let tokens = build_editor_file_invocation(
+            "code -n",
+            Path::new("/repo"),
+            Path::new("/repo/src/a.ts"),
+        )
+        .unwrap();
+        assert_eq!(tokens, vec!["code", "-n", "/repo/src/a.ts"]);
+    }
+
+    #[test]
+    fn file_invocation_substitutes_root_and_file() {
+        let tokens = build_editor_file_invocation(
+            r#"ed "$ROOT" "$FILE""#,
+            Path::new("/repo"),
+            Path::new("/repo/src/a.ts"),
+        )
+        .unwrap();
+        assert_eq!(tokens, vec!["ed", "/repo", "/repo/src/a.ts"]);
+    }
+
+    #[test]
+    fn file_invocation_root_only_template_still_appends_file() {
+        // `code "$ROOT"` is a valid open-repo template; opening a file with it
+        // must still deliver the file (folder + file in one window).
+        let tokens = build_editor_file_invocation(
+            r#"code "$ROOT""#,
+            Path::new("/repo"),
+            Path::new("/repo/src/a.ts"),
+        )
+        .unwrap();
+        assert_eq!(tokens, vec!["code", "/repo", "/repo/src/a.ts"]);
+    }
+
+    #[test]
+    fn file_invocation_path_with_spaces_stays_one_token() {
+        let tokens = build_editor_file_invocation(
+            r#"ed "$FILE""#,
+            Path::new("/a b"),
+            Path::new("/a b/c d.txt"),
+        )
+        .unwrap();
+        assert_eq!(tokens, vec!["ed", "/a b/c d.txt"]);
     }
 
     #[test]

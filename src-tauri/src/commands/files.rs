@@ -179,7 +179,7 @@ async fn write_gitignore_line(root: &std::path::Path, rel: &str, is_dir: bool) -
 /// Launch the platform file manager focused on `abs`. Windows/macOS select the
 /// file; other platforms open its containing directory. Fire-and-forget: the
 /// spawned process is not awaited, but a failure to spawn is reported.
-fn reveal_in_file_manager(abs: &std::path::Path) -> Result<(), AppError> {
+pub(crate) fn reveal_in_file_manager(abs: &std::path::Path) -> Result<(), AppError> {
     use std::process::Command;
     let spawn = |mut cmd: Command| -> Result<(), AppError> {
         cmd.spawn()
