@@ -11,6 +11,7 @@ import {
 } from "../../lib/commands";
 import { Button } from "../shared/buttons";
 import { Section, FieldNote } from "./primitives";
+import { CredentialHelperField } from "./CredentialHelperField";
 
 const FORMAT_OPTIONS: { label: string; value: string | null }[] = [
   { label: "ssh", value: "ssh" },
@@ -203,12 +204,12 @@ function ProfileEditor({
         <WithBrowse value={p.authSshKey ?? ""} onChange={setStr("authSshKey")} onBrowse={() => browseInto("authSshKey")} placeholder="Path to SSH private key (for push/pull)" />
       </Field>
       <Field label="credential.helper (HTTPS)">
-        <input value={p.credentialHelper ?? ""} onChange={(e) => setStr("credentialHelper")(e.target.value)} placeholder="short name e.g. manager (not a full path)" />
+        <CredentialHelperField
+          value={p.credentialHelper ?? ""}
+          onChange={(v) => setStr("credentialHelper")(v)}
+        />
         <FieldNote>
-          Use a short helper name like <code>manager</code> — LeGit runs git via the
-          CLI, which executes the helper through a shell, so a full path with spaces
-          (e.g. <code>C:/Program Files/…</code>) would break. Applying overrides any
-          inherited (global/system) helper for this repo.
+          Applying overrides any inherited (global/system) helper for this repo.
         </FieldNote>
       </Field>
 
@@ -222,9 +223,9 @@ function ProfileEditor({
   );
 }
 
-// --- small presentational helpers ---
+// --- small presentational helpers (shared with GlobalGitConfigSection) ---
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+export function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
       <span style={{ fontSize: "var(--fz-md)", fontFamily: "monospace", color: "var(--subtle-fg)" }}>{label}</span>
@@ -233,7 +234,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function WithBrowse({
+export function WithBrowse({
   value,
   onChange,
   onBrowse,

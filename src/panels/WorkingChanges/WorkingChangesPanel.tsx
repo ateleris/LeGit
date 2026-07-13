@@ -4,8 +4,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
 import { usePanelActiveEffect, usePanelFocusEffect } from "../PanelApiContext";
-import { repoCommit, repoConflictEntries, repoConflictReopen, repoCreateStashPaths, repoDiscard, repoLog, repoResolveTakeSide, repoResolveUndoPaths, repoStage, repoStagedMarkerPaths, repoStatus, repoTrackingStatus, repoUnstage, repoUnstagedMarkerPaths } from "../../lib/commands";
-import type { Commit, ConflictEntry, ConflictSide, DiffRequest, DiffSource, FileStatus, TrackingStatus } from "../../lib/types";
+import { repoCommit, repoConflictEntries, repoConflictReopen, repoCreateStashPaths, repoDiscard, repoLog, repoResolvedIdentity, repoResolveTakeSide, repoResolveUndoPaths, repoStage, repoStagedMarkerPaths, repoStatus, repoTrackingStatus, repoUnstage, repoUnstagedMarkerPaths } from "../../lib/commands";
+import type { Commit, ConflictEntry, ConflictSide, DiffRequest, DiffSource, FileStatus, ResolvedIdentity, TrackingStatus } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { useCommitDraftStore } from "../../store/commitDraft";
@@ -281,6 +281,19 @@ export function WorkingChangesPanel() {
   // ahead of it (ahead === 0 → the tip is on the remote). Amending then rewrites
   // pushed history and needs a force-push.
   const amendingPushed = amend && !!tracking && tracking.ahead === 0;
+
+  // Commit identity resolved across all config scopes: when name or email is
+  // missing everywhere, a commit fails with git's "Please tell me who you are";
+  // the composer warns BEFORE that and links to the profile settings. Identity
+  // changes rarely and ~/.gitconfig isn't watched, so a moderate staleTime plus
+  // the panel-focus refetch keeps it honest after the user sets one.
+  const { data: identity } = useQuery<ResolvedIdentity>({
+    queryKey: [repo?.id, "identity"],
+    queryFn: () => repoResolvedIdentity(repo!.id),
+    enabled: !!repo,
+    staleTime: 30_000,
+  });
+  const identityMissing = !!identity && (!identity.user_name || !identity.user_email);
 
   // Refresh whenever the panel is focused or swapped/summoned into view, so the
   // working tree is re-read after edits made while it wasn't the shown panel.
@@ -1019,6 +1032,32 @@ export function WorkingChangesPanel() {
           );
           const commitComposer = (
           <div key="commit" style={{ flexShrink: 0, borderTop: "1px solid var(--panel-border)", padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+          {identityMissing && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "6px 8px",
+                border: "1px solid var(--panel-border)",
+                borderRadius: 4,
+                background: "var(--button-hover-bg)",
+                fontSize: "var(--fz-md)",
+              }}
+            >
+              <span style={{ display: "inline-flex", color: "var(--warning-fg)" }}>
+                <WarningIcon />
+              </span>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                No git identity is set ({!identity?.user_name && <code>user.name</code>}
+                {!identity?.user_name && !identity?.user_email && ", "}
+                {!identity?.user_email && <code>user.email</code>}): committing will fail.
+              </span>
+              <button onClick={() => useSummonStore.getState().summon("global-settings")}>
+                Set identity…
+              </button>
+            </div>
+          )}
           <textarea
             value={message}
             onChange={(e) => setMessage(e.target.value)}

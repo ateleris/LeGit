@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { WarningIcon } from "../../icons";
 import { formatAppError } from "../../lib/types";
-import type { GitProfile, KeyDiff, ProfileStatus } from "../../lib/types";
+import type { GitProfile, KeyDiff, ProfileStatus, ResolvedIdentity } from "../../lib/types";
 import {
   listGitProfiles,
   detectActiveProfileForRepo,
@@ -10,6 +10,7 @@ import {
   applyProfileToRepo,
   clearRepoProfile,
   createProfileFromRepo,
+  repoResolvedIdentity,
 } from "../../lib/commands";
 import { Button } from "../shared/buttons";
 import { Section, FieldNote } from "./primitives";
@@ -23,6 +24,7 @@ const INHERIT = "__inherit__";
  */
 export function RepoProfileSection({ repoId }: { repoId: string }) {
   const [status, setStatus] = useState<ProfileStatus | null>(null);
+  const [resolvedIdentity, setResolvedIdentity] = useState<ResolvedIdentity | null>(null);
   const [profiles, setProfiles] = useState<GitProfile[]>([]);
   const [pending, setPending] = useState<{ profileId: string; diffs: KeyDiff[] } | null>(null);
   const [clearPending, setClearPending] = useState(false);
@@ -34,8 +36,8 @@ export function RepoProfileSection({ repoId }: { repoId: string }) {
   const load = useCallback(() => {
     setPending(null);
     setClearPending(false);
-    Promise.all([detectActiveProfileForRepo(repoId), listGitProfiles()])
-      .then(([s, p]) => { setStatus(s); setProfiles(p); })
+    Promise.all([detectActiveProfileForRepo(repoId), listGitProfiles(), repoResolvedIdentity(repoId)])
+      .then(([s, p, r]) => { setStatus(s); setProfiles(p); setResolvedIdentity(r); })
       .catch((e) => setError(formatAppError(e)));
   }, [repoId]);
 
@@ -123,6 +125,7 @@ export function RepoProfileSection({ repoId }: { repoId: string }) {
 
       <div style={{ marginTop: 8 }}>
         <StatusBadge status={status} profileName={profileName} />
+        {m.kind === "inherit" && <InheritedIdentityNote identity={resolvedIdentity} />}
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
@@ -184,6 +187,22 @@ export function RepoProfileSection({ repoId }: { repoId: string }) {
 
       {error && <pre className="legit-error" style={{ marginTop: 6 }}>{error}</pre>}
     </Section>
+  );
+}
+
+/**
+ * What "Inherit" actually resolves to for this repo: the identity from
+ * global/system scope, or nothing (a commit would fail).
+ */
+function InheritedIdentityNote({ identity }: { identity: ResolvedIdentity | null }) {
+  if (!identity) return null;
+  const resolved = [identity.user_name, identity.user_email].filter(Boolean).join(" · ");
+  return (
+    <div className="legit-subtle" style={{ marginTop: 4, fontSize: "var(--fz-sm)" }}>
+      {resolved
+        ? `Inheriting identity: ${resolved}.`
+        : "No identity is set at any scope: commits will fail. Set the global identity in Global Settings, or apply a profile to this repo."}
+    </div>
   );
 }
 
@@ -265,3 +284,4 @@ function ConfirmPanel({
     </div>
   );
 }
+

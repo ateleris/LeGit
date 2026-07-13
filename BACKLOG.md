@@ -91,9 +91,49 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 
 - **Worktrees** (add/list/remove) and **bisect**. The two whole-feature gaps
   left vs a full-featured client.
+- **Re-add signed-commit chips in the commit list, presence-only.**
+  (Parked 2026-07-13.) The old chips were removed because `%G?` in the bulk
+  log format makes git *verify* every signature during the walk (one
+  gpg/ssh-keygen spawn per signed commit, ~18s on heavily-signed repos) -
+  that rule stands (see `parsers/log.rs`). Perf-safe approach: detect
+  signature *presence* without verification by scanning raw commit headers
+  for `gpgsig` / `gpgsig-sha256` - one extra batched process, no verifier
+  spawns: feed the page's SHAs to `git cat-file --batch` (or use
+  `git rev-list --header`) in a second pass after the log parse, and ship
+  the result as an enrichment (new parser + flow test asserting no
+  verification command runs). Chip renders a neutral "signed" state;
+  on-demand verification in `commit_details` (`git verify-commit`) stays
+  the only verifier and can upgrade the selected row's chip to
+  valid/invalid/untrusted. Cache presence per SHA (immutable) so
+  re-renders and refetches are free.
+- **Platform integrations, SSH-first: GitHub, GitLab, Azure DevOps.**
+  (Scoped 2026-07-13 with Simon: he authenticates via SSH and uses exactly
+  these three platforms.) Lives in the reserved `crates/legit-providers`
+  stub. Phased:
+  1. *SSH key management, no API needed*: generate a keypair from the
+     profile editor and wire it into the profile's `auth_ssh_key`
+     (-> `core.sshCommand`); show the public key with a copy button and a
+     deep link to the platform's "add SSH key" settings page; an
+     `ssh -T`-style connection test. Key type is per-platform: Ed25519 for
+     GitHub/GitLab, **RSA for Azure DevOps** (ADO supports only RSA with
+     rsa-sha2 signatures; Ed25519 is rejected - verified 2026-07-13).
+  2. *Connected accounts (API tokens)*: OAuth device flow for GitHub
+     (client id only, no secret) and GitLab (recent versions; PAT paste as
+     fallback), Entra device-code flow or PAT for Azure DevOps. Tokens go
+     into the OS keychain under the broker's protocol+host key: LeGit
+     still stores no secrets. Enables one-click public-key upload where an
+     API exists (GitHub `POST /user/keys`, GitLab `POST /user/keys`; ADO
+     has no documented SSH-key API, so it keeps the copy + deep-link flow).
+  3. *HTTPS auth via the broker*: with a token in the keychain the existing
+     broker already answers `git credential fill` for that host. Secondary
+     here (SSH-first user base), and on Windows GCM already covers it.
+  4. *(Separate product decision)* repo listing for the clone dialog,
+     PR/issue surfaces.
 - **SSH passphrase prompting** (`SSH_ASKPASS` shim mode): the credential
   helper covers HTTP(S) only; encrypted SSH keys without an agent still
-  fail non-interactively.
+  fail non-interactively. Also relevant to generated keys from the
+  integrations item above (passphrase-protected keys need this or an
+  agent).
 - **Keychain management UI**: list/forget credentials LeGit remembered
   (today: delete the "LeGit Git Credentials" entries in the OS keychain).
 - **Git LFS-aware content views.** LeGit is already LFS-*compatible* for the
@@ -141,8 +181,9 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   query-time constants, summon-registry cross-check test, fixed-px padding
   sweep, theme.css value-equality test, GlobalSettingsPanel split (1309
   lines), GitBackend naming normalization (batch with the next backend
-  feature). Also decide keep-or-delete for the unreferenced
-  `crates/legit-providers` workspace member.
+  feature). The `crates/legit-providers` keep-or-delete question is
+  resolved: **keep** - it hosts the SSH-first platform-integrations item
+  under "Git features".
 - **Submodules:** nested-tree overview (deliberately flat for now);
   hide-the-Refs-pane-when-no-gitlinks (paneview layouts persist panes);
   `--shallow-submodules` on clone when depth + submodules are both set

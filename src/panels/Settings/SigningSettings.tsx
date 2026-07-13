@@ -222,13 +222,13 @@ export function SigningSettings({ scope, repoId }: { scope: Scope; repoId?: stri
 // Options + change diff
 // ---------------------------------------------------------------------------
 
-const GPGSIGN_OPTIONS: { label: string; value: string | null }[] = [
+export const GPGSIGN_OPTIONS: { label: string; value: string | null }[] = [
   { label: "On", value: "true" },
   { label: "Off", value: "false" },
   { label: "Inherit", value: null },
 ];
 
-const FORMAT_OPTIONS: { label: string; value: string | null }[] = [
+export const FORMAT_OPTIONS: { label: string; value: string | null }[] = [
   { label: "ssh", value: "ssh" },
   { label: "openpgp (GPG)", value: "openpgp" },
   { label: "x509", value: "x509" },
@@ -288,7 +288,7 @@ function ScopeBadges({
   );
 }
 
-function RadioGroup({
+export function RadioGroup({
   name,
   value,
   options,
@@ -319,7 +319,7 @@ function RadioGroup({
   );
 }
 
-function ConfigRow({ label, children }: { label: string; children: React.ReactNode }) {
+export function ConfigRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 10 }}>
       <div style={{ fontSize: "var(--fz-md)", fontFamily: "monospace", color: "var(--subtle-fg)", marginBottom: 4 }}>{label}</div>
@@ -328,7 +328,7 @@ function ConfigRow({ label, children }: { label: string; children: React.ReactNo
   );
 }
 
-function ResolvedBadge({
+export function ResolvedBadge({
   label,
   value,
   source,

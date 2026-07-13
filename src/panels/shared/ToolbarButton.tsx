@@ -13,6 +13,7 @@ export function ToolbarButton({
   disabled = false,
   onClick,
   rounded,
+  style,
 }: {
   title?: string;
   label: string;
@@ -22,6 +23,8 @@ export function ToolbarButton({
   onClick: () => void;
   /** "left" flattens the right edge (for split buttons with a caret half). */
   rounded?: "left";
+  /** Overrides for hosts whose surface isn't panel-coloured (op-state banner). */
+  style?: React.CSSProperties;
 }) {
   return (
     <Button
@@ -32,6 +35,7 @@ export function ToolbarButton({
       icon={icon}
       onClick={onClick}
       rounded={rounded}
+      style={style}
     >
       <span>{label}</span>
     </Button>

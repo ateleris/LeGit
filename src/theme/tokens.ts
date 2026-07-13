@@ -97,6 +97,8 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "app.fg", group: "App", documentation: "Top-level default text." },
   { name: "accent", group: "App", documentation: "General accent: focus rings, active markers, highlighted icons." },
   { name: "accent.fg", group: "App", documentation: "Text/icons drawn on accent-coloured surfaces." },
+  { name: "op.banner.bg", group: "App", documentation: "Background of the merge/rebase-in-progress banner (app chrome, below the repo tabs)." },
+  { name: "op.banner.fg", group: "App", documentation: "Text of the merge/rebase-in-progress banner, including its buttons' text and border." },
 
   { name: "panel.bg", group: "Panel", documentation: "Panel body background." },
   { name: "panel.fg", group: "Panel", documentation: "Panel body text." },
@@ -170,8 +172,6 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "merge.fold.bg", group: "Merge", documentation: "Background of the merge view's folded-lines bar." },
   { name: "merge.fold.fg", group: "Merge", documentation: "Text of the merge view's folded-lines bar." },
   { name: "diff.edited.bg", group: "Diff", documentation: "Whole-line background for a line with unsaved edits in the editable diff." },
-  { name: "op.banner.bg", group: "Working Changes", documentation: "Background of the merge/rebase-in-progress banner." },
-  { name: "op.banner.fg", group: "Working Changes", documentation: "Text of the merge/rebase-in-progress banner." },
   { name: "diff.action.bg", group: "Diff", documentation: "Background of the hunk stage/unstage buttons." },
   { name: "diff.action.fg", group: "Diff", documentation: "Text of the hunk stage/unstage buttons." },
   { name: "diff.action.hover.bg", group: "Diff", documentation: "Background of the hunk stage/unstage buttons on hover." },

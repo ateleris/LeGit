@@ -2539,3 +2539,106 @@ async fn remote_management_roundtrip() {
     repo.backend.remove_remote("mirror").await.unwrap();
     assert!(repo.backend.list_remotes().await.unwrap().is_empty());
 }
+
+/// Global-scope `git config` semantics the global writers depend on
+/// (`src-tauri/commands/config_util.rs` `write_config_global`, used by the
+/// identity / signing / line-endings sections): the write path tolerates
+/// exit 5 from `--unset-all` and `--unset`, and a single plain value reads
+/// back via `--get-all`. `GIT_CONFIG_GLOBAL` redirects the global file into
+/// the tempdir - passed through `run_with_env`, which wins over the runner's
+/// scrubbed base env - so the developer's real `~/.gitconfig` is never touched.
+#[tokio::test]
+async fn global_config_unset_all_and_helper_round_trip() {
+    let repo = TestRepo::init().await;
+    let gcfg = repo.path.join("fake-global-config");
+    let gcfg_s = gcfg.to_str().expect("utf8 tempdir path").to_string();
+    let env: &[(&str, &str)] = &[("GIT_CONFIG_GLOBAL", &gcfg_s)];
+    let runner = GitRunner::for_repo("git", &repo.path);
+
+    // `--unset-all` exits 5 when the global config file doesn't exist yet...
+    let out = runner
+        .run_with_env(&["config", "--global", "--unset-all", "credential.helper"], env)
+        .await
+        .expect("spawn git");
+    assert!(!out.success);
+    assert_eq!(out.exit_code, Some(5), "missing global file: {}", out.stderr);
+
+    // ...and equally when the file exists but the key is absent.
+    let out = runner
+        .run_with_env(&["config", "--global", "user.name", "Global Name"], env)
+        .await
+        .expect("spawn git");
+    assert!(out.success, "{}", out.stderr);
+    let out = runner
+        .run_with_env(&["config", "--global", "--unset-all", "credential.helper"], env)
+        .await
+        .expect("spawn git");
+    assert_eq!(out.exit_code, Some(5), "absent key: {}", out.stderr);
+
+    // A single plain global helper round-trips through `--get-all`.
+    let out = runner
+        .run_with_env(&["config", "--global", "--add", "credential.helper", "manager"], env)
+        .await
+        .expect("spawn git");
+    assert!(out.success, "{}", out.stderr);
+    let out = runner
+        .run_with_env(&["config", "--global", "--get-all", "credential.helper"], env)
+        .await
+        .expect("spawn git");
+    assert!(out.success, "{}", out.stderr);
+    assert_eq!(out.stdout.trim(), "manager");
+
+    // The writes landed in the redirected file, not the real global config.
+    assert!(repo.exists("fake-global-config"));
+
+    // Unsetting the only entry then reading exits 1 (key gone): the read path
+    // maps that to "no helper set".
+    let out = runner
+        .run_with_env(&["config", "--global", "--unset-all", "credential.helper"], env)
+        .await
+        .expect("spawn git");
+    assert!(out.success, "{}", out.stderr);
+    let out = runner
+        .run_with_env(&["config", "--global", "--get-all", "credential.helper"], env)
+        .await
+        .expect("spawn git");
+    assert!(!out.success);
+    assert_eq!(out.exit_code, Some(1), "unset key reads back empty: {}", out.stderr);
+}
+
+/// Why the global-settings views read `--global`/`--system` only
+/// (`config_util::read_config_global_scopes`): an unbound runner inherits the
+/// app process's cwd, which can lie inside SOME repo (tauri dev runs inside
+/// the LeGit source repo). Run inside a repo, an unflagged `git config --get`
+/// resolves the repo's LOCAL value; only a `--global`-flagged read is immune.
+#[tokio::test]
+async fn config_global_flag_ignores_repo_local_values() {
+    let repo = TestRepo::init().await; // pins local user.name = "LeGit Test"
+    let gcfg = repo.path.join("fake-global-config");
+    let gcfg_s = gcfg.to_str().expect("utf8 tempdir path").to_string();
+    let env: &[(&str, &str)] = &[("GIT_CONFIG_GLOBAL", &gcfg_s)];
+    let runner = GitRunner::for_repo("git", &repo.path);
+
+    let out = runner
+        .run_with_env(&["config", "--global", "user.name", "Global Name"], env)
+        .await
+        .expect("spawn git");
+    assert!(out.success, "{}", out.stderr);
+
+    // Unflagged read inside the repo: LOCAL wins. This is the leak a global
+    // view would exhibit if it consulted local scope.
+    let out = runner
+        .run_with_env(&["config", "--get", "user.name"], env)
+        .await
+        .expect("spawn git");
+    assert!(out.success, "{}", out.stderr);
+    assert_eq!(out.stdout.trim(), "LeGit Test");
+
+    // `--global`-flagged read inside the same repo: immune to local scope.
+    let out = runner
+        .run_with_env(&["config", "--global", "--get", "user.name"], env)
+        .await
+        .expect("spawn git");
+    assert!(out.success, "{}", out.stderr);
+    assert_eq!(out.stdout.trim(), "Global Name");
+}

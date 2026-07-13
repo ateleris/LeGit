@@ -105,6 +105,11 @@ fn projection(p: &GitProfile) -> ManagedKeys {
 /// Read the eight managed keys at LOCAL scope. For `core.sshCommand`, parse out
 /// the key path; if it isn't a LeGit-shaped `ssh -i …` command, keep the raw
 /// command string (so it shows as a mismatch rather than a false match).
+///
+/// Profiles read and write LOCAL scope only, by decision: global scope holds
+/// at most a directly edited identity (see `global_identity_view`), never a
+/// profile's auth/signing bundle, so a machine-wide `credential.helper` or
+/// `core.sshCommand` can't be applied by one click.
 async fn read_local_managed(runner: &GitRunner) -> ManagedKeys {
     let local = |key: &'static str| async move {
         read_config_scope(runner, key, &["--local"]).await.value
@@ -128,8 +133,8 @@ async fn read_local_managed(runner: &GitRunner) -> ManagedKeys {
 
 /// Read the effective local `credential.helper`: the LAST non-empty value among
 /// the local entries, or `None` when none is set. Uses `--get-all` (not `--get`)
-/// because the reset-then-set we write leaves TWO local entries — an empty reset
-/// followed by the helper — and `--get` errors on multiple values.
+/// because the reset-then-set we write leaves TWO local entries (an empty reset
+/// followed by the helper) and `--get` errors on multiple values.
 async fn read_local_credential_helper(runner: &GitRunner) -> Option<String> {
     let out = runner
         .run(&["config", "--local", "--get-all", KEY_CREDENTIAL_HELPER])
@@ -150,15 +155,15 @@ async fn read_local_credential_helper(runner: &GitRunner) -> Option<String> {
 ///
 /// `credential.helper` is multi-valued and **accumulates across config scopes**,
 /// so a single local value wouldn't override a (possibly broken) global/system
-/// helper — git would still run that one first. So we reset the local list and,
+/// helper: git would still run that one first. So we reset the local list and,
 /// when setting, prepend an **empty value**, which clears all inherited helpers,
 /// before adding ours. `None` removes our local entries entirely (back to
 /// inheriting the global/system helper).
 ///
-/// Note: the value must be a form the git CLI can run via `sh -c` — a short name
+/// Note: the value must be a form the git CLI can run via `sh -c`: a short name
 /// like `manager`, not a path containing spaces (which `sh` would word-split).
 async fn write_credential_helper(runner: &GitRunner, value: Option<&str>) -> Result<(), AppError> {
-    // Drop any existing local entries first (exit 5 = none set — fine).
+    // Drop any existing local entries first (exit 5 = none set; fine).
     let unset = runner
         .run(&["config", "--local", "--unset-all", KEY_CREDENTIAL_HELPER])
         .await?;
@@ -538,6 +543,31 @@ pub async fn clear_repo_profile(
     write_managed(&runner, &ManagedKeys::all_unset()).await?;
     set_repo_profile_id(&state, &session, None).await?;
     Ok(status_for(&state, &runner, None).await)
+}
+
+/// The identity git would use for a commit in this repo, resolved across all
+/// scopes (local > global > system). Both `None` means a commit would fail
+/// with git's "Please tell me who you are" error: the UI surfaces that
+/// BEFORE the failed commit (commit-box nudge).
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct ResolvedIdentity {
+    pub user_name: Option<String>,
+    pub user_email: Option<String>,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_resolved_identity(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<ResolvedIdentity, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    let runner = session.runner.read().await.clone();
+    // No scope flag: `git config --get` resolves across all scopes.
+    Ok(ResolvedIdentity {
+        user_name: read_config_scope(&runner, KEY_USER_NAME, &[]).await.value,
+        user_email: read_config_scope(&runner, KEY_USER_EMAIL, &[]).await.value,
+    })
 }
 
 /// Snapshot the repo's current local config into a new profile, and select it.

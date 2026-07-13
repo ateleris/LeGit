@@ -26,6 +26,10 @@ import type {
   SigningView,
   GitProfile,
   ProfileStatus,
+  ResolvedIdentity,
+  IdentityView,
+  CredentialHelperView,
+  AvailableHelper,
   KeyDiff,
   DiffEntry,
   DiffSource,
@@ -346,6 +350,27 @@ export const clearRepoProfile = (repoId: string) =>
 
 export const createProfileFromRepo = (repoId: string, name: string) =>
   invoke<GitProfile>("create_profile_from_repo", { repoId, name });
+
+// Global identity (user.name / user.email in ~/.gitconfig): edit-only mirror,
+// never a profile apply. Auth/signing bundles stay per-repo via profiles.
+
+export const globalIdentityView = () =>
+  invoke<IdentityView>("global_identity_view");
+
+export const globalWriteIdentity = (name: string | null, email: string | null) =>
+  invoke<IdentityView>("global_write_identity", { name, email });
+
+export const repoResolvedIdentity = (repoId: string) =>
+  invoke<ResolvedIdentity>("repo_resolved_identity", { repoId });
+
+export const globalCredentialHelperView = () =>
+  invoke<CredentialHelperView>("global_credential_helper_view");
+
+export const globalWriteCredentialHelper = (helper: string | null) =>
+  invoke<CredentialHelperView>("global_write_credential_helper", { helper });
+
+export const listAvailableCredentialHelpers = () =>
+  invoke<AvailableHelper[]>("list_available_credential_helpers");
 
 // --- log / commit details ---
 

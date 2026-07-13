@@ -7,7 +7,8 @@
 //! keys. All reads/writes go through `GitRunner`; system scope is read-only.
 
 use crate::commands::config_util::{
-    read_config_all_scopes, write_config_global, write_config_local, ScopedConfig,
+    read_config_all_scopes, read_config_global_scopes, write_config_global, write_config_local,
+    ScopedConfig,
 };
 use crate::error::AppError;
 use crate::state::AppState;
@@ -43,6 +44,18 @@ async fn read_signing_view(runner: &GitRunner) -> SigningView {
     }
 }
 
+/// Global-settings variant: global + system scope only. The unbound runner's
+/// cwd may lie inside some repo, and an all-scopes read would leak that
+/// repo's local config into the view (see `read_config_global_scopes`).
+async fn read_signing_view_global(runner: &GitRunner) -> SigningView {
+    SigningView {
+        gpgsign: read_config_global_scopes(runner, KEY_GPGSIGN).await.into(),
+        format: read_config_global_scopes(runner, KEY_FORMAT).await.into(),
+        signing_key: read_config_global_scopes(runner, KEY_SIGNING_KEY).await.into(),
+        allowed_signers: read_config_global_scopes(runner, KEY_ALLOWED_SIGNERS).await.into(),
+    }
+}
+
 /// Read signing config for the active repo (resolved across local/global/system).
 #[tauri::command]
 #[specta::specta]
@@ -63,7 +76,7 @@ pub async fn global_signing_config(
 ) -> Result<SigningView, AppError> {
     let git_path = state.git_path.read().await.clone();
     let runner = GitRunner::unbound(&git_path);
-    Ok(read_signing_view(&runner).await)
+    Ok(read_signing_view_global(&runner).await)
 }
 
 /// Write signing config to the repo's `.git/config`. `None` for a field unsets
@@ -104,5 +117,5 @@ pub async fn global_write_signing(
     write_config_global(&runner, KEY_FORMAT, format.as_deref()).await?;
     write_config_global(&runner, KEY_SIGNING_KEY, signing_key.as_deref()).await?;
     write_config_global(&runner, KEY_ALLOWED_SIGNERS, allowed_signers.as_deref()).await?;
-    Ok(read_signing_view(&runner).await)
+    Ok(read_signing_view_global(&runner).await)
 }

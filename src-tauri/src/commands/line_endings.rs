@@ -7,7 +7,8 @@
 //! All reads/writes go through `GitRunner`.  System scope is read-only.
 
 use crate::commands::config_util::{
-    read_config_all_scopes, write_config_global, write_config_local, ConfigValue,
+    read_config_all_scopes, read_config_global_scopes, write_config_global, write_config_local,
+    ConfigValue,
 };
 use crate::commands::working::resolve_repo_relative;
 use crate::error::AppError;
@@ -95,10 +96,13 @@ async fn build_repo_view(
 }
 
 /// Assemble the global-scope view: no local scope, no `.gitattributes`, no
-/// mixed-endings scan (they only exist inside a repo).
+/// mixed-endings scan (they only exist inside a repo). Reads global + system
+/// only: the unbound runner's cwd may lie inside some repo, and an all-scopes
+/// read would leak that repo's local config into the resolved value
+/// (see `read_config_global_scopes`).
 async fn build_global_view(runner: &GitRunner) -> LineEndingsView {
-    let autocrlf = read_config_all_scopes(runner, "core.autocrlf").await;
-    let eol = read_config_all_scopes(runner, "core.eol").await;
+    let autocrlf = read_config_global_scopes(runner, "core.autocrlf").await;
+    let eol = read_config_global_scopes(runner, "core.eol").await;
 
     LineEndingsView {
         autocrlf_local: ConfigValue::unset(),

@@ -28,6 +28,13 @@ import {
 import { ToolbarButton } from "./shared/ToolbarButton";
 import { usePanelRunner } from "./shared/usePanelRunner";
 
+// The banner's ghost buttons sit on op-banner-bg, not a panel surface, so
+// their text and border must follow the banner's own foreground token.
+const BANNER_BUTTON_STYLE: React.CSSProperties = {
+  color: "var(--op-banner-fg)",
+  borderColor: "var(--op-banner-fg)",
+};
+
 /** What the strip shows and can do per in-progress operation kind. */
 const OP_META = {
   merge: { noun: "merge", canSkip: false },
@@ -206,8 +213,18 @@ export function OpStateBanner({
             Abort {meta.noun}? Conflict resolutions will be discarded.
           </span>
           <span style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
-            <ToolbarButton label={`Abort ${meta.noun}`} disabled={busy} onClick={doAbort} />
-            <ToolbarButton label="Cancel" disabled={busy} onClick={() => setConfirmingAbort(false)} />
+            <ToolbarButton
+              label={`Abort ${meta.noun}`}
+              disabled={busy}
+              onClick={doAbort}
+              style={BANNER_BUTTON_STYLE}
+            />
+            <ToolbarButton
+              label="Cancel"
+              disabled={busy}
+              onClick={() => setConfirmingAbort(false)}
+              style={BANNER_BUTTON_STYLE}
+            />
           </span>
         </>
       ) : (
@@ -232,6 +249,7 @@ export function OpStateBanner({
               }
               disabled={busy || conflictCount > 0}
               onClick={onContinue}
+              style={BANNER_BUTTON_STYLE}
             />
             {meta.canSkip && (
               <ToolbarButton
@@ -239,6 +257,7 @@ export function OpStateBanner({
                 title="Skip the current commit"
                 disabled={busy}
                 onClick={onSkip}
+                style={BANNER_BUTTON_STYLE}
               />
             )}
             <ToolbarButton
@@ -246,6 +265,7 @@ export function OpStateBanner({
               title={`Abort the ${meta.noun}`}
               disabled={busy}
               onClick={onAbort}
+              style={BANNER_BUTTON_STYLE}
             />
           </span>
         </>

@@ -11,8 +11,8 @@ import { formatAppError } from "../../lib/types";
 import type { ConfigScope, LineEndingsView, PushRecurseMode, RegionPlacement, SwitchDirtyBehavior } from "../../lib/types";
 import { globalLineEndingsView, globalWriteLineEndings, setWarnOnMixedEndings } from "../../lib/commands";
 import { useGitStatusStore } from "../../store/git-status";
-import { SigningSettings } from "./SigningSettings";
 import { GlobalProfilesSection } from "./GlobalProfilesSection";
+import { GlobalGitConfigSection } from "./GlobalGitConfigSection";
 import { Section, Row, FieldNote, SettingsGroup, GitConfigPill } from "./primitives";
 import { ALL_PANELS, SUPPRESSIBLE_SUMMON_PANELS } from "../registry";
 import {
@@ -161,8 +161,8 @@ export function GlobalSettingsPanel() {
               <span className="legit-subtle">Probing git…</span>
             )}
           </Section>
+          <GlobalGitConfigSection />
           <LineEndingsGlobalSection />
-          <SigningSettings scope="global" />
           <GlobalProfilesSection />
         </SettingsGroup>
 

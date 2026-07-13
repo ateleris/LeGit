@@ -323,9 +323,51 @@ export type ProfileMatch =
   | { kind: "unmanaged" };
 
 export interface ProfileStatus {
+  /** Live LOCAL value of each managed key (null = unset locally). */
   local: ManagedKeys;
   stored_profile_id: string | null;
   match: ProfileMatch;
+}
+
+/**
+ * The identity git would use for a commit in a repo (resolved across all
+ * scopes). Both null = a commit would fail with "Please tell me who you are".
+ */
+export interface ResolvedIdentity {
+  user_name: string | null;
+  user_email: string | null;
+}
+
+/**
+ * user.name / user.email at global + system scope plus the resolved value
+ * outside any repo (matches commands/identity.rs). Backs the edit-only
+ * "Global identity" section.
+ */
+export interface IdentityView {
+  name_global: ConfigValue;
+  name_system: ConfigValue;
+  name_resolved: ConfigValue;
+  email_global: ConfigValue;
+  email_system: ConfigValue;
+  email_resolved: ConfigValue;
+}
+
+/**
+ * credential.helper per scope (matches commands/credential_helper.rs).
+ * The key is multi-valued and accumulates across scopes, so there is no
+ * single "resolved" value; null = no helper configured at that scope.
+ */
+export interface CredentialHelperView {
+  helper_global: string | null;
+  helper_system: string | null;
+}
+
+/** A credential helper detected on this machine (matches credential_helper.rs). */
+export interface AvailableHelper {
+  /** The value to write into credential.helper (e.g. "manager"). */
+  name: string;
+  /** Where the executable was found. */
+  path: string;
 }
 
 // --- Git log / commit types (matches legit-core/src/types.rs) ---
