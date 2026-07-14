@@ -1,3 +1,4 @@
+pub mod accounts;
 pub mod branches;
 pub mod browser;
 pub mod config_util;
@@ -18,11 +19,13 @@ pub mod profiles;
 pub mod remote;
 pub mod repo;
 pub mod signing;
+pub mod ssh_keys;
 pub mod stashes;
 pub mod submodules;
 pub mod tags;
 pub mod working;
 
+pub use accounts::*;
 pub use branches::*;
 pub use browser::*;
 pub use console::*;
@@ -42,6 +45,7 @@ pub use profiles::*;
 pub use remote::*;
 pub use repo::*;
 pub use signing::*;
+pub use ssh_keys::*;
 pub use stashes::*;
 pub use submodules::*;
 pub use tags::*;

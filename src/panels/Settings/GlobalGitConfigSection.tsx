@@ -27,6 +27,7 @@ import {
 import { Button } from "../shared/buttons";
 import { Section, FieldNote } from "./primitives";
 import { CredentialHelperField } from "./CredentialHelperField";
+import { DefaultSshKeysField } from "./SshKeyTools";
 import { Field, WithBrowse } from "./GlobalProfilesSection";
 import {
   ResolvedBadge,
@@ -266,6 +267,10 @@ export function GlobalGitConfigSection() {
               <code>{helperView.helper_system}</code> still runs as well.
             </FieldNote>
           )}
+        </Field>
+
+        <Field label="Default SSH keys (~/.ssh)">
+          <DefaultSshKeysField />
         </Field>
 
         {confirmPending && (

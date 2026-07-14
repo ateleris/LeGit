@@ -12,6 +12,7 @@ import {
 import { Button } from "../shared/buttons";
 import { Section, FieldNote } from "./primitives";
 import { CredentialHelperField } from "./CredentialHelperField";
+import { GenerateSshKeyForm, SshKeyActions } from "./SshKeyTools";
 
 const FORMAT_OPTIONS: { label: string; value: string | null }[] = [
   { label: "ssh", value: "ssh" },
@@ -137,6 +138,11 @@ export function GlobalProfilesSection() {
   );
 }
 
+/** File-name-safe slug from a profile name, for the generated key's default name. */
+function profileNameSlug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
 function ProfileEditor({
   initial,
   onSave,
@@ -147,6 +153,7 @@ function ProfileEditor({
   onCancel: () => void;
 }) {
   const [p, setP] = useState<GitProfile>(initial);
+  const [showGenerateKey, setShowGenerateKey] = useState(false);
   const set = <K extends keyof GitProfile>(k: K, v: GitProfile[K]) =>
     setP((prev) => ({ ...prev, [k]: v }));
   const setStr = (k: keyof GitProfile) => (v: string) =>
@@ -202,6 +209,22 @@ function ProfileEditor({
       )}
       <Field label="Auth SSH key (core.sshCommand)">
         <WithBrowse value={p.authSshKey ?? ""} onChange={setStr("authSshKey")} onBrowse={() => browseInto("authSshKey")} placeholder="Path to SSH private key (for push/pull)" />
+        {p.authSshKey && !showGenerateKey && <SshKeyActions privateKeyPath={p.authSshKey} />}
+        {showGenerateKey ? (
+          <GenerateSshKeyForm
+            nameSlug={profileNameSlug(p.name)}
+            defaultComment={p.userEmail ?? ""}
+            onGenerated={(path) => {
+              set("authSshKey", path as GitProfile[keyof GitProfile]);
+              setShowGenerateKey(false);
+            }}
+            onCancel={() => setShowGenerateKey(false)}
+          />
+        ) : (
+          <div>
+            <button onClick={() => setShowGenerateKey(true)}>Generate new key…</button>
+          </div>
+        )}
       </Field>
       <Field label="credential.helper (HTTPS)">
         <CredentialHelperField

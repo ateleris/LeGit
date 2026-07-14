@@ -13,6 +13,7 @@ import { globalLineEndingsView, globalWriteLineEndings, setWarnOnMixedEndings } 
 import { useGitStatusStore } from "../../store/git-status";
 import { GlobalProfilesSection } from "./GlobalProfilesSection";
 import { GlobalGitConfigSection } from "./GlobalGitConfigSection";
+import { ConnectedAccountsSection } from "./ConnectedAccountsSection";
 import { Section, Row, FieldNote, SettingsGroup, GitConfigPill } from "./primitives";
 import { ALL_PANELS, SUPPRESSIBLE_SUMMON_PANELS } from "../registry";
 import {
@@ -162,6 +163,7 @@ export function GlobalSettingsPanel() {
             )}
           </Section>
           <GlobalGitConfigSection />
+          <ConnectedAccountsSection />
           <LineEndingsGlobalSection />
           <GlobalProfilesSection />
         </SettingsGroup>

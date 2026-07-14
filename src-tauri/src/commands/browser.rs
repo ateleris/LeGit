@@ -74,7 +74,7 @@ fn pick_remote(remotes: &[Remote]) -> Option<&Remote> {
 }
 
 /// Open a URL in the default browser (fire-and-forget).
-fn open_url(url: &str) -> Result<(), AppError> {
+pub(crate) fn open_url(url: &str) -> Result<(), AppError> {
     let spawn = |mut cmd: Command| -> Result<(), AppError> {
         cmd.spawn()
             .map(|_| ())

@@ -370,6 +370,44 @@ export interface AvailableHelper {
   path: string;
 }
 
+/** One SSH key pair on disk (matches commands/ssh_keys.rs). */
+export interface SshKeyStatus {
+  /** Absolute private-key path. */
+  private_key_path: string;
+  exists: boolean;
+  /** Content of `<path>.pub`, when readable. */
+  public_key: string | null;
+}
+
+/**
+ * One connected platform account (matches state.rs ConnectedAccountMeta).
+ * Metadata only: the token lives in the OS keychain.
+ */
+export interface ConnectedAccountMeta {
+  /** Platform id: "github" | "gitlab" | "azure_devops". */
+  platform: string;
+  /** Git HTTPS host (also the keychain key host). */
+  host: string;
+  username: string;
+  display_name: string | null;
+}
+
+/**
+ * Account metadata plus live keychain presence: false = the token was erased
+ * (e.g. git erased a revoked one) and the account needs reconnecting.
+ */
+export interface ConnectedAccountStatus {
+  account: ConnectedAccountMeta;
+  token_present: boolean;
+}
+
+/** Result of an `ssh -T git@<host>` authentication probe. */
+export type SshTestOutcome =
+  | { kind: "authenticated"; detail: string }
+  | { kind: "rejected"; detail: string }
+  | { kind: "cannot_connect"; detail: string }
+  | { kind: "unknown"; detail: string };
+
 // --- Git log / commit types (matches legit-core/src/types.rs) ---
 
 export type CommitId = string;

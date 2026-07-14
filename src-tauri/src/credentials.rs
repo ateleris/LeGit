@@ -500,6 +500,43 @@ fn keyring_save(key: &str, cred: &StoredCred) -> Result<(), keyring::Error> {
 }
 
 // ---------------------------------------------------------------------------
+// Connected-accounts interop (commands/accounts.rs)
+// ---------------------------------------------------------------------------
+// A connected account's token is stored under the SAME service/key/format as
+// broker-remembered passwords, so `git credential fill` answers with it
+// without any broker change. All three are blocking (keyring): call them
+// from spawn_blocking.
+
+pub(crate) fn keychain_store(
+    key: &str,
+    username: &str,
+    password: &str,
+) -> Result<(), keyring::Error> {
+    keyring_save(
+        key,
+        &StoredCred { username: username.to_string(), password: password.to_string() },
+    )
+}
+
+pub(crate) fn keychain_read(key: &str) -> Option<(String, String)> {
+    keyring_load(key).map(|c| (c.username, c.password))
+}
+
+pub(crate) fn keychain_delete(key: &str) -> Result<(), keyring::Error> {
+    keyring::Entry::new(KEYRING_SERVICE, key)?.delete_credential()
+}
+
+/// Evict a host's session-cache entry so the next `fill` re-reads the
+/// keychain. Needed when a connected account replaces or removes the stored
+/// secret: the session cache is consulted BEFORE the keychain, so a stale
+/// entry would shadow the new token until the app restarts.
+pub(crate) fn forget_session(key: &str) {
+    if let Some(broker) = BROKER.get() {
+        lock(&broker.session_cache).remove(key);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // UI-facing entry points (called by the credential commands)
 // ---------------------------------------------------------------------------
 

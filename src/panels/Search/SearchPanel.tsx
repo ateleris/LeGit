@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PanelError } from "../shared/PanelError";
 import { useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -27,6 +28,18 @@ const KIND_LABELS: Record<SearchKind, string> = {
 
 // Results render in a virtualized list, so a big cap costs only git time.
 const MAX_RESULTS = 1000;
+
+// Easter egg: searching for "abdäsele" swaps the window title between
+// "LeGit" and "LegIt" (dev builds: "LeGit DEV" / "LegIt DEV"). Purely
+// session-local: nothing is persisted, a restart restores the real title.
+async function toggleAbdaesele(): Promise<void> {
+  const win = getCurrentWindow();
+  const title = await win.title();
+  const next = title.includes("LegIt")
+    ? title.replace("LegIt", "LeGit")
+    : title.replace("LeGit", "LegIt");
+  if (next !== title) await win.setTitle(next);
+}
 
 const rowStyle: React.CSSProperties = {
   display: "flex",
@@ -83,7 +96,9 @@ export function SearchPanel() {
 
   const search = useCallback(() => {
     const q = query.trim();
-    if (q) setSubmitted({ query: q, kind });
+    if (!q) return;
+    if (q.toLowerCase() === "abdäsele") void toggleAbdaesele().catch(() => {});
+    setSubmitted({ query: q, kind });
   }, [query, kind]);
 
   // Virtualized results (the cap is high enough that plain mapping would

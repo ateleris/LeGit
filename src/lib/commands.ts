@@ -30,6 +30,10 @@ import type {
   IdentityView,
   CredentialHelperView,
   AvailableHelper,
+  SshKeyStatus,
+  SshTestOutcome,
+  ConnectedAccountMeta,
+  ConnectedAccountStatus,
   KeyDiff,
   DiffEntry,
   DiffSource,
@@ -371,6 +375,40 @@ export const globalWriteCredentialHelper = (helper: string | null) =>
 
 export const listAvailableCredentialHelpers = () =>
   invoke<AvailableHelper[]>("list_available_credential_helpers");
+
+// SSH key management (phase 1 of the platform integrations).
+
+export const sshKeyStatus = (privateKeyPath: string) =>
+  invoke<SshKeyStatus>("ssh_key_status", { privateKeyPath });
+
+export const defaultSshKeysStatus = () =>
+  invoke<SshKeyStatus[]>("default_ssh_keys_status");
+
+export const generateSshKey = (fileName: string, keyType: "ed25519" | "rsa", comment: string) =>
+  invoke<SshKeyStatus>("generate_ssh_key", { fileName, keyType, comment });
+
+export const testSshAuth = (host: string, privateKeyPath: string | null) =>
+  invoke<SshTestOutcome>("test_ssh_auth", { host, privateKeyPath });
+
+export const openPlatformKeySettings = (platform: string) =>
+  invoke<null>("open_platform_key_settings", { platform });
+
+// Connected platform accounts (PAT-based; tokens live in the OS keychain).
+
+export const listConnectedAccounts = () =>
+  invoke<ConnectedAccountStatus[]>("list_connected_accounts");
+
+export const connectAccountPat = (platform: string, token: string) =>
+  invoke<ConnectedAccountMeta>("connect_account_pat", { platform, token });
+
+export const disconnectAccount = (platform: string) =>
+  invoke<null>("disconnect_account", { platform });
+
+export const uploadSshKeyToPlatform = (platform: string, title: string, publicKey: string) =>
+  invoke<null>("upload_ssh_key_to_platform", { platform, title, publicKey });
+
+export const openPlatformTokenSettings = (platform: string) =>
+  invoke<null>("open_platform_token_settings", { platform });
 
 // --- log / commit details ---
 

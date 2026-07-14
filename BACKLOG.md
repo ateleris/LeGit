@@ -32,7 +32,9 @@ In rough order:
    list (GCM / profile helpers still win where configured), broker prompt
    appears when no other helper answers, keychain entries are written only
    after git confirms via `store`, cached credentials are scoped to the
-   session. Exercise against real remotes (GitHub HTTPS with GCM installed,
+   session. Since 2026-07-13 the same chain also serves connected-account
+   tokens (same keychain slot): cover a token-answered fill and the
+   disconnect path in this pass. Exercise against real remotes (GitHub HTTPS with GCM installed,
    a remote with no helper configured) on Windows and in WSL/Linux, where
    the helper landscape differs (no GCM by default; keychain backend is
    Secret Service).
@@ -54,6 +56,32 @@ SmartScreen/Gatekeeper warnings documented.
 
 ## Next up (high value, post-release ok)
 
+- **Verification pass for the 2026-07-13 auth/config session.** One large
+  uncommitted session shipped: the edit-only global git-config form
+  (identity + signing + credential helper, one bordered panel, one Save;
+  design/2026-07-13-global-default-profile.md), the guided credential-helper
+  picker, the local-scope-leak fix for all global views
+  (`read_config_global_scopes`; "resolved (from local)" bug), the op-banner
+  button token fix, the commit-box missing-identity nudge, and platform
+  integrations phases 1-3 (SSH key generate/copy/test, PAT-connected
+  accounts in the OS keychain, one-click key upload, broker HTTPS auth +
+  session-cache eviction + revoked-token detection). WSL-side cargo/tsc are
+  green (incl. new unit + real-git tests); still needed from PowerShell:
+  1. vitest suites and a debug run to regenerate `bindings.ts`
+     (17 new commands).
+  2. Visual pass over the new Global Settings sections and the profile
+     editor's SSH block.
+  3. LIVE checks the tests can't cover: `ssh -T` against real
+     GitHub/GitLab/ADO accounts (probe classification encoded from
+     documented outputs, not live runs), key generation both types, PAT
+     connect for all three platforms (the ADO profile endpoint and its
+     HTML-on-bad-PAT heuristic especially), key upload to GitHub/GitLab,
+     an HTTPS push answered by a connected token, and the "token missing"
+     badge after revoking a PAT.
+  4. Small follow-ups noticed: `WithBrowse` has no disabled state (profile
+     editor parity choice); two dirty-tracking sections in one panel can
+     under-report dirty when both are edited and one saves
+     (`usePanelDirty` is last-writer-wins).
 - **Improve the merge window.** (Requested 2026-07-09; exact scope to be
   defined with Simon before starting.) Merging is still a set of
   fire-immediately context-menu entries (merge ff-auto / no-ff / ff-only /
@@ -110,23 +138,36 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   (Scoped 2026-07-13 with Simon: he authenticates via SSH and uses exactly
   these three platforms.) Lives in the reserved `crates/legit-providers`
   stub. Phased:
-  1. *SSH key management, no API needed*: generate a keypair from the
-     profile editor and wire it into the profile's `auth_ssh_key`
-     (-> `core.sshCommand`); show the public key with a copy button and a
-     deep link to the platform's "add SSH key" settings page; an
-     `ssh -T`-style connection test. Key type is per-platform: Ed25519 for
-     GitHub/GitLab, **RSA for Azure DevOps** (ADO supports only RSA with
-     rsa-sha2 signatures; Ed25519 is rejected - verified 2026-07-13).
-  2. *Connected accounts (API tokens)*: OAuth device flow for GitHub
-     (client id only, no secret) and GitLab (recent versions; PAT paste as
-     fallback), Entra device-code flow or PAT for Azure DevOps. Tokens go
-     into the OS keychain under the broker's protocol+host key: LeGit
-     still stores no secrets. Enables one-click public-key upload where an
-     API exists (GitHub `POST /user/keys`, GitLab `POST /user/keys`; ADO
-     has no documented SSH-key API, so it keeps the copy + deep-link flow).
-  3. *HTTPS auth via the broker*: with a token in the keychain the existing
-     broker already answers `git credential fill` for that host. Secondary
-     here (SSH-first user base), and on Windows GCM already covers it.
+  1. *SSH key management* - **shipped 2026-07-13**
+     (`commands/ssh_keys.rs` + `Settings/SshKeyTools.tsx`): generate
+     (Ed25519 / RSA-4096 for ADO, passphrase-less, into `~/.ssh`), public-key
+     copy, platform deep links, `ssh -T` test with output-based
+     classification (GitHub exits 1 on success - encoded in unit tests).
+     Per profile via `auth_ssh_key`; global = ssh's default keys as a
+     filesystem-only field in the global form (zero git-config writes).
+     Open follow-ups: passphrase support blocks on the `SSH_ASKPASS` item
+     below; the connection test could later surface WHICH account
+     authenticated (parse the "Hi <user>!" line).
+  2. *Connected accounts* - **PAT flow shipped 2026-07-13**
+     (`crates/legit-providers` + `commands/accounts.rs` +
+     `Settings/ConnectedAccountsSection.tsx`): paste-a-token connect for all
+     three platforms (validated via the platform API), token stored in the
+     OS keychain under the broker's `https://<host>` key (settings hold
+     metadata only), one-click public-key upload for GitHub/GitLab in the
+     SSH key tools, scope-prefilled token-creation deep links. Open
+     remainder: **OAuth device flows** (GitHub client-id-only, GitLab
+     device grant, Entra device code for ADO) - blocked on registering app
+     client IDs (Simon's account/org), the code seam is
+     `legit_providers::validate_token`. Self-hosted GitLab hosts are also
+     out (gitlab.com fixed for now).
+  3. *HTTPS auth via the broker* - **shipped 2026-07-13** with phase 2 plus
+     hardening: connect/disconnect evict the broker's session cache for the
+     host (`forget_session`: the cache is consulted BEFORE the keychain, so
+     a stale entry would shadow the new token until restart), and
+     `list_connected_accounts` reports live keychain presence, so a token
+     git erased (revoked) shows as "reconnect needed" instead of silently
+     looking connected. Remaining edge: legacy `org.visualstudio.com` ADO
+     remotes miss the `dev.azure.com` keychain entry (only if it hurts).
   4. *(Separate product decision)* repo listing for the clone dialog,
      PR/issue surfaces.
 - **SSH passphrase prompting** (`SSH_ASKPASS` shim mode): the credential

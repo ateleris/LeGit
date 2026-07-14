@@ -263,6 +263,23 @@ pub struct GlobalSettings {
     /// User-defined git identity profiles (versioned envelope).
     #[serde(default, rename = "gitProfiles")]
     pub git_profiles_doc: GitProfilesDoc,
+    /// Platform accounts connected via PAT (`commands/accounts.rs`).
+    /// METADATA ONLY: the token lives in the OS keychain under the broker's
+    /// `https://<host>` key; settings files hold no secrets.
+    #[serde(default)]
+    pub connected_accounts: Vec<ConnectedAccountMeta>,
+}
+
+/// One connected platform account (see `commands/accounts.rs`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct ConnectedAccountMeta {
+    /// Platform id: "github" | "gitlab" | "azure_devops".
+    pub platform: String,
+    /// Git HTTPS host, which is also the keychain key host (e.g. "github.com").
+    pub host: String,
+    /// Account username (doubles as the git basic-auth username).
+    pub username: String,
+    pub display_name: Option<String>,
 }
 
 impl Default for GlobalSettings {
@@ -298,6 +315,7 @@ impl Default for GlobalSettings {
             suppressed_auto_open_panels: vec![],
             working_changes_section_order: vec![],
             git_profiles_doc: GitProfilesDoc::default(),
+            connected_accounts: vec![],
         }
     }
 }
