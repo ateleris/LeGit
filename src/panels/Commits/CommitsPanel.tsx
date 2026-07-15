@@ -44,7 +44,7 @@ import type { Branch, Commit, CommitId, FileStatus, MergeOptions, PullStrategy, 
 import { useRemoteProgressStore } from "../../store/remoteProgress";
 import { formatAppError, gitErrorKind } from "../../lib/types";
 import { notify } from "../../store/notifications";
-import { BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon } from "../../icons";
+import { BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon, StashIcon } from "../../icons";
 import { formatFull, formatRelative } from "../../lib/time";
 import { RefsCell } from "./cells/RefsCell";
 import { InlineRenameInput } from "./cells/InlineRenameInput";
@@ -781,6 +781,8 @@ export function CommitsPanel() {
         repoId={repo.id}
         branches={branches}
         onCreateBranch={handleCreateBranchStart}
+        onStash={handleCreateStash}
+        hasUncommittedChanges={status.length > 0}
       />
 
 
@@ -1364,11 +1366,17 @@ function RemoteSyncToolbar({
   repoId,
   branches,
   onCreateBranch,
+  onStash,
+  hasUncommittedChanges,
 }: {
   repoId: string;
   branches: Branch[];
   /** Opens the create-new-branch input on the HEAD row (see CommitsPanel). */
   onCreateBranch: () => void;
+  /** Stashes the working tree (same action as the uncommitted-changes row's menu). */
+  onStash: (includeUntracked: boolean) => void;
+  /** Whether the working tree has anything to stash (drives the disabled state). */
+  hasUncommittedChanges: boolean;
 }) {
   const queryClient = useQueryClient();
 
@@ -1391,6 +1399,7 @@ function RemoteSyncToolbar({
   const [busyOp, setBusyOp] = useState<SyncOp | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [pullMenuOpen, setPullMenuOpen] = useState(false);
+  const [stashMenuOpen, setStashMenuOpen] = useState(false);
   const opIdRef = useRef<string | null>(null);
   const cancelRequestedRef = useRef(false);
 
@@ -1645,6 +1654,47 @@ function RemoteSyncToolbar({
         // the handler's optional startPoint parameter.
         onClick={() => onCreateBranch()}
       />
+
+      {/* Stash the working tree - same options as the uncommitted-changes
+          row's context menu (plain / incl. untracked). Local op; independent
+          of the sync busy state. */}
+      <div style={{ position: "relative", display: "flex" }}>
+        <ToolbarButton
+          title={
+            hasUncommittedChanges
+              ? "Stash uncommitted changes"
+              : "No uncommitted changes to stash"
+          }
+          disabled={!hasUncommittedChanges}
+          loading={false}
+          icon={<StashIcon />}
+          label="Stash"
+          onClick={() => onStash(false)}
+          rounded="left"
+        />
+        <Button
+          variant="ghost"
+          rounded="right"
+          title="More stash options"
+          disabled={!hasUncommittedChanges}
+          onClick={() => setStashMenuOpen((o) => !o)}
+          style={{ padding: "2px 4px", marginLeft: -1 }}
+        >
+          <ChevronDownIcon />
+        </Button>
+        {stashMenuOpen && (
+          <SyncDropdown onClose={() => setStashMenuOpen(false)}>
+            <MenuItem
+              onClick={() => {
+                setStashMenuOpen(false);
+                onStash(true);
+              }}
+            >
+              Stash changes (incl. untracked)
+            </MenuItem>
+          </SyncDropdown>
+        )}
+      </div>
 
       {/* Live transfer progress for the in-flight op (fed by the
           legit://remote-progress event; cleared when the op settles). */}
