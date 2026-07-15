@@ -467,6 +467,11 @@ export const repoFileWorktree = (repoId: string, path: string) =>
 export const repoLineEndingKind = (repoId: string, path: string, rev?: string | null) =>
   invoke<LineEndingKind>("repo_line_ending_kind", { repoId, path, rev: rev ?? null });
 
+/** Rewrite a working-tree file's line endings to `target`, content untouched.
+ *  Backs the diff chip's "revert line endings" action. */
+export const repoRevertLineEndings = (repoId: string, path: string, target: LineEndingKind) =>
+  invoke<null>("repo_revert_line_endings", { repoId, path, target });
+
 /** Blame `path` - at `rev` when given, else the working tree. */
 export const repoBlame = (repoId: string, path: string, rev?: string | null) =>
   invoke<BlameHunk[]>("repo_blame", { repoId, path, rev: rev ?? null });

@@ -66,6 +66,7 @@ pub fn run() {
         commands::delete_theme,
         commands::repo_line_endings_view,
         commands::repo_line_ending_kind,
+        commands::repo_revert_line_endings,
         commands::global_line_endings_view,
         commands::repo_write_line_endings,
         commands::global_write_line_endings,

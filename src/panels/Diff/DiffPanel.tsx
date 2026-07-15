@@ -18,7 +18,7 @@ import {
   repoWriteWorktreeFile,
 } from "../../lib/commands";
 import type { DiffEntry, DiffRequest, DiffSource } from "../../lib/types";
-import { LineEndingBadge } from "../shared/LineEndingBadge";
+import { LineEndingBadge, RevertableLineEndingBadge } from "../shared/LineEndingBadge";
 import { SubmoduleDiffView, SubmoduleDirtyNotice } from "./SubmoduleDiffView";
 import { formatAppError } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
@@ -447,7 +447,19 @@ export function DiffPanel() {
         </span>
         {(() => {
           const s = lineEndingSides(request.source);
-          return <LineEndingBadge repoId={request.repoId} path={request.path} rev={s.rev} oldRev={s.oldRev} />;
+          // Only the unstaged diff offers the revert action — its new side is
+          // the working tree, the one side we can rewrite safely.
+          return request.source.kind === "working_unstaged" ? (
+            <RevertableLineEndingBadge
+              repoId={request.repoId}
+              path={request.path}
+              rev={s.rev}
+              oldRev={s.oldRev}
+              disabled={dirty}
+            />
+          ) : (
+            <LineEndingBadge repoId={request.repoId} path={request.path} rev={s.rev} oldRev={s.oldRev} />
+          );
         })()}
         {dirty && (
           <span style={{ display: "flex", gap: 4, marginLeft: "auto" }}>

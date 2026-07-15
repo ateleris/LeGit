@@ -14,7 +14,7 @@ use crate::commands::working::resolve_repo_relative;
 use crate::error::AppError;
 use crate::state::AppState;
 use legit_core::types::LineEndingKind;
-use legit_core::{classify_line_endings, mixed_endings_in_bytes, GitRunner};
+use legit_core::{classify_line_endings, convert_line_endings, mixed_endings_in_bytes, GitRunner};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::{Path, PathBuf};
@@ -269,6 +269,37 @@ pub async fn repo_line_ending_kind(
         }
     };
     Ok(text.map(|t| classify_line_endings(&t)).unwrap_or(LineEndingKind::None))
+}
+
+/// Rewrite a working-tree file's line endings to `target`, leaving content
+/// untouched (backs the Diff panel's chip action that reverts an accidental
+/// EOL flip while keeping content edits). Refuses binary files, non-concrete
+/// targets (only lf/crlf/cr), and files over the indicator's 2 MB cap; the
+/// byte-level contract is `legit_core::convert_line_endings` (pure, tested).
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_revert_line_endings(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    path: String,
+    target: LineEndingKind,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    let abs = resolve_repo_relative(&session.path, &path)?;
+
+    let meta = tokio::fs::metadata(&abs).await.map_err(|e| AppError::Io(e.to_string()))?;
+    if meta.len() > MAX_LINE_ENDING_BYTES as u64 {
+        return Err(AppError::Io(format!("{path}: file too large to convert line endings")));
+    }
+    let bytes = tokio::fs::read(&abs).await.map_err(|e| AppError::Io(e.to_string()))?;
+
+    let converted = convert_line_endings(&bytes, target).ok_or_else(|| {
+        AppError::Io(format!("{path}: cannot convert line endings (binary file or invalid target)"))
+    })?;
+    if converted != bytes {
+        tokio::fs::write(&abs, converted).await.map_err(|e| AppError::Io(e.to_string()))?;
+    }
+    Ok(())
 }
 
 /// 2 MB cap: above this the indicator is skipped rather than reading/scanning a

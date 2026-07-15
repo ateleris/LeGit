@@ -2751,6 +2751,43 @@ pub fn classify_line_endings(text: &str) -> LineEndingKind {
     }
 }
 
+/// Rewrite every line ending (CRLF, bare LF, or lone CR) in `bytes` to
+/// `target`, leaving all other bytes untouched. No EOL is added or removed,
+/// so a missing trailing newline stays missing. Returns `None` for binary
+/// content (NUL in the leading window, git's heuristic) and for targets that
+/// aren't a concrete kind (only Lf/Crlf/Cr can be converted to). Pure so the
+/// "only EOLs change" contract is unit-tested; backs `repo_revert_line_endings`.
+pub fn convert_line_endings(bytes: &[u8], target: LineEndingKind) -> Option<Vec<u8>> {
+    let eol: &[u8] = match target {
+        LineEndingKind::Lf => b"\n",
+        LineEndingKind::Crlf => b"\r\n",
+        LineEndingKind::Cr => b"\r",
+        _ => return None,
+    };
+    if bytes.iter().take(BINARY_SNIFF_WINDOW).any(|&b| b == 0) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(bytes.len() + bytes.len() / 8);
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\r' if i + 1 < bytes.len() && bytes[i + 1] == b'\n' => {
+                out.extend_from_slice(eol);
+                i += 2;
+            }
+            b'\r' | b'\n' => {
+                out.extend_from_slice(eol);
+                i += 1;
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    Some(out)
+}
+
 /// Case-insensitive substring filter over `git ls-files -z` output, capped at
 /// `max` entries. Pure so the matching rule is unit-tested.
 fn filter_paths(ls_files_stdout: &str, query: &str, max: usize) -> Vec<PathBuf> {
@@ -3427,6 +3464,49 @@ mod tests {
     #[test]
     fn classify_line_endings_binary_wins() {
         assert_eq!(classify_line_endings("a\0b\r\n"), LineEndingKind::Binary);
+    }
+
+    // --- line-ending conversion ----------------------------------------------
+
+    #[test]
+    fn convert_line_endings_lf_to_crlf_and_back() {
+        assert_eq!(convert_line_endings(b"a\nb\nc\n", LineEndingKind::Crlf).unwrap(), b"a\r\nb\r\nc\r\n");
+        assert_eq!(convert_line_endings(b"a\r\nb\r\nc\r\n", LineEndingKind::Lf).unwrap(), b"a\nb\nc\n");
+    }
+
+    #[test]
+    fn convert_line_endings_mixed_input_becomes_uniform() {
+        // CRLF + bare LF + lone CR all become the target.
+        assert_eq!(convert_line_endings(b"a\r\nb\nc\rd\n", LineEndingKind::Lf).unwrap(), b"a\nb\nc\nd\n");
+        assert_eq!(
+            convert_line_endings(b"a\r\nb\nc\rd\n", LineEndingKind::Crlf).unwrap(),
+            b"a\r\nb\r\nc\r\nd\r\n"
+        );
+    }
+
+    #[test]
+    fn convert_line_endings_preserves_missing_trailing_newline() {
+        // No EOL is added or removed; only existing EOLs change kind.
+        assert_eq!(convert_line_endings(b"a\r\nb", LineEndingKind::Lf).unwrap(), b"a\nb");
+        assert_eq!(convert_line_endings(b"", LineEndingKind::Lf).unwrap(), b"");
+        assert_eq!(convert_line_endings(b"no breaks", LineEndingKind::Crlf).unwrap(), b"no breaks");
+    }
+
+    #[test]
+    fn convert_line_endings_to_cr_and_noop() {
+        assert_eq!(convert_line_endings(b"a\nb\r\n", LineEndingKind::Cr).unwrap(), b"a\rb\r");
+        // Already uniform at the target: content is unchanged.
+        assert_eq!(convert_line_endings(b"a\nb\n", LineEndingKind::Lf).unwrap(), b"a\nb\n");
+    }
+
+    #[test]
+    fn convert_line_endings_refuses_binary_and_bad_targets() {
+        // NUL in the sniff window: binary, refuse.
+        assert_eq!(convert_line_endings(b"a\0b\r\n", LineEndingKind::Lf), None);
+        // Only Lf/Crlf/Cr are meaningful conversion targets.
+        assert_eq!(convert_line_endings(b"a\nb\n", LineEndingKind::Mixed), None);
+        assert_eq!(convert_line_endings(b"a\nb\n", LineEndingKind::None), None);
+        assert_eq!(convert_line_endings(b"a\nb\n", LineEndingKind::Binary), None);
     }
 
     // --- repo-wide file classification (Files tree) -------------------------
