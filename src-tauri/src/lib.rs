@@ -110,6 +110,7 @@ pub fn run() {
         commands::repo_open_remote_page,
         commands::save_switch_dirty_behavior,
         commands::save_pull_strategy,
+        commands::save_stash_include_untracked,
         commands::save_push_recurse_submodules,
         commands::set_commit_avatars,
         commands::set_diff_syntax_highlighting,

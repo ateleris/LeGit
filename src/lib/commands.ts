@@ -858,6 +858,9 @@ export const savePushRecurseSubmodules = (mode: PushRecurseMode | null) =>
 export const savePullStrategy = (strategy: PullStrategy) =>
   invoke<void>("save_pull_strategy", { strategy });
 
+export const saveStashIncludeUntracked = (includeUntracked: boolean) =>
+  invoke<void>("save_stash_include_untracked", { includeUntracked });
+
 // --- remote sync (fetch / pull / push) ---
 //
 // fetch/pull/push take a frontend-generated `opId` so the op can be cancelled

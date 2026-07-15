@@ -16,6 +16,7 @@ import {
   setWorkingChangesSectionOrder,
   saveSwitchDirtyBehavior,
   savePullStrategy,
+  saveStashIncludeUntracked,
   savePushRecurseSubmodules,
 } from "../lib/commands";
 import { reapplyPanelConstraints } from "./dockview";
@@ -107,6 +108,7 @@ interface SettingsStore {
   setWorkingChangesSectionOrder: (order: string[]) => Promise<void>;
   setSwitchDirtyBehavior: (behavior: SwitchDirtyBehavior) => Promise<void>;
   setPullStrategy: (strategy: PullStrategy) => Promise<void>;
+  setStashIncludeUntracked: (include: boolean) => Promise<void>;
   setPushRecurseSubmodules: (mode: PushRecurseMode | null) => Promise<void>;
 }
 
@@ -238,6 +240,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     await savePullStrategy(strategy);
     const s = get().settings;
     if (s) set({ settings: { ...s, pull_strategy: strategy } });
+  },
+
+  async setStashIncludeUntracked(include) {
+    await saveStashIncludeUntracked(include);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, stash_include_untracked: include } });
   },
 
   async setPushRecurseSubmodules(mode) {

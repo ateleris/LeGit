@@ -55,6 +55,9 @@ export interface GlobalSettings {
   switch_dirty_behavior: SwitchDirtyBehavior | null;
   /** Pull integration strategy (null = Default: the repo's pull.rebase decides). */
   pull_strategy?: PullStrategy | null;
+  /** Default mode for the Commits-toolbar Stash button: include untracked
+   * files (default off = tracked changes only). Picked via the caret menu. */
+  stash_include_untracked?: boolean;
   /** `push --recurse-submodules` guard mode (null = off). */
   push_recurse_submodules?: PushRecurseMode | null;
   /** Show author Gravatars in the commit graph. OFF by default — enabling it

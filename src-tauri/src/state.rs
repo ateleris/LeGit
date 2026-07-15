@@ -238,6 +238,11 @@ pub struct GlobalSettings {
     /// (the repo's `pull.rebase` config decides).
     #[serde(default)]
     pub pull_strategy: Option<PullStrategy>,
+    /// Whether the Commits-toolbar Stash button includes untracked files.
+    /// Persisted default picked via the button's caret menu (pull-strategy
+    /// style); off = tracked changes only.
+    #[serde(default)]
+    pub stash_include_untracked: bool,
     /// `git push --recurse-submodules` guard mode. `None` = off (no flag).
     #[serde(default)]
     pub push_recurse_submodules: Option<legit_core::PushRecurseMode>,
@@ -309,6 +314,7 @@ impl Default for GlobalSettings {
             external_editor_command: None,
             switch_dirty_behavior: None,
             pull_strategy: None,
+            stash_include_untracked: false,
             push_recurse_submodules: None,
             commit_avatars: false,
             diff_syntax_highlighting: false,

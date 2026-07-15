@@ -274,6 +274,19 @@ pub async fn save_pull_strategy(
     .await
 }
 
+/// Persist the Stash button's default mode (include untracked files or not).
+#[tauri::command]
+#[specta::specta]
+pub async fn save_stash_include_untracked(
+    state: tauri::State<'_, AppState>,
+    include_untracked: bool,
+) -> Result<(), AppError> {
+    state.mutate_global(|s| {
+        s.stash_include_untracked = include_untracked;
+    })
+    .await
+}
+
 /// Persist the `push --recurse-submodules` guard mode (None = off).
 #[tauri::command]
 #[specta::specta]

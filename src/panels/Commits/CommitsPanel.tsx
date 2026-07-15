@@ -1330,6 +1330,13 @@ const PULL_STRATEGY_LABELS: Record<PullStrategy, string> = {
   FfOnly: "Fast-forward only",
 };
 
+/** Stash-button modes: whether `git stash push` includes untracked files.
+ *  Ordered for the caret menu; keys mirror `stash_include_untracked`. */
+const STASH_MODES: { includeUntracked: boolean; label: string }[] = [
+  { includeUntracked: false, label: "Tracked changes only" },
+  { includeUntracked: true, label: "Include untracked files" },
+];
+
 /** Hand-rolled caret dropdown shared by the Pull and Push toolbar buttons:
  *  a fixed click-away overlay plus a right-aligned panel under the anchor. */
 function SyncDropdown({
@@ -1411,6 +1418,14 @@ function RemoteSyncToolbar({
     (st) => st.settings?.push_recurse_submodules ?? null,
   );
   const setPullStrategy = useSettingsStore((s) => s.setPullStrategy);
+
+  // Persisted default for the Stash button (pull-strategy style): whether
+  // stashing includes untracked files. Picking a mode in the caret menu
+  // changes the default for every future stash, not just the next one.
+  const stashIncludeUntracked = useSettingsStore(
+    (s) => s.settings?.stash_include_untracked ?? false,
+  );
+  const setStashIncludeUntracked = useSettingsStore((s) => s.setStashIncludeUntracked);
 
   // Latest --progress update for the in-flight op (cleared when it settles).
   const progress = useRemoteProgressStore((s) =>
@@ -1655,27 +1670,30 @@ function RemoteSyncToolbar({
         onClick={() => onCreateBranch()}
       />
 
-      {/* Stash the working tree - same options as the uncommitted-changes
-          row's context menu (plain / incl. untracked). Local op; independent
+      {/* Stash the working tree - same action as the uncommitted-changes
+          row's context menu. The caret picks the persisted default mode
+          (tracked only / incl. untracked), pull-strategy style: selecting a
+          mode configures the button, it does not stash. Local op; independent
           of the sync busy state. */}
       <div style={{ position: "relative", display: "flex" }}>
         <ToolbarButton
           title={
             hasUncommittedChanges
-              ? "Stash uncommitted changes"
+              ? "Stash uncommitted changes" +
+                (stashIncludeUntracked ? " (incl. untracked)" : "")
               : "No uncommitted changes to stash"
           }
           disabled={!hasUncommittedChanges}
           loading={false}
           icon={<StashIcon />}
           label="Stash"
-          onClick={() => onStash(false)}
+          onClick={() => onStash(stashIncludeUntracked)}
           rounded="left"
         />
         <Button
           variant="ghost"
           rounded="right"
-          title="More stash options"
+          title="Stash mode"
           disabled={!hasUncommittedChanges}
           onClick={() => setStashMenuOpen((o) => !o)}
           style={{ padding: "2px 4px", marginLeft: -1 }}
@@ -1684,14 +1702,25 @@ function RemoteSyncToolbar({
         </Button>
         {stashMenuOpen && (
           <SyncDropdown onClose={() => setStashMenuOpen(false)}>
-            <MenuItem
-              onClick={() => {
-                setStashMenuOpen(false);
-                onStash(true);
-              }}
-            >
-              Stash changes (incl. untracked)
-            </MenuItem>
+            {STASH_MODES.map((mode) => (
+              <MenuItem
+                key={mode.label}
+                onClick={() => {
+                  void setStashIncludeUntracked(mode.includeUntracked);
+                  setStashMenuOpen(false);
+                }}
+              >
+                <span
+                  style={{
+                    fontWeight:
+                      mode.includeUntracked === stashIncludeUntracked ? 600 : 400,
+                  }}
+                >
+                  {mode.includeUntracked === stashIncludeUntracked ? "✓ " : " "}
+                  {mode.label}
+                </span>
+              </MenuItem>
+            ))}
           </SyncDropdown>
         )}
       </div>
