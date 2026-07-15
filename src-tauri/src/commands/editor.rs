@@ -220,7 +220,10 @@ fn open_directory(dir: &Path) -> Result<(), AppError> {
     #[cfg(target_os = "windows")]
     {
         let mut cmd = Command::new("explorer");
-        cmd.arg(dir);
+        // Session paths come from `git rev-parse --show-toplevel`, which
+        // prints forward slashes on Windows - explorer silently opens the
+        // Documents folder for such a path, so normalize first.
+        cmd.arg(crate::commands::files::explorer_path(dir));
         spawn(cmd)
     }
     #[cfg(target_os = "macos")]

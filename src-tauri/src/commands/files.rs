@@ -179,6 +179,25 @@ async fn write_gitignore_line(root: &std::path::Path, rel: &str, is_dir: bool) -
 /// Launch the platform file manager focused on `abs`. Windows/macOS select the
 /// file; other platforms open its containing directory. Fire-and-forget: the
 /// spawned process is not awaited, but a failure to spawn is reported.
+/// Render a path in the plain backslash form explorer.exe requires. Explorer
+/// does not error on a malformed path argument - it silently opens the
+/// Documents folder instead. Two malformed-for-explorer forms actually reach
+/// us: forward-slash paths (git prints `C:/...` for `--show-toplevel`, and
+/// session paths keep that form) and `\\?\`-verbatim paths (what
+/// `std::fs::canonicalize` returns on Windows). Every path handed to
+/// explorer must go through here.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn explorer_path(path: &std::path::Path) -> String {
+    let backslashed = path.to_string_lossy().replace('/', "\\");
+    if let Some(rest) = backslashed.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = backslashed.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        backslashed
+    }
+}
+
 pub(crate) fn reveal_in_file_manager(abs: &std::path::Path) -> Result<(), AppError> {
     use std::process::Command;
     let spawn = |mut cmd: Command| -> Result<(), AppError> {
@@ -190,8 +209,9 @@ pub(crate) fn reveal_in_file_manager(abs: &std::path::Path) -> Result<(), AppErr
     {
         let mut cmd = Command::new("explorer");
         // `explorer /select,<path>` selects the file; it exits non-zero even on
-        // success, so we only care that it spawned.
-        cmd.arg(format!("/select,{}", abs.display()));
+        // success, so we only care that it spawned. The path must be in plain
+        // backslash form (see `explorer_path`) or explorer opens Documents.
+        cmd.arg(format!("/select,{}", explorer_path(abs)));
         spawn(cmd)
     }
     #[cfg(target_os = "macos")]
@@ -213,6 +233,45 @@ pub(crate) fn reveal_in_file_manager(abs: &std::path::Path) -> Result<(), AppErr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // explorer.exe path form: these encode the "explorer opens Documents on a
+    // malformed path" fallback - both inputs below are real (git prints
+    // forward-slash toplevels; canonicalize returns \\?\-verbatim paths).
+
+    #[test]
+    fn explorer_path_converts_forward_slashes() {
+        // `git rev-parse --show-toplevel` output on Windows (session paths).
+        assert_eq!(
+            explorer_path(std::path::Path::new("C:/NOT_WORK/LeGit")),
+            r"C:\NOT_WORK\LeGit"
+        );
+    }
+
+    #[test]
+    fn explorer_path_strips_verbatim_prefix() {
+        // `std::fs::canonicalize` output on Windows (reveal targets).
+        assert_eq!(
+            explorer_path(std::path::Path::new(r"\\?\C:\repo\file.txt")),
+            r"C:\repo\file.txt"
+        );
+    }
+
+    #[test]
+    fn explorer_path_rewrites_verbatim_unc_to_plain_unc() {
+        assert_eq!(
+            explorer_path(std::path::Path::new(r"\\?\UNC\server\share\repo")),
+            r"\\server\share\repo"
+        );
+    }
+
+    #[test]
+    fn explorer_path_leaves_native_paths_unchanged() {
+        assert_eq!(explorer_path(std::path::Path::new(r"C:\repo")), r"C:\repo");
+        assert_eq!(
+            explorer_path(std::path::Path::new(r"\\server\share")),
+            r"\\server\share"
+        );
+    }
 
     #[test]
     fn gitignore_line_anchors_files_to_root() {
