@@ -63,6 +63,18 @@ pub struct RunOutput {
     pub duration_ms: u64,
 }
 
+/// Like `RunOutput`, but with raw stdout bytes - for commands whose output
+/// is byte-size framed (`cat-file --batch`), where the lossy UTF-8
+/// conversion of `RunOutput.stdout` would corrupt the declared byte counts.
+#[derive(Debug, Clone)]
+pub struct RunOutputBytes {
+    pub stdout: Vec<u8>,
+    pub stderr: String,
+    pub exit_code: Option<i32>,
+    pub success: bool,
+    pub duration_ms: u64,
+}
+
 /// A completed `git` invocation, reported to the process-wide observer (the app
 /// forwards these to the UI as a git command log). Excludes stdout (often large)
 /// but keeps stderr so failures are diagnosable.
@@ -441,6 +453,64 @@ impl GitRunner {
         log_invocation(self.cwd.as_deref(), args, started, status.code(), status.success(), &stderr);
 
         Ok(RunOutput {
+            stdout,
+            stderr,
+            exit_code: status.code(),
+            success: status.success(),
+            duration_ms: started.elapsed().as_millis() as u64,
+        })
+    }
+
+    /// `run_with_stdin` with RAW stdout bytes (see `RunOutputBytes`). Used by
+    /// `cat-file --batch`, whose output frames blob contents by byte count.
+    pub async fn run_with_stdin_bytes(
+        &self,
+        args: &[&str],
+        stdin_data: &str,
+    ) -> Result<RunOutputBytes, RunnerError> {
+        use tokio::io::AsyncWriteExt;
+
+        let started = Instant::now();
+        let mut cmd = self.build_command(args);
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let mut child = cmd.spawn().map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                RunnerError::GitNotFound(self.git_path.clone())
+            } else {
+                RunnerError::Spawn(e)
+            }
+        })?;
+
+        let mut stdin = child.stdin.take().expect("stdin piped");
+        let stdout = child.stdout.take().expect("stdout piped");
+        let stderr = child.stderr.take().expect("stderr piped");
+
+        let stdout_task = tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let mut buf = Vec::new();
+            let mut reader = stdout;
+            let _ = reader.read_to_end(&mut buf).await;
+            buf
+        });
+        let stderr_task = tokio::spawn(read_to_string(stderr));
+
+        stdin
+            .write_all(stdin_data.as_bytes())
+            .await
+            .map_err(RunnerError::Io)?;
+        // Close stdin so git sees EOF and proceeds.
+        drop(stdin);
+
+        let status = child.wait().await.map_err(RunnerError::Io)?;
+        let stdout = stdout_task.await.unwrap_or_default();
+        let stderr = stderr_task.await.unwrap_or_default();
+
+        log_invocation(self.cwd.as_deref(), args, started, status.code(), status.success(), &stderr);
+
+        Ok(RunOutputBytes {
             stdout,
             stderr,
             exit_code: status.code(),

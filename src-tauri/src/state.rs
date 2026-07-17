@@ -188,6 +188,13 @@ pub struct GlobalSettings {
     /// Default for mixed-ending detection; per-repo settings can override.
     #[serde(default = "default_warn_on_mixed_endings")]
     pub warn_on_mixed_endings: bool,
+    /// Attention-only line-ending chips on Working Changes rows; per-repo
+    /// settings can override.
+    #[serde(default = "default_true")]
+    pub line_ending_chips_in_changes: bool,
+    /// Warn before committing staged line-ending changes; per-repo override.
+    #[serde(default = "default_true")]
+    pub warn_on_line_ending_commit: bool,
     /// Serialized column preferences for the Commits panel (frontend-owned schema).
     #[serde(default)]
     pub column_preferences: serde_json::Value,
@@ -300,6 +307,8 @@ impl Default for GlobalSettings {
             global_region_size_left: None,
             global_dock_collapsed: false,
             warn_on_mixed_endings: true,
+            line_ending_chips_in_changes: true,
+            warn_on_line_ending_commit: true,
             column_preferences: serde_json::Value::Null,
             commits_row_height: default_commits_row_height(),
             commits_lane_width: default_commits_lane_width(),
@@ -367,6 +376,12 @@ pub struct RepoSettings {
     pub git_path_override: Option<String>,
     /// Per-repo override for mixed-ending detection (None = inherit global).
     pub warn_on_mixed_endings: Option<bool>,
+    /// Per-repo override for the Working Changes line-ending chips
+    /// (None = inherit global).
+    pub line_ending_chips_in_changes: Option<bool>,
+    /// Per-repo override for the commit line-ending warning
+    /// (None = inherit global).
+    pub warn_on_line_ending_commit: Option<bool>,
     /// Per-repo override for the external editor command template
     /// (None = inherit global; same `$ROOT` semantics).
     #[serde(default)]

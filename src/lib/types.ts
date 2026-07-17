@@ -29,6 +29,10 @@ export interface GlobalSettings {
   global_region_size_left: number | null;
   global_dock_collapsed: boolean;
   warn_on_mixed_endings?: boolean;
+  /** Attention-only line-ending chips on Working Changes rows (default true). */
+  line_ending_chips_in_changes?: boolean;
+  /** Warn before committing staged line-ending changes (default true). */
+  warn_on_line_ending_commit?: boolean;
   column_preferences?: unknown;
   commits_row_height?: number;
   commits_lane_width?: number;
@@ -78,6 +82,10 @@ export interface GlobalSettings {
 export interface RepoSettings {
   git_path_override: string | null;
   warn_on_mixed_endings: boolean | null;
+  /** Per-repo override for the Working Changes chips (null = inherit). */
+  line_ending_chips_in_changes?: boolean | null;
+  /** Per-repo override for the commit warning (null = inherit). */
+  warn_on_line_ending_commit?: boolean | null;
   /** Per-repo override for the external editor command template
    * (null/blank = inherit global; same $ROOT/$FILE semantics). */
   external_editor_command?: string | null;
@@ -474,6 +482,23 @@ export interface RepoFileEntry {
 
 /** Line-ending style of a file/blob (matches legit-core `LineEndingKind`). */
 export type LineEndingKind = "lf" | "crlf" | "cr" | "mixed" | "none" | "binary";
+
+/** A line-ending change between two sides of a changed file (old -> new). */
+export interface LineEndingTransition {
+  from: LineEndingKind;
+  to: LineEndingKind;
+}
+
+/** Line-ending summary for one changed file (`repo_line_ending_status`).
+ * `unstaged` = index vs what `git add` would store (policy-aware);
+ * `staged` = HEAD vs index (exactly what a commit records). */
+export interface LineEndingStatusEntry {
+  path: string;
+  unstaged: LineEndingTransition | null;
+  staged: LineEndingTransition | null;
+  mixed: boolean;
+  working_raw: LineEndingKind | null;
+}
 
 // --- diffs (mirror legit-core `Diff*` types; see bindings.ts) ---
 

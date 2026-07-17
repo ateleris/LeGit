@@ -41,6 +41,7 @@ import type {
   FileHistoryEntry,
   RepoFileEntry,
   LineEndingKind,
+  LineEndingStatusEntry,
   FetchOptions,
   PullOptions,
   PullStrategy,
@@ -203,6 +204,12 @@ export const getGlobalSettings = () =>
 
 export const setWarnOnMixedEndings = (warn: boolean) =>
   invoke<null>("set_warn_on_mixed_endings", { warn });
+
+export const setLineEndingChipsInChanges = (enabled: boolean) =>
+  invoke<null>("set_line_ending_chips_in_changes", { enabled });
+
+export const setWarnOnLineEndingCommit = (warn: boolean) =>
+  invoke<null>("set_warn_on_line_ending_commit", { warn });
 
 export const setConfirmDiscard = (confirm: boolean) =>
   invoke<null>("set_confirm_discard", { confirm });
@@ -466,6 +473,10 @@ export const repoFileWorktree = (repoId: string, path: string) =>
  *  else a rev spec (sha / HEAD / <sha>^ / branch). */
 export const repoLineEndingKind = (repoId: string, path: string, rev?: string | null) =>
   invoke<LineEndingKind>("repo_line_ending_kind", { repoId, path, rev: rev ?? null });
+
+/** Batch line-ending summary for every changed file (chips + commit warning). */
+export const repoLineEndingStatus = (repoId: string) =>
+  invoke<LineEndingStatusEntry[]>("repo_line_ending_status", { repoId });
 
 /** Rewrite a working-tree file's line endings to `target`, content untouched.
  *  Backs the diff chip's "revert line endings" action. */

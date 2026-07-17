@@ -239,6 +239,31 @@ pub enum LineEndingKind {
     Binary,
 }
 
+/// A line-ending change between two sides of a changed file (old -> new).
+/// Backs the Working Changes chips and the commit warning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct LineEndingTransition {
+    pub from: LineEndingKind,
+    pub to: LineEndingKind,
+}
+
+/// Line-ending summary for one changed file (`repo_line_ending_status`).
+/// `unstaged` compares the index against what `git add` would store
+/// (check-in normalization applied - policy-aware, so autocrlf conversions
+/// are not flagged); `staged` compares HEAD against the index: exactly what
+/// a commit records, immune to autocrlf by construction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct LineEndingStatusEntry {
+    pub path: String,
+    pub unstaged: Option<LineEndingTransition>,
+    pub staged: Option<LineEndingTransition>,
+    /// The working file has mixed CRLF+LF endings.
+    pub mixed: bool,
+    /// Raw on-disk kind of the working file - the chip label never lies
+    /// about disk state. `None` when there is no readable working side.
+    pub working_raw: Option<LineEndingKind>,
+}
+
 /// A single file changed by a commit, relative to its first parent (or the
 /// empty tree for a root commit). Backs the Changed Files panel.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]

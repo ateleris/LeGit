@@ -148,6 +148,25 @@ export function ChangedFilesPanel() {
     [repo, selectedId],
   );
 
+  // Right-click targeting: the selection moves to the clicked row (it is what
+  // the menu acts on, and the selection is what the detail views show), and
+  // an ALREADY-OPEN diff follows it - but a right-click never force-opens one
+  // (notifyIfOpen, unlike handleSelect's summon). Mirrors Working Changes.
+  const selectForMenu = useCallback(
+    (file: FileTreeEntry) => {
+      setSelectedPath(file.path);
+      if (!repo || !selectedId) return;
+      useSummonStore.getState().notifyIfOpen("diff", {
+        repoId: repo.id,
+        path: file.path,
+        source: { kind: "commit", commit_id: selectedId },
+        change: file.change,
+        oldPath: file.old_path,
+      } satisfies DiffRequest);
+    },
+    [repo, selectedId],
+  );
+
   // Consume a pending pre-select once this commit's files have loaded: select
   // the requested file's row and open its diff (File History flow). Matches on
   // the destination path; cleared once handled or if it never appears.
@@ -256,7 +275,8 @@ export function ChangedFilesPanel() {
           onSelect={handleSelect}
           rowHeight={rowHeight}
           iconSize={iconSize}
-          onContextMenu={(file, e) =>
+          onContextMenu={(file, e) => {
+            selectForMenu(file);
             openMenu(
               e,
               <FileAtCommitMenuSection
@@ -277,8 +297,8 @@ export function ChangedFilesPanel() {
                 }
                 onClose={closeMenu}
               />,
-            )
-          }
+            );
+          }}
         />
       )}
     </div>

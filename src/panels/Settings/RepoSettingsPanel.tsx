@@ -112,6 +112,7 @@ export function RepoSettingsPanel() {
 
         <SettingsGroup id="repo-behavior" title="Behavior" caption="How LeGit acts in this repo">
           <MixedEndingRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
+          <LineEndingChangesRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
           <ExternalEditorRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
           <SubmoduleAutoUpdateSection repoId={activeRepo.id} repoSettings={repoSettings} />
         </SettingsGroup>
@@ -288,6 +289,81 @@ function MixedEndingRepoSection({
           Effective: <strong>{effective ? "on" : "off"}</strong>
         </div>
       </div>
+    </Section>
+  );
+}
+
+function LineEndingChangesRepoSection({
+  repoId,
+  repoSettings,
+}: {
+  repoId: string;
+  repoSettings: import("../../lib/types").RepoSettings | null;
+}) {
+  const globalChips = useSettingsStore((s) => s.settings?.line_ending_chips_in_changes ?? true);
+  const globalWarn = useSettingsStore((s) => s.settings?.warn_on_line_ending_commit ?? true);
+  const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
+  const [saving, setSaving] = useState(false);
+
+  const setOverride = async (
+    key: "line_ending_chips_in_changes" | "warn_on_line_ending_commit",
+    value: boolean | null,
+  ) => {
+    if (!repoSettings) return;
+    setSaving(true);
+    try {
+      await updateRepoSettings(repoId, { ...repoSettings, [key]: value });
+      await loadRepoSettings(repoId);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const groups = [
+    {
+      key: "line_ending_chips_in_changes" as const,
+      label: "Line-ending chips on Working Changes files",
+      global: globalChips,
+      override: repoSettings?.line_ending_chips_in_changes ?? null,
+    },
+    {
+      key: "warn_on_line_ending_commit" as const,
+      label: "Warn when committing line-ending changes",
+      global: globalWarn,
+      override: repoSettings?.warn_on_line_ending_commit ?? null,
+    },
+  ];
+
+  return (
+    <Section title="Line ending changes">
+      <FieldNote>writes to: repos/&lt;hash&gt;/settings.json (this repo only)</FieldNote>
+      {groups.map((g) => (
+        <div key={g.key} style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+          <div style={{ fontSize: "var(--fz-md)" }}>{g.label}</div>
+          {(["inherit", "on", "off"] as const).map((opt) => {
+            const checked =
+              opt === "inherit" ? g.override === null :
+              opt === "on" ? g.override === true :
+              g.override === false;
+            return (
+              <label key={opt} style={{ display: "flex", alignItems: "center", gap: 6, cursor: saving ? "default" : "pointer", opacity: saving ? 0.5 : 1 }}>
+                <input
+                  type="radio"
+                  name={`repo-${g.key}-${repoId}`}
+                  checked={checked}
+                  disabled={saving}
+                  onChange={() => setOverride(g.key, opt === "inherit" ? null : opt === "on")}
+                />
+                <span style={{ fontSize: "var(--fz-lg)" }}>
+                  {opt === "inherit"
+                    ? `Inherit from global (currently ${g.global ? "on" : "off"})`
+                    : opt === "on" ? "On" : "Off"}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      ))}
     </Section>
   );
 }

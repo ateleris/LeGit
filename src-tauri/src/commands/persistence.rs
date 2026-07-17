@@ -155,6 +155,30 @@ pub async fn set_warn_on_mixed_endings(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn set_line_ending_chips_in_changes(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state.mutate_global(|s| {
+        s.line_ending_chips_in_changes = enabled;
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_warn_on_line_ending_commit(
+    state: tauri::State<'_, AppState>,
+    warn: bool,
+) -> Result<(), AppError> {
+    state.mutate_global(|s| {
+        s.warn_on_line_ending_commit = warn;
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn set_confirm_discard(
     state: tauri::State<'_, AppState>,
     confirm: bool,

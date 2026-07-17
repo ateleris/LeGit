@@ -14,14 +14,16 @@ pub mod types;
 
 pub use backend::GitBackend;
 pub use cli_impl::{
-    classify_line_endings, classify_remote_error, convert_line_endings, mixed_endings_in_bytes,
-    GitCliBackend,
+    checkin_normalizes, classify_line_endings, classify_line_endings_normalized,
+    classify_remote_error, convert_line_endings, derive_line_ending_entry,
+    mixed_endings_in_bytes, parse_autocrlf, parse_cat_file_batch, parse_check_attr_z,
+    AutocrlfSetting, EolTextAttr, GitCliBackend,
 };
 pub use executor::GitExecutor;
 pub use error::{GitError, ParseError};
 pub use progress::RemoteProgress;
 pub use runner::{
-    GitRunner, GitVersion, OperationId, RunOutput, RunnerError, RunnerEvent,
+    GitRunner, GitVersion, OperationId, RunOutput, RunOutputBytes, RunnerError, RunnerEvent,
     MIN_SUPPORTED_GIT_VERSION,
 };
 pub use types::*;

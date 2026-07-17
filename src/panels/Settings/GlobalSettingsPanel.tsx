@@ -9,7 +9,7 @@ import { useAppVersion } from "../../lib/appVersion";
 const LANE_LINK_KEY = "legit.commits-lane-link";
 import { formatAppError } from "../../lib/types";
 import type { ConfigScope, LineEndingsView, PushRecurseMode, RegionPlacement, SwitchDirtyBehavior } from "../../lib/types";
-import { globalLineEndingsView, globalWriteLineEndings, setWarnOnMixedEndings } from "../../lib/commands";
+import { globalLineEndingsView, globalWriteLineEndings, setLineEndingChipsInChanges, setWarnOnLineEndingCommit, setWarnOnMixedEndings } from "../../lib/commands";
 import { useGitStatusStore } from "../../store/git-status";
 import { GlobalProfilesSection } from "./GlobalProfilesSection";
 import { GlobalGitConfigSection } from "./GlobalGitConfigSection";
@@ -97,6 +97,7 @@ export function GlobalSettingsPanel() {
           <AutoFetchSection />
           <ExternalEditorSection />
           <MixedEndingDetectionSection />
+          <LineEndingChangesSection />
         </SettingsGroup>
 
         <SettingsGroup id="git" title="Git" caption="Integration & configuration">
@@ -1070,6 +1071,61 @@ function MixedEndingDetectionSection() {
         />
         <label htmlFor="global-warn-mixed" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
           Detect files with mixed CRLF+LF line endings (shown in Repo Settings)
+        </label>
+      </div>
+    </Section>
+  );
+}
+
+function LineEndingChangesSection() {
+  const chips = useSettingsStore((s) => s.settings?.line_ending_chips_in_changes ?? true);
+  const warn = useSettingsStore((s) => s.settings?.warn_on_line_ending_commit ?? true);
+  const [saving, setSaving] = useState(false);
+
+  const toggle = async (key: "chips" | "warn") => {
+    setSaving(true);
+    try {
+      if (key === "chips") {
+        await setLineEndingChipsInChanges(!chips);
+        useSettingsStore.setState((s) =>
+          s.settings ? { settings: { ...s.settings, line_ending_chips_in_changes: !chips } } : {}
+        );
+      } else {
+        await setWarnOnLineEndingCommit(!warn);
+        useSettingsStore.setState((s) =>
+          s.settings ? { settings: { ...s.settings, warn_on_line_ending_commit: !warn } } : {}
+        );
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Line ending changes">
+      <FieldNote>writes to: global settings — default for all repos</FieldNote>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <input
+          type="checkbox"
+          id="global-eol-chips"
+          checked={chips}
+          onChange={() => toggle("chips")}
+          disabled={saving}
+        />
+        <label htmlFor="global-eol-chips" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
+          Show line-ending change chips on Working Changes files
+        </label>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <input
+          type="checkbox"
+          id="global-eol-warn"
+          checked={warn}
+          onChange={() => toggle("warn")}
+          disabled={saving}
+        />
+        <label htmlFor="global-eol-warn" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
+          Warn when committing files whose line endings change
         </label>
       </div>
     </Section>

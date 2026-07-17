@@ -11,6 +11,8 @@ import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { useCommitDraftStore } from "../../store/commitDraft";
 import { notify } from "../../store/notifications";
 import { FileTree } from "../shared/FileTree/FileTree";
+import { LineEndingRowBadge } from "../shared/LineEndingBadge";
+import { useLineEndingStatusMap } from "../shared/lineEndingStatus";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { Button, IconButton } from "../shared/buttons";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
@@ -27,6 +29,7 @@ import { notifyResolutionInvisible } from "../../lib/mergeFeedback";
 import { useOpState } from "../../lib/useOpState";
 import { isDetachedHead } from "../../lib/detachedHead";
 import { takeSideLabels } from "./conflictLabels";
+import { formatEolChanges, stagedEolChanges } from "./lineEndingWarning";
 import {
   orderedWorkingChangesSections,
   type WorkingChangesSection,
@@ -160,6 +163,12 @@ export function WorkingChangesPanel() {
   );
   // Whether discard actions prompt first (global setting, default on).
   const confirmDiscardEnabled = useSettingsStore((s) => s.settings?.confirm_discard ?? true);
+  // Line-ending features: repo override else global (both default on).
+  const chipsGlobal = useSettingsStore((s) => s.settings?.line_ending_chips_in_changes ?? true);
+  const warnEolGlobal = useSettingsStore((s) => s.settings?.warn_on_line_ending_commit ?? true);
+  const repoEolSettings = useRepoStore((s) => (repo ? s.repoSettings[repo.id] : undefined));
+  const chipsEnabled = repoEolSettings?.line_ending_chips_in_changes ?? chipsGlobal;
+  const warnEolCommit = repoEolSettings?.warn_on_line_ending_commit ?? warnEolGlobal;
   const setViewMode = useSettingsStore((s) => s.setChangedFilesViewMode);
   const { rowHeight, iconSize } = useFileRowMetrics();
 
@@ -235,6 +244,7 @@ export function WorkingChangesPanel() {
   const [confirm, setConfirm] = useState<DiscardRequest | null>(null);
   const [confirmDetachedCommit, setConfirmDetachedCommit] = useState(false);
   const [confirmAmendPushed, setConfirmAmendPushed] = useState(false);
+  const [confirmEolCommit, setConfirmEolCommit] = useState(false);
 
   // Clear the selection when the repo changes — a stale path from the previous
   // repo must not leak into actions or a diff summon for the new repo.
@@ -257,6 +267,10 @@ export function WorkingChangesPanel() {
     enabled: !!repo,
     staleTime: 5_000,
   });
+
+  // Batch line-ending summary - drives the row chips and the commit
+  // warning. Disabled entirely when both features are off.
+  const eolMap = useLineEndingStatusMap(repo?.id, chipsEnabled || warnEolCommit);
 
   // The latest commit — drives amend message prefill and the "has commits"
   // guard (amend is impossible on an unborn branch). Kept fresh because
@@ -307,6 +321,14 @@ export function WorkingChangesPanel() {
   // Line-count sums for the toolbar (whole panel) and the section headers.
   // The panel-wide file count is unique paths — a partially staged file has an
   // entry in both sections but is still one file.
+  // Staged line-ending changes the next commit would record - the commit
+  // warning's data (index vs HEAD, so repo policy can't false-positive).
+  const stagedPathSet = useMemo(() => new Set(staged.map((f) => f.path)), [staged]);
+  const eolChanges = useMemo(
+    () => stagedEolChanges(eolMap.values(), stagedPathSet),
+    [eolMap, stagedPathSet],
+  );
+
   const stagedTotals = useMemo(() => sumCounts(staged), [staged]);
   const unstagedTotals = useMemo(() => sumCounts(unstaged), [unstaged]);
   const totals = useMemo(
@@ -466,9 +488,16 @@ export function WorkingChangesPanel() {
   }, [selected, syncOpenDiff]);
   useSummonTarget("working-changes", onSummoned);
 
+  // Right-click targeting: if the row is outside the current selection, the
+  // selection moves to it (so the menu's bulk actions hit what was clicked).
+  // The selection is what the detail views show, so an already-open Diff or
+  // Merge panel follows it - but a right-click never force-opens one
+  // (syncOpenDiff uses notifyIfOpen).
   const selectForMenu = (section: Section, path: string): string[] => {
     if (selected?.section === section && selected.paths.includes(path)) return selected.paths;
-    setSelected({ section, paths: [path] });
+    const next: Selection = { section, paths: [path] };
+    setSelected(next);
+    syncOpenDiff(selected, next);
     return [path];
   };
 
@@ -576,6 +605,16 @@ export function WorkingChangesPanel() {
   // global confirmation setting. Judged from the HEAD commit's log
   // decorations: a bare `head` decoration = detached.
   const detached = isDetachedHead(head);
+  // Final gate before the actual commit: the line-ending warning (per its
+  // setting). Runs LAST so it also covers commits approved through the
+  // detached-HEAD / amend-pushed confirms.
+  const proceedCommit = () => {
+    if (warnEolCommit && eolChanges.length > 0) {
+      setConfirmEolCommit(true);
+      return;
+    }
+    commit();
+  };
   const requestCommit = () => {
     if (detached) {
       setConfirmDetachedCommit(true);
@@ -588,7 +627,7 @@ export function WorkingChangesPanel() {
       setConfirmAmendPushed(true);
       return;
     }
-    commit();
+    proceedCommit();
   };
 
   // Drop a pending detached-HEAD confirmation once HEAD is back on a branch
@@ -602,6 +641,12 @@ export function WorkingChangesPanel() {
   useEffect(() => {
     if (!amendingPushed) setConfirmAmendPushed(false);
   }, [amendingPushed]);
+
+  // Drop a pending line-ending confirmation once it no longer applies
+  // (files unstaged, endings reverted, or the setting turned off).
+  useEffect(() => {
+    if (!warnEolCommit || eolChanges.length === 0) setConfirmEolCommit(false);
+  }, [warnEolCommit, eolChanges.length]);
 
   // Prefill HEAD's message when turning amend on, but only if the box is empty
   // so typed-but-uncommitted text is never clobbered.
@@ -875,6 +920,16 @@ export function WorkingChangesPanel() {
                   </span>
                 ) : null
               }
+              renderBadge={
+                chipsEnabled
+                  ? (f) => {
+                      const entry = eolMap.get(f.path);
+                      return entry ? (
+                        <LineEndingRowBadge repoId={repo.id} entry={entry} side="unstaged" disabled={busy} />
+                      ) : null;
+                    }
+                  : undefined
+              }
               renderActions={(f) =>
                 // A dirty-inside submodule has nothing stageable (the pointer
                 // is unmoved) - no stage button, the row is informational.
@@ -1009,6 +1064,16 @@ export function WorkingChangesPanel() {
                   </span>
                 ) : null
               }
+              renderBadge={
+                chipsEnabled
+                  ? (f) => {
+                      const entry = eolMap.get(f.path);
+                      return entry ? (
+                        <LineEndingRowBadge repoId={repo.id} entry={entry} side="staged" disabled={busy} />
+                      ) : null;
+                    }
+                  : undefined
+              }
               renderActions={(f) => (
                 <IconButton title="Unstage" disabled={busy} onClick={() => unstage([f.path])}>
                   <UnstageIcon />
@@ -1084,7 +1149,7 @@ export function WorkingChangesPanel() {
                   disabled={busy}
                   onClick={() => {
                     setConfirmDetachedCommit(false);
-                    commit();
+                    proceedCommit();
                   }}
                 >
                   Commit anyway
@@ -1115,12 +1180,45 @@ export function WorkingChangesPanel() {
                   disabled={busy}
                   onClick={() => {
                     setConfirmAmendPushed(false);
-                    commit();
+                    proceedCommit();
                   }}
                 >
                   Amend anyway
                 </Button>
                 <button disabled={busy} onClick={() => setConfirmAmendPushed(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : confirmEolCommit ? (
+            <div
+              style={{
+                padding: "8px 10px",
+                border: "1px solid var(--panel-border)",
+                borderRadius: 4,
+                background: "var(--button-hover-bg)",
+              }}
+            >
+              <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
+                {eolChanges.length === 1 ? (
+                  <>1 file changes <strong>line endings</strong>: </>
+                ) : (
+                  <>{eolChanges.length} files change <strong>line endings</strong>: </>
+                )}
+                <code>{formatEolChanges(eolChanges)}</code>. Commit anyway?
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <Button
+                  variant="primary"
+                  disabled={busy}
+                  onClick={() => {
+                    setConfirmEolCommit(false);
+                    commit();
+                  }}
+                >
+                  Commit anyway
+                </Button>
+                <button disabled={busy} onClick={() => setConfirmEolCommit(false)}>
                   Cancel
                 </button>
               </div>

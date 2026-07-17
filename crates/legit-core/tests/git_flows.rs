@@ -2642,3 +2642,212 @@ async fn config_global_flag_ignores_repo_local_values() {
     assert!(out.success, "{}", out.stderr);
     assert_eq!(out.stdout.trim(), "Global Name");
 }
+
+// ---------------------------------------------------------------------------
+// Line-ending check-in assumptions (repo_line_ending_status)
+// ---------------------------------------------------------------------------
+
+/// `cat-file --batch` resolves `:path` (index) and `HEAD:path` specs and
+/// reports unresolvable ones - the framing our batch parser encodes.
+#[tokio::test]
+async fn cat_file_batch_resolves_index_and_head_specs() {
+    use legit_core::parse_cat_file_batch;
+
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\ntwo\n");
+    repo.git(&["add", "a.txt"]).await;
+    repo.git(&["commit", "-m", "init"]).await;
+    repo.write("a.txt", "one\r\ntwo\r\n");
+    repo.git(&["add", "a.txt"]).await;
+
+    let runner = GitRunner::for_repo("git", &repo.path);
+    let out = runner
+        .run_with_stdin_bytes(&["cat-file", "--batch"], ":a.txt\nHEAD:a.txt\n:gone.txt\n")
+        .await
+        .expect("spawn");
+    let parsed = parse_cat_file_batch(&out.stdout).expect("framing");
+    assert_eq!(parsed.len(), 3);
+    assert_eq!(parsed[0].as_deref(), Some(b"one\r\ntwo\r\n".as_slice()));
+    assert_eq!(parsed[1].as_deref(), Some(b"one\ntwo\n".as_slice()));
+    assert_eq!(parsed[2], None);
+}
+
+/// `check-attr -z --stdin text eol` emits path NUL attr NUL value NUL
+/// triples with the values our parser encodes.
+#[tokio::test]
+async fn check_attr_z_output_shape() {
+    use legit_core::{parse_check_attr_z, EolTextAttr};
+
+    let repo = TestRepo::init().await;
+    repo.write(
+        ".gitattributes",
+        "set.txt text\nbin.dat -text\nauto.txt text=auto\nforced.txt eol=lf\n",
+    );
+    let runner = GitRunner::for_repo("git", &repo.path);
+    let out = runner
+        .run_with_stdin(
+            &["check-attr", "-z", "--stdin", "text", "eol"],
+            "set.txt\0bin.dat\0auto.txt\0forced.txt\0plain.txt\0",
+        )
+        .await
+        .expect("spawn");
+    assert!(out.success, "{}", out.stderr);
+    let map = parse_check_attr_z(&out.stdout);
+    assert_eq!(map["set.txt"], (EolTextAttr::Set, false));
+    assert_eq!(map["bin.dat"], (EolTextAttr::Unset, false));
+    assert_eq!(map["auto.txt"], (EolTextAttr::Auto, false));
+    assert_eq!(map["forced.txt"], (EolTextAttr::Unspecified, true));
+    assert_eq!(map["plain.txt"], (EolTextAttr::Unspecified, false));
+}
+
+/// The check-in normalization rules encoded in `checkin_normalizes` match
+/// what `git add` actually stages, per scenario. For each: configure, write,
+/// add, then compare the staged blob's classification with our prediction.
+#[tokio::test]
+async fn checkin_kind_matches_real_git() {
+    use legit_core::{
+        checkin_normalizes, classify_line_endings, classify_line_endings_normalized,
+        parse_autocrlf, EolTextAttr, LineEndingKind,
+    };
+
+    // (autocrlf, content, expected staged kind for a FIRST add - no index blob)
+    let cases: &[(&str, &str, LineEndingKind)] = &[
+        ("false", "a\r\nb\r\n", LineEndingKind::Crlf), // no policy: raw CRLF staged
+        ("true", "a\r\nb\r\n", LineEndingKind::Lf),    // autocrlf=true normalizes
+        ("input", "a\r\nb\r\n", LineEndingKind::Lf),   // input too
+        ("true", "a\rb\r", LineEndingKind::Cr),        // lone CR never converted
+        ("true", "a\nb\n", LineEndingKind::Lf),        // LF stays LF
+    ];
+    for (i, (autocrlf, content, expected)) in cases.iter().enumerate() {
+        let repo = TestRepo::init().await;
+        repo.git(&["config", "core.autocrlf", autocrlf]).await;
+        let name = format!("f{i}.txt");
+        repo.write(&name, content);
+        repo.git(&["add", &name]).await;
+        let staged = repo.git(&["show", &format!(":{name}")]).await;
+        assert_eq!(
+            classify_line_endings(&staged),
+            *expected,
+            "case {i}: autocrlf={autocrlf} content={content:?}"
+        );
+        // And our prediction agrees.
+        let raw = classify_line_endings(content);
+        let normalizes = checkin_normalizes(
+            EolTextAttr::Unspecified,
+            false,
+            parse_autocrlf(autocrlf),
+            raw,
+            None,
+        );
+        let predicted = if normalizes {
+            classify_line_endings_normalized(content)
+        } else {
+            raw
+        };
+        assert_eq!(predicted, *expected, "prediction diverges in case {i}");
+    }
+}
+
+/// The auto-mode exemption: a file already committed with CRLF is NOT
+/// renormalized by autocrlf=true on a later add - while an explicit `text`
+/// attribute DOES renormalize it. Both encoded in `checkin_normalizes`.
+#[tokio::test]
+async fn committed_crlf_not_renormalized_under_auto() {
+    use legit_core::{
+        checkin_normalizes, classify_line_endings, AutocrlfSetting, EolTextAttr, LineEndingKind,
+    };
+
+    let repo = TestRepo::init().await;
+    repo.write("f.txt", "a\r\nb\r\n");
+    repo.git(&["add", "f.txt"]).await;
+    repo.git(&["commit", "-m", "crlf blob"]).await;
+
+    // Auto mode: modify, re-add - the staged blob keeps CRLF.
+    repo.git(&["config", "core.autocrlf", "true"]).await;
+    repo.write("f.txt", "a\r\nb\r\nc\r\n");
+    repo.git(&["add", "f.txt"]).await;
+    let staged = repo.git(&["show", ":f.txt"]).await;
+    assert_eq!(classify_line_endings(&staged), LineEndingKind::Crlf);
+    assert!(!checkin_normalizes(
+        EolTextAttr::Unspecified,
+        false,
+        AutocrlfSetting::True,
+        LineEndingKind::Crlf,
+        Some(LineEndingKind::Crlf),
+    ));
+
+    // Explicit text attr: the same add DOES normalize.
+    repo.write(".gitattributes", "f.txt text\n");
+    repo.write("f.txt", "a\r\nb\r\nc\r\nd\r\n");
+    repo.git(&["add", "f.txt"]).await;
+    let staged = repo.git(&["show", ":f.txt"]).await;
+    assert_eq!(classify_line_endings(&staged), LineEndingKind::Lf);
+    assert!(checkin_normalizes(
+        EolTextAttr::Set,
+        false,
+        AutocrlfSetting::True,
+        LineEndingKind::Crlf,
+        Some(LineEndingKind::Crlf),
+    ));
+}
+
+/// End-to-end: a real repo where one file flips endings unstaged, one is
+/// staged with a flip, exercising the same call sequence the
+/// `repo_line_ending_status` command runs (cat-file batch + derivation).
+#[tokio::test]
+async fn line_ending_status_pipeline_against_real_repo() {
+    use legit_core::types::LineEndingTransition;
+    use legit_core::{
+        derive_line_ending_entry, parse_cat_file_batch, AutocrlfSetting, EolTextAttr,
+        LineEndingKind,
+    };
+
+    let repo = TestRepo::init().await;
+    repo.write("flip.txt", "a\nb\n");
+    repo.write("staged.txt", "a\nb\n");
+    repo.git(&["add", "."]).await;
+    repo.git(&["commit", "-m", "init"]).await;
+    repo.write("flip.txt", "a\r\nb\r\n"); // unstaged CRLF flip
+    repo.write("staged.txt", "a\r\nb\r\n");
+    repo.git(&["add", "staged.txt"]).await; // staged CRLF flip
+
+    let runner = GitRunner::for_repo("git", &repo.path);
+    let blobs = runner
+        .run_with_stdin_bytes(
+            &["cat-file", "--batch"],
+            ":flip.txt\nHEAD:flip.txt\n:staged.txt\nHEAD:staged.txt\n",
+        )
+        .await
+        .expect("spawn");
+    let parsed = parse_cat_file_batch(&blobs.stdout).expect("framing");
+
+    let flip = derive_line_ending_entry(
+        "flip.txt",
+        Some(b"a\r\nb\r\n"),
+        parsed[0].as_deref(),
+        parsed[1].as_deref(),
+        EolTextAttr::Unspecified,
+        false,
+        AutocrlfSetting::False,
+    );
+    assert_eq!(
+        flip.unstaged,
+        Some(LineEndingTransition { from: LineEndingKind::Lf, to: LineEndingKind::Crlf })
+    );
+    assert_eq!(flip.staged, None);
+
+    let staged = derive_line_ending_entry(
+        "staged.txt",
+        Some(b"a\r\nb\r\n"),
+        parsed[2].as_deref(),
+        parsed[3].as_deref(),
+        EolTextAttr::Unspecified,
+        false,
+        AutocrlfSetting::False,
+    );
+    assert_eq!(
+        staged.staged,
+        Some(LineEndingTransition { from: LineEndingKind::Lf, to: LineEndingKind::Crlf })
+    );
+    assert_eq!(staged.unstaged, None); // working matches index
+}

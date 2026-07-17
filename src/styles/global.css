@@ -92,6 +92,13 @@ button:disabled {
   opacity: 0.6;
   cursor: default;
 }
+/* Clickable line-ending chip (revert action): transparent at rest so it sits
+   flush like the passive chips, but as a class (not an inline style) so the
+   shared button:hover tint above still applies - the hover feedback IS the
+   clickable affordance distinguishing it from passive chips. */
+button.legit-eol-chip {
+  background: transparent;
+}
 button.primary {
   background: var(--button-primary-bg);
   color: var(--button-primary-fg);

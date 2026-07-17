@@ -45,6 +45,12 @@ interface FileTreeProps {
   /** Optional per-file action buttons, revealed on row hover/focus (right edge). */
   renderActions?: (file: FileTreeEntry) => ReactNode;
   /**
+   * Optional always-visible badge for a file row, rendered directly after
+   * the filename (left-aligned; unlike `renderActions`, which is hover-only
+   * at the right edge). Working Changes uses it for line-ending chips.
+   */
+  renderBadge?: (file: FileTreeEntry) => ReactNode;
+  /**
    * Optional override for the leading status icon of a file row. When omitted,
    * the icon is derived from `file.change` (or a neutral file icon when the
    * entry has no change). The Files tree uses this to icon by tracked/
@@ -104,6 +110,7 @@ export function FileTree({
   selectedPaths,
   onSelectionChange,
   renderActions,
+  renderBadge,
   renderFileIcon,
   renderDirActions,
   onContextMenu,
@@ -357,6 +364,7 @@ export function FileTree({
                   viewMode={viewMode}
                   iconSize={iconSize}
                   icon={renderFileIcon ? renderFileIcon(row.file) : null}
+                  badge={renderBadge ? renderBadge(row.file) : null}
                   actions={renderActions && (isHovered || isFocused) ? renderActions(row.file) : null}
                 />
               )}
@@ -411,11 +419,29 @@ function DirRowView({
   );
 }
 
+/**
+ * Wrapper for a row badge, sitting directly after the filename. A badge can
+ * be interactive (the revert chip): stop the row's mousedown selection the
+ * same way the hover actions do.
+ */
+function RowBadge({ children }: { children: ReactNode }) {
+  return (
+    <span
+      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+      onClick={(e) => e.stopPropagation()}
+      style={{ marginLeft: 6, flexShrink: 0, display: "flex", alignItems: "center" }}
+    >
+      {children}
+    </span>
+  );
+}
+
 function FileRowView({
   file,
   viewMode,
   iconSize,
   icon,
+  badge,
   actions,
 }: {
   file: FileTreeEntry;
@@ -423,6 +449,8 @@ function FileRowView({
   iconSize: number;
   /** Caller-supplied leading icon; falls back to the change-derived icon. */
   icon?: ReactNode;
+  /** Always-visible badge directly after the filename. */
+  badge?: ReactNode;
   actions?: ReactNode;
 }) {
   const meta = file.change ? STATUS_META[file.change] : PLAIN_FILE_META;
@@ -461,15 +489,19 @@ function FileRowView({
             </span>
           )}
           <span style={{ flexShrink: 0 }}>{name}</span>
+          {badge && <RowBadge>{badge}</RowBadge>}
         </span>
       ) : (
-        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {name}
-          {file.old_path && (
-            <span className="legit-subtle" style={{ marginLeft: 6, fontSize: "var(--fz-sm)" }}>
-              ← {baseName(file.old_path)}
-            </span>
-          )}
+        <span style={{ display: "flex", flex: 1, minWidth: 0, alignItems: "center", whiteSpace: "nowrap" }}>
+          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+            {name}
+            {file.old_path && (
+              <span className="legit-subtle" style={{ marginLeft: 6, fontSize: "var(--fz-sm)" }}>
+                ← {baseName(file.old_path)}
+              </span>
+            )}
+          </span>
+          {badge && <RowBadge>{badge}</RowBadge>}
         </span>
       )}
 
