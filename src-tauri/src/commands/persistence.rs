@@ -143,18 +143,6 @@ pub async fn save_commits_graph_metrics(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn set_warn_on_mixed_endings(
-    state: tauri::State<'_, AppState>,
-    warn: bool,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.warn_on_mixed_endings = warn;
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
 pub async fn set_line_ending_chips_in_changes(
     state: tauri::State<'_, AppState>,
     enabled: bool,

@@ -202,9 +202,6 @@ export const updateRepoSettings = (repoId: string, settings: RepoSettings) =>
 export const getGlobalSettings = () =>
   invoke<GlobalSettings>("get_global_settings");
 
-export const setWarnOnMixedEndings = (warn: boolean) =>
-  invoke<null>("set_warn_on_mixed_endings", { warn });
-
 export const setLineEndingChipsInChanges = (enabled: boolean) =>
   invoke<null>("set_line_ending_chips_in_changes", { enabled });
 

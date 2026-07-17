@@ -100,7 +100,6 @@ pub fn run() {
         commands::disconnect_account,
         commands::upload_ssh_key_to_platform,
         commands::open_platform_token_settings,
-        commands::set_warn_on_mixed_endings,
         commands::set_line_ending_chips_in_changes,
         commands::set_warn_on_line_ending_commit,
         commands::set_confirm_discard,

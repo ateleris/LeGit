@@ -9,7 +9,7 @@ import { useAppVersion } from "../../lib/appVersion";
 const LANE_LINK_KEY = "legit.commits-lane-link";
 import { formatAppError } from "../../lib/types";
 import type { ConfigScope, LineEndingsView, PushRecurseMode, RegionPlacement, SwitchDirtyBehavior } from "../../lib/types";
-import { globalLineEndingsView, globalWriteLineEndings, setLineEndingChipsInChanges, setWarnOnLineEndingCommit, setWarnOnMixedEndings } from "../../lib/commands";
+import { globalLineEndingsView, globalWriteLineEndings, setLineEndingChipsInChanges, setWarnOnLineEndingCommit } from "../../lib/commands";
 import { useGitStatusStore } from "../../store/git-status";
 import { GlobalProfilesSection } from "./GlobalProfilesSection";
 import { GlobalGitConfigSection } from "./GlobalGitConfigSection";
@@ -96,7 +96,6 @@ export function GlobalSettingsPanel() {
           <AutoRefreshSection />
           <AutoFetchSection />
           <ExternalEditorSection />
-          <MixedEndingDetectionSection />
           <LineEndingChangesSection />
         </SettingsGroup>
 
@@ -1036,41 +1035,6 @@ function BranchSwitchingSection() {
           <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
             — stashes changes and leaves them parked; the new branch starts clean
           </span>
-        </label>
-      </div>
-    </Section>
-  );
-}
-
-function MixedEndingDetectionSection() {
-  const warn = useSettingsStore((s) => s.settings?.warn_on_mixed_endings ?? true);
-  const [saving, setSaving] = useState(false);
-
-  const toggle = async () => {
-    setSaving(true);
-    try {
-      await setWarnOnMixedEndings(!warn);
-      useSettingsStore.setState((s) =>
-        s.settings ? { settings: { ...s.settings, warn_on_mixed_endings: !warn } } : {}
-      );
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Section title="Mixed ending detection">
-      <FieldNote>writes to: global settings — default for all repos</FieldNote>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-        <input
-          type="checkbox"
-          id="global-warn-mixed"
-          checked={warn}
-          onChange={toggle}
-          disabled={saving}
-        />
-        <label htmlFor="global-warn-mixed" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
-          Detect files with mixed CRLF+LF line endings (shown in Repo Settings)
         </label>
       </div>
     </Section>

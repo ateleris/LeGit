@@ -58,10 +58,6 @@ pub enum RegionPlacement {
     Left,
 }
 
-fn default_warn_on_mixed_endings() -> bool {
-    true
-}
-
 /// Default minutes between background auto-fetches.
 fn default_auto_fetch_interval() -> u32 {
     15
@@ -185,9 +181,6 @@ pub struct GlobalSettings {
     pub global_region_size_left: Option<f64>,
     /// Whether the global dock is collapsed to zero height/width.
     pub global_dock_collapsed: bool,
-    /// Default for mixed-ending detection; per-repo settings can override.
-    #[serde(default = "default_warn_on_mixed_endings")]
-    pub warn_on_mixed_endings: bool,
     /// Attention-only line-ending chips on Working Changes rows; per-repo
     /// settings can override.
     #[serde(default = "default_true")]
@@ -306,7 +299,6 @@ impl Default for GlobalSettings {
             global_region_size_top: None,
             global_region_size_left: None,
             global_dock_collapsed: false,
-            warn_on_mixed_endings: true,
             line_ending_chips_in_changes: true,
             warn_on_line_ending_commit: true,
             column_preferences: serde_json::Value::Null,
@@ -374,8 +366,6 @@ impl Default for LaneLocksDoc {
 pub struct RepoSettings {
     /// Per-repo override for the git binary path (None = inherit global).
     pub git_path_override: Option<String>,
-    /// Per-repo override for mixed-ending detection (None = inherit global).
-    pub warn_on_mixed_endings: Option<bool>,
     /// Per-repo override for the Working Changes line-ending chips
     /// (None = inherit global).
     pub line_ending_chips_in_changes: Option<bool>,

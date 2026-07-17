@@ -111,7 +111,6 @@ export function RepoSettingsPanel() {
         </div>
 
         <SettingsGroup id="repo-behavior" title="Behavior" caption="How LeGit acts in this repo">
-          <MixedEndingRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
           <LineEndingChangesRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
           <ExternalEditorRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
           <SubmoduleAutoUpdateSection repoId={activeRepo.id} repoSettings={repoSettings} />
@@ -229,66 +228,6 @@ function ExternalEditorRepoSection({
         <code> $FILE</code> by the file path, each appended if the template
         doesn't mention it.
       </FieldNote>
-    </Section>
-  );
-}
-
-function MixedEndingRepoSection({
-  repoId,
-  repoSettings,
-}: {
-  repoId: string;
-  repoSettings: import("../../lib/types").RepoSettings | null;
-}) {
-  const globalWarn = useSettingsStore((s) => s.settings?.warn_on_mixed_endings ?? true);
-  const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
-  const [saving, setSaving] = useState(false);
-
-  // null = inherit global
-  const repoOverride = repoSettings?.warn_on_mixed_endings ?? null;
-  const effective = repoOverride !== null ? repoOverride : globalWarn;
-
-  const setOverride = async (value: boolean | null) => {
-    if (!repoSettings) return;
-    setSaving(true);
-    try {
-      await updateRepoSettings(repoId, { ...repoSettings, warn_on_mixed_endings: value });
-      await loadRepoSettings(repoId);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Section title="Mixed ending detection">
-      <FieldNote>writes to: repos/&lt;hash&gt;/settings.json (this repo only)</FieldNote>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
-        {(["inherit", "on", "off"] as const).map((opt) => {
-          const checked =
-            opt === "inherit" ? repoOverride === null :
-            opt === "on" ? repoOverride === true :
-            repoOverride === false;
-          return (
-            <label key={opt} style={{ display: "flex", alignItems: "center", gap: 6, cursor: saving ? "default" : "pointer", opacity: saving ? 0.5 : 1 }}>
-              <input
-                type="radio"
-                name={`repo-mixed-${repoId}`}
-                checked={checked}
-                disabled={saving}
-                onChange={() => setOverride(opt === "inherit" ? null : opt === "on")}
-              />
-              <span style={{ fontSize: "var(--fz-lg)" }}>
-                {opt === "inherit"
-                  ? `Inherit from global (currently ${globalWarn ? "on" : "off"})`
-                  : opt === "on" ? "On" : "Off"}
-              </span>
-            </label>
-          );
-        })}
-        <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: 2 }}>
-          Effective: <strong>{effective ? "on" : "off"}</strong>
-        </div>
-      </div>
     </Section>
   );
 }
@@ -594,18 +533,6 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
         </div>
       )}
 
-      {view.mixed_ending_files.length > 0 && (
-        <div style={{ marginTop: 14 }}>
-          <div style={{ fontSize: "var(--fz-sm)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--error-fg)", marginBottom: 6 }}>
-            Files with mixed CRLF+LF ({view.mixed_ending_files.length})
-          </div>
-          <div style={{ maxHeight: 120, overflowY: "auto" }}>
-            {view.mixed_ending_files.map((f) => (
-              <div key={f} style={{ fontFamily: "monospace", fontSize: "var(--fz-sm)", padding: "1px 0" }}>{f}</div>
-            ))}
-          </div>
-        </div>
-      )}
     </Section>
   );
 }

@@ -28,7 +28,6 @@ export interface GlobalSettings {
   global_region_size_top: number | null;
   global_region_size_left: number | null;
   global_dock_collapsed: boolean;
-  warn_on_mixed_endings?: boolean;
   /** Attention-only line-ending chips on Working Changes rows (default true). */
   line_ending_chips_in_changes?: boolean;
   /** Warn before committing staged line-ending changes (default true). */
@@ -81,7 +80,6 @@ export interface GlobalSettings {
 
 export interface RepoSettings {
   git_path_override: string | null;
-  warn_on_mixed_endings: boolean | null;
   /** Per-repo override for the Working Changes chips (null = inherit). */
   line_ending_chips_in_changes?: boolean | null;
   /** Per-repo override for the commit warning (null = inherit). */
@@ -256,7 +254,6 @@ export interface LineEndingsView {
   eol_resolved: ConfigValue;
   gitattributes: GitAttrRule[];
   gitattributes_covers_all: boolean;
-  mixed_ending_files: string[];
 }
 
 // --- Signing config types (matches src-tauri/src/commands/signing.rs) ---
