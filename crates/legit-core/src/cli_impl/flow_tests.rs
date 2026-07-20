@@ -649,6 +649,34 @@ async fn stash_mutation_on_vanished_sha_is_ref_not_found() {
 }
 
 // ---------------------------------------------------------------------------
+// log - ref selector walks
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn log_all_branches_and_remotes_walks_remote_refs_too() {
+    let fmt = format!("--format={}", parsers::log::LOG_FORMAT);
+    let stash_fmt = format!("--format={}", parsers::stash::STASH_FORMAT);
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &[
+            "log", fmt.as_str(), "--max-count=500",
+            "HEAD", "--branches", "--remotes", "--decorate=full",
+        ],
+        ok(""),
+    );
+    // The full-graph walk injects stashes afterwards, same as the local-only one.
+    fake.expect(&["stash", "list", stash_fmt.as_str()], ok(""));
+    let (b, exec) = backend(fake);
+
+    let commits = b
+        .log(LogOptions { refs: RefSelector::AllBranchesAndRemotes, ..Default::default() })
+        .await
+        .unwrap();
+    assert!(commits.is_empty());
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
 // search — commits (message/author/content) and paths
 // ---------------------------------------------------------------------------
 

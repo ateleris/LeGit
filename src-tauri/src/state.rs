@@ -418,6 +418,9 @@ pub struct RepoSettings {
     /// Auto-update submodule pointers after switch/pull (None = default ON).
     #[serde(default)]
     pub submodule_auto_update: Option<bool>,
+    /// Show remote-tracking branches in the commit tree (None = default ON).
+    #[serde(default)]
+    pub show_remote_branches: Option<bool>,
 }
 
 // ---------------------------------------------------------------------------

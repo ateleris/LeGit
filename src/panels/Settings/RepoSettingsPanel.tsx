@@ -111,6 +111,7 @@ export function RepoSettingsPanel() {
         </div>
 
         <SettingsGroup id="repo-behavior" title="Behavior" caption="How LeGit acts in this repo">
+          <CommitTreeRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
           <LineEndingChangesRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
           <ExternalEditorRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
           <SubmoduleAutoUpdateSection repoId={activeRepo.id} repoSettings={repoSettings} />
@@ -303,6 +304,60 @@ function LineEndingChangesRepoSection({
           })}
         </div>
       ))}
+    </Section>
+  );
+}
+
+function CommitTreeRepoSection({
+  repoId,
+  repoSettings,
+}: {
+  repoId: string;
+  repoSettings: RepoSettings | null;
+}) {
+  const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
+  const [saving, setSaving] = useState(false);
+  // null = default ON.
+  const enabled = repoSettings?.show_remote_branches ?? true;
+
+  const setEnabled = async (value: boolean) => {
+    if (!repoSettings) return;
+    setSaving(true);
+    try {
+      await updateRepoSettings(repoId, { ...repoSettings, show_remote_branches: value });
+      await loadRepoSettings(repoId);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Commit tree">
+      <FieldNote>writes to: repos/&lt;hash&gt;/settings.json (this repo only)</FieldNote>
+      <label
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginTop: 8,
+          cursor: saving ? "default" : "pointer",
+          opacity: saving ? 0.5 : 1,
+          fontSize: "var(--fz-lg)",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={saving}
+          onChange={(e) => setEnabled(e.target.checked)}
+        />
+        Show remote branches
+      </label>
+      <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: 4 }}>
+        Include remote-tracking branches (e.g. origin/main) in the commit tree,
+        so fetched commits appear even before they are merged locally. Turn off
+        to show local branch history only.
+      </div>
     </Section>
   );
 }

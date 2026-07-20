@@ -20,10 +20,13 @@ pub async fn repo_log(
     max_count: Option<u32>,
     skip: Option<u32>,
     revision_range: Option<String>,
+    include_remotes: Option<bool>,
 ) -> Result<Vec<Commit>, AppError> {
     let session = state.get_session(&repo_id).await?;
     let refs = if revision_range.is_some() {
         legit_core::types::RefSelector::Head
+    } else if include_remotes.unwrap_or(false) {
+        legit_core::types::RefSelector::AllBranchesAndRemotes
     } else {
         legit_core::types::RefSelector::AllLocalBranches
     };

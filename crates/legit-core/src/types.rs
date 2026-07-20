@@ -114,6 +114,9 @@ pub enum RefSelector {
     #[default]
     Head,
     AllLocalBranches,
+    /// Local branches plus remote-tracking refs (`--branches --remotes`):
+    /// the full-graph view when "show remote branches" is on.
+    AllBranchesAndRemotes,
 }
 
 /// Options for `GitBackend::log`.

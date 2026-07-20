@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { PanelError } from "../shared/PanelError";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useActiveRepo } from "../../store/repos";
+import { useActiveRepo, useRepoStore } from "../../store/repos";
 import {
   useSettingsStore,
   COMMITS_ROW_HEIGHT_DEFAULT,
@@ -219,11 +219,20 @@ export function CommitsPanel() {
   // from a hand-edited settings.json), the first one wins.
   const lockMap = useMemo((): LockMap => buildLockMap(rawLocks), [rawLocks]);
 
-  const queryKey = [repo?.id, "log", totalToFetch];
+  // Per-repo "show remote branches in the commit tree" (null = default ON).
+  // Part of the query key so flipping the setting refetches the walk.
+  const repoSettings = useRepoStore((s) => (repo ? s.repoSettings[repo.id] : undefined));
+  const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
+  useEffect(() => {
+    if (repo && !repoSettings) loadRepoSettings(repo.id);
+  }, [repo?.id, repoSettings, loadRepoSettings]);
+  const showRemoteBranches = repoSettings?.show_remote_branches ?? true;
+
+  const queryKey = [repo?.id, "log", totalToFetch, showRemoteBranches];
 
   const { data: commits = [], isFetching, isError, error } = useQuery<Commit[]>({
     queryKey,
-    queryFn: () => repoLog(repo!.id, totalToFetch, 0),
+    queryFn: () => repoLog(repo!.id, totalToFetch, 0, undefined, showRemoteBranches),
     enabled: !!repo,
     staleTime: 5_000,
     // Keep the current (smaller) page rendered while the larger page fetches.

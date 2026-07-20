@@ -103,6 +103,8 @@ export interface RepoSettings {
   git_profile_id?: string | null;
   /** Auto-update submodule pointers after switch/pull (null = default ON). */
   submodule_auto_update?: boolean | null;
+  /** Show remote-tracking branches in the commit tree (null = default ON). */
+  show_remote_branches?: boolean | null;
 }
 
 export interface RestoreResult {

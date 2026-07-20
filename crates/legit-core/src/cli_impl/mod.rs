@@ -960,6 +960,11 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
                     args.push("HEAD");
                     args.push("--branches");
                 }
+                RefSelector::AllBranchesAndRemotes => {
+                    args.push("HEAD");
+                    args.push("--branches");
+                    args.push("--remotes");
+                }
                 RefSelector::Head => {}
             }
         }
@@ -976,7 +981,10 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         // Inject stashes as synthetic nodes so they appear in the graph. Only for
         // the full-graph view, and best-effort: a stash-list failure must never
         // break the commit log itself.
-        if matches!(opts.refs, RefSelector::AllLocalBranches) {
+        if matches!(
+            opts.refs,
+            RefSelector::AllLocalBranches | RefSelector::AllBranchesAndRemotes
+        ) {
             if let Ok(stashes) = self.stashes().await {
                 inject_stashes(&mut commits, stashes);
             }

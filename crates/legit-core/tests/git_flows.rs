@@ -14,11 +14,11 @@
 
 use legit_core::{
     CommitId, GitError, ConflictKind, ConflictSide, DiffEntry, DiffSource, FetchOptions, FileState,
-    GitBackend, GitCliBackend, GitRunner, MergeOptions, MergeOutcome, OperationId, PullOptions,
-    PullStrategy, PushOptions, PushRecurseMode, RebaseOutcome, RemoteProgress, RepoFileEntry, RepoFileKind,
-    RepoOpState, ResetMode, SequenceOutcome, StashApplyOutcome, StashOutcome, SubmoduleAutoUpdateStatus,
-    SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy, SwitchDirtyBehavior,
-    SwitchOutcome,
+    GitBackend, GitCliBackend, GitRunner, LogOptions, MergeOptions, MergeOutcome, OperationId,
+    PullOptions, PullStrategy, PushOptions, PushRecurseMode, RebaseOutcome, RefDecoration,
+    RefSelector, RemoteProgress, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode,
+    SequenceOutcome, StashApplyOutcome, StashOutcome, SubmoduleAutoUpdateStatus, SubmoduleLog,
+    SubmoduleUpdateOptions, SubmoduleUpdateStrategy, SwitchDirtyBehavior, SwitchOutcome,
 };
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -2850,4 +2850,56 @@ async fn line_ending_status_pipeline_against_real_repo() {
         Some(LineEndingTransition { from: LineEndingKind::Lf, to: LineEndingKind::Crlf })
     );
     assert_eq!(staged.unstaged, None); // working matches index
+}
+
+// ---------------------------------------------------------------------------
+// log: ref selector walks (which refs reach the graph)
+// ---------------------------------------------------------------------------
+
+/// A fetched remote branch that is ahead of every local ref must show up in
+/// the full-graph walk (`AllBranchesAndRemotes`) and must NOT leak into the
+/// local-only walk (`AllLocalBranches`). Simulates the post-fetch state with
+/// `update-ref refs/remotes/...`: no networking involved.
+#[tokio::test]
+async fn log_walks_remote_only_commits_with_the_remotes_selector() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+
+    // Build a commit reachable only from a remote-tracking ref.
+    repo.git(&["switch", "-c", "tmp"]).await;
+    repo.write("a.txt", "remote\n");
+    repo.commit_all("remote-only change").await;
+    let sha = repo.head().await;
+    repo.git(&["switch", "main"]).await;
+    repo.git(&["update-ref", "refs/remotes/origin/feature", &sha]).await;
+    repo.git(&["branch", "-D", "tmp"]).await;
+
+    let local = repo
+        .backend
+        .log(LogOptions { refs: RefSelector::AllLocalBranches, ..Default::default() })
+        .await
+        .expect("local log");
+    assert!(
+        !local.iter().any(|c| c.id.0 == sha),
+        "local-only walk must not contain the remote-only commit"
+    );
+
+    let all = repo
+        .backend
+        .log(LogOptions { refs: RefSelector::AllBranchesAndRemotes, ..Default::default() })
+        .await
+        .expect("full log");
+    let found = all
+        .iter()
+        .find(|c| c.id.0 == sha)
+        .expect("remote-only commit must be in the full-graph walk");
+    assert!(
+        found
+            .decorations
+            .iter()
+            .any(|d| matches!(d, RefDecoration::Remote(r) if r == "refs/remotes/origin/feature")),
+        "remote-only commit must carry its remote decoration: {:?}",
+        found.decorations
+    );
 }

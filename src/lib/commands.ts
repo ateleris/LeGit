@@ -426,12 +426,19 @@ export const openPlatformTokenSettings = (platform: string) =>
 
 // --- log / commit details ---
 
-export const repoLog = (repoId: string, maxCount?: number, skip?: number, revisionRange?: string) =>
+export const repoLog = (
+  repoId: string,
+  maxCount?: number,
+  skip?: number,
+  revisionRange?: string,
+  includeRemotes?: boolean,
+) =>
   invoke<Commit[]>("repo_log", {
     repoId,
     maxCount: maxCount ?? null,
     skip: skip ?? null,
     revisionRange: revisionRange ?? null,
+    includeRemotes: includeRemotes ?? null,
   });
 
 export const repoStatus = (repoId: string) =>

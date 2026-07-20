@@ -93,6 +93,20 @@ leading-edge coalescing) is the manual refresh; the filesystem **watcher**
 (`useRepoChangeListener`) is the primary live-update path (the backend event
 carries the domains to invalidate). Repo data uses a short `staleTime`.
 
+**Per-repo settings (`RepoSettings`).** Repo-scoped app settings live in
+`RepoSettings` (`src-tauri/src/state.rs`), persisted at
+`<app-data>/repos/<hash>/settings.json`: loaded into the `RepoSession` when the
+repo opens, persisted eagerly on each change. Fields follow the convention
+`Option<T>` + `#[serde(default)]` where `None` means "inherit global / use the
+default" (so old settings files keep parsing). Frontend: `useRepoStore` caches
+`repoSettings[repoId]` (filled by `loadRepoSettings`, triggered on activate);
+mutations send the whole struct via
+`updateRepoSettings(repoId, { ...repoSettings, field: value })`, then
+`loadRepoSettings` refreshes the cache. Adding a setting touches 3 places: the
+Rust struct, the hand-mirrored `RepoSettings` in `src/lib/types.ts`, and a
+section in `RepoSettingsPanel.tsx`; consumers read
+`repoSettings?.field ?? default`.
+
 **Repos & sessions.** `src/store/repos.ts` owns `openRepos` + `activeRepoId`.
 `RepoSession`s and watchers are **persistent per repo** (a `HashMap`), not rebuilt
 on tab switch. Tab order is user-controlled: tabs are drag-reorderable, the order

@@ -18,16 +18,7 @@ In rough order:
 
 1. **LICENSE file.** The repo has no LICENSE yet - pick one and add it before
    the release is public (the Releases page implies redistribution).
-2. **Conflict-resolution verification pass.** Pending since 2026-07-10:
-   vitest suites + manual end-to-end run of the overhaul (mark-resolved
-   guard -> marker badge -> reopen-conflict -> side-select header checkboxes
-   incl. gutter alignment -> resolution-invisible toast -> abort
-   hold-disabled-until-refresh; plus the toast line-clamp fix, the dev
-   build's "LeGit DEV" title + ribbon icon (regenerable via
-   `scripts/make-dev-icon.py`), and the draggable unstaged/staged split in
-   Working Changes in every section order) from PowerShell; WSL-side
-   cargo/tsc are green.
-3. **Credential manager verification pass.** A check over the whole chain
+2. **Credential manager verification pass.** A check over the whole chain
    before release: helper-shim registration lands at the END of the helper
    list (GCM / profile helpers still win where configured), broker prompt
    appears when no other helper answers, keychain entries are written only
@@ -38,11 +29,11 @@ In rough order:
    a remote with no helper configured) on Windows and in WSL/Linux, where
    the helper landscape differs (no GCM by default; keychain backend is
    Secret Service).
-4. **Pre-release pass.** Smoke-test the built (non-dev) bundles on each
+3. **Pre-release pass.** Smoke-test the built (non-dev) bundles on each
    target, since several code paths differ from `tauri dev` (e.g. the
    `CREATE_NO_WINDOW` git-spawn flag, `windows_subsystem = "windows"`,
    bindings generated only when the app runs).
-5. **README screenshots.** Add one or two once the UI is deemed presentable,
+4. **README screenshots.** Add one or two once the UI is deemed presentable,
    and check the README/release-page branding matches the new logo
    (swapped in 2026-07-09).
 
@@ -82,30 +73,11 @@ SmartScreen/Gatekeeper warnings documented.
      editor parity choice); two dirty-tracking sections in one panel can
      under-report dirty when both are edited and one saves
      (`usePanelDirty` is last-writer-wins).
-- **Improve the merge window.** (Requested 2026-07-09; exact scope to be
-  defined with Simon before starting.) Merging is still a set of
-  fire-immediately context-menu entries (merge ff-auto / no-ff / ff-only /
-  squash -> `repoMerge` from BranchesPanel / RefsCell). Likely direction: a
-  merge dialog that shows what is about to happen before running it -
-  source/target, the commits that would come in (`git log target..source`),
-  ff-or-merge-commit prediction, options (ff mode, squash, message) in one
-  place, and a conflict heads-up where cheaply detectable. Follow the
-  panel/summon patterns; keep the quick menu entries as shortcuts.
 - **Live-refresh the diff on external git changes.** The watcher's emitted
   domains (`status|log|branches|stashes|tags`) don't include `diff`, so an
   external `git` stage/unstage while the app is open doesn't refresh an open
   diff (in-app actions do). Add a `diff` domain on the Rust side.
-- **Op-state indicator for background repos.** (Deferred 2026-07-10.) The
-  strip under the repo tab bar surfaces only the active repo's in-progress
-  merge/rebase/cherry-pick/revert; a background tab can be mid-operation
-  with no visible hint. Idea: a badge/dot on the repo tab when that repo's
-  `op_state` is not `none` (needs a per-repo op-state subscription).
-- **Conflict-flow open remainders** (from the 2026-07-10 overhaul):
-  - *Working Changes "Mark resolved" menu entry is unguarded*: the
-    conflict-row menu stages the file directly (`repoStage`) with no
-    markers check - deliberate for now (the warning badge catches it right
-    after); decide whether it should get the same confirm as the Merge
-    panel, which would need a file-content read at menu-action time.
+- **Conflict-flow open remainder** (from the 2026-07-10 overhaul):
   - *Header checkbox alignment is measured once per view build*: a global
     font-size change while the merge view is open rebuilds the view, so it
     re-measures in practice, but a path where the gutter width changes
@@ -118,7 +90,8 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 `lib.rs`) -> wrapper in `lib/commands.ts` + type in `lib/types.ts` -> UI.
 
 - **Worktrees** (add/list/remove) and **bisect**. The two whole-feature gaps
-  left vs a full-featured client.
+  left vs a full-featured client. Deferred to post v1.0.0 (decided
+  2026-07-20).
 - **Re-add signed-commit chips in the commit list, presence-only.**
   (Parked 2026-07-13.) The old chips were removed because `%G?` in the bulk
   log format makes git *verify* every signature during the walk (one
@@ -197,9 +170,8 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 
 - **Files panel:** untrack a folder (`rm_cached` needs `-r` for a
   directory); persist view mode / show-ignored (ephemeral component state
-  today; mirror `changed_files_view_mode`); offer the nearest nested
-  `.gitignore` or `.git/info/exclude` as ignore targets (always repo-root
-  `.gitignore` today); escape `*`, `?`, `[` in `gitignore_line` (a filename
+  today; mirror `changed_files_view_mode`); escape `*`, `?`, `[` in
+  `gitignore_line` (a filename
   containing them would become a glob).
 - **Git Log panel:** filter/search the log, copy a command, jump a toast to
   its specific log entry (today it just opens the panel).
