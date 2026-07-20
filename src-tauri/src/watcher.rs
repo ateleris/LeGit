@@ -55,7 +55,7 @@ const DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// A react-query data domain affected by a filesystem change. Mirrors the
 /// query-key suffixes used by the frontend
-/// (`[repoId, "status"|"log"|"branches"|"stashes"|"tags"]`).
+/// (`[repoId, "status"|"log"|"branches"|"stashes"|"tags"|"diff"|…]`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ChangeDomain {
@@ -64,6 +64,10 @@ pub enum ChangeDomain {
     Branches,
     Stashes,
     Tags,
+    /// Worktree content, the index, or the HEAD-anchored comparison base
+    /// changed: open worktree/index diffs may be stale. Revision-pair diffs
+    /// are immutable, so ref-only churn (remote/tag/stash refs) stays out.
+    Diff,
     /// A merge/rebase/cherry-pick/revert started, advanced, or ended
     /// (MERGE_HEAD, MERGE_MSG, rebase-merge/, rebase-apply/, *_HEAD).
     OpState,
@@ -224,6 +228,8 @@ fn classify(
             return;
         }
         out.insert(ChangeDomain::Status);
+        // File content changed: an open worktree diff of it is stale.
+        out.insert(ChangeDomain::Diff);
     }
 }
 
@@ -249,9 +255,11 @@ fn classify_git(rel: &Path, out: &mut BTreeSet<ChangeDomain>) {
     }
 
     match first.as_str() {
-        // Index change → staged/unstaged set changed.
+        // Index change → staged/unstaged set changed, and with it both sides
+        // of every worktree/index diff.
         "index" => {
             out.insert(ChangeDomain::Status);
+            out.insert(ChangeDomain::Diff);
         }
         // FETCH_HEAD is written by *every* fetch, even one that updated
         // nothing, and holds no data the UI displays — actual remote-ref
@@ -283,6 +291,15 @@ fn classify_git(rel: &Path, out: &mut BTreeSet<ChangeDomain>) {
             {
                 out.insert(ChangeDomain::Tags);
             }
+            // Staged diffs compare the index against HEAD, so they go stale
+            // when HEAD's resolved target moves: the HEAD file itself, a
+            // local branch head (possibly packed), or an op head (external
+            // `git reset --soft` moves the branch ref without touching the
+            // index). Remote/tag/stash refs never anchor a diff - a plain
+            // fetch must not refetch open diffs.
+            if first != "refs" || rel.starts_with("refs/heads") {
+                out.insert(ChangeDomain::Diff);
+            }
         }
         // The prepared merge message feeds the op-state banner.
         "MERGE_MSG" => {
@@ -312,17 +329,21 @@ fn classify_git(rel: &Path, out: &mut BTreeSet<ChangeDomain>) {
             {
                 out.insert(ChangeDomain::Submodules);
                 // A submodule HEAD move is a pointer move: visible in the
-                // superproject's status as SubmoduleChanged.
+                // superproject's status as SubmoduleChanged, and as a gitlink
+                // change in an open diff of the submodule path.
                 out.insert(ChangeDomain::Status);
+                out.insert(ChangeDomain::Diff);
             }
         }
         // In-progress merge/rebase state affects all three (conflicts + refs)
-        // plus the op-state banner.
+        // plus the op-state banner; each step rewrites worktree/index content
+        // (conflict markers), so open diffs go stale too.
         "rebase-merge" | "rebase-apply" => {
             out.insert(ChangeDomain::Status);
             out.insert(ChangeDomain::Log);
             out.insert(ChangeDomain::Branches);
             out.insert(ChangeDomain::OpState);
+            out.insert(ChangeDomain::Diff);
         }
         _ => {}
     }
@@ -496,25 +517,66 @@ mod tests {
             &mut seen,
             |_| None,
         );
-        assert_eq!(out.into_iter().collect::<Vec<_>>(), vec![ChangeDomain::Status]);
+        assert_eq!(
+            out.into_iter().collect::<Vec<_>>(),
+            vec![ChangeDomain::Status, ChangeDomain::Diff]
+        );
         assert!(seen.is_empty());
     }
 
     #[test]
-    fn worktree_edit_is_status() {
+    fn worktree_edit_is_status_and_diff() {
+        // An external edit of a tracked file must refresh both the status
+        // list and an open worktree diff of it.
         let wt = Path::new("/repo");
         let gd = Path::new("/repo/.git");
         let ig = Gitignore::empty();
-        assert_eq!(domains("src/main.rs", wt, gd, &ig), vec![ChangeDomain::Status]);
+        assert_eq!(
+            domains("src/main.rs", wt, gd, &ig),
+            vec![ChangeDomain::Status, ChangeDomain::Diff]
+        );
     }
 
     #[test]
-    fn index_change_is_status() {
+    fn index_change_is_status_and_diff() {
+        // External stage/unstage rewrites .git/index; open diffs (worktree
+        // AND staged) change sides, so both domains must fire - this was the
+        // "external `git add` leaves the open diff stale" bug.
         let wt = Path::new("/repo");
         let gd = Path::new("/repo/.git");
         let mut out = BTreeSet::new();
         classify(Path::new("/repo/.git/index"), wt, gd, &Gitignore::empty(), &mut out);
-        assert_eq!(out.into_iter().collect::<Vec<_>>(), vec![ChangeDomain::Status]);
+        assert_eq!(
+            out.into_iter().collect::<Vec<_>>(),
+            vec![ChangeDomain::Status, ChangeDomain::Diff]
+        );
+    }
+
+    #[test]
+    fn head_anchored_moves_drive_diff() {
+        // Staged diffs are index-vs-HEAD: a HEAD move (checkout), a local
+        // branch head move (commit / reset --soft, possibly packed), or an op
+        // head must refresh them.
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        for anchor in ["HEAD", "refs/heads/main", "packed-refs", "MERGE_HEAD", "ORIG_HEAD"] {
+            let mut out = BTreeSet::new();
+            classify(&gd.join(anchor), wt, gd, &Gitignore::empty(), &mut out);
+            assert!(out.contains(&ChangeDomain::Diff), "{anchor} should drive Diff, got {out:?}");
+        }
+    }
+
+    #[test]
+    fn remote_tag_and_stash_refs_do_not_drive_diff() {
+        // Diffs are never anchored to remote/tag/stash refs: a plain fetch or
+        // an external `git tag`/`git stash` must not refetch open diffs.
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        for quiet in ["refs/remotes/origin/main", "refs/tags/v1.0", "refs/stash"] {
+            let mut out = BTreeSet::new();
+            classify(&gd.join(quiet), wt, gd, &Gitignore::empty(), &mut out);
+            assert!(!out.contains(&ChangeDomain::Diff), "{quiet} should not drive Diff, got {out:?}");
+        }
     }
 
     #[test]
@@ -618,6 +680,7 @@ mod tests {
         classify(Path::new("/repo/.git/modules/lib/HEAD"), wt, gd, &Gitignore::empty(), &mut out);
         assert!(out.contains(&ChangeDomain::Submodules), "got {out:?}");
         assert!(out.contains(&ChangeDomain::Status), "pointer move shows in status too");
+        assert!(out.contains(&ChangeDomain::Diff), "gitlink change shows in an open diff");
     }
 
     #[test]
@@ -688,6 +751,7 @@ mod tests {
         let mut out = BTreeSet::new();
         classify(Path::new("/repo/.git/rebase-merge/msgnum"), wt, gd, &Gitignore::empty(), &mut out);
         assert!(out.contains(&ChangeDomain::OpState) && out.contains(&ChangeDomain::Status));
+        assert!(out.contains(&ChangeDomain::Diff), "rebase steps rewrite worktree/index content");
     }
 
     #[test]

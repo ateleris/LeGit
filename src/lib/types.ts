@@ -136,6 +136,7 @@ export type ChangeDomain =
   | "branches"
   | "stashes"
   | "tags"
+  | "diff"
   | "op_state"
   | "submodules";
 

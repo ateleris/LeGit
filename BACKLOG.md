@@ -30,44 +30,6 @@ SmartScreen/Gatekeeper warnings documented.
 
 ---
 
-## Next up (high value, post-release ok)
-
-- **Verification pass for the 2026-07-13 auth/config session.** One large
-  uncommitted session shipped: the edit-only global git-config form
-  (identity + signing + credential helper, one bordered panel, one Save;
-  design/2026-07-13-global-default-profile.md), the guided credential-helper
-  picker, the local-scope-leak fix for all global views
-  (`read_config_global_scopes`; "resolved (from local)" bug), the op-banner
-  button token fix, the commit-box missing-identity nudge, and platform
-  integrations phases 1-3 (SSH key generate/copy/test, PAT-connected
-  accounts in the OS keychain, one-click key upload, broker HTTPS auth +
-  session-cache eviction + revoked-token detection). WSL-side cargo/tsc are
-  green (incl. new unit + real-git tests); still needed from PowerShell:
-  1. vitest suites and a debug run to regenerate `bindings.ts`
-     (17 new commands).
-  2. Visual pass over the new Global Settings sections and the profile
-     editor's SSH block.
-  3. LIVE checks the tests can't cover: `ssh -T` against real
-     GitHub/GitLab/ADO accounts (probe classification encoded from
-     documented outputs, not live runs), key generation both types, PAT
-     connect for all three platforms (the ADO profile endpoint and its
-     HTML-on-bad-PAT heuristic especially), key upload to GitHub/GitLab,
-     an HTTPS push answered by a connected token, and the "token missing"
-     badge after revoking a PAT.
-  4. Small follow-ups noticed: `WithBrowse` has no disabled state (profile
-     editor parity choice); two dirty-tracking sections in one panel can
-     under-report dirty when both are edited and one saves
-     (`usePanelDirty` is last-writer-wins).
-- **Live-refresh the diff on external git changes.** The watcher's emitted
-  domains (`status|log|branches|stashes|tags`) don't include `diff`, so an
-  external `git` stage/unstage while the app is open doesn't refresh an open
-  diff (in-app actions do). Add a `diff` domain on the Rust side.
-- **Conflict-flow open remainder** (from the 2026-07-10 overhaul):
-  - *Header checkbox alignment is measured once per view build*: a global
-    font-size change while the merge view is open rebuilds the view, so it
-    re-measures in practice, but a path where the gutter width changes
-    without a rebuild would let the header box drift.
-
 ## Git features (missing vs a normal client)
 
 Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
