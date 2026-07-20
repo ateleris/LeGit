@@ -663,6 +663,12 @@ export interface BlameHunk {
   /** Whether a parent version of the file exists (git porcelain `previous`) —
    *  false for the commit that added the file, so "blame parent" is hidden. */
   has_previous: boolean;
+  /** The `previous` header's parent commit — the right rev to re-blame at
+   *  (correct parent for merges, unlike `<sha>^`). */
+  previous_sha: CommitId | null;
+  /** The file's path AT `previous_sha` — the OLD name when the blamed commit
+   *  renamed the file; re-blaming must use this path. */
+  previous_path: string | null;
 }
 
 /** Summon payload delivered to the Diff panel when a file is selected. */

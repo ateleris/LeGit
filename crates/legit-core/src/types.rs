@@ -657,6 +657,13 @@ pub struct BlameHunk {
     /// file (or a root commit): blaming its parent would fail, so the "blame
     /// parent" affordance is hidden.
     pub has_previous: bool,
+    /// The `previous` header's parent commit - the right revision to re-blame
+    /// at (git picks the correct parent for merges, unlike a naive `<sha>^`).
+    pub previous_sha: Option<CommitId>,
+    /// The file's path AT `previous_sha` - the OLD name when the blamed
+    /// commit renamed the file. Re-blaming must use this path: the current
+    /// name does not exist in the parent after a rename.
+    pub previous_path: Option<String>,
 }
 
 /// What a commit search matches against. `Message`/`Author` are

@@ -92,11 +92,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   the existing binary-file handling; (b) later - smudge on demand (gated for
   size/network). Also consider a warning when `.gitattributes` has
   `filter=lfs` but `git-lfs` isn't installed.
-- **Blame "blame parent" across renames.** When a hunk's commit renamed the
-  file, `has_previous` is true but `reblameParent` blames
-  `<sha>^:<current path>`, which fails (different name at the parent). The
-  porcelain `previous <sha> <path>` header carries the old path - surface it
-  on `BlameHunk` (e.g. `previous_path`) and reblame at that path.
 
 ## Smaller follow-ups
 

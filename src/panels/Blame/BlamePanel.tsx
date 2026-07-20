@@ -108,12 +108,16 @@ export function BlamePanel() {
     summon.notifyIfOpen("log", h.sha);
   };
 
-  // Time-travel: blame the file as it was just before this hunk's commit.
-  // `<sha>^` may not contain the file (the commit added it) - git's error is
+  // Time-travel: blame the file as it was just before this hunk's commit,
+  // following renames - the porcelain `previous` header carries the parent
+  // commit AND the file's name in it (after a rename, the current name does
+  // not exist at the parent, so `<sha>^:<current path>` would fail). The
+  // `<sha>^` fallback covers hunks without the header data; its error is
   // shown as-is, and the previous result stays one "Working tree" click away.
   const reblameParent = (h: BlameHunk) => {
     if (h.sha === UNCOMMITTED) return;
-    setRev(`${h.sha}^`);
+    if (h.previous_path) setPath(h.previous_path);
+    setRev(h.previous_sha ?? `${h.sha}^`);
   };
 
   if (!repo) {

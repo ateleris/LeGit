@@ -17,9 +17,11 @@ struct Meta {
     author: String,
     timestamp: i64,
     summary: String,
-    /// The porcelain `previous <sha> <path>` header was present for this commit
-    /// — i.e. a parent version of the file exists to blame.
-    has_previous: bool,
+    /// The porcelain `previous <sha> <path>` header: the parent commit to
+    /// re-blame at and the file's path IN THAT COMMIT (the old name when this
+    /// commit renamed the file). `None` for the commit that introduced the
+    /// file.
+    previous: Option<(String, String)>,
 }
 
 /// Parse `git blame --porcelain` output into hunks (consecutive lines of the
@@ -42,6 +44,10 @@ pub fn parse_blame(output: &str) -> Vec<BlameHunk> {
             return;
         }
         let meta = metas.get(sha).cloned().unwrap_or_default();
+        let (previous_sha, previous_path) = match meta.previous {
+            Some((psha, ppath)) => (Some(CommitId::new(psha)), Some(ppath)),
+            None => (None, None),
+        };
         hunks.push(BlameHunk {
             sha: CommitId::new(sha.clone()),
             author: meta.author,
@@ -49,7 +55,9 @@ pub fn parse_blame(output: &str) -> Vec<BlameHunk> {
             summary: meta.summary,
             start_line: start,
             lines: std::mem::take(lines),
-            has_previous: meta.has_previous,
+            has_previous: previous_sha.is_some(),
+            previous_sha,
+            previous_path,
         });
     };
 
@@ -81,12 +89,55 @@ pub fn parse_blame(output: &str) -> Vec<BlameHunk> {
             meta.timestamp = v.trim().parse().unwrap_or(0);
         } else if let Some(v) = line.strip_prefix("summary ") {
             meta.summary = v.to_string();
-        } else if line.starts_with("previous ") {
-            meta.has_previous = true;
+        } else if let Some(v) = line.strip_prefix("previous ") {
+            if let Some((psha, ppath)) = v.split_once(' ') {
+                meta.previous = Some((psha.to_string(), unquote_path(ppath)));
+            }
         }
     }
     flush(&mut hunks, &metas, &current_sha, current_start, &mut pending_lines);
     hunks
+}
+
+/// Undo git's C-style path quoting (`"sp\303\244ter.txt"` -> `später.txt`).
+/// core.quotePath (default true) quotes porcelain path fields containing
+/// non-ASCII or special bytes; octal escapes are raw bytes, decoded as UTF-8.
+/// Unquoted input is returned verbatim.
+fn unquote_path(s: &str) -> String {
+    let Some(inner) = s.strip_prefix('"').and_then(|t| t.strip_suffix('"')) else {
+        return s.to_string();
+    };
+    let bytes = inner.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            let c = bytes[i + 1];
+            if (b'0'..=b'7').contains(&c) {
+                // Up to 3 octal digits form one raw byte.
+                let mut val: u32 = 0;
+                let mut n = 0;
+                while n < 3 && i + 1 + n < bytes.len() && (b'0'..=b'7').contains(&bytes[i + 1 + n]) {
+                    val = val * 8 + u32::from(bytes[i + 1 + n] - b'0');
+                    n += 1;
+                }
+                out.push(val as u8);
+                i += 1 + n;
+                continue;
+            }
+            out.push(match c {
+                b'n' => b'\n',
+                b't' => b'\t',
+                b'r' => b'\r',
+                other => other, // covers \\ and \" (and passes unknowns through)
+            });
+            i += 2;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// A porcelain header is `<40-hex sha> <origLine> <finalLine>[ <numLines>]`.
@@ -151,7 +202,48 @@ mod tests {
         let hunks = parse_blame(&raw);
         assert_eq!(hunks.len(), 2);
         assert!(hunks[0].has_previous, "A has a parent version of the file");
+        assert_eq!(hunks[0].previous_sha.as_ref().map(|s| s.as_str()), Some(SHA_B));
+        assert_eq!(hunks[0].previous_path.as_deref(), Some("f.txt"));
         assert!(!hunks[1].has_previous, "B introduced the file — no previous");
+        assert!(hunks[1].previous_sha.is_none());
+        assert!(hunks[1].previous_path.is_none());
+    }
+
+    #[test]
+    fn previous_header_carries_the_old_path_across_a_rename() {
+        // The blamed commit renamed old.txt -> new.txt: `previous` points at
+        // the OLD path, which is what a "blame parent" must re-blame (the new
+        // name does not exist in the parent).
+        let raw = format!(
+            "{SHA_A} 1 1 1\nauthor A\nauthor-time 1\nsummary rename\nprevious {SHA_B} old.txt\nfilename new.txt\n\tline\n"
+        );
+        let hunks = parse_blame(&raw);
+        assert_eq!(hunks[0].previous_path.as_deref(), Some("old.txt"));
+    }
+
+    #[test]
+    fn previous_path_with_spaces_is_kept_whole() {
+        // Only the first token is the sha; everything after is the path.
+        let raw = format!(
+            "{SHA_A} 1 1 1\nauthor A\nauthor-time 1\nsummary s\nprevious {SHA_B} my old file.txt\nfilename f.txt\n\tline\n"
+        );
+        assert_eq!(parse_blame(&raw)[0].previous_path.as_deref(), Some("my old file.txt"));
+    }
+
+    #[test]
+    fn previous_path_c_quoting_is_undone() {
+        // core.quotePath (default true) C-quotes non-ASCII paths with octal
+        // byte escapes: "sp\303\244ter.txt" is `später.txt` in UTF-8.
+        let raw = format!(
+            "{SHA_A} 1 1 1\nauthor A\nauthor-time 1\nsummary s\nprevious {SHA_B} \"sp\\303\\244ter.txt\"\nfilename f.txt\n\tline\n"
+        );
+        assert_eq!(parse_blame(&raw)[0].previous_path.as_deref(), Some("später.txt"));
+
+        // Escaped quote/backslash/tab forms decode too.
+        let raw = format!(
+            "{SHA_A} 1 1 1\nauthor A\nauthor-time 1\nsummary s\nprevious {SHA_B} \"a\\\"b\\\\c\\td.txt\"\nfilename f.txt\n\tline\n"
+        );
+        assert_eq!(parse_blame(&raw)[0].previous_path.as_deref(), Some("a\"b\\c\td.txt"));
     }
 
     #[test]

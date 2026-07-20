@@ -744,6 +744,93 @@ async fn blame_attributes_lines_to_the_right_commits() {
     assert_eq!(historic[0].lines, vec!["one", "two"]);
 }
 
+/// The porcelain `previous` header follows renames: it names the parent
+/// commit AND the file's OLD path, and re-blaming must use both - after a
+/// rename, `<parent>:<current name>` does not exist. Also pins the quoting
+/// contract: core.quotePath (default true) C-quotes non-ASCII paths in the
+/// header, which the parser must undo.
+#[tokio::test]
+async fn blame_previous_follows_renames_and_unquotes_paths() {
+    let repo = TestRepo::init().await;
+    // Enough unchanged lines that the rename stays comfortably above git's
+    // ~50% content-similarity threshold (a small file with a big edit counts
+    // as delete+add instead - see the below-threshold case at the end).
+    repo.write("original.txt", "alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\n");
+    repo.commit_all("add original").await;
+    let parent = repo.head().await;
+    // Rename AND edit a line so the rename commit owns a blamed hunk.
+    repo.git(&["mv", "original.txt", "renamed.txt"]).await;
+    repo.write("renamed.txt", "alpha\nBETA\ngamma\ndelta\nepsilon\nzeta\n");
+    repo.commit_all("rename + edit").await;
+    let head = repo.head().await;
+
+    let hunks = repo.backend.blame(Path::new("renamed.txt"), None).await.expect("blame");
+    // Rename following at work: the unchanged lines still blame to the
+    // ORIGINAL commit, only the edited line to the renaming commit.
+    let hunk = hunks
+        .iter()
+        .find(|h| h.sha.as_str() == head)
+        .expect("the rename commit owns the edited line");
+    assert_eq!(hunk.lines, vec!["BETA"]);
+    assert!(
+        hunks.iter().any(|h| h.sha.as_str() == parent),
+        "unchanged lines must still blame to the original commit: {hunks:?}"
+    );
+    assert_eq!(hunk.previous_sha.as_ref().map(|s| s.as_str()), Some(parent.as_str()));
+    assert_eq!(hunk.previous_path.as_deref(), Some("original.txt"));
+
+    // Re-blaming at (previous_sha, previous_path) succeeds - the point of
+    // following the rename - while the current name at the parent fails,
+    // which is exactly why the old `<sha>^:<current path>` approach broke.
+    let at_parent = repo
+        .backend
+        .blame(Path::new("original.txt"), Some(&parent))
+        .await
+        .expect("blame parent at the old path");
+    assert_eq!(at_parent[0].lines[..2], ["alpha", "beta"]);
+    assert!(
+        repo.backend.blame(Path::new("renamed.txt"), Some(&parent)).await.is_err(),
+        "the new name must not resolve at the parent"
+    );
+
+    // Below the similarity threshold there is NO rename to follow: git sees
+    // delete+add, every line blames to the renaming commit, and no
+    // `previous` header appears (so the "blame parent" affordance hides).
+    repo.write("tiny.txt", "one\ntwo\nthree\n");
+    repo.commit_all("add tiny").await;
+    repo.git(&["mv", "tiny.txt", "tiny2.txt"]).await;
+    repo.write("tiny2.txt", "one\nTWO, rewritten far beyond recognition\nTHREE, also fully rewritten\n");
+    repo.commit_all("rename tiny + heavy edit").await;
+    let tiny_head = repo.head().await;
+    let hunks = repo.backend.blame(Path::new("tiny2.txt"), None).await.expect("blame tiny2");
+    assert!(
+        hunks.iter().all(|h| h.sha.as_str() == tiny_head && h.previous_sha.is_none()),
+        "below-threshold rename must not follow: {hunks:?}"
+    );
+
+    // Non-ASCII old name: git emits `previous <sha> "sp\303\244ter.txt"`
+    // (C-quoted octal); the parsed path must come back as real UTF-8.
+    repo.write("später.txt", "eins\nzwei\n");
+    repo.commit_all("add unicode-named file").await;
+    let uni_parent = repo.head().await;
+    repo.git(&["mv", "später.txt", "plain.txt"]).await;
+    repo.write("plain.txt", "eins\nZWEI\n");
+    repo.commit_all("rename away from unicode name").await;
+    let uni_head = repo.head().await;
+
+    let hunks = repo.backend.blame(Path::new("plain.txt"), None).await.expect("blame plain");
+    let hunk = hunks
+        .iter()
+        .find(|h| h.sha.as_str() == uni_head)
+        .expect("the unicode-rename commit owns the edited line");
+    assert_eq!(
+        hunk.previous_path.as_deref(),
+        Some("später.txt"),
+        "C-quoted previous path must be unquoted"
+    );
+    assert_eq!(hunk.previous_sha.as_ref().map(|s| s.as_str()), Some(uni_parent.as_str()));
+}
+
 #[tokio::test]
 async fn merge_base_resolves_the_fork_point() {
     let repo = TestRepo::init().await;
