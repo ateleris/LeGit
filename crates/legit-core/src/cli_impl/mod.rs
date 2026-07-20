@@ -1521,6 +1521,16 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         Self::ensure_success(&ls)?;
         let gitlinks = sub::parse_gitlinks(&ls.stdout);
 
+        // No gitlinks -> no rows, guaranteed: `assemble_submodules` iterates
+        // gitlinks only (config-only entries never surface). Skip the three
+        // follow-up reads entirely - in a repo without submodules the two
+        // config `--get-regexp` calls exit 1 ("no matches"), which painted
+        // the Git Log panel red on every derived refetch, and all three are
+        // wasted spawns for a known-empty answer.
+        if gitlinks.is_empty() {
+            return Ok(Vec::new());
+        }
+
         // Both config reads exit non-zero for "no matches / no file" - that
         // is a normal repo without submodules, never an error.
         let gitmodules = match runner.run(&sub::GITMODULES_CONFIG_ARGS).await {

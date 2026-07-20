@@ -1394,6 +1394,24 @@ async fn file_history_runs_follow_name_status_with_paging() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+async fn submodules_without_gitlinks_runs_only_ls_files() {
+    // A repo without submodules answers from the index listing alone: the
+    // config `--get-regexp` reads (which exit 1 on "no matches" and used to
+    // land as failed calls in the Git Log on every derived refetch) and the
+    // status read must not run - assert_done encodes that.
+    let sha_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["ls-files", "--stage", "-z"],
+        ok(&format!("100644 {sha_a} 0\tREADME.md\0100644 {sha_a} 0\tsrc/main.rs\0")),
+    );
+    let (b, exec) = backend(fake);
+
+    assert!(b.submodules().await.unwrap().is_empty());
+    exec.assert_done();
+}
+
+#[tokio::test]
 async fn submodules_enumerates_without_git_submodule_status() {
     let sha_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let fake = FakeExecutor::default();
