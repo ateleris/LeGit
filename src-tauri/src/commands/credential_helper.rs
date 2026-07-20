@@ -41,7 +41,8 @@ fn last_non_empty(stdout: &str) -> Option<String> {
 }
 
 async fn read_helper_at(runner: &GitRunner, flag: &str) -> Option<String> {
-    let out = runner.run(&["config", flag, "--get-all", KEY]).await.ok()?;
+    // exit 1 = no helper at this scope: expected, not a failure (Git Log).
+    let out = runner.run_expecting(&["config", flag, "--get-all", KEY], &[1]).await.ok()?;
     if !out.success {
         return None;
     }
@@ -80,7 +81,7 @@ pub async fn global_write_credential_helper(
     let git_path = state.git_path.read().await.clone();
     let runner = GitRunner::unbound(&git_path);
 
-    let unset = runner.run(&["config", "--global", "--unset-all", KEY]).await?;
+    let unset = runner.run_expecting(&["config", "--global", "--unset-all", KEY], &[5]).await?;
     if !unset.success && unset.exit_code != Some(5) {
         return Err(AppError::Git(GitError::CommandFailed {
             exit_code: unset.exit_code.unwrap_or(-1),

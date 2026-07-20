@@ -327,7 +327,7 @@ pub async fn repo_line_ending_status(
     }
 
     // Resolved core.autocrlf (exit 1 + empty stdout when unset = False).
-    let autocrlf: AutocrlfSetting = match runner.run(&["config", "--get", "core.autocrlf"]).await {
+    let autocrlf: AutocrlfSetting = match runner.run_expecting(&["config", "--get", "core.autocrlf"], &[1]).await {
         Ok(o) => parse_autocrlf(&o.stdout),
         Err(_) => AutocrlfSetting::False,
     };

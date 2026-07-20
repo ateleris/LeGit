@@ -137,7 +137,8 @@ async fn read_local_managed(runner: &GitRunner) -> ManagedKeys {
 /// followed by the helper) and `--get` errors on multiple values.
 async fn read_local_credential_helper(runner: &GitRunner) -> Option<String> {
     let out = runner
-        .run(&["config", "--local", "--get-all", KEY_CREDENTIAL_HELPER])
+        // exit 1 = no local entries: expected, not a failure (Git Log).
+        .run_expecting(&["config", "--local", "--get-all", KEY_CREDENTIAL_HELPER], &[1])
         .await
         .ok()?;
     if !out.success {
@@ -165,7 +166,7 @@ async fn read_local_credential_helper(runner: &GitRunner) -> Option<String> {
 async fn write_credential_helper(runner: &GitRunner, value: Option<&str>) -> Result<(), AppError> {
     // Drop any existing local entries first (exit 5 = none set; fine).
     let unset = runner
-        .run(&["config", "--local", "--unset-all", KEY_CREDENTIAL_HELPER])
+        .run_expecting(&["config", "--local", "--unset-all", KEY_CREDENTIAL_HELPER], &[5])
         .await?;
     if !unset.success && unset.exit_code != Some(5) {
         return Err(AppError::Git(GitError::CommandFailed {

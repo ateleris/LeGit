@@ -219,7 +219,22 @@ impl GitRunner {
     /// Run a one-shot `git` invocation and collect the full output.
     #[instrument(level = "info", skip(self), fields(cwd = ?self.cwd, args = ?args))]
     pub async fn run(&self, args: &[&str]) -> Result<RunOutput, RunnerError> {
-        self.run_inner(args, &[], OperationId::new()).await
+        self.run_inner(args, &[], OperationId::new(), &[]).await
+    }
+
+    /// Like `run`, but the caller declares non-zero exit codes that are
+    /// EXPECTED outcomes - `config --get` exits 1 for "key unset",
+    /// `--unset` 5 for "was already absent", `merge-base` 1 for "no common
+    /// ancestor". The invocation log (and the Git Log panel it feeds) records
+    /// those exits as OK instead of failed; the returned `RunOutput` is
+    /// unchanged (`success` stays `exit == 0`), so callers still branch on
+    /// the exit code themselves.
+    pub async fn run_expecting(
+        &self,
+        args: &[&str],
+        ok_exit_codes: &[i32],
+    ) -> Result<RunOutput, RunnerError> {
+        self.run_inner(args, &[], OperationId::new(), ok_exit_codes).await
     }
 
     /// Run a one-shot `git` invocation under a caller-supplied operation id,
@@ -229,7 +244,7 @@ impl GitRunner {
         args: &[&str],
         op_id: OperationId,
     ) -> Result<RunOutput, RunnerError> {
-        self.run_inner(args, &[], op_id).await
+        self.run_inner(args, &[], op_id, &[]).await
     }
 
     /// Run with per-invocation environment overrides, applied *after* the
@@ -243,7 +258,7 @@ impl GitRunner {
         args: &[&str],
         extra_env: &[(&str, &str)],
     ) -> Result<RunOutput, RunnerError> {
-        self.run_inner(args, extra_env, OperationId::new()).await
+        self.run_inner(args, extra_env, OperationId::new(), &[]).await
     }
 
     async fn run_inner(
@@ -251,6 +266,7 @@ impl GitRunner {
         args: &[&str],
         extra_env: &[(&str, &str)],
         op_id: OperationId,
+        ok_exit_codes: &[i32],
     ) -> Result<RunOutput, RunnerError> {
         let started = Instant::now();
         let mut cmd = self.build_command_with_env(args, extra_env);
@@ -300,7 +316,14 @@ impl GitRunner {
         let stdout = stdout_task.await.unwrap_or_default();
         let stderr = stderr_task.await.unwrap_or_default();
 
-        log_invocation(self.cwd.as_deref(), args, started, exit_code.code(), exit_code.success(), &stderr);
+        log_invocation(
+            self.cwd.as_deref(),
+            args,
+            started,
+            exit_code.code(),
+            logged_ok(exit_code.success(), exit_code.code(), ok_exit_codes),
+            &stderr,
+        );
 
         Ok(RunOutput {
             stdout,
@@ -745,6 +768,15 @@ async fn read_to_string<R: tokio::io::AsyncRead + Unpin>(reader: R) -> String {
     String::from_utf8_lossy(&buf).into_owned()
 }
 
+/// Whether an invocation should be LOGGED as ok: a zero exit, or a non-zero
+/// exit the caller declared expected (`run_expecting`) - e.g. `config --get`'s
+/// 1 for "key unset" is an answer, not a failure, and must not paint the Git
+/// Log panel red. Affects logging only; `RunOutput.success` stays `exit == 0`.
+/// Pure; unit-tested.
+fn logged_ok(success: bool, exit_code: Option<i32>, ok_exit_codes: &[i32]) -> bool {
+    success || exit_code.is_some_and(|c| ok_exit_codes.contains(&c))
+}
+
 fn log_invocation(
     cwd: Option<&Path>,
     args: &[&str],
@@ -963,5 +995,17 @@ mod tests {
         assert_eq!(envs.get("GIT_EDITOR").map(String::as_str), Some("true"));
         // The rest of the hardening is untouched.
         assert_eq!(envs.get("GIT_TERMINAL_PROMPT").map(String::as_str), Some("0"));
+    }
+
+    #[test]
+    fn logged_ok_accepts_declared_expected_exit_codes() {
+        // Zero always logs ok; a declared code logs ok; anything else fails.
+        assert!(logged_ok(true, Some(0), &[]));
+        assert!(logged_ok(false, Some(1), &[1]));
+        assert!(logged_ok(false, Some(5), &[1, 5]));
+        assert!(!logged_ok(false, Some(128), &[1, 5]));
+        assert!(!logged_ok(false, Some(1), &[]));
+        // Killed by signal (no exit code) is never "expected".
+        assert!(!logged_ok(false, None, &[1]));
     }
 }

@@ -26,6 +26,21 @@ pub trait GitExecutor: Send + Sync + 'static {
     /// Run a one-shot `git` invocation and collect the full output.
     async fn run(&self, args: &[&str]) -> Result<RunOutput, RunnerError>;
 
+    /// `run` with caller-declared EXPECTED non-zero exit codes: the result is
+    /// identical, but the invocation log (Git Log panel) records those exits
+    /// as OK instead of failed (`config --get` exits 1 for "key unset" - an
+    /// answer, not a failure). The default delegates to `run`, which is
+    /// correct for scripted fakes: they do no logging, and sequence contracts
+    /// are unaffected.
+    async fn run_expecting(
+        &self,
+        args: &[&str],
+        ok_exit_codes: &[i32],
+    ) -> Result<RunOutput, RunnerError> {
+        let _ = ok_exit_codes;
+        self.run(args).await
+    }
+
     /// Run under a caller-supplied operation id so the caller can cancel it.
     async fn run_with_op(
         &self,
@@ -88,6 +103,14 @@ pub trait GitExecutor: Send + Sync + 'static {
 impl GitExecutor for GitRunner {
     async fn run(&self, args: &[&str]) -> Result<RunOutput, RunnerError> {
         GitRunner::run(self, args).await
+    }
+
+    async fn run_expecting(
+        &self,
+        args: &[&str],
+        ok_exit_codes: &[i32],
+    ) -> Result<RunOutput, RunnerError> {
+        GitRunner::run_expecting(self, args, ok_exit_codes).await
     }
 
     async fn run_with_op(

@@ -785,7 +785,7 @@ impl<E: GitExecutor> GitCliBackend<E> {
     async fn stash_tip(&self) -> Result<Option<String>, GitError> {
         let runner = self.runner().await;
         let output = runner
-            .run(&["rev-parse", "-q", "--verify", "refs/stash"])
+            .run_expecting(&["rev-parse", "-q", "--verify", "refs/stash"], &[1])
             .await?;
         if output.success {
             Ok(Some(output.stdout.trim().to_string()))
@@ -1145,7 +1145,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
     async fn merge_base(&self, a: &str, b: &str) -> Result<Option<String>, GitError> {
         let runner = self.runner().await;
         let output = runner
-            .run(&["merge-base", a, b])
+            .run_expecting(&["merge-base", a, b], &[1])
             .await?;
         // Exit 1 = no common ancestor (unrelated histories) - that is an
         // answer, not an error. Unknown revs etc. exit 128 and are errors.
@@ -1531,13 +1531,14 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             return Ok(Vec::new());
         }
 
-        // Both config reads exit non-zero for "no matches / no file" - that
-        // is a normal repo without submodules, never an error.
-        let gitmodules = match runner.run(&sub::GITMODULES_CONFIG_ARGS).await {
+        // Both config reads exit 1 for "no matches / no file" - that is a
+        // normal state (e.g. declared-but-uninitialized submodules), never an
+        // error, so it must not log as a failed call either.
+        let gitmodules = match runner.run_expecting(&sub::GITMODULES_CONFIG_ARGS, &[1]).await {
             Ok(o) if o.success => sub::parse_submodule_config(&o.stdout),
             _ => Default::default(),
         };
-        let local = match runner.run(&sub::LOCAL_SUBMODULE_CONFIG_ARGS).await {
+        let local = match runner.run_expecting(&sub::LOCAL_SUBMODULE_CONFIG_ARGS, &[1]).await {
             Ok(o) if o.success => sub::parse_submodule_config(&o.stdout),
             _ => Default::default(),
         };
@@ -1604,7 +1605,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
 
         // Unfetched pointer target is an expected state, not an error.
         let probe = format!("{}^{{commit}}", to.as_str());
-        match runner.run(&["-C", &p, "cat-file", "-e", &probe]).await {
+        match runner.run_expecting(&["-C", &p, "cat-file", "-e", &probe], &[1]).await {
             Ok(o) if o.success => {}
             Ok(_) => return Ok(SubmoduleLog::TargetMissing),
             Err(e) => return Err(GitError::Internal(e.to_string())),

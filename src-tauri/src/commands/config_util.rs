@@ -103,7 +103,9 @@ pub async fn read_config_scope(runner: &GitRunner, key: &str, flags: &[&str]) ->
     args.extend_from_slice(flags);
     args.extend_from_slice(&["--get", key]);
 
-    match runner.run(&args).await {
+    // exit 1 = key not set at this scope: an answer, not a failure - declare
+    // it expected so the Git Log doesn't show a red row per unset key.
+    match runner.run_expecting(&args, &[1]).await {
         Ok(out) if out.success => {
             let value = out.stdout.trim().to_string();
             let scope = match flags {
@@ -126,7 +128,7 @@ pub async fn write_config_local(
 ) -> Result<(), AppError> {
     let out = match value {
         Some(v) => runner.run(&["config", "--local", key, v]).await?,
-        None => runner.run(&["config", "--local", "--unset", key]).await?,
+        None => runner.run_expecting(&["config", "--local", "--unset", key], &[5]).await?,
     };
     // exit 5 from --unset means key was already absent — not an error for us.
     if !out.success && out.exit_code != Some(5) {
@@ -145,7 +147,7 @@ pub async fn write_config_global(
 ) -> Result<(), AppError> {
     let out = match value {
         Some(v) => runner.run(&["config", "--global", key, v]).await?,
-        None => runner.run(&["config", "--global", "--unset", key]).await?,
+        None => runner.run_expecting(&["config", "--global", "--unset", key], &[5]).await?,
     };
     if !out.success && out.exit_code != Some(5) {
         return Err(AppError::Git(GitError::CommandFailed {
