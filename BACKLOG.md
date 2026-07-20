@@ -18,22 +18,7 @@ In rough order:
 
 1. **LICENSE file.** The repo has no LICENSE yet - pick one and add it before
    the release is public (the Releases page implies redistribution).
-2. **Credential manager verification pass.** A check over the whole chain
-   before release: helper-shim registration lands at the END of the helper
-   list (GCM / profile helpers still win where configured), broker prompt
-   appears when no other helper answers, keychain entries are written only
-   after git confirms via `store`, cached credentials are scoped to the
-   session. Since 2026-07-13 the same chain also serves connected-account
-   tokens (same keychain slot): cover a token-answered fill and the
-   disconnect path in this pass. Exercise against real remotes (GitHub HTTPS with GCM installed,
-   a remote with no helper configured) on Windows and in WSL/Linux, where
-   the helper landscape differs (no GCM by default; keychain backend is
-   Secret Service).
-3. **Pre-release pass.** Smoke-test the built (non-dev) bundles on each
-   target, since several code paths differ from `tauri dev` (e.g. the
-   `CREATE_NO_WINDOW` git-spawn flag, `windows_subsystem = "windows"`,
-   bindings generated only when the app runs).
-4. **README screenshots.** Add one or two once the UI is deemed presentable,
+2. **README screenshots.** Add one or two once the UI is deemed presentable,
    and check the README/release-page branding matches the new logo
    (swapped in 2026-07-09).
 

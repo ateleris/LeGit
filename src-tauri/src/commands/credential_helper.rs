@@ -145,6 +145,25 @@ fn helper_rank(name: &str) -> u8 {
 /// exec-path (GCM installs its own binary; distros put libsecret elsewhere).
 const PATH_CANDIDATES: [&str; 3] = ["manager", "manager-core", "libsecret"];
 
+/// Directories to scan for helper executables, given git's exec-path. The
+/// exec-path alone is not enough: Git for Windows ships GCM in
+/// `<prefix>/mingw64/bin` and `<prefix>/usr/bin` holds shell helpers - dirs
+/// git prepends to its children's PATH, so `helper = manager` resolves for
+/// git while being invisible to an exec-path-only scan (and to LeGit's own
+/// PATH, which only sees `Git/cmd`). Derived lexically from the exec-path
+/// (`<exec>/../../bin`, `<exec>/../../../usr/bin`); on Linux/macOS both
+/// collapse to `/usr/bin`, a harmless extra scan. Pure; unit-tested.
+fn helper_scan_dirs(exec_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut dirs = vec![exec_dir.to_path_buf()];
+    if let Some(prefix) = exec_dir.parent().and_then(|p| p.parent()) {
+        dirs.push(prefix.join("bin"));
+        if let Some(root) = prefix.parent() {
+            dirs.push(root.join("usr").join("bin"));
+        }
+    }
+    dirs
+}
+
 /// Enumerate the credential helpers installed on this machine: everything in
 /// git's exec-path plus known external helpers on PATH. Sorted most- to
 /// least-recommended (`helper_rank`).
@@ -159,11 +178,13 @@ pub async fn list_available_credential_helpers(
     // name -> path; first find wins (exec-path beats PATH duplicates).
     let mut found: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
 
-    // 1. Helpers bundled with git, in `git --exec-path`.
+    // 1. Helpers bundled with git: its exec-path plus the sibling bin dirs
+    //    git itself puts on its children's PATH (see `helper_scan_dirs`).
     if let Ok(out) = runner.run(&["--exec-path"]).await {
         if out.success {
             let exec_dir = std::path::PathBuf::from(out.stdout.trim());
-            if let Ok(mut entries) = tokio::fs::read_dir(&exec_dir).await {
+            for dir in helper_scan_dirs(&exec_dir) {
+                let Ok(mut entries) = tokio::fs::read_dir(&dir).await else { continue };
                 while let Ok(Some(entry)) = entries.next_entry().await {
                     let file_name = entry.file_name();
                     let Some(fname) = file_name.to_str() else { continue };
@@ -216,6 +237,7 @@ pub async fn list_available_credential_helpers(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn helper_name_from_filename_strips_prefix_and_exe() {
@@ -236,6 +258,25 @@ mod tests {
         assert_eq!(helper_name_from_filename("git-remote-https"), None);
         assert_eq!(helper_name_from_filename("git.exe"), None);
         assert_eq!(helper_name_from_filename("git-credential-"), None);
+    }
+
+    #[test]
+    fn helper_scan_dirs_covers_git_for_windows_bin_dirs() {
+        // Git for Windows: exec-path is <prefix>/mingw64/libexec/git-core, but
+        // GCM ships in <prefix>/mingw64/bin - a dir git prepends to child PATH,
+        // so `helper = manager` works while an exec-path-only scan misses it.
+        let exec = Path::new("C:/Program Files/Git/mingw64/libexec/git-core");
+        let dirs = helper_scan_dirs(exec);
+        assert_eq!(dirs[0], exec.to_path_buf());
+        assert!(dirs.contains(&PathBuf::from("C:/Program Files/Git/mingw64/bin")));
+        assert!(dirs.contains(&PathBuf::from("C:/Program Files/Git/usr/bin")));
+    }
+
+    #[test]
+    fn helper_scan_dirs_handles_shallow_exec_path() {
+        // A short exec-path must not panic or produce bogus dirs.
+        let dirs = helper_scan_dirs(Path::new("git-core"));
+        assert_eq!(dirs, vec![PathBuf::from("git-core")]);
     }
 
     #[test]
