@@ -39,21 +39,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 - **Worktrees** (add/list/remove) and **bisect**. The two whole-feature gaps
   left vs a full-featured client. Deferred to post v1.0.0 (decided
   2026-07-20).
-- **Re-add signed-commit chips in the commit list, presence-only.**
-  (Parked 2026-07-13.) The old chips were removed because `%G?` in the bulk
-  log format makes git *verify* every signature during the walk (one
-  gpg/ssh-keygen spawn per signed commit, ~18s on heavily-signed repos) -
-  that rule stands (see `parsers/log.rs`). Perf-safe approach: detect
-  signature *presence* without verification by scanning raw commit headers
-  for `gpgsig` / `gpgsig-sha256` - one extra batched process, no verifier
-  spawns: feed the page's SHAs to `git cat-file --batch` (or use
-  `git rev-list --header`) in a second pass after the log parse, and ship
-  the result as an enrichment (new parser + flow test asserting no
-  verification command runs). Chip renders a neutral "signed" state;
-  on-demand verification in `commit_details` (`git verify-commit`) stays
-  the only verifier and can upgrade the selected row's chip to
-  valid/invalid/untrusted. Cache presence per SHA (immutable) so
-  re-renders and refetches are free.
 - **Platform integrations, SSH-first: GitHub, GitLab, Azure DevOps.**
   (Scoped 2026-07-13 with Simon: he authenticates via SSH and uses exactly
   these three platforms.) Lives in the reserved `crates/legit-providers`

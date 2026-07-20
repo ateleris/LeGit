@@ -164,6 +164,7 @@ pub fn run() {
         commands::repo_rename_stash,
         commands::repo_stash_branch,
         commands::repo_commit_details,
+        commands::repo_signature_presence,
         commands::repo_commit_files,
         commands::repo_diff_files,
         commands::repo_search_commits,

@@ -17,8 +17,9 @@ use legit_core::{
     GitBackend, GitCliBackend, GitRunner, LogOptions, MergeOptions, MergeOutcome, OperationId,
     PullOptions, PullStrategy, PushOptions, PushRecurseMode, RebaseOutcome, RefDecoration,
     RefSelector, RemoteProgress, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode,
-    SequenceOutcome, StashApplyOutcome, StashOutcome, SubmoduleAutoUpdateStatus, SubmoduleLog,
-    SubmoduleUpdateOptions, SubmoduleUpdateStrategy, SwitchDirtyBehavior, SwitchOutcome,
+    SequenceOutcome, SignatureStatus, StashApplyOutcome, StashOutcome, SubmoduleAutoUpdateStatus,
+    SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy, SwitchDirtyBehavior,
+    SwitchOutcome,
 };
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -2902,4 +2903,160 @@ async fn log_walks_remote_only_commits_with_the_remotes_selector() {
         "remote-only commit must carry its remote decoration: {:?}",
         found.decorations
     );
+}
+
+// ---------------------------------------------------------------------------
+// log: signature-presence enrichment (real cat-file --batch framing)
+// ---------------------------------------------------------------------------
+
+/// `signature_presence` flags signed commits via the batched raw-header scan
+/// (real `cat-file --batch` byte framing). The signed commit is fabricated:
+/// HEAD's raw object with a garbage `gpgsig` header spliced in, stored via
+/// `hash-object --literally` - no keys, no signing config (the harness pins
+/// `commit.gpgsign=false`), which also proves the flag comes from the header
+/// scan and not from any verifier.
+#[tokio::test]
+async fn signature_presence_flags_signed_commits_without_verifying() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("unsigned base").await;
+    let unsigned_sha = repo.head().await;
+
+    let raw = repo.git(&["cat-file", "-p", "HEAD"]).await;
+    let sig = "gpgsig -----BEGIN PGP SIGNATURE-----\n fabricated-for-presence-test\n -----END PGP SIGNATURE-----";
+    let signed_obj = raw.replacen("\n\n", &format!("\n{sig}\n\n"), 1);
+    assert_ne!(signed_obj, raw, "splice point (blank line) must exist");
+
+    let runner = GitRunner::for_repo("git", &repo.path);
+    let out = runner
+        .run_with_stdin(
+            &["hash-object", "-t", "commit", "-w", "--stdin", "--literally"],
+            &signed_obj,
+        )
+        .await
+        .expect("spawn git");
+    assert!(out.success, "hash-object failed: {}", out.stderr);
+    let signed_sha = out.stdout.trim().to_string();
+    repo.git(&["branch", "signed", &signed_sha]).await;
+
+    let signed = repo
+        .backend
+        .signature_presence(&[CommitId::new(signed_sha.clone()), CommitId::new(unsigned_sha)])
+        .await
+        .expect("signature_presence");
+    assert_eq!(
+        signed,
+        vec![CommitId::new(signed_sha)],
+        "exactly the gpgsig-bearing commit is flagged"
+    );
+
+    // The list itself stays signature-free (presence is pay-per-view).
+    let commits = repo
+        .backend
+        .log(LogOptions { refs: RefSelector::AllLocalBranches, ..Default::default() })
+        .await
+        .expect("log");
+    assert!(
+        commits.iter().all(|c| c.signature.is_none() && !c.has_signature),
+        "the list must carry no signature data"
+    );
+}
+
+/// SSH-signature verification classification against the real binary. The
+/// "[SSH:] GOOD_SIGNATURE" format the parser once matched was assumed, wrong,
+/// and never emitted by real git - every ssh-signed commit classified as
+/// NoSignature. This pins the REAL `verify-commit --raw` output shapes:
+/// trusted principal -> Good, key missing from allowedSignersFile ->
+/// Untrusted, tampered content -> BadSignature.
+#[tokio::test]
+async fn commit_details_classifies_real_ssh_signatures() {
+    // Signing needs ssh-keygen; skip (don't fail) where it isn't installed.
+    if std::process::Command::new("ssh-keygen").arg("-?").output().is_err() {
+        eprintln!("skipping: ssh-keygen not available");
+        return;
+    }
+
+    let repo = TestRepo::init().await;
+    let keydir = repo.path.join(".git").join("test-keys");
+    std::fs::create_dir_all(&keydir).expect("mkdir keydir");
+    let gen_key = |name: &str| {
+        let path = keydir.join(name);
+        let st = std::process::Command::new("ssh-keygen")
+            .args(["-q", "-t", "ed25519", "-N", "", "-C", "legit-flows", "-f"])
+            .arg(&path)
+            .status()
+            .expect("spawn ssh-keygen");
+        assert!(st.success(), "ssh-keygen failed for {name}");
+        path
+    };
+    let trusted = gen_key("trusted");
+    let unknown = gen_key("unknown");
+
+    // allowed_signers holds ONLY the trusted key, bound to the pinned
+    // committer identity.
+    let pubkey = std::fs::read_to_string(trusted.with_extension("pub")).expect("read pub");
+    let mut fields = pubkey.split_whitespace();
+    let (ktype, kdata) = (fields.next().expect("key type"), fields.next().expect("key data"));
+    let signers = keydir.join("allowed_signers");
+    std::fs::write(&signers, format!("test@example.invalid {ktype} {kdata}\n")).expect("write signers");
+
+    repo.git(&["config", "gpg.format", "ssh"]).await;
+    repo.git(&["config", "gpg.ssh.allowedSignersFile", signers.to_str().unwrap()]).await;
+    repo.git(&["config", "user.signingkey", trusted.to_str().unwrap()]).await;
+
+    // 1. Trusted key + allowed_signers entry -> Good, with signer + key id.
+    repo.write("a.txt", "one\n");
+    repo.git(&["add", "a.txt"]).await;
+    repo.git(&["commit", "-S", "-m", "ssh signed trusted"]).await;
+    let good_sha = repo.head().await;
+
+    let details = repo
+        .backend
+        .commit_details(&CommitId::new(good_sha.clone()))
+        .await
+        .expect("details (trusted)");
+    assert!(details.commit.has_signature, "presence flag must be set");
+    let sig = details.commit.signature.expect("verification must run");
+    assert_eq!(sig.status, SignatureStatus::Good, "raw: {:?}", sig.raw);
+    assert_eq!(sig.signer.as_deref(), Some("test@example.invalid"));
+    assert!(sig.key_id.is_some(), "fingerprint must be extracted");
+
+    // 2. Key absent from allowed_signers -> valid signature, Untrusted.
+    let key_cfg = format!("user.signingkey={}", unknown.to_str().unwrap());
+    repo.write("a.txt", "two\n");
+    repo.git(&["add", "a.txt"]).await;
+    repo.git(&["-c", &key_cfg, "commit", "-S", "-m", "ssh signed unknown"]).await;
+    let untrusted_sha = repo.head().await;
+
+    let details = repo
+        .backend
+        .commit_details(&CommitId::new(untrusted_sha))
+        .await
+        .expect("details (unknown key)");
+    let sig = details.commit.signature.expect("verification must run");
+    assert_eq!(sig.status, SignatureStatus::Untrusted, "raw: {:?}", sig.raw);
+
+    // 3. Tampered content -> BadSignature. Rewrite the signed commit's
+    // message and store the forgery with `hash-object --literally`.
+    let raw = repo.git(&["cat-file", "-p", &good_sha]).await;
+    let tampered = raw.replacen("ssh signed trusted", "ssh signed TAMPERED", 1);
+    assert_ne!(tampered, raw);
+    let runner = GitRunner::for_repo("git", &repo.path);
+    let out = runner
+        .run_with_stdin(
+            &["hash-object", "-t", "commit", "-w", "--stdin", "--literally"],
+            &tampered,
+        )
+        .await
+        .expect("spawn git");
+    assert!(out.success, "hash-object failed: {}", out.stderr);
+    let bad_sha = out.stdout.trim().to_string();
+
+    let details = repo
+        .backend
+        .commit_details(&CommitId::new(bad_sha))
+        .await
+        .expect("details (tampered)");
+    let sig = details.commit.signature.expect("verification must run");
+    assert_eq!(sig.status, SignatureStatus::BadSignature, "raw: {:?}", sig.raw);
 }

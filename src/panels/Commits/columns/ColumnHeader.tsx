@@ -2,7 +2,7 @@
 // right-click context menu for hide/show. One <ColumnHeader> renders per
 // visible column.
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { usePanelContextMenu } from "../menu/PanelContextMenu";
 import { MenuItem, Separator, SectionLabel } from "../menu/primitives";
 import { COLUMN_GAP, MIN_COLUMN_WIDTH } from "./types";
@@ -10,7 +10,8 @@ import type { ColumnId } from "./types";
 
 interface ColumnHeaderProps {
   colId: ColumnId;
-  label: string;
+  /** Header content — text for most columns, an icon for the Signed column. */
+  label: ReactNode;
   /** Current width as a CSS dimension string (px number or "1fr"). */
   width: string;
   isDraggable: boolean;

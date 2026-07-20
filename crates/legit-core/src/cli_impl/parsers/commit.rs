@@ -105,10 +105,68 @@ pub fn parse_cat_file(sha: &str, raw: &str) -> Result<ParsedCatFile, ParseError>
             message,
             timestamp: author_ts,
             signature: None, // filled in by the caller after verify-commit
+            has_signature: has_sig,
             decorations: vec![],
         },
         has_signature_header: has_sig,
         raw_object: raw.to_string(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Batched signature-presence scan (`cat-file --batch`)
+// ---------------------------------------------------------------------------
+
+/// SHAs whose commit objects carry a signature header, from the raw stdout of
+/// `git cat-file --batch` fed one SHA per line. Presence only - the same
+/// header set `parse_cat_file` treats as verification-worthy (`gpgsig`,
+/// `gpgsig-sha256`, `mergetag`) - detected without ever spawning a verifier;
+/// this is what makes per-row "signed" chips affordable where `%G?` was not.
+///
+/// Operates on BYTES: `--batch` frames each object as
+/// `<sha> <type> <size>\n<size raw bytes>\n`, and commit objects may contain
+/// non-UTF-8 identities, so byte counts must be applied to the unconverted
+/// stream (`run_with_stdin_bytes`). Unknown SHAs print `<sha> missing` and are
+/// skipped. Best-effort by design - the log must render even if enrichment
+/// misbehaves - so a framing inconsistency ends the scan and returns what
+/// parsed so far instead of erroring.
+pub fn parse_batch_signature_presence(stdout: &[u8]) -> std::collections::HashSet<String> {
+    let mut signed = std::collections::HashSet::new();
+    let mut pos = 0usize;
+    while pos < stdout.len() {
+        // Header line: `<sha> <type> <size>` or `<sha> missing`.
+        let Some(nl) = stdout[pos..].iter().position(|&b| b == b'\n') else { break };
+        let Ok(header) = std::str::from_utf8(&stdout[pos..pos + nl]) else { break };
+        pos += nl + 1;
+        let mut fields = header.split(' ');
+        let (Some(sha), Some(kind)) = (fields.next(), fields.next()) else { break };
+        if kind == "missing" {
+            continue;
+        }
+        let Some(size) = fields.next().and_then(|s| s.parse::<usize>().ok()) else { break };
+        let Some(end) = pos.checked_add(size).filter(|&e| e <= stdout.len()) else { break };
+        if kind == "commit" && object_has_signature_header(&stdout[pos..end]) {
+            signed.insert(sha.to_string());
+        }
+        // +1: --batch appends a LF after each object's content.
+        pos = end + 1;
+    }
+    signed
+}
+
+/// True when a raw commit object's header section (everything before the
+/// first blank line) contains a signature header. Continuation lines start
+/// with a space, so a `gpgsig`-prefixed line IS the header, and the message
+/// (which could echo the word) is never scanned.
+fn object_has_signature_header(object: &[u8]) -> bool {
+    let headers_end = object
+        .windows(2)
+        .position(|w| w == b"\n\n")
+        .unwrap_or(object.len());
+    object[..headers_end].split(|&b| b == b'\n').any(|line| {
+        line.starts_with(b"gpgsig ")
+            || line.starts_with(b"gpgsig-sha256 ")
+            || line.starts_with(b"mergetag ")
     })
 }
 
@@ -218,10 +276,35 @@ pub fn parse_verify_commit(stderr: &str) -> Option<SignatureVerification> {
             if !matches!(status, SignatureStatus::Good | SignatureStatus::BadSignature) {
                 status = SignatureStatus::UnknownKey;
             }
-        } else if let Some(rest) = line.strip_prefix("[SSH:] GOOD_SIGNATURE ") {
-            status = SignatureStatus::Good;
-            signer = Some(rest.trim().to_string());
-        } else if line.starts_with("[SSH:] BAD_SIGNATURE") {
+        } else if let Some(rest) = line.strip_prefix("Good \"git\" signature") {
+            // SSH signatures (gpg.format=ssh). Captured LIVE from git 2.52
+            // (the previous "[SSH:] GOOD_SIGNATURE" match was assumed, wrong,
+            // and never emitted by real git - same lesson as ssh -T probing):
+            //   Good "git" signature for <principal> with <TYPE> key <fp>
+            //   Good "git" signature with <TYPE> key <fp>
+            // The "for <principal>" form means the signer matched
+            // allowedSignersFile; without it the signature is VALID but the
+            // signer is not trusted (accompanied by "No principal matched."
+            // and/or "Unable to open allowed keys file ...") -> Untrusted.
+            if let Some(i) = rest.rfind(" key ") {
+                key_id = Some(KeyId(rest[i + 5..].trim().to_string()));
+            }
+            if let Some(after_for) = rest.strip_prefix(" for ") {
+                status = SignatureStatus::Good;
+                let principal = after_for
+                    .rfind(" with ")
+                    .map(|i| &after_for[..i])
+                    .unwrap_or(after_for);
+                signer = Some(principal.trim().to_string());
+            } else if status == SignatureStatus::NoSignature {
+                status = SignatureStatus::Untrusted;
+            }
+        } else if line.starts_with("Could not verify signature")
+            || line.starts_with("Signature verification failed")
+        {
+            // Tampered content / corrupt ssh signature (captured live):
+            //   Could not verify signature.
+            //   Signature verification failed: incorrect signature
             status = SignatureStatus::BadSignature;
         }
     }
@@ -391,10 +474,135 @@ mod tests {
         assert!(parse_verify_commit("  \n  ").is_none());
     }
 
+    // SSH verification outputs below were captured LIVE from
+    // `git verify-commit --raw` (git 2.52, gpg.format=ssh) - never encode
+    // these from documentation (the old "[SSH:] GOOD_SIGNATURE" format was
+    // assumed, wrong, and classified every ssh-signed commit as NoSignature).
+
     #[test]
-    fn verify_ssh_good() {
-        let stderr = "[SSH:] GOOD_SIGNATURE SHA256:abc123key VALID\n";
+    fn verify_ssh_good_trusted_principal() {
+        // Signer matched allowedSignersFile; exit code 0.
+        let stderr = "Good \"git\" signature for simon@example.com with ED25519 key SHA256:OfRkdI/ogfETTsQmkALPa6b4UqaINmHWzWIzUd0NKcU\n";
         let v = parse_verify_commit(stderr).unwrap();
         assert_eq!(v.status, SignatureStatus::Good);
+        assert_eq!(v.signer.as_deref(), Some("simon@example.com"));
+        assert_eq!(
+            v.key_id.unwrap().0,
+            "SHA256:OfRkdI/ogfETTsQmkALPa6b4UqaINmHWzWIzUd0NKcU"
+        );
+    }
+
+    #[test]
+    fn verify_ssh_valid_but_unmatched_principal_is_untrusted() {
+        // Valid signature, but the key is not in allowedSignersFile; exit 1.
+        let stderr = "Good \"git\" signature with ED25519 key SHA256:K/GIgJD4qQ6D3G0fuetL+HRwJQU6BU/EFK2wHNl/I0o\nNo principal matched.\n";
+        let v = parse_verify_commit(stderr).unwrap();
+        assert_eq!(v.status, SignatureStatus::Untrusted);
+        assert!(v.signer.is_none());
+        assert_eq!(
+            v.key_id.unwrap().0,
+            "SHA256:K/GIgJD4qQ6D3G0fuetL+HRwJQU6BU/EFK2wHNl/I0o"
+        );
+    }
+
+    #[test]
+    fn verify_ssh_missing_signers_file_is_untrusted() {
+        // gpg.ssh.allowedSignersFile unset/empty; exit 1.
+        let stderr = "Good \"git\" signature with ED25519 key SHA256:OfRkdI/ogfETTsQmkALPa6b4UqaINmHWzWIzUd0NKcU\nUnable to open allowed keys file \"\": No such file or directory\nsig_find_principals: sshsig_find_principal: No such file or directory\nNo principal matched.\n";
+        let v = parse_verify_commit(stderr).unwrap();
+        assert_eq!(v.status, SignatureStatus::Untrusted);
+    }
+
+    #[test]
+    fn verify_ssh_bad_signature() {
+        // Tampered commit content; exit 1.
+        let stderr = "Could not verify signature.\nSignature verification failed: incorrect signature\n";
+        let v = parse_verify_commit(stderr).unwrap();
+        assert_eq!(v.status, SignatureStatus::BadSignature);
+    }
+
+    // --- parse_batch_signature_presence -----------------------------------
+
+    const SHA_B: &str = "def456abc123def456abc123def456abc123def4";
+
+    /// One `cat-file --batch` entry: `<sha> commit <byte-size>\n<object>\n`.
+    fn batch_entry(sha: &str, object: &[u8]) -> Vec<u8> {
+        let mut v = format!("{sha} commit {}\n", object.len()).into_bytes();
+        v.extend_from_slice(object);
+        v.push(b'\n');
+        v
+    }
+
+    const SIGNED_HEADERS: &str =
+        "gpgsig -----BEGIN PGP SIGNATURE-----\n iQEcBAABCAAG...\n -----END PGP SIGNATURE-----\n";
+
+    #[test]
+    fn batch_presence_flags_only_signed_commits() {
+        let mut out = batch_entry(SHA, object(SIGNED_HEADERS, "Signed\n").as_bytes());
+        out.extend(batch_entry(SHA_B, object("", "Unsigned\n").as_bytes()));
+        let signed = parse_batch_signature_presence(&out);
+        assert!(signed.contains(SHA));
+        assert!(!signed.contains(SHA_B));
+    }
+
+    #[test]
+    fn batch_presence_detects_sha256_and_mergetag_variants() {
+        for hdr in ["gpgsig-sha256 -----BEGIN...\n more\n", "mergetag object abc\n type commit\n"] {
+            let out = batch_entry(SHA, object(hdr, "Msg\n").as_bytes());
+            assert!(parse_batch_signature_presence(&out).contains(SHA), "header {hdr:?}");
+        }
+    }
+
+    #[test]
+    fn batch_presence_skips_missing_entries() {
+        let mut out = b"0000000000000000000000000000000000000000 missing\n".to_vec();
+        out.extend(batch_entry(SHA, object(SIGNED_HEADERS, "After missing\n").as_bytes()));
+        let signed = parse_batch_signature_presence(&out);
+        assert_eq!(signed.len(), 1);
+        assert!(signed.contains(SHA));
+    }
+
+    #[test]
+    fn batch_presence_never_scans_the_message() {
+        // A message line starting with "gpgsig " must not count: only the
+        // header section (before the first blank line) is signature-bearing.
+        let obj = object("", "gpgsig looks like a header but is message text\n");
+        let out = batch_entry(SHA, obj.as_bytes());
+        assert!(parse_batch_signature_presence(&out).is_empty());
+    }
+
+    #[test]
+    fn batch_presence_survives_non_utf8_object_content() {
+        // Byte-size framing must hold even when an object's identity bytes
+        // are not valid UTF-8 (0xE9 = latin-1 'é'): the NEXT entry still
+        // parses. This is why the scan runs on raw bytes.
+        let mut latin1 = object("", "Caf").into_bytes();
+        latin1.push(0xE9);
+        latin1.push(b'\n');
+        let mut out = batch_entry(SHA_B, &latin1);
+        out.extend(batch_entry(SHA, object(SIGNED_HEADERS, "Signed\n").as_bytes()));
+        let signed = parse_batch_signature_presence(&out);
+        assert!(signed.contains(SHA));
+        assert!(!signed.contains(SHA_B));
+    }
+
+    #[test]
+    fn batch_presence_ignores_non_commit_objects_and_truncation() {
+        // A non-commit object is never flagged even when its content happens
+        // to carry a gpgsig-looking line; truncated output (framing claims
+        // more bytes than present) ends the scan without panicking.
+        let obj = object(SIGNED_HEADERS, "Ok\n");
+        let mut out = format!("{SHA} tag {}\n", obj.len()).into_bytes();
+        out.extend_from_slice(obj.as_bytes());
+        out.push(b'\n');
+        assert!(parse_batch_signature_presence(&out).is_empty());
+
+        let truncated = format!("{SHA} commit 5000\ntoo short").into_bytes();
+        assert!(parse_batch_signature_presence(&truncated).is_empty());
+    }
+
+    #[test]
+    fn batch_presence_empty_input() {
+        assert!(parse_batch_signature_presence(b"").is_empty());
     }
 }

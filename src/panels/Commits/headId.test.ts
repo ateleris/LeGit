@@ -13,6 +13,7 @@ function commit(id: string, decorations: RefDecoration[] = []): Commit {
     message: id,
     timestamp: 0,
     signature: null,
+    has_signature: false,
     decorations,
   };
 }

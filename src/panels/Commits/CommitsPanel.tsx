@@ -30,6 +30,7 @@ import {
   repoLog,
   repoPull,
   repoPush,
+  repoSignaturePresence,
   repoStatus,
   repoTrackingStatus,
   repoStashBranch,
@@ -44,7 +45,8 @@ import type { Branch, Commit, CommitId, FileStatus, MergeOptions, PullStrategy, 
 import { useRemoteProgressStore } from "../../store/remoteProgress";
 import { formatAppError, gitErrorKind } from "../../lib/types";
 import { notify } from "../../store/notifications";
-import { BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon, StashIcon } from "../../icons";
+import { BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon, SignedIcon, StashIcon } from "../../icons";
+import { useSignatureStore } from "../../store/signatures";
 import { formatAbsolute, formatFull, formatRelative } from "../../lib/time";
 import { RefsCell } from "./cells/RefsCell";
 import { InlineRenameInput } from "./cells/InlineRenameInput";
@@ -82,6 +84,7 @@ import type { ColumnId } from "./columns/types";
 const COLUMN_LABELS: Record<ColumnId, string> = {
   refs: "Refs",
   graph: "Graph",
+  signed: "Signed",
   subject: "Subject",
   date: "Date",
   author: "Author",
@@ -300,6 +303,30 @@ export function CommitsPanel() {
   const tagRemote = useMemo(() => pickTagRemote(remotesList), [remotesList]);
   const remoteNames = useMemo(() => remotesList.map((r) => r.name), [remotesList]);
 
+  // Verification verdicts for every commit inspected in Commit Details this
+  // session (the list itself never verifies - it only knows presence). Each
+  // recorded verdict upgrades that row's neutral "signed" chip permanently,
+  // not just while the row is selected.
+  const verifiedSignatures = useSignatureStore((s) => (repo ? s.byRepo[repo.id] : undefined));
+
+  // Signature PRESENCE for the Signed column - pay-per-view: queried only
+  // while the column is visible, as a second pass so the list itself renders
+  // without waiting (and without the extra subprocess when hidden). Presence
+  // is immutable per SHA, hence staleTime: Infinity and no watcher
+  // invalidation; new commits change the key, and the backend's per-SHA cache
+  // makes that refetch pay only for unseen SHAs. keepPreviousData stops the
+  // chips from blinking out while the refetch runs.
+  const signedColumnVisible = !colState.hidden.includes("signed");
+  const commitIds = useMemo(() => commits.map((c) => c.id), [commits]);
+  const { data: signedIds } = useQuery<CommitId[]>({
+    queryKey: [repo?.id, "sig-presence", commitIds],
+    queryFn: () => repoSignaturePresence(repo!.id, commitIds),
+    enabled: !!repo && signedColumnVisible && commitIds.length > 0,
+    staleTime: Infinity,
+    placeholderData: keepPreviousData,
+  });
+  const signedSet = useMemo(() => new Set(signedIds ?? []), [signedIds]);
+
   // All mutating row/menu actions (merge, sequencer, branch/tag/stash ops,
   // checkouts) live in this hook; every returned callback is stable.
   const actions = useCommitActions(repo, remoteNames);
@@ -471,6 +498,7 @@ export function CommitsPanel() {
       message: `Uncommitted changes (${status.length} ${noun})`,
       timestamp: 0,
       signature: null,
+      has_signature: false,
       decorations: [],
     };
   }, [status.length, headId]);
@@ -742,8 +770,13 @@ export function CommitsPanel() {
     (id) => !colState.hidden.includes(id)
   );
 
+  // Signed column: fixed one-icon width, derived from the UI font size so it
+  // scales with the rest of the chrome (icons render at 1em of TEXT_SIZE).
+  const signedColWidth = Math.round(TEXT_SIZE * 1.3);
+
   function colWidth(id: ColumnId): string {
     if (id === "graph") return `${graphColWidth}px`;
+    if (id === "signed") return `${signedColWidth}px`;
     if (id === "subject") return "1fr";
     const w = colState.widths[id] ?? DEFAULT_WIDTHS[id] ?? 100;
     return `${w}px`;
@@ -867,7 +900,16 @@ export function CommitsPanel() {
             <ColumnHeader
               key={colId}
               colId={colId}
-              label={COLUMN_LABELS[colId]}
+              // The Signed column is icon-only (one icon wide): its header is
+              // the same key glyph the cells use. COLUMN_LABELS.signed still
+              // labels it in the show/hide menu.
+              label={
+                colId === "signed" ? (
+                  <SignedIcon aria-label="Signed" style={{ display: "block" }} />
+                ) : (
+                  COLUMN_LABELS[colId]
+                )
+              }
               width={colWidth(colId)}
               isDraggable={true}
               isResizable={!NON_RESIZABLE.includes(colId)}
@@ -1166,6 +1208,24 @@ export function CommitsPanel() {
                           />
                         </div>
                       );
+                    case "signed":
+                      // Icon-only column: presence chip, upgraded to the
+                      // verified verdict once the commit has been inspected
+                      // in Commit Details (session signature cache).
+                      return (
+                        <div
+                          key="signed"
+                          style={{ overflow: "hidden", display: "flex", alignItems: "center" }}
+                        >
+                          {!isWorkingDir && (
+                            <SignatureBadge
+                              signature={verifiedSignatures?.[commit.id] ?? null}
+                              hasSignature={signedSet.has(commit.id)}
+                              size={TEXT_SIZE}
+                            />
+                          )}
+                        </div>
+                      );
                     case "subject": {
                       // The checked-out commit's subject renders bold — the
                       // row-level counterpart of the dot on the current
@@ -1210,9 +1270,6 @@ export function CommitsPanel() {
                             overflow: "hidden",
                           }}
                         >
-                          {!isWorkingDir && (
-                            <SignatureBadge signature={commit.signature} size={TEXT_SIZE} />
-                          )}
                           <span
                             style={{
                               overflow: "hidden",

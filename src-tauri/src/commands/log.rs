@@ -83,6 +83,26 @@ pub async fn repo_commit_files(
         .map_err(AppError::Git)
 }
 
+/// The subset of `commit_ids` that carry a signature header - presence only,
+/// via one batched raw-header scan (per-SHA cached; no verifier spawns).
+/// Backs the Commits panel's Signed column; the frontend queries this only
+/// while that column is visible.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_signature_presence(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    commit_ids: Vec<String>,
+) -> Result<Vec<CommitId>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    let ids: Vec<CommitId> = commit_ids.into_iter().map(CommitId::new).collect();
+    session
+        .backend
+        .signature_presence(&ids)
+        .await
+        .map_err(AppError::Git)
+}
+
 /// Fetch full details for a single commit.
 #[tauri::command]
 #[specta::specta]

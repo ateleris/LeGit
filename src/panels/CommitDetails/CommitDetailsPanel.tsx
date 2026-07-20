@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { PanelError } from "../shared/PanelError";
 import { useQuery } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
+import { useSignatureStore } from "../../store/signatures";
 import { useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
@@ -39,6 +40,15 @@ export function CommitDetailsPanel() {
     enabled: !!repo && !!selectedId,
     staleTime: 60_000,
   });
+
+  // Record the verification result in the session signature cache so the
+  // Commits list keeps showing the verified verdict chip on every commit
+  // that has been inspected here (not just the selected row).
+  useEffect(() => {
+    if (repo && data?.commit.signature) {
+      useSignatureStore.getState().record(repo.id, data.commit.id, data.commit.signature);
+    }
+  }, [repo, data]);
 
   usePanelFocusEffect(useCallback(() => { refetch(); }, [refetch]));
 

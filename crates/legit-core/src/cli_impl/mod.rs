@@ -71,11 +71,20 @@ mod flow_tests;
 /// fake; production code uses the default `GitRunner` and is unaffected.
 pub struct GitCliBackend<E: GitExecutor = GitRunner> {
     runner: Arc<RwLock<Arc<E>>>,
+    /// Per-SHA signature-*presence* results (see `signature_presence`).
+    /// Presence is immutable per SHA, so entries are never invalidated: a
+    /// repeat query only pays the batched `cat-file` for commits not seen
+    /// this session. std Mutex - held only for map access, never across an
+    /// await.
+    sig_presence: std::sync::Mutex<HashMap<String, bool>>,
 }
 
 impl<E: GitExecutor> GitCliBackend<E> {
     pub fn new(runner: Arc<RwLock<Arc<E>>>) -> Self {
-        Self { runner }
+        Self {
+            runner,
+            sig_presence: std::sync::Mutex::new(HashMap::new()),
+        }
     }
 
     /// Snapshot the current runner without holding the lock during I/O.
@@ -978,6 +987,12 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
 
         let mut commits = parsers::log::parse_log(&output.stdout).map_err(GitError::from)?;
 
+        // NOTE: the list deliberately does NOT carry signature data - not
+        // even presence. Presence is a separate, pay-per-view pass
+        // (`signature_presence`, fetched only while the Signed column is
+        // visible), and verification stays on-demand in `commit_details`.
+        // LOG_FORMAT must never grow %G? (it spawns a verifier per commit).
+
         // Inject stashes as synthetic nodes so they appear in the graph. Only for
         // the full-graph view, and best-effort: a stash-list failure must never
         // break the commit log itself.
@@ -991,6 +1006,44 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         }
 
         Ok(commits)
+    }
+
+    async fn signature_presence(&self, ids: &[CommitId]) -> Result<Vec<CommitId>, GitError> {
+        // One `cat-file --batch` over the not-yet-seen SHAs (byte-safe: the
+        // output frames objects by byte count and may contain non-UTF-8
+        // identities), then answer everything from the per-SHA cache -
+        // presence is immutable, so a repeat query for the same page costs
+        // zero subprocesses.
+        let unknown: Vec<String> = {
+            let cache = self.sig_presence.lock().unwrap();
+            ids.iter()
+                .filter(|id| !cache.contains_key(id.as_str()))
+                .map(|id| id.as_str().to_string())
+                .collect()
+        };
+        if !unknown.is_empty() {
+            let runner = self.runner().await;
+            let stdin = unknown.join("\n") + "\n";
+            let out = runner.run_with_stdin_bytes(&["cat-file", "--batch"], &stdin).await?;
+            if !out.success {
+                return Err(GitError::CommandFailed {
+                    exit_code: out.exit_code.unwrap_or(-1),
+                    stderr: out.stderr.trim().to_string(),
+                });
+            }
+            let signed = parsers::commit::parse_batch_signature_presence(&out.stdout);
+            let mut cache = self.sig_presence.lock().unwrap();
+            for sha in unknown {
+                let is_signed = signed.contains(&sha);
+                cache.insert(sha, is_signed);
+            }
+        }
+        let cache = self.sig_presence.lock().unwrap();
+        Ok(ids
+            .iter()
+            .filter(|id| cache.get(id.as_str()).copied().unwrap_or(false))
+            .cloned()
+            .collect())
     }
 
     async fn commit_details(&self, id: &CommitId) -> Result<CommitDetails, GitError> {
@@ -2519,6 +2572,7 @@ fn stash_commit(entry: &StashEntry) -> Commit {
         message: entry.message.clone(),
         timestamp: entry.timestamp,
         signature: None,
+        has_signature: false,
         decorations: vec![RefDecoration::Stash(entry.selector.clone())],
     }
 }
@@ -3975,6 +4029,7 @@ mod tests {
             message: id.into(),
             timestamp: author_ts,
             signature: None,
+            has_signature: false,
             decorations: vec![],
         }
     }

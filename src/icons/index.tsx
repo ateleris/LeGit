@@ -21,6 +21,7 @@ import {
   GitBranch,
   GitBranchPlus,
   Globe,
+  KeyRound,
   Link2,
   Lock,
   Unlink2,
@@ -69,6 +70,7 @@ export const StashIcon = withDefaults(Archive, "StashIcon");
 export const LinkIcon = withDefaults(Link2, "LinkIcon");
 export const UnlinkIcon = withDefaults(Unlink2, "UnlinkIcon");
 export const CheckIcon = withDefaults(Check, "CheckIcon");
+export const SignedIcon = withDefaults(KeyRound, "SignedIcon");
 export const WarningIcon = withDefaults(TriangleAlert, "WarningIcon");
 // Working Changes row actions.
 export const StageIcon = withDefaults(Plus, "StageIcon");

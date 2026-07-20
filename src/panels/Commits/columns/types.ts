@@ -5,7 +5,7 @@
 // See DESIGN-v0.4.md §C.5 for default order and §I.1 for the versioned
 // persistence schema.
 
-export type ColumnId = "refs" | "graph" | "subject" | "date" | "author" | "sha";
+export type ColumnId = "refs" | "graph" | "signed" | "subject" | "date" | "author" | "sha";
 
 /** Runtime, in-memory column state held by `useColumnState`. */
 export interface ColumnState {
@@ -30,6 +30,7 @@ export interface ColumnPreferences {
 export const DEFAULT_ORDER: ColumnId[] = [
   "refs",
   "graph",
+  "signed",
   "subject",
   "date",
   "author",
@@ -48,6 +49,7 @@ export const DEFAULT_WIDTHS: Partial<Record<ColumnId, number>> = {
 export const ALL_COLUMN_IDS: readonly ColumnId[] = [
   "refs",
   "graph",
+  "signed",
   "subject",
   "date",
   "author",
@@ -57,10 +59,11 @@ export const ALL_COLUMN_IDS: readonly ColumnId[] = [
 /**
  * Columns that are *not* user-resizable.
  * - Graph: width is dynamic, driven by the number of visible lanes.
+ * - Signed: fixed one-icon width, derived from the UI font size.
  * - Subject: always the elastic "1fr" filler — a resize handle would have no
  *   effect (the grid ignores a px width for it).
  */
-export const NON_RESIZABLE: ColumnId[] = ["graph", "subject"];
+export const NON_RESIZABLE: ColumnId[] = ["graph", "signed", "subject"];
 
 /**
  * Columns that cannot be hidden.

@@ -18,7 +18,7 @@
 //! side channel through the runner's process-wide observer - so the default
 //! implementation just delegates and scripted fakes need no changes.
 
-use crate::runner::{GitRunner, OperationId, RunOutput, RunnerError};
+use crate::runner::{GitRunner, OperationId, RunOutput, RunOutputBytes, RunnerError};
 use async_trait::async_trait;
 
 #[async_trait]
@@ -40,6 +40,26 @@ pub trait GitExecutor: Send + Sync + 'static {
         args: &[&str],
         stdin_data: &str,
     ) -> Result<RunOutput, RunnerError>;
+
+    /// `run_with_stdin` with RAW stdout bytes, for byte-size-framed output
+    /// (`cat-file --batch`) where a lossy UTF-8 conversion would corrupt the
+    /// declared byte counts. The default delegates to `run_with_stdin` (fine
+    /// for scripted fakes, whose canned output is valid UTF-8); `GitRunner`
+    /// overrides it with the truly byte-safe path.
+    async fn run_with_stdin_bytes(
+        &self,
+        args: &[&str],
+        stdin_data: &str,
+    ) -> Result<RunOutputBytes, RunnerError> {
+        let out = self.run_with_stdin(args, stdin_data).await?;
+        Ok(RunOutputBytes {
+            stdout: out.stdout.into_bytes(),
+            stderr: out.stderr,
+            exit_code: out.exit_code,
+            success: out.success,
+            duration_ms: out.duration_ms,
+        })
+    }
 
     /// Run with per-invocation environment overrides that win over the
     /// hardened base env (e.g. `GIT_EDITOR=true` for `merge/rebase
@@ -84,6 +104,14 @@ impl GitExecutor for GitRunner {
         stdin_data: &str,
     ) -> Result<RunOutput, RunnerError> {
         GitRunner::run_with_stdin(self, args, stdin_data).await
+    }
+
+    async fn run_with_stdin_bytes(
+        &self,
+        args: &[&str],
+        stdin_data: &str,
+    ) -> Result<RunOutputBytes, RunnerError> {
+        GitRunner::run_with_stdin_bytes(self, args, stdin_data).await
     }
 
     async fn run_with_env(

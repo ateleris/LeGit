@@ -27,6 +27,13 @@ pub trait GitBackend: Send + Sync {
 
     async fn log(&self, opts: LogOptions) -> Result<Vec<Commit>, GitError>;
 
+    /// The subset of `ids` whose commit objects carry a signature header
+    /// (`gpgsig`/`gpgsig-sha256`/`mergetag`) - PRESENCE only, detected via one
+    /// batched raw-header scan and cached per SHA; no verifier ever spawns
+    /// (verification stays on-demand in `commit_details`). Backs the Commits
+    /// panel's Signed column, fetched only while that column is visible.
+    async fn signature_presence(&self, ids: &[CommitId]) -> Result<Vec<CommitId>, GitError>;
+
     async fn commit_details(&self, id: &CommitId) -> Result<CommitDetails, GitError>;
 
     /// Files changed by `id`, relative to its first parent (or the empty tree

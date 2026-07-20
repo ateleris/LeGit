@@ -10,6 +10,7 @@ import type {
   Branch,
   Commit,
   CommitDetails,
+  CommitId,
   GlobalSettings,
   LaneLock,
   RepoSettings,
@@ -446,6 +447,12 @@ export const repoStatus = (repoId: string) =>
 
 export const repoCommitDetails = (repoId: string, commitId: string) =>
   invoke<CommitDetails>("repo_commit_details", { repoId, commitId });
+
+/** Subset of `commitIds` whose objects carry a signature header (presence
+ *  only, batched + cached backend-side; never verifies). Queried by the
+ *  Commits panel only while the Signed column is visible. */
+export const repoSignaturePresence = (repoId: string, commitIds: string[]) =>
+  invoke<CommitId[]>("repo_signature_presence", { repoId, commitIds });
 
 // --- inspection: compare / search / blame ---
 

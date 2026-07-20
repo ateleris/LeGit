@@ -30,8 +30,9 @@ function defaultState(): ColumnState {
  * Validate raw JSON from disk against our schema. Returns a ColumnState if the
  * input is a well-formed `legit-column-prefs` v1 document with all-known
  * ColumnId values; returns null otherwise (caller substitutes defaults).
+ * Exported for unit tests (the missing-column insertion is decision logic).
  */
-function parsePreferences(value: unknown): ColumnState | null {
+export function parsePreferences(value: unknown): ColumnState | null {
   if (!value || typeof value !== "object") return null;
   const obj = value as Record<string, unknown>;
   if (obj.format !== "legit-commits-columns") return null;
@@ -60,10 +61,24 @@ function parsePreferences(value: unknown): ColumnState | null {
   const seenOrder = new Set(order);
   if (seenOrder.size !== order.length) return null;
 
-  // Forward-compatible: if a future version drops a column, fill from defaults
-  // so the user doesn't end up with an empty header row after downgrading.
+  // Fill in defaults the document doesn't know: columns ADDED by this build
+  // (persisted prefs predate them) and columns restored after a downgrade.
+  // Each missing id is inserted at its default-relative position - right
+  // after the nearest preceding default column the user has - instead of
+  // being appended, so a new column shows up where the default layout puts
+  // it rather than dangling at the far right.
   for (const id of DEFAULT_ORDER) {
-    if (!seenOrder.has(id)) order.push(id);
+    if (seenOrder.has(id)) continue;
+    let insertAt = 0;
+    for (let i = DEFAULT_ORDER.indexOf(id) - 1; i >= 0; i--) {
+      const pos = order.indexOf(DEFAULT_ORDER[i]);
+      if (pos !== -1) {
+        insertAt = pos + 1;
+        break;
+      }
+    }
+    order.splice(insertAt, 0, id);
+    seenOrder.add(id);
   }
 
   // Keep only hidden ids that exist in the resolved order.

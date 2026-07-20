@@ -71,6 +71,12 @@ pub struct Commit {
     /// Author timestamp (Unix seconds).
     pub timestamp: i64,
     pub signature: Option<SignatureVerification>,
+    /// Presence-only: the raw commit object carries a signature header
+    /// (`gpgsig`/`gpgsig-sha256`/`mergetag`). Detected by the commit list's
+    /// batched header scan - NOT a verification result (`signature` is, and
+    /// stays on-demand; the bulk log must never verify, see LOG_FORMAT).
+    #[serde(default)]
+    pub has_signature: bool,
     #[serde(default)]
     pub decorations: Vec<RefDecoration>,
 }

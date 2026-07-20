@@ -114,8 +114,10 @@ fn parse_record(record: &str) -> Result<Commit, ParseError> {
         message,
         timestamp: author_ts,
         // The commit list does not verify signatures (too slow per-row); the
-        // signature is populated on demand by `commit_details`.
+        // signature is populated on demand by `commit_details`. Signature
+        // PRESENCE is filled in afterwards by `log`'s batched header scan.
         signature: None,
+        has_signature: false,
         decorations,
     })
 }

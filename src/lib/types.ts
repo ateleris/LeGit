@@ -944,6 +944,9 @@ export interface Commit {
   message: string;
   timestamp: number;
   signature: SignatureVerification | null;
+  /** Presence-only: the raw object carries a signature header. NOT a
+   *  verification result (that stays on-demand in commit details). */
+  has_signature: boolean;
   decorations?: RefDecoration[];
 }
 
