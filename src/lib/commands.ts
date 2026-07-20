@@ -5,6 +5,7 @@
 // keep the shape (one exported async function per command) compatible.
 
 import { invoke } from "@tauri-apps/api/core";
+import type { CommitDateFormat } from "./time";
 import type {
   Branch,
   Commit,
@@ -245,6 +246,15 @@ export const setCommitAvatars = (enabled: boolean) =>
 
 export const setDiffSyntaxHighlighting = (enabled: boolean) =>
   invoke<null>("set_diff_syntax_highlighting", { enabled });
+
+export const setCommitDateAbsolute = (enabled: boolean) =>
+  invoke<null>("set_commit_date_absolute", { enabled });
+
+export const setCommitDateFormat = (format: CommitDateFormat) =>
+  invoke<null>("set_commit_date_format", { format });
+
+export const setCommitDateShowTime = (enabled: boolean) =>
+  invoke<null>("set_commit_date_show_time", { enabled });
 
 export const setSuppressedAutoOpenPanels = (panels: string[]) =>
   invoke<null>("set_suppressed_auto_open_panels", { panels });

@@ -7,7 +7,8 @@
 
 use crate::error::AppError;
 use crate::state::{
-    max_commits_dot_radius, min_commits_row_height, AppState, GlobalSettings, RegionPlacement,
+    max_commits_dot_radius, min_commits_row_height, AppState, CommitDateFormat, GlobalSettings,
+    RegionPlacement,
 };
 use legit_core::SwitchDirtyBehavior;
 use serde::{Deserialize, Serialize};
@@ -234,6 +235,42 @@ pub async fn set_diff_syntax_highlighting(
 ) -> Result<(), AppError> {
     state.mutate_global(|s| {
         s.diff_syntax_highlighting = enabled;
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_commit_date_absolute(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state.mutate_global(|s| {
+        s.commit_date_absolute = enabled;
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_commit_date_format(
+    state: tauri::State<'_, AppState>,
+    format: CommitDateFormat,
+) -> Result<(), AppError> {
+    state.mutate_global(|s| {
+        s.commit_date_format = format;
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_commit_date_show_time(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state.mutate_global(|s| {
+        s.commit_date_show_time = enabled;
     })
     .await
 }

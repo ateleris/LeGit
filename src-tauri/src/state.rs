@@ -58,6 +58,23 @@ pub enum RegionPlacement {
     Left,
 }
 
+/// Absolute date format for the Commits panel's Date column (applies when
+/// `commit_date_absolute` is on). Rendering lives in the frontend
+/// (`src/lib/time.ts`); this only persists the choice.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum CommitDateFormat {
+    /// ISO 8601: 2026-07-20 14:30
+    #[default]
+    Iso,
+    /// Swiss/German: 20.07.2026 14:30
+    Swiss,
+    /// UK/European: 20/07/2026 14:30
+    Uk,
+    /// US: 07/20/2026 2:30 PM
+    Us,
+}
+
 /// Default minutes between background auto-fetches.
 fn default_auto_fetch_interval() -> u32 {
     15
@@ -255,6 +272,17 @@ pub struct GlobalSettings {
     /// parses each hunk's sides on the UI thread, so it is opt-in.
     #[serde(default)]
     pub diff_syntax_highlighting: bool,
+    /// Show the full author datetime in the Commits panel's Date column
+    /// instead of the compact relative form (default off = relative).
+    #[serde(default)]
+    pub commit_date_absolute: bool,
+    /// Which absolute format the Date column uses (when `commit_date_absolute`).
+    #[serde(default)]
+    pub commit_date_format: CommitDateFormat,
+    /// Whether the absolute Date column includes the time of day (on by
+    /// default; off shows the date only). Ignored while the column is relative.
+    #[serde(default = "default_true")]
+    pub commit_date_show_time: bool,
     /// Panel IDs the user has opted out of auto-opening: a `summon` to one of
     /// these degrades to `notifyIfOpen` (updates it only if already open, never
     /// pops it open). Empty = every panel auto-opens as before.
@@ -319,6 +347,9 @@ impl Default for GlobalSettings {
             push_recurse_submodules: None,
             commit_avatars: false,
             diff_syntax_highlighting: false,
+            commit_date_absolute: false,
+            commit_date_format: CommitDateFormat::Iso,
+            commit_date_show_time: true,
             suppressed_auto_open_panels: vec![],
             working_changes_section_order: vec![],
             git_profiles_doc: GitProfilesDoc::default(),

@@ -12,6 +12,9 @@ import {
   setExternalEditorCommand,
   setCommitAvatars,
   setDiffSyntaxHighlighting,
+  setCommitDateAbsolute,
+  setCommitDateFormat,
+  setCommitDateShowTime,
   setSuppressedAutoOpenPanels,
   setWorkingChangesSectionOrder,
   saveSwitchDirtyBehavior,
@@ -27,6 +30,7 @@ import type {
   RegionPlacement,
   SwitchDirtyBehavior,
 } from "../lib/types";
+import type { CommitDateFormat } from "../lib/time";
 
 /** Defaults + bounds for the Commits-panel graph metrics. Mirror the backend
  * clamps in `save_commits_graph_metrics`. */
@@ -104,6 +108,9 @@ interface SettingsStore {
   setExternalEditorCommand: (command: string | null) => Promise<void>;
   setCommitAvatars: (enabled: boolean) => Promise<void>;
   setDiffSyntaxHighlighting: (enabled: boolean) => Promise<void>;
+  setCommitDateAbsolute: (enabled: boolean) => Promise<void>;
+  setCommitDateFormat: (format: CommitDateFormat) => Promise<void>;
+  setCommitDateShowTime: (enabled: boolean) => Promise<void>;
   setSuppressedAutoOpenPanels: (panels: string[]) => Promise<void>;
   setWorkingChangesSectionOrder: (order: string[]) => Promise<void>;
   setSwitchDirtyBehavior: (behavior: SwitchDirtyBehavior) => Promise<void>;
@@ -216,6 +223,24 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     await setDiffSyntaxHighlighting(enabled);
     const s = get().settings;
     if (s) set({ settings: { ...s, diff_syntax_highlighting: enabled } });
+  },
+
+  async setCommitDateAbsolute(enabled) {
+    await setCommitDateAbsolute(enabled);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, commit_date_absolute: enabled } });
+  },
+
+  async setCommitDateFormat(format) {
+    await setCommitDateFormat(format);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, commit_date_format: format } });
+  },
+
+  async setCommitDateShowTime(enabled) {
+    await setCommitDateShowTime(enabled);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, commit_date_show_time: enabled } });
   },
 
   async setSuppressedAutoOpenPanels(panels) {

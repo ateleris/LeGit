@@ -6,6 +6,8 @@
 // authoritative source long-term; this file exists so the frontend
 // compiles before the first cargo build.
 
+import type { CommitDateFormat } from "./time";
+
 export type RepoId = string;
 
 export interface RepoSummary {
@@ -68,6 +70,16 @@ export interface GlobalSettings {
   commit_avatars?: boolean;
   /** Syntax-highlight code in the diff viewer (default off). */
   diff_syntax_highlighting?: boolean;
+  /** Show the full author datetime in the Commits panel's Date column instead
+   * of the compact relative form (default off = relative). */
+  commit_date_absolute?: boolean;
+  /** Which absolute format the Date column uses (when `commit_date_absolute`).
+   * Mirrors the backend `CommitDateFormat`; the string union lives in
+   * `lib/time.ts` next to the formatter. */
+  commit_date_format?: CommitDateFormat;
+  /** Whether the absolute Date column includes the time of day (default on;
+   * off shows the date only). Ignored while the column is relative. */
+  commit_date_show_time?: boolean;
   /** Panel IDs the user opted out of auto-opening: a summon to one degrades to
    * notifyIfOpen (updates only if already open, never pops open). */
   suppressed_auto_open_panels?: string[];

@@ -9,6 +9,7 @@ import { useAppVersion } from "../../lib/appVersion";
 const LANE_LINK_KEY = "legit.commits-lane-link";
 import { formatAppError } from "../../lib/types";
 import type { ConfigScope, LineEndingsView, PushRecurseMode, RegionPlacement, SwitchDirtyBehavior } from "../../lib/types";
+import type { CommitDateFormat } from "../../lib/time";
 import { globalLineEndingsView, globalWriteLineEndings, setLineEndingChipsInChanges, setWarnOnLineEndingCommit } from "../../lib/commands";
 import { useGitStatusStore } from "../../store/git-status";
 import { GlobalProfilesSection } from "./GlobalProfilesSection";
@@ -306,6 +307,52 @@ function CommitsGraphSection() {
     }
   };
 
+  // Date column: relative ("2d ago", the default) vs the full author datetime,
+  // in a user-picked format.
+  const dateAbsolute = useSettingsStore((s) => s.settings?.commit_date_absolute ?? false);
+  const dateFormat = useSettingsStore((s) => s.settings?.commit_date_format ?? "iso");
+  const dateShowTime = useSettingsStore((s) => s.settings?.commit_date_show_time ?? true);
+  const setCommitDateAbsolute = useSettingsStore((s) => s.setCommitDateAbsolute);
+  const setCommitDateFormat = useSettingsStore((s) => s.setCommitDateFormat);
+  const setCommitDateShowTime = useSettingsStore((s) => s.setCommitDateShowTime);
+  const [savingDate, setSavingDate] = useState(false);
+  const toggleDateAbsolute = async () => {
+    setSavingDate(true);
+    try {
+      await setCommitDateAbsolute(!dateAbsolute);
+    } finally {
+      setSavingDate(false);
+    }
+  };
+  const selectDateFormat = async (format: CommitDateFormat) => {
+    setSavingDate(true);
+    try {
+      await setCommitDateFormat(format);
+    } finally {
+      setSavingDate(false);
+    }
+  };
+  const toggleDateShowTime = async () => {
+    setSavingDate(true);
+    try {
+      await setCommitDateShowTime(!dateShowTime);
+    } finally {
+      setSavingDate(false);
+    }
+  };
+  // Option labels are format patterns (YYYY-MM-DD style), tracking the time
+  // toggle so they always mirror the column's shape.
+  const datePattern = (format: CommitDateFormat) => {
+    const base = {
+      iso: "YYYY-MM-DD",
+      swiss: "DD.MM.YYYY",
+      uk: "DD/MM/YYYY",
+      us: "MM/DD/YYYY",
+    }[format];
+    if (!dateShowTime) return base;
+    return format === "us" ? `${base} h:mm AM/PM` : `${base} HH:mm`;
+  };
+
   const save = async (
     nextRow: number,
     nextLane: number,
@@ -430,6 +477,45 @@ function CommitsGraphSection() {
           disabled={saving}
           onCommit={(v) => save(effectiveRowHeight, effectiveLaneWidth, dotRadius, v)}
         />
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
+        <input
+          type="checkbox"
+          id="global-commit-date-absolute"
+          checked={dateAbsolute}
+          onChange={toggleDateAbsolute}
+          disabled={savingDate}
+        />
+        <label htmlFor="global-commit-date-absolute" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
+          Show the full date in the Date column instead of relative time
+        </label>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <label htmlFor="global-commit-date-format" style={{ fontSize: "var(--fz-lg)" }}>
+          Date format
+        </label>
+        <select
+          id="global-commit-date-format"
+          value={dateFormat}
+          disabled={savingDate || !dateAbsolute}
+          onChange={(e) => void selectDateFormat(e.target.value as CommitDateFormat)}
+        >
+          <option value="iso">{datePattern("iso")}</option>
+          <option value="swiss">{datePattern("swiss")}</option>
+          <option value="uk">{datePattern("uk")}</option>
+          <option value="us">{datePattern("us")}</option>
+        </select>
+        <input
+          type="checkbox"
+          id="global-commit-date-show-time"
+          checked={dateShowTime}
+          onChange={toggleDateShowTime}
+          disabled={savingDate || !dateAbsolute}
+          style={{ marginLeft: 8 }}
+        />
+        <label htmlFor="global-commit-date-show-time" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
+          Include the time of day
+        </label>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
         <input

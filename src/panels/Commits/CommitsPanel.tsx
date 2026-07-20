@@ -45,7 +45,7 @@ import { useRemoteProgressStore } from "../../store/remoteProgress";
 import { formatAppError, gitErrorKind } from "../../lib/types";
 import { notify } from "../../store/notifications";
 import { BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon, StashIcon } from "../../icons";
-import { formatFull, formatRelative } from "../../lib/time";
+import { formatAbsolute, formatFull, formatRelative } from "../../lib/time";
 import { RefsCell } from "./cells/RefsCell";
 import { InlineRenameInput } from "./cells/InlineRenameInput";
 import { SignatureBadge } from "./cells/SignatureBadge";
@@ -143,6 +143,11 @@ export function CommitsPanel() {
   // Opt-in author avatars in the commit dots (off by default — no Gravatar
   // request leaves the app unless the user enabled the setting).
   const AVATARS_ENABLED = useSettingsStore((s) => s.settings?.commit_avatars ?? false);
+  // Date column: full author datetime instead of the relative form (global
+  // setting), in the user's chosen format.
+  const DATE_ABSOLUTE = useSettingsStore((s) => s.settings?.commit_date_absolute ?? false);
+  const DATE_FORMAT = useSettingsStore((s) => s.settings?.commit_date_format ?? "iso");
+  const DATE_SHOW_TIME = useSettingsStore((s) => s.settings?.commit_date_show_time ?? true);
 
   // Render-time floors (the settings clamps only run on save): rows must
   // always clear a ref chip by 2px so chips on adjacent rows never touch —
@@ -1215,12 +1220,16 @@ export function CommitsPanel() {
                       return (
                         <span
                           key="date"
-                          // Exact author datetime (author's timezone) on hover;
-                          // the cell itself keeps the compact relative form.
+                          // Hover complements the cell: the exact author
+                          // datetime (author's timezone) when the cell is
+                          // relative, plus the relative form when the cell
+                          // shows the absolute date.
                           title={
                             isWorkingDir
                               ? undefined
-                              : formatFull(commit.timestamp, commit.author.tz_offset_minutes)
+                              : DATE_ABSOLUTE
+                                ? `${formatFull(commit.timestamp, commit.author.tz_offset_minutes)} (${formatRelative(commit.timestamp)})`
+                                : formatFull(commit.timestamp, commit.author.tz_offset_minutes)
                           }
                           style={{
                             fontSize: TEXT_SIZE,
@@ -1230,7 +1239,11 @@ export function CommitsPanel() {
                             whiteSpace: "nowrap",
                           }}
                         >
-                          {isWorkingDir ? "" : formatRelative(commit.timestamp)}
+                          {isWorkingDir
+                            ? ""
+                            : DATE_ABSOLUTE
+                              ? formatAbsolute(commit.timestamp, commit.author.tz_offset_minutes, DATE_FORMAT, DATE_SHOW_TIME)
+                              : formatRelative(commit.timestamp)}
                         </span>
                       );
                     case "author":

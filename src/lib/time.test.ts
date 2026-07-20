@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, afterEach } from "vitest";
-import { formatRelative, formatFull } from "./time";
+import { formatRelative, formatFull, formatAbsolute } from "./time";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -38,5 +38,39 @@ describe("formatFull", () => {
 
   test("negative offset (incl. half-hour zones)", () => {
     expect(formatFull(TS, -330)).toBe("2021-03-13 20:29:26 -05:30");
+  });
+});
+
+describe("formatAbsolute", () => {
+  // 2021-03-14 01:59:26 UTC
+  const TS = 1_615_687_166;
+
+  test("each format renders the author-local wall time", () => {
+    expect(formatAbsolute(TS, 0, "iso")).toBe("2021-03-14 01:59");
+    expect(formatAbsolute(TS, 0, "swiss")).toBe("14.03.2021 01:59");
+    expect(formatAbsolute(TS, 0, "uk")).toBe("14/03/2021 01:59");
+    expect(formatAbsolute(TS, 0, "us")).toBe("03/14/2021 1:59 AM");
+  });
+
+  test("tz offset shifts the wall time (like formatFull)", () => {
+    expect(formatAbsolute(TS, 120, "iso")).toBe("2021-03-14 03:59");
+    expect(formatAbsolute(TS, -330, "swiss")).toBe("13.03.2021 20:29");
+  });
+
+  test("includeTime=false drops the time in every format", () => {
+    expect(formatAbsolute(TS, 0, "iso", false)).toBe("2021-03-14");
+    expect(formatAbsolute(TS, 0, "swiss", false)).toBe("14.03.2021");
+    expect(formatAbsolute(TS, 0, "uk", false)).toBe("14/03/2021");
+    expect(formatAbsolute(TS, 0, "us", false)).toBe("03/14/2021");
+    // The tz offset still decides which calendar day it is.
+    expect(formatAbsolute(TS, -330, "iso", false)).toBe("2021-03-13");
+  });
+
+  test("US 12-hour edges: midnight and noon are 12, not 0", () => {
+    // 2021-03-14 00:05:00 UTC / 12:05:00 UTC
+    const MIDNIGHT = 1_615_680_300;
+    const NOON = MIDNIGHT + 12 * 3600;
+    expect(formatAbsolute(MIDNIGHT, 0, "us")).toBe("03/14/2021 12:05 AM");
+    expect(formatAbsolute(NOON, 0, "us")).toBe("03/14/2021 12:05 PM");
   });
 });
