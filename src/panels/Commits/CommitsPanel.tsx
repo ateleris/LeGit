@@ -411,11 +411,11 @@ export function CommitsPanel() {
   }, []);
 
   const handleCreateTagSave = useCallback(
-    async (name: string, message: string | null) => {
+    async (name: string) => {
       const creation = tagCreation;
       setTagCreation(null);
       if (!creation) return;
-      await actions.createTag(name, creation.rowId, message);
+      await actions.createTag(name, creation.rowId, null);
     },
     [tagCreation, actions],
   );

@@ -198,4 +198,17 @@ describe("computeVisibleCount", () => {
   it("handles empty input", () => {
     expect(computeVisibleCount([], 100, 3, 24)).toBe(0);
   });
+
+  // minVisible 0: a creation input reserved the width, so every chip may
+  // collapse behind "+N" when the remaining space is too narrow.
+  it("minVisible 0 lets all chips collapse when nothing fits", () => {
+    // Even one chip + overflow (30+3+24 = 57) exceeds 40; only "+N" (3+24) fits.
+    expect(computeVisibleCount(widths, 40, 3, 24, 0)).toBe(0);
+  });
+
+  it("minVisible 0 still shows chips that fit", () => {
+    // 1 chip + gap + overflow = 30+3+24+3(gap before overflow) ≤ 100 → 2 fit: 30+3+30+3+24 = 90.
+    expect(computeVisibleCount(widths, 100, 3, 24, 0)).toBe(2);
+    expect(computeVisibleCount(widths, 129, 3, 24, 0)).toBe(4);
+  });
 });

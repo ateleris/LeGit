@@ -188,14 +188,18 @@ export function branchesAt(decorations: RefDecoration[]): BranchesAtCommit {
  *
  * Returns `widths.length` when everything fits without an overflow chip.
  * Otherwise returns the largest count that fits alongside the `+N`
- * overflow chip — but always at least 1 so the highest-priority ref stays
- * visible even in a very narrow column.
+ * overflow chip, but never below `minVisible` (default 1, so the
+ * highest-priority ref stays visible even in a very narrow column).
+ * A caller that reserves space for something more important than chips
+ * (the create-branch/-tag input) passes `minVisible` 0 to let every chip
+ * collapse behind "+N".
  */
 export function computeVisibleCount(
   widths: number[],
   containerWidth: number,
   gap: number,
   overflowChipWidth: number,
+  minVisible: 0 | 1 = 1,
 ): number {
   const n = widths.length;
   if (n === 0) return 0;
@@ -208,8 +212,8 @@ export function computeVisibleCount(
 
   if (totalOf(n) <= containerWidth) return n;
 
-  for (let count = n - 1; count >= 1; count--) {
+  for (let count = n - 1; count >= minVisible; count--) {
     if (totalOf(count) + gap + overflowChipWidth <= containerWidth) return count;
   }
-  return 1;
+  return minVisible;
 }

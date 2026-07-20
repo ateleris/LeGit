@@ -40,7 +40,7 @@ interface RefsCellProps {
   /** Same as `creatingBranch`, but for a tag on this row's commit (annotated
    *  when a message is entered, lightweight otherwise). */
   creatingTag?: boolean;
-  onCreateTagSave?: (name: string, message: string | null) => void;
+  onCreateTagSave?: (name: string) => void;
   onCreateTagCancel?: () => void;
   /** Tag names that exist on the remote with the same target — their chips
    *  carry the remote indicator, like fused branch chips do. */
@@ -86,6 +86,9 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
   const [popover, setPopover] = useState<{ x: number; y: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
+  // Wrapper around any open create-branch/-tag input; its width is reserved
+  // before fitting chips so the input is never clipped by the cell.
+  const creationRef = useRef<HTMLSpanElement>(null);
 
   // Hover lifecycle for the "+N" popover: opening cancels any pending close;
   // leaving the chip or the popover schedules a short-grace close so the
@@ -137,14 +140,25 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
     );
     // The measurer's last child is the worst-case "+99" overflow chip probe.
     const overflowWidth = widths.pop() ?? 0;
+    // An open creation input takes priority over chips: reserve its width
+    // (plus the gap separating it from the chips), and allow every chip to
+    // collapse behind "+N" if that's what it takes to keep the input visible.
+    const creation = creationRef.current;
+    const reserved = creation ? creation.offsetWidth + CHIP_GAP : 0;
     setVisibleCount(
-      computeVisibleCount(widths, container.clientWidth, CHIP_GAP, overflowWidth),
+      computeVisibleCount(
+        widths,
+        container.clientWidth - reserved,
+        CHIP_GAP,
+        overflowWidth,
+        creation ? 0 : 1,
+      ),
     );
   }, []);
 
   useLayoutEffect(() => {
     remeasure();
-  }, [remeasure, chips, textSize]);
+  }, [remeasure, chips, textSize, creatingBranch, creatingTag]);
 
   // Re-fit when the Refs column is resized.
   useEffect(() => {
@@ -338,33 +352,51 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
         <span style={overflowChipStyle}>+99</span>
       </div>
 
-      {/* Create-new-branch input (toolbar's New-branch button): an empty
-          chip-styled input; the branch only exists once a name is confirmed. */}
-      {creatingBranch && (
-        <InlineRenameInput
-          initialValue=""
-          placeholder="branch name…"
-          title="Enter to create · Esc to cancel"
-          onSave={(name) => onCreateBranchSave?.(name)}
-          onCancel={() => onCreateBranchCancel?.()}
-          style={{
-            fontSize: textSize,
-            padding: "1px 5px",
-            borderRadius: 10,
-            width: "16ch",
-            flexShrink: 0,
-          }}
-        />
-      )}
-
-      {/* Create-new-tag inputs (row context menu): same pattern, tag-shaped.
-          A non-empty message makes the tag annotated. */}
-      {creatingTag && (
-        <InlineTagCreate
-          textSize={textSize}
-          onSave={(name, message) => onCreateTagSave?.(name, message)}
-          onCancel={() => onCreateTagCancel?.()}
-        />
+      {/* Create-new-ref inputs: an empty chip-styled input; the ref only
+          exists once a name is confirmed. Branch creation comes from the
+          toolbar's New-branch button; tag creation from the row context menu
+          and always makes a lightweight tag - annotated tags (with a message)
+          are created via the Refs panel's Tags section. The wrapper is
+          measured so `remeasure` can reserve its width (the input must never
+          be clipped by the right-anchored cell; chips collapse instead). */}
+      {(creatingBranch || creatingTag) && (
+        <span
+          ref={creationRef}
+          style={{ display: "inline-flex", gap: CHIP_GAP, flexShrink: 0 }}
+        >
+          {creatingBranch && (
+            <InlineRenameInput
+              initialValue=""
+              placeholder="branch name…"
+              title="Enter to create · Esc to cancel"
+              onSave={(name) => onCreateBranchSave?.(name)}
+              onCancel={() => onCreateBranchCancel?.()}
+              style={{
+                fontSize: textSize,
+                padding: "1px 5px",
+                borderRadius: 10,
+                width: "16ch",
+                flexShrink: 0,
+              }}
+            />
+          )}
+          {creatingTag && (
+            <InlineRenameInput
+              initialValue=""
+              placeholder="tag name…"
+              title="Enter to create · Esc to cancel"
+              onSave={(name) => onCreateTagSave?.(name)}
+              onCancel={() => onCreateTagCancel?.()}
+              style={{
+                fontSize: textSize,
+                padding: "1px 5px",
+                borderRadius: 3, // tag chips are squarer than branch chips
+                width: "16ch",
+                flexShrink: 0,
+              }}
+            />
+          )}
+        </span>
       )}
 
       {visibleChips.map((dec, i) => renderChip(dec, i))}
@@ -422,80 +454,6 @@ interface ChipProps {
 
 const shortBranch = (ref: string) => ref.replace(/^refs\/heads\//, "");
 const shortRemote = (ref: string) => ref.replace(/^refs\/remotes\//, "");
-
-/**
- * In-place tag creation: a required name plus an optional message (a
- * non-empty message creates an annotated tag). Enter in either field creates
- * the tag, Esc discards; a save without a name is treated as cancel, matching
- * `InlineRenameInput` semantics.
- */
-function InlineTagCreate({
-  textSize,
-  onSave,
-  onCancel,
-}: {
-  textSize: number;
-  onSave: (name: string, message: string | null) => void;
-  onCancel: () => void;
-}) {
-  const [name, setName] = useState("");
-  const [message, setMessage] = useState("");
-
-  const save = () => {
-    const trimmed = name.trim();
-    if (trimmed.length === 0) {
-      onCancel();
-      return;
-    }
-    onSave(trimmed, message.trim() || null);
-  };
-
-  const inputStyle: React.CSSProperties = {
-    boxSizing: "border-box",
-    fontSize: textSize,
-    padding: "1px 5px",
-    borderRadius: 3, // tag chips are squarer than branch chips
-    flexShrink: 0,
-  };
-  const keyHandler = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      save();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      onCancel();
-    }
-    // Keep list-level shortcuts (arrows etc.) from acting while typing.
-    e.stopPropagation();
-  };
-  const stop = (e: React.MouseEvent) => e.stopPropagation();
-
-  return (
-    <span style={{ display: "inline-flex", gap: 3, flexShrink: 0 }}>
-      <input
-        autoFocus
-        value={name}
-        placeholder="tag name…"
-        title="Enter to create · Esc to cancel"
-        onChange={(e) => setName(e.target.value)}
-        onClick={stop}
-        onContextMenu={stop}
-        onKeyDown={keyHandler}
-        style={{ ...inputStyle, width: "14ch" }}
-      />
-      <input
-        value={message}
-        placeholder="message (annotated)…"
-        title="Optional: a message makes the tag annotated"
-        onChange={(e) => setMessage(e.target.value)}
-        onClick={stop}
-        onContextMenu={stop}
-        onKeyDown={keyHandler}
-        style={{ ...inputStyle, width: "20ch" }}
-      />
-    </span>
-  );
-}
 
 /**
  * The checked-out marker: a filled dot at the left edge of the current
