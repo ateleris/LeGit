@@ -342,14 +342,19 @@ export interface KeyDiff {
 export type ProfileMatch =
   | { kind: "inherit" }
   | { kind: "active"; profile_id: string }
-  | { kind: "drift"; profile_id: string; diffs: KeyDiff[] }
-  | { kind: "unmanaged" };
+  | { kind: "custom" };
 
 export interface ProfileStatus {
   /** Live LOCAL value of each managed key (null = unset locally). */
   local: ManagedKeys;
   stored_profile_id: string | null;
   match: ProfileMatch;
+}
+
+/** Local + inherited (global, falling back to system) managed keys. */
+export interface ManagedConfigView {
+  local: ManagedKeys;
+  inherited: ManagedKeys;
 }
 
 /**

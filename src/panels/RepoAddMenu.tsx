@@ -1,8 +1,8 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
-import { listGitProfiles, recentRepos } from "../lib/commands";
-import type { GitProfile } from "../lib/types";
+import { recentRepos } from "../lib/commands";
 import { formatAppError } from "../lib/types";
+import { useGitProfiles } from "../lib/useGitProfiles";
 import { useRepoStore } from "../store/repos";
 import { notify } from "../store/notifications";
 import { SectionLabel } from "./Commits/menu/primitives";
@@ -29,7 +29,7 @@ export function RepoAddMenu() {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<Mode>("menu");
   const [recents, setRecents] = useState<string[]>([]);
-  const [profiles, setProfiles] = useState<GitProfile[]>([]);
+  const { data: profiles = [], refetch: refetchProfiles } = useGitProfiles();
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   // Pin while a clone is in flight; a ref so the document listener sees the
@@ -39,12 +39,12 @@ export function RepoAddMenu() {
   const openRepoIds = useRepoStore((s) => s.openRepos.map((r) => r.id).join("\0"));
 
   // Load menu data lazily each time the popover opens (recents change as
-  // repos are opened; profiles are cheap).
+  // repos are opened; the profile list refreshes through the shared query).
   useEffect(() => {
     if (!open) return;
     recentRepos().then(setRecents).catch(console.warn);
-    listGitProfiles().then(setProfiles).catch(console.warn);
-  }, [open, openRepoIds]);
+    void refetchProfiles();
+  }, [open, openRepoIds, refetchProfiles]);
 
   const close = () => {
     setOpen(false);

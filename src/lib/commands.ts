@@ -28,6 +28,8 @@ import type {
   SigningView,
   GitProfile,
   ProfileStatus,
+  ManagedKeys,
+  ManagedConfigView,
   ResolvedIdentity,
   IdentityView,
   CredentialHelperView,
@@ -307,26 +309,8 @@ export const globalWriteLineEndings = (
 
 // --- commit signing ---
 
-export const repoSigningConfig = (repoId: string) =>
-  invoke<SigningView>("repo_signing_config", { repoId });
-
 export const globalSigningConfig = () =>
   invoke<SigningView>("global_signing_config");
-
-export const repoWriteSigning = (
-  repoId: string,
-  gpgsign: string | null,
-  format: string | null,
-  signingKey: string | null,
-  allowedSigners: string | null
-) =>
-  invoke<SigningView>("repo_write_signing", {
-    repoId,
-    gpgsign,
-    format,
-    signingKey,
-    allowedSigners,
-  });
 
 export const globalWriteSigning = (
   gpgsign: string | null,
@@ -351,6 +335,15 @@ export const createGitProfile = (profile: GitProfile) =>
 
 export const updateGitProfile = (profile: GitProfile) =>
   invoke<null>("update_git_profile", { profile });
+
+export const reposUsingProfile = (profileId: string) =>
+  invoke<string[]>("repos_using_profile", { profileId });
+
+export const repoManagedConfigView = (repoId: string) =>
+  invoke<ManagedConfigView>("repo_managed_config_view", { repoId });
+
+export const writeRepoManagedConfig = (repoId: string, draft: ManagedKeys) =>
+  invoke<ProfileStatus>("write_repo_managed_config", { repoId, draft });
 
 export const deleteGitProfile = (profileId: string) =>
   invoke<null>("delete_git_profile", { profileId });

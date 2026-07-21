@@ -163,8 +163,8 @@ export function GlobalSettingsPanel() {
               <span className="legit-subtle">Probing git…</span>
             )}
           </Section>
-          <GlobalGitConfigSection />
           <ConnectedAccountsSection />
+          <GlobalGitConfigSection />
           <LineEndingsGlobalSection />
           <GlobalProfilesSection />
         </SettingsGroup>

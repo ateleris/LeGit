@@ -8,7 +8,7 @@
 //! repo's stored `git_profile_id` is only a *hint* about intent. The active
 //! profile is always recomputed by matching the repo's live local config
 //! against the profile definitions, so a deleted/edited profile or a hand-edited
-//! config degrades gracefully (drift/unmanaged) rather than lying.
+//! config degrades gracefully (shown as custom) rather than lying.
 
 use crate::commands::config_util::{read_config_scope, write_config_local};
 use crate::commands::signing;
@@ -55,14 +55,14 @@ pub struct KeyDiff {
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ProfileMatch {
-    /// No managed keys set locally — repo uses inherited (global) identity.
+    /// No managed keys set locally - repo uses inherited (global) identity.
     Inherit,
-    /// Local config exactly equals a profile's projection.
+    /// Local config exactly equals a profile's projection (the stored
+    /// `git_profile_id` only tiebreaks identical profiles).
     Active { profile_id: String },
-    /// Stored id points at an existing profile, but local config diverges.
-    Drift { profile_id: String, diffs: Vec<KeyDiff> },
-    /// Local has managed values matching no profile and no usable stored id.
-    Unmanaged,
+    /// Local has managed values matching no profile: a deliberate (or
+    /// externally made) repo-specific configuration.
+    Custom,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -71,6 +71,14 @@ pub struct ProfileStatus {
     pub local: ManagedKeys,
     pub stored_profile_id: Option<String>,
     pub r#match: ProfileMatch,
+}
+
+/// The repo section's data: live LOCAL values plus what the repo would
+/// inherit without them (global scope, falling back to system).
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct ManagedConfigView {
+    pub local: ManagedKeys,
+    pub inherited: ManagedKeys,
 }
 
 // ---------------------------------------------------------------------------
@@ -102,54 +110,70 @@ fn projection(p: &GitProfile) -> ManagedKeys {
     }
 }
 
-/// Read the eight managed keys at LOCAL scope. For `core.sshCommand`, parse out
-/// the key path; if it isn't a LeGit-shaped `ssh -i …` command, keep the raw
-/// command string (so it shows as a mismatch rather than a false match).
+/// Clean a frontend draft exactly like a profile projection: trim, treat
+/// empty as unset, normalize the auth key path.
+fn normalize_draft(mk: &ManagedKeys) -> ManagedKeys {
+    ManagedKeys {
+        user_name: clean(&mk.user_name),
+        user_email: clean(&mk.user_email),
+        gpg_format: clean(&mk.gpg_format),
+        signing_key: clean(&mk.signing_key),
+        commit_gpgsign: clean(&mk.commit_gpgsign),
+        allowed_signers_file: clean(&mk.allowed_signers_file),
+        auth_ssh_key: clean(&mk.auth_ssh_key).map(|p| normalize_key_path(&p)),
+        credential_helper: clean(&mk.credential_helper),
+    }
+}
+
+/// Read the eight managed keys at one config scope (`--local`, `--global`,
+/// or `--system`). For `core.sshCommand`, parse out the key path; if it isn't
+/// a LeGit-shaped `ssh -i ...` command, keep the raw command string (so it
+/// shows as a mismatch rather than a false match). The credential helper
+/// reads via `read_helper_at` (`--get-all` + last non-empty, because the
+/// reset-then-set we write leaves two entries and `--get` errors on that).
 ///
 /// Profiles read and write LOCAL scope only, by decision: global scope holds
 /// at most a directly edited identity (see `global_identity_view`), never a
 /// profile's auth/signing bundle, so a machine-wide `credential.helper` or
-/// `core.sshCommand` can't be applied by one click.
-async fn read_local_managed(runner: &GitRunner) -> ManagedKeys {
-    let local = |key: &'static str| async move {
-        read_config_scope(runner, key, &["--local"]).await.value
+/// `core.sshCommand` can't be applied by one click. The global/system reads
+/// exist for the repo section's "inherited" view.
+async fn read_managed_scope(runner: &GitRunner, flag: &'static str) -> ManagedKeys {
+    let at = |key: &'static str| async move {
+        read_config_scope(runner, key, &[flag]).await.value
     };
-    let ssh_raw = local(KEY_SSH_COMMAND).await;
+    let ssh_raw = at(KEY_SSH_COMMAND).await;
     ManagedKeys {
-        user_name: local(KEY_USER_NAME).await,
-        user_email: local(KEY_USER_EMAIL).await,
-        gpg_format: local(signing::KEY_FORMAT).await,
-        signing_key: local(signing::KEY_SIGNING_KEY).await,
-        commit_gpgsign: local(signing::KEY_GPGSIGN).await,
-        allowed_signers_file: local(signing::KEY_ALLOWED_SIGNERS).await,
+        user_name: at(KEY_USER_NAME).await,
+        user_email: at(KEY_USER_EMAIL).await,
+        gpg_format: at(signing::KEY_FORMAT).await,
+        signing_key: at(signing::KEY_SIGNING_KEY).await,
+        commit_gpgsign: at(signing::KEY_GPGSIGN).await,
+        allowed_signers_file: at(signing::KEY_ALLOWED_SIGNERS).await,
         auth_ssh_key: ssh_raw.map(|cmd| {
             parse_ssh_key_from_command(&cmd)
                 .map(|p| normalize_key_path(&p))
                 .unwrap_or(cmd)
         }),
-        credential_helper: read_local_credential_helper(runner).await,
+        credential_helper: crate::commands::credential_helper::read_helper_at(runner, flag).await,
     }
 }
 
-/// Read the effective local `credential.helper`: the LAST non-empty value among
-/// the local entries, or `None` when none is set. Uses `--get-all` (not `--get`)
-/// because the reset-then-set we write leaves TWO local entries (an empty reset
-/// followed by the helper) and `--get` errors on multiple values.
-async fn read_local_credential_helper(runner: &GitRunner) -> Option<String> {
-    let out = runner
-        // exit 1 = no local entries: expected, not a failure (Git Log).
-        .run_expecting(&["config", "--local", "--get-all", KEY_CREDENTIAL_HELPER], &[1])
-        .await
-        .ok()?;
-    if !out.success {
-        return None;
+async fn read_local_managed(runner: &GitRunner) -> ManagedKeys {
+    read_managed_scope(runner, "--local").await
+}
+
+/// Pure: per-key scope precedence for the inherited view (global beats system).
+fn coalesce_inherited(global: ManagedKeys, system: ManagedKeys) -> ManagedKeys {
+    ManagedKeys {
+        user_name: global.user_name.or(system.user_name),
+        user_email: global.user_email.or(system.user_email),
+        gpg_format: global.gpg_format.or(system.gpg_format),
+        signing_key: global.signing_key.or(system.signing_key),
+        commit_gpgsign: global.commit_gpgsign.or(system.commit_gpgsign),
+        allowed_signers_file: global.allowed_signers_file.or(system.allowed_signers_file),
+        auth_ssh_key: global.auth_ssh_key.or(system.auth_ssh_key),
+        credential_helper: global.credential_helper.or(system.credential_helper),
     }
-    out.stdout
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .last()
-        .map(|s| s.to_string())
 }
 
 /// Write the local `credential.helper`, making it authoritative for this repo.
@@ -206,6 +230,38 @@ async fn write_managed(runner: &GitRunner, mk: &ManagedKeys) -> Result<(), AppEr
     Ok(())
 }
 
+/// Write one managed key by its git key name. The value is the projected
+/// form (key PATH for the auth key; synthesized into `core.sshCommand` here,
+/// mirroring `write_managed`).
+async fn write_one_managed(
+    runner: &GitRunner,
+    key: &str,
+    value: Option<&str>,
+) -> Result<(), AppError> {
+    match key {
+        KEY_SSH_COMMAND => {
+            let ssh = value.map(synth_ssh_command);
+            write_config_local(runner, KEY_SSH_COMMAND, ssh.as_deref()).await
+        }
+        KEY_CREDENTIAL_HELPER => write_credential_helper(runner, value).await,
+        k => write_config_local(runner, k, value).await,
+    }
+}
+
+/// Prefix the failing key into a git error so a partial write says where it
+/// stopped (the config may be partially written; detection stays honest).
+fn note_failed_key(e: AppError, key: &str) -> AppError {
+    match e {
+        AppError::Git(GitError::CommandFailed { exit_code, stderr }) => {
+            AppError::Git(GitError::CommandFailed {
+                exit_code,
+                stderr: format!("while writing {key}: {stderr}"),
+            })
+        }
+        other => other,
+    }
+}
+
 /// Labeled (git key, local, profile) tuples for diffing/display, in a stable order.
 fn diff_keys(local: &ManagedKeys, proj: &ManagedKeys) -> Vec<KeyDiff> {
     let pairs: [(&str, &Option<String>, &Option<String>); 8] = [
@@ -236,7 +292,7 @@ fn is_all_unset(mk: &ManagedKeys) -> bool {
         && mk.credential_helper.is_none()
 }
 
-/// Compute the active/drift/unmanaged/inherit relationship (pure; unit-tested).
+/// Compute the active/custom/inherit relationship (pure; unit-tested).
 fn compute_match(
     local: &ManagedKeys,
     profiles: &[GitProfile],
@@ -245,7 +301,8 @@ fn compute_match(
     if is_all_unset(local) {
         return ProfileMatch::Inherit;
     }
-    // Prefer the stored profile when it matches exactly.
+    // Prefer the stored profile when it matches exactly (tiebreaker for
+    // profiles with identical definitions).
     if let Some(sid) = stored_id {
         if let Some(p) = profiles.iter().find(|p| p.id == sid) {
             if projection(p) == *local {
@@ -253,20 +310,11 @@ fn compute_match(
             }
         }
     }
-    // Any profile matching exactly → active.
+    // Any profile matching exactly -> active.
     if let Some(p) = profiles.iter().find(|p| projection(p) == *local) {
         return ProfileMatch::Active { profile_id: p.id.clone() };
     }
-    // Stored id exists but config diverged → drift.
-    if let Some(sid) = stored_id {
-        if let Some(p) = profiles.iter().find(|p| p.id == sid) {
-            return ProfileMatch::Drift {
-                profile_id: sid.to_string(),
-                diffs: diff_keys(local, &projection(p)),
-            };
-        }
-    }
-    ProfileMatch::Unmanaged
+    ProfileMatch::Custom
 }
 
 // ---------------------------------------------------------------------------
@@ -474,6 +522,55 @@ pub async fn delete_git_profile(
     .await
 }
 
+/// Pure: display names (repo folder name) of the repos whose stored selection
+/// references `profile_id`. Entries are `(repo_path, stored_profile_id)`.
+/// Paths may be Windows-style regardless of host OS (they come from
+/// `path.txt`), so separators are normalized before taking the last segment.
+fn collect_profile_usage(entries: &[(String, Option<String>)], profile_id: &str) -> Vec<String> {
+    let mut names: Vec<String> = entries
+        .iter()
+        .filter(|(_, stored)| stored.as_deref() == Some(profile_id))
+        .map(|(path, _)| {
+            let normalized = path.replace('\\', "/");
+            normalized
+                .rsplit('/')
+                .find(|seg| !seg.is_empty())
+                .unwrap_or(&normalized)
+                .to_string()
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Read-only: which repos currently select `profile_id`. Scans the persisted
+/// per-repo settings under `repos/<hash>/` - repo settings persist eagerly on
+/// every change, so disk is current even for open repos, and the scan also
+/// covers repos that are not open right now. A dir without `path.txt` has
+/// never had settings written and is skipped.
+#[tauri::command]
+#[specta::specta]
+pub async fn repos_using_profile(
+    state: tauri::State<'_, AppState>,
+    profile_id: String,
+) -> Result<Vec<String>, AppError> {
+    let mut entries: Vec<(String, Option<String>)> = Vec::new();
+    let mut dir = match tokio::fs::read_dir(&state.repos_data_dir).await {
+        Ok(d) => d,
+        Err(_) => return Ok(vec![]), // no repo data yet
+    };
+    while let Ok(Some(ent)) = dir.next_entry().await {
+        let repo_dir = ent.path();
+        let Ok(repo_path) = tokio::fs::read_to_string(repo_dir.join("path.txt")).await else {
+            continue;
+        };
+        let settings = crate::state::load_repo_settings_sync(&repo_dir.join("settings.json"));
+        entries.push((repo_path.trim().to_string(), settings.git_profile_id));
+    }
+    Ok(collect_profile_usage(&entries, &profile_id))
+}
+
 // ---------------------------------------------------------------------------
 // Commands — per-repo apply / detect
 // ---------------------------------------------------------------------------
@@ -489,6 +586,22 @@ pub async fn detect_active_profile_for_repo(
     let runner = session.runner.read().await.clone();
     let stored = session.settings.read().await.git_profile_id.clone();
     Ok(status_for(&state, &runner, stored).await)
+}
+
+/// Read-only: local + inherited managed keys, for the repo identity section
+/// (Global-mode summary, Custom-editor prefill and placeholders).
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_managed_config_view(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<ManagedConfigView, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    let runner = session.runner.read().await.clone();
+    let local = read_managed_scope(&runner, "--local").await;
+    let global = read_managed_scope(&runner, "--global").await;
+    let system = read_managed_scope(&runner, "--system").await;
+    Ok(ManagedConfigView { local, inherited: coalesce_inherited(global, system) })
 }
 
 /// Read-only: the diff `apply_profile_to_repo` would make for this profile.
@@ -544,6 +657,30 @@ pub async fn clear_repo_profile(
     write_managed(&runner, &ManagedKeys::all_unset()).await?;
     set_repo_profile_id(&state, &session, None).await?;
     Ok(status_for(&state, &runner, None).await)
+}
+
+/// Custom-mode save: write only the keys the draft changes (relative to the
+/// live local config) and return the refreshed status. Never touches the
+/// stored `git_profile_id` (it is only a match tiebreaker).
+#[tauri::command]
+#[specta::specta]
+pub async fn write_repo_managed_config(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    draft: ManagedKeys,
+) -> Result<ProfileStatus, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    let runner = session.runner.read().await.clone();
+    let draft = normalize_draft(&draft);
+    let current = read_local_managed(&runner).await;
+    for d in diff_keys(&current, &draft) {
+        // KeyDiff's `profile` side carries the draft value here.
+        write_one_managed(&runner, &d.key, d.profile.as_deref())
+            .await
+            .map_err(|e| note_failed_key(e, &d.key))?;
+    }
+    let stored = session.settings.read().await.git_profile_id.clone();
+    Ok(status_for(&state, &runner, stored).await)
 }
 
 /// The identity git would use for a commit in this repo, resolved across all
@@ -760,28 +897,20 @@ mod tests {
     }
 
     #[test]
-    fn match_drift_when_stored_diverges() {
+    fn match_custom_when_stored_profile_diverges() {
+        // Formerly "drift": the config matches no profile, so it IS custom.
         let profiles = vec![signing_profile("p1", "work@x.com")];
         let local = email_only_local(Some("personal@y.com"));
         let m = compute_match(&local, &profiles, Some("p1"));
-        match m {
-            ProfileMatch::Drift { profile_id, diffs } => {
-                assert_eq!(profile_id, "p1");
-                assert_eq!(diffs.len(), 1);
-                assert_eq!(diffs[0].key, KEY_USER_EMAIL);
-                assert_eq!(diffs[0].local.as_deref(), Some("personal@y.com"));
-                assert_eq!(diffs[0].profile.as_deref(), Some("work@x.com"));
-            }
-            other => panic!("expected drift, got {other:?}"),
-        }
+        assert!(matches!(m, ProfileMatch::Custom));
     }
 
     #[test]
-    fn match_unmanaged_when_no_profile_and_no_stored() {
+    fn match_custom_when_no_profile_and_no_stored() {
         let profiles = vec![signing_profile("p1", "work@x.com")];
         let local = email_only_local(Some("nobody@z.com"));
         let m = compute_match(&local, &profiles, None);
-        assert!(matches!(m, ProfileMatch::Unmanaged));
+        assert!(matches!(m, ProfileMatch::Custom));
     }
 
     #[test]
@@ -796,11 +925,77 @@ mod tests {
     }
 
     #[test]
-    fn match_stale_stored_id_falls_back() {
+    fn profile_usage_filters_and_names() {
+        let entries = vec![
+            ("/work/alpha".to_string(), Some("p1".to_string())),
+            ("/work/beta".to_string(), Some("p2".to_string())),
+            ("/work/gamma".to_string(), None),
+            (r"C:\work\delta".to_string(), Some("p1".to_string())),
+        ];
+        assert_eq!(collect_profile_usage(&entries, "p1"), vec!["alpha", "delta"]);
+        assert_eq!(collect_profile_usage(&entries, "p2"), vec!["beta"]);
+        assert!(collect_profile_usage(&entries, "p9").is_empty());
+    }
+
+    #[test]
+    fn normalize_draft_trims_and_normalizes_key_path() {
+        let raw = ManagedKeys {
+            user_name: Some("  Name  ".into()),
+            user_email: Some("   ".into()), // whitespace-only -> unset
+            auth_ssh_key: Some(r"C:\Users\s\.ssh\id".into()),
+            ..ManagedKeys::all_unset()
+        };
+        let n = normalize_draft(&raw);
+        assert_eq!(n.user_name.as_deref(), Some("Name"));
+        assert_eq!(n.user_email, None);
+        assert_eq!(n.auth_ssh_key.as_deref(), Some("C:/Users/s/.ssh/id"));
+    }
+
+    #[test]
+    fn mixed_draft_diffs_exactly_the_changed_keys() {
+        // One key set, one unset, six untouched -> exactly two diffs.
+        let current = ManagedKeys {
+            user_email: Some("old@x.com".into()),
+            signing_key: Some("KEEP".into()),
+            ..ManagedKeys::all_unset()
+        };
+        let draft = ManagedKeys {
+            user_name: Some("New Name".into()), // set
+            user_email: None,                   // unset
+            signing_key: Some("KEEP".into()),   // untouched
+            ..ManagedKeys::all_unset()
+        };
+        let diffs = diff_keys(&current, &draft);
+        let keys: Vec<&str> = diffs.iter().map(|d| d.key.as_str()).collect();
+        assert_eq!(keys, vec![KEY_USER_NAME, KEY_USER_EMAIL]);
+        assert_eq!(diffs[0].profile.as_deref(), Some("New Name"));
+        assert_eq!(diffs[1].profile, None);
+    }
+
+    #[test]
+    fn inherited_coalescing_global_beats_system() {
+        let global = ManagedKeys {
+            user_name: Some("Global Name".into()),
+            ..ManagedKeys::all_unset()
+        };
+        let system = ManagedKeys {
+            user_name: Some("System Name".into()),
+            credential_helper: Some("manager".into()),
+            ..ManagedKeys::all_unset()
+        };
+        let merged = coalesce_inherited(global, system);
+        // Global wins where both are set; system fills the gaps.
+        assert_eq!(merged.user_name.as_deref(), Some("Global Name"));
+        assert_eq!(merged.credential_helper.as_deref(), Some("manager"));
+        assert_eq!(merged.user_email, None);
+    }
+
+    #[test]
+    fn match_stale_stored_id_is_custom() {
         // Stored id references a deleted profile; local matches no profile.
         let profiles = vec![signing_profile("p1", "work@x.com")];
         let local = email_only_local(Some("orphan@z.com"));
         let m = compute_match(&local, &profiles, Some("deleted-id"));
-        assert!(matches!(m, ProfileMatch::Unmanaged));
+        assert!(matches!(m, ProfileMatch::Custom));
     }
 }

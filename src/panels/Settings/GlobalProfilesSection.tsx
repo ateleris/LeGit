@@ -1,14 +1,17 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { formatAppError } from "../../lib/types";
 import type { GitProfile } from "../../lib/types";
 import {
-  listGitProfiles,
   createGitProfile,
   updateGitProfile,
   deleteGitProfile,
+  reposUsingProfile,
 } from "../../lib/commands";
+import { useGitProfiles, invalidateGitProfiles } from "../../lib/useGitProfiles";
+import { useConfirmDestructive } from "../../store/settings";
 import { Button } from "../shared/buttons";
 import { Section, FieldNote } from "./primitives";
 import { CredentialHelperField } from "./CredentialHelperField";
@@ -42,18 +45,14 @@ function emptyProfile(): GitProfile {
  * applying writes to a repo's local .git/config.
  */
 export function GlobalProfilesSection() {
-  const [profiles, setProfiles] = useState<GitProfile[]>([]);
+  const queryClient = useQueryClient();
+  const profilesQuery = useGitProfiles();
+  const profiles = profilesQuery.data ?? [];
   const [editing, setEditing] = useState<GitProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(() => {
-    listGitProfiles()
-      .then(setProfiles)
-      .catch((e) => setError(formatAppError(e)));
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-  usePanelFocusEffect(load);
+  const { refetch } = profilesQuery;
+  usePanelFocusEffect(useCallback(() => { void refetch(); }, [refetch]));
 
   const save = async (p: GitProfile) => {
     setError(null);
@@ -64,20 +63,37 @@ export function GlobalProfilesSection() {
         await updateGitProfile(p);
       }
       setEditing(null);
-      load();
+      invalidateGitProfiles(queryClient);
     } catch (e) {
       setError(formatAppError(e));
     }
   };
 
-  const remove = async (id: string) => {
+  const confirmDestructive = useConfirmDestructive();
+  const [confirmingDelete, setConfirmingDelete] =
+    useState<{ id: string; usedBy: string[] } | null>(null);
+
+  const doDelete = async (id: string) => {
     setError(null);
     try {
       await deleteGitProfile(id);
-      load();
+      setConfirmingDelete(null);
+      invalidateGitProfiles(queryClient);
     } catch (e) {
       setError(formatAppError(e));
     }
+  };
+
+  const requestDelete = async (id: string) => {
+    // Gated by the global destructive-confirmation setting (never hardcoded).
+    if (!confirmDestructive) return void doDelete(id);
+    let usedBy: string[] = [];
+    try {
+      usedBy = await reposUsingProfile(id);
+    } catch {
+      // Usage lookup is best-effort; the confirmation still shows without it.
+    }
+    setConfirmingDelete({ id, usedBy });
   };
 
   return (
@@ -112,8 +128,31 @@ export function GlobalProfilesSection() {
                 {p.userName ?? "—"} &lt;{p.userEmail ?? "—"}&gt;
               </div>
             </div>
-            <button onClick={() => setEditing(p)} disabled={!!editing}>Edit</button>
-            <button onClick={() => remove(p.id)} disabled={!!editing}>Delete</button>
+            {confirmingDelete?.id === p.id ? (
+              <>
+                <span style={{ fontSize: "var(--fz-sm)", textAlign: "right" }}>
+                  {confirmingDelete.usedBy.length > 0 ? (
+                    <>
+                      Used by <b>{confirmingDelete.usedBy.join(", ")}</b>.
+                      {" "}Repos keep their git config and show as Custom. Delete profile?
+                    </>
+                  ) : (
+                    "Delete profile?"
+                  )}
+                </span>
+                <Button variant="danger" data-testid="profile-delete-confirm" onClick={() => doDelete(p.id)}>
+                  Delete
+                </Button>
+                <button onClick={() => setConfirmingDelete(null)}>Cancel</button>
+              </>
+            ) : (
+              <>
+                <button onClick={() => setEditing(p)} disabled={!!editing}>Edit</button>
+                <button data-testid="profile-delete" onClick={() => requestDelete(p.id)} disabled={!!editing}>
+                  {confirmDestructive ? "Delete…" : "Delete"}
+                </button>
+              </>
+            )}
           </div>
         ))}
       </div>
@@ -127,19 +166,23 @@ export function GlobalProfilesSection() {
         />
       ) : (
         <div style={{ marginTop: 10 }}>
-          <Button variant="primary" onClick={() => setEditing(emptyProfile())}>
+          <Button variant="primary" data-testid="profile-new" onClick={() => setEditing(emptyProfile())}>
             New profile
           </Button>
         </div>
       )}
 
-      {error && <pre className="legit-error" style={{ marginTop: 6 }}>{error}</pre>}
+      {(error ?? profilesQuery.error) && (
+        <pre className="legit-error" style={{ marginTop: 6 }}>
+          {error ?? formatAppError(profilesQuery.error)}
+        </pre>
+      )}
     </Section>
   );
 }
 
 /** File-name-safe slug from a profile name, for the generated key's default name. */
-function profileNameSlug(name: string): string {
+export function profileNameSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
@@ -179,7 +222,7 @@ function ProfileEditor({
       }}
     >
       <Field label="Profile name">
-        <input value={p.name} onChange={(e) => set("name", e.target.value)} placeholder="e.g. Work" />
+        <input data-testid="profile-name-input" value={p.name} onChange={(e) => set("name", e.target.value)} placeholder="e.g. Work" />
       </Field>
       <Field label="user.name">
         <input value={p.userName ?? ""} onChange={(e) => setStr("userName")(e.target.value)} placeholder="Your Name" />
@@ -237,7 +280,7 @@ function ProfileEditor({
       </Field>
 
       <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-        <Button variant="primary" disabled={p.name.trim() === ""} onClick={() => onSave({ ...p, name: p.name.trim() })}>
+        <Button variant="primary" data-testid="profile-save" disabled={p.name.trim() === ""} onClick={() => onSave({ ...p, name: p.name.trim() })}>
           Save profile
         </Button>
         <button onClick={onCancel}>Cancel</button>

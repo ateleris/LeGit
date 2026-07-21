@@ -1,8 +1,8 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
-import { listGitProfiles, recentRepos } from "../../lib/commands";
-import type { GitProfile } from "../../lib/types";
+import { recentRepos } from "../../lib/commands";
 import { formatAppError } from "../../lib/types";
+import { useGitProfiles } from "../../lib/useGitProfiles";
 import { useRepoStore } from "../../store/repos";
 import { notify } from "../../store/notifications";
 import { Button } from "../shared/buttons";
@@ -23,14 +23,13 @@ export function RepositoriesPanel() {
   const initialized = useRepoStore((s) => s.initialized);
 
   const [recents, setRecents] = useState<string[]>([]);
-  const [profiles, setProfiles] = useState<GitProfile[]>([]);
+  const { data: profiles = [] } = useGitProfiles();
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("none");
 
   useEffect(() => {
     if (!initialized) refresh();
     recentRepos().then(setRecents).catch(console.warn);
-    listGitProfiles().then(setProfiles).catch(console.warn);
   }, [initialized, refresh]);
 
   const refreshRecents = () => recentRepos().then(setRecents).catch(console.warn);

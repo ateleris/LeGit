@@ -40,7 +40,7 @@ fn last_non_empty(stdout: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-async fn read_helper_at(runner: &GitRunner, flag: &str) -> Option<String> {
+pub(crate) async fn read_helper_at(runner: &GitRunner, flag: &str) -> Option<String> {
     // exit 1 = no helper at this scope: expected, not a failure (Git Log).
     let out = runner.run_expecting(&["config", flag, "--get-all", KEY], &[1]).await.ok()?;
     if !out.success {

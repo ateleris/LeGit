@@ -7,8 +7,7 @@ import { setRepoGitPath, repoLineEndingsView, repoWriteLineEndings, updateRepoSe
 import { useGitStatusStore } from "../../store/git-status";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
-import { SigningSettings } from "./SigningSettings";
-import { RepoProfileSection } from "./RepoProfileSection";
+import { RepoIdentitySection } from "./RepoIdentitySection";
 import { Section, Row, FieldNote, SettingsGroup, GitConfigPill } from "./primitives";
 import { Button } from "../shared/buttons";
 
@@ -159,9 +158,8 @@ export function RepoSettingsPanel() {
             )}
           </Section>
 
-          <RepoProfileSection repoId={activeRepo.id} />
+          <RepoIdentitySection repoId={activeRepo.id} repoName={activeRepo.name} />
           <LineEndingsRepoSection repoId={activeRepo.id} />
-          <SigningSettings scope="repo" repoId={activeRepo.id} />
         </SettingsGroup>
       </div>
     </div>

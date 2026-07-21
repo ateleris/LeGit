@@ -3147,3 +3147,47 @@ async fn commit_details_classifies_real_ssh_signatures() {
     let sig = details.commit.signature.expect("verification must run");
     assert_eq!(sig.status, SignatureStatus::BadSignature, "raw: {:?}", sig.raw);
 }
+
+/// Local-scope semantics the repo Custom editor depends on
+/// (`src-tauri/commands/profiles.rs` `write_repo_managed_config`): a local
+/// value overrides global, and unsetting it returns resolution to the global
+/// value. `GIT_CONFIG_GLOBAL` redirects the global file into the tempdir so
+/// the developer's real `~/.gitconfig` is never touched.
+#[tokio::test]
+async fn local_config_unset_falls_back_to_global() {
+    let repo = TestRepo::init().await;
+    let gcfg = repo.path.join("fake-global-config");
+    let gcfg_s = gcfg.to_str().expect("utf8 tempdir path").to_string();
+    let env: &[(&str, &str)] = &[("GIT_CONFIG_GLOBAL", &gcfg_s)];
+    let runner = GitRunner::for_repo("git", &repo.path);
+
+    let out = runner
+        .run_with_env(&["config", "--global", "user.signingkey", "GLOBALKEY"], env)
+        .await
+        .expect("spawn git");
+    assert!(out.success, "{}", out.stderr);
+    let out = runner
+        .run_with_env(&["config", "--local", "user.signingkey", "LOCALKEY"], env)
+        .await
+        .expect("spawn git");
+    assert!(out.success, "{}", out.stderr);
+
+    // Local wins while set...
+    let out = runner
+        .run_with_env(&["config", "--get", "user.signingkey"], env)
+        .await
+        .expect("spawn git");
+    assert_eq!(out.stdout.trim(), "LOCALKEY");
+
+    // ...and resolution falls back to global once unset.
+    let out = runner
+        .run_with_env(&["config", "--local", "--unset", "user.signingkey"], env)
+        .await
+        .expect("spawn git");
+    assert!(out.success, "{}", out.stderr);
+    let out = runner
+        .run_with_env(&["config", "--get", "user.signingkey"], env)
+        .await
+        .expect("spawn git");
+    assert_eq!(out.stdout.trim(), "GLOBALKEY", "unset local key must fall back to global");
+}
