@@ -325,13 +325,13 @@ export function SubmodulesSection() {
             placeholder="repository URL"
             style={{ fontSize: "var(--fz-md)", fontFamily: "monospace" }}
           />
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <input
               value={addPath}
               onChange={(e) => setAddPath(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && doAdd()}
               placeholder="path"
-              style={{ fontSize: "var(--fz-md)", fontFamily: "monospace", flex: 1 }}
+              style={{ fontSize: "var(--fz-md)", fontFamily: "monospace", flex: "1 1 8em", minWidth: 0 }}
             />
             <input
               value={addBranch}
@@ -344,6 +344,7 @@ export function SubmodulesSection() {
               variant="primary"
               disabled={busy || !addUrl.trim() || !addPath.trim()}
               onClick={doAdd}
+              style={{ marginLeft: "auto" }}
             >
               Add
             </Button>

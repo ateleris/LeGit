@@ -22,17 +22,6 @@ In rough order:
    and check the README/release-page branding matches the new logo
    (swapped in 2026-07-09).
 
-Pre-release manual test (added 2026-07-23): the two submodule features
-shipped that day are code-complete and unit/real-git tested but not yet
-exercised in the running app - before the next version bump, verify in the
-app: (a) **submodule branch attach** (Global Settings toggle, off by
-default): update a detached submodule whose tracked branch points at the
-recorded commit and confirm it ends attached; (b) **submodule Move** (row
-button): move a submodule into a subfolder and confirm the staged
-`.gitmodules` + gitlink change and the row under the new path. Specs:
-`design/2026-07-23-submodule-branch-attach.md`,
-`design/2026-07-23-submodule-move.md`.
-
 Decided and recorded, no action: **git is not bundled** (trade study
 `design/2026-07-07-bundled-git-trade-study.md`; install-relative config,
 size, and CVE ownership; revisit trigger + download-on-demand fallback
