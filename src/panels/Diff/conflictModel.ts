@@ -137,26 +137,53 @@ export interface ConflictSideNames {
  * deliberately stays unnamed rather than guessing (theirs then carries
  * "<sha> (message)" straight from the marker, which is exactly right since
  * rebase inverts ours/theirs relative to intuition).
+ *
+ * A REOPENED conflict (`git checkout -m`) regenerates the markers with the
+ * hardcoded stage labels "ours"/"theirs" instead of ref names: "ours"
+ * resolves like HEAD, "theirs" falls back to `incomingName` (the op-state's
+ * merge source, when the caller knows it) or stays unnamed.
  */
 export function conflictSideNames(
   parsed: ParsedConflicts,
   currentBranch: string | null,
+  incomingName: string | null = null,
 ): ConflictSideNames {
   const block = parsed.sections.find(
     (s): s is ConflictBlock => s.kind === "conflict",
   );
   if (!block) return { ours: null, theirs: null };
   const ours =
-    block.oursLabel === "" || block.oursLabel === "HEAD"
+    block.oursLabel === "" || block.oursLabel === "HEAD" || block.oursLabel === "ours"
       ? currentBranch
       : block.oursLabel;
-  const theirs = block.theirsLabel === "" ? null : block.theirsLabel;
+  const theirs =
+    block.theirsLabel === "" || block.theirsLabel === "theirs"
+      ? incomingName
+      : block.theirsLabel;
   return { ours, theirs };
 }
 
 /** "Current 'main'" or the bare side word when the name is unknown. */
 export function sideLabel(word: string, name: string | null): string {
   return name === null ? word : `${word} '${name}'`;
+}
+
+/**
+ * Whether the merge panel must warn that the marker file changed on disk:
+ * the view's baseline (`shown`) is frozen while the result is dirty, so an
+ * external edit cannot be auto-reloaded without clobbering the in-progress
+ * resolution - the user decides. A pristine view reloads silently instead
+ * (never warns), and a dismissed warning stays quiet until the disk text
+ * changes AGAIN (`dismissed` is the exact text the user chose to ignore).
+ */
+export function externalChangePending(
+  shown: string | null,
+  disk: string | null | undefined,
+  dirty: boolean,
+  dismissed: string | null,
+): boolean {
+  if (!dirty || shown == null || disk == null) return false;
+  return disk !== shown && disk !== dismissed;
 }
 
 /** For each conflict, its 0-based start line in the centre (marker) doc and
@@ -404,6 +431,26 @@ export function markerViewSpans(
     c += lines;
   }
   return spans;
+}
+
+/** Each block's initial [from, to) character range in the result document,
+ *  in CodeMirror positions: the editor normalizes every line break (LF and
+ *  CRLF alike) to ONE position, so the offsets are accumulated over
+ *  \r-stripped lines. Raw string offsets would drift one character per
+ *  preceding CRLF line, starting every range below its `<<<<<<<` line.
+ *  `docText` is the marker file with a guaranteed trailing newline. */
+export function initialBlockRanges(
+  parsed: ParsedConflicts,
+  docText: string,
+): Array<{ from: number; to: number }> {
+  const lineStart: number[] = [0];
+  for (const l of docText.split("\n")) {
+    lineStart.push(lineStart[lineStart.length - 1] + l.replace(/\r$/, "").length + 1);
+  }
+  return markerViewSpans(parsed).map((sp) => ({
+    from: lineStart[sp.start],
+    to: lineStart[sp.start + sp.lines],
+  }));
 }
 
 /**

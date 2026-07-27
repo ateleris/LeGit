@@ -7,6 +7,7 @@ import {
   saveUiFontSize,
   setWatcherEnabled,
   setConfirmDiscard,
+  setSubmoduleAttachBranch,
   setAutoFetchEnabled,
   setAutoFetchIntervalMinutes,
   setExternalEditorCommand,
@@ -103,6 +104,7 @@ interface SettingsStore {
   setUiFontSize: (size: number) => Promise<void>;
   setWatcherEnabled: (enabled: boolean) => Promise<void>;
   setConfirmDiscard: (confirm: boolean) => Promise<void>;
+  setSubmoduleAttachBranch: (enabled: boolean) => Promise<void>;
   setAutoFetchEnabled: (enabled: boolean) => Promise<void>;
   setAutoFetchIntervalMinutes: (minutes: number) => Promise<void>;
   setExternalEditorCommand: (command: string | null) => Promise<void>;
@@ -191,6 +193,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     if (s) {
       set({ settings: { ...s, confirm_discard: confirm } });
     }
+  },
+
+  async setSubmoduleAttachBranch(enabled) {
+    await setSubmoduleAttachBranch(enabled);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, submodule_attach_branch: enabled } });
   },
 
   async setAutoFetchEnabled(enabled) {

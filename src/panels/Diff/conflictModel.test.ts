@@ -4,8 +4,10 @@ import {
   conflictAnchors,
   conflictSideNames,
   composeBlockLines,
+  externalChangePending,
   locateRegionAnchors,
   foldableRanges,
+  initialBlockRanges,
   markerViewSpans,
   blockSection,
   regionsFromParsed,
@@ -199,6 +201,51 @@ describe("conflictSideNames", () => {
       theirs: null,
     });
   });
+
+  it("resolves git's literal ours/theirs labels (checkout -m reopen)", () => {
+    // `git checkout -m` (conflict reopen) regenerates the markers with the
+    // hardcoded stage labels "ours"/"theirs" instead of ref names; they must
+    // resolve like HEAD does, not show up verbatim in the pane headers.
+    const reopened = ["<<<<<<< ours", "o", "=======", "t", ">>>>>>> theirs"].join("\n") + "\n";
+    expect(conflictSideNames(parseConflicts(reopened), "main", "new_arch")).toEqual({
+      ours: "main",
+      theirs: "new_arch",
+    });
+    // No op-state fallback known: the side stays unnamed rather than "theirs".
+    expect(conflictSideNames(parseConflicts(reopened), "main")).toEqual({
+      ours: "main",
+      theirs: null,
+    });
+  });
+
+  it("prefers a real theirs ref label over the op-state fallback", () => {
+    expect(conflictSideNames(parseConflicts(CLASSIC), "main", "merge-head")).toEqual({
+      ours: "main",
+      theirs: "feature/x",
+    });
+  });
+});
+
+describe("externalChangePending", () => {
+  // The merge view freezes its baseline while the result is dirty; this
+  // predicate decides when to tell the user the file changed on disk
+  // underneath their in-progress resolution.
+  it("flags a disk change only while the result is dirty", () => {
+    expect(externalChangePending("a", "b", true, null)).toBe(true);
+    // Pristine view: the panel auto-reloads instead of asking.
+    expect(externalChangePending("a", "b", false, null)).toBe(false);
+  });
+
+  it("is quiet when disk matches the baseline or is not loaded yet", () => {
+    expect(externalChangePending("a", "a", true, null)).toBe(false);
+    expect(externalChangePending("a", undefined, true, null)).toBe(false);
+    expect(externalChangePending(null, "b", true, null)).toBe(false);
+  });
+
+  it("stays dismissed for the same disk text, re-fires on a new change", () => {
+    expect(externalChangePending("a", "b", true, "b")).toBe(false);
+    expect(externalChangePending("a", "c", true, "b")).toBe(true);
+  });
 });
 
 describe("regionsFromParsed", () => {
@@ -260,6 +307,36 @@ describe("composeBlockLines / markerViewSpans (merge view model)", () => {
       { start: 1, lines: 6 },
       { start: 8, lines: 5 },
     ]);
+  });
+});
+
+describe("initialBlockRanges", () => {
+  const LINES = [
+    "before",
+    "<<<<<<< HEAD", "o1", "o2", "=======", "t1", ">>>>>>> feature/x",
+    "mid",
+    "<<<<<<< HEAD", "o3", "=======", "t3", ">>>>>>> feature/x",
+  ];
+  const LF = LINES.join("\n") + "\n";
+
+  it("gives each block's [from, to) character range in the result doc", () => {
+    const ranges = initialBlockRanges(parseConflicts(LF), LF);
+    expect(ranges).toEqual([
+      { from: LF.indexOf("<<<<<<< HEAD"), to: LF.indexOf("mid") },
+      { from: LF.lastIndexOf("<<<<<<< HEAD"), to: LF.length },
+    ]);
+  });
+
+  it("counts a CRLF break as ONE position, like the CodeMirror doc", () => {
+    // CodeMirror normalizes every line break to a single position, so a
+    // CRLF file's ranges equal its LF twin's. Raw string offsets would
+    // drift +1 per preceding line: block ranges then start BELOW their
+    // `<<<<<<<` line, which broke marker highlighting, block replacement
+    // and pane alignment on CRLF merge files.
+    const crlf = LINES.join("\r\n") + "\r\n";
+    expect(initialBlockRanges(parseConflicts(crlf), crlf)).toEqual(
+      initialBlockRanges(parseConflicts(LF), LF),
+    );
   });
 });
 

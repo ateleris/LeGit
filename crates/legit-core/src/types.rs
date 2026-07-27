@@ -901,6 +901,11 @@ pub struct SubmoduleUpdateOptions {
     /// Recurse into nested submodules (`--recursive`).
     pub recursive: bool,
     pub paths: Vec<PathBuf>,
+    /// After the update, attach detached submodule HEADs to a branch pointing
+    /// at the same commit (top-level submodules only). Filled backend-side
+    /// from the global setting; the frontend never sets it.
+    #[serde(default)]
+    pub attach_branch: bool,
 }
 
 /// Integration mode for `submodule update --remote`.

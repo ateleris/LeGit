@@ -8,6 +8,7 @@ import {
   repoSubmoduleDeleteGitdir,
   repoSubmoduleFetch,
   repoSubmoduleGitdirInfo,
+  repoSubmoduleMove,
   repoSubmoduleRemove,
   repoSubmoduleSetBranch,
   repoSubmoduleSetUrl,
@@ -281,6 +282,12 @@ export function SubmodulesSection() {
               onSetUrl={(url) => run(() => repoSubmoduleSetUrl(repo.id, s.path, url))}
               onSetBranch={(branch) =>
                 run(() => repoSubmoduleSetBranch(repo.id, s.path, branch))
+              }
+              onMovePath={(to) =>
+                run(async () => {
+                  await repoSubmoduleMove(repo.id, s.path, to);
+                  notify.success(`Moved '${s.path}' to '${to}' (staged)`);
+                })
               }
               onCreateBranch={(name) =>
                 run(() => repoSubmoduleCreateBranch(repo.id, s.path, name))

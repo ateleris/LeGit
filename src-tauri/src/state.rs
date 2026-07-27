@@ -263,6 +263,12 @@ pub struct GlobalSettings {
     /// `git push --recurse-submodules` guard mode. `None` = off (no flag).
     #[serde(default)]
     pub push_recurse_submodules: Option<legit_core::PushRecurseMode>,
+    /// After LeGit-driven submodule updates, attach a detached submodule HEAD
+    /// to a branch pointing at the same commit (configured branch first, else
+    /// a unique local match). Opt-in; see
+    /// design/2026-07-23-submodule-branch-attach.md.
+    #[serde(default)]
+    pub submodule_attach_branch: bool,
     /// Show author avatars (Gravatar) in the commit graph. OFF by default —
     /// enabling it sends hashed author emails to gravatar.com (privacy
     /// opt-in; see BACKLOG/settings copy).
@@ -345,6 +351,7 @@ impl Default for GlobalSettings {
             pull_strategy: None,
             stash_include_untracked: false,
             push_recurse_submodules: None,
+            submodule_attach_branch: false,
             commit_avatars: false,
             diff_syntax_highlighting: false,
             commit_date_absolute: false,

@@ -215,6 +215,9 @@ export const setWarnOnLineEndingCommit = (warn: boolean) =>
 export const setConfirmDiscard = (confirm: boolean) =>
   invoke<null>("set_confirm_discard", { confirm });
 
+export const setSubmoduleAttachBranch = (enabled: boolean) =>
+  invoke<null>("set_submodule_attach_branch", { enabled });
+
 export const setExternalEditorCommand = (command: string | null) =>
   invoke<null>("set_external_editor_command", { command });
 
@@ -755,6 +758,9 @@ export const repoSubmoduleAdd = (
 
 export const repoSubmoduleSetUrl = (repoId: string, path: string, url: string) =>
   invoke<void>("repo_submodule_set_url", { repoId, path, url });
+
+export const repoSubmoduleMove = (repoId: string, from: string, to: string) =>
+  invoke<void>("repo_submodule_move", { repoId, from, to });
 
 export const repoSubmoduleSetBranch = (repoId: string, path: string, branch: string | null) =>
   invoke<void>("repo_submodule_set_branch", { repoId, path, branch });

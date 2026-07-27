@@ -45,6 +45,9 @@ pub async fn repo_submodule_update(
     op_id: String,
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
+    let mut opts = opts;
+    // The frontend never sets this; it mirrors the global setting.
+    opts.attach_branch = state.global_settings.read().await.submodule_attach_branch;
     session
         .backend
         .submodule_update(opts, OperationId(op_id))
@@ -185,15 +188,13 @@ pub async fn repo_submodule_update_remote(
 ) -> Result<Vec<SubmoduleAutoUpdateResult>, AppError> {
     let session = state.get_session(&repo_id).await?;
     let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
-    let behavior = state
-        .global_settings
-        .read()
-        .await
-        .switch_dirty_behavior
-        .unwrap_or_default();
+    let (behavior, attach_branch) = {
+        let gs = state.global_settings.read().await;
+        (gs.switch_dirty_behavior.unwrap_or_default(), gs.submodule_attach_branch)
+    };
     session
         .backend
-        .submodule_update_remote(&paths, strategy, behavior, OperationId(op_id))
+        .submodule_update_remote(&paths, strategy, behavior, attach_branch, OperationId(op_id))
         .await
         .map_err(AppError::Git)
 }
@@ -210,6 +211,23 @@ pub async fn repo_submodule_remove(
     session
         .backend
         .submodule_remove(&PathBuf::from(path))
+        .await
+        .map_err(AppError::Git)
+}
+
+/// Move a submodule to another path (`git mv`; stages the result).
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_submodule_move(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    from: String,
+    to: String,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .submodule_move(&PathBuf::from(from), &PathBuf::from(to))
         .await
         .map_err(AppError::Git)
 }
@@ -252,15 +270,13 @@ pub async fn repo_submodule_auto_update(
     if !enabled {
         return Ok(Vec::new());
     }
-    let behavior = state
-        .global_settings
-        .read()
-        .await
-        .switch_dirty_behavior
-        .unwrap_or_default();
+    let (behavior, attach_branch) = {
+        let gs = state.global_settings.read().await;
+        (gs.switch_dirty_behavior.unwrap_or_default(), gs.submodule_attach_branch)
+    };
     session
         .backend
-        .submodule_auto_update(behavior)
+        .submodule_auto_update(behavior, attach_branch)
         .await
         .map_err(AppError::Git)
 }

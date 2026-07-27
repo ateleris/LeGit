@@ -228,11 +228,14 @@ pub trait GitBackend: Send + Sync {
     /// follow `behavior` with the same never-lose-changes guarantees as
     /// `submodule_auto_update` (rollback on a conflicted carry-over). Empty
     /// `paths` = all submodules. Per-submodule outcomes; cancellable.
+    /// With `attach_branch`, detached HEADs re-attach to a branch at the same
+    /// commit afterwards (best-effort).
     async fn submodule_update_remote(
         &self,
         paths: &[PathBuf],
         strategy: SubmoduleUpdateStrategy,
         behavior: SwitchDirtyBehavior,
+        attach_branch: bool,
         op_id: OperationId,
     ) -> Result<Vec<SubmoduleAutoUpdateResult>, GitError>;
 
@@ -242,6 +245,13 @@ pub trait GitBackend: Send + Sync {
     /// `.git/modules/<name>` is deliberately KEPT - see
     /// `submodule_gitdir_info` / `submodule_delete_gitdir`.
     async fn submodule_remove(&self, path: &Path) -> Result<(), GitError>;
+
+    /// Move a submodule's path (`git mv`): moves the worktree, rewrites
+    /// `.gitmodules`, moves the index gitlink, fixes the gitfile link, and
+    /// STAGES it all. The submodule NAME (`.git/modules/<name>`) stays
+    /// unchanged. Missing parent directories of `to` are created; an
+    /// occupied target is refused before anything runs.
+    async fn submodule_move(&self, from: &Path, to: &Path) -> Result<(), GitError>;
 
     /// Inspect a removed submodule's retained gitdir: `None` when it does
     /// not exist; `unpushed = true` when local branches hold commits on no
@@ -263,9 +273,12 @@ pub trait GitBackend: Send + Sync {
     /// ROLLS the submodule BACK (changes reapplied on their original base).
     /// Per-submodule atomicity: failures are reported per entry, the batch
     /// continues. Local changes are never lost in any path.
+    /// With `attach_branch`, detached HEADs re-attach to a branch at the same
+    /// commit afterwards (best-effort).
     async fn submodule_auto_update(
         &self,
         behavior: SwitchDirtyBehavior,
+        attach_branch: bool,
     ) -> Result<Vec<SubmoduleAutoUpdateResult>, GitError>;
 
     /// Fetch from remote(s). Cancellable via `op_id`.

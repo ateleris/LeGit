@@ -17,6 +17,7 @@ import {
   repoWriteWorktreeFile,
 } from "../../lib/commands";
 import type { Branch, ConflictFileSides, ConflictSide } from "../../lib/types";
+import { useOpState } from "../../lib/useOpState";
 import { formatAppError } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notifyResolutionInvisible } from "../../lib/mergeFeedback";
@@ -27,6 +28,7 @@ import { LineEndingBadge } from "../shared/LineEndingBadge";
 import { applyEol } from "../Diff/editModel";
 import {
   conflictSideNames,
+  externalChangePending,
   parseConflicts,
   sideLabel,
   type LineSelection,
@@ -120,16 +122,33 @@ export function MergePanel() {
   }, [activeRepoId]);
 
   const {
-    data: content,
+    data: diskContent,
     isError: isReadError,
     isFetching,
   } = useQuery<string>({
-    // Under the "diff" domain so existing invalidations refresh it.
+    // Under the "diff" domain so existing invalidations refresh it; stays
+    // enabled while dirty so external edits are still NOTICED (the view's
+    // baseline below is what protects the in-progress result).
     queryKey: [request?.repoId, "diff", "merge-content", request?.path],
     queryFn: () => repoReadWorktreeFile(request!.repoId, request!.path),
-    enabled: !!request && request.repoId === activeRepoId && !dirty,
+    enabled: !!request && request.repoId === activeRepoId,
     staleTime: 5_000,
   });
+  // The baseline the view is built from: follows the disk while the result
+  // is pristine (external edits reload the conflict), frozen while dirty so
+  // a background refetch never clobbers an in-progress resolution - the
+  // externalChangePending banner asks the user instead.
+  const [content, setContent] = useState<string | null>(null);
+  // Disk text the user chose to keep editing over (banner dismissed).
+  const [dismissedDisk, setDismissedDisk] = useState<string | null>(null);
+  useEffect(() => {
+    setContent(null);
+    setDismissedDisk(null);
+  }, [request?.repoId, request?.path]);
+  useEffect(() => {
+    if (!dirty && diskContent != null) setContent(diskContent);
+  }, [dirty, diskContent]);
+  const externalChange = externalChangePending(content, diskContent, dirty, dismissedDisk);
   const parsed = useMemo(() => (content != null ? parseConflicts(content) : null), [content]);
   const parsedRef = useRef(parsed);
   parsedRef.current = parsed;
@@ -151,9 +170,28 @@ export function MergePanel() {
     () => branches.find((b) => b.is_current)?.name ?? null,
     [branches],
   );
+
+  // Names the incoming side when the markers cannot (a reopened conflict's
+  // labels are the literal "ours"/"theirs"): the merge source branch, the
+  // branch being rebased, or the picked/reverted commit.
+  const opState = useOpState(request?.repoId);
+  const incomingName = useMemo(() => {
+    switch (opState?.kind) {
+      case "merge":
+        return opState.branch;
+      case "rebase":
+        return opState.head_name;
+      case "cherry_pick":
+      case "revert":
+        return opState.sha;
+      default:
+        return null;
+    }
+  }, [opState]);
+
   const sideNames = useMemo(
-    () => (parsed ? conflictSideNames(parsed, currentBranchName) : null),
-    [parsed, currentBranchName],
+    () => (parsed ? conflictSideNames(parsed, currentBranchName, incomingName) : null),
+    [parsed, currentBranchName, incomingName],
   );
 
   // Per-line selections; live in a ref for the mounted view, in state for
@@ -284,6 +322,13 @@ export function MergePanel() {
     setConfirmUnresolved(null);
     setStagedNotice(false);
   }, [request]);
+
+  // Discard the in-progress result and rebuild from the file on disk.
+  const reloadFromDisk = useCallback(() => {
+    setDirty(false);
+    setConfirmUnresolved(null);
+    setDismissedDisk(null);
+  }, []);
 
   const conflictCount = parsed?.conflictCount ?? 0;
   const resolvedCount = selections.filter(
@@ -419,6 +464,22 @@ export function MergePanel() {
             }}
           />
           <ToolbarButton label="Stay" onClick={() => setPending(null)} />
+        </div>
+      )}
+
+      {externalChange && (
+        <div
+          className="legit-panel__toolbar"
+          style={{ display: "flex", alignItems: "center", gap: 8 }}
+        >
+          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
+            The file changed on disk - reload it? The current result will be lost.
+          </span>
+          <ToolbarButton label="Reload" onClick={reloadFromDisk} />
+          <ToolbarButton
+            label="Keep editing"
+            onClick={() => setDismissedDisk(diskContent ?? null)}
+          />
         </div>
       )}
 

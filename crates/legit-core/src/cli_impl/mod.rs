@@ -506,6 +506,59 @@ impl<E: GitExecutor> GitCliBackend<E> {
         }
     }
 
+    /// Best-effort: attach submodule `p`'s detached HEAD to a branch whose
+    /// tip is exactly the current commit (configured branch first, else a
+    /// unique local match - `choose_attach_branch`). The checkout is a
+    /// content no-op (tip == HEAD), so this can never touch the worktree.
+    /// Never fails the surrounding update: the update is already complete
+    /// and a failed attach only leaves the correct detached state, so every
+    /// error path is a warn + return.
+    async fn attach_submodule_branch(&self, p: &str, configured: Option<&str>) {
+        let runner = self.runner().await;
+        // Attached already (e.g. `--remote --merge` on a branch): done.
+        // Detached HEAD makes symbolic-ref exit 1 - expected, not a failure.
+        match runner
+            .run_expecting(&["-C", p, "symbolic-ref", "-q", "--short", "HEAD"], &[1])
+            .await
+        {
+            Ok(o) if !o.success => {}
+            Ok(_) => return,
+            Err(e) => {
+                tracing::warn!(path = p, error = %e, "branch-attach detach probe failed");
+                return;
+            }
+        }
+        let matching: Vec<String> = match runner
+            .run(&["-C", p, "for-each-ref", "refs/heads", "--points-at", "HEAD", "--format=%(refname:short)"])
+            .await
+        {
+            Ok(o) if o.success => o
+                .stdout
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect(),
+            Ok(o) => {
+                tracing::warn!(path = p, stderr = %o.stderr, "branch-attach for-each-ref failed");
+                return;
+            }
+            Err(e) => {
+                tracing::warn!(path = p, error = %e, "branch-attach for-each-ref failed");
+                return;
+            }
+        };
+        drop(runner);
+        let Some(branch) = choose_attach_branch(configured, &matching) else {
+            return;
+        };
+        if let Err(e) = self.run_simple(&["-C", p, "checkout", &branch]).await {
+            tracing::warn!(
+                path = p, branch = %branch, error = %e,
+                "branch attach failed; the submodule stays detached"
+            );
+        }
+    }
+
     /// Update ONE submodule (to `mv`'s target), handling dirtiness per
     /// `behavior`. `old` is the pre-move HEAD, the rollback anchor. Never
     /// returns Err: every failure becomes a status so the caller's batch
@@ -1650,7 +1703,35 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         }
         // May clone/fetch missing commits: run as a remote op (progress,
         // cancel, auth-aware error classification).
-        self.run_remote(&runner, &args, op_id).await
+        self.run_remote(&runner, &args, op_id).await?;
+        drop(runner);
+
+        if opts.attach_branch {
+            // Best-effort attach pass over the updated (top-level) submodules;
+            // an enumeration failure must not turn the successful update into
+            // an error. `head_branch.is_some()` skips already-attached ones
+            // (the helper's own probe re-checks; it has callers without this
+            // pre-filter).
+            match self.submodules().await {
+                Ok(subs) => {
+                    for s in subs {
+                        if !s.state.populated || !s.state.initialized {
+                            continue;
+                        }
+                        if !opts.paths.is_empty() && !opts.paths.contains(&s.path) {
+                            continue;
+                        }
+                        if s.head_branch.is_some() {
+                            continue;
+                        }
+                        let p = s.path.to_string_lossy().into_owned();
+                        self.attach_submodule_branch(&p, s.branch.as_deref()).await;
+                    }
+                }
+                Err(e) => tracing::warn!(error = %e, "branch-attach enumeration failed"),
+            }
+        }
+        Ok(())
     }
 
     async fn submodule_sync(&self, paths: &[PathBuf], recursive: bool) -> Result<(), GitError> {
@@ -1734,6 +1815,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         paths: &[PathBuf],
         strategy: SubmoduleUpdateStrategy,
         behavior: SwitchDirtyBehavior,
+        attach_branch: bool,
         op_id: OperationId,
     ) -> Result<Vec<SubmoduleAutoUpdateResult>, GitError> {
         // Per-submodule composed flow (shared with the post-switch/pull
@@ -1763,12 +1845,17 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             // `--remote` moves worktrees but not the index: stage the pointer
             // of every submodule that actually moved, so the operation reads
             // as one atomic "pull latest and record it" (spec sub-project 4).
-            if matches!(
+            let moved = matches!(
                 status,
                 SubmoduleAutoUpdateStatus::Updated
                     | SubmoduleAutoUpdateStatus::ChangesCarried
                     | SubmoduleAutoUpdateStatus::ChangesStashed
-            ) {
+            );
+            if moved {
+                if attach_branch {
+                    let p = s.path.to_string_lossy().into_owned();
+                    self.attach_submodule_branch(&p, s.branch.as_deref()).await;
+                }
                 to_stage.push(s.path.clone());
             }
             results.push(SubmoduleAutoUpdateResult { path: s.path, status });
@@ -1805,6 +1892,77 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         self.run_simple(&["submodule", "deinit", "-f", "--", &p]).await?;
         // Removes worktree + index gitlink and STAGES the .gitmodules edit.
         self.run_simple(&["rm", "-f", "--", &p]).await
+    }
+
+    async fn submodule_move(&self, from: &Path, to: &Path) -> Result<(), GitError> {
+        // Reject anything that could escape the worktree (same rule as
+        // `submodule_gitdir_path`): relative, normal components only.
+        for p in [from, to] {
+            if p.as_os_str().is_empty()
+                || p.is_absolute()
+                || p.components().any(|c| !matches!(c, std::path::Component::Normal(_)))
+            {
+                return Err(GitError::Internal(format!(
+                    "invalid submodule path '{}'",
+                    p.display()
+                )));
+            }
+        }
+        let runner = self.runner().await;
+        let out = runner.run(&["rev-parse", "--show-toplevel"]).await?;
+        Self::ensure_success(&out)?;
+        drop(runner);
+        let root = PathBuf::from(out.stdout.trim());
+        let abs_to = root.join(to);
+        if abs_to.exists() {
+            return Err(GitError::Internal(format!(
+                "target path '{}' already exists",
+                to.display()
+            )));
+        }
+        // `git mv` refuses "destination directory does not exist": create the
+        // missing parents, remembering the topmost one we created so a failed
+        // move can clean up after itself.
+        let mut created: Option<PathBuf> = None;
+        if let Some(parent) = abs_to.parent() {
+            if !parent.exists() {
+                let mut probe = parent.to_path_buf();
+                while let Some(up) = probe.parent() {
+                    if up.exists() {
+                        break;
+                    }
+                    probe = up.to_path_buf();
+                }
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    GitError::Internal(format!(
+                        "could not create '{}': {e}",
+                        parent.display()
+                    ))
+                })?;
+                created = Some(probe);
+            }
+        }
+        let f = from.to_string_lossy().into_owned();
+        let t = to.to_string_lossy().into_owned();
+        match self.run_simple(&["mv", "--", &f, &t]).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // Best-effort: remove the empty directories we just created;
+                // a failed cleanup must not be silent (house rule).
+                if let Some(dir) = created {
+                    if let Err(rm) = std::fs::remove_dir_all(&dir) {
+                        return Err(append_error_note(
+                            e,
+                            &format!(
+                                "note: cleanup of created directory '{}' also failed: {rm}",
+                                dir.display()
+                            ),
+                        ));
+                    }
+                }
+                Err(e)
+            }
+        }
     }
 
     async fn submodule_gitdir_info(
@@ -1847,6 +2005,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
     async fn submodule_auto_update(
         &self,
         behavior: SwitchDirtyBehavior,
+        attach_branch: bool,
     ) -> Result<Vec<SubmoduleAutoUpdateResult>, GitError> {
         let subs = self.submodules().await?;
         let mut results = Vec::new();
@@ -1862,6 +2021,17 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             let status = self
                 .update_one_submodule(&s, old.as_str(), behavior, SubmoduleMove::Recorded, None)
                 .await;
+            if attach_branch
+                && matches!(
+                    status,
+                    SubmoduleAutoUpdateStatus::Updated
+                        | SubmoduleAutoUpdateStatus::ChangesCarried
+                        | SubmoduleAutoUpdateStatus::ChangesStashed
+                )
+            {
+                let p = s.path.to_string_lossy().into_owned();
+                self.attach_submodule_branch(&p, s.branch.as_deref()).await;
+            }
             results.push(SubmoduleAutoUpdateResult { path: s.path, status });
         }
         Ok(results)
@@ -3136,6 +3306,23 @@ fn find_created_stash(before_list: &str, after_list: &str, marker: &str) -> Opti
     None
 }
 
+/// Pick the branch to attach a submodule's detached HEAD to, given the
+/// configured `.gitmodules` branch (if any) and the local branches whose
+/// tips equal the checked-out commit (`for-each-ref --points-at HEAD`).
+/// The configured branch wins when it matches; otherwise only an
+/// unambiguous single candidate attaches - 2+ candidates stay detached.
+fn choose_attach_branch(configured: Option<&str>, matching: &[String]) -> Option<String> {
+    if let Some(c) = configured {
+        if matching.iter().any(|b| b == c) {
+            return Some(c.to_string());
+        }
+    }
+    match matching {
+        [only] => Some(only.clone()),
+        _ => None,
+    }
+}
+
 fn stash_created(tip_before: Option<&str>, tip_after: Option<&str>) -> Option<String> {
     match tip_after {
         Some(after) if tip_before != Some(after) => Some(after.to_string()),
@@ -3601,6 +3788,42 @@ mod tests {
     fn find_created_stash_empty_before_list() {
         let after = format!("bbb On main: {MARKER}\n");
         assert_eq!(find_created_stash("", &after, MARKER), Some("bbb".into()));
+    }
+
+    // --- submodule branch attach: which branch (if any) to check out ---------
+    // Configured branch wins when its tip is at the commit; otherwise only an
+    // unambiguous single candidate attaches (2+ stay detached).
+
+    #[test]
+    fn choose_attach_branch_configured_match_wins() {
+        let matching = vec!["dev".to_string(), "main".to_string()];
+        assert_eq!(
+            choose_attach_branch(Some("main"), &matching),
+            Some("main".to_string())
+        );
+    }
+
+    #[test]
+    fn choose_attach_branch_unique_match_attaches() {
+        let matching = vec!["feature".to_string()];
+        assert_eq!(choose_attach_branch(None, &matching), Some("feature".to_string()));
+        // Configured branch NOT at this commit: the unique rule still applies.
+        assert_eq!(
+            choose_attach_branch(Some("main"), &matching),
+            Some("feature".to_string())
+        );
+    }
+
+    #[test]
+    fn choose_attach_branch_ambiguous_stays_detached() {
+        let matching = vec!["a".to_string(), "b".to_string()];
+        assert_eq!(choose_attach_branch(None, &matching), None);
+    }
+
+    #[test]
+    fn choose_attach_branch_no_candidates_stays_detached() {
+        assert_eq!(choose_attach_branch(Some("main"), &[]), None);
+        assert_eq!(choose_attach_branch(None, &[]), None);
     }
 
     // --- sequencer (cherry-pick / revert) output classification --------------

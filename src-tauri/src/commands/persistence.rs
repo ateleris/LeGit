@@ -180,6 +180,18 @@ pub async fn set_confirm_discard(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn set_submodule_attach_branch(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state.mutate_global(|s| {
+        s.submodule_attach_branch = enabled;
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn set_external_editor_command(
     state: tauri::State<'_, AppState>,
     command: Option<String>,

@@ -65,6 +65,7 @@ export interface GlobalSettings {
   stash_include_untracked?: boolean;
   /** `push --recurse-submodules` guard mode (null = off). */
   push_recurse_submodules?: PushRecurseMode | null;
+  submodule_attach_branch?: boolean;
   /** Show author Gravatars in the commit graph. OFF by default — enabling it
    * sends hashed author emails to gravatar.com. */
   commit_avatars?: boolean;
@@ -596,6 +597,8 @@ export interface SubmoduleUpdateOptions {
   init: boolean;
   recursive: boolean;
   paths: string[];
+  /** Filled backend-side from the global setting; never set by the frontend. */
+  attach_branch?: boolean;
 }
 
 /** Integration mode for `submodule update --remote`. */

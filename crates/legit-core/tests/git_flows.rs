@@ -1569,6 +1569,133 @@ async fn submodules_reports_a_real_submodule() {
 }
 
 #[tokio::test]
+async fn submodule_move_relocates_worktree_gitmodules_and_stays_functional() {
+    let (sup, _lib) = repo_with_submodule().await;
+    // Dirty content must travel with the move.
+    sup.write("lib/wip.txt", "uncommitted\n");
+
+    sup.backend
+        .submodule_move(Path::new("lib"), Path::new("vendor/lib"))
+        .await
+        .unwrap();
+
+    // Worktree moved (dirt included), .gitmodules rewritten, change staged.
+    assert!(sup.exists("vendor/lib/lib.txt"));
+    assert!(sup.exists("vendor/lib/wip.txt"));
+    assert!(!sup.exists("lib"));
+    assert!(sup.read(".gitmodules").contains("path = vendor/lib"));
+    let staged = sup.git(&["diff", "--cached", "--name-only"]).await;
+    assert!(staged.contains(".gitmodules"), "{staged}");
+    // The gitfile link still resolves: git works inside the moved submodule,
+    // and the gitdir key kept the ORIGINAL name.
+    let gitdir = sup.git(&["-C", "vendor/lib", "rev-parse", "--absolute-git-dir"]).await;
+    assert!(
+        gitdir.replace('\\', "/").contains(".git/modules/lib"),
+        "gitdir key must keep the original name: {gitdir}"
+    );
+    // The enumeration sees the new path under the old name.
+    let subs = sup.backend.submodules().await.unwrap();
+    assert_eq!(subs.len(), 1);
+    assert_eq!(subs[0].name, "lib");
+    assert_eq!(subs[0].path, PathBuf::from("vendor/lib"));
+    // A follow-up commit of the staged move succeeds.
+    sup.git(&["commit", "-m", "move submodule"]).await;
+
+    // Occupied target: refused, nothing changed.
+    sup.write("taken", "occupied\n");
+    let err = sup
+        .backend
+        .submodule_move(Path::new("vendor/lib"), Path::new("taken"))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("already exists"), "{err:?}");
+    assert!(sup.exists("vendor/lib/lib.txt"));
+}
+
+#[tokio::test]
+async fn submodule_move_works_on_an_uninitialized_submodule() {
+    // Encodes real git's behavior for moving a deinit-ed submodule: the
+    // gitlink and .gitmodules entry move even without a populated worktree.
+    let (sup, _lib) = repo_with_submodule().await;
+    sup.git(&["submodule", "deinit", "-f", "--", "lib"]).await;
+
+    sup.backend
+        .submodule_move(Path::new("lib"), Path::new("third_party/lib"))
+        .await
+        .unwrap();
+
+    assert!(sup.read(".gitmodules").contains("path = third_party/lib"));
+    let subs = sup.backend.submodules().await.unwrap();
+    assert_eq!(subs.len(), 1);
+    assert_eq!(subs[0].name, "lib");
+    assert_eq!(subs[0].path, PathBuf::from("third_party/lib"));
+    assert!(!subs[0].state.populated);
+}
+
+#[tokio::test]
+async fn submodule_update_attach_branch_reattaches_the_configured_branch() {
+    // Encodes the assumptions the branch-attach feature is built on:
+    // (1) `submodule update` checks out the recorded SHA DETACHED even when
+    //     the configured branch points at exactly that commit (the premise);
+    // (2) `for-each-ref --points-at HEAD --format=%(refname:short)` lists
+    //     that branch;
+    // (3) the follow-up `checkout` attaches and leaves both worktrees clean.
+    let (sup, _lib) = repo_with_submodule().await;
+    // Track `main` in .gitmodules (read back by submodules()); commit the
+    // .gitmodules edit so the final cleanliness assertion sees only what the
+    // attach itself did.
+    sup.backend
+        .submodule_set_branch(Path::new("lib"), Some("main"))
+        .await
+        .unwrap();
+    sup.git(&["add", ".gitmodules"]).await;
+    sup.git(&["commit", "-m", "track main"]).await;
+
+    // Move the submodule's HEAD off the recorded SHA (update skips a
+    // submodule already sitting at the gitlink): a detached commit inside
+    // the submodule. `main` keeps pointing at the recorded commit.
+    sup.git(&["-C", "lib", "checkout", "--detach"]).await;
+    sup.write("lib/lib.txt", "detached work\n");
+    sup.git(&["-C", "lib", "add", "-A"]).await;
+    sup.git(&["-C", "lib", "commit", "-m", "detached work"]).await;
+
+    // PREMISE (attach off): the update returns to the recorded SHA but
+    // leaves the submodule detached, even though `main` points exactly there.
+    let mut opts = SubmoduleUpdateOptions {
+        paths: vec![PathBuf::from("lib")],
+        ..Default::default()
+    };
+    sup.backend
+        .submodule_update(opts.clone(), OperationId("t1".into()))
+        .await
+        .unwrap();
+    let subs = sup.backend.submodules().await.unwrap();
+    assert_eq!(subs.len(), 1);
+    assert_eq!(subs[0].head_branch, None, "plain update must stay detached");
+    assert_eq!(
+        subs[0].checked_out_sha, subs[0].recorded_sha,
+        "update must have checked out the recorded SHA"
+    );
+
+    // FEATURE (attach on): the same update now ends attached to `main`.
+    opts.attach_branch = true;
+    sup.backend
+        .submodule_update(opts, OperationId("t2".into()))
+        .await
+        .unwrap();
+    let subs = sup.backend.submodules().await.unwrap();
+    assert_eq!(
+        subs[0].head_branch.as_deref(),
+        Some("main"),
+        "attach must have checked out the configured branch"
+    );
+    assert_eq!(subs[0].checked_out_sha, subs[0].recorded_sha);
+    // The attach is a content no-op: both worktrees stay clean.
+    assert_eq!(sup.git(&["-C", "lib", "status", "--porcelain"]).await.trim(), "");
+    assert_eq!(sup.git(&["status", "--porcelain"]).await.trim(), "");
+}
+
+#[tokio::test]
 async fn status_classifies_submodule_pointer_moves_and_dirt() {
     let (sup, _lib) = repo_with_submodule().await;
     let sub_path = sup.path.join("lib").to_string_lossy().into_owned();
@@ -1758,6 +1885,7 @@ async fn submodule_update_remote_moves_and_stages_the_pointer() {
             &[PathBuf::from("lib")],
             SubmoduleUpdateStrategy::Checkout,
             SwitchDirtyBehavior::AutoStash,
+            false,
             OperationId("t".into()),
         )
         .await
@@ -1795,6 +1923,7 @@ async fn submodule_update_remote_handles_dirty_submodules_safely() {
             &[PathBuf::from("lib")],
             SubmoduleUpdateStrategy::Checkout,
             SwitchDirtyBehavior::AutoStash,
+            false,
             OperationId("t1".into()),
         )
         .await
@@ -1824,6 +1953,7 @@ async fn submodule_update_remote_handles_dirty_submodules_safely() {
             &[PathBuf::from("lib")],
             SubmoduleUpdateStrategy::Checkout,
             SwitchDirtyBehavior::AutoStash,
+            false,
             OperationId("t2".into()),
         )
         .await
@@ -1900,7 +2030,7 @@ async fn submodule_pointer_ahead() -> (TestRepo, String, String) {
 #[tokio::test]
 async fn auto_update_moves_clean_submodules() {
     let (sup, _old, new) = submodule_pointer_ahead().await;
-    let results = sup.backend.submodule_auto_update(SwitchDirtyBehavior::AutoStash).await.unwrap();
+    let results = sup.backend.submodule_auto_update(SwitchDirtyBehavior::AutoStash, false).await.unwrap();
     assert_eq!(results.len(), 1);
     assert!(matches!(results[0].status, SubmoduleAutoUpdateStatus::Updated), "{results:?}");
     let sub_path = sup.path.join("lib").to_string_lossy().into_owned();
@@ -1913,7 +2043,7 @@ async fn auto_update_carries_nonconflicting_changes_with_autostash() {
     let (sup, _old, new) = submodule_pointer_ahead().await;
     // Untracked file: never conflicts with the pointer move.
     sup.write("lib/notes.txt", "wip\n");
-    let results = sup.backend.submodule_auto_update(SwitchDirtyBehavior::AutoStash).await.unwrap();
+    let results = sup.backend.submodule_auto_update(SwitchDirtyBehavior::AutoStash, false).await.unwrap();
     assert!(matches!(results[0].status, SubmoduleAutoUpdateStatus::ChangesCarried), "{results:?}");
     let sub_path = sup.path.join("lib").to_string_lossy().into_owned();
     let head = sup.git(&["-C", &sub_path, "rev-parse", "HEAD"]).await.trim().to_string();
@@ -1928,7 +2058,7 @@ async fn auto_update_pop_conflict_rolls_back_with_changes_intact() {
     let (sup, old, _new) = submodule_pointer_ahead().await;
     // Local edit to the SAME file the new commit changes: the pop conflicts.
     sup.write("lib/lib.txt", "local work\n");
-    let results = sup.backend.submodule_auto_update(SwitchDirtyBehavior::AutoStash).await.unwrap();
+    let results = sup.backend.submodule_auto_update(SwitchDirtyBehavior::AutoStash, false).await.unwrap();
     assert!(matches!(results[0].status, SubmoduleAutoUpdateStatus::RolledBack { .. }), "{results:?}");
     let sub_path = sup.path.join("lib").to_string_lossy().into_owned();
     let head = sup.git(&["-C", &sub_path, "rev-parse", "HEAD"]).await.trim().to_string();
@@ -1942,7 +2072,7 @@ async fn auto_update_pop_conflict_rolls_back_with_changes_intact() {
 async fn auto_update_stash_and_keep_parks_changes() {
     let (sup, _old, new) = submodule_pointer_ahead().await;
     sup.write("lib/lib.txt", "local work\n");
-    let results = sup.backend.submodule_auto_update(SwitchDirtyBehavior::StashAndKeep).await.unwrap();
+    let results = sup.backend.submodule_auto_update(SwitchDirtyBehavior::StashAndKeep, false).await.unwrap();
     assert!(matches!(results[0].status, SubmoduleAutoUpdateStatus::ChangesStashed), "{results:?}");
     let sub_path = sup.path.join("lib").to_string_lossy().into_owned();
     let head = sup.git(&["-C", &sub_path, "rev-parse", "HEAD"]).await.trim().to_string();

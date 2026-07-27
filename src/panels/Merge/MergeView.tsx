@@ -28,12 +28,13 @@ import { codeFolding, foldEffect, unfoldAll, unfoldEffect } from "@codemirror/la
 import { EXPAND_STEP, EXPANDER_THEME, expanderPair, headerBand } from "../Diff/hunkExpanders";
 import { baseTheme, NumberMarker, plusMinusIcon, readOnly } from "../Diff/DiffEditor";
 import { loadLanguageForPath, syntaxColorTheme } from "../Diff/syntaxLanguages";
+import { splitLines } from "../Diff/editModel";
 import {
   blockSection,
   composeBlockLines,
   foldableRanges,
+  initialBlockRanges,
   locateRegionAnchors,
-  markerViewSpans,
   regionsFromParsed,
   sideLabel,
   type ConflictSideNames,
@@ -318,18 +319,18 @@ export const MergeView = forwardRef<
     // Side anchors are located by region CONTENT in the actual stage docs,
     // not derived from the marker file's structure: saved edits to the
     // result's common lines must not shift where the sides' blocks render.
+    // splitLines (not a raw "\n" split): the parsed regions are \r-stripped,
+    // so CRLF stage content must be too or no region would ever match.
     const sideAnchors = {
       ours: locateRegionAnchors(
-        (ours ?? "").split("\n"),
+        splitLines(ours ?? ""),
         regions.map((r) => r.ours),
       ),
       theirs: locateRegionAnchors(
-        (theirs ?? "").split("\n"),
+        splitLines(theirs ?? ""),
         regions.map((r) => r.theirs),
       ),
     };
-    const spans = markerViewSpans(parsed);
-    const nBlocks = spans.length;
 
     // ------------------------------------------------------------------
     // Result document: guaranteed trailing newline so every block range can
@@ -337,15 +338,13 @@ export const MergeView = forwardRef<
     // at a line start). Save strips it again when the file had none.
     // ------------------------------------------------------------------
     const docText = content.endsWith("\n") || content === "" ? content : `${content}\n`;
-    // Initial ranges from the marker-view spans (line-based → positions).
-    const docLines = docText.split("\n");
-    const lineStart: number[] = [0];
-    for (const l of docLines) lineStart.push(lineStart[lineStart.length - 1] + l.length + 1);
-    const initialRanges: BlockRange[] = spans.map((sp) => ({
-      from: lineStart[sp.start],
-      to: lineStart[sp.start + sp.lines],
+    // Initial ranges from the marker-view spans, in CodeMirror positions
+    // (every line break is ONE position, CRLF included).
+    const initialRanges: BlockRange[] = initialBlockRanges(parsed, docText).map((r) => ({
+      ...r,
       origin: null,
     }));
+    const nBlocks = initialRanges.length;
 
     const rangesField = StateField.define<BlockRange[]>({
       create: () => initialRanges,

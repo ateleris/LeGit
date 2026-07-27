@@ -24,6 +24,7 @@ export function SubmoduleRow({
   onFetch,
   onSetUrl,
   onSetBranch,
+  onMovePath,
   onCreateBranch,
   onRemove,
   onConfirmRemove,
@@ -41,6 +42,8 @@ export function SubmoduleRow({
   onFetch: () => void;
   onSetUrl: (url: string) => void;
   onSetBranch: (branch: string | null) => void;
+  /** Move the submodule to a new path (git mv; stages the result). */
+  onMovePath: (to: string) => void;
   /** Create a branch at the submodule's detached HEAD. */
   onCreateBranch: (name: string) => void;
   onRemove: () => void;
@@ -50,7 +53,7 @@ export function SubmoduleRow({
   const badge = submoduleBadge(info);
   const sha = info.checked_out_sha ?? info.recorded_sha;
   const uninitialized = !info.state.initialized || !info.state.populated;
-  const [editing, setEditing] = useState<"url" | "branch" | "new-branch" | null>(null);
+  const [editing, setEditing] = useState<"url" | "branch" | "new-branch" | "path" | null>(null);
 
   return (
     <div
@@ -170,6 +173,27 @@ export function SubmoduleRow({
         </div>
       )}
 
+      {editing === "path" && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", flexShrink: 0 }}>
+            Move to
+          </span>
+          <InlineRenameInput
+            initialValue={info.path}
+            placeholder="new path for the submodule"
+            disabled={busy}
+            onSave={(v) => {
+              setEditing(null);
+              const to = v.trim();
+              if (to && to !== info.path) onMovePath(to);
+            }}
+            onCancel={() => setEditing(null)}
+            style={{ fontSize: "var(--fz-sm)", flex: 1 }}
+            title="git mv: moves the working tree, updates .gitmodules, and stages the move"
+          />
+        </div>
+      )}
+
       {removing === "confirm" ? (
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: "var(--fz-md)", flex: 1 }}>
@@ -235,6 +259,12 @@ export function SubmoduleRow({
                 title="Edit the tracked branch in place"
                 disabled={busy}
                 onClick={() => setEditing(editing === "branch" ? null : "branch")}
+              />
+              <ToolbarButton
+                label="Move"
+                title="Move the submodule to another path in place (git mv; stages the move)"
+                disabled={busy}
+                onClick={() => setEditing(editing === "path" ? null : "path")}
               />
               {info.head_branch === null && (
                 <ToolbarButton

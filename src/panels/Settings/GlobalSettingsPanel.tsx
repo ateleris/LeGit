@@ -94,6 +94,7 @@ export function GlobalSettingsPanel() {
           <ConfirmDiscardSection />
           <BranchSwitchingSection />
           <PushGuardSection />
+          <SubmoduleAttachSection />
           <AutoRefreshSection />
           <AutoFetchSection />
           <ExternalEditorSection />
@@ -994,6 +995,46 @@ function ConfirmDiscardSection() {
         Covers discarding changes, deleting branches, dropping stashes, and
         removing remotes or themes. When off, these run immediately without a
         prompt.
+      </FieldNote>
+    </Section>
+  );
+}
+
+function SubmoduleAttachSection() {
+  const enabled = useSettingsStore((s) => s.settings?.submodule_attach_branch ?? false);
+  const setSubmoduleAttachBranch = useSettingsStore((s) => s.setSubmoduleAttachBranch);
+  const [saving, setSaving] = useState(false);
+
+  const toggle = async () => {
+    setSaving(true);
+    try {
+      await setSubmoduleAttachBranch(!enabled);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Submodule branch attach">
+      <FieldNote>writes to: global settings (applies to all repos)</FieldNote>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <input
+          type="checkbox"
+          id="global-submodule-attach"
+          checked={enabled}
+          onChange={toggle}
+          disabled={saving}
+        />
+        <label htmlFor="global-submodule-attach" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
+          Attach submodule HEAD to its branch after updates
+        </label>
+      </div>
+      <FieldNote>
+        When a submodule update lands on a commit that a branch already points
+        at (the tracked branch, or a single matching local branch), check out
+        that branch instead of leaving a detached HEAD. The submodule then
+        follows the branch, so its recorded pointer shows as changed when the
+        branch moves.
       </FieldNote>
     </Section>
   );
