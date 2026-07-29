@@ -22,6 +22,7 @@ import { PanelContextMenuProvider, useMenuConfirm, type BaselineEntry } from "..
 import { MenuItem } from "../Commits/menu/primitives";
 import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
 import { OpenInEditorMenuItem } from "../shared/OpenInEditorMenuItem";
+import { AddToGitignoreMenuItem } from "../shared/AddToGitignoreMenuItem";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
@@ -903,6 +904,9 @@ export function WorkingChangesPanel() {
                     {!many && <CopyPathMenuSection path={f.path} onClose={closeMenu} />}
                     {!many && f.change !== "Deleted" && f.change !== "SubmoduleChanged" && (
                       <OpenInEditorMenuItem path={f.path} onClose={closeMenu} />
+                    )}
+                    {!many && f.change === "Untracked" && (
+                      <AddToGitignoreMenuItem path={f.path} onClose={closeMenu} />
                     )}
                   </>,
                 );

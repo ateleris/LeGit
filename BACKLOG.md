@@ -108,16 +108,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   today; mirror `changed_files_view_mode`); escape `*`, `?`, `[` in
   `gitignore_line` (a filename
   containing them would become a glob).
-- **Working Changes panel:** "Add to .gitignore" context-menu entry on
-  untracked files, like the Files panel has (`repo_add_to_gitignore` via
-  `addToGitignore` in `lib/commands.ts`; menu items in `FilesPanel.tsx`).
-  Untracked-only here - the Files panel's tracked-file variant (untrack via
-  `rm_cached`) stays a Files concern. Consider extracting the menu item
-  into a shared component so wording/behaviour can't drift (same lesson as
-  `StashMenuSection`). Also: untracked files should use the same icon as
-  the Files panel (`FilePlus` + `var(--status-added)`, FilesPanel.tsx
-  `kind` icon map) instead of the current Working Changes marker, so
-  "new file" reads identically across panels.
 - **Git Log panel:** filter/search the log, copy a command, jump a toast to
   its specific log entry (today it just opens the panel).
 - **"Open in editor" on more file rows.** Shipped 2026-07-11 for Files /
