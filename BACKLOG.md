@@ -82,6 +82,14 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   agent).
 - **Keychain management UI**: list/forget credentials LeGit remembered
   (today: delete the "LeGit Git Credentials" entries in the OS keychain).
+- **Line-ending normalization: skip-unstaged refinement.** The Normalize
+  block shipped 2026-07-29 (spec:
+  `docs/superpowers/specs/2026-07-29-renormalize-line-endings-design.md`):
+  `.gitattributes` covers-all writer + `git add --renormalize` with a
+  throwaway-index preview in `LineEndingsRepoSection`. Open remainder:
+  `--renormalize` implies `-u`, so it also stages pending unstaged edits of
+  tracked files - v1 warns with a count in the confirm step; a refinement
+  could restrict the pathspec to files without unstaged edits.
 - **Git LFS-aware content views.** LeGit is already LFS-*compatible* for the
   core workflow (real git CLI inherits the user's `git-lfs` filters), but
   content views that read committed blobs (`git show <rev>:<path>` / diff at
@@ -100,6 +108,16 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   today; mirror `changed_files_view_mode`); escape `*`, `?`, `[` in
   `gitignore_line` (a filename
   containing them would become a glob).
+- **Working Changes panel:** "Add to .gitignore" context-menu entry on
+  untracked files, like the Files panel has (`repo_add_to_gitignore` via
+  `addToGitignore` in `lib/commands.ts`; menu items in `FilesPanel.tsx`).
+  Untracked-only here - the Files panel's tracked-file variant (untrack via
+  `rm_cached`) stays a Files concern. Consider extracting the menu item
+  into a shared component so wording/behaviour can't drift (same lesson as
+  `StashMenuSection`). Also: untracked files should use the same icon as
+  the Files panel (`FilePlus` + `var(--status-added)`, FilesPanel.tsx
+  `kind` icon map) instead of the current Working Changes marker, so
+  "new file" reads identically across panels.
 - **Git Log panel:** filter/search the log, copy a command, jump a toast to
   its specific log entry (today it just opens the panel).
 - **"Open in editor" on more file rows.** Shipped 2026-07-11 for Files /

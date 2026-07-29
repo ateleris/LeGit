@@ -272,6 +272,20 @@ export interface LineEndingsView {
   gitattributes_covers_all: boolean;
 }
 
+/** Result of `git add --renormalize` (matches legit-core `RenormalizeOutcome`).
+ * Empty = the repo was already normalized: an outcome, not an error. */
+export interface RenormalizeOutcome {
+  restaged: string[];
+}
+
+/** Simulated-renormalize preview (`repo_renormalize_preview`). */
+export interface RenormalizePreview {
+  /** Index entries a renormalize would change. */
+  files: string[];
+  /** Tracked files with unstaged changes - restaging stages those edits too. */
+  unstaged_changes: number;
+}
+
 // --- Signing config types (matches src-tauri/src/commands/signing.rs) ---
 
 /** A single git-config key resolved across all scopes. */

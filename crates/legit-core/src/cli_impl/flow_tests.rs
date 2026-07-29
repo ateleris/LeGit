@@ -2466,3 +2466,57 @@ async fn merge_ff_auto_passes_no_edit_and_classifies_clean() {
     assert_eq!(outcome, MergeOutcome::Merged);
     exec.assert_done();
 }
+
+#[tokio::test]
+async fn renormalize_preview_runs_entirely_on_a_temp_index() {
+    // Every step that could mutate an index carries GIT_INDEX_FILE pointing
+    // at the throwaway copy - the sequence proves the real index is never
+    // touched.
+    const TMP: &str = ".git/index.legit-renormalize-preview";
+    let fake = FakeExecutor::default();
+    fake.expect(&["write-tree"], ok("TREESHA\n"));
+    fake.expect(&["rev-parse", "--git-path", "index"], ok(".git/index\n"));
+    fake.expect_env(&["read-tree", "TREESHA"], &[("GIT_INDEX_FILE", TMP)], ok(""));
+    fake.expect_env(
+        &["add", "--renormalize", "--", "."],
+        &[("GIT_INDEX_FILE", TMP)],
+        ok(""),
+    );
+    fake.expect_env(
+        &["diff-index", "--cached", "--name-only", "-z", "TREESHA"],
+        &[("GIT_INDEX_FILE", TMP)],
+        ok("a.txt\0b c.txt\0"),
+    );
+    let (backend, fake) = backend(fake);
+    let files = backend.renormalize_preview().await.unwrap();
+    assert_eq!(files, vec!["a.txt".to_string(), "b c.txt".to_string()]);
+    fake.assert_done();
+}
+
+#[tokio::test]
+async fn renormalize_brackets_the_add_with_write_tree_and_diff_index() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["write-tree"], ok("TREESHA\n"));
+    fake.expect(&["add", "--renormalize", "--", "."], ok(""));
+    fake.expect(
+        &["diff-index", "--cached", "--name-only", "-z", "TREESHA"],
+        ok("a.txt\0"),
+    );
+    let (backend, fake) = backend(fake);
+    let outcome = backend.renormalize().await.unwrap();
+    assert_eq!(outcome.restaged, vec!["a.txt".to_string()]);
+    fake.assert_done();
+}
+
+#[tokio::test]
+async fn renormalize_add_failure_propagates_as_error() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["write-tree"], ok("TREESHA\n"));
+    fake.expect(
+        &["add", "--renormalize", "--", "."],
+        fail(128, "fatal: unable to write index"),
+    );
+    let (backend, fake) = backend(fake);
+    assert!(backend.renormalize().await.is_err());
+    fake.assert_done();
+}

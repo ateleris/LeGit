@@ -8,6 +8,7 @@ import { useGitStatusStore } from "../../store/git-status";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
 import { RepoIdentitySection } from "./RepoIdentitySection";
+import { NormalizeLineEndingsBlock } from "./NormalizeLineEndingsBlock";
 import { Section, Row, FieldNote, SettingsGroup, GitConfigPill } from "./primitives";
 import { Button } from "../shared/buttons";
 
@@ -585,6 +586,16 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
           </table>
         </div>
       )}
+
+      <NormalizeLineEndingsBlock
+        repoId={repoId}
+        view={view}
+        onViewChange={(v) => {
+          setView(v);
+          setDraftAutocrlf(v.autocrlf_local.value ?? null);
+          setDraftEol(v.eol_local.value ?? null);
+        }}
+      />
 
     </Section>
   );

@@ -18,7 +18,7 @@ use crate::types::{
     FetchOptions, FfMode, FileAtRevision, FileHistoryEntry, FileState, FileStatus,
     HunkOp, LineEndingKind, LineEndingStatusEntry, LineEndingTransition, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullStrategy, PushOptions, PushRecurseMode,
     RebaseOutcome, RebaseStep, RefDecoration, RefSelector, ReflogEntry, Remote, RemoteTag,
-    RepoFileEntry, RepoFileKind, RepoOpState, ResetMode, SequenceOutcome, SignMode, StashApplyOutcome, StashEntry,
+    RenormalizeOutcome, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode, SequenceOutcome, SignMode, StashApplyOutcome, StashEntry,
     StashOutcome, SubmoduleAutoUpdateResult, SubmoduleAutoUpdateStatus, SubmoduleGitdirInfo,
     SubmoduleInfo, SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy,
     SwitchDirtyBehavior, SwitchOutcome, TagInfo, TrackingStatus,
@@ -1421,6 +1421,61 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             return Ok(());
         }
         self.run_pathspec(&["restore", "--staged", "--"], paths).await
+    }
+
+    async fn renormalize_preview(&self) -> Result<Vec<String>, GitError> {
+        // Simulate on a throwaway index (see parsers::renormalize): snapshot
+        // the real index as a tree, rebuild it under GIT_INDEX_FILE, run the
+        // renormalize there, and diff against the snapshot. The real index
+        // is never touched; the temp file is cleaned up by the caller.
+        let runner = self.runner().await;
+
+        let out = runner.run(&["write-tree"]).await?;
+        Self::ensure_success(&out)?;
+        let tree = out.stdout.trim().to_string();
+
+        let out = runner.run(&["rev-parse", "--git-path", "index"]).await?;
+        Self::ensure_success(&out)?;
+        let temp_index = format!(
+            "{}{}",
+            out.stdout.trim(),
+            parsers::renormalize::RENORMALIZE_PREVIEW_INDEX_SUFFIX
+        );
+        let env: [(&str, &str); 1] = [("GIT_INDEX_FILE", temp_index.as_str())];
+
+        let out = runner.run_with_env(&["read-tree", &tree], &env).await?;
+        Self::ensure_success(&out)?;
+        let out = runner
+            .run_with_env(&parsers::renormalize::RENORMALIZE_ARGS, &env)
+            .await?;
+        Self::ensure_success(&out)?;
+
+        let mut args: Vec<&str> = parsers::renormalize::DIFF_INDEX_NAME_ONLY_Z.to_vec();
+        args.push(&tree);
+        let out = runner.run_with_env(&args, &env).await?;
+        Self::ensure_success(&out)?;
+        Ok(parsers::renormalize::parse_name_only_z(&out.stdout))
+    }
+
+    async fn renormalize(&self) -> Result<RenormalizeOutcome, GitError> {
+        // Bracket the real run with write-tree + diff-index so the outcome
+        // reports exactly the index entries the renormalize changed.
+        let runner = self.runner().await;
+
+        let out = runner.run(&["write-tree"]).await?;
+        Self::ensure_success(&out)?;
+        let tree = out.stdout.trim().to_string();
+
+        let out = runner.run(&parsers::renormalize::RENORMALIZE_ARGS).await?;
+        Self::ensure_success(&out)?;
+
+        let mut args: Vec<&str> = parsers::renormalize::DIFF_INDEX_NAME_ONLY_Z.to_vec();
+        args.push(&tree);
+        let out = runner.run(&args).await?;
+        Self::ensure_success(&out)?;
+        Ok(RenormalizeOutcome {
+            restaged: parsers::renormalize::parse_name_only_z(&out.stdout),
+        })
     }
 
     async fn discard(&self, paths: &[PathBuf]) -> Result<(), GitError> {
