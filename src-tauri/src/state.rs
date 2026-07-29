@@ -448,6 +448,10 @@ pub struct RepoSession {
     pub settings: Arc<RwLock<RepoSettings>>,
     /// On-disk path for `repos/<hash>/settings.json`.
     pub settings_path: PathBuf,
+    /// Serializes renormalize previews: they simulate on a fixed-path
+    /// throwaway index (`GIT_INDEX_FILE`), so two concurrent previews would
+    /// collide on git's `.lock` for that file.
+    pub renormalize_preview_lock: tokio::sync::Mutex<()>,
 }
 
 impl RepoSession {
@@ -466,6 +470,7 @@ impl RepoSession {
             backend,
             settings: Arc::new(RwLock::new(settings)),
             settings_path,
+            renormalize_preview_lock: tokio::sync::Mutex::new(()),
         }
     }
 

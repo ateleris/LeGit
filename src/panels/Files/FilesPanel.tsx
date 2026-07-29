@@ -9,7 +9,6 @@ import { useSummonStore } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import {
   repoListFiles,
-  repoAddToGitignore,
   repoUntrackPath,
   repoRevealPath,
 } from "../../lib/commands";
@@ -23,6 +22,7 @@ import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
 import { PanelContextMenuProvider, useMenuConfirm } from "../Commits/menu/PanelContextMenu";
 import { MenuItem, SectionLabel } from "../Commits/menu/primitives";
+import { AddToGitignoreMenuItem } from "../shared/AddToGitignoreMenuItem";
 import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
 import { OpenInEditorMenuItem } from "../shared/OpenInEditorMenuItem";
 
@@ -227,9 +227,6 @@ export function FilesPanel() {
                     onBlame={() => useSummonStore.getState().summon("blame", file.path)}
                     onView={() => viewInFileView(file.path)}
                     onReveal={() => reveal(file.path)}
-                    onAddToGitignore={() =>
-                      onIgnored(() => repoAddToGitignore(repo.id, file.path, false), `Ignored ${file.path}`)
-                    }
                     onUntrack={() =>
                       onIgnored(() => repoUntrackPath(repo.id, file.path, false), `Stopped tracking ${file.path}`)
                     }
@@ -243,9 +240,6 @@ export function FilesPanel() {
                   <DirMenuSection
                     dirPath={dirPath}
                     onReveal={() => reveal(dirPath)}
-                    onAddToGitignore={() =>
-                      onIgnored(() => repoAddToGitignore(repo.id, dirPath, true), `Ignored ${dirPath}/`)
-                    }
                     onClose={closeMenu}
                   />,
                 )
@@ -278,7 +272,6 @@ function FileMenuSection({
   onBlame,
   onView,
   onReveal,
-  onAddToGitignore,
   onUntrack,
   onClose,
 }: {
@@ -288,7 +281,6 @@ function FileMenuSection({
   onBlame: () => void;
   onView: () => void;
   onReveal: () => void;
-  onAddToGitignore: () => void;
   onUntrack: () => void;
   onClose: () => void;
 }) {
@@ -320,7 +312,7 @@ function FileMenuSection({
           {confirmDestructive ? "Stop tracking & ignore…" : "Stop tracking & ignore"}
         </MenuItem>
       ) : kind === "untracked" ? (
-        <MenuItem onClick={() => { onClose(); onAddToGitignore(); }}>Add to .gitignore</MenuItem>
+        <AddToGitignoreMenuItem path={path} onClose={onClose} />
       ) : null}
     </>
   );
@@ -330,18 +322,16 @@ function FileMenuSection({
 function DirMenuSection({
   dirPath,
   onReveal,
-  onAddToGitignore,
   onClose,
 }: {
   dirPath: string;
   onReveal: () => void;
-  onAddToGitignore: () => void;
   onClose: () => void;
 }) {
   return (
     <>
       <SectionLabel>{dirPath}/</SectionLabel>
-      <MenuItem onClick={() => { onClose(); onAddToGitignore(); }}>Add folder to .gitignore</MenuItem>
+      <AddToGitignoreMenuItem path={dirPath} isDir onClose={onClose} />
       <CopyPathMenuSection path={dirPath} onClose={onClose} />
       <MenuItem onClick={() => { onClose(); onReveal(); }}>Reveal in file manager</MenuItem>
     </>

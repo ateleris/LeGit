@@ -3321,3 +3321,101 @@ async fn local_config_unset_falls_back_to_global() {
         .expect("spawn git");
     assert_eq!(out.stdout.trim(), "GLOBALKEY", "unset local key must fall back to global");
 }
+
+// --- renormalize -----------------------------------------------------------
+
+#[tokio::test]
+async fn renormalize_restages_crlf_blobs_as_lf() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\r\ntwo\r\n");
+    repo.commit_all("crlf").await;
+    repo.write(".gitattributes", "* text=auto\n");
+
+    let preview = repo.backend.renormalize_preview().await.unwrap();
+    assert_eq!(preview, vec!["a.txt".to_string()]);
+    // The preview must not have touched the real index.
+    let staged = repo.git(&["diff", "--cached", "--name-only"]).await;
+    assert_eq!(staged.trim(), "", "preview must leave the real index untouched");
+
+    let outcome = repo.backend.renormalize().await.unwrap();
+    assert_eq!(outcome.restaged, vec!["a.txt".to_string()]);
+
+    let eol = repo.git(&["ls-files", "--eol", "a.txt"]).await;
+    assert!(eol.contains("i/lf"), "index should be LF after renormalize: {eol}");
+    // Working tree bytes untouched.
+    assert_eq!(repo.read("a.txt"), "one\r\ntwo\r\n");
+}
+
+#[tokio::test]
+async fn renormalize_on_normalized_repo_stages_nothing() {
+    let repo = TestRepo::init().await;
+    repo.write(".gitattributes", "* text=auto\n");
+    repo.write("a.txt", "one\n");
+    repo.commit_all("lf").await;
+
+    assert!(repo.backend.renormalize_preview().await.unwrap().is_empty());
+    let outcome = repo.backend.renormalize().await.unwrap();
+    assert!(outcome.restaged.is_empty());
+    let staged = repo.git(&["diff", "--cached", "--name-only"]).await;
+    assert_eq!(staged.trim(), "");
+}
+
+#[tokio::test]
+async fn renormalize_clears_phantom_crlf_status_without_content_changes() {
+    // Validated git behavior: writing `* text=auto` does NOT hide a
+    // CRLF-resaved file from status - it stays "modified" (with an empty
+    // content diff) until an add refreshes the stat cache. Renormalize is
+    // that refresh: it reports no content change (the index blob was
+    // already LF) yet the phantom modification disappears, and the disk
+    // bytes keep their CRLF.
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\ntwo\n");
+    repo.commit_all("lf").await;
+    // An editor re-saves the file with CRLF: with autocrlf=false this is a
+    // phantom "modified".
+    repo.write("a.txt", "one\r\ntwo\r\n");
+    repo.write(".gitattributes", "* text=auto\n");
+    let dirty = repo.backend.status().await.unwrap();
+    assert!(
+        dirty.iter().any(|s| s.path == Path::new("a.txt")),
+        "text=auto alone must NOT clear the phantom modification (git keeps reporting it)"
+    );
+
+    // The preview agrees nothing would change content-wise.
+    assert!(repo.backend.renormalize_preview().await.unwrap().is_empty());
+
+    let outcome = repo.backend.renormalize().await.unwrap();
+    assert!(outcome.restaged.is_empty(), "no index entry changed content");
+    let after = repo.backend.status().await.unwrap();
+    assert!(
+        !after.iter().any(|s| s.path == Path::new("a.txt")),
+        "renormalize must clear the phantom modification"
+    );
+    assert_eq!(repo.read("a.txt"), "one\r\ntwo\r\n", "disk bytes must be untouched");
+}
+
+#[tokio::test]
+async fn renormalize_preview_reports_non_ascii_paths_raw() {
+    let repo = TestRepo::init().await;
+    repo.write("ümlaut ö.txt", "x\r\n");
+    repo.commit_all("crlf").await;
+    repo.write(".gitattributes", "* text=auto\n");
+    let files = repo.backend.renormalize_preview().await.unwrap();
+    assert_eq!(files, vec!["ümlaut ö.txt".to_string()]);
+}
+
+#[tokio::test]
+async fn stale_preview_lock_blocks_the_preview() {
+    // git refuses to write GIT_INDEX_FILE while `<file>.lock` exists - a
+    // preview killed mid-run leaves that lock behind and would block every
+    // future preview. This pins the failure mode the command layer's
+    // before/after cleanup (`remove_preview_index`) exists to heal.
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("base").await;
+    repo.write(".git/index.legit-renormalize-preview.lock", "");
+    assert!(
+        repo.backend.renormalize_preview().await.is_err(),
+        "a stale preview lock must surface as an error, not a silent empty preview"
+    );
+}

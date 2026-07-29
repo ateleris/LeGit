@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Copy,
   File,
+  FilePlus,
   FileQuestion,
   GitFork,
   Pencil,
@@ -95,7 +96,9 @@ const STATUS_META: Record<FileState, { Icon: LucideIcon; color: string }> = {
   Renamed: { Icon: ArrowRightLeft, color: "var(--status-renamed)" },
   Copied: { Icon: Copy, color: "var(--status-copied)" },
   Conflicted: { Icon: TriangleAlert, color: "var(--status-conflicted)" },
-  Untracked: { Icon: FileQuestion, color: "var(--subtle-fg)" },
+  // Matches the Files panel's untracked icon (FilePlus + status-added) so
+  // "new file" reads identically across panels.
+  Untracked: { Icon: FilePlus, color: "var(--status-added)" },
   Ignored: { Icon: FileQuestion, color: "var(--subtle-fg)" },
   SubmoduleChanged: { Icon: GitFork, color: "var(--subtle-fg)" },
   SubmoduleDirty: { Icon: GitFork, color: "var(--status-modified)" },

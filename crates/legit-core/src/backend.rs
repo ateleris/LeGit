@@ -13,7 +13,7 @@ use crate::types::{
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
     FetchOptions, FileAtRevision, FileHistoryEntry, FileStatus, HunkOp, LogOptions,
     MergeOptions, MergeOutcome, PullOptions, PushOptions, RebaseOutcome, RebaseStep,
-    ReflogEntry, Remote, RemoteTag, RepoFileEntry, RepoOpState, ResetMode, SequenceOutcome, StashApplyOutcome,
+    ReflogEntry, Remote, RemoteTag, RenormalizeOutcome, RepoFileEntry, RepoOpState, ResetMode, SequenceOutcome, StashApplyOutcome,
     StashEntry, StashOutcome, SubmoduleAutoUpdateResult, SubmoduleGitdirInfo, SubmoduleInfo,
     SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy, SwitchDirtyBehavior,
     SwitchOutcome, TagInfo, TrackingStatus,
@@ -159,6 +159,20 @@ pub trait GitBackend: Send + Sync {
 
     /// Unstage the given paths (`git restore --staged`).
     async fn unstage(&self, paths: &[PathBuf]) -> Result<(), GitError>;
+
+    /// List the index entries `git add --renormalize` would change, by
+    /// simulating the run on a throwaway index (`GIT_INDEX_FILE`); the real
+    /// index is untouched. NOT `add -n`: the dry run lists every tracked
+    /// file, not the ones that would change. Leaves a temp file next to the
+    /// real index (`RENORMALIZE_PREVIEW_INDEX_SUFFIX`) for the caller to
+    /// remove best-effort.
+    async fn renormalize_preview(&self) -> Result<Vec<String>, GitError>;
+
+    /// Re-run the clean filter over all tracked files
+    /// (`git add --renormalize -- .`) and report which files were restaged.
+    /// `--renormalize` implies `-u`, so pending unstaged modifications and
+    /// deletions of tracked files are staged too - callers must warn first.
+    async fn renormalize(&self) -> Result<RenormalizeOutcome, GitError>;
 
     /// Discard working-tree changes for the given paths: tracked paths are
     /// reverted (`git restore --worktree`), untracked paths are removed

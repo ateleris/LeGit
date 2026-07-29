@@ -82,6 +82,14 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   agent).
 - **Keychain management UI**: list/forget credentials LeGit remembered
   (today: delete the "LeGit Git Credentials" entries in the OS keychain).
+- **Line-ending normalization: skip-unstaged refinement.** The Normalize
+  block shipped 2026-07-29 (spec:
+  `docs/superpowers/specs/2026-07-29-renormalize-line-endings-design.md`):
+  `.gitattributes` covers-all writer + `git add --renormalize` with a
+  throwaway-index preview in `LineEndingsRepoSection`. Open remainder:
+  `--renormalize` implies `-u`, so it also stages pending unstaged edits of
+  tracked files - v1 warns with a count in the confirm step; a refinement
+  could restrict the pathspec to files without unstaged edits.
 - **Git LFS-aware content views.** LeGit is already LFS-*compatible* for the
   core workflow (real git CLI inherits the user's `git-lfs` filters), but
   content views that read committed blobs (`git show <rev>:<path>` / diff at

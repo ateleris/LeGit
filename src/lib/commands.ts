@@ -46,6 +46,8 @@ import type {
   RepoFileEntry,
   LineEndingKind,
   LineEndingStatusEntry,
+  RenormalizeOutcome,
+  RenormalizePreview,
   FetchOptions,
   PullOptions,
   PullStrategy,
@@ -309,6 +311,18 @@ export const globalWriteLineEndings = (
   autocrlf: string | null,
   eol: string | null
 ) => invoke<LineEndingsView>("global_write_line_endings", { autocrlf, eol });
+
+/** Simulated `git add --renormalize` on a throwaway index (real index untouched). */
+export const repoRenormalizePreview = (repoId: string) =>
+  invoke<RenormalizePreview>("repo_renormalize_preview", { repoId });
+
+/** Restage all tracked files through the clean filter; staged, never committed. */
+export const repoRenormalize = (repoId: string) =>
+  invoke<RenormalizeOutcome>("repo_renormalize", { repoId });
+
+/** Insert a covers-all `* text=auto [eol=...]` rule into `.gitattributes`. */
+export const repoWriteGitattributesEol = (repoId: string, eol: string | null) =>
+  invoke<LineEndingsView>("repo_write_gitattributes_eol", { repoId, eol });
 
 // --- commit signing ---
 

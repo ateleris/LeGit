@@ -437,6 +437,14 @@ pub enum SwitchOutcome {
     StashPopFailed { message: String },
 }
 
+/// Result of `git add --renormalize`: the files git restaged through the
+/// clean filter (captured via the dry run immediately beforehand). Empty
+/// means the repo was already normalized: an outcome, not an error.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct RenormalizeOutcome {
+    pub restaged: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SwitchDirtyBehavior {

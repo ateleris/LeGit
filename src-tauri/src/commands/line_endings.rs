@@ -13,7 +13,7 @@ use crate::commands::config_util::{
 use crate::commands::working::resolve_repo_relative;
 use crate::error::AppError;
 use crate::state::AppState;
-use legit_core::types::{FileState, LineEndingKind, LineEndingStatusEntry};
+use legit_core::types::{FileState, LineEndingKind, LineEndingStatusEntry, RenormalizeOutcome};
 use legit_core::{
     classify_line_endings, convert_line_endings, derive_line_ending_entry, parse_autocrlf,
     parse_cat_file_batch, parse_check_attr_z, AutocrlfSetting, EolTextAttr, GitRunner,
@@ -402,6 +402,198 @@ async fn read_capped_bytes(abs: &Path) -> Option<Vec<u8>> {
 /// 2 MB cap: above this the indicator is skipped rather than reading/scanning a
 /// large blob (matches the mixed-ending detector's guard).
 const MAX_LINE_ENDING_BYTES: usize = 2 * 1024 * 1024;
+
+// ---------------------------------------------------------------------------
+// Renormalize (Repo Settings "Line endings" -> Normalize block)
+// ---------------------------------------------------------------------------
+
+/// Preview for the Normalize block: which index entries a renormalize would
+/// change, plus how many tracked files carry unstaged changes (restaging
+/// stages those edits too - `--renormalize` implies `-u`).
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct RenormalizePreview {
+    pub files: Vec<String>,
+    pub unstaged_changes: u32,
+}
+
+/// Simulated `git add --renormalize` (throwaway index; the real index is
+/// untouched). Also cleans up the simulation's temp index file, best-effort.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_renormalize_preview(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<RenormalizePreview, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    // Serialize previews: they share one throwaway-index path, and git's
+    // `.lock` on it makes concurrent runs fail ("Another git process seems
+    // to be running"). The pre-run cleanup self-heals after a crashed run
+    // whose lock file would otherwise block every future preview.
+    let _preview_guard = session.renormalize_preview_lock.lock().await;
+    remove_preview_index(&session).await;
+    let files = session.backend.renormalize_preview().await;
+    remove_preview_index(&session).await;
+    let files = files.map_err(AppError::Git)?;
+
+    let statuses = session.backend.status().await.map_err(AppError::Git)?;
+    // `--renormalize` implies `-u`: unstaged modifications, deletions, and
+    // submodule pointer moves of tracked paths all get staged by the run.
+    let unstaged_changes = statuses
+        .iter()
+        .filter(|s| {
+            !s.staged
+                && matches!(
+                    s.state,
+                    FileState::Modified | FileState::Deleted | FileState::SubmoduleChanged
+                )
+        })
+        .count() as u32;
+    Ok(RenormalizePreview { files, unstaged_changes })
+}
+
+/// Best-effort removal of the preview's throwaway index file AND its
+/// `.lock` (the backend is executor-only and cannot delete files). The
+/// `.lock` matters: git leaves it behind when a preview is killed mid-run,
+/// and a stale lock makes every subsequent preview fail. Never fails.
+async fn remove_preview_index(session: &crate::state::RepoSession) {
+    let runner = session.runner.read().await.clone();
+    let Ok(out) = runner.run(&["rev-parse", "--git-path", "index"]).await else {
+        return;
+    };
+    if !out.success {
+        return;
+    }
+    let rel = Path::new(out.stdout.trim());
+    let abs = if rel.is_absolute() { rel.to_path_buf() } else { session.path.join(rel) };
+    let mut name = abs.file_name().unwrap_or_default().to_os_string();
+    name.push(legit_core::cli_impl::parsers::renormalize::RENORMALIZE_PREVIEW_INDEX_SUFFIX);
+    let temp = abs.with_file_name(name);
+    let mut lock_name = temp.file_name().unwrap_or_default().to_os_string();
+    lock_name.push(".lock");
+    let _ = tokio::fs::remove_file(temp.with_file_name(lock_name)).await;
+    let _ = tokio::fs::remove_file(temp).await;
+}
+
+/// Run `git add --renormalize -- .`: restages tracked files through the
+/// clean filter. The result is left staged for review, never committed.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_renormalize(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<RenormalizeOutcome, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.renormalize().await.map_err(AppError::Git)
+}
+
+/// Insert a covers-all `* text=auto [eol=...]` rule into `.gitattributes`
+/// (created if missing). Returns the refreshed view, like
+/// `repo_write_line_endings`. The file is a normal working-tree change for
+/// the user to stage and commit.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_write_gitattributes_eol(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    eol: Option<String>,
+) -> Result<LineEndingsView, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    let path = session.path.join(".gitattributes");
+    let existing = tokio::fs::read_to_string(&path).await.ok();
+    let updated =
+        insert_covers_all_rule(existing.as_deref(), eol.as_deref()).map_err(AppError::Io)?;
+    tokio::fs::write(&path, updated)
+        .await
+        .map_err(|e| AppError::Io(e.to_string()))?;
+    let runner = session.runner.read().await.clone();
+    Ok(build_repo_view(&session.path, &runner).await)
+}
+
+/// Build new `.gitattributes` content with a covers-all
+/// `* text=auto [eol=...]` rule inserted at the TOP (after any leading
+/// comment/blank block): last matching rule wins in gitattributes, so
+/// appending would silently override every specific rule below it.
+/// Errors are plain strings for `AppError::Io`.
+fn insert_covers_all_rule(existing: Option<&str>, eol: Option<&str>) -> Result<String, String> {
+    if let Some(v) = eol {
+        if v != "lf" && v != "crlf" {
+            return Err(format!("invalid eol value: {v}"));
+        }
+    }
+    let rule = match eol {
+        Some(v) => format!("* text=auto eol={v}"),
+        None => "* text=auto".to_string(),
+    };
+    let Some(existing) = existing else {
+        return Ok(format!("{rule}\n"));
+    };
+    for line in existing.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        if let Some(r) = parse_attr_line(t) {
+            if r.pattern == "*" && r.text.is_some() {
+                return Err("a covers-all `*` text rule already exists in .gitattributes".into());
+            }
+        }
+    }
+    let lines: Vec<&str> = existing.lines().collect();
+    let insert_at = lines
+        .iter()
+        .position(|l| {
+            let t = l.trim();
+            !t.is_empty() && !t.starts_with('#')
+        })
+        .unwrap_or(lines.len());
+    let mut out: Vec<String> = Vec::with_capacity(lines.len() + 1);
+    out.extend(lines[..insert_at].iter().map(|s| s.to_string()));
+    out.push(rule);
+    out.extend(lines[insert_at..].iter().map(|s| s.to_string()));
+    Ok(out.join("\n") + "\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::insert_covers_all_rule;
+
+    #[test]
+    fn creates_new_file_with_rule() {
+        assert_eq!(
+            insert_covers_all_rule(None, Some("lf")).unwrap(),
+            "* text=auto eol=lf\n"
+        );
+        assert_eq!(insert_covers_all_rule(None, None).unwrap(), "* text=auto\n");
+    }
+
+    #[test]
+    fn inserts_before_first_rule_keeping_leading_comments() {
+        let existing = "# EOL policy\n\n*.bat eol=crlf\n*.png binary\n";
+        let got = insert_covers_all_rule(Some(existing), Some("lf")).unwrap();
+        assert_eq!(
+            got,
+            "# EOL policy\n\n* text=auto eol=lf\n*.bat eol=crlf\n*.png binary\n"
+        );
+    }
+
+    #[test]
+    fn comment_only_file_appends_after_comments() {
+        let got = insert_covers_all_rule(Some("# notes\n"), None).unwrap();
+        assert_eq!(got, "# notes\n* text=auto\n");
+    }
+
+    #[test]
+    fn refuses_existing_covers_all_rule() {
+        assert!(insert_covers_all_rule(Some("* text=auto\n"), Some("lf")).is_err());
+        // Also the plain `text` form.
+        assert!(insert_covers_all_rule(Some("* text\n"), None).is_err());
+    }
+
+    #[test]
+    fn refuses_invalid_eol_value() {
+        assert!(insert_covers_all_rule(None, Some("cr")).is_err());
+    }
+}
 
 /// Read a working-tree file as text for line-ending classification; `None` if
 /// missing, unreadable, or over the size cap.
