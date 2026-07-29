@@ -1,9 +1,17 @@
 # LeGit
 
+[![CI](https://github.com/ateleris/LeGit/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ateleris/LeGit/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/ateleris/LeGit)](https://github.com/ateleris/LeGit/releases/latest)
+
 A fast desktop **Git GUI** — a [Tauri 2](https://v2.tauri.app) app with a Rust
 backend and a React + TypeScript frontend. LeGit drives the real `git` CLI
 rather than reimplementing git, so it works with your existing git config,
 hooks, credential helpers, and Git-LFS setup.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hero_dark.png">
+  <img src="docs/screenshots/hero_light.png" alt="LeGit main window: branches, commit graph, changed files, and diff viewer">
+</picture>
 
 ## Features
 
