@@ -1,6 +1,6 @@
 import { useConfirmDestructive } from "../../../store/settings";
 import { useMenuConfirm } from "./PanelContextMenu";
-import { MenuItem, Separator } from "./primitives";
+import { MenuItem, Separator, Submenu } from "./primitives";
 import type { ResetMode } from "../../../lib/types";
 
 /**
@@ -35,17 +35,17 @@ export function ResetMenuItems({
   return (
     <>
       <Separator />
-      <MenuItem onClick={() => onReset("soft")}>
-        Reset {label} to here (soft — keep changes staged)
-      </MenuItem>
-      <MenuItem onClick={() => onReset("mixed")}>
-        Reset {label} to here (mixed — keep changes unstaged)
-      </MenuItem>
-      <MenuItem onClick={requestHard}>
-        {confirmDestructive
-          ? `Reset ${label} to here (hard — discard changes)…`
-          : `Reset ${label} to here (hard — discard changes)`}
-      </MenuItem>
+      <Submenu label={`Reset ${label} to here`}>
+        <MenuItem onClick={() => onReset("soft")}>
+          Soft (keep changes staged)
+        </MenuItem>
+        <MenuItem onClick={() => onReset("mixed")}>
+          Mixed (keep changes unstaged)
+        </MenuItem>
+        <MenuItem onClick={requestHard}>
+          {confirmDestructive ? "Hard (discard changes)…" : "Hard (discard changes)"}
+        </MenuItem>
+      </Submenu>
     </>
   );
 }

@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PanelError } from "../shared/PanelError";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -45,7 +45,7 @@ import type { Branch, Commit, CommitId, FileStatus, MergeOptions, PullStrategy, 
 import { useRemoteProgressStore } from "../../store/remoteProgress";
 import { formatAppError, gitErrorKind } from "../../lib/types";
 import { notify } from "../../store/notifications";
-import { BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon, SignedIcon, StashIcon } from "../../icons";
+import { BranchIcon, BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon, RemoteIcon, SignedIcon, StashIcon, TagIcon } from "../../icons";
 import { useSignatureStore } from "../../store/signatures";
 import { formatAbsolute, formatFull, formatRelative } from "../../lib/time";
 import { RefsCell } from "./cells/RefsCell";
@@ -67,7 +67,7 @@ import { useColumnState } from "./columns/useColumnState";
 import { ColumnHeader } from "./columns/ColumnHeader";
 import { LaneLockIndicator } from "./LaneLockIndicator";
 import { PanelContextMenuProvider, type BaselineEntry } from "./menu/PanelContextMenu";
-import { MenuItem, SectionLabel, Separator } from "./menu/primitives";
+import { MenuItem, SectionLabel, Separator, Submenu } from "./menu/primitives";
 import { StashMenuSection } from "./menu/StashMenuSection";
 import { ResetMenuItems } from "./menu/ResetMenuItems";
 import { BranchMenuSection, RemoteBranchMenuSection } from "./menu/BranchMenuSection";
@@ -994,6 +994,11 @@ export function CommitsPanel() {
                   // the same shared sections the ref chips use, so the
                   // actions (and the delete Confirm step) stay in parity.
                   const rowBranches = branchesAt(commit.decorations ?? []);
+                  const rowTags = (commit.decorations ?? [])
+                    .filter((d) => d.type === "tag")
+                    .map((d) => (d as { value: string }).value.replace(/^refs\/tags\//, ""));
+                  const hasRefSections =
+                    rowBranches.local.length > 0 || rowBranches.remote.length > 0 || rowTags.length > 0;
                   openMenu(
                     e,
                     stashSelector ? (
@@ -1058,9 +1063,16 @@ export function CommitsPanel() {
                             />
                           </>
                         )}
+                        {/* One submenu entry per decorating ref: keeps the row
+                            menu O(refs) long while the flyouts reuse the same
+                            shared sections as the ref chips (action parity,
+                            incl. the delete Confirm takeover). */}
+                        {hasRefSections && <Separator />}
                         {rowBranches.local.map((b) => (
-                          <Fragment key={`local-${b.name}`}>
-                            <Separator />
+                          <Submenu
+                            key={`local-${b.name}`}
+                            label={<><BranchIcon /> {b.isCurrent ? `${b.name} (current)` : b.name}</>}
+                          >
                             <BranchMenuSection
                               name={b.name}
                               isCurrent={b.isCurrent}
@@ -1075,11 +1087,10 @@ export function CommitsPanel() {
                               onMerge={(options) => { closeMenu(); handleMerge(b.name, options); }}
                               onRebaseOnto={() => { closeMenu(); handleRebaseOnto(b.name); }}
                             />
-                          </Fragment>
+                          </Submenu>
                         ))}
                         {rowBranches.remote.map((name) => (
-                          <Fragment key={`remote-${name}`}>
-                            <Separator />
+                          <Submenu key={`remote-${name}`} label={<><RemoteIcon /> {name}</>}>
                             <RemoteBranchMenuSection
                               remoteName={name}
                               currentBranch={currentBranchName}
@@ -1089,26 +1100,22 @@ export function CommitsPanel() {
                               onRebaseOnto={() => { closeMenu(); handleRebaseOnto(name); }}
                               onDeleteRemote={() => { closeMenu(); void handleRemoteBranchDelete(name); }}
                             />
-                          </Fragment>
+                          </Submenu>
                         ))}
-                        {(commit.decorations ?? [])
-                          .filter((d) => d.type === "tag")
-                          .map((d) => (d as { value: string }).value.replace(/^refs\/tags\//, ""))
-                          .map((name) => (
-                            <Fragment key={`tag-${name}`}>
-                              <Separator />
-                              <TagMenuSection
-                                name={name}
-                                pushed={pushedTags.has(name)}
-                                targetOnRemote={tagTargetsOnRemote.has(name)}
-                                remote={tagRemote}
-                                remotes={remoteNames}
-                                onPush={(remote) => { closeMenu(); handleTagPush(name, remote); }}
-                                onDelete={() => { closeMenu(); handleTagDelete(name); }}
-                                onDeleteRemote={(remote) => { closeMenu(); handleTagDeleteRemote(name, remote); }}
-                              />
-                            </Fragment>
-                          ))}
+                        {rowTags.map((name) => (
+                          <Submenu key={`tag-${name}`} label={<><TagIcon /> {name}</>}>
+                            <TagMenuSection
+                              name={name}
+                              pushed={pushedTags.has(name)}
+                              targetOnRemote={tagTargetsOnRemote.has(name)}
+                              remote={tagRemote}
+                              remotes={remoteNames}
+                              onPush={(remote) => { closeMenu(); handleTagPush(name, remote); }}
+                              onDelete={() => { closeMenu(); handleTagDelete(name); }}
+                              onDeleteRemote={(remote) => { closeMenu(); handleTagDeleteRemote(name, remote); }}
+                            />
+                          </Submenu>
+                        ))}
                       </>
                     ),
                   );

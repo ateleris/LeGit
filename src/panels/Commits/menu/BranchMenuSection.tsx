@@ -1,6 +1,6 @@
 import { useConfirmDestructive } from "../../../store/settings";
 import { useMenuConfirm } from "./PanelContextMenu";
-import { MenuItem, Separator, SectionLabel } from "./primitives";
+import { MenuItem, Separator, SectionLabel, Submenu } from "./primitives";
 import type { MergeOptions } from "../../../lib/types";
 
 /** Short display/command form of an upstream ref: `refs/remotes/origin/dev`
@@ -34,18 +34,20 @@ function MergeRebaseItems({
   return (
     <>
       <Separator />
-      <MenuItem testId="menu-merge" onClick={() => onMerge({ ff: "auto", squash: false })}>
-        Merge '{targetLabel}' into '{currentBranch}'
-      </MenuItem>
-      <MenuItem onClick={() => onMerge({ ff: "no_ff", squash: false })}>
-        Merge '{targetLabel}' into '{currentBranch}' (no fast-forward)
-      </MenuItem>
-      <MenuItem onClick={() => onMerge({ ff: "ff_only", squash: false })}>
-        Merge '{targetLabel}' into '{currentBranch}' (fast-forward only)
-      </MenuItem>
-      <MenuItem onClick={() => onMerge({ ff: "auto", squash: true })}>
-        Squash merge '{targetLabel}' into '{currentBranch}'
-      </MenuItem>
+      <Submenu testId="menu-merge-submenu" label={`Merge '${targetLabel}' into '${currentBranch}'`}>
+        <MenuItem testId="menu-merge" onClick={() => onMerge({ ff: "auto", squash: false })}>
+          Merge (fast-forward if possible)
+        </MenuItem>
+        <MenuItem onClick={() => onMerge({ ff: "no_ff", squash: false })}>
+          Merge (no fast-forward)
+        </MenuItem>
+        <MenuItem onClick={() => onMerge({ ff: "ff_only", squash: false })}>
+          Merge (fast-forward only)
+        </MenuItem>
+        <MenuItem onClick={() => onMerge({ ff: "auto", squash: true })}>
+          Squash merge
+        </MenuItem>
+      </Submenu>
       <MenuItem onClick={onRebaseOnto}>
         Rebase '{currentBranch}' onto '{targetLabel}'
       </MenuItem>

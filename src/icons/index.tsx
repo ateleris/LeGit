@@ -16,6 +16,7 @@ import {
   ArrowUpToLine,
   Check,
   ChevronDown,
+  ChevronRight,
   Cloud,
   CornerLeftUp,
   GitBranch,
@@ -82,6 +83,7 @@ export const FetchIcon = withDefaults(RefreshCw, "FetchIcon");
 export const PullIcon = withDefaults(ArrowDownToLine, "PullIcon");
 export const PushIcon = withDefaults(ArrowUpToLine, "PushIcon");
 export const ChevronDownIcon = withDefaults(ChevronDown, "ChevronDownIcon");
+export const ChevronRightIcon = withDefaults(ChevronRight, "ChevronRightIcon");
 
 // Custom (non-lucide) icons follow the same conventions: `size` defaults to
 // `1em`, the glyph fills with `currentColor`, and the keyhole is punched out

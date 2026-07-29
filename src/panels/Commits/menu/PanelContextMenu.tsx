@@ -21,7 +21,14 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import { MenuItem, SectionLabel, Separator } from "./primitives";
+import {
+  MENU_LAYER_ATTR,
+  MenuItem,
+  MenuLevelProvider,
+  SectionLabel,
+  Separator,
+  menuSurfaceStyle,
+} from "./primitives";
 
 export interface BaselineEntry {
   label: string;
@@ -181,8 +188,6 @@ export function useMenuPicker() {
   );
 }
 
-const MENU_MIN_W = 220;
-
 /** Positioned, dismissable portal container shared by every panel menu. */
 function MenuShell({
   x,
@@ -211,11 +216,14 @@ function MenuShell({
 
   // Dismiss on outside mousedown + Escape. Capture phase: a stopPropagation
   // in another panel (e.g. FileTree action buttons) must not keep the menu open.
+  // "Inside" is any marked menu layer, not just this shell's subtree: submenu
+  // flyouts portal to document.body, so a DOM containment check would treat a
+  // click inside a flyout as outside and unmount it before its click fires.
   useEffect(() => {
     const controller = new AbortController();
     const onMouseDown = (e: MouseEvent) => {
-      const target = e.target as Node | null;
-      if (target && !ref.current?.contains(target)) onClose();
+      const target = e.target instanceof Element ? e.target : null;
+      if (!target?.closest(`[${MENU_LAYER_ATTR}]`)) onClose();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -228,23 +236,14 @@ function MenuShell({
   return (
     <div
       ref={ref}
+      {...{ [MENU_LAYER_ATTR]: "" }}
       style={{
-        position: "fixed",
+        ...menuSurfaceStyle,
         left: pos.left,
         top: pos.top,
-        minWidth: MENU_MIN_W,
-        background: "var(--panel-bg, #1e1e1e)",
-        border: "1px solid var(--panel-border, rgba(255,255,255,0.12))",
-        borderRadius: 4,
-        padding: "4px 0",
-        zIndex: 9999,
-        boxShadow: "0 4px 12px var(--shadow-color)",
-        fontSize: "var(--fz-lg)",
-        color: "var(--panel-fg, #ccc)",
-        userSelect: "none",
       }}
     >
-      {children}
+      <MenuLevelProvider>{children}</MenuLevelProvider>
     </div>
   );
 }

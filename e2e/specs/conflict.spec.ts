@@ -34,6 +34,11 @@ describe("conflict: merge with conflicts shows the op-state banner", () => {
     );
     await featureName.waitForDisplayed();
     await featureName.click({ button: "right" });
+    // Merge variants live in a submenu: click the trigger to open the flyout,
+    // then pick the default merge inside it.
+    const mergeSubmenu = $('[data-testid="menu-merge-submenu"]');
+    await mergeSubmenu.waitForClickable({ timeout: 10_000 });
+    await mergeSubmenu.click();
     const mergeItem = $('[data-testid="menu-merge"]');
     await mergeItem.waitForClickable({ timeout: 10_000 });
     await mergeItem.click();
