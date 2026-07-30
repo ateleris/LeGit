@@ -1,9 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { CheckIcon } from "../icons";
 import { useDockviewStore } from "../store/dockview";
+import { notify } from "../store/notifications";
 import { GLOBAL_PANELS, REPO_PANELS } from "./registry";
-import { openGlobalPanel } from "./GlobalDock";
-import { openRepoPanel } from "./RepoDock";
+import { buildDefaultGlobalLayout, openGlobalPanel } from "./GlobalDock";
+import { buildDefaultRepoLayout, openRepoPanel } from "./RepoDock";
+import {
+  applyBakedGlobalLayout,
+  applyBakedRepoLayout,
+  applySavedGlobalLayout,
+  applySavedRepoLayout,
+  saveLayoutAsDefault,
+} from "./layoutSnapshot";
 import { MenuItem, SectionLabel, Separator } from "./Commits/menu/primitives";
 
 /**
@@ -25,16 +33,30 @@ export function ViewMenu() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
 
+  // Snapshot the current arrangement of both docks; "Reset to default layout"
+  // restores it from now on.
+  const saveAsDefault = () => {
+    saveLayoutAsDefault(globalApi, repoApi);
+    notify.info("Saved the current layout as the default.");
+    setOpen(false);
+  };
+
+  // Restore the saved default layout; without one, the baked-in default
+  // (defaultLayouts.ts); if even that fails, the programmatic builders.
   const resetLayouts = () => {
-    if (globalApi) {
-      for (const panel of globalApi.panels) globalApi.removePanel(panel);
-      for (const p of GLOBAL_PANELS)
-        globalApi.addPanel({ id: p.id, component: p.id, title: p.title });
+    if (globalApi && !applySavedGlobalLayout(globalApi)) {
+      globalApi.clear();
+      if (!applyBakedGlobalLayout(globalApi)) {
+        globalApi.clear();
+        buildDefaultGlobalLayout(globalApi);
+      }
     }
-    if (repoApi) {
-      for (const panel of repoApi.panels) repoApi.removePanel(panel);
-      for (const p of REPO_PANELS)
-        repoApi.addPanel({ id: p.id, component: p.id, title: p.title });
+    if (repoApi && !applySavedRepoLayout(repoApi)) {
+      repoApi.clear();
+      if (!applyBakedRepoLayout(repoApi)) {
+        repoApi.clear();
+        buildDefaultRepoLayout(repoApi);
+      }
     }
     setOpen(false);
   };
@@ -91,6 +113,7 @@ export function ViewMenu() {
             })
           )}
           <Separator />
+          <MenuItem onClick={saveAsDefault}>Save as default layout</MenuItem>
           <MenuItem onClick={resetLayouts}>Reset to default layout</MenuItem>
         </div>
       )}

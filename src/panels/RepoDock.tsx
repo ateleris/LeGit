@@ -6,9 +6,10 @@ import {
 } from "dockview-react";
 import { applyPanelConstraints, useDockviewStore } from "../store/dockview";
 import { useThemeStore } from "../store/themes";
-import { useSummonStore, computeFallbackPosition } from "../store/summon";
+import { useSummonStore } from "../store/summon";
 import { validateTheme } from "../theme/validate";
 import { REPO_DOCKVIEW_COMPONENTS, REPO_DOCKVIEW_TAB_COMPONENTS, REPO_PANELS } from "./registry";
+import { applyBakedRepoLayout, applyRepoLayoutEnvelope, capturePlacements, parseRepoLayoutEnvelope } from "./layoutSnapshot";
 
 const LAYOUT_KEY = "legit.repo-dock-layout";
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -35,50 +36,24 @@ export function RepoDock() {
       apiRef.current = event.api;
       setRepoApi(event.api);
 
-      let restored = false;
-      const raw = localStorage.getItem(LAYOUT_KEY);
-      if (raw) {
-        try {
-          // Envelope format: { dockview: <layout>, placements: <map>, fallbacks: <map> }
-          const envelope = JSON.parse(raw);
-          const dockviewJson = envelope.dockview ?? envelope; // backward compat
-
-          if (envelope.placements && typeof envelope.placements === "object") {
-            const { capturePlacement } = useSummonStore.getState();
-            for (const [panelId, groupId] of Object.entries(envelope.placements)) {
-              if (typeof groupId === "string") capturePlacement(panelId, groupId);
-            }
-          }
-
-          if (envelope.fallbacks && typeof envelope.fallbacks === "object") {
-            const { captureFallback } = useSummonStore.getState();
-            for (const [panelId, pos] of Object.entries(envelope.fallbacks)) {
-              if (pos && typeof pos === "object" && "referencePanel" in (pos as object)) {
-                captureFallback(panelId, pos as any);
-              }
-            }
-          }
-
-          event.api.fromJSON(dockviewJson);
-          if (event.api.panels.length > 0) {
-            restored = true;
-          } else {
-            console.warn("repo dock layout restored 0 panels, using default");
-          }
-        } catch (e) {
-          console.warn("could not restore repo dock layout, using default", e);
+      // Envelope format: { dockview: <layout>, placements: <map>, fallbacks: <map> }
+      const envelope = parseRepoLayoutEnvelope(localStorage.getItem(LAYOUT_KEY));
+      const restored = envelope !== null && applyRepoLayoutEnvelope(event.api, envelope);
+      if (!restored) {
+        if (envelope !== null) {
+          console.warn("could not restore repo dock layout, using default");
+        }
+        // First launch (or broken persisted layout): the baked-in default,
+        // with the programmatic builder as last resort.
+        if (!applyBakedRepoLayout(event.api)) {
+          buildDefaultRepoLayout(event.api);
+          // Capture initial placements immediately so summon works before the
+          // first layout-change event fires (the restore path does this itself).
+          capturePlacements(event.api);
+          // Enforce the panel minimum width on existing and future groups.
+          applyPanelConstraints(event.api);
         }
       }
-      if (!restored) {
-        buildDefaultRepoLayout(event.api);
-      }
-
-      // Capture initial placements immediately so summon works before the first
-      // layout-change event fires.
-      capturePlacements(event.api);
-
-      // Enforce the panel minimum width on existing and future groups.
-      applyPanelConstraints(event.api);
 
       event.api.onDidLayoutChange(() => {
         try {
@@ -154,23 +129,9 @@ export function RepoDock() {
   );
 }
 
-/**
- * Snapshot the current group ID and fallback position for every open panel.
- * Pass `layoutJson` if you already called `api.toJSON()` to avoid a second call.
- */
-function capturePlacements(api: DockviewApi, layoutJson?: unknown) {
-  const json = layoutJson ?? api.toJSON();
-  const { capturePlacement, captureFallback } = useSummonStore.getState();
-  for (const panel of api.panels) {
-    const groupId = panel.group?.id;
-    if (!groupId) continue;
-    capturePlacement(panel.id, groupId);
-    const fallback = computeFallbackPosition(json, groupId);
-    if (fallback) captureFallback(panel.id, fallback);
-  }
-}
-
-function buildDefaultRepoLayout(api: DockviewApi) {
+/** First-launch repo layout; also the fallback for "Reset to default layout"
+ * when no saved snapshot exists (ViewMenu). */
+export function buildDefaultRepoLayout(api: DockviewApi) {
   api.addPanel({ id: "log", component: "log", title: "Commits" });
   api.addPanel({
     id: "commit-details",

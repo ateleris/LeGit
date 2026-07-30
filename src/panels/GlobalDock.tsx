@@ -6,6 +6,7 @@ import {
 } from "dockview-react";
 import { applyPanelConstraints, useDockviewStore } from "../store/dockview";
 import { GLOBAL_DOCKVIEW_COMPONENTS, GLOBAL_DOCKVIEW_TAB_COMPONENTS, GLOBAL_PANELS } from "./registry";
+import { applyBakedGlobalLayout } from "./layoutSnapshot";
 
 const LAYOUT_KEY = "legit.global-dock-layout";
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -46,7 +47,11 @@ export function GlobalDock() {
         }
       }
       if (!restored) {
-        buildDefaultGlobalLayout(event.api);
+        // First launch (or broken persisted layout): the baked-in default,
+        // with the programmatic builder as last resort.
+        if (!applyBakedGlobalLayout(event.api)) {
+          buildDefaultGlobalLayout(event.api);
+        }
       }
 
       // Enforce the panel minimum width on existing and future groups.
@@ -78,7 +83,9 @@ export function GlobalDock() {
   );
 }
 
-function buildDefaultGlobalLayout(api: DockviewApi) {
+/** First-launch global layout; also the fallback for "Reset to default layout"
+ * when no saved snapshot exists (ViewMenu). */
+export function buildDefaultGlobalLayout(api: DockviewApi) {
   api.addPanel({
     id: "repositories",
     component: "repositories",

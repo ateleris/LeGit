@@ -181,15 +181,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   likely a query mode that runs `git log --grep/--author/-- <path>` and shows
   a flat filtered result list (with jump-to-commit back in the graph), rather
   than filtering the graph itself.
-- **Saved window layout with reset** (requested 2026-07-30). One saveable
-  layout: a "save current layout" action snapshots the panel arrangement,
-  and a reset button restores it whenever the user has rearranged things.
-  Both docks already persist their live layout to localStorage
-  (`legit.repo-dock-layout` / `legit.global-dock-layout`, envelope
-  `{ dockview, placements, fallbacks }`); the saved layout = a second copy
-  of those envelopes, applied via the same restore path (must go through
-  the existing normalizations, e.g. RefsPanel's `headerSize` patching).
-  UI: save/reset actions in the View menu.
 - **"Open in editor" on more file rows.** Shipped 2026-07-11 for Files /
   Working Changes / Changed Files (`repo_open_file_in_editor`, `$FILE`,
   shared `OpenInEditorMenuItem`); File History, Compare, and Search share
