@@ -240,6 +240,11 @@ pub struct GlobalSettings {
     /// actions run immediately.
     #[serde(default = "default_true")]
     pub confirm_discard: bool,
+    /// Whether creating a branch also checks it out (default true). Applies
+    /// to the Commits panel's inline create and the Branches section's form;
+    /// "branch from stash" always checks out (`git stash branch` semantics).
+    #[serde(default = "default_true")]
+    pub checkout_new_branch: bool,
     /// Periodic background auto-fetch of the active repo's remotes. OFF by
     /// default (network access on a timer is opt-in). Fetch-only and quiet:
     /// never pulls/merges, never toasts.
@@ -349,6 +354,7 @@ impl Default for GlobalSettings {
             ui_font_size: default_ui_font_size(),
             watcher_enabled: true,
             confirm_discard: true,
+            checkout_new_branch: true,
             auto_fetch_enabled: false,
             auto_fetch_interval_minutes: default_auto_fetch_interval(),
             external_editor_command: None,

@@ -1,5 +1,6 @@
 import { useConfirmDestructive } from "../../../store/settings";
-import { useMenuConfirm } from "./PanelContextMenu";
+import { useSummonStore } from "../../../store/summon";
+import { useMenuConfirm, usePanelContextMenu } from "./PanelContextMenu";
 import { MenuItem, Separator, SectionLabel, Submenu } from "./primitives";
 import type { MergeOptions } from "../../../lib/types";
 
@@ -7,6 +8,24 @@ import type { MergeOptions } from "../../../lib/types";
  *  and `origin/dev` both become `origin/dev`. */
 function shortUpstream(upstream: string | null): string | null {
   return upstream?.replace(/^refs\/remotes\//, "") ?? null;
+}
+
+/** "Show only this branch in the graph": restrict the Commits panel's walk to
+ *  commits reachable from `ref` (its branch-filter mode). Summons directly -
+ *  the target is always the log panel, so threading a callback through every
+ *  caller of these shared sections would only invite drift. */
+function FilterGraphItem({ refName }: { refName: string }) {
+  const { closeMenu } = usePanelContextMenu();
+  return (
+    <MenuItem
+      onClick={() => {
+        closeMenu();
+        useSummonStore.getState().summon("log", { filterRef: refName });
+      }}
+    >
+      Show only this branch in the graph
+    </MenuItem>
+  );
 }
 
 /**
@@ -113,6 +132,7 @@ export function BranchMenuSection({
       <MenuItem onClick={onCheckout} disabled={isCurrent}>
         {isCurrent ? "Checkout branch (current)" : "Checkout branch"}
       </MenuItem>
+      <FilterGraphItem refName={name} />
       <MenuItem onClick={onRename}>Rename branch…</MenuItem>
       {/* Upstream (tracking) management: offer the existing same-name
           remote-tracking branches as targets; git requires the remote ref to
@@ -186,6 +206,7 @@ export function RemoteBranchMenuSection({
     <>
       <SectionLabel>{remoteName}</SectionLabel>
       <MenuItem onClick={onCheckout}>Checkout branch</MenuItem>
+      <FilterGraphItem refName={remoteName} />
       <MergeRebaseItems
         targetLabel={remoteName}
         currentBranch={currentBranch}

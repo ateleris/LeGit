@@ -94,6 +94,7 @@ export function GlobalSettingsPanel() {
         <SettingsGroup id="behavior" title="Behavior" caption="How LeGit acts">
           <AutoOpenPanelsSection />
           <ConfirmDiscardSection />
+          <BranchCreationSection />
           <BranchSwitchingSection />
           <PushGuardSection />
           <SubmoduleAttachSection />
@@ -999,6 +1000,45 @@ function RefsSortSection() {
       <FieldNote>
         Applies to the Branches and Tags lists in the Refs panel. Stashes keep
         their newest-first order.
+      </FieldNote>
+    </Section>
+  );
+}
+
+function BranchCreationSection() {
+  const enabled = useSettingsStore((s) => s.settings?.checkout_new_branch ?? true);
+  const setCheckoutNewBranch = useSettingsStore((s) => s.setCheckoutNewBranch);
+  const [saving, setSaving] = useState(false);
+
+  const toggle = async () => {
+    setSaving(true);
+    try {
+      await setCheckoutNewBranch(!enabled);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Branch creation">
+      <FieldNote>writes to: global settings — applies to all repos</FieldNote>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <input
+          type="checkbox"
+          id="global-checkout-new-branch"
+          checked={enabled}
+          onChange={toggle}
+          disabled={saving}
+        />
+        <label htmlFor="global-checkout-new-branch" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
+          Check out a newly created branch immediately
+        </label>
+      </div>
+      <FieldNote>
+        Applies to the Commits panel's inline create and the Branches
+        section's form. When the new branch starts at another commit, the
+        checkout follows the "Branch switching" behavior below for uncommitted
+        changes. "Branch from stash" always checks out.
       </FieldNote>
     </Section>
   );

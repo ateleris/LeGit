@@ -193,6 +193,19 @@ pub async fn set_confirm_discard(
     .await
 }
 
+/// Whether creating a branch also checks it out (default true).
+#[tauri::command]
+#[specta::specta]
+pub async fn set_checkout_new_branch(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state.mutate_global(|s| {
+        s.checkout_new_branch = enabled;
+    })
+    .await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn set_submodule_attach_branch(

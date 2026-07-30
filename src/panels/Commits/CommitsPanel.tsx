@@ -28,6 +28,8 @@ import {
   repoFetch,
   repoListRemotes,
   repoLog,
+  repoResolveCommit,
+  repoSearchCommits,
   repoPull,
   repoPush,
   repoSignaturePresence,
@@ -44,6 +46,7 @@ import { useOpState } from "../../lib/useOpState";
 import type { Branch, Commit, CommitId, FileStatus, MergeOptions, PullStrategy, PushOptions, Remote, RemoteTag, ResetMode, Signature, TagInfo, TrackingStatus } from "../../lib/types";
 import { useRemoteProgressStore } from "../../store/remoteProgress";
 import { formatAppError, gitErrorKind } from "../../lib/types";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { notify } from "../../store/notifications";
 import { BranchIcon, BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon, RemoteIcon, SignedIcon, StashIcon, TagIcon } from "../../icons";
 import { useSignatureStore } from "../../store/signatures";
@@ -56,6 +59,7 @@ import { computeLanes } from "./graph/lanes";
 import { computeEdgeSpans } from "./graph/spans";
 import { pickHeadCommitId } from "./headId";
 import { growJumpWindow, pendingJumpAction, shouldCenterScroll } from "./scrollToRow";
+import { mergeSearchResults, quickSearchMatch } from "./commitSearch";
 import type { LaneEdge, LaneIndex, LaneResult, LockMap, RefsAtCommit } from "./graph/types";
 import {
   buildLockMap,
@@ -86,7 +90,9 @@ const COLUMN_LABELS: Record<ColumnId, string> = {
   refs: "Refs",
   graph: "Graph",
   signed: "Signed",
-  subject: "Subject",
+  // User-facing label is "Message" everywhere (matching the filter's kind
+  // dropdown); "subject" stays the internal/persisted column id.
+  subject: "Message",
   date: "Date",
   author: "Author",
   sha: "SHA",
@@ -104,6 +110,36 @@ const COLUMN_LABELS: Record<ColumnId, string> = {
 // height, which would create an infinite growth loop via measureElement.
 
 const PAGE_SIZE = 500;
+
+// Cap for the toolbar search: hits are cycled, and both underlying walks are
+// capped - a big cap costs only git time.
+const SEARCH_MAX_RESULTS = 1000;
+
+// Easter egg (inherited from the retired Search panel): searching for
+// "abdäsele" swaps the window title between "LeGit" and "LegIt" (dev builds:
+// "LeGit DEV" / "LegIt DEV"). Purely session-local: nothing is persisted, a
+// restart restores the real title.
+async function toggleAbdaesele(): Promise<void> {
+  const win = getCurrentWindow();
+  const title = await win.title();
+  const next = title.includes("LegIt")
+    ? title.replace("LegIt", "LeGit")
+    : title.replace("LeGit", "LegIt");
+  if (next !== title) await win.setTitle(next);
+}
+
+// Shared style for the filter input and its kind <select>, so the two render
+// at exactly the same height inside the sync toolbar.
+const SEARCH_FIELD_STYLE: React.CSSProperties = {
+  fontSize: "var(--fz-sm)",
+  height: "2em",
+  boxSizing: "border-box",
+  padding: "0 6px",
+  border: "1px solid var(--panel-border)",
+  borderRadius: 3,
+  background: "var(--input-bg)",
+  color: "var(--panel-fg)",
+};
 
 // Sentinel id for the synthetic "uncommitted changes" row prepended above HEAD.
 // Chosen to never collide with a real 40-hex commit id.
@@ -152,6 +188,8 @@ export function CommitsPanel() {
   const DATE_ABSOLUTE = useSettingsStore((s) => s.settings?.commit_date_absolute ?? false);
   const DATE_FORMAT = useSettingsStore((s) => s.settings?.commit_date_format ?? "iso");
   const DATE_SHOW_TIME = useSettingsStore((s) => s.settings?.commit_date_show_time ?? true);
+  // Global setting (default on): creating a branch also checks it out.
+  const checkoutNewBranch = useSettingsStore((s) => s.settings?.checkout_new_branch ?? true);
 
   // Render-time floors (the settings clamps only run on save): rows must
   // always clear a ref chip by 2px so chips on adjacent rows never touch —
@@ -167,6 +205,26 @@ export function CommitsPanel() {
   // A jump target (adoptSelection) not yet in the loaded window; the seek
   // effect below keeps growing the fetch window until it loads, then scrolls.
   const [pendingJump, setPendingJump] = useState<CommitId | null>(null);
+  // Toolbar search: a submitted query runs a full-history backend search
+  // (`git log --grep/--author`, message OR author - a client-side scan of
+  // the loaded window would silently miss unloaded commits) and Enter CYCLES
+  // the selection through the hits, newest first, inside the intact graph
+  // (Shift+Enter goes back). The query is also tried as a rev-parse
+  // expression (SHA, branch, tag, HEAD~2, ...); a resolving one becomes the
+  // FIRST hit, so pasting a sha or ref name jumps straight to it.
+  const [searchDraft, setSearchDraft] = useState("");
+  const [search, setSearch] = useState<{ query: string } | null>(null);
+  // Which hit the selection sits on; Enter advances it (wrapping).
+  const [searchHit, setSearchHit] = useState(0);
+  // Branch filter (ref menus' "Show only this branch"): restricts the log
+  // WALK to commits reachable from the ref (`repoLog` revision_range). The
+  // graph stays - a ref's history is connected, unlike text-search results.
+  const [branchFilter, setBranchFilter] = useState<string | null>(null);
+  // Author filter (row menu "Show only commits by …"): restricts the walk to
+  // one author (`--author`, matched by email; the name labels the chip).
+  // Unlike a branch, an author's commits are an arbitrary subset, so the
+  // graph column hides while this is active. Combines with the branch filter.
+  const [authorFilter, setAuthorFilter] = useState<{ name: string; email: string } | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
 
   // In-place editing in the Subject column: rewording a commit's subject line
@@ -217,6 +275,11 @@ export function CommitsPanel() {
     setBranchCreation(null);
     setTagCreation(null);
     setPendingJump(null);
+    setSearch(null);
+    setSearchDraft("");
+    setSearchHit(0);
+    setBranchFilter(null);
+    setAuthorFilter(null);
   }, [repo?.id]);
 
   // Raw lock list from the store; used by the Refs context menu UI.
@@ -236,16 +299,53 @@ export function CommitsPanel() {
   }, [repo?.id, repoSettings, loadRepoSettings]);
   const showRemoteBranches = repoSettings?.show_remote_branches ?? true;
 
-  const queryKey = [repo?.id, "log", totalToFetch, showRemoteBranches];
+  const queryKey = [repo?.id, "log", totalToFetch, showRemoteBranches, branchFilter, authorFilter?.email];
 
   const { data: commits = [], isFetching, isError, error } = useQuery<Commit[]>({
     queryKey,
-    queryFn: () => repoLog(repo!.id, totalToFetch, 0, undefined, showRemoteBranches),
+    queryFn: () =>
+      repoLog(
+        repo!.id,
+        totalToFetch,
+        0,
+        branchFilter ?? undefined,
+        showRemoteBranches,
+        authorFilter?.email,
+        // Branch filter: still show stashes BASED ON commits in the walk
+        // (they hang off their base like in the full graph).
+        branchFilter !== null ? true : undefined,
+      ),
     enabled: !!repo,
     staleTime: 5_000,
     // Keep the current (smaller) page rendered while the larger page fetches.
     // Without this, the new totalToFetch query key has no cached data, the list
     // collapses to zero height, and the scroll position jumps back to the top.
+    placeholderData: keepPreviousData,
+  });
+
+  // Filter results: same walk universe and row shape as the graph (the
+  // backend searches HEAD + all local branches with the log format), capped
+  // like the Search panel. Under the "log" domain so the watcher refreshes
+  // the results after commits/amends like it does the graph.
+  const { data: searchHits = [], isFetching: searchFetching } = useQuery<CommitId[]>({
+    queryKey: [repo?.id, "log", "commits-search", search],
+    queryFn: async () => {
+      const { query } = search!;
+      // Message OR author: git ANDs --grep and --author in one invocation,
+      // so OR takes two walks merged client-side. The rev-parse probe runs
+      // alongside; failure just means the query isn't a rev.
+      const [resolved, byMessage, byAuthor] = await Promise.all([
+        repoResolveCommit(repo!.id, query).catch(() => null),
+        repoSearchCommits(repo!.id, query, "message", SEARCH_MAX_RESULTS),
+        repoSearchCommits(repo!.id, query, "author", SEARCH_MAX_RESULTS),
+      ]);
+      const ids = mergeSearchResults(byMessage, byAuthor)
+        .map((c) => c.id)
+        .filter((id) => id !== resolved);
+      return resolved ? [resolved, ...ids] : ids;
+    },
+    enabled: !!repo && search !== null,
+    staleTime: 30_000,
     placeholderData: keepPreviousData,
   });
 
@@ -481,10 +581,21 @@ export function CommitsPanel() {
   usePanelFocusEffect(refetch);
 
   // Baseline context-menu entries — present on every right-click in the panel,
-  // regardless of what was clicked.
+  // regardless of what was clicked. While a branch filter is active, the way
+  // back rides along: the filter is applied via a context menu, so removing
+  // it must not depend on spotting the toolbar chip's ✕.
   const baseline = useMemo<BaselineEntry[]>(
-    () => [{ label: "Refresh", onClick: refetch, disabled: isFetching }],
-    [refetch, isFetching],
+    () => [
+      ...(branchFilter !== null
+        ? [{ label: `Show all branches (remove '${branchFilter}' filter)`, onClick: () => setBranchFilter(null) }]
+        : []),
+      ...(authorFilter !== null
+        ? [{ label: `Show all authors (remove '${authorFilter.name}' filter)`, onClick: () => setAuthorFilter(null) }]
+        : []),
+      // Refresh stays the last entry.
+      { label: "Refresh", onClick: refetch, disabled: isFetching },
+    ],
+    [refetch, isFetching, branchFilter, authorFilter],
   );
 
   // HEAD commit id — the parent of the synthetic working-dir row.
@@ -513,9 +624,22 @@ export function CommitsPanel() {
   // rows when HEAD is not the newest commit (e.g. detached HEAD, behind a
   // branch). Lane layout is computed on `commits` for stability, then augmented
   // with the synthetic node — so paging/recompute never see it.
+  // In search/filter mode the rows are the flat result list instead: no
+  // synthetic row, no injected stashes, and the graph column is hidden (lane
+  // layout over an arbitrary subset would be meaningless).
+  // Under a branch filter the synthetic row only makes sense on the branch
+  // that actually owns the working tree (HEAD may not be in the walk at all);
+  // under an author filter it is not "a commit by this author" at all.
+  const showWorkingDirRow =
+    workingDirRow !== null &&
+    authorFilter === null &&
+    (branchFilter === null || branchFilter === currentBranchName);
   const rows = useMemo(
-    () => (workingDirRow ? [workingDirRow, ...commits] : commits),
-    [workingDirRow, commits],
+    () =>
+      showWorkingDirRow && workingDirRow
+        ? [workingDirRow, ...commits]
+        : commits,
+    [showWorkingDirRow, workingDirRow, commits],
   );
 
   const rowVirtualizer = useVirtualizer({
@@ -549,6 +673,19 @@ export function CommitsPanel() {
   const virtualizerRef = useRef(rowVirtualizer);
   virtualizerRef.current = rowVirtualizer;
   const adoptSelection = useCallback((payload: unknown) => {
+    // `{ filterRef }` payload (ref menus' "Show only this branch"): switch
+    // the walk to that ref. Clears an active search - its hits may not be
+    // reachable from the ref, so cycling would just toast.
+    if (payload && typeof payload === "object") {
+      const filterRef = (payload as { filterRef?: unknown }).filterRef;
+      if (typeof filterRef === "string") {
+        setBranchFilter(filterRef);
+        setSearch(null);
+        setSearchDraft("");
+        setSearchHit(0);
+      }
+      return;
+    }
     if (typeof payload !== "string") return;
     setSelectedId(payload as CommitId);
     const idx = rowsRef.current.findIndex((c) => c.id === payload);
@@ -598,6 +735,10 @@ export function CommitsPanel() {
         notify.info(`Created branch '${name}' from the stash and checked it out.`);
       } else {
         await repoCreateBranch(repo.id, name, creation.startPoint);
+        // Global setting (default on): a new branch is checked out right
+        // away. handleBranchCheckout carries the switch feedback and its
+        // own error handling (dirty-tree behavior etc.).
+        if (checkoutNewBranch) await handleBranchCheckout(name);
       }
       invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
     } catch (e) {
@@ -606,7 +747,7 @@ export function CommitsPanel() {
       if (creation.stashSha) notifySwitchError(e);
       else notify.error(formatAppError(e));
     }
-  }, [repo, branchCreation, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [repo, branchCreation, checkoutNewBranch, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCreateBranchCancel = useCallback(() => {
     setBranchCreation(null);
@@ -649,7 +790,11 @@ export function CommitsPanel() {
   // they may sit on a locked lane when their parent owns it (they belong to
   // that branch's line) instead of being pushed off by the lane reservation.
   const { assignments, edges: allEdges } = useMemo((): LaneResult => {
-    const forGraph = rows.map((c) => ({
+    // An author-filtered walk is an arbitrary, mostly-disconnected subset:
+    // the graph column is hidden, so skip the lane walk entirely (it would
+    // open a lane per dangling parent and never close them).
+    const laneRows = authorFilter !== null ? [] : rows;
+    const forGraph = laneRows.map((c) => ({
       id: c.id,
       parentIds: c.parents,
       inheritsParentLane:
@@ -670,7 +815,7 @@ export function CommitsPanel() {
     prevAssignmentsRef.current = result.assignments;
     prevRowIdsRef.current = forGraph.map((c) => c.id);
     return result;
-  }, [rows, lockMap, refsAt, stashSelectorById]);
+  }, [rows, authorFilter, lockMap, refsAt, stashSelectorById]);
 
   // Outgoing edge lookup: edges originating at each commit (child → parent).
   const edgesByCommit = useMemo(() => {
@@ -759,6 +904,28 @@ export function CommitsPanel() {
     }
   }, [pendingJump, isFetching, rows, hasMore, rowVirtualizer]);
 
+  // Land the selection on the toolbar search's current hit once results
+  // settle or the hit index moves (Enter cycles it). Keyed so a background
+  // refetch of the same search (watcher invalidation) never re-jumps under
+  // the user. The pending-jump seek does the centering, growing the window
+  // when the hit is beyond the loaded rows (or toasting when it isn't in
+  // the walk at all, e.g. off-branch under a branch filter).
+  const lastHitJumpRef = useRef("");
+  useEffect(() => {
+    if (search === null) {
+      lastHitJumpRef.current = "";
+      return;
+    }
+    if (searchFetching) return;
+    const key = `${search.query}\0${searchHit}`;
+    if (lastHitJumpRef.current === key) return;
+    const hit = searchHits[searchHit];
+    if (!hit) return;
+    lastHitJumpRef.current = key;
+    setSelectedId(hit);
+    setPendingJump(hit);
+  }, [search, searchFetching, searchHits, searchHit]);
+
   let maxVisibleLane = 0;
   for (const vItem of visibleItems) {
     const rowIndex = vItem.index;
@@ -807,8 +974,10 @@ export function CommitsPanel() {
   // always the elastic "1fr" filler. All others use the persisted px width
   // (or DEFAULT_WIDTHS if not yet set).
   const graphColWidth = (maxVisibleLane + 2) * LANE_SPACING;
+  // The graph column hides under an author filter - lanes/edges between an
+  // arbitrary subset of commits would be meaningless.
   const visibleColumns = colState.order.filter(
-    (id) => !colState.hidden.includes(id)
+    (id) => !colState.hidden.includes(id) && !(authorFilter !== null && id === "graph")
   );
 
   // Signed column: fixed one-icon width, derived from the UI font size so it
@@ -848,6 +1017,103 @@ export function CommitsPanel() {
   const handleShow = (id: ColumnId) =>
     setHidden(colState.hidden.filter((h) => h !== id));
 
+  // Type-to-jump quick search (GitExtensions-style): with the list focused,
+  // typing jumps the selection to the next loaded row whose subject or ref
+  // label matches; Alt+Down/Up steps through matches (also after the typing
+  // buffer expired - `lastQuickQuery` persists), Esc dismisses. Purely
+  // client-side over the loaded rows; the toolbar filter covers full history.
+  const quickBufferRef = useRef("");
+  const lastQuickQueryRef = useRef("");
+  const quickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [quickOverlay, setQuickOverlay] = useState<string | null>(null);
+
+  const showQuickOverlay = (text: string) => {
+    setQuickOverlay(text);
+    if (quickTimerRef.current) clearTimeout(quickTimerRef.current);
+    quickTimerRef.current = setTimeout(() => {
+      quickBufferRef.current = "";
+      setQuickOverlay(null);
+    }, 1200);
+  };
+
+  const quickJump = (anchor: number, direction: 1 | -1, query: string) => {
+    const idx = quickSearchMatch(rowsRef.current, query, anchor, direction);
+    if (idx === null) return;
+    setSelectedId(rowsRef.current[idx].id);
+    if (shouldCenterScroll(idx, virtualizerRef.current.range)) {
+      virtualizerRef.current.scrollToIndex(idx, { align: "center" });
+    }
+  };
+
+  const handleQuickSearchKey = (e: React.KeyboardEvent) => {
+    // Never intercept typing meant for an inline editor or the toolbar.
+    const target = e.target as HTMLElement;
+    if (target.closest("input, textarea, select, [contenteditable=true]")) return;
+    const selectedIdx = rowsRef.current.findIndex((c) => c.id === selectedId);
+
+    if (e.altKey && (e.key === "ArrowDown" || e.key === "ArrowUp") && lastQuickQueryRef.current) {
+      e.preventDefault();
+      const dir = e.key === "ArrowDown" ? 1 : -1;
+      quickJump(selectedIdx + dir, dir, lastQuickQueryRef.current);
+      showQuickOverlay(lastQuickQueryRef.current);
+      return;
+    }
+    if (e.key === "Escape") {
+      quickBufferRef.current = "";
+      lastQuickQueryRef.current = "";
+      if (quickTimerRef.current) clearTimeout(quickTimerRef.current);
+      setQuickOverlay(null);
+      return;
+    }
+    if (e.key === "Backspace" && quickBufferRef.current) {
+      e.preventDefault();
+      const next = quickBufferRef.current.slice(0, -1);
+      quickBufferRef.current = next;
+      lastQuickQueryRef.current = next;
+      if (next) {
+        quickJump(Math.max(selectedIdx, 0), 1, next);
+        showQuickOverlay(next);
+      } else {
+        setQuickOverlay(null);
+      }
+      return;
+    }
+    if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) return;
+    e.preventDefault();
+    const next = quickBufferRef.current + e.key;
+    quickBufferRef.current = next;
+    lastQuickQueryRef.current = next;
+    // Anchor inclusively on the current row so refining the query stays put.
+    quickJump(Math.max(selectedIdx, 0), 1, next);
+    showQuickOverlay(next);
+  };
+
+  // Enter on an already-submitted query advances to the next hit (wrapping);
+  // Shift+Enter steps back. A changed query submits a new search - the
+  // hit-jump effect (above, next to the seek effect) lands on its first hit
+  // once results arrive.
+  const submitSearch = (backwards = false) => {
+    const q = searchDraft.trim();
+    if (!q) {
+      clearSearch();
+      return;
+    }
+    if (search !== null && search.query === q) {
+      const n = searchHits.length;
+      if (n > 0) setSearchHit((h) => (h + (backwards ? -1 : 1) + n) % n);
+      return;
+    }
+    if (q.toLowerCase() === "abdäsele") void toggleAbdaesele().catch(() => {});
+    setSearch({ query: q });
+    setSearchHit(0);
+  };
+
+  const clearSearch = () => {
+    setSearch(null);
+    setSearchDraft("");
+    setSearchHit(0);
+  };
+
   return (
     <PanelContextMenuProvider baseline={baseline}>
       {({ openMenu, closeMenu }) => (
@@ -861,18 +1127,131 @@ export function CommitsPanel() {
         >
       {/* Loading indicator — thin top-edge bar, no layout shift. Refresh lives
           in the panel context menu (baseline entry). */}
-      <PanelLoadingBar active={isFetching} />
+      <PanelLoadingBar active={isFetching || searchFetching} />
 
       {/* Remote sync toolbar — fetch / pull / push + ahead-behind for the
-          current branch. Self-contained; reuses the already-fetched branches. */}
+          current branch. Self-contained; reuses the already-fetched branches.
+          The trailing slot carries the search controls: Enter runs a
+          full-history backend search and cycles the selection through the
+          hits inside the intact graph (Shift+Enter backwards; Esc / Clear
+          dismisses). The branch chip shows an active branch-only walk (ref
+          menus' "Show only this branch"). */}
       <RemoteSyncToolbar
         repoId={repo.id}
         branches={branches}
         onCreateBranch={handleCreateBranchStart}
         onStash={handleCreateStash}
         hasUncommittedChanges={status.length > 0}
+        trailing={
+          <div
+            // Right-floating block, packed right (flex-end) and growing into
+            // the line's free space so chips render full-length whenever room
+            // exists. The flex BASIS is the block's acceptable compressed
+            // minimum (input min + ~6em per chip + counter): the block stays
+            // on the buttons' line while it can still compress (chips
+            // ellipsize, input shrinks), and wraps onto its own full-width
+            // line exactly when compression would go below that minimum.
+            style={{
+              marginLeft: "auto",
+              flex: `1 1 ${
+                10 +
+                (branchFilter !== null ? 6 : 0) +
+                (authorFilter !== null ? 6 : 0) +
+                (search !== null ? 5 : 0)
+              }em`,
+              minWidth: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "flex-end",
+              gap: 6,
+            }}
+          >
+            {branchFilter !== null && (
+              <FilterChip
+                label={branchFilter}
+                title={`Showing only commits reachable from ${branchFilter}`}
+                clearTitle="Show all branches again"
+                onClear={() => setBranchFilter(null)}
+              />
+            )}
+            {authorFilter !== null && (
+              <FilterChip
+                label={authorFilter.name}
+                title={`Showing only commits by ${authorFilter.name} <${authorFilter.email}>`}
+                clearTitle="Show all authors again"
+                onClear={() => setAuthorFilter(null)}
+              />
+            )}
+            <div
+              // No minimum: under pressure the input yields all the way down
+              // rather than pushing overflow into the hit counter / chips
+              // (form controls also carry an intrinsic minimum - the inner
+              // input zeroes it explicitly).
+              style={{
+                position: "relative",
+                flex: "1 1 12em",
+                minWidth: 0,
+                maxWidth: "22em",
+                display: "flex",
+              }}
+            >
+              <input
+                type="text"
+                value={searchDraft}
+                onChange={(e) => setSearchDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") submitSearch(e.shiftKey);
+                  if (e.key === "Escape") clearSearch();
+                }}
+                placeholder="Search commits…"
+                title="Searches message and author across full history; a SHA, branch, tag, or rev expression jumps there first. Enter cycles through the hits (Shift+Enter backwards), Esc clears."
+                // Right padding keeps the text clear of the ✕; minWidth 0
+                // defeats the browser's intrinsic input minimum so the field
+                // can actually shrink with its wrapper.
+                style={{ ...SEARCH_FIELD_STYLE, flex: 1, minWidth: 0, paddingRight: "1.8em" }}
+              />
+              {(searchDraft !== "" || search !== null) && (
+                <button
+                  title="Clear search (Esc)"
+                  onClick={clearSearch}
+                  style={{
+                    position: "absolute",
+                    right: 2,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    height: "auto",
+                    padding: "0 4px",
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                    color: "var(--subtle-fg)",
+                    fontSize: "var(--fz-sm)",
+                    lineHeight: 1,
+                  }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            {search !== null && (
+              <span
+                className="legit-subtle"
+                // Keeps its space unconditionally: the input never grows (or
+                // pushes overflow) into the hit counter.
+                style={{ fontSize: "var(--fz-sm)", whiteSpace: "nowrap", flexShrink: 0 }}
+              >
+                {searchHits.length === 0
+                  ? searchFetching
+                    ? "searching…"
+                    : "no matches"
+                  : `${searchHit + 1} of ${searchHits.length}${
+                      searchHits.length >= SEARCH_MAX_RESULTS ? "+" : ""
+                    }`}
+              </span>
+            )}
+          </div>
+        }
       />
-
 
       {isError && (
         <PanelError error={error} />
@@ -971,11 +1350,46 @@ export function CommitsPanel() {
 
       {/* Virtualised rows. A little top padding keeps the first row clear of
           the header so a tall chip on the top commit isn't clipped against it;
-          it scrolls away with the content. */}
+          it scrolls away with the content. Focusable (clicking anywhere in the
+          list focuses it) so type-to-jump quick search receives keystrokes. */}
       <div
         ref={parentRef}
-        style={{ flex: 1, overflow: "auto", position: "relative", paddingTop: 4 }}
+        tabIndex={0}
+        onKeyDown={handleQuickSearchKey}
+        style={{ flex: 1, overflow: "auto", position: "relative", paddingTop: 4, outline: "none" }}
       >
+        {/* Quick-search indicator: what's been typed, while the buffer is
+            live. Sticky so it stays put as the list scrolls under it. */}
+        {quickOverlay !== null && (
+          <div
+            style={{
+              position: "sticky",
+              top: 0,
+              zIndex: 3,
+              display: "flex",
+              justifyContent: "flex-end",
+              height: 0,
+              overflow: "visible",
+            }}
+          >
+            <span
+              style={{
+                margin: "2px 12px 0 0",
+                padding: "2px 8px",
+                fontSize: "var(--fz-sm)",
+                fontFamily: "monospace",
+                background: "var(--panel-bg)",
+                border: "1px solid var(--panel-border)",
+                borderRadius: 3,
+                boxShadow: "0 2px 8px var(--shadow-color)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {quickOverlay}
+              <span className="legit-subtle"> — Alt+↑/↓ next/prev</span>
+            </span>
+          </div>
+        )}
         <div
           style={{
             height: rowVirtualizer.getTotalSize(),
@@ -1031,6 +1445,10 @@ export function CommitsPanel() {
                     return;
                   }
                   const stashSelector = stashSelectorById.get(commit.id);
+                  // Author-specific entries only when the click landed in the
+                  // Author cell (keeps the row menu uncluttered).
+                  const inAuthorCell =
+                    (e.target as HTMLElement).closest('[data-col="author"]') !== null;
                   // Branch sections for every branch decorating this row —
                   // the same shared sections the ref chips use, so the
                   // actions (and the delete Confirm step) stay in parity.
@@ -1074,6 +1492,19 @@ export function CommitsPanel() {
                         >
                           Browse files at this commit
                         </MenuItem>
+                        {inAuthorCell && (
+                          <MenuItem
+                            onClick={() => {
+                              closeMenu();
+                              setAuthorFilter({ name: commit.author.name, email: commit.author.email });
+                              // A search's hits may not be by this author -
+                              // cycling would only toast. Same as branch filter.
+                              clearSearch();
+                            }}
+                          >
+                            Show only commits by '{commit.author.name}'
+                          </MenuItem>
+                        )}
                         {commit.id === headSha && headIsRewordable && (
                           <MenuItem onClick={() => { closeMenu(); handleRewordStart(commit); }}>
                             Reword message…
@@ -1372,6 +1803,9 @@ export function CommitsPanel() {
                       return (
                         <span
                           key="author"
+                          // Marks the cell for the row menu's author-scoped
+                          // entries (right-click here offers the author filter).
+                          data-col="author"
                           style={{
                             fontSize: TEXT_SIZE,
                             color: "var(--subtle-fg)",
@@ -1442,6 +1876,58 @@ function subjectOf(message: string): string {
   return message.split("\n")[0] ?? "";
 }
 
+/** Active-filter chip in the sync toolbar (branch / author walk filters):
+ *  the same "selected" surface as the active view-mode toggles, plus an ✕.
+ *  The ✕ opts out of the toolbar's 2em button height (it sits INSIDE a 2em
+ *  chip). */
+function FilterChip({
+  label,
+  title,
+  clearTitle,
+  onClear,
+}: {
+  label: string;
+  title: string;
+  clearTitle: string;
+  onClear: () => void;
+}) {
+  return (
+    <span
+      title={title}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        fontSize: "var(--fz-sm)",
+        fontFamily: "monospace",
+        border: "1px solid var(--panel-border)",
+        borderRadius: 3,
+        padding: "0 4px",
+        height: "2em",
+        boxSizing: "border-box",
+        whiteSpace: "nowrap",
+        // Shrinkable (the label ellipsizes) so long filter labels squeeze
+        // before they crush the search input into the panel border.
+        flex: "0 1 auto",
+        minWidth: "5em",
+        background: "var(--button-active-bg, rgba(255,255,255,0.12))",
+      }}
+    >
+      {/* minWidth 0 lets the label actually shrink inside the flex chip. */}
+      <span style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+        {label}
+      </span>
+      <button
+        title={clearTitle}
+        onClick={onClear}
+        style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--panel-fg)", padding: 0, height: "auto", flexShrink: 0 }}
+      >
+        ✕
+      </button>
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Remote sync toolbar
 // ---------------------------------------------------------------------------
@@ -1510,6 +1996,7 @@ function RemoteSyncToolbar({
   onCreateBranch,
   onStash,
   hasUncommittedChanges,
+  trailing,
 }: {
   repoId: string;
   branches: Branch[];
@@ -1519,6 +2006,8 @@ function RemoteSyncToolbar({
   onStash: (includeUntracked: boolean) => void;
   /** Whether the working tree has anything to stash (drives the disabled state). */
   hasUncommittedChanges: boolean;
+  /** Extra controls rendered right of the git buttons (the search/filter bar). */
+  trailing?: React.ReactNode;
 }) {
   const queryClient = useQueryClient();
 
@@ -1679,7 +2168,12 @@ function RemoteSyncToolbar({
   return (
     <div
       className="legit-panel__toolbar"
-      style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 8px" }}
+      // Wraps when the panel is narrow: the search controls (trailing) move
+      // to their own line instead of crushing the git buttons. Vertical
+      // padding stays the class default (6px): with the 2em controls that
+      // lands exactly on the toolbar min-height, so the spacing around the
+      // controls is identical whether or not the row wraps.
+      style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}
     >
       {/* While an op runs, ITS button becomes the Cancel button (spinner +
           "Cancel", still enabled) — the cancel affordance sits exactly where
@@ -1860,13 +2354,36 @@ function RemoteSyncToolbar({
         )}
       </div>
 
+      {/* Ahead/behind indicator for the current branch, right of the buttons. */}
+      {tracking && (
+        <span
+          title={`${tracking.ahead} ahead, ${tracking.behind} behind ${tracking.upstream}`}
+          style={{
+            fontSize: "var(--fz-sm)",
+            color: "var(--subtle-fg)",
+            fontFamily: "monospace",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          {tracking.ahead === 0 && tracking.behind === 0 ? (
+            <span>in sync</span>
+          ) : (
+            <>
+              <span>↑{tracking.ahead}</span>
+              <span>↓{tracking.behind}</span>
+            </>
+          )}
+        </span>
+      )}
+
       {/* Live transfer progress for the in-flight op (fed by the
           legit://remote-progress event; cleared when the op settles). */}
       {busy && progress && (
         <span
           title={`${progress.phase}${progress.percent != null ? ` ${progress.percent}%` : ""}`}
           style={{
-            marginLeft: "auto",
             display: "flex",
             alignItems: "center",
             gap: 6,
@@ -1905,30 +2422,9 @@ function RemoteSyncToolbar({
         </span>
       )}
 
-      {/* Ahead/behind indicator for the current branch. */}
-      {tracking && (
-        <span
-          title={`${tracking.ahead} ahead, ${tracking.behind} behind ${tracking.upstream}`}
-          style={{
-            marginLeft: busy && progress ? undefined : "auto",
-            fontSize: "var(--fz-sm)",
-            color: "var(--subtle-fg)",
-            fontFamily: "monospace",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          {tracking.ahead === 0 && tracking.behind === 0 ? (
-            <span>in sync</span>
-          ) : (
-            <>
-              <span>↑{tracking.ahead}</span>
-              <span>↓{tracking.behind}</span>
-            </>
-          )}
-        </span>
-      )}
+      {/* Search controls (owned by CommitsPanel): float right of the flexible
+          gap after the buttons + indicators, capped in width. */}
+      {trailing}
     </div>
   );
 }

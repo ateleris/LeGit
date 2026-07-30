@@ -16,6 +16,7 @@ import {
 // Only the RepoLayoutEnvelope TYPE flows back into defaultLayouts - no
 // runtime cycle.
 import { DEFAULT_GLOBAL_LAYOUT, DEFAULT_REPO_LAYOUT } from "./defaultLayouts";
+import { GLOBAL_DOCKVIEW_COMPONENTS, REPO_DOCKVIEW_COMPONENTS } from "./registry";
 
 export const SAVED_REPO_LAYOUT_KEY = "legit.repo-dock-layout-default";
 export const SAVED_GLOBAL_LAYOUT_KEY = "legit.global-dock-layout-default";
@@ -69,6 +70,80 @@ export function parseRepoLayoutEnvelope(raw: string | null): RepoLayoutEnvelope 
 }
 
 /**
+ * Strip panels whose component no longer exists from a persisted dockview
+ * layout. A removed panel (e.g. the retired Search panel) would otherwise
+ * make `fromJSON` throw AFTER building the restored panes' DOM - the exact
+ * failure mode behind the old Refs pane-duplication bug - and nuke the whole
+ * layout to the default. Returns the cleaned layout, or null when nothing
+ * usable remains (callers fall back to the default). Pure so the pruning
+ * rules are unit-tested.
+ */
+export function sanitizeDockviewLayout(
+  json: unknown,
+  knownComponents: ReadonlySet<string>,
+): unknown | null {
+  const layout = json as {
+    grid?: { root?: unknown };
+    panels?: Record<string, unknown>;
+    activeGroup?: unknown;
+  } | null;
+  if (!layout || typeof layout !== "object" || !layout.grid || !layout.panels) return null;
+
+  // Panels whose contentComponent still exists.
+  const panels: Record<string, unknown> = {};
+  for (const [id, p] of Object.entries(layout.panels)) {
+    const component = (p as { contentComponent?: unknown } | null)?.contentComponent;
+    if (typeof component === "string" && knownComponents.has(component)) panels[id] = p;
+  }
+
+  const groupIds = new Set<string>();
+  const usedViews = new Set<string>();
+
+  type Node = { type?: unknown; data?: unknown; size?: unknown };
+  const sanitizeNode = (node: Node | null | undefined): Node | null => {
+    if (!node || typeof node !== "object") return null;
+    if (node.type === "leaf") {
+      const data = (node.data ?? {}) as { views?: unknown; activeView?: unknown; id?: unknown };
+      const views = (Array.isArray(data.views) ? data.views : []).filter(
+        (v): v is string => typeof v === "string" && v in panels,
+      );
+      if (views.length === 0) return null;
+      for (const v of views) usedViews.add(v);
+      if (typeof data.id === "string") groupIds.add(data.id);
+      const activeView =
+        typeof data.activeView === "string" && views.includes(data.activeView)
+          ? data.activeView
+          : views[0];
+      return { ...node, data: { ...data, views, activeView } };
+    }
+    if (node.type === "branch") {
+      const children = (Array.isArray(node.data) ? node.data : [])
+        .map((c) => sanitizeNode(c as Node))
+        .filter((c): c is Node => c !== null);
+      if (children.length === 0) return null;
+      return { ...node, data: children };
+    }
+    return null;
+  };
+
+  const root = sanitizeNode((layout.grid as { root?: Node }).root);
+  if (!root) return null;
+
+  const result: Record<string, unknown> = {
+    ...layout,
+    grid: { ...(layout.grid as object), root },
+    panels: Object.fromEntries(Object.entries(panels).filter(([id]) => usedViews.has(id))),
+  };
+  if (typeof layout.activeGroup === "string" && !groupIds.has(layout.activeGroup)) {
+    delete result.activeGroup;
+  }
+  return result;
+}
+
+const REPO_COMPONENT_IDS: ReadonlySet<string> = new Set(Object.keys(REPO_DOCKVIEW_COMPONENTS));
+const GLOBAL_COMPONENT_IDS: ReadonlySet<string> = new Set(Object.keys(GLOBAL_DOCKVIEW_COMPONENTS));
+
+/**
  * Snapshot the current group ID and fallback position for every open panel
  * into the summon store (drives where closed panels re-open). Pass
  * `layoutJson` if you already called `api.toJSON()` to avoid a second call.
@@ -101,6 +176,10 @@ export function captureRepoLayoutEnvelope(api: DockviewApi): RepoLayoutEnvelope 
  * threw - the caller falls back to the default layout.
  */
 export function applyRepoLayoutEnvelope(api: DockviewApi, envelope: RepoLayoutEnvelope): boolean {
+  // Retired panels are pruned first - a stale reference would make fromJSON
+  // throw and nuke the whole layout.
+  const dockview = sanitizeDockviewLayout(envelope.dockview, REPO_COMPONENT_IDS);
+  if (dockview === null) return false;
   const { capturePlacement, captureFallback } = useSummonStore.getState();
   for (const [panelId, groupId] of Object.entries(envelope.placements)) {
     capturePlacement(panelId, groupId);
@@ -110,7 +189,7 @@ export function applyRepoLayoutEnvelope(api: DockviewApi, envelope: RepoLayoutEn
   }
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    api.fromJSON(envelope.dockview as any);
+    api.fromJSON(dockview as any);
   } catch (e) {
     console.warn("could not apply repo dock layout", e);
     return false;
@@ -146,12 +225,16 @@ export function applySavedRepoLayout(api: DockviewApi): boolean {
   return applyRepoLayoutEnvelope(api, envelope);
 }
 
-/** Same as `applySavedRepoLayout`, for the global dock's plain-JSON layout. */
-export function applySavedGlobalLayout(api: DockviewApi): boolean {
-  const raw = localStorage.getItem(SAVED_GLOBAL_LAYOUT_KEY);
-  if (!raw) return false;
+/**
+ * Apply a plain global-dock layout JSON (sanitized: retired panels pruned).
+ * Shared by the startup restore, the saved default, and the baked default.
+ */
+export function applyGlobalLayoutJson(api: DockviewApi, json: unknown): boolean {
+  const layout = sanitizeDockviewLayout(json, GLOBAL_COMPONENT_IDS);
+  if (layout === null) return false;
   try {
-    api.fromJSON(JSON.parse(raw));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    api.fromJSON(layout as any);
   } catch (e) {
     console.warn("could not apply global dock layout", e);
     return false;
@@ -159,6 +242,19 @@ export function applySavedGlobalLayout(api: DockviewApi): boolean {
   if (api.panels.length === 0) return false;
   applyPanelConstraints(api);
   return true;
+}
+
+/** Same as `applySavedRepoLayout`, for the global dock's plain-JSON layout. */
+export function applySavedGlobalLayout(api: DockviewApi): boolean {
+  const raw = localStorage.getItem(SAVED_GLOBAL_LAYOUT_KEY);
+  if (!raw) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+  return applyGlobalLayoutJson(api, parsed);
 }
 
 /**
@@ -173,14 +269,5 @@ export function applyBakedRepoLayout(api: DockviewApi): boolean {
 
 /** Same as `applyBakedRepoLayout`, for the global dock. */
 export function applyBakedGlobalLayout(api: DockviewApi): boolean {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    api.fromJSON(structuredClone(DEFAULT_GLOBAL_LAYOUT) as any);
-  } catch (e) {
-    console.warn("could not apply built-in global layout", e);
-    return false;
-  }
-  if (api.panels.length === 0) return false;
-  applyPanelConstraints(api);
-  return true;
+  return applyGlobalLayoutJson(api, structuredClone(DEFAULT_GLOBAL_LAYOUT));
 }

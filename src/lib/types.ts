@@ -50,6 +50,8 @@ export interface GlobalSettings {
   watcher_enabled?: boolean;
   /** Whether discarding changes asks for confirmation first (default true). */
   confirm_discard?: boolean;
+  /** Whether creating a branch also checks it out (default true). */
+  checkout_new_branch?: boolean;
   /** Periodic background auto-fetch of the active repo's remotes (default off).
    * Fetch-only and quiet: never pulls/merges, never toasts. */
   auto_fetch_enabled?: boolean;

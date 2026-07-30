@@ -2,7 +2,7 @@
 
 use crate::error::AppError;
 use crate::state::AppState;
-use legit_core::types::{BlameHunk, Commit, CommitFileChange, CommitSearchKind};
+use legit_core::types::{BlameHunk, Commit, CommitFileChange, CommitId, CommitSearchKind};
 use std::path::PathBuf;
 
 /// Files changed between two arbitrary revs — the Compare view's file list.
@@ -33,6 +33,19 @@ pub async fn repo_search_commits(
         .search_commits(&query, kind, max_count)
         .await
         .map_err(AppError::Git)
+}
+
+/// Resolve any rev-parse expression (SHA prefix, branch, tag, `HEAD~2`, ...)
+/// to the commit it names, peeling tags. Backs the Commits panel's "Go to".
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_resolve_commit(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    rev: String,
+) -> Result<CommitId, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.resolve_commit(&rev).await.map_err(AppError::Git)
 }
 
 #[tauri::command]

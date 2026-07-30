@@ -176,6 +176,7 @@ pub fn run() {
         commands::repo_commit_files,
         commands::repo_diff_files,
         commands::repo_search_commits,
+        commands::repo_resolve_commit,
         commands::repo_search_paths,
         commands::repo_list_files,
         commands::repo_files_at_revision,
@@ -244,6 +245,7 @@ pub fn run() {
         commands::save_column_preferences,
         commands::save_changed_files_view_mode,
         commands::save_refs_sort_mode,
+        commands::set_checkout_new_branch,
         commands::save_ui_font_size,
         commands::save_commits_graph_metrics,
     ]);

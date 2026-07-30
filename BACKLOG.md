@@ -167,12 +167,18 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   v1): `repoFileHistory` walks from HEAD, so "File history" on a file
   deleted since the browsed rev comes up empty - a refinement would pass
   the browsed rev as the walk's start point.
-- **Commits panel: search/filter the commit list** (requested 2026-07-30).
-  Find commits by subject/author/sha (possibly by touched path). The graph
-  walk is paged, so a client-side filter over loaded rows is incomplete;
-  likely a query mode that runs `git log --grep/--author/-- <path>` and shows
-  a flat filtered result list (with jump-to-commit back in the graph), rather
-  than filtering the graph itself.
+- **Commits panel search: touched-path query kind.** The search bar shipped
+  2026-07-30: one box, no mode dropdown - Enter cycles the selection
+  through full-history hits inside the intact graph (Shift+Enter
+  backwards); hits = message OR author matches (two walks merged), and a
+  query that rev-parses (SHA, branch, tag, HEAD~2) becomes the first hit.
+  Plus GitExtensions-style type-to-jump quick search over loaded rows.
+  Open remainder: a touched-path kind (`git log -- <path>`). NOTE: the
+  Search panel was removed 2026-07-30 as redundant - with it went the UI
+  for content search (pickaxe `-S` / `-G`) and path search. The backend
+  (`search_commits` Content/ContentRegex kinds, `search_paths`) is kept
+  and tested; re-adding is a small UI task if content search is missed
+  ("when did this string change?" archaeology has no UI today).
 - **"Open in editor" on more file rows.** Shipped 2026-07-11 for Files /
   Working Changes / Changed Files (`repo_open_file_in_editor`, `$FILE`,
   shared `OpenInEditorMenuItem`); File History, Compare, and Search share

@@ -90,6 +90,11 @@ pub trait GitBackend: Send + Sync {
     /// `max_count`, in `git ls-files` order.
     async fn search_paths(&self, query: &str, max_count: u32) -> Result<Vec<PathBuf>, GitError>;
 
+    /// Resolve any rev-parse expression (SHA prefix, branch, tag, `HEAD~2`,
+    /// ...) to the commit it names, peeling tags. Errors when the expression
+    /// doesn't name a commit. Backs the "Go to" jump in the Commits panel.
+    async fn resolve_commit(&self, rev: &str) -> Result<CommitId, GitError>;
+
     /// Every file in the repo's working tree, classified as tracked, untracked,
     /// or (when `show_ignored`) ignored. Backs the Files tree. Sorted by path.
     async fn list_repo_files(

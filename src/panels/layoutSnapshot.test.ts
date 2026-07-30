@@ -5,7 +5,7 @@
 // tolerance rules are pinned here - envelope format, bare-layout backward
 // compatibility, and never throwing on garbage.
 import { describe, it, expect } from "vitest";
-import { parseRepoLayoutEnvelope } from "./layoutSnapshot";
+import { parseRepoLayoutEnvelope, sanitizeDockviewLayout } from "./layoutSnapshot";
 
 describe("parseRepoLayoutEnvelope", () => {
   it("parses the envelope format", () => {
@@ -47,5 +47,64 @@ describe("parseRepoLayoutEnvelope", () => {
     expect(parseRepoLayoutEnvelope("not json {")).toBeNull();
     expect(parseRepoLayoutEnvelope('"a string"')).toBeNull();
     expect(parseRepoLayoutEnvelope("null")).toBeNull();
+  });
+});
+
+describe("sanitizeDockviewLayout", () => {
+  const KNOWN = new Set(["log", "diff"]);
+  const leaf = (id: string, views: string[], activeView = views[0]) => ({
+    type: "leaf",
+    data: { views, activeView, id },
+    size: 100,
+  });
+  const panel = (id: string) => ({ id, contentComponent: id, title: id });
+
+  it("passes a fully-known layout through structurally intact", () => {
+    const layout = {
+      grid: { root: { type: "branch", data: [leaf("1", ["log"]), leaf("2", ["diff"])], size: 200 }, width: 200, height: 100, orientation: "HORIZONTAL" },
+      panels: { log: panel("log"), diff: panel("diff") },
+      activeGroup: "2",
+    };
+    expect(sanitizeDockviewLayout(layout, KNOWN)).toEqual(layout);
+  });
+
+  it("prunes retired panels from views and the panels map", () => {
+    const layout = {
+      grid: { root: { type: "branch", data: [leaf("1", ["log", "search"], "search")], size: 100 } },
+      panels: { log: panel("log"), search: panel("search") },
+      activeGroup: "1",
+    };
+    const out = sanitizeDockviewLayout(layout, KNOWN) as {
+      grid: { root: { data: { data: { views: string[]; activeView: string } }[] } };
+      panels: Record<string, unknown>;
+    };
+    expect(out.grid.root.data[0].data.views).toEqual(["log"]);
+    // The retired panel was the active view - falls back to a surviving one.
+    expect(out.grid.root.data[0].data.activeView).toBe("log");
+    expect(Object.keys(out.panels)).toEqual(["log"]);
+  });
+
+  it("drops groups left empty and clears a dangling activeGroup", () => {
+    const layout = {
+      grid: { root: { type: "branch", data: [leaf("1", ["log"]), leaf("2", ["search"])], size: 200 } },
+      panels: { log: panel("log"), search: panel("search") },
+      activeGroup: "2",
+    };
+    const out = sanitizeDockviewLayout(layout, KNOWN) as {
+      grid: { root: { data: unknown[] } };
+      activeGroup?: string;
+    };
+    expect(out.grid.root.data).toHaveLength(1);
+    expect(out.activeGroup).toBeUndefined();
+  });
+
+  it("returns null when nothing usable remains or the shape is foreign", () => {
+    const layout = {
+      grid: { root: leaf("1", ["search"]) },
+      panels: { search: panel("search") },
+    };
+    expect(sanitizeDockviewLayout(layout, KNOWN)).toBeNull();
+    expect(sanitizeDockviewLayout(null, KNOWN)).toBeNull();
+    expect(sanitizeDockviewLayout({ garbage: true }, KNOWN)).toBeNull();
   });
 });

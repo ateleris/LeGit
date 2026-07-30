@@ -1162,6 +1162,125 @@ async fn branch_list_reports_upstream_divergence_and_gone() {
 }
 
 // ---------------------------------------------------------------------------
+// log author filter: fixed-string, case-insensitive, and no stash injection
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn log_author_filter_matches_fixed_string_and_skips_stashes() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("by default author").await;
+    repo.write("a.txt", "two\n");
+    repo.git(&["add", "-A"]).await;
+    // Author with regex metacharacters in the email - must match literally.
+    repo.git(&["-c", "user.name=Other Person", "-c", "user.email=o.p+git@example.invalid",
+               "commit", "-m", "by other"]).await;
+    // A stash: must NOT appear as a synthetic node in a filtered walk.
+    repo.write("a.txt", "wip\n");
+    repo.git(&["stash", "push", "-m", "wip"]).await;
+
+    let opts = |author: &str| LogOptions {
+        refs: RefSelector::AllLocalBranches,
+        author: Some(author.to_string()),
+        ..Default::default()
+    };
+
+    // Case-insensitive name match.
+    let by_other = repo.backend.log(opts("other person")).await.unwrap();
+    assert_eq!(by_other.len(), 1, "{by_other:?}");
+    assert_eq!(by_other[0].message.trim(), "by other");
+
+    // Fixed-string email match ('.' and '+' stay literal).
+    let by_email = repo.backend.log(opts("o.p+git@example.invalid")).await.unwrap();
+    assert_eq!(by_email.len(), 1, "{by_email:?}");
+
+    // The unfiltered walk injects the stash; the filtered one must not.
+    let unfiltered = repo
+        .backend
+        .log(LogOptions { refs: RefSelector::AllLocalBranches, ..Default::default() })
+        .await
+        .unwrap();
+    assert!(unfiltered.len() > 2, "stash node expected in {unfiltered:?}");
+    let filtered = repo.backend.log(opts("LeGit Test")).await.unwrap();
+    assert_eq!(filtered.len(), 1, "no stash node expected: {filtered:?}");
+}
+
+// ---------------------------------------------------------------------------
+// branch-filtered log: stash nodes appear iff their BASE commit is in the
+// walked window and the caller opted in (include_stashes)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn range_walk_injects_only_stashes_based_in_the_window() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    // Branch `dev` diverges; a stash is created on top of dev's tip.
+    repo.git(&["switch", "-c", "dev"]).await;
+    repo.write("a.txt", "dev\n");
+    repo.commit_all("dev work").await;
+    repo.write("a.txt", "wip\n");
+    repo.git(&["stash", "push", "-m", "dev wip"]).await;
+    // `main` moves on separately - the stash's base is NOT on main.
+    repo.git(&["switch", "main"]).await;
+    repo.write("b.txt", "main\n");
+    repo.commit_all("main work").await;
+
+    let range_opts = |range: &str, include: bool| LogOptions {
+        revision_range: Some(range.to_string()),
+        refs: RefSelector::Head,
+        include_stashes: include,
+        ..Default::default()
+    };
+    let has_stash = |commits: &[legit_core::types::Commit]| {
+        commits.iter().any(|c| {
+            c.decorations
+                .iter()
+                .any(|d| matches!(d, legit_core::types::RefDecoration::Stash(_)))
+        })
+    };
+
+    // Filter to dev: the stash's base (dev tip) is in the window -> injected.
+    let dev = repo.backend.log(range_opts("dev", true)).await.unwrap();
+    assert!(has_stash(&dev), "{dev:?}");
+
+    // Filter to main: base not reachable -> no stash node.
+    let main = repo.backend.log(range_opts("main", true)).await.unwrap();
+    assert!(!has_stash(&main), "{main:?}");
+
+    // Same dev walk WITHOUT the opt-in (interactive-rebase style) -> none.
+    let plain = repo.backend.log(range_opts("dev", false)).await.unwrap();
+    assert!(!has_stash(&plain), "{plain:?}");
+}
+
+// ---------------------------------------------------------------------------
+// resolve_commit: rev-parse expressions name commits; tags peel; junk errors
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn resolve_commit_accepts_shas_refs_and_expressions() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "v1\n");
+    repo.commit_all("v1").await;
+    let first = repo.head().await;
+    repo.git(&["tag", "-a", "v1.0", "-m", "release"]).await;
+    repo.write("a.txt", "v2\n");
+    repo.commit_all("v2").await;
+    let second = repo.head().await;
+
+    let b = &repo.backend;
+    assert_eq!(b.resolve_commit("main").await.unwrap().0, second);
+    assert_eq!(b.resolve_commit("HEAD~1").await.unwrap().0, first);
+    // Annotated tag peels to the tagged commit, not the tag object.
+    assert_eq!(b.resolve_commit("v1.0").await.unwrap().0, first);
+    // Unique SHA prefix resolves too.
+    assert_eq!(b.resolve_commit(&second[..8]).await.unwrap().0, second);
+    // Junk and dash-leading input error instead of resolving or hanging.
+    assert!(b.resolve_commit("no-such-thing").await.is_err());
+    assert!(b.resolve_commit("--all").await.is_err());
+}
+
+// ---------------------------------------------------------------------------
 // ref creation dates: %(creatordate:unix) yields a parseable Unix timestamp
 // for branches and for both tag kinds (drives the user-selectable ref sort)
 // ---------------------------------------------------------------------------

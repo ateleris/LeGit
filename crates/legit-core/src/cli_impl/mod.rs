@@ -1004,10 +1004,22 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let skip = opts.skip.unwrap_or(0);
         let max_count_arg = format!("--max-count={max_count}");
         let skip_arg = format!("--skip={skip}");
+        let author_arg = opts
+            .author
+            .as_deref()
+            .filter(|a| !a.is_empty())
+            .map(|a| format!("--author={a}"));
 
         let mut args = vec!["log", &fmt_arg, &max_count_arg];
         if skip > 0 {
             args.push(&skip_arg);
+        }
+        // Author filter: fixed-string + case-insensitive so a plain email or
+        // name matches literally (no accidental regex metacharacters).
+        if let Some(author) = &author_arg {
+            args.push("--fixed-strings");
+            args.push("--regexp-ignore-case");
+            args.push(author);
         }
 
         // An explicit revision range (e.g. `base..HEAD` for the interactive
@@ -1046,14 +1058,24 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         // visible), and verification stays on-demand in `commit_details`.
         // LOG_FORMAT must never grow %G? (it spawns a verifier per commit).
 
-        // Inject stashes as synthetic nodes so they appear in the graph. Only for
-        // the full-graph view, and best-effort: a stash-list failure must never
-        // break the commit log itself.
-        if matches!(
+        // Inject stashes as synthetic nodes so they appear in the graph. For
+        // the full-graph view always; for a range walk only when the caller
+        // opted in (`include_stashes`, the branch filter) and then only
+        // stashes whose base commit is inside the walked window - others
+        // couldn't hang off anything. Never for an author filter (a stash
+        // isn't "a commit by this author"). Best-effort: a stash-list failure
+        // must never break the commit log itself.
+        let full_graph = matches!(
             opts.refs,
             RefSelector::AllLocalBranches | RefSelector::AllBranchesAndRemotes
-        ) {
-            if let Ok(stashes) = self.stashes().await {
+        );
+        if opts.author.is_none() && (full_graph || opts.include_stashes) {
+            if let Ok(mut stashes) = self.stashes().await {
+                if !full_graph {
+                    let ids: std::collections::HashSet<&str> =
+                        commits.iter().map(|c| c.id.as_str()).collect();
+                    stashes.retain(|s| ids.contains(s.base_sha.as_str()));
+                }
                 inject_stashes(&mut commits, stashes);
             }
         }
@@ -1261,6 +1283,25 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             .await?;
         Self::ensure_success(&output)?;
         Ok(filter_paths(&output.stdout, query, max_count as usize))
+    }
+
+    async fn resolve_commit(&self, rev: &str) -> Result<CommitId, GitError> {
+        let runner = self.runner().await;
+        // `^{commit}` peels tags to the tagged commit and rejects non-commit
+        // objects; `--end-of-options` guards against dash-leading user input.
+        let spec = format!("{rev}^{{commit}}");
+        let output = runner
+            .run(&["rev-parse", "--verify", "--quiet", "--end-of-options", &spec])
+            .await?;
+        Self::ensure_success(&output)?;
+        let sha = output.stdout.trim();
+        if sha.is_empty() {
+            return Err(GitError::CommandFailed {
+                exit_code: 1,
+                stderr: format!("'{rev}' does not name a commit"),
+            });
+        }
+        Ok(CommitId::new(sha.to_string()))
     }
 
     async fn list_repo_files(

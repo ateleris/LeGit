@@ -133,6 +133,8 @@ export function BranchesSection() {
   // User-selected sort order (global setting) applied to the local list and
   // within each remote group; group order itself stays the remotes' order.
   const sortMode = coerceRefsSortMode(useSettingsStore((s) => s.settings?.refs_sort_mode));
+  // Global setting (default on): creating a branch also checks it out.
+  const checkoutNewBranch = useSettingsStore((s) => s.settings?.checkout_new_branch ?? true);
   const sortBranches = useCallback(
     (list: readonly Branch[]) =>
       sortRefs(list, sortMode, (b) => b.name, (b) => b.created_at),
@@ -237,6 +239,9 @@ export function BranchesSection() {
     if (await runMut(() => repoCreateBranch(repo!.id, name, from))) {
       setCreateName("");
       setCreateFrom("");
+      // Global setting (default on): a new branch is checked out right away.
+      // The switch flow handles dirty-tree behavior and its own feedback.
+      if (checkoutNewBranch) await doCheckout(name);
     }
   };
 

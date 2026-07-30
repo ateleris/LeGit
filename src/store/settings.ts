@@ -8,6 +8,7 @@ import {
   saveUiFontSize,
   setWatcherEnabled,
   setConfirmDiscard,
+  setCheckoutNewBranch,
   setSubmoduleAttachBranch,
   setAutoFetchEnabled,
   setAutoFetchIntervalMinutes,
@@ -107,6 +108,7 @@ interface SettingsStore {
   setUiFontSize: (size: number) => Promise<void>;
   setWatcherEnabled: (enabled: boolean) => Promise<void>;
   setConfirmDiscard: (confirm: boolean) => Promise<void>;
+  setCheckoutNewBranch: (enabled: boolean) => Promise<void>;
   setSubmoduleAttachBranch: (enabled: boolean) => Promise<void>;
   setAutoFetchEnabled: (enabled: boolean) => Promise<void>;
   setAutoFetchIntervalMinutes: (minutes: number) => Promise<void>;
@@ -204,6 +206,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     if (s) {
       set({ settings: { ...s, confirm_discard: confirm } });
     }
+  },
+
+  async setCheckoutNewBranch(enabled) {
+    await setCheckoutNewBranch(enabled);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, checkout_new_branch: enabled } });
   },
 
   async setSubmoduleAttachBranch(enabled) {

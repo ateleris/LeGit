@@ -29,10 +29,14 @@ function ghostStyle(disabled: boolean): React.CSSProperties {
     alignItems: "center",
     gap: 4,
     fontSize: "var(--fz-sm)",
-    // Pinned: .legit-panel__toolbar's min-height derives the uniform header
-    // height from exactly these metrics (global.css).
+    // Pinned: the standard compact toolbar control is 2em of --fz-sm tall
+    // (border-box) - the same height as toolbar text inputs/selects (e.g.
+    // the Commits filter). .legit-panel__toolbar's min-height and its
+    // button/input normalization rules derive from exactly this (global.css).
     lineHeight: 1.2,
-    padding: "2px 8px",
+    height: "2em",
+    boxSizing: "border-box",
+    padding: "0 8px",
     border: "1px solid var(--panel-border)",
     borderRadius: 3,
     background: "transparent",

@@ -6,7 +6,7 @@ import {
 } from "dockview-react";
 import { applyPanelConstraints, useDockviewStore } from "../store/dockview";
 import { GLOBAL_DOCKVIEW_COMPONENTS, GLOBAL_DOCKVIEW_TAB_COMPONENTS, GLOBAL_PANELS } from "./registry";
-import { applyBakedGlobalLayout } from "./layoutSnapshot";
+import { applyBakedGlobalLayout, applyGlobalLayoutJson } from "./layoutSnapshot";
 
 const LAYOUT_KEY = "legit.global-dock-layout";
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -35,15 +35,14 @@ export function GlobalDock() {
       const raw = localStorage.getItem(LAYOUT_KEY);
       if (raw) {
         try {
-          const persisted = JSON.parse(raw);
-          event.api.fromJSON(persisted);
-          if (event.api.panels.length > 0) {
-            restored = true;
-          } else {
-            console.warn("global dock layout restored 0 panels, using default");
-          }
+          // Sanitized apply: retired panels in a stale layout are pruned
+          // instead of blowing up fromJSON.
+          restored = applyGlobalLayoutJson(event.api, JSON.parse(raw));
         } catch (e) {
           console.warn("could not restore global dock layout, using default", e);
+        }
+        if (!restored) {
+          console.warn("global dock layout not restorable, using default");
         }
       }
       if (!restored) {

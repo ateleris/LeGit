@@ -9,7 +9,6 @@ import { DiffPanel } from "./Diff/DiffPanel";
 import { MergePanel } from "./Merge/MergePanel";
 import { InteractiveRebasePanel } from "./InteractiveRebase/InteractiveRebasePanel";
 import { ComparePanel } from "./Compare/ComparePanel";
-import { SearchPanel } from "./Search/SearchPanel";
 import { BlamePanel } from "./Blame/BlamePanel";
 import { FileViewPanel } from "./FileView/FileViewPanel";
 import { FileHistoryPanel } from "./FileHistory/FileHistoryPanel";
@@ -87,13 +86,6 @@ export const REPO_PANELS: PanelDescriptor[] = [
     title: "Compare",
     scope: "repo",
     summons: ["diff"],
-    defaultPlacement: { direction: "right", referencePanel: "log" },
-  },
-  {
-    id: "search",
-    title: "Search",
-    scope: "repo",
-    summons: ["commit-details", "changed-files", "blame", "log"],
     defaultPlacement: { direction: "right", referencePanel: "log" },
   },
   {
@@ -237,7 +229,6 @@ export const REPO_DOCKVIEW_COMPONENTS: Record<
   merge: wrap(MergePanel),
   "interactive-rebase": wrap(InteractiveRebasePanel),
   compare: wrap(ComparePanel),
-  search: wrap(SearchPanel),
   files: wrap(FilesPanel),
   blame: wrap(BlamePanel),
   "file-view": wrap(FileViewPanel),

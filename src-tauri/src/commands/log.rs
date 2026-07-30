@@ -21,6 +21,8 @@ pub async fn repo_log(
     skip: Option<u32>,
     revision_range: Option<String>,
     include_remotes: Option<bool>,
+    author: Option<String>,
+    include_stashes: Option<bool>,
 ) -> Result<Vec<Commit>, AppError> {
     let session = state.get_session(&repo_id).await?;
     let refs = if revision_range.is_some() {
@@ -36,6 +38,8 @@ pub async fn repo_log(
         revision_range,
         paths: vec![],
         refs,
+        author,
+        include_stashes: include_stashes.unwrap_or(false),
     };
     session.backend.log(opts).await.map_err(AppError::Git)
 }

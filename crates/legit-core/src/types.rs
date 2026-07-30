@@ -133,6 +133,15 @@ pub struct LogOptions {
     pub revision_range: Option<String>,
     pub paths: Vec<PathBuf>,
     pub refs: RefSelector,
+    /// Only commits whose author matches (fixed-string, case-insensitive
+    /// `--author`). Backs the Commits panel's author filter; suppresses the
+    /// synthetic stash nodes like a range walk does.
+    pub author: Option<String>,
+    /// Inject synthetic stash nodes into a RANGE walk too - but only stashes
+    /// whose base commit is inside the walked window (they can hang off their
+    /// base in the graph like the full view). The Commits panel's branch
+    /// filter sets this; the interactive-rebase plan walk does not.
+    pub include_stashes: bool,
 }
 
 /// Decoration attached to a commit in `git log --decorate=full` output.

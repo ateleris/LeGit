@@ -74,7 +74,6 @@ export const DEFAULT_REPO_LAYOUT: RepoLayoutEnvelope = {
     refs: "3",
     "interactive-rebase": "1",
     compare: "7",
-    search: "1",
     files: "2",
     blame: "7",
     "file-history": "5",
@@ -97,7 +96,6 @@ export const DEFAULT_REPO_LAYOUT: RepoLayoutEnvelope = {
     merge: { referencePanel: "commit-details", direction: "right" },
     compare: { referencePanel: "commit-details", direction: "right" },
     files: { referencePanel: "git-log", direction: "right" },
-    search: { referencePanel: "log", direction: "right" },
     blame: { referencePanel: "commit-details", direction: "right" },
   },
 };
