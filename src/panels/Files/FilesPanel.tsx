@@ -135,8 +135,15 @@ export function FilesPanel() {
     (file: FileTreeEntry) => {
       setSelectedPath(file.path);
       viewInFileView(file.path);
+      // Retarget the history/blame panels only if they are already open
+      // (notifyIfOpen never pops them up). Tracked files only, matching the
+      // context menu - untracked/ignored files have no history to show.
+      if ((kindByPath.get(file.path) ?? "tracked") === "tracked") {
+        useSummonStore.getState().notifyIfOpen("file-history", file.path);
+        useSummonStore.getState().notifyIfOpen("blame", file.path);
+      }
     },
-    [viewInFileView],
+    [viewInFileView, kindByPath],
   );
 
   if (!repo) {

@@ -221,6 +221,16 @@ project memory for details.
   merge/rebase continue until the real-git harness (`tests/git_flows.rs`)
   encoded the flow. Prefer validating such assumptions there, against the
   real binary.
+- **A fixed bug is not done until a regression test pins it.** The point is
+  that a solved issue can never be re-introduced silently. Every bugfix
+  lands with a test that fails on the pre-fix behavior, at the most precise
+  seam available: pure-function unit test (parsers, decision logic),
+  `flow_tests.rs` command-sequence test, `tests/git_flows.rs` real-git case,
+  the theme contract suites, or - only when the bug lives in UI wiring that
+  no unit seam can express - an E2E spec. If genuinely no automated seam can
+  express it (interactive-only behavior), record the repro and root cause in
+  a design note or the BACKLOG "Known bugs" entry instead, so the knowledge
+  survives the session that fixed it.
 
 ## Backlog
 

@@ -30,6 +30,21 @@ SmartScreen/Gatekeeper warnings documented.
 
 ---
 
+## Known bugs
+
+- **Commit graph breaks on bigger repos when loading new entries** (reported
+  2026-07-30, with screenshot). After the log pages in more commits, the
+  graph column degrades: node dots render but the connecting edges between
+  rows are missing, so the graph reads as disconnected dots. The lane
+  algorithm (`src/panels/Commits/graph/lanes.ts`) claims incremental
+  stability under pagination (`previousAssignments`: already-assigned
+  commits keep their lanes, slot state is reconstructed before continuing),
+  so the suspects are that reconstruction seam and the edge/span computation
+  (`graph/spans.ts`) across the page boundary. Repro needs a repo larger
+  than the first page; investigate with `graph/lanes.test.ts` /
+  `spans.test.ts` style cases that simulate a load-more (two-pass assignment
+  with `previousAssignments`) rather than a single full-window pass.
+
 ## Git features (missing vs a normal client)
 
 Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
@@ -110,6 +125,30 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   containing them would become a glob).
 - **Git Log panel:** filter/search the log, copy a command, jump a toast to
   its specific log entry (today it just opens the panel).
+- **Refs panel: click jumps the Commits panel to the ref** (requested
+  2026-07-30). Clicking a branch, stash or tag in the Refs panel should
+  scroll the Commits panel to that ref's commit and select it. The
+  mechanism exists: panels already point the graph at a commit via
+  `notifyIfOpen("log", sha)` (File History, Blame, Search do this), so the
+  Refs row click resolves the ref to its tip/stash commit and sends that.
+  To decide: whether the loaded window must be extended when the target
+  commit is beyond the currently paged rows (same problem as jumping a
+  toast to a log entry).
+- **Commits panel: search/filter the commit list** (requested 2026-07-30).
+  Find commits by subject/author/sha (possibly by touched path). The graph
+  walk is paged, so a client-side filter over loaded rows is incomplete;
+  likely a query mode that runs `git log --grep/--author/-- <path>` and shows
+  a flat filtered result list (with jump-to-commit back in the graph), rather
+  than filtering the graph itself.
+- **Saved window layout with reset** (requested 2026-07-30). One saveable
+  layout: a "save current layout" action snapshots the panel arrangement,
+  and a reset button restores it whenever the user has rearranged things.
+  Both docks already persist their live layout to localStorage
+  (`legit.repo-dock-layout` / `legit.global-dock-layout`, envelope
+  `{ dockview, placements, fallbacks }`); the saved layout = a second copy
+  of those envelopes, applied via the same restore path (must go through
+  the existing normalizations, e.g. RefsPanel's `headerSize` patching).
+  UI: save/reset actions in the View menu.
 - **"Open in editor" on more file rows.** Shipped 2026-07-11 for Files /
   Working Changes / Changed Files (`repo_open_file_in_editor`, `$FILE`,
   shared `OpenInEditorMenuItem`); File History, Compare, and Search share
