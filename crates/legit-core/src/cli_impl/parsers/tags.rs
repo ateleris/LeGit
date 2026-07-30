@@ -4,11 +4,14 @@
 use crate::types::{CommitId, RemoteTag, TagInfo};
 
 /// Format for `git for-each-ref --format=… refs/tags`, tab-separated:
-/// short name, object type, object sha, peeled sha (annotated only), subject.
+/// short name, object type, object sha, peeled sha (annotated only),
+/// creatordate (Unix seconds; the tag object's date for annotated tags, the
+/// commit's committer date for lightweight ones), subject. Subject stays the
+/// LAST field so an embedded tab can't shift the others (`splitn` keeps it whole).
 pub const TAGS_FORMAT: &str =
-    "%(refname:short)%09%(objecttype)%09%(objectname)%09%(*objectname)%09%(subject)";
+    "%(refname:short)%09%(objecttype)%09%(objectname)%09%(*objectname)%09%(creatordate:unix)%09%(subject)";
 
-const FIELD_COUNT: usize = 5;
+const FIELD_COUNT: usize = 6;
 
 /// Parse the stdout of `git for-each-ref --format=TAGS_FORMAT refs/tags`.
 /// Malformed lines are skipped so one bad entry never breaks the list.
@@ -29,7 +32,9 @@ fn parse_tag_line(line: &str) -> Option<TagInfo> {
     let object_type = parts[1].trim();
     let object_sha = parts[2].trim();
     let peeled_sha = parts[3].trim();
-    let subject = parts[4].trim();
+    // Degrade to 0 rather than dropping the tag on a missing/odd date.
+    let created_at = parts[4].trim().parse().unwrap_or(0);
+    let subject = parts[5].trim();
     if name.is_empty() || object_sha.is_empty() {
         return None;
     }
@@ -50,6 +55,7 @@ fn parse_tag_line(line: &str) -> Option<TagInfo> {
         // rev-list probe (a failed probe then falls back to the old,
         // unrestricted behavior rather than disabling every push).
         target_on_remote: true,
+        created_at,
     })
 }
 
@@ -118,24 +124,43 @@ mod tests {
 
     #[test]
     fn parses_lightweight_and_annotated_tags() {
-        let out = "v1.0\tcommit\taaa111\t\t\n\
-                   v2.0\ttag\tbbb222\tccc333\tRelease 2.0\n";
+        let out = "v1.0\tcommit\taaa111\t\t1700000001\t\n\
+                   v2.0\ttag\tbbb222\tccc333\t1700000002\tRelease 2.0\n";
         let tags = parse_tags(out);
         assert_eq!(tags.len(), 2);
         assert_eq!(tags[0].name, "v1.0");
         assert!(!tags[0].annotated);
         assert_eq!(tags[0].target_sha.0, "aaa111");
         assert_eq!(tags[0].message, None);
+        assert_eq!(tags[0].created_at, 1700000001);
         assert_eq!(tags[1].name, "v2.0");
         assert!(tags[1].annotated);
         // Annotated: the peeled sha (the tagged commit), not the tag object.
         assert_eq!(tags[1].target_sha.0, "ccc333");
         assert_eq!(tags[1].message.as_deref(), Some("Release 2.0"));
+        assert_eq!(tags[1].created_at, 1700000002);
+    }
+
+    #[test]
+    fn subject_with_a_tab_stays_whole() {
+        let out = "v3.0\ttag\tbbb\tccc\t1700000003\tRelease\twith tab\n";
+        let tags = parse_tags(out);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].message.as_deref(), Some("Release\twith tab"));
+        assert_eq!(tags[0].created_at, 1700000003);
+    }
+
+    #[test]
+    fn missing_date_degrades_to_zero() {
+        let out = "v1.0\tcommit\taaa111\t\t\t\n";
+        let tags = parse_tags(out);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].created_at, 0);
     }
 
     #[test]
     fn skips_malformed_lines() {
-        let out = "garbage\nv1.0\tcommit\taaa111\t\t\n";
+        let out = "garbage\nv1.0\tcommit\taaa111\t\t1700000001\t\n";
         let tags = parse_tags(out);
         assert_eq!(tags.len(), 1);
         assert_eq!(tags[0].name, "v1.0");
@@ -163,7 +188,7 @@ mod tests {
     #[test]
     fn unpushed_targets_are_marked_not_on_remote() {
         // v1 targets aaa (on remote), v2 targets bbb (only reachable locally).
-        let out = "v1\tcommit\taaa\t\t\nv2\tcommit\tbbb\t\t\n";
+        let out = "v1\tcommit\taaa\t\t1\t\nv2\tcommit\tbbb\t\t2\t\n";
         let mut tags = parse_tags(out);
         assert!(tags.iter().all(|t| t.target_on_remote));
         mark_unpushed_targets(&mut tags, "bbb\nccc\n");
@@ -173,7 +198,7 @@ mod tests {
 
     #[test]
     fn empty_rev_list_leaves_all_tags_pushable() {
-        let mut tags = parse_tags("v1\tcommit\taaa\t\t\n");
+        let mut tags = parse_tags("v1\tcommit\taaa\t\t1\t\n");
         mark_unpushed_targets(&mut tags, "");
         assert!(tags[0].target_on_remote);
     }

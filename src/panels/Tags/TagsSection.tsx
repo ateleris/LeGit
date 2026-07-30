@@ -22,7 +22,8 @@ import { usePanelRunner } from "../shared/usePanelRunner";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { isRowBackgroundClick, jumpPanelsToCommit } from "../shared/jumpToCommit";
 import { Button } from "../shared/buttons";
-import { useConfirmDestructive } from "../../store/settings";
+import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
+import { coerceRefsSortMode, sortRefs } from "../../lib/refSort";
 
 // A tag mutation touches the tag list and the graph decorations.
 const AFFECTED_DOMAINS = ["tags", "log"];
@@ -66,6 +67,13 @@ export function TagsSection() {
     retry: false,
   });
   const pushed = useMemo(() => pushedTagNames(tags, remoteTags), [tags, remoteTags]);
+
+  // User-selected sort order (global setting); display order only.
+  const sortMode = coerceRefsSortMode(useSettingsStore((s) => s.settings?.refs_sort_mode));
+  const sortedTags = useMemo(
+    () => sortRefs(tags, sortMode, (t) => t.name, (t) => t.created_at),
+    [tags, sortMode],
+  );
 
   const reload = useCallback(() => { refetch(); }, [refetch]);
   usePanelFocusEffect(reload);
@@ -167,7 +175,7 @@ export function TagsSection() {
           </span>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {tags.map((t) => (
+            {sortedTags.map((t) => (
               <TagRow
                 key={t.name}
                 tag={t}

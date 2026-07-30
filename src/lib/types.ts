@@ -41,6 +41,9 @@ export interface GlobalSettings {
   commits_line_width?: number;
   /** Remembered Changed Files panel view mode ("tree" | "flat"). */
   changed_files_view_mode?: string | null;
+  /** Sort order for branches/tags in the Refs panel
+   * ("alphabetical" | "date" | "date_reversed"); null = alphabetical. */
+  refs_sort_mode?: string | null;
   /** Global UI font size (px) — base for the panel text scale and min sizes. */
   ui_font_size?: number;
   /** Whether the filesystem watcher auto-refreshes the UI on disk changes. */
@@ -729,6 +732,9 @@ export interface Branch {
   behind: number | null;
   /** The configured upstream ref no longer exists ("[gone]"). */
   upstream_gone: boolean;
+  /** Tip commit's committer date (Unix seconds); 0 when git returned none.
+   * Drives the user-selectable ref sort order. */
+  created_at: number;
 }
 
 export type SwitchOutcome =
@@ -846,6 +852,10 @@ export interface TagInfo {
   /** The tagged commit is reachable from a remote-tracking ref; pushing a
    *  tag whose commit is not on the remote is disabled (push branch first). */
   target_on_remote: boolean;
+  /** Creation date (Unix seconds): the tag object's date for annotated tags,
+   * the tagged commit's committer date for lightweight ones; 0 when absent.
+   * Drives the user-selectable ref sort order. */
+  created_at: number;
 }
 
 /** A tag as it exists on a remote (matches legit-core `RemoteTag`). */

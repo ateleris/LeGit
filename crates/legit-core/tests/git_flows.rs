@@ -1162,6 +1162,33 @@ async fn branch_list_reports_upstream_divergence_and_gone() {
 }
 
 // ---------------------------------------------------------------------------
+// ref creation dates: %(creatordate:unix) yields a parseable Unix timestamp
+// for branches and for both tag kinds (drives the user-selectable ref sort)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn branch_and_tag_listings_carry_creation_dates() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["tag", "light"]).await;
+    repo.git(&["tag", "-a", "annot", "-m", "annotated"]).await;
+
+    // "a real date, not the parser's 0 fallback": anything past 2001-09-09.
+    const EPOCH_FLOOR: i64 = 1_000_000_000;
+
+    let branches = repo.backend.branches().await.unwrap();
+    let main = branches.iter().find(|b| b.name == "main").expect("main listed");
+    assert!(main.created_at > EPOCH_FLOOR, "{main:?}");
+
+    let tags = repo.backend.tags().await.unwrap();
+    for name in ["light", "annot"] {
+        let tag = tags.iter().find(|t| t.name == name).expect("tag listed");
+        assert!(tag.created_at > EPOCH_FLOOR, "{tag:?}");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // file at revision: read (`show rev:path`) and restore (`checkout rev -- path`)
 // ---------------------------------------------------------------------------
 

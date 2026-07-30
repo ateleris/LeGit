@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   getGlobalSettings,
   saveChangedFilesViewMode,
+  saveRefsSortMode,
   saveCommitsGraphMetrics,
   saveUiFontSize,
   setWatcherEnabled,
@@ -32,6 +33,7 @@ import type {
   SwitchDirtyBehavior,
 } from "../lib/types";
 import type { CommitDateFormat } from "../lib/time";
+import type { RefsSortMode } from "../lib/refSort";
 
 /** Defaults + bounds for the Commits-panel graph metrics. Mirror the backend
  * clamps in `save_commits_graph_metrics`. */
@@ -101,6 +103,7 @@ interface SettingsStore {
     lineWidth: number
   ) => Promise<void>;
   setChangedFilesViewMode: (mode: "tree" | "flat") => Promise<void>;
+  setRefsSortMode: (mode: RefsSortMode) => Promise<void>;
   setUiFontSize: (size: number) => Promise<void>;
   setWatcherEnabled: (enabled: boolean) => Promise<void>;
   setConfirmDiscard: (confirm: boolean) => Promise<void>;
@@ -176,6 +179,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const s = get().settings;
     if (s) {
       set({ settings: { ...s, changed_files_view_mode: mode } });
+    }
+  },
+
+  async setRefsSortMode(mode) {
+    await saveRefsSortMode(mode);
+    const s = get().settings;
+    if (s) {
+      set({ settings: { ...s, refs_sort_mode: mode } });
     }
   },
 

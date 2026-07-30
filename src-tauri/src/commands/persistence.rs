@@ -96,6 +96,21 @@ pub async fn save_changed_files_view_mode(
     .await
 }
 
+/// Persist the Refs panel sort order for branches and tags
+/// (`"alphabetical"` | `"date"` | `"date_reversed"`). Unknown values are
+/// stored as-is; the frontend falls back to alphabetical when reading.
+#[tauri::command]
+#[specta::specta]
+pub async fn save_refs_sort_mode(
+    state: tauri::State<'_, AppState>,
+    mode: String,
+) -> Result<(), AppError> {
+    state.mutate_global(|s| {
+        s.refs_sort_mode = Some(mode);
+    })
+    .await
+}
+
 /// Persist the global UI font size (px), clamped to a sane range.
 #[tauri::command]
 #[specta::specta]

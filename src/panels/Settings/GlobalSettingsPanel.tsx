@@ -10,6 +10,7 @@ const LANE_LINK_KEY = "legit.commits-lane-link";
 import { formatAppError } from "../../lib/types";
 import type { ConfigScope, LineEndingsView, PushRecurseMode, RegionPlacement, SwitchDirtyBehavior } from "../../lib/types";
 import type { CommitDateFormat } from "../../lib/time";
+import { coerceRefsSortMode, type RefsSortMode } from "../../lib/refSort";
 import { globalLineEndingsView, globalWriteLineEndings, setLineEndingChipsInChanges, setWarnOnLineEndingCommit } from "../../lib/commands";
 import { useGitStatusStore } from "../../store/git-status";
 import { GlobalProfilesSection } from "./GlobalProfilesSection";
@@ -85,6 +86,7 @@ export function GlobalSettingsPanel() {
         <SettingsGroup id="appearance" title="Appearance" caption="How LeGit looks">
           <GeneralSection />
           <CommitsGraphSection />
+          <RefsSortSection />
           <DiffViewerSection />
           <WorkingChangesLayoutSection />
         </SettingsGroup>
@@ -957,6 +959,46 @@ function ExternalEditorSection() {
         <code>$FILE</code> by the file path (appended if the template doesn't
         mention them); quote them against spaces. Leave blank to use the
         system file manager instead.
+      </FieldNote>
+    </Section>
+  );
+}
+
+function RefsSortSection() {
+  const mode = coerceRefsSortMode(useSettingsStore((s) => s.settings?.refs_sort_mode));
+  const setRefsSortMode = useSettingsStore((s) => s.setRefsSortMode);
+  const [saving, setSaving] = useState(false);
+
+  const select = async (next: RefsSortMode) => {
+    setSaving(true);
+    try {
+      await setRefsSortMode(next);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Refs sorting">
+      <FieldNote>writes to: global settings — applies to all repos</FieldNote>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <label htmlFor="global-refs-sort-mode" style={{ fontSize: "var(--fz-lg)" }}>
+          Sort branches and tags by
+        </label>
+        <select
+          id="global-refs-sort-mode"
+          value={mode}
+          disabled={saving}
+          onChange={(e) => void select(e.target.value as RefsSortMode)}
+        >
+          <option value="alphabetical">Name (alphabetical)</option>
+          <option value="date">Date (newest first)</option>
+          <option value="date_reversed">Date (oldest first)</option>
+        </select>
+      </div>
+      <FieldNote>
+        Applies to the Branches and Tags lists in the Refs panel. Stashes keep
+        their newest-first order.
       </FieldNote>
     </Section>
   );

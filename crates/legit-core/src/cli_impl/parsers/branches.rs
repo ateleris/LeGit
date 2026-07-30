@@ -9,8 +9,9 @@ use crate::types::{Branch, CommitId};
 /// `--format=` argument for `git for-each-ref`. Fields, tab-separated:
 ///   refname (full) · objectname (commit sha) · upstream (full ref) · HEAD marker
 ///   · upstream divergence (`[ahead N, behind M]` / `[gone]` / empty)
+///   · creatordate (Unix seconds; the tip commit's committer date)
 pub const BRANCH_FORMAT: &str =
-    "%(refname)\t%(objectname)\t%(upstream)\t%(HEAD)\t%(upstream:track)";
+    "%(refname)\t%(objectname)\t%(upstream)\t%(HEAD)\t%(upstream:track)\t%(creatordate:unix)";
 
 /// Parse the stdout of `git for-each-ref --format=BRANCH_FORMAT refs/heads refs/remotes`.
 ///
@@ -32,6 +33,8 @@ fn parse_line(line: &str) -> Option<Branch> {
     let upstream = fields.next().unwrap_or("");
     let head = fields.next().unwrap_or("");
     let track = fields.next().unwrap_or("");
+    // Degrade to 0 rather than dropping the branch on a missing/odd date.
+    let created_at = fields.next().and_then(|f| f.trim().parse().ok()).unwrap_or(0);
 
     let is_remote = refname.starts_with("refs/remotes/");
     let name = if is_remote {
@@ -64,6 +67,7 @@ fn parse_line(line: &str) -> Option<Branch> {
         ahead,
         behind,
         upstream_gone,
+        created_at,
     })
 }
 
@@ -99,9 +103,9 @@ fn parse_track(track: &str) -> (Option<u32>, Option<u32>, bool) {
 mod tests {
     use super::*;
 
-    /// Build one for-each-ref line from its five fields.
+    /// Build one for-each-ref line from its six fields (fixed creatordate).
     fn line(refname: &str, oid: &str, upstream: &str, head: &str, track: &str) -> String {
-        format!("{refname}\t{oid}\t{upstream}\t{head}\t{track}")
+        format!("{refname}\t{oid}\t{upstream}\t{head}\t{track}\t1700000000")
     }
 
     #[test]
@@ -123,6 +127,7 @@ mod tests {
             ahead: Some(2),
             behind: Some(1),
             upstream_gone: false,
+            created_at: 1700000000,
         }]);
     }
 
@@ -139,6 +144,7 @@ mod tests {
             ahead: None,
             behind: None,
             upstream_gone: false,
+            created_at: 1700000000,
         }]);
     }
 
@@ -155,6 +161,7 @@ mod tests {
             ahead: None,
             behind: None,
             upstream_gone: false,
+            created_at: 1700000000,
         }]);
     }
 

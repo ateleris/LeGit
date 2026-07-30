@@ -25,7 +25,8 @@ import { notifySwitchOutcome, formatSwitchError } from "../../lib/switchFeedback
 import { notifyMergeOutcome, notifyOpError, notifyRebaseOutcome } from "../../lib/mergeFeedback";
 import { notify } from "../../store/notifications";
 import { OP_DOMAINS, useOpState } from "../../lib/useOpState";
-import { useConfirmDestructive } from "../../store/settings";
+import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
+import { coerceRefsSortMode, sortRefs } from "../../lib/refSort";
 import type { Branch, MergeOptions, Remote } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
@@ -129,7 +130,19 @@ export function BranchesSection() {
   });
   const busy = mutBusy || switchBusy || opBusy || netBusy;
 
-  const localBranches = branches.filter((b) => !b.is_remote);
+  // User-selected sort order (global setting) applied to the local list and
+  // within each remote group; group order itself stays the remotes' order.
+  const sortMode = coerceRefsSortMode(useSettingsStore((s) => s.settings?.refs_sort_mode));
+  const sortBranches = useCallback(
+    (list: readonly Branch[]) =>
+      sortRefs(list, sortMode, (b) => b.name, (b) => b.created_at),
+    [sortMode],
+  );
+
+  const localBranches = useMemo(
+    () => sortBranches(branches.filter((b) => !b.is_remote)),
+    [branches, sortBranches],
+  );
   const remoteBranches = branches.filter((b) => b.is_remote);
 
   // Map full upstream ref → local branch for "tracking" labels + divergence.
@@ -139,13 +152,15 @@ export function BranchesSection() {
       .map((b) => [b.upstream!, b]),
   );
 
+  // `groupRemoteBranches` preserves the input order within each group, so
+  // sorting the flat list up front sorts every group.
   const remoteGroups = useMemo(
     () =>
       groupRemoteBranches(
-        branches.filter((b) => b.is_remote),
+        sortBranches(branches.filter((b) => b.is_remote)),
         remotes.map((r) => r.name),
       ),
-    [branches, remotes],
+    [branches, remotes, sortBranches],
   );
 
   const [collapsedRemotes, setCollapsedRemotes] = useState<Record<string, boolean>>(

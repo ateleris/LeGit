@@ -967,6 +967,9 @@ export const saveColumnPreferences = (prefs: unknown) =>
 export const saveChangedFilesViewMode = (mode: string) =>
   invoke<null>("save_changed_files_view_mode", { mode });
 
+export const saveRefsSortMode = (mode: string) =>
+  invoke<null>("save_refs_sort_mode", { mode });
+
 /** Persists the global UI font size (px); returns the clamped value. */
 export const saveUiFontSize = (size: number) =>
   invoke<number>("save_ui_font_size", { size });

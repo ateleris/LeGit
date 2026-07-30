@@ -224,6 +224,10 @@ pub struct GlobalSettings {
     /// `None` until the user first toggles it.
     #[serde(default)]
     pub changed_files_view_mode: Option<String>,
+    /// Sort order for branches and tags in the Refs panel
+    /// (`"alphabetical"` | `"date"` | `"date_reversed"`). `None` = alphabetical.
+    #[serde(default)]
+    pub refs_sort_mode: Option<String>,
     /// Global UI font size (px). Base for every panel's text scale and for the
     /// panel min-size constraints.
     #[serde(default = "default_ui_font_size")]
@@ -341,6 +345,7 @@ impl Default for GlobalSettings {
             commits_dot_radius: default_commits_dot_radius(),
             commits_line_width: default_commits_line_width(),
             changed_files_view_mode: None,
+            refs_sort_mode: None,
             ui_font_size: default_ui_font_size(),
             watcher_enabled: true,
             confirm_discard: true,

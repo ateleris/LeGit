@@ -242,6 +242,7 @@ pub fn run() {
         commands::unset_lane_lock,
         commands::save_column_preferences,
         commands::save_changed_files_view_mode,
+        commands::save_refs_sort_mode,
         commands::save_ui_font_size,
         commands::save_commits_graph_metrics,
     ]);

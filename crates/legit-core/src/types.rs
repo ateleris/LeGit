@@ -419,6 +419,10 @@ pub struct Branch {
     pub behind: Option<u32>,
     /// The configured upstream ref no longer exists (`[gone]`).
     pub upstream_gone: bool,
+    /// `%(creatordate:unix)`: the tip commit's committer date (Unix seconds).
+    /// Drives the user-selectable ref sort order; 0 when git returned none.
+    #[serde(default)]
+    pub created_at: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -569,6 +573,11 @@ pub struct TagInfo {
     /// tag whose target is NOT on the remote would upload commits no remote
     /// branch references, so the UI disables it (push the branch first).
     pub target_on_remote: bool,
+    /// `%(creatordate:unix)` (Unix seconds): the tag object's creation date
+    /// for annotated tags, the tagged commit's committer date for lightweight
+    /// ones. Drives the user-selectable ref sort order; 0 when absent.
+    #[serde(default)]
+    pub created_at: i64,
 }
 
 /// A tag as it exists on a remote (`git ls-remote --tags`).

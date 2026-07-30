@@ -11,6 +11,7 @@ const remoteBranch = (name: string): Branch => ({
   ahead: null,
   behind: null,
   upstream_gone: false,
+  created_at: 0,
 });
 
 describe("groupRemoteBranches", () => {

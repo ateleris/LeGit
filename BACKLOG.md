@@ -32,18 +32,38 @@ SmartScreen/Gatekeeper warnings documented.
 
 ## Known bugs
 
+- **Diff viewer: cursor can be placed in hunk-header / expander rows**
+  (reported 2026-07-30, with screenshot). Clicking a `@@ … @@` header line or
+  an expand-context row puts a text cursor there - these are synthetic
+  chrome, not content, so the cursor should never enter them. Cause: hunk
+  headers and expander rows are real document lines in the CodeMirror doc
+  (decorated via marks/widgets in `Diff/DiffEditor.tsx` +
+  `Diff/hunkExpanders.ts`), so selection lands on them like any line. Fix
+  direction: an `EditorState.transactionFilter` (or selection filter) that
+  moves a selection head off header/expander lines to the nearest content
+  line (CodeMirror's atomic-ranges facet only covers ranges inside a line,
+  not whole lines). **Also check the Merge panel**: `Merge/MergeView.tsx`
+  builds its fold rows and section bands with the same machinery
+  (`hunkExpanders`' `headerBand`; "the fold row IS the band, exactly like
+  the diff's `@@` header lines"), and it is genuinely editable, so a cursor
+  there is worse than in the (read-only) diff.
 - **Commit graph breaks on bigger repos when loading new entries** (reported
-  2026-07-30, with screenshot). After the log pages in more commits, the
-  graph column degrades: node dots render but the connecting edges between
-  rows are missing, so the graph reads as disconnected dots. The lane
-  algorithm (`src/panels/Commits/graph/lanes.ts`) claims incremental
-  stability under pagination (`previousAssignments`: already-assigned
-  commits keep their lanes, slot state is reconstructed before continuing),
-  so the suspects are that reconstruction seam and the edge/span computation
-  (`graph/spans.ts`) across the page boundary. Repro needs a repo larger
-  than the first page; investigate with `graph/lanes.test.ts` /
-  `spans.test.ts` style cases that simulate a load-more (two-pass assignment
-  with `previousAssignments`) rather than a single full-window pass.
+  2026-07-30, with screenshot; root-caused same day). After the log pages in
+  more commits, node dots render but the connecting edges are missing.
+  Root cause: `computeLanes`'s incremental path (`previousAssignments`,
+  `graph/lanes.ts`) copies the old ASSIGNMENTS verbatim but starts its walk
+  at `firstNewIndex` - it never visits the already-assigned commits, so it
+  never re-emits their EDGES. The panel replaces `allEdges` wholesale with
+  the result (`CommitsPanel.tsx`, the `computeLanes` memo) and only carries
+  `prevAssignmentsRef` across passes, so after every load-more all edges
+  among previously loaded rows vanish. It slipped through because the
+  load-more stability tests (`lanes.test.ts`, "stability under load-more")
+  assert only assignments, never edges. Fix: emit edges for the previously
+  assigned region too (or have the panel accumulate edges across passes);
+  the regression test extends the existing load-more tests to assert the
+  two-pass edge set equals a full one-pass recompute. Related: the
+  "incremental log appending" item below builds on this same seam - fix
+  this first; its tests carry over.
 
 ## Git features (missing vs a normal client)
 
@@ -132,8 +152,9 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   exponential window doubling (`growJumpWindow`). The clean fix: fetch only
   the next page (`repoLog` already takes an offset) and append - the lane
   algorithm was designed for exactly this (`previousAssignments` keeps
-  existing rows stable under appended pages). Likely React Query
-  infinite-query style. Caveat to design around: offset pages are only
+  existing rows stable under appended pages; NOTE: that path currently
+  drops the old rows' edges - the "commit graph breaks" bug under Known
+  bugs - and must be fixed first). Likely React Query infinite-query style. Caveat to design around: offset pages are only
   consistent while refs don't move, so a watcher invalidation mid-walk must
   restart the walk (or re-fetch the full window once). Include a guardrail
   on the auto-seek: past a large bound (~50k commits), stop and ask via
