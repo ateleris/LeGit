@@ -222,11 +222,18 @@ pub enum RepoFileKind {
     Ignored,
 }
 
-/// A single file in the repo-wide Files tree (`list_repo_files`).
+/// A single file in the repo-wide Files tree (`list_repo_files`,
+/// `list_files_at_revision`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct RepoFileEntry {
     pub path: PathBuf,
     pub kind: RepoFileKind,
+    /// The entry is not a blob: a tracked gitlink (mode 160000 / ls-tree type
+    /// `commit`) or an untracked nested git repo (`ls-files --others` lists it
+    /// as `dir/`). No file content exists at this path in the object store,
+    /// so blob actions (View, Blame) don't apply.
+    #[serde(default)]
+    pub submodule: bool,
 }
 
 /// The line-ending style of a file's (or blob's) text — the small indicator

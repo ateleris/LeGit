@@ -1189,6 +1189,60 @@ async fn branch_and_tag_listings_carry_creation_dates() {
 }
 
 // ---------------------------------------------------------------------------
+// files at revision: `ls-tree -r` lists the commit's tree - tracked content
+// only, and a file deleted later still shows at the old rev
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn files_at_revision_list_the_commits_tree_only() {
+    let repo = TestRepo::init().await;
+    repo.write("kept.txt", "v1\n");
+    repo.write("doomed.txt", "short-lived\n");
+    repo.commit_all("both files").await;
+    repo.git(&["rm", "-q", "doomed.txt"]).await;
+    repo.git(&["commit", "-q", "-m", "drop doomed"]).await;
+    repo.write("untracked.txt", "never added\n");
+
+    let head = repo.backend.list_files_at_revision("HEAD").await.unwrap();
+    let head_names: Vec<_> = head.iter().map(|f| f.path.to_string_lossy().to_string()).collect();
+    assert!(head_names.contains(&"kept.txt".to_string()), "{head_names:?}");
+    assert!(!head_names.contains(&"doomed.txt".to_string()), "{head_names:?}");
+    // Untracked files never appear at a revision - a commit only records
+    // tracked content (the design decision behind the Files rev mode).
+    assert!(!head_names.contains(&"untracked.txt".to_string()), "{head_names:?}");
+
+    let old = repo.backend.list_files_at_revision("HEAD~1").await.unwrap();
+    let old_names: Vec<_> = old.iter().map(|f| f.path.to_string_lossy().to_string()).collect();
+    assert!(old_names.contains(&"doomed.txt".to_string()), "{old_names:?}");
+}
+
+#[tokio::test]
+async fn gitlinks_carry_the_submodule_flag_in_both_listings() {
+    // A gitlink created via update-index (no .gitmodules needed): mode 160000
+    // in `ls-files --stage`, type `commit` in `ls-tree -r` - the two encodings
+    // the submodule flag is parsed from.
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    let head = repo.head().await;
+    repo.git(&["update-index", "--add", "--cacheinfo", &format!("160000,{head},sub")])
+        .await;
+    repo.git(&["commit", "-m", "add gitlink"]).await;
+
+    let live = repo.backend.list_repo_files(false).await.unwrap();
+    let sub = live.iter().find(|f| f.path == PathBuf::from("sub")).expect("gitlink listed");
+    assert!(sub.submodule, "{sub:?}");
+    let plain = live.iter().find(|f| f.path == PathBuf::from("a.txt")).expect("blob listed");
+    assert!(!plain.submodule, "{plain:?}");
+
+    let at_rev = repo.backend.list_files_at_revision("HEAD").await.unwrap();
+    let sub = at_rev.iter().find(|f| f.path == PathBuf::from("sub")).expect("gitlink listed");
+    assert!(sub.submodule, "{sub:?}");
+    let plain = at_rev.iter().find(|f| f.path == PathBuf::from("a.txt")).expect("blob listed");
+    assert!(!plain.submodule, "{plain:?}");
+}
+
+// ---------------------------------------------------------------------------
 // file at revision: read (`show rev:path`) and restore (`checkout rev -- path`)
 // ---------------------------------------------------------------------------
 
@@ -1443,6 +1497,32 @@ async fn list_repo_files_classifies_tracked_untracked_ignored() {
     // With ignored: debug.log now appears, classified Ignored.
     let files = repo.backend.list_repo_files(true).await.unwrap();
     assert_eq!(kind_of(&files, "debug.log"), Some(RepoFileKind::Ignored));
+}
+
+#[tokio::test]
+async fn list_repo_files_reports_a_nested_repo_as_one_slashless_entry() {
+    // `ls-files --others` does not descend into a foreign work tree - it
+    // reports the nested repo as `dir/` WITH a trailing slash. Encoded here
+    // because the Files tree must never see the slash form: it would render
+    // as a folder containing an empty-named child row.
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    std::fs::create_dir_all(repo.path.join("nested")).unwrap();
+    let nested_runner = GitRunner::for_repo("git", &repo.path.join("nested"));
+    let out = nested_runner.run(&["init", "-b", "main"]).await.expect("spawn git");
+    assert!(out.success, "nested init failed: {}", out.stderr);
+    repo.write("nested/file.txt", "x\n");
+
+    let files = repo.backend.list_repo_files(false).await.unwrap();
+    assert_eq!(kind_of(&files, "nested"), Some(RepoFileKind::Untracked), "{files:?}");
+    assert!(
+        files.iter().all(|f| !f.path.to_string_lossy().ends_with('/')),
+        "trailing-slash path leaked into the listing: {files:?}"
+    );
+    // The trailing-slash form is what marks a nested repo - kept as the flag.
+    let nested = files.iter().find(|f| f.path == PathBuf::from("nested")).unwrap();
+    assert!(nested.submodule, "{nested:?}");
 }
 
 #[tokio::test]

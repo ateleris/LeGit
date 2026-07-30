@@ -162,19 +162,11 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   stays the model (industry norm; graph lanes need all rows above, and
   virtualization already makes rendering O(visible)) - windowed unloading
   was considered 2026-07-30 and rejected.
-- **Files panel: browse at a particular commit** (requested 2026-07-30).
-  A rev mode for the Files panel: entry point "Browse files at this commit"
-  in the commit context menu, summoning the panel with `{ rev }`; the list
-  comes from `git ls-tree -r <rev>` instead of the working-tree listing,
-  with a banner chip showing the rev and a "back to working tree" action.
-  Untracked files: **not showable at a commit, by design** - a commit only
-  records tracked content, so files that were untracked at the time simply
-  do not exist in any historical tree; git has nothing to show. In rev mode
-  the tracked/untracked/ignored distinction disappears (everything listed
-  is from the tree), the "Show ignored" toggle is disabled, and
-  worktree-mutating row actions (untrack, add-to-gitignore) are hidden;
-  row click opens File View at that rev (`file-view` already accepts
-  `{ path, rev }`), History/Blame stay available.
+- **Files panel rev mode: file history from the browsed rev.** The
+  browse-at-commit mode shipped 2026-07-30; open remainder (accepted for
+  v1): `repoFileHistory` walks from HEAD, so "File history" on a file
+  deleted since the browsed rev comes up empty - a refinement would pass
+  the browsed rev as the walk's start point.
 - **Commits panel: search/filter the commit list** (requested 2026-07-30).
   Find commits by subject/author/sha (possibly by touched path). The graph
   walk is paged, so a client-side filter over loaded rows is incomplete;

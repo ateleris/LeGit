@@ -97,6 +97,12 @@ pub trait GitBackend: Send + Sync {
         show_ignored: bool,
     ) -> Result<Vec<RepoFileEntry>, GitError>;
 
+    /// Every entry in the tree of `rev` (`git ls-tree -r`), sorted. Backs the
+    /// Files tree's browse-at-commit mode. A commit only records tracked
+    /// content, so every entry is `Tracked`; gitlinks carry the `submodule`
+    /// flag (ls-tree type `commit`).
+    async fn list_files_at_revision(&self, rev: &str) -> Result<Vec<RepoFileEntry>, GitError>;
+
     /// Remove paths from the index but keep them on disk (`git rm --cached`).
     /// Used to stop tracking a file without deleting it (Files tree "Stop
     /// tracking & ignore").

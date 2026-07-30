@@ -513,6 +513,10 @@ export type RepoFileKind = "tracked" | "untracked" | "ignored";
 export interface RepoFileEntry {
   path: string;
   kind: RepoFileKind;
+  /** Not a blob: a tracked gitlink (submodule) or an untracked nested git
+   * repo. No file content exists at this path, so blob actions (View,
+   * Blame) don't apply. */
+  submodule: boolean;
 }
 
 /** Line-ending style of a file/blob (matches legit-core `LineEndingKind`). */

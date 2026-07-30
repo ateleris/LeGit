@@ -95,6 +95,8 @@ function FileHistoryBody() {
     summon.swapSummon("changed-files", "working-changes", { commitId: sha, selectPath: path });
     // Keep the Commits graph highlight in step (only if that panel is open).
     summon.notifyIfOpen("log", sha);
+    // An open Files panel follows into browse-at-commit mode for this rev.
+    summon.notifyIfOpen("files", { rev: sha });
   }, []);
 
   const restore = useCallback(

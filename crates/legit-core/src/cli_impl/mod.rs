@@ -1278,7 +1278,9 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
                 Ok::<String, GitError>(out.stdout)
             }
         };
-        let cached = run(&["ls-files", "-z"]).await?;
+        // `--stage` for the tracked set: the mode column is the only way to
+        // tell a gitlink (160000, a submodule) from a blob in ls-files output.
+        let cached = run(&["ls-files", "-z", "--stage"]).await?;
         let others = run(&["ls-files", "-z", "--others", "--exclude-standard"]).await?;
         let ignored = if show_ignored {
             run(&["ls-files", "-z", "--others", "--ignored", "--exclude-standard"]).await?
@@ -1286,6 +1288,15 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             String::new()
         };
         Ok(classify_repo_files(&cached, &others, &ignored))
+    }
+
+    async fn list_files_at_revision(&self, rev: &str) -> Result<Vec<RepoFileEntry>, GitError> {
+        let runner = self.runner().await;
+        // Full ls-tree records (not --name-only): the object type is the only
+        // way to tell a gitlink (`commit`) from a blob at a revision.
+        let output = runner.run(&["ls-tree", "-r", "-z", rev]).await?;
+        Self::ensure_success(&output)?;
+        Ok(parse_ls_tree_files(&output.stdout))
     }
 
     async fn rm_cached(&self, paths: &[PathBuf]) -> Result<(), GitError> {
@@ -2957,28 +2968,68 @@ fn build_set_url_args<'a>(name: &'a str, url: &'a str, push: bool) -> Vec<&'a st
 }
 
 /// Classify the repo's files into the Files tree from three `-z` (NUL-separated)
-/// `git ls-files` outputs: `cached` (tracked), `others` (untracked, not
-/// ignored), and `ignored` (empty when the caller didn't request ignored
-/// files). The three sets are disjoint by git's definition, so no overlap
-/// resolution is needed. Result is de-duplicated and sorted by path so the
-/// tree order is stable regardless of git's listing order. Pure so the
-/// classification rule is unit-tested.
+/// `git ls-files` outputs: `cached` (tracked, in `--stage` format so gitlinks
+/// are identifiable by mode 160000), `others` (untracked, not ignored), and
+/// `ignored` (empty when the caller didn't request ignored files). The three
+/// sets are disjoint by git's definition, so no overlap resolution is needed.
+/// Result is de-duplicated and sorted by path so the tree order is stable
+/// regardless of git's listing order. Pure so the classification rule is
+/// unit-tested.
 fn classify_repo_files(cached: &str, others: &str, ignored: &str) -> Vec<RepoFileEntry> {
     let mut entries: Vec<RepoFileEntry> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    // Order matters only for the disjoint-set guarantee: tracked wins if a path
-    // somehow appears twice. The final sort makes the visible order stable.
+    let mut push = |path: &str, kind: RepoFileKind, submodule: bool| {
+        if !path.is_empty() && seen.insert(path.to_string()) {
+            entries.push(RepoFileEntry { path: PathBuf::from(path), kind, submodule });
+        }
+    };
+
+    // Tracked: `--stage` records are `<mode> <sha> <stage>\t<path>`.
+    // Mode 160000 marks a gitlink (submodule pointer).
+    for record in cached.split('\0').filter(|r| !r.is_empty()) {
+        let Some((meta, path)) = record.split_once('\t') else { continue };
+        let submodule = meta.starts_with("160000 ");
+        push(path, RepoFileKind::Tracked, submodule);
+    }
+
+    // Untracked / ignored: plain path records. `ls-files --others` lists an
+    // untracked nested git repo as `dir/` (trailing slash) - it doesn't
+    // descend into foreign work trees. Trim it (an empty-named child would
+    // corrupt the tree) and keep the fact as the submodule flag.
     for (stdout, kind) in [
-        (cached, RepoFileKind::Tracked),
         (others, RepoFileKind::Untracked),
         (ignored, RepoFileKind::Ignored),
     ] {
         for path in stdout.split('\0').filter(|p| !p.is_empty()) {
-            if seen.insert(path.to_string()) {
-                entries.push(RepoFileEntry { path: PathBuf::from(path), kind });
-            }
+            let trimmed = path.trim_end_matches('/');
+            push(trimmed, kind, trimmed.len() != path.len());
         }
     }
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    entries
+}
+
+/// Parse full `git ls-tree -r -z <rev>` records
+/// (`<mode> <type> <sha>\t<path>`) into Files-tree entries: everything at a
+/// revision is tracked content; type `commit` marks a gitlink (submodule).
+/// Re-sorted with `PathBuf` ordering so browse-at-commit lists order exactly
+/// like `classify_repo_files`. Pure so the parse rule is unit-tested.
+fn parse_ls_tree_files(stdout: &str) -> Vec<RepoFileEntry> {
+    let mut entries: Vec<RepoFileEntry> = stdout
+        .split('\0')
+        .filter_map(|record| {
+            let (meta, path) = record.split_once('\t')?;
+            if path.is_empty() {
+                return None;
+            }
+            let submodule = meta.split(' ').nth(1) == Some("commit");
+            Some(RepoFileEntry {
+                path: PathBuf::from(path),
+                kind: RepoFileKind::Tracked,
+                submodule,
+            })
+        })
+        .collect();
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     entries
 }
@@ -4212,16 +4263,61 @@ mod tests {
     // --- repo-wide file classification (Files tree) -------------------------
 
     fn entry(path: &str, kind: RepoFileKind) -> RepoFileEntry {
-        RepoFileEntry { path: PathBuf::from(path), kind }
+        RepoFileEntry { path: PathBuf::from(path), kind, submodule: false }
+    }
+
+    fn sub_entry(path: &str, kind: RepoFileKind) -> RepoFileEntry {
+        RepoFileEntry { path: PathBuf::from(path), kind, submodule: true }
+    }
+
+    /// One `ls-files --stage` record for a regular blob.
+    fn stage(path: &str) -> String {
+        format!("100644 aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111 0\t{path}\0")
+    }
+
+    #[test]
+    fn classify_repo_files_marks_gitlinks_as_submodules() {
+        // Mode 160000 in the --stage record = gitlink (submodule pointer).
+        let cached = format!(
+            "{}160000 bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222 0\tsubs/attach-configured\0",
+            stage("a.txt"),
+        );
+        assert_eq!(
+            classify_repo_files(&cached, "", ""),
+            vec![
+                entry("a.txt", RepoFileKind::Tracked),
+                sub_entry("subs/attach-configured", RepoFileKind::Tracked),
+            ]
+        );
+    }
+
+    #[test]
+    fn classify_repo_files_trims_nested_repo_trailing_slash() {
+        // `ls-files --others` reports an untracked nested git repo as `dir/`;
+        // the raw form would render as a folder with an empty-named child in
+        // the Files tree. The trim is kept as the submodule flag, and a
+        // tracked gitlink of the same path wins the dedup.
+        assert_eq!(
+            classify_repo_files("", "subs/dort/\0", ""),
+            vec![sub_entry("subs/dort", RepoFileKind::Untracked)]
+        );
+        assert_eq!(
+            classify_repo_files(
+                "160000 bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222 0\tsubs/dort\0",
+                "subs/dort/\0",
+                ""
+            ),
+            vec![sub_entry("subs/dort", RepoFileKind::Tracked)]
+        );
     }
 
     #[test]
     fn classify_repo_files_tags_each_class() {
-        let cached = "src/main.rs\0README.md\0";
+        let cached = format!("{}{}", stage("src/main.rs"), stage("README.md"));
         let others = "notes.txt\0";
         let ignored = "target/debug\0";
         assert_eq!(
-            classify_repo_files(cached, others, ignored),
+            classify_repo_files(&cached, others, ignored),
             vec![
                 entry("README.md", RepoFileKind::Tracked),
                 entry("notes.txt", RepoFileKind::Untracked),
@@ -4233,10 +4329,10 @@ mod tests {
 
     #[test]
     fn classify_repo_files_empty_ignored_when_not_requested() {
-        let cached = "a.txt\0";
+        let cached = stage("a.txt");
         let others = "b.txt\0";
         assert_eq!(
-            classify_repo_files(cached, others, ""),
+            classify_repo_files(&cached, others, ""),
             vec![
                 entry("a.txt", RepoFileKind::Tracked),
                 entry("b.txt", RepoFileKind::Untracked),
@@ -4248,12 +4344,31 @@ mod tests {
     fn classify_repo_files_ignores_blank_segments_and_dedups() {
         // Trailing NUL yields a final empty segment; a path must never appear
         // twice even if git somehow lists it in two streams.
-        let cached = "dup.txt\0\0";
+        let cached = format!("{}\0", stage("dup.txt"));
         let others = "dup.txt\0";
         assert_eq!(
-            classify_repo_files(cached, others, ""),
+            classify_repo_files(&cached, others, ""),
             vec![entry("dup.txt", RepoFileKind::Tracked)]
         );
+    }
+
+    #[test]
+    fn parse_ls_tree_files_types_and_resorts() {
+        // PathBuf ordering is component-wise: the directory component "a"
+        // sorts before the file "a.txt", matching classify_repo_files' sort.
+        // Type `commit` = gitlink (submodule).
+        let out = "100644 blob aaaa1111\ta.txt\0\
+                   100644 blob aaaa1111\ta/b.txt\0\
+                   160000 commit bbbb2222\tsubs/dort\0";
+        assert_eq!(
+            parse_ls_tree_files(out),
+            vec![
+                entry("a/b.txt", RepoFileKind::Tracked),
+                entry("a.txt", RepoFileKind::Tracked),
+                sub_entry("subs/dort", RepoFileKind::Tracked),
+            ]
+        );
+        assert_eq!(parse_ls_tree_files(""), vec![]);
     }
 
     // --- stash SHA → selector resolution ------------------------------------

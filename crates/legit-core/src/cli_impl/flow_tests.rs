@@ -843,9 +843,13 @@ async fn search_paths_filters_ls_files_case_insensitively() {
 
 #[tokio::test]
 async fn list_repo_files_without_ignored_runs_two_ls_files() {
-    // Tracked then untracked, and NO ignored query when show_ignored is false.
+    // Tracked (--stage, for the gitlink mode) then untracked, and NO ignored
+    // query when show_ignored is false.
     let fake = FakeExecutor::default();
-    fake.expect(&["ls-files", "-z"], ok("src/main.rs\0"));
+    fake.expect(
+        &["ls-files", "-z", "--stage"],
+        ok("100644 aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111 0\tsrc/main.rs\0"),
+    );
     fake.expect(&["ls-files", "-z", "--others", "--exclude-standard"], ok("notes.txt\0"));
     let (b, exec) = backend(fake);
 
@@ -853,8 +857,8 @@ async fn list_repo_files_without_ignored_runs_two_ls_files() {
     assert_eq!(
         files,
         vec![
-            RepoFileEntry { path: PathBuf::from("notes.txt"), kind: RepoFileKind::Untracked },
-            RepoFileEntry { path: PathBuf::from("src/main.rs"), kind: RepoFileKind::Tracked },
+            RepoFileEntry { path: PathBuf::from("notes.txt"), kind: RepoFileKind::Untracked, submodule: false },
+            RepoFileEntry { path: PathBuf::from("src/main.rs"), kind: RepoFileKind::Tracked, submodule: false },
         ],
     );
     exec.assert_done();
@@ -863,7 +867,10 @@ async fn list_repo_files_without_ignored_runs_two_ls_files() {
 #[tokio::test]
 async fn list_repo_files_with_ignored_adds_third_ls_files() {
     let fake = FakeExecutor::default();
-    fake.expect(&["ls-files", "-z"], ok("a.txt\0"));
+    fake.expect(
+        &["ls-files", "-z", "--stage"],
+        ok("100644 aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111 0\ta.txt\0"),
+    );
     fake.expect(&["ls-files", "-z", "--others", "--exclude-standard"], ok(""));
     fake.expect(
         &["ls-files", "-z", "--others", "--ignored", "--exclude-standard"],
@@ -875,8 +882,8 @@ async fn list_repo_files_with_ignored_adds_third_ls_files() {
     assert_eq!(
         files,
         vec![
-            RepoFileEntry { path: PathBuf::from("a.txt"), kind: RepoFileKind::Tracked },
-            RepoFileEntry { path: PathBuf::from("target/x"), kind: RepoFileKind::Ignored },
+            RepoFileEntry { path: PathBuf::from("a.txt"), kind: RepoFileKind::Tracked, submodule: false },
+            RepoFileEntry { path: PathBuf::from("target/x"), kind: RepoFileKind::Ignored, submodule: false },
         ],
     );
     exec.assert_done();

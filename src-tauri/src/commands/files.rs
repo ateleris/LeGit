@@ -33,6 +33,24 @@ pub async fn repo_list_files(
         .map_err(AppError::Git)
 }
 
+/// Every entry in the tree of `rev` (browse-at-commit mode of the Files
+/// panel). A commit only records tracked content, so every entry is
+/// `Tracked`; gitlinks carry the `submodule` flag.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_files_at_revision(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    rev: String,
+) -> Result<Vec<RepoFileEntry>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .list_files_at_revision(&rev)
+        .await
+        .map_err(AppError::Git)
+}
+
 /// Append a path to the repo-root `.gitignore` (`path` for a file, `path/` for
 /// a directory), anchored to the repo root. A no-op if the exact line is
 /// already present.

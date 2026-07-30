@@ -74,7 +74,7 @@ export const REPO_PANELS: PanelDescriptor[] = [
     id: "log",
     title: "Commits",
     scope: "repo",
-    summons: ["commit-details", "changed-files", "working-changes", "interactive-rebase", "compare"],
+    summons: ["commit-details", "changed-files", "working-changes", "interactive-rebase", "compare", "files"],
   },
   {
     id: "interactive-rebase",
@@ -190,6 +190,7 @@ export const SUPPRESSIBLE_SUMMON_PANELS: string[] = [
   "blame",
   "compare",
   "interactive-rebase",
+  "files",
 ];
 
 const TAB_COMPONENTS: Record<string, FunctionComponent<IDockviewPanelHeaderProps>> = {

@@ -1066,6 +1066,14 @@ export function CommitsPanel() {
                         <MenuItem onClick={() => { closeMenu(); handleCreateTagStart(commit.id); }}>
                           Create tag here…
                         </MenuItem>
+                        <MenuItem
+                          onClick={() => {
+                            closeMenu();
+                            useSummonStore.getState().summon("files", { rev: commit.id });
+                          }}
+                        >
+                          Browse files at this commit
+                        </MenuItem>
                         {commit.id === headSha && headIsRewordable && (
                           <MenuItem onClick={() => { closeMenu(); handleRewordStart(commit); }}>
                             Reword message…

@@ -178,6 +178,7 @@ pub fn run() {
         commands::repo_search_commits,
         commands::repo_search_paths,
         commands::repo_list_files,
+        commands::repo_files_at_revision,
         commands::repo_add_to_gitignore,
         commands::repo_untrack_path,
         commands::repo_reveal_path,

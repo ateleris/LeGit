@@ -481,6 +481,9 @@ export const repoSearchPaths = (repoId: string, query: string, maxCount: number)
   invoke<string[]>("repo_search_paths", { repoId, query, maxCount });
 
 /** Every file in the repo, classified tracked/untracked/(ignored). Files tree. */
+export const repoFilesAtRevision = (repoId: string, rev: string) =>
+  invoke<RepoFileEntry[]>("repo_files_at_revision", { repoId, rev });
+
 export const repoListFiles = (repoId: string, showIgnored: boolean) =>
   invoke<RepoFileEntry[]>("repo_list_files", { repoId, showIgnored });
 
