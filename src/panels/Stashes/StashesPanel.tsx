@@ -24,6 +24,7 @@ import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { InlineEditor } from "../shared/InlineEditor";
 import { Button } from "../shared/buttons";
+import { isRowBackgroundClick, jumpPanelsToCommit } from "../shared/jumpToCommit";
 
 // A stash mutation touches the working tree, the stash list, and the graph.
 const AFFECTED_DOMAINS = ["stashes", "log", "status"];
@@ -374,6 +375,14 @@ function StashRow({
 }) {
   return (
     <div
+      onClick={(e) => {
+        // Background click = show the stash's node in the graph (stash nodes
+        // are injected into the log by their commit SHA); not while an inline
+        // rename/branch/drop flow is open, and never for the row's buttons.
+        if (!editing && !branching && !confirmingDrop && isRowBackgroundClick(e.target)) {
+          jumpPanelsToCommit(stash.stash_sha);
+        }
+      }}
       style={{
         border: "1px solid var(--panel-border)",
         borderRadius: 4,

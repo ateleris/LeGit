@@ -55,6 +55,7 @@ import { GraphCellWithAvatar, laneColor } from "./cells/GraphCell";
 import { computeLanes } from "./graph/lanes";
 import { computeEdgeSpans } from "./graph/spans";
 import { pickHeadCommitId } from "./headId";
+import { growJumpWindow, pendingJumpAction, shouldCenterScroll } from "./scrollToRow";
 import type { LaneEdge, LaneIndex, LaneResult, LockMap, RefsAtCommit } from "./graph/types";
 import {
   buildLockMap,
@@ -163,6 +164,9 @@ export function CommitsPanel() {
 
   const [selectedId, setSelectedId] = useState<CommitId | null>(null);
   const [extraPages, setExtraPages] = useState(0);
+  // A jump target (adoptSelection) not yet in the loaded window; the seek
+  // effect below keeps growing the fetch window until it loads, then scrolls.
+  const [pendingJump, setPendingJump] = useState<CommitId | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
 
   // In-place editing in the Subject column: rewording a commit's subject line
@@ -212,6 +216,7 @@ export function CommitsPanel() {
     setRenamingBranch(null);
     setBranchCreation(null);
     setTagCreation(null);
+    setPendingJump(null);
   }, [repo?.id]);
 
   // Raw lock list from the store; used by the Refs context menu UI.
@@ -535,9 +540,10 @@ export function CommitsPanel() {
   // highlight (and scroll to it) — the source panel already summons Commit
   // Details / Changed Files, so this panel must NOT re-summon them (that would
   // loop). Refs keep the callback stable so the summon target isn't
-  // re-registered every render. A commit outside the loaded window still sets
-  // the selection (it highlights once a later "load more" brings it in); only
-  // the scroll is skipped.
+  // re-registered every render. A commit outside the loaded window sets the
+  // selection and becomes a pending jump: the seek effect (below, next to the
+  // infinite-scroll effect) grows the fetch window until the commit loads,
+  // then centers it.
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
   const virtualizerRef = useRef(rowVirtualizer);
@@ -546,7 +552,15 @@ export function CommitsPanel() {
     if (typeof payload !== "string") return;
     setSelectedId(payload as CommitId);
     const idx = rowsRef.current.findIndex((c) => c.id === payload);
-    if (idx >= 0) virtualizerRef.current.scrollToIndex(idx);
+    if (idx >= 0) {
+      if (shouldCenterScroll(idx, virtualizerRef.current.range)) {
+        virtualizerRef.current.scrollToIndex(idx, { align: "center" });
+      }
+    } else {
+      // Beyond the loaded window - hand off to the seek effect, which grows
+      // the fetch window until the commit is loaded, then scrolls to it.
+      setPendingJump(payload as CommitId);
+    }
   }, []);
   useSummonTarget("log", adoptSelection);
 
@@ -559,7 +573,9 @@ export function CommitsPanel() {
     if (rowId === null) return; // empty repo — nothing to branch from
     setBranchCreation({ rowId, startPoint });
     const idx = rows.findIndex((c) => c.id === rowId);
-    if (idx >= 0) rowVirtualizer.scrollToIndex(idx);
+    if (idx >= 0 && shouldCenterScroll(idx, rowVirtualizer.range)) {
+      rowVirtualizer.scrollToIndex(idx, { align: "center" });
+    }
   }, [headId, rows, rowVirtualizer]);
 
   // "Branch from stash…" — reuses the create-branch chip input on the stash's
@@ -567,7 +583,9 @@ export function CommitsPanel() {
   const handleStashBranchStart = useCallback((sha: string) => {
     setBranchCreation({ rowId: sha, stashSha: sha });
     const idx = rows.findIndex((c) => c.id === sha);
-    if (idx >= 0) rowVirtualizer.scrollToIndex(idx);
+    if (idx >= 0 && shouldCenterScroll(idx, rowVirtualizer.range)) {
+      rowVirtualizer.scrollToIndex(idx, { align: "center" });
+    }
   }, [rows, rowVirtualizer]);
 
   const handleCreateBranchSave = useCallback(async (name: string) => {
@@ -717,6 +735,29 @@ export function CommitsPanel() {
       setExtraPages((n) => n + 1);
     }
   }, [hasMore, isFetching, lastVisibleIndex, rows.length]);
+
+  // Seek for a jump target beyond the loaded window (Refs click on an old
+  // tag/branch/stash): grow the fetch window until the commit is loaded, then
+  // center it. `isFetching` gates each step so the decision only runs on
+  // settled data; the growth is exponential (see `growJumpWindow`). When the
+  // walk is exhausted without a hit the commit is unreachable in the walked
+  // refs (e.g. hidden remote branches) - stop and say so instead of silence.
+  useEffect(() => {
+    if (!pendingJump || isFetching) return;
+    const idx = rows.findIndex((c) => c.id === pendingJump);
+    const action = pendingJumpAction(idx >= 0, hasMore);
+    if (action === "scroll") {
+      setPendingJump(null);
+      if (shouldCenterScroll(idx, rowVirtualizer.range)) {
+        rowVirtualizer.scrollToIndex(idx, { align: "center" });
+      }
+    } else if (action === "extend") {
+      setExtraPages(growJumpWindow);
+    } else {
+      setPendingJump(null);
+      notify.info("This commit is not in the log - it may only be reachable from hidden remote branches.");
+    }
+  }, [pendingJump, isFetching, rows, hasMore, rowVirtualizer]);
 
   let maxVisibleLane = 0;
   for (const vItem of visibleItems) {

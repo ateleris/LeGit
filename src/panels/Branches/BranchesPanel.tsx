@@ -31,6 +31,7 @@ import { formatAppError } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { InlineEditor } from "../shared/InlineEditor";
 import { usePanelRunner } from "../shared/usePanelRunner";
+import { isRowBackgroundClick, jumpPanelsToCommit } from "../shared/jumpToCommit";
 import { PanelContextMenuProvider } from "../Commits/menu/PanelContextMenu";
 import { BranchMenuSection, RemoteBranchMenuSection } from "../Commits/menu/BranchMenuSection";
 
@@ -523,6 +524,12 @@ function LocalBranchRow({
   return (
     <div
       onContextMenu={onContextMenu}
+      onClick={(e) => {
+        // Background click = show this branch in the commit graph. Skipped
+        // while an inline rename/delete is open and for clicks on the row's
+        // own controls (their clicks bubble here).
+        if (!isEditing && isRowBackgroundClick(e.target)) jumpPanelsToCommit(branch.head);
+      }}
       data-testid="branch-row"
       data-branch={branch.name}
       style={{
@@ -619,6 +626,9 @@ function RemoteBranchRow({
   return (
     <div
       onContextMenu={onContextMenu}
+      onClick={(e) => {
+        if (isRowBackgroundClick(e.target)) jumpPanelsToCommit(branch.head);
+      }}
       title={branch.name}
       style={{
         border: "1px solid var(--panel-border)",

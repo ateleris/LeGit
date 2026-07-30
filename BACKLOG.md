@@ -125,15 +125,35 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   containing them would become a glob).
 - **Git Log panel:** filter/search the log, copy a command, jump a toast to
   its specific log entry (today it just opens the panel).
-- **Refs panel: click jumps the Commits panel to the ref** (requested
-  2026-07-30). Clicking a branch, stash or tag in the Refs panel should
-  scroll the Commits panel to that ref's commit and select it. The
-  mechanism exists: panels already point the graph at a commit via
-  `notifyIfOpen("log", sha)` (File History, Blame, Search do this), so the
-  Refs row click resolves the ref to its tip/stash commit and sends that.
-  To decide: whether the loaded window must be extended when the target
-  commit is beyond the currently paged rows (same problem as jumping a
-  toast to a log entry).
+- **Commits panel: incremental log appending** (decided 2026-07-30). Today
+  every window growth (infinite scroll, and the jump-seek that loads until a
+  clicked ref's commit appears) refetches the WHOLE window from offset 0 and
+  re-parses it - O(n^2) total work, currently mitigated for the seek by
+  exponential window doubling (`growJumpWindow`). The clean fix: fetch only
+  the next page (`repoLog` already takes an offset) and append - the lane
+  algorithm was designed for exactly this (`previousAssignments` keeps
+  existing rows stable under appended pages). Likely React Query
+  infinite-query style. Caveat to design around: offset pages are only
+  consistent while refs don't move, so a watcher invalidation mid-walk must
+  restart the walk (or re-fetch the full window once). Include a guardrail
+  on the auto-seek: past a large bound (~50k commits), stop and ask via
+  toast instead of silently walking a huge history. Keep-everything-loaded
+  stays the model (industry norm; graph lanes need all rows above, and
+  virtualization already makes rendering O(visible)) - windowed unloading
+  was considered 2026-07-30 and rejected.
+- **Files panel: browse at a particular commit** (requested 2026-07-30).
+  A rev mode for the Files panel: entry point "Browse files at this commit"
+  in the commit context menu, summoning the panel with `{ rev }`; the list
+  comes from `git ls-tree -r <rev>` instead of the working-tree listing,
+  with a banner chip showing the rev and a "back to working tree" action.
+  Untracked files: **not showable at a commit, by design** - a commit only
+  records tracked content, so files that were untracked at the time simply
+  do not exist in any historical tree; git has nothing to show. In rev mode
+  the tracked/untracked/ignored distinction disappears (everything listed
+  is from the tree), the "Show ignored" toggle is disabled, and
+  worktree-mutating row actions (untrack, add-to-gitignore) are hidden;
+  row click opens File View at that rev (`file-view` already accepts
+  `{ path, rev }`), History/Blame stay available.
 - **Commits panel: search/filter the commit list** (requested 2026-07-30).
   Find commits by subject/author/sha (possibly by touched path). The graph
   walk is paged, so a client-side filter over loaded rows is incomplete;

@@ -20,6 +20,7 @@ import { RemoteIcon, TagIcon } from "../../icons";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { ToolbarButton } from "../shared/ToolbarButton";
+import { isRowBackgroundClick, jumpPanelsToCommit } from "../shared/jumpToCommit";
 import { Button } from "../shared/buttons";
 import { useConfirmDestructive } from "../../store/settings";
 
@@ -257,6 +258,13 @@ function TagRow({
 }) {
   return (
     <div
+      onClick={(e) => {
+        // Background click = show the tagged commit in the graph; not while
+        // the delete confirmation is open, and never for the row's buttons.
+        if (confirming === null && isRowBackgroundClick(e.target)) {
+          jumpPanelsToCommit(tag.target_sha);
+        }
+      }}
       style={{
         border: "1px solid var(--panel-border)",
         borderRadius: 4,
