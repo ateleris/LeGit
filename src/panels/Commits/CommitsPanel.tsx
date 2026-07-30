@@ -767,9 +767,8 @@ export function CommitsPanel() {
   // the previous row ids are still an exact prefix. Any other change — a stash
   // created/dropped, the working-dir row appearing/disappearing, a branch op —
   // fails the prefix test and triggers a full recompute. (A length-only check
-  // would misread a synthetic-node insertion as load-more and corrupt the
-  // walk: firstNewIndex would jump to the inserted node, skipping the commits
-  // after it and dropping their edges.)
+  // would misread a synthetic-node insertion as load-more and pin rows to
+  // lanes that were chosen for a different graph shape.)
   const prevAssignmentsRef = useRef<Map<string, number> | undefined>(undefined);
   const prevRowIdsRef = useRef<string[] | undefined>(undefined);
 

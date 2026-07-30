@@ -6,7 +6,7 @@
 
 import { describe, test, expect } from "vitest";
 import { computeLanes } from "./lanes";
-import type { CommitForGraph, LockMap, RefsAtCommit } from "./types";
+import type { CommitForGraph, LaneEdge, LockMap, RefsAtCommit } from "./types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -27,6 +27,17 @@ function makeCommits(
 /** Build an empty refs-at map (no decorations). */
 function noRefs(): RefsAtCommit {
   return new Map();
+}
+
+/** Canonical sort so edge sets compare independent of emission order. */
+function sortedEdges(edges: LaneEdge[]): LaneEdge[] {
+  return [...edges].sort(
+    (a, b) =>
+      a.fromCommitId.localeCompare(b.fromCommitId) ||
+      a.toCommitId.localeCompare(b.toCommitId) ||
+      a.fromLane - b.fromLane ||
+      a.toLane - b.toLane,
+  );
 }
 
 /** Build a linear chain `c0 -> c1 -> ... -> c{n-1}`. */
@@ -238,6 +249,93 @@ describe("computeLanes", () => {
     }
     expect(r2.assignments.has("F")).toBe(true);
     expect(r2.assignments.has("G")).toBe(true);
+  });
+
+  // Regression tests for the load-more edge-loss bug (BACKLOG "Commit graph
+  // breaks on bigger repos"): the incremental path kept prior ASSIGNMENTS
+  // verbatim but never re-emitted their EDGES, so after every load-more all
+  // edges among previously loaded rows vanished. The pinned property: a
+  // two-pass (load-more) run must produce the same edge set as a full
+  // one-pass recompute of the same window.
+
+  test("load-more keeps edges of previously assigned commits", () => {
+    const first500 = linearChain(500);
+    const r1 = computeLanes(first500, {}, noRefs());
+
+    const all1000 = linearChain(1000);
+    const incremental = computeLanes(all1000, {}, noRefs(), r1.assignments);
+    const full = computeLanes(all1000, {}, noRefs());
+
+    // The direct symptom: edges among the previously loaded rows must
+    // still exist (c0 -> c1 is the newest edge, deep in the old region).
+    expect(
+      incremental.edges.find(
+        (e) => e.fromCommitId === "c0" && e.toCommitId === "c1",
+      ),
+    ).toBeDefined();
+
+    expect(sortedEdges(incremental.edges)).toEqual(sortedEdges(full.edges));
+  });
+
+  test("load-more edge set equals full recompute with branching", () => {
+    const window1 = makeCommits([
+      ["A", "B", "D"],
+      ["B", "C"],
+      ["D", "E"],
+      ["C", "F"],
+      ["E", "F"],
+    ]);
+    const r1 = computeLanes(window1, {}, noRefs());
+
+    const window2 = makeCommits([
+      ["A", "B", "D"],
+      ["B", "C"],
+      ["D", "E"],
+      ["C", "F"],
+      ["E", "F"],
+      ["F", "G"],
+      ["G"],
+    ]);
+    const incremental = computeLanes(window2, {}, noRefs(), r1.assignments);
+    const full = computeLanes(window2, {}, noRefs());
+
+    // Assignments stay stable (the existing contract) …
+    for (const [id, lane] of r1.assignments) {
+      expect(incremental.assignments.get(id)).toBe(lane);
+    }
+    // … AND the edge set matches a from-scratch computation.
+    expect(sortedEdges(incremental.edges)).toEqual(sortedEdges(full.edges));
+  });
+
+  test("load-more regenerates the lane of a merge parent beyond the boundary", () => {
+    // Window 1 ends with a merge whose second parent (X) is not loaded
+    // yet: A spawns a lane waiting for X. The old incremental path lost
+    // that pending slot on reconstruction (the spawned lane has no
+    // assigned commits to rebuild it from), on top of dropping the
+    // A -> X edge itself.
+    const window1 = makeCommits([
+      ["A", "B", "X"],
+      ["B", "C"],
+    ]);
+    const r1 = computeLanes(window1, {}, noRefs());
+
+    const window2 = makeCommits([
+      ["A", "B", "X"],
+      ["B", "C"],
+      ["X", "C"],
+      ["C"],
+    ]);
+    const incremental = computeLanes(window2, {}, noRefs(), r1.assignments);
+    const full = computeLanes(window2, {}, noRefs());
+
+    expect(sortedEdges(incremental.edges)).toEqual(sortedEdges(full.edges));
+
+    // The merge edge must point at the lane X actually lands in.
+    const mergeEdge = incremental.edges.find(
+      (e) => e.fromCommitId === "A" && e.toCommitId === "X",
+    );
+    expect(mergeEdge).toBeDefined();
+    expect(mergeEdge!.toLane).toBe(incremental.assignments.get("X"));
   });
 
   test("lock conflict — two locks to same lane", () => {

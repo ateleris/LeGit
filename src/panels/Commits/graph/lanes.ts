@@ -12,8 +12,10 @@
 //
 // Stability under load-more is the central correctness property: when
 // `previousAssignments` is supplied, every commit already assigned keeps
-// its lane verbatim, and the walk reconstructs active slot state from the
-// last-known slot positions before continuing with new commits.
+// its lane verbatim. The walk still covers the whole window - assigned
+// commits simply have their lane pinned instead of chosen greedily - so
+// the full edge set is (re)emitted every pass and an incremental result
+// always equals a from-scratch recompute of the same window.
 
 import type {
   CommitForGraph,
@@ -192,53 +194,6 @@ function pickNewLane(
 }
 
 /**
- * Reconstructs `activeSlots` from prior assignments for stability under
- * load-more. For each commit already assigned in `previousAssignments`,
- * we know the lane it lives in. The slot's next target is the first
- * parent of the *oldest* commit per lane that has a parent still outside
- * the previously-walked range — but we don't have to model that
- * precisely: when the walk encounters a new commit whose id matches the
- * remembered target, the slot fires. So we initialize each lane's
- * target to the first parent of the last (oldest) commit in that lane
- * within the previous set.
- */
-function reconstructActiveSlots(
-  commits: CommitForGraph[],
-  previousAssignments: Map<string, LaneIndex>,
-): { activeSlots: Map<LaneIndex, string>; firstNewIndex: number } {
-  // Group previously-assigned commits by lane, keeping track of the
-  // oldest (highest index) commit in each lane.
-  const oldestByLane = new Map<LaneIndex, { id: string; idx: number }>();
-  let firstNewIndex = commits.length;
-  for (let i = 0; i < commits.length; i++) {
-    const c = commits[i];
-    const lane = previousAssignments.get(c.id);
-    if (lane === undefined) {
-      if (i < firstNewIndex) firstNewIndex = i;
-      continue;
-    }
-    const prev = oldestByLane.get(lane);
-    if (!prev || i > prev.idx) oldestByLane.set(lane, { id: c.id, idx: i });
-  }
-
-  // For each lane in the previous assignment, the active slot's target
-  // is the first parent of the oldest commit in that lane (the next
-  // commit that should land in that lane after the boundary).
-  const activeSlots = new Map<LaneIndex, string>();
-  for (const [lane, info] of oldestByLane) {
-    const commit = commits[info.idx];
-    const target = commit.parentIds[0];
-    if (target !== undefined) {
-      activeSlots.set(lane, target);
-    }
-    // If the oldest commit in the lane has no parents (root commit),
-    // the lane has already terminated — leave it out of activeSlots.
-  }
-
-  return { activeSlots, firstNewIndex };
-}
-
-/**
  * Compute lane assignments for the commit window.
  *
  * @param commits Ordered newest-first. Each commit carries `id` and
@@ -247,7 +202,8 @@ function reconstructActiveSlots(
  * @param refsAt `commitId -> [refName, ...]` from log decorations.
  * @param previousAssignments Prior lane assignments for stability under
  *   load-more. When supplied, every commit it contains keeps its lane
- *   verbatim and the walk only computes new commits.
+ *   verbatim; the walk still covers the whole window so the complete
+ *   edge set is emitted on every pass.
  */
 export function computeLanes(
   commits: CommitForGraph[],
@@ -268,28 +224,26 @@ export function computeLanes(
   // and order-independent, so it is also stable across load-more.
   const owner = computeOwnership(commits, locks, refsAt);
 
-  // Slot state: laneIndex -> commitId the lane is currently waiting for.
-  const activeSlots = new Map<LaneIndex, string>();
-  let startIndex = 0;
-
-  if (previousAssignments && previousAssignments.size > 0) {
-    // Honor prior assignments for stability, but let ownership win: a commit
-    // on a locked ref's first-parent line is pinned to its owner lane even if
-    // a prior (possibly pre-fix) pass placed it elsewhere.
+  // Lanes pinned by prior assignments (load-more stability): a pinned commit
+  // keeps its lane verbatim instead of getting a greedy pick, but the walk
+  // still visits it so its edges are re-emitted and slot state stays exact.
+  // Ownership wins over a stale assignment: a commit on a locked ref's
+  // first-parent line is pinned to its owner lane even if a prior (possibly
+  // pre-fix) pass placed it elsewhere.
+  const pinned = new Map<string, LaneIndex>();
+  if (previousAssignments) {
     for (const [id, lane] of previousAssignments) {
-      assignments.set(id, owner.get(id) ?? lane);
+      pinned.set(id, owner.get(id) ?? lane);
     }
-    const recon = reconstructActiveSlots(commits, previousAssignments);
-    for (const [lane, target] of recon.activeSlots) {
-      activeSlots.set(lane, target);
-    }
-    startIndex = recon.firstNewIndex;
   }
 
-  for (let i = startIndex; i < commits.length; i++) {
+  // Slot state: laneIndex -> commitId the lane is currently waiting for.
+  const activeSlots = new Map<LaneIndex, string>();
+
+  for (let i = 0; i < commits.length; i++) {
     const c = commits[i];
 
-    // Skip commits already assigned (load-more stability path).
+    // Guard against duplicate ids in the input window.
     if (assignments.has(c.id)) continue;
 
     // Step 1 — find waiting lanes (slots whose target === c.id).
@@ -299,14 +253,26 @@ export function computeLanes(
     }
     waiting.sort((a, b) => a - b);
 
-    // Step 2 — assign C to a lane. A commit owned by a locked ref's
-    // first-parent line is pinned to that lane; otherwise the greedy walk
-    // decides. (`isOnLockedRef` only knew tips; ownership covers the chain.)
+    // Step 2 — assign C to a lane. A previously assigned commit keeps its
+    // lane verbatim (stability under load-more); a commit owned by a locked
+    // ref's first-parent line is pinned to that lane; otherwise the greedy
+    // walk decides. (`isOnLockedRef` only knew tips; ownership covers the
+    // chain.)
     let cLane: LaneIndex;
+    const pinnedLane = pinned.get(c.id);
     const ownedC = owner.get(c.id);
     const lockedLaneForC = ownedC === undefined ? null : ownedC;
 
-    if (lockedLaneForC !== null && waiting.includes(lockedLaneForC)) {
+    if (pinnedLane !== undefined) {
+      // Prior pass already chose this lane (ownership folded in when the
+      // pinned map was built). Any stale occupant of the lane is displaced
+      // exactly as in the locked case below; Step 4 re-targets the slot.
+      cLane = pinnedLane;
+      const existingTarget = activeSlots.get(cLane);
+      if (existingTarget !== undefined && existingTarget !== c.id) {
+        activeSlots.delete(cLane);
+      }
+    } else if (lockedLaneForC !== null && waiting.includes(lockedLaneForC)) {
       // The locked lane is among the waiters — claim it.
       cLane = lockedLaneForC;
     } else if (lockedLaneForC !== null) {

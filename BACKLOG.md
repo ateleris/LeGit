@@ -47,24 +47,6 @@ SmartScreen/Gatekeeper warnings documented.
   (`hunkExpanders`' `headerBand`; "the fold row IS the band, exactly like
   the diff's `@@` header lines"), and it is genuinely editable, so a cursor
   there is worse than in the (read-only) diff.
-- **Commit graph breaks on bigger repos when loading new entries** (reported
-  2026-07-30, with screenshot; root-caused same day). After the log pages in
-  more commits, node dots render but the connecting edges are missing.
-  Root cause: `computeLanes`'s incremental path (`previousAssignments`,
-  `graph/lanes.ts`) copies the old ASSIGNMENTS verbatim but starts its walk
-  at `firstNewIndex` - it never visits the already-assigned commits, so it
-  never re-emits their EDGES. The panel replaces `allEdges` wholesale with
-  the result (`CommitsPanel.tsx`, the `computeLanes` memo) and only carries
-  `prevAssignmentsRef` across passes, so after every load-more all edges
-  among previously loaded rows vanish. It slipped through because the
-  load-more stability tests (`lanes.test.ts`, "stability under load-more")
-  assert only assignments, never edges. Fix: emit edges for the previously
-  assigned region too (or have the panel accumulate edges across passes);
-  the regression test extends the existing load-more tests to assert the
-  two-pass edge set equals a full one-pass recompute. Related: the
-  "incremental log appending" item below builds on this same seam - fix
-  this first; its tests carry over.
-
 ## Git features (missing vs a normal client)
 
 Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
@@ -152,9 +134,11 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   exponential window doubling (`growJumpWindow`). The clean fix: fetch only
   the next page (`repoLog` already takes an offset) and append - the lane
   algorithm was designed for exactly this (`previousAssignments` keeps
-  existing rows stable under appended pages; NOTE: that path currently
-  drops the old rows' edges - the "commit graph breaks" bug under Known
-  bugs - and must be fixed first). Likely React Query infinite-query style. Caveat to design around: offset pages are only
+  existing rows stable under appended pages; the edge-loss bug in that
+  path was fixed 2026-07-30 - the incremental pass now re-walks the whole
+  window with prior lanes pinned, so an incremental result always equals a
+  full recompute, pinned by the "load-more … edge set" tests in
+  `lanes.test.ts`). Likely React Query infinite-query style. Caveat to design around: offset pages are only
   consistent while refs don't move, so a watcher invalidation mid-walk must
   restart the walk (or re-fetch the full window once). Include a guardrail
   on the auto-seek: past a large bound (~50k commits), stop and ask via
