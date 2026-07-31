@@ -15,6 +15,7 @@ import { FileHistoryPanel } from "./FileHistory/FileHistoryPanel";
 import { FilesPanel } from "./Files/FilesPanel";
 import { GitLogPanel } from "./GitLog/GitLogPanel";
 import { RefsPanel } from "./Refs/RefsPanel";
+import { ReleaseNotesPanel } from "./ReleaseNotes/ReleaseNotesPanel";
 import { RepositoriesPanel } from "./Repositories/RepositoriesPanel";
 import { ThemeEditorPanel } from "./ThemeEditor/ThemeEditorPanel";
 import { GlobalSettingsPanel } from "./Settings/GlobalSettingsPanel";
@@ -59,6 +60,12 @@ export const REPO_PANELS: PanelDescriptor[] = [
     defaultPlacement: { direction: "below", referencePanel: "log" },
   },
   { id: "repo-settings", title: "Repo Settings", scope: "repo" },
+  {
+    id: "release-notes",
+    title: "Release Notes",
+    scope: "repo",
+    defaultPlacement: { direction: "right", referencePanel: "log" },
+  },
   {
     // Branches + Remotes + Stashes combined as a vertical accordion
     // (Paneview) — see Refs/RefsPanel. The Stashes pane's "View diff"
@@ -229,6 +236,7 @@ export const REPO_DOCKVIEW_COMPONENTS: Record<
   merge: wrap(MergePanel),
   "interactive-rebase": wrap(InteractiveRebasePanel),
   compare: wrap(ComparePanel),
+  "release-notes": wrap(ReleaseNotesPanel),
   files: wrap(FilesPanel),
   blame: wrap(BlamePanel),
   "file-view": wrap(FileViewPanel),

@@ -180,11 +180,12 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   feature). The `crates/legit-providers` keep-or-delete question is
   resolved: **keep** - it hosts the SSH-first platform-integrations item
   under "Git features".
-- **Release notes generator (idea, unscoped).** Check Git Extensions'
-  "Release notes generator" plugin (commit list between two revs grouped
-  into formatted release notes) - could that be a LeGit panel? Scope
-  questions: rev-range picker, grouping/format templates, copy/export
-  target (Markdown/HTML). Added 2026-07-31, not yet evaluated.
+- **Release notes panel follow-ups.** The panel shipped 2026-07-31 (plain
+  text, flat list, merges included - Git Extensions parity; spec:
+  `docs/superpowers/specs/2026-07-31-release-notes-panel-design.md`).
+  Deferred by decision: Markdown/HTML output, conventional-commit grouping,
+  merge filtering, templates, `git describe`-based default tag. Pick up only
+  if the plain list proves insufficient.
 - **Submodules:** nested-tree overview (deliberately flat for now);
   hide-the-Refs-pane-when-no-gitlinks (paneview layouts persist panes);
   `--shallow-submodules` on clone when depth + submodules are both set
