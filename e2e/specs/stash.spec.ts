@@ -39,7 +39,7 @@ describe("stash: create and pop", () => {
     await stashBtn.click();
 
     // The stash row appears (its Pop button is the stable handle) ...
-    await $('//button[normalize-space(text())="Pop"]').waitForDisplayed({ timeout: 15_000 });
+    await $('//button[normalize-space()="Pop"]').waitForDisplayed({ timeout: 15_000 });
     // ... and the tree is clean again.
     await browser.waitUntil(
       async () => !(await logSubjects()).some((t) => t.includes("Uncommitted changes")),
@@ -48,11 +48,11 @@ describe("stash: create and pop", () => {
   });
 
   it("pops the stash back", async () => {
-    const popBtn = $('//button[normalize-space(text())="Pop"]');
+    const popBtn = $('//button[normalize-space()="Pop"]');
     await popBtn.waitForClickable();
     await popBtn.click();
 
-    await $('//button[normalize-space(text())="Pop"]').waitForExist({
+    await $('//button[normalize-space()="Pop"]').waitForExist({
       reverse: true,
       timeout: 15_000,
     });

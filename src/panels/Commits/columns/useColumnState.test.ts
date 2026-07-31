@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parsePreferences } from "./useColumnState";
 import type { ColumnId } from "./types";
+import { columnGridTrack } from "./types";
 
 /** A well-formed v1 document, as persisted before the Signed column existed. */
 function v1Doc(order: ColumnId[], hidden: ColumnId[] = []) {
@@ -50,5 +51,20 @@ describe("parsePreferences - missing-column insertion", () => {
     expect(
       parsePreferences(v1Doc(["refs", "refs", "graph", "subject", "date", "author", "sha"])),
     ).toBeNull();
+  });
+});
+
+describe("columnGridTrack", () => {
+  const ctx = { graphColWidth: 36, signedColWidth: 16, subjectMinWidth: 120, widths: {} };
+
+  it("gives the subject column a floor - a bare 1fr collapsed to 0px when the panel was narrower than the fixed columns (E2E 1280x800 regression)", () => {
+    expect(columnGridTrack("subject", ctx)).toBe("minmax(120px, 1fr)");
+  });
+
+  it("keeps computed and persisted px widths for the other columns", () => {
+    expect(columnGridTrack("graph", ctx)).toBe("36px");
+    expect(columnGridTrack("signed", ctx)).toBe("16px");
+    expect(columnGridTrack("refs", ctx)).toBe("150px"); // DEFAULT_WIDTHS fallback
+    expect(columnGridTrack("date", { ...ctx, widths: { date: 88 } })).toBe("88px");
   });
 });

@@ -80,7 +80,7 @@ import { TagMenuSection } from "./menu/TagMenuSection";
 import { branchesAt } from "./cells/refChips";
 import {
   COLUMN_GAP,
-  DEFAULT_WIDTHS,
+  columnGridTrack,
   NON_HIDEABLE,
   NON_RESIZABLE,
 } from "./columns/types";
@@ -970,7 +970,7 @@ export function CommitsPanel() {
 
   // Grid column layout — driven by `colState` (order + widths + hidden).
   // The Graph column's width tracks the maximum visible lane; Subject is
-  // always the elastic "1fr" filler. All others use the persisted px width
+  // always the elastic filler. All others use the persisted px width
   // (or DEFAULT_WIDTHS if not yet set).
   const graphColWidth = (maxVisibleLane + 2) * LANE_SPACING;
   // The graph column hides under an author filter - lanes/edges between an
@@ -983,13 +983,16 @@ export function CommitsPanel() {
   // scales with the rest of the chrome (icons render at 1em of TEXT_SIZE).
   const signedColWidth = Math.round(TEXT_SIZE * 1.3);
 
-  function colWidth(id: ColumnId): string {
-    if (id === "graph") return `${graphColWidth}px`;
-    if (id === "signed") return `${signedColWidth}px`;
-    if (id === "subject") return "1fr";
-    const w = colState.widths[id] ?? DEFAULT_WIDTHS[id] ?? 100;
-    return `${w}px`;
-  }
+  // Subject never collapses below ~10 characters (see columnGridTrack).
+  const subjectMinWidth = Math.round(TEXT_SIZE * 10);
+
+  const colWidth = (id: ColumnId): string =>
+    columnGridTrack(id, {
+      graphColWidth,
+      signedColWidth,
+      subjectMinWidth,
+      widths: colState.widths,
+    });
 
   const GRID_COLUMNS = visibleColumns.map(colWidth).join(" ");
 

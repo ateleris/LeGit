@@ -45,6 +45,27 @@ export const DEFAULT_WIDTHS: Partial<Record<ColumnId, number>> = {
   sha: 80,
 };
 
+/** Grid track for one column. Subject is the elastic filler WITH A FLOOR:
+ *  a bare "1fr" collapses to zero width when the panel is narrower than the
+ *  fixed columns' sum (the 1280x800 E2E window hit this - subjects were
+ *  invisible and unclickable), while `minmax` keeps it readable and lets the
+ *  grid overflow-scroll instead. Pinned by useColumnState.test.ts. */
+export function columnGridTrack(
+  id: ColumnId,
+  ctx: {
+    graphColWidth: number;
+    signedColWidth: number;
+    subjectMinWidth: number;
+    widths: Partial<Record<ColumnId, number>>;
+  },
+): string {
+  if (id === "graph") return `${ctx.graphColWidth}px`;
+  if (id === "signed") return `${ctx.signedColWidth}px`;
+  if (id === "subject") return `minmax(${ctx.subjectMinWidth}px, 1fr)`;
+  const w = ctx.widths[id] ?? DEFAULT_WIDTHS[id] ?? 100;
+  return `${w}px`;
+}
+
 /** All known column ids — used for validation when reading persisted prefs. */
 export const ALL_COLUMN_IDS: readonly ColumnId[] = [
   "refs",

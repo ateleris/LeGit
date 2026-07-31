@@ -9,7 +9,10 @@ const row = (name: string) => `[data-testid="branch-row"][data-branch="${name}"]
 // The Checkout button renders only on NON-current branches, so its
 // presence/absence is the current-branch signal.
 const checkoutBtn = (name: string) =>
-  `//div[@data-testid="branch-row" and @data-branch="${name}"]//button[text()="Checkout"]`;
+  // normalize-space() (no arg) matches on the button's whole string value:
+  // row actions are ToolbarButtons whose label sits in a nested <span>, so
+  // text() (direct text nodes only) never matches them.
+  `//div[@data-testid="branch-row" and @data-branch="${name}"]//button[normalize-space()="Checkout"]`;
 
 describe("branch: create and switch", () => {
   it("launches and opens the Branches section", async () => {

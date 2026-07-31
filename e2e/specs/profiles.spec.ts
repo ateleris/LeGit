@@ -9,9 +9,16 @@ import { waitForTextContent } from "../helpers.ts";
 
 const PROFILE_NAME = "E2E Profile";
 
-/** Click a dockview tab by its title text (works for both docks). */
+/** Click a dockview tab by its title text (works for both docks).
+ *  Token-safe class match: contains(@class, "dv-tab") also substring-matches
+ *  the "dv-tabs-…" CONTAINER elements, which precede the tab in document
+ *  order - $() then returns the container and the click lands on whatever
+ *  tab happens to sit at its center (broke when the default layout grouped
+ *  three tabs together). */
 async function clickDockTab(title: string): Promise<void> {
-  const tab = $(`//div[contains(@class, "dv-tab")][contains(., "${title}")]`);
+  const tab = $(
+    `//div[contains(concat(" ", normalize-space(@class), " "), " dv-tab ")][contains(., "${title}")]`,
+  );
   await tab.waitForDisplayed({ timeout: 15_000 });
   await tab.click();
 }
