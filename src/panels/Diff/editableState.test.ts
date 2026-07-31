@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { collectHunkNewSideTexts, type RowMeta } from "./editModel";
-import { createRowState } from "./editableState";
+import { createRowState, selectionGuard } from "./editableState";
 
 // One hunk, inline rows: header / context / removed / added / context.
 const ROWS: RowMeta[] = [
@@ -115,5 +115,81 @@ describe("createRowState markers", () => {
       1
     );
     expect(out).toEqual([["ctx1", "ctx2"]]);
+  });
+});
+
+// Rows with chrome at both ends and in the middle, plus a split-pane Filler.
+const CHROME_ROWS: RowMeta[] = [
+  { kind: "Hunk", hunkIndex: 0 },     // line 1  "@@ a"
+  { kind: "Context", hunkIndex: 0 },  // line 2  "ctx1"
+  { kind: "Added", hunkIndex: 0 },    // line 3  "new"
+  { kind: "Hunk", hunkIndex: 1 },     // line 4  "@@ b"
+  { kind: "Filler", hunkIndex: 1 },   // line 5  ""
+  { kind: "Removed", hunkIndex: 1 },  // line 6  "old"
+];
+const CHROME_DOC = "@@ a\nctx1\nnew\n@@ b\n\nold";
+
+function makeGuardedState(rows: RowMeta[], doc: string) {
+  const rowState = createRowState(rows);
+  const state = EditorState.create({
+    doc,
+    extensions: [rowState.field, rowState.guard, selectionGuard(rowState, rows)],
+  });
+  return { rowState, state };
+}
+
+/** Dispatch a selection-only transaction; returns the resulting state. */
+function select(state: EditorState, anchor: number, head?: number) {
+  return state.update({ selection: { anchor, head: head ?? anchor } }).state;
+}
+
+describe("selectionGuard", () => {
+  it("moves a caret off a hunk-header line to the next content line", () => {
+    const { state } = makeGuardedState(CHROME_ROWS, CHROME_DOC);
+    const header = state.doc.line(1);
+    const next = select(state, header.from);
+    expect(next.doc.lineAt(next.selection.main.head).number).toBe(2);
+  });
+
+  it("moves a caret off a Filler line", () => {
+    const { state } = makeGuardedState(CHROME_ROWS, CHROME_DOC);
+    const filler = state.doc.line(5);
+    const next = select(state, filler.from);
+    expect(next.doc.lineAt(next.selection.main.head).number).toBe(6);
+  });
+
+  it("sends an upward move onto a header to the content line above", () => {
+    const { state } = makeGuardedState(CHROME_ROWS, CHROME_DOC);
+    // Start on line 6 ("old"), move the caret up onto the header at line 4.
+    const start = select(state, state.doc.line(6).from);
+    const next = select(start, start.doc.line(4).from);
+    expect(next.doc.lineAt(next.selection.main.head).number).toBe(3);
+  });
+
+  it("keeps the goal column when jumping lines", () => {
+    const { state } = makeGuardedState(CHROME_ROWS, CHROME_DOC);
+    const header = state.doc.line(1);
+    const next = select(state, header.from + 3);
+    const head = next.selection.main.head;
+    const line = next.doc.lineAt(head);
+    expect(line.number).toBe(2);
+    expect(head - line.from).toBe(3);
+  });
+
+  it("leaves carets on content lines alone", () => {
+    const { state } = makeGuardedState(CHROME_ROWS, CHROME_DOC);
+    const ctx = state.doc.line(2);
+    const next = select(state, ctx.from + 1);
+    expect(next.selection.main.head).toBe(ctx.from + 1);
+  });
+
+  it("leaves non-empty selections spanning chrome untouched", () => {
+    const { state } = makeGuardedState(CHROME_ROWS, CHROME_DOC);
+    // Select from "ctx1" across the second header into "old".
+    const anchor = state.doc.line(2).from;
+    const head = state.doc.line(6).to;
+    const next = select(state, anchor, head);
+    expect(next.selection.main.anchor).toBe(anchor);
+    expect(next.selection.main.head).toBe(head);
   });
 });

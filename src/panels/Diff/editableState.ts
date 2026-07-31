@@ -11,12 +11,14 @@
 // Only @codemirror/state imports here: this module is unit-tested headlessly.
 
 import {
+  EditorSelection,
   EditorState,
   MapMode,
   RangeSet,
   RangeValue,
   StateField,
   type Extension,
+  type SelectionRange,
 } from "@codemirror/state";
 import type { RowMeta } from "./editModel";
 
@@ -107,4 +109,68 @@ export function createRowState(
   });
 
   return { field, guard, rowIndexAtLine };
+}
+
+/** Row kinds that are synthetic chrome, not content: the `@@ … @@` header
+ *  lines (incl. the trailing expander row) and the split view's alignment
+ *  fillers. A text caret must never sit on them. */
+export const CHROME_KINDS: ReadonlySet<string> = new Set(["Hunk", "Filler"]);
+
+/**
+ * Selection filter keeping the caret off chrome rows: a caret landing on a
+ * header/filler line (click, arrow keys, Home/End, …) moves to the nearest
+ * content line - onward in the direction of travel, back the other way at
+ * the document edge - keeping its goal column. Only EMPTY ranges are
+ * adjusted: multi-line selections legitimately span headers (the diff's
+ * "Stage N lines" selection flow depends on that) and are left untouched.
+ * Doc-changing transactions are exempt too - the change guard already keeps
+ * edits (and therefore their carets) inside editable rows.
+ */
+export function selectionGuard(
+  rowState: RowState,
+  rows: readonly RowMeta[],
+  chromeKinds: ReadonlySet<string> = CHROME_KINDS,
+): Extension {
+  const isChromeLine = (state: EditorState, lineNumber: number): boolean => {
+    const rowIndex = rowState.rowIndexAtLine(state, lineNumber);
+    if (rowIndex == null) return false; // user-inserted line = content
+    const row = rows[rowIndex];
+    return row != null && chromeKinds.has(row.kind);
+  };
+
+  /** First non-chrome line from `start` walking `dir`, else null. */
+  const scan = (state: EditorState, start: number, dir: 1 | -1): number | null => {
+    for (let n = start; n >= 1 && n <= state.doc.lines; n += dir) {
+      if (!isChromeLine(state, n)) return n;
+    }
+    return null;
+  };
+
+  return EditorState.transactionFilter.of((tr) => {
+    if (!tr.selection || tr.docChanged) return tr;
+    const doc = tr.newDoc;
+    const prevHead = tr.startState.selection.main.head;
+    let changed = false;
+    const ranges: SelectionRange[] = tr.newSelection.ranges.map((range) => {
+      if (!range.empty) return range;
+      const state = tr.startState; // selection-only: doc and field are current
+      const line = doc.lineAt(range.head);
+      if (!isChromeLine(state, line.number)) return range;
+      // Continue in the direction the caret was travelling; from a plain
+      // click (no meaningful previous head) downward reads most natural.
+      const dir: 1 | -1 = range.head >= prevHead ? 1 : -1;
+      const target =
+        scan(state, line.number + dir, dir) ?? scan(state, line.number - dir, -dir as 1 | -1);
+      if (target == null) return range; // all-chrome doc; leave it be
+      const targetLine = doc.line(target);
+      const column = Math.min(range.head - line.from, targetLine.length);
+      changed = true;
+      return EditorSelection.cursor(targetLine.from + column);
+    });
+    if (!changed) return tr;
+    return [
+      tr,
+      { selection: EditorSelection.create(ranges, tr.newSelection.mainIndex), sequential: true },
+    ];
+  });
 }

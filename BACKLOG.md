@@ -32,21 +32,13 @@ SmartScreen/Gatekeeper warnings documented.
 
 ## Known bugs
 
-- **Diff viewer: cursor can be placed in hunk-header / expander rows**
-  (reported 2026-07-30, with screenshot). Clicking a `@@ … @@` header line or
-  an expand-context row puts a text cursor there - these are synthetic
-  chrome, not content, so the cursor should never enter them. Cause: hunk
-  headers and expander rows are real document lines in the CodeMirror doc
-  (decorated via marks/widgets in `Diff/DiffEditor.tsx` +
-  `Diff/hunkExpanders.ts`), so selection lands on them like any line. Fix
-  direction: an `EditorState.transactionFilter` (or selection filter) that
-  moves a selection head off header/expander lines to the nearest content
-  line (CodeMirror's atomic-ranges facet only covers ranges inside a line,
-  not whole lines). **Also check the Merge panel**: `Merge/MergeView.tsx`
-  builds its fold rows and section bands with the same machinery
-  (`hunkExpanders`' `headerBand`; "the fold row IS the band, exactly like
-  the diff's `@@` header lines"), and it is genuinely editable, so a cursor
-  there is worse than in the (read-only) diff.
+(none currently - the diff-viewer cursor-in-chrome-rows bug was fixed
+2026-07-31 via `selectionGuard` in `Diff/editableState.ts`, regression tests
+in `editableState.test.ts`. The Merge panel was checked as the entry asked:
+its fold rows are REAL CodeMirror folds over genuine content - only the
+visual band comes from `hunkExpanders`' `headerBand` - so caret behavior
+there is native fold UX, not this bug.)
+
 ## Git features (missing vs a normal client)
 
 Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via

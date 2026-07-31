@@ -39,7 +39,7 @@ import {
   type ResolveRegions,
   type RowMeta,
 } from "./editModel";
-import { createRowState, type RowState } from "./editableState";
+import { createRowState, selectionGuard, type RowState } from "./editableState";
 import { selectedHunkLines } from "./selectionModel";
 import { EXPANDER_THEME, expanderPair, headerBand } from "./hunkExpanders";
 import {
@@ -985,6 +985,9 @@ function mountInline(
     numberGuttersWidthVar,
     syntaxField,
     rowState.field,
+    // Keep the caret off header/expander (and filler) rows in BOTH modes -
+    // they are synthetic chrome, not content (BACKLOG bug, 2026-07-30).
+    selectionGuard(rowState, rows),
     ...(editable
       ? [rowState.guard, ...editableExtensions(onDirty, onSaveRequest)]
       : readOnly),
@@ -1082,6 +1085,9 @@ function mountSplit(
       guttersWidthVar,
       syntaxField,
       rowState.field,
+      // Chrome rows (headers, fillers) never take the caret - see the
+      // inline builder's matching extension.
+      selectionGuard(rowState, rows),
       ...(paneEditable
         ? [rowState.guard, ...editableExtensions(onDirty, onSaveRequest)]
         : readOnly),
