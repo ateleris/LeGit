@@ -54,7 +54,11 @@ function withDefaults(Base: LucideIcon, displayName: string) {
         size="1em"
         aria-hidden
         {...props}
-        style={{ verticalAlign: "-0.125em", ...props.style }}
+        // flexShrink 0: an icon inside an inline-flex row (ref chips, menu
+        // labels) must keep its 1em box under width pressure - the default
+        // shrink squeezed the glyph horizontally (chip overflow popover bug,
+        // 2026-07-31, pinned in icons.test.tsx).
+        style={{ verticalAlign: "-0.125em", flexShrink: 0, ...props.style }}
       />
     );
   });

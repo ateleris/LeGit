@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PanelError } from "../shared/PanelError";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRepoStore } from "../../store/repos";
-import { useSettingsStore } from "../../store/settings";
+import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
 import { useSummonTarget } from "../../store/summon";
 import {
   repoDiff,
@@ -27,6 +27,7 @@ import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import {
   PanelContextMenuProvider,
+  useMenuConfirm,
   usePanelContextMenu,
   type BaselineEntry,
 } from "../Commits/menu/PanelContextMenu";
@@ -39,6 +40,7 @@ import {
   type LineActionOp,
 } from "./DiffEditor";
 import { spliceEdits, splitLines } from "./editModel";
+import { lineActionLabel } from "./selectionModel";
 import { expandDiff, type HunkExpansion } from "./expandModel";
 import { EXPAND_STEP } from "./hunkExpanders";
 
@@ -46,12 +48,6 @@ const ACTION_TITLE: Record<HunkAction, string> = {
   stage: "Stage chunk",
   unstage: "Unstage chunk",
   discard: "Discard chunk",
-};
-
-const LINE_LABEL: Record<HunkAction, string> = {
-  stage: "Stage line",
-  unstage: "Unstage line",
-  discard: "Discard line",
 };
 
 type ContextMode = "chunked" | "full";
@@ -320,16 +316,17 @@ export function DiffPanel() {
     [request, queryClient]
   );
 
-  // Per-line stage/unstage/discard (hover affordance + context menu).
+  // Line-level stage/unstage/discard: a single line from the hover
+  // affordance, one or more (a selection) from the context menu. Lines always
+  // belong to ONE hunk - `apply_lines` stages a subset of a single hunk.
   const onLineAction = useCallback(
-    async (hunkIndex: number, lineIndex: number, action: HunkAction) => {
+    async (hunkIndex: number, lines: number[], action: HunkAction) => {
       if (!request) return;
       if (dirtyRef.current) {
         notify.error("Unsaved edits in the diff. Save or discard them first.");
         return;
       }
       const { repoId, path } = request;
-      const lines = [lineIndex];
       try {
         if (action === "stage") await repoStageLines(repoId, path, hunkIndex, lines);
         else if (action === "unstage") await repoUnstageLines(repoId, path, hunkIndex, lines);
@@ -550,7 +547,7 @@ function DiffBody({
   onAction: (hunkIndex: number, action: HunkAction) => void;
   request: DiffRequest;
   lineActionOp: LineActionOp;
-  onLineAction: (hunkIndex: number, lineIndex: number, action: HunkAction) => void;
+  onLineAction: (hunkIndex: number, lineIndices: number[], action: HunkAction) => void;
   editable: boolean;
   dirty: boolean;
   onDirty: () => void;
@@ -562,31 +559,56 @@ function DiffBody({
   syntaxPath: string | null;
 }) {
   const { openMenu, closeMenu } = usePanelContextMenu();
+  const confirmDestructive = useConfirmDestructive();
+  const menuConfirm = useMenuConfirm();
+
+  // Run a menu entry's action; discard is destructive, so it takes the
+  // standard inline-confirm takeover unless the global setting is off.
+  const runMenuAction = useCallback(
+    (action: HunkAction, question: string, run: () => void) => {
+      const go = () => {
+        run();
+        closeMenu();
+      };
+      if (action === "discard" && confirmDestructive) menuConfirm(question, go);
+      else go();
+    },
+    [confirmDestructive, menuConfirm, closeMenu]
+  );
+
   const onContextMenu = useCallback(
-    (hunkIndex: number, lineIndex: number | null, event: MouseEvent) => {
+    (
+      hunkIndex: number,
+      lineIndex: number | null,
+      event: MouseEvent,
+      selectedLines: number[] | null
+    ) => {
+      // Line entries act on the selection when the click landed inside one,
+      // else on the clicked changed line (may be neither, e.g. a bare
+      // context line - then only the chunk entries show).
+      const lines = selectedLines ?? (lineIndex != null ? [lineIndex] : null);
       const section = (
         <>
-          {/* Line actions — only when a changed line was clicked. */}
-          {lineIndex != null &&
+          {lines !== null &&
             actions.map((a) => (
               <MenuItem
                 key={`line-${a}`}
-                onClick={() => {
-                  onLineAction(hunkIndex, lineIndex, a);
-                  closeMenu();
-                }}
+                onClick={() =>
+                  runMenuAction(a, `${lineActionLabel(a, lines.length)}?`, () =>
+                    onLineAction(hunkIndex, lines, a)
+                  )
+                }
               >
-                {LINE_LABEL[a]}
+                {lineActionLabel(a, lines.length)}
               </MenuItem>
             ))}
-          {lineIndex != null && <Separator />}
+          {lines !== null && <Separator />}
           {actions.map((a) => (
             <MenuItem
               key={a}
-              onClick={() => {
-                onAction(hunkIndex, a);
-                closeMenu();
-              }}
+              onClick={() =>
+                runMenuAction(a, `${ACTION_TITLE[a]}?`, () => onAction(hunkIndex, a))
+              }
             >
               {ACTION_TITLE[a]}
             </MenuItem>
@@ -595,7 +617,7 @@ function DiffBody({
       );
       openMenu(event as unknown as React.MouseEvent, section);
     },
-    [actions, onAction, onLineAction, openMenu, closeMenu]
+    [actions, onAction, onLineAction, openMenu, runMenuAction]
   );
 
   // A dirty-inside submodule has no superproject diff (unmoved pointer, and

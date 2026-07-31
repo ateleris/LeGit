@@ -40,6 +40,7 @@ import {
   type RowMeta,
 } from "./editModel";
 import { createRowState, type RowState } from "./editableState";
+import { selectedHunkLines } from "./selectionModel";
 import { EXPANDER_THEME, expanderPair, headerBand } from "./hunkExpanders";
 import {
   MAX_SYNTAX_CHARS,
@@ -54,18 +55,37 @@ export type DiffViewMode = "inline" | "split";
 /** Per-line action offered for a working-tree diff (null = read-only commit). */
 export type LineActionOp = "stage" | "unstage" | null;
 
+/** Apply an action to changed lines of one hunk (indices into the hunk's
+ *  diff lines). The hover gutter sends a single line; the context menu may
+ *  send a whole selection. */
+export type LineActionHandler = (
+  hunkIndex: number,
+  lineIndices: number[],
+  action: HunkAction,
+) => void;
+
+/** Right-click on a hunk. `lineIndex` is the clicked changed line (else
+ *  null); `selectedLines` is the changed lines of THAT hunk covered by a
+ *  text selection the click landed in (else null) - see `selectedHunkLines`. */
+export type ContextMenuHandler = (
+  hunkIndex: number,
+  lineIndex: number | null,
+  event: MouseEvent,
+  selectedLines: number[] | null,
+) => void;
+
 interface DiffEditorProps {
   diff: TextDiff;
   mode: DiffViewMode;
   /** Which per-hunk actions to offer; empty for read-only (commit) diffs. */
   actions: HunkAction[];
   onAction?: (hunkIndex: number, action: HunkAction) => void;
-  /** Right-click on a hunk; `lineIndex` is the clicked changed line, else null. */
-  onContextMenu?: (hunkIndex: number, lineIndex: number | null, event: MouseEvent) => void;
+  /** Right-click on a hunk; see `ContextMenuHandler`. */
+  onContextMenu?: ContextMenuHandler;
   /** Op for the hover per-line affordance ("stage"/"unstage"), or null. */
   lineActionOp: LineActionOp;
-  /** Apply an action to a single changed line. */
-  onLineAction?: (hunkIndex: number, lineIndex: number, action: HunkAction) => void;
+  /** Apply an action to changed lines of one hunk; see `LineActionHandler`. */
+  onLineAction?: LineActionHandler;
   /** Identity of the shown file/source. Scroll is preserved across diff content
    *  refetches but reset to top when this changes (a different file). */
   scrollResetKey: string;
@@ -203,7 +223,7 @@ class LineActionMarker extends GutterMarker {
     private readonly op: "stage" | "unstage",
     private readonly hunkIndex: number,
     private readonly lineIndex: number,
-    private readonly onLineAction?: (hunkIndex: number, lineIndex: number, action: HunkAction) => void
+    private readonly onLineAction?: LineActionHandler
   ) {
     super();
   }
@@ -224,7 +244,7 @@ class LineActionMarker extends GutterMarker {
       if (e.button !== 0) return; // left only; let right-click open the menu
       e.preventDefault();
       e.stopPropagation();
-      this.onLineAction?.(this.hunkIndex, this.lineIndex, this.op);
+      this.onLineAction?.(this.hunkIndex, [this.lineIndex], this.op);
     });
     return btn;
   }
@@ -722,7 +742,7 @@ function lineActionGutter(
   rowState: RowState,
   rows: { kind: string; hunkIndex: number; lineIndex: number }[],
   lineActionOp: "stage" | "unstage",
-  onLineAction?: (hunkIndex: number, lineIndex: number, action: HunkAction) => void
+  onLineAction?: LineActionHandler
 ) {
   return gutter({
     class: "cm-diff-action-gutter",
@@ -809,11 +829,16 @@ export class HunkExpanderMarker extends GutterMarker {
 
 /** A `contextmenu` handler that maps the clicked position to its row's hunk and,
  *  if the row is a changed line, that line's index. Rows are resolved through
- *  the row markers so the mapping stays correct while the doc is edited. */
+ *  the row markers so the mapping stays correct while the doc is edited.
+ *  When the click lands inside a non-empty text selection, the changed lines
+ *  of the clicked hunk covered by that selection ride along (`selectedLines`)
+ *  so the menu can offer "Stage N lines" (single-hunk rule; see
+ *  `selectedHunkLines`). Shared by the inline view and both split panes -
+ *  selection behavior stays in action parity by construction. */
 function contextMenuExtension(
   rowState: RowState,
   rows: { hunkIndex: number; lineIndex: number; kind: string }[],
-  onContextMenu: (hunkIndex: number, lineIndex: number | null, event: MouseEvent) => void
+  onContextMenu: ContextMenuHandler
 ) {
   return EditorView.domEventHandlers({
     contextmenu(e, view) {
@@ -828,10 +853,43 @@ function contextMenuExtension(
         row.lineIndex >= 0 && (row.kind === "Added" || row.kind === "Removed")
           ? row.lineIndex
           : null;
-      onContextMenu(row.hunkIndex, lineIndex, e);
+      const selectedLines =
+        rowIndex == null ? null : selectionLinesAt(view, pos, rowState, rows, rowIndex);
+      onContextMenu(row.hunkIndex, lineIndex, e, selectedLines);
       return true;
     },
   });
+}
+
+/** The `selectedLines` payload for a right-click at `pos`: the clicked hunk's
+ *  changed lines covered by the selection, or null when the click is outside
+ *  every non-empty selection range (the menu then targets the clicked line). */
+function selectionLinesAt(
+  view: EditorView,
+  pos: number,
+  rowState: RowState,
+  rows: { hunkIndex: number; lineIndex: number; kind: string }[],
+  clickedRowIndex: number
+): number[] | null {
+  const ranges = view.state.selection.ranges.filter((r) => !r.empty);
+  if (!ranges.some((r) => r.from <= pos && pos <= r.to)) return null;
+  const doc = view.state.doc;
+  const covered: number[] = [];
+  for (const range of ranges) {
+    const fromLine = doc.lineAt(range.from).number;
+    const toLineObj = doc.lineAt(range.to);
+    // A range ending exactly at a line start (full-line mouse selections do)
+    // does not visually include that line - exclude it.
+    const toLine =
+      range.to === toLineObj.from && toLineObj.number > fromLine
+        ? toLineObj.number - 1
+        : toLineObj.number;
+    for (let lineNo = fromLine; lineNo <= toLine; lineNo++) {
+      const idx = rowState.rowIndexAtLine(view.state, lineNo);
+      if (idx != null) covered.push(idx);
+    }
+  }
+  return selectedHunkLines(rows, covered, clickedRowIndex);
 }
 
 /** Build the inline (single, interleaved) editor. */
@@ -898,9 +956,9 @@ function mountInline(
   diff: TextDiff,
   actions: HunkAction[],
   onAction: ((hunkIndex: number, action: HunkAction) => void) | undefined,
-  onContextMenu: ((hunkIndex: number, lineIndex: number | null, event: MouseEvent) => void) | undefined,
+  onContextMenu: ContextMenuHandler | undefined,
   lineActionOp: LineActionOp,
-  onLineAction: ((hunkIndex: number, lineIndex: number, action: HunkAction) => void) | undefined,
+  onLineAction: LineActionHandler | undefined,
   anchor: ScrollAnchor,
   editable: boolean,
   onDirty: (() => void) | undefined,
@@ -969,9 +1027,9 @@ function mountSplit(
   diff: TextDiff,
   actions: HunkAction[],
   onAction: ((hunkIndex: number, action: HunkAction) => void) | undefined,
-  onContextMenu: ((hunkIndex: number, lineIndex: number | null, event: MouseEvent) => void) | undefined,
+  onContextMenu: ContextMenuHandler | undefined,
   lineActionOp: LineActionOp,
-  onLineAction: ((hunkIndex: number, lineIndex: number, action: HunkAction) => void) | undefined,
+  onLineAction: LineActionHandler | undefined,
   anchor: ScrollAnchor,
   editable: boolean,
   onDirty: (() => void) | undefined,

@@ -178,7 +178,7 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
   // `forMeasure` renders the plain chip even mid-rename: the invisible
   // measurement pass must never mount the editing input (a second autoFocus
   // would steal focus from the real one).
-  const renderChip = (chip: ChipDescriptor, key: React.Key, forMeasure = false) => {
+  const renderChip = (chip: ChipDescriptor, key: React.Key, forMeasure = false, unclamped = false) => {
     const refName =
       chip.kind === "branch"
         ? chip.value
@@ -309,6 +309,7 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
         textSize={textSize}
         tagPushed={tagPushed}
         tagRemote={tagRemote ?? null}
+        unclamped={unclamped}
         onContextMenu={(e) => openMenu(e, menuSection)}
         onDoubleClickAction={buildDoubleClickCheckout()}
       />
@@ -421,7 +422,7 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
             onPointerEnter={cancelPopoverClose}
             onPointerLeave={schedulePopoverClose}
           >
-            {hiddenChips.map((dec, i) => renderChip(dec, i))}
+            {hiddenChips.map((dec, i) => renderChip(dec, i, false, true))}
           </OverflowPopover>,
           document.body
         )}
@@ -442,6 +443,9 @@ interface ChipProps {
   tagPushed?: boolean;
   /** Remote the pushed indicator refers to (tooltip). */
   tagRemote?: string | null;
+  /** Lift the row clamp (`maxWidth: 160`): overflow-popover chips exist to
+   *  reveal the collapsed refs, so they may use the popover's full width. */
+  unclamped?: boolean;
   /** Called on right-click; the unified menu handles preventDefault. */
   onContextMenu: (e: React.MouseEvent) => void;
   /**
@@ -491,7 +495,27 @@ function RemoteIndicator({ remoteRef }: { remoteRef: string }) {
   );
 }
 
-function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = null, onContextMenu, onDoubleClickAction }: ChipProps) {
+/** The chip's text, ellipsized when the chip hits its width limit. The
+ *  ellipsis must live on a block-ish child: `textOverflow` on the chip span
+ *  itself never applies (a flex container clips its items with a hard cut -
+ *  exactly the bug this fixes). `minWidth: 0` lets the label shrink below its
+ *  content width inside the flex row; the icons keep their 1em boxes. */
+function ChipLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      style={{
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        minWidth: 0,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = null, unclamped = false, onContextMenu, onDoubleClickAction }: ChipProps) {
   const handleContextMenu = onContextMenu;
   const handleDoubleClick = onDoubleClickAction
     ? (e: React.MouseEvent) => {
@@ -511,7 +535,7 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
       return (
         <span
           onContextMenu={handleContextMenu}
-          style={chipStyle({ variant: "head", textSize })}
+          style={chipStyle({ variant: "head", textSize, unclamped })}
           title="Detached HEAD — checked out"
         >
           <CurrentDot />
@@ -525,11 +549,11 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
         <span
           onContextMenu={handleContextMenu}
           onDoubleClick={handleDoubleClick}
-          style={chipStyle({ variant: "branch", isCheckedOut, textSize })}
+          style={chipStyle({ variant: "branch", isCheckedOut, textSize, unclamped })}
           title={`${chip.value}${isCheckedOut ? " — checked out" : ""}${checkoutHint}`}
         >
           {isCheckedOut && <CurrentDot />}
-          <BranchIcon /> {shortBranch(chip.value)}
+          <BranchIcon /> <ChipLabel>{shortBranch(chip.value)}</ChipLabel>
         </span>
       );
     }
@@ -542,11 +566,11 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
         <span
           onContextMenu={handleContextMenu}
           onDoubleClick={handleDoubleClick}
-          style={chipStyle({ variant: "branch", isCheckedOut, textSize })}
+          style={chipStyle({ variant: "branch", isCheckedOut, textSize, unclamped })}
           title={`${shortBranch(chip.local)} → ${shortRemote(chip.remote)}${isCheckedOut ? " — checked out" : ""}${checkoutHint}`}
         >
           {isCheckedOut && <CurrentDot />}
-          <BranchIcon /> <RemoteIndicator remoteRef={chip.remote} /> {shortBranch(chip.local)}
+          <BranchIcon /> <RemoteIndicator remoteRef={chip.remote} /> <ChipLabel>{shortBranch(chip.local)}</ChipLabel>
         </span>
       );
     }
@@ -556,10 +580,10 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
         <span
           onContextMenu={handleContextMenu}
           onDoubleClick={handleDoubleClick}
-          style={chipStyle({ variant: "remote", textSize })}
+          style={chipStyle({ variant: "remote", textSize, unclamped })}
           title={`${chip.value}${checkoutHint}`}
         >
-          <RemoteIcon /> {shortRemote(chip.value)}
+          <RemoteIcon /> <ChipLabel>{shortRemote(chip.value)}</ChipLabel>
         </span>
       );
 
@@ -569,7 +593,7 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
       return (
         <span
           onContextMenu={handleContextMenu}
-          style={chipStyle({ variant: "tag", textSize })}
+          style={chipStyle({ variant: "tag", textSize, unclamped })}
           title={`${chip.value}${tagPushed ? ` — pushed to ${tagRemote ?? "remote"}` : ""}`}
         >
           <TagIcon />{" "}
@@ -578,7 +602,7 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
               <RemoteIcon />
             </span>
           )}{" "}
-          {chip.value.replace(/^refs\/tags\//, "")}
+          <ChipLabel>{chip.value.replace(/^refs\/tags\//, "")}</ChipLabel>
         </span>
       );
 
@@ -586,10 +610,10 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
       return (
         <span
           onContextMenu={handleContextMenu}
-          style={chipStyle({ variant: "other", textSize })}
+          style={chipStyle({ variant: "other", textSize, unclamped })}
           title={chip.value}
         >
-          {chip.value}
+          <ChipLabel>{chip.value}</ChipLabel>
         </span>
       );
   }
@@ -712,12 +736,20 @@ function chipStyle({
   variant,
   isCheckedOut,
   textSize,
+  unclamped,
 }: {
   variant: ChipVariant;
   isCheckedOut?: boolean;
   textSize: number;
+  /** Popover chips reveal collapsed refs: replace the row clamp (160px) with
+   *  the container's width so the full name shows. */
+  unclamped?: boolean;
 }): React.CSSProperties {
-  const base: React.CSSProperties = { ...BASE_CHIP, fontSize: textSize };
+  const base: React.CSSProperties = {
+    ...BASE_CHIP,
+    fontSize: textSize,
+    ...(unclamped ? { maxWidth: "100%" } : {}),
+  };
   switch (variant) {
     case "branch":
       return {

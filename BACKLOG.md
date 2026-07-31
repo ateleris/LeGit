@@ -158,12 +158,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   (`search_commits` Content/ContentRegex kinds, `search_paths`) is kept
   and tested; re-adding is a small UI task if content search is missed
   ("when did this string change?" archaeology has no UI today).
-- **Diff viewer: stage/unstage a multi-line selection.** In a working-changes
-  diff, when the user has selected multiple lines, the per-line context menu
-  entry should become "Stage N lines" (and the unstage/discard counterparts
-  match) and act on all selected lines at once. Today the entry targets only
-  the clicked line. Wire through the shared inline/split helpers - the
-  action-parity rule applies. Added 2026-07-31.
 - **"Open in editor" on more file rows.** Shipped 2026-07-11 for Files /
   Working Changes / Changed Files (`repo_open_file_in_editor`, `$FILE`,
   shared `OpenInEditorMenuItem`); File History, Compare, and Search share
