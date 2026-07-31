@@ -1439,7 +1439,7 @@ async fn file_history_follows_renames_and_reports_the_path_at_each_commit() {
 
     let history = repo
         .backend
-        .file_history(std::path::Path::new("b.txt"), 200, 0)
+        .file_history(std::path::Path::new("b.txt"), 200, 0, None)
         .await
         .unwrap();
 
@@ -1467,11 +1467,99 @@ async fn file_history_follows_renames_and_reports_the_path_at_each_commit() {
     // Paging: skipping the newest leaves the remaining three.
     let page = repo
         .backend
-        .file_history(std::path::Path::new("b.txt"), 200, 1)
+        .file_history(std::path::Path::new("b.txt"), 200, 1, None)
         .await
         .unwrap();
     assert_eq!(page.len(), 3);
     assert_eq!(page[0].summary, "rename a to b");
+}
+
+/// The bug the start-rev walk fixes: a file that only exists on a side branch
+/// has NO history from HEAD (the panel showed empty while the user was
+/// browsing that branch's tree). Walking from the browsed rev finds it.
+#[tokio::test]
+async fn file_history_from_a_rev_outside_head_ancestry_finds_the_file() {
+    let repo = TestRepo::init().await;
+    repo.write("base.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["switch", "-c", "side"]).await;
+    repo.write("only-on-side.txt", "v1\n");
+    repo.commit_all("add side file").await;
+    let side_tip = repo.head().await;
+    repo.git(&["switch", "main"]).await;
+    repo.write("base.txt", "base2\n");
+    repo.commit_all("advance main").await;
+
+    let from_head = repo
+        .backend
+        .file_history(std::path::Path::new("only-on-side.txt"), 200, 0, None)
+        .await
+        .unwrap();
+    assert!(from_head.is_empty(), "pre-fix behavior: HEAD walk finds nothing");
+
+    let from_rev = repo
+        .backend
+        .file_history(std::path::Path::new("only-on-side.txt"), 200, 0, Some(&side_tip))
+        .await
+        .unwrap();
+    let subjects: Vec<&str> = from_rev.iter().map(|e| e.summary.as_str()).collect();
+    assert_eq!(subjects, ["add side file"]);
+}
+
+/// Start-rev scoping: the walk excludes commits newer than the rev, so the
+/// history matches the browsed tree. Also pins the verified-against-real-git
+/// fact (2026-07-31) that a deleted file's HEAD walk is NOT empty - the
+/// original backlog claim was imprecise, deletion alone never was the bug.
+#[tokio::test]
+async fn file_history_from_a_rev_excludes_later_commits() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "v1\n");
+    repo.commit_all("add a").await;
+    repo.write("a.txt", "v2\n");
+    repo.commit_all("modify a").await;
+    let pre_delete = repo.head().await;
+    repo.git(&["rm", "a.txt"]).await;
+    repo.commit_all("delete a").await;
+
+    let from_head = repo
+        .backend
+        .file_history(std::path::Path::new("a.txt"), 200, 0, None)
+        .await
+        .unwrap();
+    let head_subjects: Vec<&str> = from_head.iter().map(|e| e.summary.as_str()).collect();
+    assert_eq!(head_subjects, ["delete a", "modify a", "add a"]);
+
+    let from_rev = repo
+        .backend
+        .file_history(std::path::Path::new("a.txt"), 200, 0, Some(&pre_delete))
+        .await
+        .unwrap();
+    let subjects: Vec<&str> = from_rev.iter().map(|e| e.summary.as_str()).collect();
+    assert_eq!(subjects, ["modify a", "add a"]);
+}
+
+/// `--follow` keeps tracking renames when the walk starts at an explicit rev.
+#[tokio::test]
+async fn file_history_from_a_rev_still_follows_renames() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "v1\n");
+    repo.commit_all("add a").await;
+    repo.git(&["mv", "a.txt", "b.txt"]).await;
+    repo.commit_all("rename a to b").await;
+    repo.write("b.txt", "v2\n");
+    repo.commit_all("modify b").await;
+    let rev = repo.head().await;
+    repo.write("b.txt", "v3\n");
+    repo.commit_all("later change").await;
+
+    let history = repo
+        .backend
+        .file_history(std::path::Path::new("b.txt"), 200, 0, Some(&rev))
+        .await
+        .unwrap();
+    let subjects: Vec<&str> = history.iter().map(|e| e.summary.as_str()).collect();
+    assert_eq!(subjects, ["modify b", "rename a to b", "add a"]);
+    assert_eq!(history[2].path, "a.txt");
 }
 
 // ---------------------------------------------------------------------------

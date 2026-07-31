@@ -25,9 +25,13 @@ import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
 /** Page size for the history walk; a "Load more" footer fetches the next page. */
 const PAGE_SIZE = 200;
 
-/** Summon payload for showing a file's history (a bare string = the path). */
+/** Summon payload for showing a file's history (a bare string = the path,
+ *  walked from HEAD). `rev` walks from that revision instead - the Files
+ *  panel's browse-at-commit mode sends it so the history matches the tree
+ *  being browsed. */
 export interface FileHistoryRequest {
   path: string;
+  rev?: string | null;
 }
 
 /**
@@ -49,6 +53,8 @@ function FileHistoryBody() {
   const repo = useActiveRepo();
   const queryClient = useQueryClient();
   const [path, setPath] = useState<string | null>(null);
+  // Non-null: walk from this rev instead of HEAD (browse-at-commit mode).
+  const [rev, setRev] = useState<string | null>(null);
   // How many pages to request; "Load more" bumps it, a new file resets it.
   const [pageCount, setPageCount] = useState(1);
 
@@ -58,18 +64,21 @@ function FileHistoryBody() {
     if (prevRepoId.current === repo?.id) return;
     prevRepoId.current = repo?.id;
     setPath(null);
+    setRev(null);
     setPageCount(1);
   }, [repo?.id]);
 
   const onReceive = useCallback((payload: unknown) => {
     if (typeof payload === "string") {
       setPath(payload);
+      setRev(null);
       setPageCount(1);
       return;
     }
     const p = payload as Partial<FileHistoryRequest> | null;
     if (p && typeof p.path === "string") {
       setPath(p.path);
+      setRev(typeof p.rev === "string" ? p.rev : null);
       setPageCount(1);
     }
   }, []);
@@ -77,8 +86,8 @@ function FileHistoryBody() {
 
   const { data: entries = [], isFetching, isError, error, refetch } = useQuery<FileHistoryEntry[]>({
     // Under the "log" domain: history changes exactly when the log/worktree do.
-    queryKey: [repo?.id, "log", "file-history", path, pageCount],
-    queryFn: () => repoFileHistory(repo!.id, path!, PAGE_SIZE * pageCount, 0),
+    queryKey: [repo?.id, "log", "file-history", path, rev, pageCount],
+    queryFn: () => repoFileHistory(repo!.id, path!, PAGE_SIZE * pageCount, 0, rev ?? undefined),
     enabled: !!repo && !!path,
     staleTime: 5_000,
   });
@@ -154,6 +163,15 @@ function FileHistoryBody() {
         >
           {path}
         </span>
+        {rev !== null && (
+          <span
+            className="legit-subtle"
+            style={{ fontSize: "var(--fz-sm)", fontFamily: "monospace", flexShrink: 0 }}
+            title={`History walked from ${rev} (browse-at-commit mode)`}
+          >
+            from {rev.slice(0, 8)}
+          </span>
+        )}
       </div>
 
       <div className="legit-panel__body" style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 0 }}>

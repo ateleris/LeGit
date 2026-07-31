@@ -536,14 +536,22 @@ export const repoMergeBase = (repoId: string, a: string, b: string) =>
 export const repoFileAtRevision = (repoId: string, rev: string, path: string) =>
   invoke<FileAtRevision>("repo_file_at_revision", { repoId, rev, path });
 
-/** A single file's commit history (newest first), following renames. */
+/** A single file's commit history (newest first), following renames.
+ *  `startRev` walks from that revision instead of HEAD (browse-at-commit). */
 export const repoFileHistory = (
   repoId: string,
   path: string,
   maxCount: number,
   skip: number,
+  startRev?: string,
 ) =>
-  invoke<FileHistoryEntry[]>("repo_file_history", { repoId, path, maxCount, skip });
+  invoke<FileHistoryEntry[]>("repo_file_history", {
+    repoId,
+    path,
+    maxCount,
+    skip,
+    startRev: startRev ?? null,
+  });
 
 /**
  * Restore a single file (index + working tree) to its content at `rev`.

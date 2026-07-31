@@ -62,12 +62,15 @@ pub trait GitBackend: Send + Sync {
     /// A single file's commit history, newest first, following renames
     /// (`git log --follow --name-status`). Each entry carries the file's path
     /// AS OF THAT COMMIT, so pre-rename commits address the old name. `skip`
-    /// and `max_count` page the walk.
+    /// and `max_count` page the walk. `start_rev` starts the walk at that
+    /// revision instead of HEAD (browse-at-commit mode): only commits
+    /// reachable from it appear, matching the tree being browsed.
     async fn file_history(
         &self,
         path: &Path,
         max_count: u32,
         skip: u32,
+        start_rev: Option<&str>,
     ) -> Result<Vec<FileHistoryEntry>, GitError>;
 
     /// Restore `path` in the index AND working tree to its content at `rev`

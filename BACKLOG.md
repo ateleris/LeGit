@@ -146,11 +146,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   stays the model (industry norm; graph lanes need all rows above, and
   virtualization already makes rendering O(visible)) - windowed unloading
   was considered 2026-07-30 and rejected.
-- **Files panel rev mode: file history from the browsed rev.** The
-  browse-at-commit mode shipped 2026-07-30; open remainder (accepted for
-  v1): `repoFileHistory` walks from HEAD, so "File history" on a file
-  deleted since the browsed rev comes up empty - a refinement would pass
-  the browsed rev as the walk's start point.
 - **Commits panel search: touched-path query kind.** The search bar shipped
   2026-07-30: one box, no mode dropdown - Enter cycles the selection
   through full-history hits inside the intact graph (Shift+Enter
@@ -163,6 +158,12 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   (`search_commits` Content/ContentRegex kinds, `search_paths`) is kept
   and tested; re-adding is a small UI task if content search is missed
   ("when did this string change?" archaeology has no UI today).
+- **Diff viewer: stage/unstage a multi-line selection.** In a working-changes
+  diff, when the user has selected multiple lines, the per-line context menu
+  entry should become "Stage N lines" (and the unstage/discard counterparts
+  match) and act on all selected lines at once. Today the entry targets only
+  the clicked line. Wire through the shared inline/split helpers - the
+  action-parity rule applies. Added 2026-07-31.
 - **"Open in editor" on more file rows.** Shipped 2026-07-11 for Files /
   Working Changes / Changed Files (`repo_open_file_in_editor`, `$FILE`,
   shared `OpenInEditorMenuItem`); File History, Compare, and Search share
@@ -185,6 +186,11 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   feature). The `crates/legit-providers` keep-or-delete question is
   resolved: **keep** - it hosts the SSH-first platform-integrations item
   under "Git features".
+- **Release notes generator (idea, unscoped).** Check Git Extensions'
+  "Release notes generator" plugin (commit list between two revs grouped
+  into formatted release notes) - could that be a LeGit panel? Scope
+  questions: rev-range picker, grouping/format templates, copy/export
+  target (Markdown/HTML). Added 2026-07-31, not yet evaluated.
 - **Submodules:** nested-tree overview (deliberately flat for now);
   hide-the-Refs-pane-when-no-gitlinks (paneview layouts persist panes);
   `--shallow-submodules` on clone when depth + submodules are both set

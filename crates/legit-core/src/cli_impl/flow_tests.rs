@@ -1389,10 +1389,38 @@ async fn file_history_runs_follow_name_status_with_paging() {
     );
     let (b, exec) = backend(fake);
 
-    let entries = b.file_history(Path::new("src/a.rs"), 200, 0).await.unwrap();
+    let entries = b.file_history(Path::new("src/a.rs"), 200, 0, None).await.unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].commit_id.as_str(), "aaa");
     assert_eq!(entries[0].path, "src/a.rs");
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn file_history_with_start_rev_walks_from_that_rev() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &[
+            "log",
+            "--follow",
+            "-M",
+            "--name-status",
+            "--format=%x1e%H%n%an%n%at%n%s",
+            "--max-count=200",
+            "--skip=0",
+            "abc123",
+            "--",
+            "src/a.rs",
+        ],
+        ok("\x1eaaa\nAlice\n1783288808\nmodify\n\nM\tsrc/a.rs\n"),
+    );
+    let (b, exec) = backend(fake);
+
+    let entries = b
+        .file_history(Path::new("src/a.rs"), 200, 0, Some("abc123"))
+        .await
+        .unwrap();
+    assert_eq!(entries.len(), 1);
     exec.assert_done();
 }
 

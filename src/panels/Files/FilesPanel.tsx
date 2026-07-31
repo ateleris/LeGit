@@ -184,7 +184,10 @@ export function FilesPanel() {
     useSummonStore.getState().summon("file-view", rev === null ? { path } : { path, rev });
   }, [rev]);
 
-  const blamePayload = useCallback(
+  // Payload for the rev-following panels (Blame, File History): a bare path
+  // in worktree mode, `{ path, rev }` in browse-at-commit mode so those
+  // panels walk from the browsed rev.
+  const revPayload = useCallback(
     (path: string) => (rev === null ? path : { path, rev }),
     [rev],
   );
@@ -200,13 +203,13 @@ export function FilesPanel() {
       // (notifyIfOpen never pops them up). Tracked files only, matching the
       // context menu - untracked/ignored files have no history to show.
       if ((kindByPath.get(file.path) ?? "tracked") === "tracked") {
-        useSummonStore.getState().notifyIfOpen("file-history", file.path);
+        useSummonStore.getState().notifyIfOpen("file-history", revPayload(file.path));
         if (!submodule) {
-          useSummonStore.getState().notifyIfOpen("blame", blamePayload(file.path));
+          useSummonStore.getState().notifyIfOpen("blame", revPayload(file.path));
         }
       }
     },
-    [viewInFileView, kindByPath, submodulePaths, blamePayload],
+    [viewInFileView, kindByPath, submodulePaths, revPayload],
   );
 
   if (!repo) {
@@ -327,8 +330,8 @@ export function FilesPanel() {
                     kind={kindByPath.get(file.path) ?? "tracked"}
                     atRev={rev !== null}
                     submodule={submodulePaths.has(file.path)}
-                    onHistory={() => useSummonStore.getState().summon("file-history", file.path)}
-                    onBlame={() => useSummonStore.getState().summon("blame", blamePayload(file.path))}
+                    onHistory={() => useSummonStore.getState().summon("file-history", revPayload(file.path))}
+                    onBlame={() => useSummonStore.getState().summon("blame", revPayload(file.path))}
                     onView={() => viewInFileView(file.path)}
                     onReveal={() => reveal(file.path)}
                     onUntrack={() =>

@@ -1644,6 +1644,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         path: &Path,
         max_count: u32,
         skip: u32,
+        start_rev: Option<&str>,
     ) -> Result<Vec<FileHistoryEntry>, GitError> {
         let runner = self.runner().await;
         let path_str = path.to_string_lossy();
@@ -1657,6 +1658,10 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         args.push(&fmt_arg);
         args.push(&max_arg);
         args.push(&skip_arg);
+        // Walk from an explicit rev (browse-at-commit mode) instead of HEAD.
+        if let Some(rev) = start_rev {
+            args.push(rev);
+        }
         args.push("--");
         args.push(&path_str);
         let output = runner
