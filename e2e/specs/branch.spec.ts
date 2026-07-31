@@ -29,7 +29,7 @@ describe("branch: create and switch", () => {
     await $(row("main")).waitForDisplayed({ timeout: 15_000 });
   });
 
-  it("creates a branch from the New-branch form", async () => {
+  it("creates a branch from the New-branch form and auto-checks it out", async () => {
     const nameInput = $('input[placeholder="name"]');
     await nameInput.waitForDisplayed();
     await nameInput.setValue(BRANCH);
@@ -37,15 +37,19 @@ describe("branch: create and switch", () => {
     // other sections' buttons inside the shared Refs paneview).
     await browser.keys("Enter");
     await $(row(BRANCH)).waitForDisplayed({ timeout: 15_000 });
-  });
-
-  it("switches to the new branch", async () => {
-    const btn = $(checkoutBtn(BRANCH));
-    await btn.waitForClickable();
-    await btn.click();
-    // The marker moves: the new branch loses its Checkout button, main
-    // gains one.
+    // The checkout-on-create setting defaults ON: the new branch becomes
+    // current right away (no Checkout button on it), and main gains one.
     await $(checkoutBtn(BRANCH)).waitForExist({ reverse: true, timeout: 15_000 });
     await $(checkoutBtn("main")).waitForExist({ timeout: 15_000 });
+  });
+
+  it("switches back to main via its Checkout button", async () => {
+    const btn = $(checkoutBtn("main"));
+    await btn.waitForClickable();
+    await btn.click();
+    // The marker moves back: main loses its Checkout button, the new
+    // branch gains one.
+    await $(checkoutBtn("main")).waitForExist({ reverse: true, timeout: 15_000 });
+    await $(checkoutBtn(BRANCH)).waitForExist({ timeout: 15_000 });
   });
 });
