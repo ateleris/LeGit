@@ -24,6 +24,7 @@ import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { InlineEditor } from "../shared/InlineEditor";
 import { Button } from "../shared/buttons";
+import { ToolbarButton } from "../shared/ToolbarButton";
 import { isRowBackgroundClick, jumpPanelsToCommit } from "../shared/jumpToCommit";
 
 // A stash mutation touches the working tree, the stash list, and the graph.
@@ -464,12 +465,12 @@ function StashRow({
         </div>
       ) : (
         <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
-          <button disabled={busy} onClick={onViewDiff}>View diff</button>
-          <button disabled={busy} onClick={onApply}>Apply</button>
-          <button disabled={busy} onClick={onPop}>Pop</button>
-          <button disabled={busy} onClick={onOpenBranch}>Branch</button>
-          <button disabled={busy} onClick={onOpenRename}>Rename</button>
-          <button disabled={busy} onClick={onOpenDrop}>Drop</button>
+          <ToolbarButton label="View diff" disabled={busy} onClick={onViewDiff} />
+          <ToolbarButton label="Apply" disabled={busy} onClick={onApply} />
+          <ToolbarButton label="Pop" disabled={busy} onClick={onPop} />
+          <ToolbarButton label="Branch" disabled={busy} onClick={onOpenBranch} />
+          <ToolbarButton label="Rename" disabled={busy} onClick={onOpenRename} />
+          <ToolbarButton label="Drop" disabled={busy} onClick={onOpenDrop} />
         </div>
       )}
     </div>

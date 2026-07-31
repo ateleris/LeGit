@@ -21,6 +21,7 @@ import {
 import { groupRemoteBranches, shortRemoteBranchName, splitRemoteRef } from "../../lib/branchGroups";
 import { ChevronDownIcon } from "../../icons";
 import { Button } from "../shared/buttons";
+import { ToolbarButton } from "../shared/ToolbarButton";
 import { notifySwitchOutcome, formatSwitchError } from "../../lib/switchFeedback";
 import { notifyMergeOutcome, notifyOpError, notifyRebaseOutcome } from "../../lib/mergeFeedback";
 import { notify } from "../../store/notifications";
@@ -588,9 +589,7 @@ function LocalBranchRow({
             <Button variant="danger" disabled={busy} onClick={() => onDoDelete(false)}>
               Delete
             </Button>
-            <button disabled={busy} onClick={() => onDoDelete(true)}>
-              Force Delete
-            </button>
+            <ToolbarButton label="Force Delete" disabled={busy} onClick={() => onDoDelete(true)} />
             <button disabled={busy} onClick={onCancelEdit}>
               Cancel
             </button>
@@ -602,23 +601,20 @@ function LocalBranchRow({
             style={{ fontSize: "var(--fz-lg)", fontFamily: "monospace", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
           >
             {branch.is_current && (
-              <span style={{ color: "var(--accent)", marginRight: 6 }}>●</span>
+              // Same token as the commit graph's checked-out branch chip
+              // (RefsCell chipStyle), so "this is the current branch" reads
+              // as one colour across the app.
+              <span style={{ color: "var(--ref-branch-current-fg, rgb(130, 220, 130))", marginRight: 6 }}>●</span>
             )}
             {branch.name}
           </span>
           <DivergenceBadge branch={branch} />
           <div style={{ display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap" }}>
             {!branch.is_current && (
-              <button disabled={busy} onClick={onCheckout}>
-                Checkout
-              </button>
+              <ToolbarButton label="Checkout" disabled={busy} onClick={onCheckout} />
             )}
-            <button disabled={busy} onClick={onOpenRename}>
-              Rename
-            </button>
-            <button disabled={busy} onClick={onOpenDelete}>
-              Delete
-            </button>
+            <ToolbarButton label="Rename" disabled={busy} onClick={onOpenRename} />
+            <ToolbarButton label="Delete" disabled={busy} onClick={onOpenDelete} />
           </div>
         </div>
       )}
@@ -690,9 +686,7 @@ function RemoteBranchRow({
           </span>
         </>
       ) : (
-        <button disabled={busy} onClick={onCheckout} style={{ flexShrink: 0 }}>
-          Checkout
-        </button>
+        <ToolbarButton label="Checkout" disabled={busy} onClick={onCheckout} style={{ flexShrink: 0 }} />
       )}
     </div>
   );

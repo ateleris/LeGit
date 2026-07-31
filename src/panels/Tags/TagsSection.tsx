@@ -277,12 +277,25 @@ function TagRow({
         border: "1px solid var(--panel-border)",
         borderRadius: 4,
         padding: "8px 10px",
+        // One line when it fits: the info group and the action strip are
+        // siblings in a wrapping row, so the actions drop to their own line
+        // only when the pane is too narrow (the info group's minWidth is the
+        // wrap threshold).
         display: "flex",
-        flexDirection: "column",
-        gap: 6,
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: "6px 8px",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          flex: "1 1 auto",
+          minWidth: "min(100%, 14em)",
+        }}
+      >
         <span style={{ color: "var(--ref-tag-fg)", flexShrink: 0, display: "inline-flex" }}>
           <TagIcon />
         </span>
@@ -331,7 +344,7 @@ function TagRow({
       </div>
 
       {confirming !== null ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", flexBasis: "100%" }}>
           <span style={{ fontSize: "var(--fz-md)", flex: 1 }}>
             {confirming === "remote"
               ? `Delete this tag from ${remote}?`
@@ -345,7 +358,7 @@ function TagRow({
           </button>
         </div>
       ) : (
-        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap", marginLeft: "auto" }}>
           <ToolbarButton
             label={pushed ? "Pushed" : remote ? `Push to ${remote}` : "Push"}
             title={

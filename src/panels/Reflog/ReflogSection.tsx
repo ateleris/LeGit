@@ -15,6 +15,7 @@ import { formatRelative } from "../../lib/time";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { Button } from "../shared/buttons";
+import { ToolbarButton } from "../shared/ToolbarButton";
 
 const MAX_ENTRIES = 200;
 
@@ -206,16 +207,18 @@ function ReflogRow({
         </div>
       ) : (
         <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
-          <button disabled={busy} onClick={onCheckout} title="Check out this commit (detached HEAD)">
-            Checkout
-          </button>
-          <button
+          <ToolbarButton
+            label="Checkout"
+            title="Check out this commit (detached HEAD)"
+            disabled={busy}
+            onClick={onCheckout}
+          />
+          <ToolbarButton
+            label="Reset here"
+            title="Hard-reset the current branch to this entry"
             disabled={busy}
             onClick={onRequestReset}
-            title="Hard-reset the current branch to this entry"
-          >
-            Reset here
-          </button>
+          />
         </div>
       )}
     </div>

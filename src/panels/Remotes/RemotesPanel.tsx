@@ -20,6 +20,7 @@ import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { InlineEditor } from "../shared/InlineEditor";
 import { Button } from "../shared/buttons";
+import { ToolbarButton } from "../shared/ToolbarButton";
 import { useConfirmDestructive } from "../../store/settings";
 import { FetchIcon } from "../../icons";
 
@@ -249,29 +250,28 @@ export function RemotesSection() {
                     <UrlRow label="fetch" url={r.fetch_url} />
                     {r.push_url !== r.fetch_url && <UrlRow label="push" url={r.push_url} />}
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 2 }}>
-                      <button
+                      <ToolbarButton
+                        label="Fetch"
+                        icon={<FetchIcon />}
                         disabled={blocked}
                         onClick={() =>
                           runNet(`fetch:${r.name}`, (opId) =>
                             repoFetch(repo.id, { all: false, prune: false, remote: r.name }, opId),
                           )
                         }
-                        style={{ display: "flex", alignItems: "center", gap: 4 }}
-                      >
-                        <FetchIcon /> Fetch
-                      </button>
-                      <button
-                        disabled={blocked}
+                      />
+                      <ToolbarButton
+                        label="Prune"
                         title="Delete local remote-tracking refs that no longer exist on the remote"
+                        disabled={blocked}
                         onClick={() =>
                           runNet(`prune:${r.name}`, (opId) => repoPruneRemote(repo.id, r.name, opId))
                         }
-                      >
-                        Prune
-                      </button>
-                      <button disabled={blocked} onClick={() => openUrls(r)}>Edit URLs</button>
-                      <button disabled={blocked} onClick={() => openRename(r)}>Rename</button>
-                      <button
+                      />
+                      <ToolbarButton label="Edit URLs" disabled={blocked} onClick={() => openUrls(r)} />
+                      <ToolbarButton label="Rename" disabled={blocked} onClick={() => openRename(r)} />
+                      <ToolbarButton
+                        label="Remove"
                         disabled={blocked}
                         onClick={() => {
                           setError(null);
@@ -280,9 +280,7 @@ export function RemotesSection() {
                           if (confirmDestructive) setEdit({ name: r.name, mode: "remove" });
                           else void doRemove(r.name);
                         }}
-                      >
-                        Remove
-                      </button>
+                      />
                     </div>
                   </>
                 )}
