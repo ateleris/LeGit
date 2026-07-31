@@ -224,6 +224,10 @@ pub struct GlobalSettings {
     /// `None` until the user first toggles it.
     #[serde(default)]
     pub changed_files_view_mode: Option<String>,
+    /// Branches section list style (`"tree"` | `"flat"`). `None`/unknown =
+    /// flat. Toggled from the Branches section header, applies globally.
+    #[serde(default)]
+    pub branch_list_view: Option<String>,
     /// Sort order for branches and tags in the Refs panel
     /// (`"alphabetical"` | `"date"` | `"date_reversed"`). `None` = alphabetical.
     #[serde(default)]
@@ -350,6 +354,7 @@ impl Default for GlobalSettings {
             commits_dot_radius: default_commits_dot_radius(),
             commits_line_width: default_commits_line_width(),
             changed_files_view_mode: None,
+            branch_list_view: None,
             refs_sort_mode: None,
             ui_font_size: default_ui_font_size(),
             watcher_enabled: true,

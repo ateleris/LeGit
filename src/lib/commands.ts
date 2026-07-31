@@ -985,6 +985,9 @@ export const saveColumnPreferences = (prefs: unknown) =>
 export const saveChangedFilesViewMode = (mode: string) =>
   invoke<null>("save_changed_files_view_mode", { mode });
 
+export const saveBranchListView = (mode: string) =>
+  invoke<null>("save_branch_list_view", { mode });
+
 export const saveRefsSortMode = (mode: string) =>
   invoke<null>("save_refs_sort_mode", { mode });
 

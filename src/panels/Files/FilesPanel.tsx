@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PanelError } from "../shared/PanelError";
+import { segStyle } from "../shared/segmented";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileCheck, FilePlus, FileX, GitFork } from "lucide-react";
 import type { ReactNode } from "react";
@@ -468,15 +469,3 @@ function DirMenuSection({
   );
 }
 
-function segStyle(active: boolean, side: "left" | "right"): React.CSSProperties {
-  return {
-    fontSize: "var(--fz-sm)",
-    padding: "2px 8px",
-    border: "1px solid var(--panel-border)",
-    borderRadius: side === "left" ? "3px 0 0 3px" : "0 3px 3px 0",
-    marginLeft: side === "right" ? -1 : 0,
-    background: active ? "var(--button-active-bg, rgba(255,255,255,0.12))" : "transparent",
-    color: "var(--panel-fg)",
-    cursor: "pointer",
-  };
-}

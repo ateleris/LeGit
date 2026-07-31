@@ -19,9 +19,11 @@ import {
   repoSetUpstream,
 } from "../../lib/commands";
 import { groupRemoteBranches, shortRemoteBranchName, splitRemoteRef } from "../../lib/branchGroups";
-import { ChevronDownIcon } from "../../icons";
+import { ChevronDownIcon, ChevronRightIcon } from "../../icons";
 import { Button } from "../shared/buttons";
 import { ToolbarButton } from "../shared/ToolbarButton";
+import { segStyle } from "../shared/segmented";
+import { branchTreeRows, folderHoldsCurrent, leafName } from "./branchTree";
 import { notifySwitchOutcome, formatSwitchError } from "../../lib/switchFeedback";
 import { notifyMergeOutcome, notifyOpError, notifyRebaseOutcome } from "../../lib/mergeFeedback";
 import { notify } from "../../store/notifications";
@@ -136,6 +138,37 @@ export function BranchesSection() {
   const sortMode = coerceRefsSortMode(useSettingsStore((s) => s.settings?.refs_sort_mode));
   // Global setting (default on): creating a branch also checks it out.
   const checkoutNewBranch = useSettingsStore((s) => s.settings?.checkout_new_branch ?? true);
+  // Global list style: folder tree vs flat list. Tree mode uses the tree's
+  // own ordering (folders first, alphabetical); refs_sort_mode applies to
+  // the flat list only.
+  const branchView = useSettingsStore((s) =>
+    s.settings?.branch_list_view === "tree" ? "tree" : "flat",
+  );
+  const setBranchListView = useSettingsStore((s) => s.setBranchListView);
+  // Collapse state is ephemeral and per-list (local + one per remote group),
+  // keyed by a list id so folder paths can repeat across lists. Absent from
+  // the set = expanded (folders default to expanded).
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const toggleFolder = useCallback((listId: string, path: string) => {
+    setCollapsedFolders((prev) => {
+      const next = new Set(prev);
+      const key = `${listId}\0${path}`;
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+  const collapsedFor = useCallback(
+    (listId: string): ReadonlySet<string> => {
+      const prefix = `${listId}\0`;
+      const out = new Set<string>();
+      for (const key of collapsedFolders) {
+        if (key.startsWith(prefix)) out.add(key.slice(prefix.length));
+      }
+      return out;
+    },
+    [collapsedFolders],
+  );
   const sortBranches = useCallback(
     (list: readonly Branch[]) =>
       sortRefs(list, sortMode, (b) => b.name, (b) => b.created_at),
@@ -302,46 +335,92 @@ export function BranchesSection() {
           <PanelError error={error} margin={0} />
         )}
 
-        {localBranches.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <SectionLabel>Local</SectionLabel>
-            {localBranches.map((b) => (
-              <LocalBranchRow
-                key={b.name}
-                branch={b}
-                edit={edit}
-                draftName={draftName}
-                busy={busy}
-                onDraftChange={setDraftName}
-                onOpenRename={() => openRename(b)}
-                onSaveRename={() => saveRename(b.name)}
-                onOpenDelete={() => openDelete(b)}
-                onDoDelete={(force) => doDelete(b.name, force)}
-                onCheckout={() => doCheckout(b.name)}
-                onCancelEdit={() => setEdit(null)}
-                onContextMenu={(e) =>
-                  openMenu(
-                    e,
-                    <BranchMenuSection
-                      name={b.name}
-                      isCurrent={b.is_current}
-                      currentBranch={currentBranch}
-                      opInProgress={opInProgress}
-                      upstream={b.upstream}
-                      upstreamCandidates={upstreamCandidatesFor(b.name)}
-                      onCheckout={() => { closeMenu(); doCheckout(b.name); }}
-                      onRename={() => { closeMenu(); openRename(b); }}
-                      onSetUpstream={(up) => { closeMenu(); doSetUpstream(b.name, up); }}
-                      onDelete={(force) => { closeMenu(); doDelete(b.name, force); }}
-                      onMerge={(options) => { closeMenu(); handleMerge(b.name, options); }}
-                      onRebaseOnto={() => { closeMenu(); handleRebaseOnto(b.name); }}
-                    />,
-                  )
-                }
-              />
-            ))}
-          </div>
-        )}
+        {localBranches.length > 0 && (() => {
+          // One row renderer shared by both modes so flat mode stays exactly
+          // the pre-tree rendering; tree mode indents it and shows the leaf
+          // segment (actions keep the full name).
+          const renderLocalRow = (b: Branch, displayName?: string) => (
+            <LocalBranchRow
+              key={b.name}
+              branch={b}
+              displayName={displayName}
+              edit={edit}
+              draftName={draftName}
+              busy={busy}
+              onDraftChange={setDraftName}
+              onOpenRename={() => openRename(b)}
+              onSaveRename={() => saveRename(b.name)}
+              onOpenDelete={() => openDelete(b)}
+              onDoDelete={(force) => doDelete(b.name, force)}
+              onCheckout={() => doCheckout(b.name)}
+              onCancelEdit={() => setEdit(null)}
+              onContextMenu={(e) =>
+                openMenu(
+                  e,
+                  <BranchMenuSection
+                    name={b.name}
+                    isCurrent={b.is_current}
+                    currentBranch={currentBranch}
+                    opInProgress={opInProgress}
+                    upstream={b.upstream}
+                    upstreamCandidates={upstreamCandidatesFor(b.name)}
+                    onCheckout={() => { closeMenu(); doCheckout(b.name); }}
+                    onRename={() => { closeMenu(); openRename(b); }}
+                    onSetUpstream={(up) => { closeMenu(); doSetUpstream(b.name, up); }}
+                    onDelete={(force) => { closeMenu(); doDelete(b.name, force); }}
+                    onMerge={(options) => { closeMenu(); handleMerge(b.name, options); }}
+                    onRebaseOnto={() => { closeMenu(); handleRebaseOnto(b.name); }}
+                  />,
+                )
+              }
+            />
+          );
+          const localByName = new Map(localBranches.map((b) => [b.name, b]));
+          return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {/* Header shares its row with the Tree/List toggle - the
+                  toggle governs the remote groups below too. */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <SectionLabel>Local</SectionLabel>
+                <div style={{ display: "flex" }}>
+                  <button
+                    onClick={() => setBranchListView("tree")}
+                    aria-pressed={branchView === "tree"}
+                    style={segStyle(branchView === "tree", "left")}
+                  >
+                    Tree
+                  </button>
+                  <button
+                    onClick={() => setBranchListView("flat")}
+                    aria-pressed={branchView === "flat"}
+                    style={segStyle(branchView === "flat", "right")}
+                  >
+                    List
+                  </button>
+                </div>
+              </div>
+              {branchView === "flat"
+                ? localBranches.map((b) => renderLocalRow(b))
+                : branchTreeRows(localBranches.map((b) => b.name), collapsedFor("local")).map((row) =>
+                    row.kind === "dir" ? (
+                      <BranchFolderRow
+                        key={`d:${row.path}`}
+                        label={row.label}
+                        depth={row.depth}
+                        count={row.fileCount}
+                        collapsed={row.collapsed}
+                        holdsCurrent={folderHoldsCurrent(row.path, currentBranch)}
+                        onToggle={() => toggleFolder("local", row.path)}
+                      />
+                    ) : (
+                      <div key={row.path} style={{ marginLeft: `${row.depth * 1.25}em` }}>
+                        {renderLocalRow(localByName.get(row.path)!, leafName(row.path))}
+                      </div>
+                    ),
+                  )}
+            </div>
+          );
+        })()}
 
         {remoteGroups.map((group) => {
           const collapsed = !!collapsedRemotes[group.remote];
@@ -353,34 +432,62 @@ export function BranchesSection() {
                 collapsed={collapsed}
                 onToggle={() => toggleRemoteCollapsed(group.remote)}
               />
-              {!collapsed && group.branches.map((b) => {
-                const fullRef = `refs/remotes/${b.name}`;
-                const trackingBranch = trackedRemotes.get(fullRef);
-                return (
-                  <RemoteBranchRow
-                    key={b.name}
-                    branch={b}
-                    shortName={shortRemoteBranchName(b.name, group.remote)}
-                    trackingBranch={trackingBranch}
-                    busy={busy}
-                    onCheckout={() => doRemoteCheckout(b.name)}
-                    onContextMenu={(e) =>
-                      openMenu(
-                        e,
-                        <RemoteBranchMenuSection
-                          remoteName={b.name}
-                          currentBranch={currentBranch}
-                          opInProgress={opInProgress}
-                          onCheckout={() => { closeMenu(); doRemoteCheckout(b.name); }}
-                          onMerge={(options) => { closeMenu(); handleMerge(b.name, options); }}
-                          onRebaseOnto={() => { closeMenu(); handleRebaseOnto(b.name); }}
-                          onDeleteRemote={() => { closeMenu(); void handleDeleteRemoteBranch(b.name); }}
-                        />,
-                      )
-                    }
-                  />
+              {!collapsed && (() => {
+                // Shared by both modes; `displayName` overrides the shown
+                // short name in tree mode (actions keep the full ref name).
+                const renderRemoteRow = (b: Branch, displayName?: string) => {
+                  const fullRef = `refs/remotes/${b.name}`;
+                  const trackingBranch = trackedRemotes.get(fullRef);
+                  return (
+                    <RemoteBranchRow
+                      key={b.name}
+                      branch={b}
+                      shortName={displayName ?? shortRemoteBranchName(b.name, group.remote)}
+                      trackingBranch={trackingBranch}
+                      busy={busy}
+                      onCheckout={() => doRemoteCheckout(b.name)}
+                      onContextMenu={(e) =>
+                        openMenu(
+                          e,
+                          <RemoteBranchMenuSection
+                            remoteName={b.name}
+                            currentBranch={currentBranch}
+                            opInProgress={opInProgress}
+                            onCheckout={() => { closeMenu(); doRemoteCheckout(b.name); }}
+                            onMerge={(options) => { closeMenu(); handleMerge(b.name, options); }}
+                            onRebaseOnto={() => { closeMenu(); handleRebaseOnto(b.name); }}
+                            onDeleteRemote={() => { closeMenu(); void handleDeleteRemoteBranch(b.name); }}
+                          />,
+                        )
+                      }
+                    />
+                  );
+                };
+                if (branchView === "flat") return group.branches.map((b) => renderRemoteRow(b));
+                // Tree mode nests within the remote group by the short name
+                // (the name without the "<remote>/" prefix, as listed).
+                const byShort = new Map(
+                  group.branches.map((b) => [shortRemoteBranchName(b.name, group.remote), b]),
                 );
-              })}
+                const listId = `remote:${group.remote}`;
+                return branchTreeRows([...byShort.keys()], collapsedFor(listId)).map((row) =>
+                  row.kind === "dir" ? (
+                    <BranchFolderRow
+                      key={`d:${row.path}`}
+                      label={row.label}
+                      depth={row.depth}
+                      count={row.fileCount}
+                      collapsed={row.collapsed}
+                      holdsCurrent={false}
+                      onToggle={() => toggleFolder(listId, row.path)}
+                    />
+                  ) : (
+                    <div key={row.path} style={{ marginLeft: `${row.depth * 1.25}em` }}>
+                      {renderRemoteRow(byShort.get(row.path)!, leafName(row.path))}
+                    </div>
+                  ),
+                );
+              })()}
             </div>
           );
         })}
@@ -512,8 +619,56 @@ function DivergenceBadge({ branch }: { branch: Branch }) {
   );
 }
 
+/** A collapsible folder row of the branch tree: chevron + name + count.
+ *  Shows the current-branch dot while collapsed and hiding the checkout. */
+function BranchFolderRow({
+  label,
+  depth,
+  count,
+  collapsed,
+  holdsCurrent,
+  onToggle,
+}: {
+  label: string;
+  depth: number;
+  count: number;
+  collapsed: boolean;
+  holdsCurrent: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      title={collapsed ? `Expand ${label}` : `Collapse ${label}`}
+      style={{
+        background: "none",
+        border: "none",
+        padding: 0,
+        marginLeft: `${depth * 1.25}em`,
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        cursor: "pointer",
+        fontSize: "var(--fz-lg)",
+        fontFamily: "monospace",
+        color: "var(--panel-fg)",
+      }}
+    >
+      {collapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}
+      {label}
+      {collapsed && holdsCurrent && (
+        // Same token as the checked-out chip/row dot: the hidden checkout
+        // stays visible on the folder.
+        <span style={{ color: "var(--ref-branch-current-fg, rgb(130, 220, 130))" }}>●</span>
+      )}
+      <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>({count})</span>
+    </button>
+  );
+}
+
 function LocalBranchRow({
   branch,
+  displayName,
   edit,
   draftName,
   busy,
@@ -527,6 +682,9 @@ function LocalBranchRow({
   onContextMenu,
 }: {
   branch: Branch;
+  /** Shown instead of the full name (tree mode's leaf segment); every action
+   *  and editor keeps operating on `branch.name`. */
+  displayName?: string;
   edit: EditState;
   draftName: string;
   busy: boolean;
@@ -599,6 +757,7 @@ function LocalBranchRow({
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span
             style={{ fontSize: "var(--fz-lg)", fontFamily: "monospace", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            title={branch.name}
           >
             {branch.is_current && (
               // Same token as the commit graph's checked-out branch chip
@@ -606,7 +765,7 @@ function LocalBranchRow({
               // as one colour across the app.
               <span style={{ color: "var(--ref-branch-current-fg, rgb(130, 220, 130))", marginRight: 6 }}>●</span>
             )}
-            {branch.name}
+            {displayName ?? branch.name}
           </span>
           <DivergenceBadge branch={branch} />
           <div style={{ display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap" }}>

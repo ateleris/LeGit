@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import {
   getGlobalSettings,
+  saveBranchListView,
   saveChangedFilesViewMode,
   saveRefsSortMode,
   saveCommitsGraphMetrics,
@@ -104,6 +105,7 @@ interface SettingsStore {
     lineWidth: number
   ) => Promise<void>;
   setChangedFilesViewMode: (mode: "tree" | "flat") => Promise<void>;
+  setBranchListView: (mode: "tree" | "flat") => Promise<void>;
   setRefsSortMode: (mode: RefsSortMode) => Promise<void>;
   setUiFontSize: (size: number) => Promise<void>;
   setWatcherEnabled: (enabled: boolean) => Promise<void>;
@@ -181,6 +183,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const s = get().settings;
     if (s) {
       set({ settings: { ...s, changed_files_view_mode: mode } });
+    }
+  },
+
+  async setBranchListView(mode) {
+    await saveBranchListView(mode);
+    const s = get().settings;
+    if (s) {
+      set({ settings: { ...s, branch_list_view: mode } });
     }
   },
 
