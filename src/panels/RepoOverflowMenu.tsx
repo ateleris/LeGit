@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useRepoStore } from "../store/repos";
 import { repoOpenInEditor } from "../lib/commands";
-import { editorActionLabel, effectiveEditorTemplate } from "../lib/editorAction";
+import { editorActionLabel, editorOpensFolder, effectiveEditorTemplate } from "../lib/editorAction";
 import { useSettingsStore } from "../store/settings";
 import { formatAppError } from "../lib/types";
 import { notify } from "../store/notifications";
-import { ExternalEditorIcon } from "../icons";
+import { ExternalEditorIcon, FolderIcon } from "../icons";
 import { SectionLabel } from "./Commits/menu/primitives";
 import { IconButton } from "./shared/buttons";
 
@@ -72,12 +72,12 @@ export function RepoOverflowMenu() {
           <SectionLabel>Open repositories</SectionLabel>
           {repos.map((r) => {
             const isActive = r.id === activeId;
-            const editorLabel = editorActionLabel(
-              effectiveEditorTemplate(
-                repoSettingsMap[r.id]?.external_editor_command,
-                globalEditorTemplate,
-              ),
+            const editorTemplate = effectiveEditorTemplate(
+              repoSettingsMap[r.id]?.external_editor_command,
+              globalEditorTemplate,
             );
+            const editorLabel = editorActionLabel(editorTemplate);
+            const opensFolder = editorOpensFolder(editorTemplate);
             return (
               <div
                 key={r.id}
@@ -126,7 +126,7 @@ export function RepoOverflowMenu() {
                   }}
                   style={{ color: "inherit", fontSize: "inherit", padding: "0 4px" }}
                 >
-                  <ExternalEditorIcon />
+                  {opensFolder ? <FolderIcon /> : <ExternalEditorIcon />}
                 </IconButton>
                 <IconButton
                   aria-label={`Close ${r.name}`}

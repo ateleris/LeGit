@@ -19,6 +19,7 @@ import {
   ChevronRight,
   Cloud,
   CornerLeftUp,
+  Folder,
   GitBranch,
   GitBranchPlus,
   Globe,
@@ -82,6 +83,9 @@ export const StageIcon = withDefaults(Plus, "StageIcon");
 export const UnstageIcon = withDefaults(Minus, "UnstageIcon");
 // Remote sync (Commits panel toolbar).
 export const ExternalEditorIcon = withDefaults(SquarePen, "ExternalEditorIcon");
+/** The "open in editor" action when NO editor is configured (opens the repo
+ *  folder instead) - the icon must not promise an editor. */
+export const FolderIcon = withDefaults(Folder, "FolderIcon");
 export const RemotePageIcon = withDefaults(Globe, "RemotePageIcon");
 export const FetchIcon = withDefaults(RefreshCw, "FetchIcon");
 export const PullIcon = withDefaults(ArrowDownToLine, "PullIcon");

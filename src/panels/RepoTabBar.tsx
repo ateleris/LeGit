@@ -3,9 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useRepoStore } from "../store/repos";
 import { formatAppError } from "../lib/types";
 import { repoOpenInEditor, repoOpenRemotePage, repoRemoteWebUrl, repoSuperproject } from "../lib/commands";
-import { useEditorActionLabel } from "../lib/editorAction";
+import { useEditorAction } from "../lib/editorAction";
 import { notify } from "../store/notifications";
-import { ExternalEditorIcon, RemotePageIcon, SuperprojectIcon } from "../icons";
+import { ExternalEditorIcon, FolderIcon, RemotePageIcon, SuperprojectIcon } from "../icons";
 import { ViewMenu } from "./ViewMenu";
 import { RepoOverflowMenu } from "./RepoOverflowMenu";
 import { RepoAddMenu } from "./RepoAddMenu";
@@ -144,7 +144,7 @@ export function RepoTabBar() {
     window.addEventListener("pointerup", onUp);
   };
 
-  const editorLabel = useEditorActionLabel(activeRepoId ?? undefined);
+  const editorAction = useEditorAction(activeRepoId ?? undefined);
   const onOpenInEditor = async () => {
     if (!activeRepoId) return;
     try {
@@ -278,10 +278,10 @@ export function RepoTabBar() {
             <button
               className="legit-tabs__icon"
               onClick={onOpenInEditor}
-              aria-label={editorLabel}
-              title={editorLabel}
+              aria-label={editorAction.label}
+              title={editorAction.label}
             >
-              <ExternalEditorIcon />
+              {editorAction.opensFolder ? <FolderIcon /> : <ExternalEditorIcon />}
             </button>
             <button
               className="legit-tabs__icon"
