@@ -15,7 +15,6 @@ import {
   repoCheckoutRemoteBranch,
   repoDeleteRemoteBranch,
   repoMerge,
-  repoPush,
   repoRebase,
   repoSetUpstream,
 } from "../../lib/commands";
@@ -28,6 +27,7 @@ import { branchTreeRows, folderHoldsCurrent, leafName } from "./branchTree";
 import { notifySwitchOutcome, formatSwitchError } from "../../lib/switchFeedback";
 import { remoteOpErrorMessage } from "../../lib/pushFeedback";
 import { PUSH_DOMAINS } from "../Commits/useCommitActions";
+import { pushWithTagFollowUp } from "../../lib/autoPushTags";
 import { notifyMergeOutcome, notifyOpError, notifyRebaseOutcome } from "../../lib/mergeFeedback";
 import { notify } from "../../store/notifications";
 import { OP_DOMAINS, useOpState } from "../../lib/useOpState";
@@ -308,7 +308,8 @@ export function BranchesSection() {
   const handleBranchPush = useCallback(async (branch: string, remote: string, setUpstream: boolean) => {
     if (!repo) return;
     await runNet(async () => {
-      await repoPush(
+      await pushWithTagFollowUp(
+        queryClient,
         repo.id,
         {
           remote,

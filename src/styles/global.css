@@ -325,12 +325,19 @@ button.legit-region-divider__mode:hover {
   height: calc(var(--fz-sm) * 2);
   box-sizing: border-box;
 }
-/* Text inputs and selects inside a toolbar (Commits filter, Files filter)
-   share the same compact control height as the buttons. */
+/* Text inputs and selects inside a toolbar (Commits filter, Files filter,
+   Theme editor's theme picker) share the same compact control height as the
+   buttons - INCLUDING the font size and zero vertical padding. The height
+   clamp alone is a trap: the generic input/select rule keeps 4px vertical
+   padding and the inherited (larger) label font, which clipped the theme
+   picker's text bottom inside the 2em box. */
 .legit-panel__toolbar input[type="text"],
 .legit-panel__toolbar select {
   height: calc(var(--fz-sm) * 2);
   box-sizing: border-box;
+  font-size: var(--fz-sm);
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 /* Repository tab strip. Three regions:

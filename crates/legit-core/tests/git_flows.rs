@@ -2555,6 +2555,38 @@ async fn push_targets_a_non_checked_out_branch_even_with_a_same_named_tag() {
 }
 
 #[tokio::test]
+async fn push_flips_the_tag_lists_target_on_remote_flag() {
+    // The auto-push-tags feature diffs `TagInfo::target_on_remote` around a
+    // push (snapshot before, recompute after; tags that flipped ride along).
+    // That depends on `git push` updating the LOCAL remote-tracking ref,
+    // which is what the tag list's `rev-list --tags --not --remotes` check
+    // reads - pin that assumption against the real binary.
+    let (_keep, _, url) = bare_remote().await;
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["remote", "add", "origin", &url]).await;
+    repo.git(&["tag", "v1"]).await;
+
+    let tags = repo.backend.tags().await.unwrap();
+    assert!(
+        !tags.iter().find(|t| t.name == "v1").unwrap().target_on_remote,
+        "before any push the tag target must be on no remote"
+    );
+
+    repo.backend
+        .push(push_opts("main", true, false), OperationId::new())
+        .await
+        .unwrap();
+
+    let tags = repo.backend.tags().await.unwrap();
+    assert!(
+        tags.iter().find(|t| t.name == "v1").unwrap().target_on_remote,
+        "the push must flip target_on_remote without a fetch"
+    );
+}
+
+#[tokio::test]
 async fn delete_remote_branch_removes_it_from_the_remote_only() {
     let (_keep, remote_path, url) = bare_remote().await;
     let repo = TestRepo::init().await;

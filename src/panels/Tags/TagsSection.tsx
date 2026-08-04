@@ -13,6 +13,7 @@ import {
   repoTags,
 } from "../../lib/commands";
 import { pickTagRemote, pushedTagNames } from "../../lib/tags";
+import { autoPushTagAfterCreate } from "../../lib/autoPushTags";
 import { notify } from "../../store/notifications";
 import type { Remote, RemoteTag, TagInfo } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
@@ -101,6 +102,8 @@ export function TagsSection() {
       await repoCreateTag(repo!.id, name, undefined, createMsg.trim() || undefined);
       setCreateName("");
       setCreateMsg("");
+      // Create-time auto-push trigger (gated on the setting inside).
+      void autoPushTagAfterCreate(queryClient, repo!.id, name);
     });
 
   const doDelete = (name: string) =>

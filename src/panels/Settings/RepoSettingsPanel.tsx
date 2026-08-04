@@ -115,6 +115,7 @@ export function RepoSettingsPanel() {
           <LineEndingChangesRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
           <ExternalEditorRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
           <SubmoduleAutoUpdateSection repoId={activeRepo.id} repoSettings={repoSettings} />
+          <AutoPushTagsRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
         </SettingsGroup>
 
         <SettingsGroup id="repo-git" title="Git" caption="Integration & configuration">
@@ -409,6 +410,67 @@ function SubmoduleAutoUpdateSection({
       <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: 4 }}>
         Dirty submodules follow the global branch-switch strategy; a conflicting
         carry-over rolls the submodule back with your changes intact.
+      </div>
+    </Section>
+  );
+}
+
+function AutoPushTagsRepoSection({
+  repoId,
+  repoSettings,
+}: {
+  repoId: string;
+  repoSettings: import("../../lib/types").RepoSettings | null;
+}) {
+  const globalEnabled = useSettingsStore((s) => s.settings?.auto_push_tags ?? false);
+  const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
+  const [saving, setSaving] = useState(false);
+  const override = repoSettings?.auto_push_tags ?? null;
+
+  const setOverride = async (value: boolean | null) => {
+    if (!repoSettings) return;
+    setSaving(true);
+    try {
+      await updateRepoSettings(repoId, { ...repoSettings, auto_push_tags: value });
+      await loadRepoSettings(repoId);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Auto-push tags">
+      <FieldNote>writes to: repos/&lt;hash&gt;/settings.json (this repo only)</FieldNote>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+        <div style={{ fontSize: "var(--fz-md)" }}>Push tags with their commit automatically</div>
+        {(["inherit", "on", "off"] as const).map((opt) => {
+          const checked =
+            opt === "inherit" ? override === null :
+            opt === "on" ? override === true :
+            override === false;
+          return (
+            <label key={opt} style={{ display: "flex", alignItems: "center", gap: 6, cursor: saving ? "default" : "pointer", opacity: saving ? 0.5 : 1 }}>
+              <input
+                type="radio"
+                name={`repo-auto-push-tags-${repoId}`}
+                checked={checked}
+                disabled={saving}
+                onChange={() => setOverride(opt === "inherit" ? null : opt === "on")}
+              />
+              <span style={{ fontSize: "var(--fz-lg)" }}>
+                {opt === "inherit"
+                  ? `Inherit from global (currently ${globalEnabled ? "on" : "off"})`
+                  : opt === "on" ? "On" : "Off"}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: 4 }}>
+        Whether pushes take the tags on their commits along, and a tag created
+        on an already-pushed commit is pushed immediately. Per-repo because
+        "tags are releases" is a property of a repo — e.g. keep it off
+        globally, on for repos whose tags should always be public.
       </div>
     </Section>
   );

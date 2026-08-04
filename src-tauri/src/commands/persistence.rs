@@ -282,6 +282,18 @@ pub async fn set_commit_avatars(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn set_auto_push_tags(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state.mutate_global(|s| {
+        s.auto_push_tags = enabled;
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn set_diff_syntax_highlighting(
     state: tauri::State<'_, AppState>,
     enabled: bool,

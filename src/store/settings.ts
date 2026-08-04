@@ -15,6 +15,7 @@ import {
   setAutoFetchIntervalMinutes,
   setExternalEditorCommand,
   setCommitAvatars,
+  setAutoPushTags,
   setDiffSyntaxHighlighting,
   setCommitDateAbsolute,
   setCommitDateFormat,
@@ -116,6 +117,7 @@ interface SettingsStore {
   setAutoFetchIntervalMinutes: (minutes: number) => Promise<void>;
   setExternalEditorCommand: (command: string | null) => Promise<void>;
   setCommitAvatars: (enabled: boolean) => Promise<void>;
+  setAutoPushTags: (enabled: boolean) => Promise<void>;
   setDiffSyntaxHighlighting: (enabled: boolean) => Promise<void>;
   setCommitDateAbsolute: (enabled: boolean) => Promise<void>;
   setCommitDateFormat: (format: CommitDateFormat) => Promise<void>;
@@ -254,6 +256,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     await setCommitAvatars(enabled);
     const s = get().settings;
     if (s) set({ settings: { ...s, commit_avatars: enabled } });
+  },
+
+  async setAutoPushTags(enabled) {
+    await setAutoPushTags(enabled);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, auto_push_tags: enabled } });
   },
 
   async setDiffSyntaxHighlighting(enabled) {

@@ -31,7 +31,6 @@ import {
   repoResolveCommit,
   repoSearchCommits,
   repoPull,
-  repoPush,
   repoSignaturePresence,
   repoStatus,
   repoTrackingStatus,
@@ -47,6 +46,7 @@ import type { Branch, Commit, CommitId, FileStatus, MergeOptions, PullStrategy, 
 import { useRemoteProgressStore } from "../../store/remoteProgress";
 import { formatAppError } from "../../lib/types";
 import { remoteOpErrorMessage } from "../../lib/pushFeedback";
+import { pushWithTagFollowUp } from "../../lib/autoPushTags";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { notify } from "../../store/notifications";
 import { BranchIcon, BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon, RemoteIcon, SignedIcon, StashIcon, TagIcon } from "../../icons";
@@ -2147,7 +2147,9 @@ function RemoteSyncToolbar({
     };
     return runSync(
       "push",
-      (opId) => repoPush(repoId, opts, opId),
+      // Auto-push-tags follow-up rides inside the op (gated on the setting);
+      // its failures toast separately and never fail the push.
+      (opId) => pushWithTagFollowUp(queryClient, repoId, opts, opId),
       hasUpstream ? `Pushed to ${remote}` : "Published branch",
     );
   };

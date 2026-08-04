@@ -25,7 +25,6 @@ import {
   repoDropStash,
   repoMerge,
   repoPopStash,
-  repoPush,
   repoPushTag,
   repoRebase,
   repoRenameBranch,
@@ -44,6 +43,7 @@ import { notify } from "../../store/notifications";
 import { useSettingsStore } from "../../store/settings";
 import { notifySwitchOutcome, notifySwitchError } from "../../lib/switchFeedback";
 import { remoteOpErrorMessage } from "../../lib/pushFeedback";
+import { autoPushTagAfterCreate, pushWithTagFollowUp } from "../../lib/autoPushTags";
 import {
   notifyMergeOutcome,
   notifyOpError,
@@ -227,7 +227,8 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
         const repo = repoOf();
         if (!repo) return;
         try {
-          await repoPush(
+          await pushWithTagFollowUp(
+            queryClient,
             repo.id,
             {
               remote,
@@ -326,6 +327,8 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
         try {
           await repoCreateTag(repo.id, name, target, message ?? undefined);
           invalidate(repo.id, TAG_DOMAINS);
+          // Create-time auto-push trigger (gated on the setting inside).
+          void autoPushTagAfterCreate(queryClient, repo.id, name);
         } catch (e) {
           notify.error(formatAppError(e));
         }
