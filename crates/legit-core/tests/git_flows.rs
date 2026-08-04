@@ -3802,3 +3802,37 @@ async fn stale_preview_lock_blocks_the_preview() {
         "a stale preview lock must surface as an error, not a silent empty preview"
     );
 }
+
+#[tokio::test]
+async fn console_color_flag_yields_ansi_on_pipes_but_not_in_porcelain() {
+    // The Git Console injects `-c color.ui=always` so a human sees coloured
+    // output despite the piped (non-TTY) stdout, where `color.ui=auto`
+    // resolves to off. Two assumptions ride on that flag and are pinned
+    // here against the real binary: (1) `always` really does force ANSI
+    // codes through a pipe, and (2) machine formats (`--porcelain`) stay
+    // clean even under `always`, so the flag can be injected unconditionally.
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("base").await;
+    repo.write("a.txt", "two\n");
+
+    let colored = repo.git(&["-c", "color.ui=always", "diff"]).await;
+    assert!(
+        colored.contains('\u{1b}'),
+        "color.ui=always must emit ANSI escapes on a piped diff, got: {colored:?}"
+    );
+
+    let plain = repo.git(&["diff"]).await;
+    assert!(
+        !plain.contains('\u{1b}'),
+        "without the flag a piped diff must stay uncoloured (auto -> off), got: {plain:?}"
+    );
+
+    let porcelain = repo
+        .git(&["-c", "color.ui=always", "status", "--porcelain"])
+        .await;
+    assert!(
+        !porcelain.contains('\u{1b}'),
+        "porcelain output must stay machine-clean under color.ui=always, got: {porcelain:?}"
+    );
+}

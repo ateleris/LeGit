@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useQueryClient } from "@tanstack/react-query";
 import { useSettingsStore, UI_FONT_SIZE_DEFAULT } from "../store/settings";
 import { useRepoStore } from "../store/repos";
 import { useSummonStore } from "../store/summon";
 import { useGitLogStore } from "../store/gitLog";
+import { useConsoleStore } from "../store/console";
 import { useRemoteProgressStore } from "../store/remoteProgress";
-import { onGitInvocation, onRemoteProgress } from "../lib/events";
+import { onConsoleOutput, onGitInvocation, onRemoteProgress } from "../lib/events";
 import { useRepoChangeListener } from "../lib/useRepoChangeListener";
 import { useAutoFetch } from "../lib/useAutoFetch";
 import type { RegionPlacement } from "../lib/types";
@@ -72,6 +74,30 @@ export function AppLayout() {
       unlisten?.();
     };
   }, []);
+
+  // Feed the per-repo console sessions. Subscribed here (not in the Console
+  // panel) so a command running in a background repo keeps receiving output
+  // even while another repo is active or the panel is closed. Completion
+  // invalidates the OWNING repo's cache (§5.3), which need not be the
+  // active one.
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    onConsoleOutput((payload) => {
+      const result = useConsoleStore.getState().handleBatch(payload);
+      if (result?.finished) {
+        queryClient.invalidateQueries({ queryKey: [result.repoId] });
+      }
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [queryClient]);
 
   // Feed the remote-progress store (sync toolbar / clone form meters).
   useEffect(() => {

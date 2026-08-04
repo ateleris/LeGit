@@ -11,9 +11,11 @@ import {
   getRepoSettings as getRepoSettingsCmd,
   updateRepoSettings as updateRepoSettingsCmd,
 } from "../lib/commands";
+import { consoleCancel } from "../lib/commands";
 import type { CloneOptions, InitOptions } from "../lib/commands";
 import type { RepoId, RepoSettings, RepoSummary } from "../lib/types";
 import { pickNextActive, pushActivation } from "./repoActivation";
+import { useConsoleStore } from "./console";
 
 interface RepoStore {
   openRepos: RepoSummary[];
@@ -172,7 +174,19 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
   },
 
   async closeRepo(id: RepoId) {
+    // A running (or pager-paused, i.e. pipe-blocked) console command must
+    // die with its repo - and the cancel needs the repo session, so it goes
+    // BEFORE the backend close.
+    const opId = useConsoleStore.getState().sessions[id]?.opId;
+    if (opId) {
+      await consoleCancel(id, opId).catch(() => {
+        /* already finished */
+      });
+    }
     await closeRepoCmd(id);
+    // The console session is repo-scoped state: a closed repo's scrollback
+    // must not linger (or resurrect if the repo is reopened later).
+    useConsoleStore.getState().dropRepo(id);
     await get().refresh();
   },
 

@@ -132,7 +132,12 @@ export type RunnerEvent =
 
 export interface ConsoleEventPayload {
   op_id: string;
-  event: RunnerEvent;
+  /** Every event that arrived within the backend's flush window, in order
+   *  (the runner's line-per-event stream is batched before crossing IPC). */
+  events: RunnerEvent[];
+  /** True when the op is paused out of stdout credit (the pager's
+   *  "-- More --" state); continue it via `consoleFeed`. */
+  paused: boolean;
 }
 
 export interface ConsoleExecHandle {

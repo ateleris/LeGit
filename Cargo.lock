@@ -1869,6 +1869,7 @@ dependencies = [
  "legit-providers",
  "notify",
  "notify-debouncer-full",
+ "regex",
  "serde",
  "serde_json",
  "sha2",

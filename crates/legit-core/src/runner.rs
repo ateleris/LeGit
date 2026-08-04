@@ -545,11 +545,17 @@ impl GitRunner {
     /// Stream stdout/stderr line-by-line through `events_tx`.
     ///
     /// Sends `RunnerEvent::Finished` exactly once before returning.
+    ///
+    /// The channel is BOUNDED (capacity chosen by the caller): when the
+    /// receiver stops consuming, the reader tasks block on `send`, the OS
+    /// pipe fills, and git itself blocks on write - the same backpressure a
+    /// pager applies. The Git Console's paging (`-- More --`) is built on
+    /// this; a consumer that always drains promptly is unaffected.
     pub async fn stream(
         &self,
         args: &[&str],
         op_id: OperationId,
-        events_tx: mpsc::UnboundedSender<RunnerEvent>,
+        events_tx: mpsc::Sender<RunnerEvent>,
     ) -> Result<i32, RunnerError> {
         let started = Instant::now();
         let mut cmd = self.build_command(args);
@@ -573,7 +579,7 @@ impl GitRunner {
         let stdout_task = tokio::spawn(async move {
             let mut lines = BufReader::new(stdout).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                if stdout_tx.send(RunnerEvent::Stdout { line }).is_err() {
+                if stdout_tx.send(RunnerEvent::Stdout { line }).await.is_err() {
                     break;
                 }
             }
@@ -583,7 +589,7 @@ impl GitRunner {
         let stderr_task = tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                if stderr_tx.send(RunnerEvent::Stderr { line }).is_err() {
+                if stderr_tx.send(RunnerEvent::Stderr { line }).await.is_err() {
                     break;
                 }
             }
@@ -593,7 +599,18 @@ impl GitRunner {
             _ = kill_rx => {
                 warn!(op_id = %op_id, "streaming git invocation cancelled — killing child");
                 let _ = child.start_kill();
-                child.wait().await.map_err(RunnerError::Io)?
+                let status = child.wait().await.map_err(RunnerError::Io)?;
+                // The kill hits only the direct child, but git spawns its
+                // own children that inherit the pipes (Git for Windows'
+                // `cmd\git.exe` shim wraps the real git; git forks helpers
+                // like pack-objects). Waiting for pipe EOF would wait for
+                // an orphan's ENTIRE remaining output — seconds after a
+                // cancel. Abort the readers instead: dropping our read
+                // ends kills an orphaned writer on its next write (broken
+                // pipe), exactly like quitting a pager does.
+                stdout_task.abort();
+                stderr_task.abort();
+                status
             }
             status = child.wait() => {
                 status.map_err(RunnerError::Io)?
@@ -602,18 +619,20 @@ impl GitRunner {
 
         self.remove_running(&op_id);
 
-        // Drain reader tasks.
+        // Drain reader tasks (resolve immediately when aborted above).
         let _ = stdout_task.await;
         let _ = stderr_task.await;
 
         let exit_code = status.code();
         log_invocation(self.cwd.as_deref(), args, started, exit_code, status.success(), "<streamed>");
 
-        let _ = events_tx.send(RunnerEvent::Finished {
-            exit_code,
-            success: status.success(),
-            duration_ms: started.elapsed().as_millis() as u64,
-        });
+        let _ = events_tx
+            .send(RunnerEvent::Finished {
+                exit_code,
+                success: status.success(),
+                duration_ms: started.elapsed().as_millis() as u64,
+            })
+            .await;
 
         Ok(exit_code.unwrap_or(-1))
     }
@@ -975,6 +994,58 @@ mod tests {
         // Once released, the id is usable again.
         let out = runner.run_with_op(&["--version"], id).await.unwrap();
         assert!(out.success);
+    }
+
+    /// Cancelling a stream must return promptly even when the killed child
+    /// left behind children that inherited the pipes (Git for Windows'
+    /// `cmd\git.exe` shim wraps the real git; git forks helpers). Waiting
+    /// for pipe EOF would wait for the orphan's whole remaining output -
+    /// the "q takes a second" console bug. The runner aborts its readers on
+    /// cancel instead, which also kills the orphan via broken pipe. Modeled
+    /// with `sh`: the direct child is killed, a backgrounded subshell keeps
+    /// the pipe open for 5s.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stream_cancel_returns_promptly_despite_orphaned_pipe_holders() {
+        let dir = tempfile::tempdir().unwrap();
+        let runner = GitRunner::for_repo("sh", dir.path());
+        let (tx, mut rx) = mpsc::channel(16);
+        let op = OperationId::new();
+        let op_for_cancel = op.clone();
+
+        let runner_for_stream = runner.clone();
+        let stream = tokio::spawn(async move {
+            runner_for_stream
+                .stream(
+                    &["-c", "(sleep 5; echo orphan) & echo started; sleep 5"],
+                    op,
+                    tx,
+                )
+                .await
+        });
+
+        // Wait until the child is demonstrably running.
+        loop {
+            match rx.recv().await.expect("stream ended before start marker") {
+                RunnerEvent::Stdout { line } if line == "started" => break,
+                _ => {}
+            }
+        }
+
+        let started = Instant::now();
+        assert!(runner.cancel(&op_for_cancel));
+        loop {
+            match rx.recv().await {
+                Some(RunnerEvent::Finished { .. }) | None => break,
+                Some(_) => {}
+            }
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "cancel waited on the orphaned pipe holder ({} ms)",
+            started.elapsed().as_millis()
+        );
+        let _ = stream.await;
     }
 
     /// Per-invocation env overrides must be applied AFTER the hardened base

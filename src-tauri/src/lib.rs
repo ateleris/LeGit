@@ -50,6 +50,7 @@ pub fn run() {
         commands::set_watcher_enabled,
         commands::console_exec,
         commands::console_cancel,
+        commands::console_feed,
         commands::credential_respond,
         commands::credential_cancel,
         commands::git_status_check,

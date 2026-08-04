@@ -162,11 +162,15 @@ export const setWatcherEnabled = (enabled: boolean) =>
 
 // --- console ---
 
-export const consoleExec = (repoId: string, command: string) =>
-  invoke<ConsoleExecHandle>("console_exec", { repoId, command });
+export const consoleExec = (repoId: string, command: string, initialCredit?: number) =>
+  invoke<ConsoleExecHandle>("console_exec", { repoId, command, initialCredit });
 
 export const consoleCancel = (repoId: string, opId: string) =>
   invoke<boolean>("console_cancel", { repoId, opId });
+
+/** Grant a paused console op more stdout-line credit (pager "next page"). */
+export const consoleFeed = (opId: string, lines: number) =>
+  invoke<boolean>("console_feed", { opId, lines });
 
 // --- in-app git credential prompt ---
 

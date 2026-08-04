@@ -36,6 +36,8 @@ specta = { workspace = true }
 specta-typescript = { workspace = true }
 
 shlex = "1"
+# Console `| grep` stages (the console is not a shell; grep is built in).
+regex = "1"
 which = "8"
 sha2 = "0.10"
 # OS keychain for the in-app git credential prompt ("remember" checkbox).
@@ -46,6 +48,8 @@ ignore = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
+# test-util: paused-time (`start_paused`) for the console pump's paging tests.
+tokio = { workspace = true, features = ["test-util"] }
 
 [features]
 # Used by tauri-build to emit cfg flags.
