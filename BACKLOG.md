@@ -201,6 +201,19 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   Deferred by decision: Markdown/HTML output, conventional-commit grouping,
   merge filtering, templates, `git describe`-based default tag. Pick up only
   if the plain list proves insufficient.
+- **Internationalization: decide want/need (2026-08-04).** Open product
+  question, not a commitment: is a non-English UI worth it for LeGit's
+  audience? Today every user-facing string is hardcoded English. Inputs for
+  the decision: who the users are (git terminology stays English in most
+  clients anyway - "commit", "rebase", "stash" are rarely translated);
+  git's own stderr/messages surface untranslated in toasts and the Git
+  Command Log regardless, so a translated chrome around English git output
+  may feel half-done; effort is a full string extraction pass (hundreds of
+  inline strings across panels) plus a library choice (react-i18next /
+  lingui) and a process for keeping catalogs current. The 2026-08-04
+  panel-title centralization (`PANEL_TITLES` in `registry.tsx`) shows the
+  shape a string catalog would take and would be its first consumer. If the
+  answer is "not needed", record that decision here and drop the item.
 - **Submodules:** nested-tree overview (deliberately flat for now);
   hide-the-Refs-pane-when-no-gitlinks (paneview layouts persist panes);
   `--shallow-submodules` on clone when depth + submodules are both set

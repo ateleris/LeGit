@@ -55,7 +55,7 @@ export const REPO_PANELS: PanelDescriptor[] = [
   { id: "console", title: "Git Console", scope: "repo" },
   {
     id: "git-log",
-    title: "Git Log",
+    title: "Git Command Log",
     scope: "repo",
     defaultPlacement: { direction: "below", referencePanel: "log" },
   },
@@ -171,6 +171,14 @@ export const REPO_PANELS: PanelDescriptor[] = [
 
 /** All panels, for menus that need to enumerate both docks. */
 export const ALL_PANELS = [...GLOBAL_PANELS, ...REPO_PANELS];
+
+/** Tab title per panel id - the single source of truth for titles. Every
+ *  other place a title surfaces (persisted layouts, the baked defaults, the
+ *  programmatic fallback builders) resolves through this map, so renaming a
+ *  panel is a one-line change to its descriptor above. */
+export const PANEL_TITLES: Readonly<Record<string, string>> = Object.fromEntries(
+  ALL_PANELS.map((p) => [p.id, p.title]),
+);
 
 /**
  * Detail/secondary panels that appear via `summon` and that the user may opt

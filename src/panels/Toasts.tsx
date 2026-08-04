@@ -35,7 +35,7 @@ function Toast({ toast, onDismiss }: { toast: Notification; onDismiss: () => voi
           useSummonStore.getState().summon("git-log");
           onDismiss();
         }}
-        title="Open the Git Log for details"
+        title="Open the Git Command Log for details"
       >
         <span className="legit-toast__msg">{toast.message}</span>
       </button>

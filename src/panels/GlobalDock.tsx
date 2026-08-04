@@ -5,7 +5,7 @@ import {
   type DockviewReadyEvent,
 } from "dockview-react";
 import { applyPanelConstraints, useDockviewStore } from "../store/dockview";
-import { GLOBAL_DOCKVIEW_COMPONENTS, GLOBAL_DOCKVIEW_TAB_COMPONENTS, GLOBAL_PANELS } from "./registry";
+import { GLOBAL_DOCKVIEW_COMPONENTS, GLOBAL_DOCKVIEW_TAB_COMPONENTS, GLOBAL_PANELS, PANEL_TITLES } from "./registry";
 import { applyBakedGlobalLayout, applyGlobalLayoutJson } from "./layoutSnapshot";
 
 const LAYOUT_KEY = "legit.global-dock-layout";
@@ -88,19 +88,19 @@ export function buildDefaultGlobalLayout(api: DockviewApi) {
   api.addPanel({
     id: "repositories",
     component: "repositories",
-    title: "Repositories",
+    title: PANEL_TITLES["repositories"],
   });
   api.addPanel({
     id: "theme-editor",
     component: "theme-editor",
-    title: "Theme Editor",
+    title: PANEL_TITLES["theme-editor"],
     position: { referencePanel: "repositories", direction: "right" },
   });
   api.addPanel({
     id: "global-settings",
     component: "global-settings",
     tabComponent: "confirm-close",
-    title: "Global Settings",
+    title: PANEL_TITLES["global-settings"],
     position: { referencePanel: "theme-editor", direction: "within" },
   });
 }

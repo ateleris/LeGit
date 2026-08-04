@@ -98,6 +98,39 @@ describe("sanitizeDockviewLayout", () => {
     expect(out.activeGroup).toBeUndefined();
   });
 
+  it("rewrites persisted panel titles from the registry titles map", () => {
+    // Layouts persist titles verbatim, so a registry rename (e.g. "Git Log"
+    // to "Git Command Log") must be re-applied on restore or existing saved
+    // layouts keep the stale tab title forever.
+    const layout = {
+      grid: { root: { type: "branch", data: [leaf("1", ["log", "diff"])], size: 100 } },
+      panels: {
+        log: { id: "log", contentComponent: "log", title: "Stale Title" },
+        diff: panel("diff"),
+      },
+      activeGroup: "1",
+    };
+    const out = sanitizeDockviewLayout(layout, KNOWN, { log: "Fresh Title" }) as {
+      panels: Record<string, { title: string }>;
+    };
+    expect(out.panels.log.title).toBe("Fresh Title");
+    // Panels without a registry entry keep their persisted title.
+    expect(out.panels.diff.title).toBe("diff");
+  });
+
+  it("injects a title into panels persisted without one", () => {
+    // The baked default layouts omit titles entirely (registry-owned), and
+    // dockview would otherwise fall back to showing the raw panel id.
+    const layout = {
+      grid: { root: leaf("1", ["log"]) },
+      panels: { log: { id: "log", contentComponent: "log" } },
+    };
+    const out = sanitizeDockviewLayout(layout, KNOWN, { log: "Commits" }) as {
+      panels: Record<string, { title?: string }>;
+    };
+    expect(out.panels.log.title).toBe("Commits");
+  });
+
   it("returns null when nothing usable remains or the shape is foreign", () => {
     const layout = {
       grid: { root: leaf("1", ["search"]) },

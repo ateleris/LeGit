@@ -16,7 +16,11 @@ import {
 // Only the RepoLayoutEnvelope TYPE flows back into defaultLayouts - no
 // runtime cycle.
 import { DEFAULT_GLOBAL_LAYOUT, DEFAULT_REPO_LAYOUT } from "./defaultLayouts";
-import { GLOBAL_DOCKVIEW_COMPONENTS, REPO_DOCKVIEW_COMPONENTS } from "./registry";
+import {
+  GLOBAL_DOCKVIEW_COMPONENTS,
+  PANEL_TITLES,
+  REPO_DOCKVIEW_COMPONENTS,
+} from "./registry";
 
 export const SAVED_REPO_LAYOUT_KEY = "legit.repo-dock-layout-default";
 export const SAVED_GLOBAL_LAYOUT_KEY = "legit.global-dock-layout-default";
@@ -77,10 +81,15 @@ export function parseRepoLayoutEnvelope(raw: string | null): RepoLayoutEnvelope 
  * layout to the default. Returns the cleaned layout, or null when nothing
  * usable remains (callers fall back to the default). Pure so the pruning
  * rules are unit-tested.
+ *
+ * `titles` (registry title per component) overrides each surviving panel's
+ * persisted title: layouts store titles verbatim, so without this a panel
+ * rename in the registry would never reach existing saved layouts.
  */
 export function sanitizeDockviewLayout(
   json: unknown,
   knownComponents: ReadonlySet<string>,
+  titles?: Readonly<Record<string, string>>,
 ): unknown | null {
   const layout = json as {
     grid?: { root?: unknown };
@@ -93,7 +102,9 @@ export function sanitizeDockviewLayout(
   const panels: Record<string, unknown> = {};
   for (const [id, p] of Object.entries(layout.panels)) {
     const component = (p as { contentComponent?: unknown } | null)?.contentComponent;
-    if (typeof component === "string" && knownComponents.has(component)) panels[id] = p;
+    if (typeof component !== "string" || !knownComponents.has(component)) continue;
+    const title = titles?.[component];
+    panels[id] = title !== undefined ? { ...(p as object), title } : p;
   }
 
   const groupIds = new Set<string>();
@@ -178,7 +189,7 @@ export function captureRepoLayoutEnvelope(api: DockviewApi): RepoLayoutEnvelope 
 export function applyRepoLayoutEnvelope(api: DockviewApi, envelope: RepoLayoutEnvelope): boolean {
   // Retired panels are pruned first - a stale reference would make fromJSON
   // throw and nuke the whole layout.
-  const dockview = sanitizeDockviewLayout(envelope.dockview, REPO_COMPONENT_IDS);
+  const dockview = sanitizeDockviewLayout(envelope.dockview, REPO_COMPONENT_IDS, PANEL_TITLES);
   if (dockview === null) return false;
   const { capturePlacement, captureFallback } = useSummonStore.getState();
   for (const [panelId, groupId] of Object.entries(envelope.placements)) {
@@ -230,7 +241,7 @@ export function applySavedRepoLayout(api: DockviewApi): boolean {
  * Shared by the startup restore, the saved default, and the baked default.
  */
 export function applyGlobalLayoutJson(api: DockviewApi, json: unknown): boolean {
-  const layout = sanitizeDockviewLayout(json, GLOBAL_COMPONENT_IDS);
+  const layout = sanitizeDockviewLayout(json, GLOBAL_COMPONENT_IDS, PANEL_TITLES);
   if (layout === null) return false;
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

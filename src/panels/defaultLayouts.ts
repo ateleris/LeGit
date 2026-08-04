@@ -9,6 +9,11 @@
 //
 // Sizes are the capture-time pixels; dockview re-scales the grid
 // proportionally to the actual window on fromJSON.
+//
+// Panel entries deliberately carry NO `title`: tab titles live only in the
+// panel registry, and the apply path (sanitizeDockviewLayout) injects them
+// from there. When re-capturing these layouts from a live dockview, strip
+// the `title` fields again - defaultLayouts.test.ts enforces this.
 
 import type { RepoLayoutEnvelope } from "./layoutSnapshot";
 
@@ -46,20 +51,19 @@ export const DEFAULT_REPO_LAYOUT: RepoLayoutEnvelope = {
       orientation: "HORIZONTAL",
     },
     panels: {
-      "git-log": { id: "git-log", contentComponent: "git-log", title: "Git Log" },
-      refs: { id: "refs", contentComponent: "refs", title: "Refs" },
+      "git-log": { id: "git-log", contentComponent: "git-log" },
+      refs: { id: "refs", contentComponent: "refs" },
       "repo-settings": {
         id: "repo-settings",
         contentComponent: "repo-settings",
         tabComponent: "confirm-close",
-        title: "Repo Settings",
       },
-      log: { id: "log", contentComponent: "log", title: "Commits" },
-      "commit-details": { id: "commit-details", contentComponent: "commit-details", title: "Commit Details" },
-      "working-changes": { id: "working-changes", contentComponent: "working-changes", title: "Working Changes" },
-      "file-view": { id: "file-view", contentComponent: "file-view", title: "File View" },
-      blame: { id: "blame", contentComponent: "blame", title: "Blame" },
-      diff: { id: "diff", contentComponent: "diff", title: "Diff" },
+      log: { id: "log", contentComponent: "log" },
+      "commit-details": { id: "commit-details", contentComponent: "commit-details" },
+      "working-changes": { id: "working-changes", contentComponent: "working-changes" },
+      "file-view": { id: "file-view", contentComponent: "file-view" },
+      blame: { id: "blame", contentComponent: "blame" },
+      diff: { id: "diff", contentComponent: "diff" },
     },
     activeGroup: "7",
   },
@@ -122,13 +126,12 @@ export const DEFAULT_GLOBAL_LAYOUT: unknown = {
     orientation: "HORIZONTAL",
   },
   panels: {
-    repositories: { id: "repositories", contentComponent: "repositories", title: "Repositories" },
-    "theme-editor": { id: "theme-editor", contentComponent: "theme-editor", title: "Theme Editor" },
+    repositories: { id: "repositories", contentComponent: "repositories" },
+    "theme-editor": { id: "theme-editor", contentComponent: "theme-editor" },
     "global-settings": {
       id: "global-settings",
       contentComponent: "global-settings",
       tabComponent: "confirm-close",
-      title: "Global Settings",
     },
   },
   activeGroup: "3",

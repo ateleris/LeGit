@@ -29,7 +29,7 @@ function collectViews(node: GridNode, out: string[] = []): string[] {
 
 interface Layout {
   grid: { root: GridNode };
-  panels: Record<string, { contentComponent?: string; tabComponent?: string }>;
+  panels: Record<string, { contentComponent?: string; tabComponent?: string; title?: string }>;
 }
 
 function checkLayout(layout: Layout, panelIds: Set<string>, tabComponents: Set<string>) {
@@ -38,6 +38,9 @@ function checkLayout(layout: Layout, panelIds: Set<string>, tabComponents: Set<s
     expect(panelIds, `panel "${id}" is not in the registry`).toContain(id);
     const p = layout.panels[id];
     expect(p.contentComponent).toBe(id);
+    // Titles live only in the registry (the apply path injects them); a
+    // title here would be a stale duplicate from re-capturing the layout.
+    expect(p.title, `panel "${id}" must not carry a title`).toBeUndefined();
     if (p.tabComponent !== undefined) {
       expect(tabComponents, `tab component "${p.tabComponent}"`).toContain(p.tabComponent);
     }
