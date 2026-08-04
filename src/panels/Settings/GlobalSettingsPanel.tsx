@@ -97,6 +97,7 @@ export function GlobalSettingsPanel() {
           <BranchCreationSection />
           <BranchSwitchingSection />
           <PushGuardSection />
+          <AutoPushTagsSection />
           <SubmoduleAttachSection />
           <AutoRefreshSection />
           <AutoFetchSection />
@@ -1163,6 +1164,47 @@ function PushGuardSection() {
           </span>
         </label>
       </div>
+    </Section>
+  );
+}
+
+function AutoPushTagsSection() {
+  const enabled = useSettingsStore((s) => s.settings?.auto_push_tags ?? false);
+  const setAutoPushTags = useSettingsStore((s) => s.setAutoPushTags);
+  const [saving, setSaving] = useState(false);
+
+  const toggle = async () => {
+    setSaving(true);
+    try {
+      await setAutoPushTags(!enabled);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Auto-push tags">
+      <FieldNote>writes to: global settings — applies to all repos (repo-overridable)</FieldNote>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <input
+          type="checkbox"
+          id="global-auto-push-tags"
+          checked={enabled}
+          onChange={toggle}
+          disabled={saving}
+        />
+        <label htmlFor="global-auto-push-tags" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
+          Push tags with their commit automatically
+        </label>
+      </div>
+      <FieldNote>
+        Pushing a branch also pushes the tags whose commits became public
+        through that push, and a tag created on an already-pushed commit is
+        pushed immediately. Off by default: tag pushes commonly trigger CI
+        release pipelines, and removing a published tag is a separate,
+        deliberate action. Tags never overwrite a same-named tag on the
+        remote; older local-only tags are never swept along.
+      </FieldNote>
     </Section>
   );
 }

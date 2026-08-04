@@ -40,7 +40,10 @@ import { formatAppError } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { autoUpdateSubmodules } from "../../lib/submodules";
 import { notify } from "../../store/notifications";
+import { useSettingsStore } from "../../store/settings";
 import { notifySwitchOutcome, notifySwitchError } from "../../lib/switchFeedback";
+import { remoteOpErrorMessage } from "../../lib/pushFeedback";
+import { autoPushTagAfterCreate, pushWithTagFollowUp } from "../../lib/autoPushTags";
 import {
   notifyMergeOutcome,
   notifyOpError,
@@ -52,6 +55,10 @@ import { splitRemoteRef } from "../../lib/branchGroups";
 
 // Switching can create/consume an auto-stash, so "stashes" is invalidated too.
 export const BRANCH_DOMAINS = ["branches", "log", "status", "tracking", "stashes"] as const;
+// Push moves remote-tracking refs; "tags" because the tag list's per-tag
+// `target_on_remote` flag is computed against them (same set as the sync
+// toolbar's invalidation).
+export const PUSH_DOMAINS = ["log", "branches", "status", "tracking", "tags"] as const;
 export const STASH_DOMAINS = ["stashes", "log", "status"] as const;
 export const TAG_DOMAINS = ["tags", "log"] as const;
 
@@ -211,6 +218,35 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
         }
       },
 
+      // Pushes a branch - checked out or not (the backend addresses the full
+      // refs/heads/ refspec). `setUpstream` publishes: the target remote
+      // becomes the branch's upstream. Feedback is toast-based like the other
+      // menu actions; the classified remote errors share the sync toolbar's
+      // wording via remoteOpErrorMessage.
+      handleBranchPush: async (branch: string, remote: string, setUpstream: boolean) => {
+        const repo = repoOf();
+        if (!repo) return;
+        try {
+          await pushWithTagFollowUp(
+            queryClient,
+            repo.id,
+            {
+              remote,
+              branch,
+              set_upstream: setUpstream,
+              force_with_lease: false,
+              recurse_submodules:
+                useSettingsStore.getState().settings?.push_recurse_submodules ?? null,
+            },
+            crypto.randomUUID(),
+          );
+          notify.success(`Pushed '${branch}' to ${remote}`);
+          invalidate(repo.id, PUSH_DOMAINS);
+        } catch (e) {
+          notify.error(remoteOpErrorMessage(e));
+        }
+      },
+
       // Deletes the branch ON THE REMOTE only (`git push --delete`) — any
       // local counterpart is untouched, mirroring remote tag deletion.
       handleRemoteBranchDelete: async (remoteRef: string) => {
@@ -291,6 +327,8 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
         try {
           await repoCreateTag(repo.id, name, target, message ?? undefined);
           invalidate(repo.id, TAG_DOMAINS);
+          // Create-time auto-push trigger (gated on the setting inside).
+          void autoPushTagAfterCreate(queryClient, repo.id, name);
         } catch (e) {
           notify.error(formatAppError(e));
         }

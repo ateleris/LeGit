@@ -50,14 +50,17 @@ interface RefsCellProps {
   tagTargetsOnRemote?: ReadonlySet<string>;
   /** Default remote tags are pushed to (chip menu label), or null when none exists. */
   tagRemote?: string | null;
-  /** All configured remote names (multi-remote repos get a picker entry). */
-  tagRemotes?: string[];
+  /** All configured remote names (tag/branch push targets; multi-remote repos
+   *  get a picker entry). */
+  remotes?: string[];
   onTagPush?: (name: string, remote: string) => void;
   onTagDelete?: (name: string) => void;
   /** Deletes the tag on the given remote only (offered while pushed). */
   onTagDeleteRemote?: (name: string, remote: string) => void;
   onBranchCheckout?: (name: string) => void;
   onBranchRename?: (name: string) => void;
+  /** Push a local branch (checked out or not); `setUpstream` publishes. */
+  onBranchPush?: (name: string, remote: string, setUpstream: boolean) => void;
   /** Set (short remote ref) or clear (null) a local branch's upstream. */
   onBranchSetUpstream?: (name: string, upstream: string | null) => void;
   /** Existing same-name remote-tracking branches a local branch could track. */
@@ -80,7 +83,7 @@ interface RefsCellProps {
 const CHIP_GAP = 3;
 
 /** Renders ref decoration chips for a commit row. */
-export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, renamingBranch, onBranchRenameSave, onBranchRenameCancel, creatingBranch, onCreateBranchSave, onCreateBranchCancel, creatingTag, onCreateTagSave, onCreateTagCancel, pushedTags, tagTargetsOnRemote, tagRemote, tagRemotes, onTagPush, onTagDelete, onTagDeleteRemote, onBranchCheckout, onBranchRename, onBranchSetUpstream, upstreamCandidatesFor, onBranchDelete, onRemoteCheckout, onRemoteBranchDelete, currentBranch, opInProgress, onBranchMerge, onBranchRebaseOnto }: RefsCellProps) {
+export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, renamingBranch, onBranchRenameSave, onBranchRenameCancel, creatingBranch, onCreateBranchSave, onCreateBranchCancel, creatingTag, onCreateTagSave, onCreateTagCancel, pushedTags, tagTargetsOnRemote, tagRemote, remotes, onTagPush, onTagDelete, onTagDeleteRemote, onBranchCheckout, onBranchRename, onBranchPush, onBranchSetUpstream, upstreamCandidatesFor, onBranchDelete, onRemoteCheckout, onRemoteBranchDelete, currentBranch, opInProgress, onBranchMerge, onBranchRebaseOnto }: RefsCellProps) {
   const { openMenu, closeMenu } = usePanelContextMenu();
   const [visibleCount, setVisibleCount] = useState(Number.MAX_SAFE_INTEGER);
   const [popover, setPopover] = useState<{ x: number; y: number } | null>(null);
@@ -226,8 +229,10 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
             opInProgress={opInProgress ?? false}
             upstream={upstreamMap.get(localRef) ?? null}
             upstreamCandidates={upstreamCandidatesFor?.(localName) ?? []}
+            remotes={remotes ?? []}
             onCheckout={() => { closeMenu(); onBranchCheckout?.(localName); }}
             onRename={() => { closeMenu(); onBranchRename?.(localName); }}
+            onPush={(remote, setUpstream) => { closeMenu(); onBranchPush?.(localName, remote, setUpstream); }}
             onSetUpstream={(up) => { closeMenu(); onBranchSetUpstream?.(localName, up); }}
             onDelete={(force) => { closeMenu(); onBranchDelete?.(localName, force); }}
             onMerge={(options) => { closeMenu(); onBranchMerge?.(localName, options); }}
@@ -257,7 +262,7 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
             pushed={pushedTags?.has(tagName) ?? false}
             targetOnRemote={tagTargetsOnRemote?.has(tagName) ?? true}
             remote={tagRemote ?? null}
-            remotes={tagRemotes ?? []}
+            remotes={remotes ?? []}
             onPush={(remote) => { closeMenu(); onTagPush?.(tagName, remote); }}
             onDelete={() => { closeMenu(); onTagDelete?.(tagName); }}
             onDeleteRemote={(remote) => { closeMenu(); onTagDeleteRemote?.(tagName, remote); }}

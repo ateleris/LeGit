@@ -2518,6 +2518,75 @@ async fn push_publishes_branch_and_tracking_counts_ahead() {
 }
 
 #[tokio::test]
+async fn push_targets_a_non_checked_out_branch_even_with_a_same_named_tag() {
+    let (_keep, remote_path, url) = bare_remote().await;
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["remote", "add", "origin", &url]).await;
+
+    // A branch that is NOT checked out, plus a same-named tag: a bare-name
+    // refspec is ambiguous here ("src refspec matches more than one"), so the
+    // push must address refs/heads/ explicitly - this is what the branch
+    // context menu's "Push to …" relies on.
+    repo.git(&["branch", "feature"]).await;
+    repo.git(&["tag", "feature"]).await;
+    assert_eq!(repo.git(&["branch", "--show-current"]).await.trim(), "main");
+
+    repo.backend
+        .push(push_opts("feature", true, false), OperationId::new())
+        .await
+        .unwrap();
+
+    // The BRANCH arrived on the remote (not the tag), and --set-upstream
+    // configured tracking for the non-current branch.
+    let remote_runner = GitRunner::for_repo("git", &remote_path);
+    let refs = remote_runner
+        .run(&["for-each-ref", "--format=%(refname)"])
+        .await
+        .expect("spawn git");
+    assert!(refs.success, "{}", refs.stderr);
+    let names: Vec<&str> = refs.stdout.lines().collect();
+    assert!(names.contains(&"refs/heads/feature"), "{names:?}");
+    assert!(!names.contains(&"refs/tags/feature"), "tag must not be pushed: {names:?}");
+
+    let up = repo.git(&["rev-parse", "--abbrev-ref", "feature@{upstream}"]).await;
+    assert_eq!(up.trim(), "origin/feature");
+}
+
+#[tokio::test]
+async fn push_flips_the_tag_lists_target_on_remote_flag() {
+    // The auto-push-tags feature diffs `TagInfo::target_on_remote` around a
+    // push (snapshot before, recompute after; tags that flipped ride along).
+    // That depends on `git push` updating the LOCAL remote-tracking ref,
+    // which is what the tag list's `rev-list --tags --not --remotes` check
+    // reads - pin that assumption against the real binary.
+    let (_keep, _, url) = bare_remote().await;
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["remote", "add", "origin", &url]).await;
+    repo.git(&["tag", "v1"]).await;
+
+    let tags = repo.backend.tags().await.unwrap();
+    assert!(
+        !tags.iter().find(|t| t.name == "v1").unwrap().target_on_remote,
+        "before any push the tag target must be on no remote"
+    );
+
+    repo.backend
+        .push(push_opts("main", true, false), OperationId::new())
+        .await
+        .unwrap();
+
+    let tags = repo.backend.tags().await.unwrap();
+    assert!(
+        tags.iter().find(|t| t.name == "v1").unwrap().target_on_remote,
+        "the push must flip target_on_remote without a fetch"
+    );
+}
+
+#[tokio::test]
 async fn delete_remote_branch_removes_it_from_the_remote_only() {
     let (_keep, remote_path, url) = bare_remote().await;
     let repo = TestRepo::init().await;

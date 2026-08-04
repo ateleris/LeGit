@@ -255,6 +255,9 @@ export const setAutoFetchIntervalMinutes = (minutes: number) =>
 export const setCommitAvatars = (enabled: boolean) =>
   invoke<null>("set_commit_avatars", { enabled });
 
+export const setAutoPushTags = (enabled: boolean) =>
+  invoke<null>("set_auto_push_tags", { enabled });
+
 export const setDiffSyntaxHighlighting = (enabled: boolean) =>
   invoke<null>("set_diff_syntax_highlighting", { enabled });
 

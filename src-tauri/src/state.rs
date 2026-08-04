@@ -276,6 +276,13 @@ pub struct GlobalSettings {
     /// `git push --recurse-submodules` guard mode. `None` = off (no flag).
     #[serde(default)]
     pub push_recurse_submodules: Option<legit_core::PushRecurseMode>,
+    /// Auto-push tags with their commit (default OFF - tag pushes commonly
+    /// trigger CI release pipelines, so this is a deliberate opt-in): a push
+    /// also pushes the tags whose target commit became public through it, and
+    /// a tag created on an already-public commit is pushed immediately.
+    /// Repo-overridable (`RepoSettings::auto_push_tags`).
+    #[serde(default)]
+    pub auto_push_tags: bool,
     /// After LeGit-driven submodule updates, attach a detached submodule HEAD
     /// to a branch pointing at the same commit (configured branch first, else
     /// a unique local match). Opt-in; see
@@ -367,6 +374,7 @@ impl Default for GlobalSettings {
             pull_strategy: None,
             stash_include_untracked: false,
             push_recurse_submodules: None,
+            auto_push_tags: false,
             submodule_attach_branch: false,
             commit_avatars: false,
             diff_syntax_highlighting: false,
@@ -444,6 +452,9 @@ pub struct RepoSettings {
     /// Show remote-tracking branches in the commit tree (None = default ON).
     #[serde(default)]
     pub show_remote_branches: Option<bool>,
+    /// Per-repo override for auto-push tags (None = inherit global).
+    #[serde(default)]
+    pub auto_push_tags: Option<bool>,
 }
 
 // ---------------------------------------------------------------------------

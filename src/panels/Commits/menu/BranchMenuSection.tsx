@@ -1,7 +1,8 @@
 import { useConfirmDestructive } from "../../../store/settings";
 import { useSummonStore } from "../../../store/summon";
-import { useMenuConfirm, usePanelContextMenu } from "./PanelContextMenu";
+import { useMenuConfirm, useMenuPicker, usePanelContextMenu } from "./PanelContextMenu";
 import { MenuItem, Separator, SectionLabel, Submenu } from "./primitives";
+import { resolveBranchPushPlan } from "../../../lib/pushPlan";
 import type { MergeOptions } from "../../../lib/types";
 
 /** Short display/command form of an upstream ref: `refs/remotes/origin/dev`
@@ -88,8 +89,10 @@ export function BranchMenuSection({
   opInProgress,
   upstream,
   upstreamCandidates,
+  remotes,
   onCheckout,
   onRename,
+  onPush,
   onSetUpstream,
   onDelete,
   onMerge,
@@ -104,8 +107,13 @@ export function BranchMenuSection({
   /** Existing remote-tracking branches this branch could track (short names,
    *  e.g. "origin/feature") — same-name candidates computed by the caller. */
   upstreamCandidates: string[];
+  /** All configured remote names (push target resolution / picker). */
+  remotes: string[];
   onCheckout: () => void;
   onRename: () => void;
+  /** Push this branch (works for non-checked-out branches too). `setUpstream`
+   *  publishes: the pushed remote becomes the branch's upstream. */
+  onPush: (remote: string, setUpstream: boolean) => void;
   /** Set (short remote ref) or clear (null) the branch's upstream. */
   onSetUpstream: (upstream: string | null) => void;
   onDelete: (force: boolean) => void;
@@ -114,6 +122,8 @@ export function BranchMenuSection({
 }) {
   const confirmDestructive = useConfirmDestructive();
   const menuConfirm = useMenuConfirm();
+  const menuPicker = useMenuPicker();
+  const pushPlan = resolveBranchPushPlan(upstream, remotes);
 
   const requestDelete = (force: boolean) => {
     if (!confirmDestructive) {
@@ -134,6 +144,29 @@ export function BranchMenuSection({
       </MenuItem>
       <FilterGraphItem refName={name} />
       <MenuItem onClick={onRename}>Rename branch…</MenuItem>
+      {/* Push: any local branch can be pushed, checked out or not. A tracked
+          branch goes to its upstream's remote; an untracked one is published
+          (--set-upstream) - to the only remote, or via a picker when there
+          are several (the choice becomes the upstream, so it must be
+          deliberate). */}
+      {pushPlan.kind === "push" && (
+        <MenuItem onClick={() => onPush(pushPlan.remote, pushPlan.setUpstream)}>
+          {pushPlan.setUpstream
+            ? `Push to ${pushPlan.remote} (set upstream)`
+            : `Push to ${pushPlan.remote}`}
+        </MenuItem>
+      )}
+      {pushPlan.kind === "choose" && (
+        <MenuItem
+          onClick={() =>
+            menuPicker(`Push '${name}' to`, pushPlan.remotes, (remote) =>
+              onPush(remote, true),
+            )
+          }
+        >
+          Push to…
+        </MenuItem>
+      )}
       {/* Upstream (tracking) management: offer the existing same-name
           remote-tracking branches as targets; git requires the remote ref to
           already exist, so free-form input would only add failure modes. */}

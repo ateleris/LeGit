@@ -99,6 +99,24 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   `--renormalize` implies `-u`, so it also stages pending unstaged edits of
   tracked files - v1 warns with a count in the confirm step; a refinement
   could restrict the pathspec to files without unstaged edits.
+- **Auto-push tags with their commit** - **shipped 2026-08-04** (idea +
+  refinement + implementation same day). The invariant "a tag whose commit
+  is public is public", maintained going forward only, at two trigger
+  points: a push also pushes the tags whose target became public through it
+  (scoped by diffing `target_on_remote` around the push - never a repo-wide
+  sweep of older local tags), and a tag created on an already-public commit
+  is pushed immediately. Core: `src/lib/autoPushTags.ts`
+  (`resolveAutoPushTags` unit-tested; `pushWithTagFollowUp` wraps all three
+  branch-push sites; `autoPushTagAfterCreate` on both create sites). The
+  push-flips-`target_on_remote` assumption is pinned in
+  `tests/git_flows.rs`. Setting: global (`auto_push_tags`, default off - CI
+  release pipelines) + per-repo inherit/on/off override. Deliberately NOT
+  `--follow-tags` (annotated-only; row-menu tags are lightweight). Failure
+  isolation: tag-push problems toast separately, the branch push still
+  succeeds; a same-named remote tag with a different target is skipped with
+  a warning, never clobbered. Not built (add only if wanted): an explicit
+  one-time "publish all publishable tags" action for pre-existing local
+  tags.
 - **Git LFS-aware content views.** LeGit is already LFS-*compatible* for the
   core workflow (real git CLI inherits the user's `git-lfs` filters), but
   content views that read committed blobs (`git show <rev>:<path>` / diff at
@@ -158,6 +176,11 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   (needs per-commit message injection), warning when the plan rewrites
   pushed commits. (Reword beyond HEAD as a standalone feature was dropped
   2026-07-05 by decision - not planned.)
+- **Test the interactive rebase in the test repo** (`../LeGit-Test`): run the
+  feature manually against real histories - pick/squash/fixup/drop/reorder
+  plans, a plan that conflicts (resolve + continue, and abort), and skip -
+  verifying plan execution, conflict UX, and the resulting log match
+  expectations.
 - **E2E extensions.** Discard-with-confirm, branch create/switch, and stash
   create/pop specs added 2026-07-11 (awaiting their first CI runs). Still
   open: clone-via-"+"-menu flow, and push/pull against a local bare-remote

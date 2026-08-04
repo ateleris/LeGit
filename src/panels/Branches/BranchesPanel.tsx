@@ -25,6 +25,9 @@ import { ToolbarButton } from "../shared/ToolbarButton";
 import { segStyle } from "../shared/segmented";
 import { branchTreeRows, folderHoldsCurrent, leafName } from "./branchTree";
 import { notifySwitchOutcome, formatSwitchError } from "../../lib/switchFeedback";
+import { remoteOpErrorMessage } from "../../lib/pushFeedback";
+import { PUSH_DOMAINS } from "../Commits/useCommitActions";
+import { pushWithTagFollowUp } from "../../lib/autoPushTags";
 import { notifyMergeOutcome, notifyOpError, notifyRebaseOutcome } from "../../lib/mergeFeedback";
 import { notify } from "../../store/notifications";
 import { OP_DOMAINS, useOpState } from "../../lib/useOpState";
@@ -124,12 +127,13 @@ export function BranchesSection() {
     },
     onError: notifyOpError,
   });
-  // Remote-branch deletion is a genuine network op: busy may show
-  // immediately per convention (delayMs 0), guard still applies.
+  // Remote-branch deletion / push are genuine network ops: busy may show
+  // immediately per convention (delayMs 0), guard still applies. Failures
+  // get the classified remote wording (auth, rejected push, …).
   const { busy: netBusy, run: runNet } = usePanelRunner({
     enabled: !!repo,
     delayMs: 0,
-    onError: (e) => notify.error(formatAppError(e)),
+    onError: (e) => notify.error(remoteOpErrorMessage(e)),
   });
   const busy = mutBusy || switchBusy || opBusy || netBusy;
 
@@ -298,6 +302,30 @@ export function BranchesSection() {
     });
   }, [repo, remotes, queryClient, runNet]);
 
+  // Pushes a branch - checked out or not (the backend addresses the full
+  // refs/heads/ refspec). `setUpstream` publishes: the target remote becomes
+  // the branch's upstream.
+  const handleBranchPush = useCallback(async (branch: string, remote: string, setUpstream: boolean) => {
+    if (!repo) return;
+    await runNet(async () => {
+      await pushWithTagFollowUp(
+        queryClient,
+        repo.id,
+        {
+          remote,
+          branch,
+          set_upstream: setUpstream,
+          force_with_lease: false,
+          recurse_submodules:
+            useSettingsStore.getState().settings?.push_recurse_submodules ?? null,
+        },
+        crypto.randomUUID(),
+      );
+      notify.success(`Pushed '${branch}' to ${remote}`);
+      invalidateRepoDomains(queryClient, repo.id, PUSH_DOMAINS);
+    });
+  }, [repo, queryClient, runNet]);
+
   const handleMerge = useCallback(async (target: string, options: MergeOptions) => {
     await runOp(async () => {
       const outcome = await repoMerge(repo!.id, target, options);
@@ -364,8 +392,10 @@ export function BranchesSection() {
                     opInProgress={opInProgress}
                     upstream={b.upstream}
                     upstreamCandidates={upstreamCandidatesFor(b.name)}
+                    remotes={remotes.map((r) => r.name)}
                     onCheckout={() => { closeMenu(); doCheckout(b.name); }}
                     onRename={() => { closeMenu(); openRename(b); }}
+                    onPush={(remote, setUpstream) => { closeMenu(); void handleBranchPush(b.name, remote, setUpstream); }}
                     onSetUpstream={(up) => { closeMenu(); doSetUpstream(b.name, up); }}
                     onDelete={(force) => { closeMenu(); doDelete(b.name, force); }}
                     onMerge={(options) => { closeMenu(); handleMerge(b.name, options); }}

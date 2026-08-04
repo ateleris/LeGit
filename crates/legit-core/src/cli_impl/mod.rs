@@ -2981,7 +2981,12 @@ fn build_pull_args(opts: &PullOptions) -> Vec<String> {
 }
 
 /// Build the argument vector for `git push`. The remote and branch are always
-/// passed explicitly so the push doesn't depend on `push.default`.
+/// passed explicitly so the push doesn't depend on `push.default`, and the
+/// branch as the full `refs/heads/` refspec: a bare name is ambiguous the
+/// moment a tag shares it ("src refspec matches more than one") - the branch
+/// context menu pushes branches that are not checked out, where that clash is
+/// easy to hit. `--set-upstream` still applies (the refspec source resolves
+/// to the local branch).
 fn build_push_args(opts: &PushOptions) -> Vec<String> {
     let mut args: Vec<String> = vec!["push".into(), "--progress".into()];
     if let Some(mode) = opts.recurse_submodules {
@@ -2997,7 +3002,7 @@ fn build_push_args(opts: &PushOptions) -> Vec<String> {
         args.push("--set-upstream".into());
     }
     args.push(opts.remote.clone());
-    args.push(opts.branch.clone());
+    args.push(format!("refs/heads/{}", opts.branch));
     args
 }
 
@@ -4616,11 +4621,13 @@ mod tests {
         ));
     }
 
+    // The refspec is the full `refs/heads/<name>`: a bare name is ambiguous
+    // the moment a tag shares it ("src refspec matches more than one").
     #[test]
     fn push_args_plain() {
         assert_eq!(
             build_push_args(&push_opts(false, false)),
-            vec!["push", "--progress", "origin", "main"]
+            vec!["push", "--progress", "origin", "refs/heads/main"]
         );
     }
 
@@ -4628,7 +4635,7 @@ mod tests {
     fn push_args_set_upstream() {
         assert_eq!(
             build_push_args(&push_opts(true, false)),
-            vec!["push", "--progress", "--set-upstream", "origin", "main"]
+            vec!["push", "--progress", "--set-upstream", "origin", "refs/heads/main"]
         );
     }
 
@@ -4636,7 +4643,7 @@ mod tests {
     fn push_args_force_with_lease_then_upstream() {
         assert_eq!(
             build_push_args(&push_opts(true, true)),
-            vec!["push", "--progress", "--force-with-lease", "--set-upstream", "origin", "main"]
+            vec!["push", "--progress", "--force-with-lease", "--set-upstream", "origin", "refs/heads/main"]
         );
     }
 

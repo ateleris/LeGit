@@ -31,7 +31,6 @@ import {
   repoResolveCommit,
   repoSearchCommits,
   repoPull,
-  repoPush,
   repoSignaturePresence,
   repoStatus,
   repoTrackingStatus,
@@ -45,7 +44,9 @@ import { notifySwitchError } from "../../lib/switchFeedback";
 import { useOpState } from "../../lib/useOpState";
 import type { Branch, Commit, CommitId, FileStatus, MergeOptions, PullStrategy, PushOptions, Remote, RemoteTag, ResetMode, Signature, TagInfo, TrackingStatus } from "../../lib/types";
 import { useRemoteProgressStore } from "../../store/remoteProgress";
-import { formatAppError, gitErrorKind } from "../../lib/types";
+import { formatAppError } from "../../lib/types";
+import { remoteOpErrorMessage } from "../../lib/pushFeedback";
+import { pushWithTagFollowUp } from "../../lib/autoPushTags";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { notify } from "../../store/notifications";
 import { BranchIcon, BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon, RemoteIcon, SignedIcon, StashIcon, TagIcon } from "../../icons";
@@ -443,6 +444,7 @@ export function CommitsPanel() {
     handleRebaseOnto,
     handleBranchCheckout,
     handleBranchDelete,
+    handleBranchPush,
     handleSetUpstream,
     handleRemoteCheckout,
     handleCommitCheckout,
@@ -1562,8 +1564,10 @@ export function CommitsPanel() {
                               opInProgress={opInProgress}
                               upstream={branches.find((x) => !x.is_remote && x.name === b.name)?.upstream ?? null}
                               upstreamCandidates={upstreamCandidatesFor(b.name)}
+                              remotes={remoteNames}
                               onCheckout={() => { closeMenu(); handleBranchCheckout(b.name); }}
                               onRename={() => { closeMenu(); handleBranchRename(b.name); }}
+                              onPush={(remote, setUpstream) => { closeMenu(); handleBranchPush(b.name, remote, setUpstream); }}
                               onSetUpstream={(up) => { closeMenu(); handleSetUpstream(b.name, up); }}
                               onDelete={(force) => { closeMenu(); handleBranchDelete(b.name, force); }}
                               onMerge={(options) => { closeMenu(); handleMerge(b.name, options); }}
@@ -1641,12 +1645,13 @@ export function CommitsPanel() {
                             pushedTags={pushedTags}
                             tagTargetsOnRemote={tagTargetsOnRemote}
                             tagRemote={tagRemote}
-                            tagRemotes={remoteNames}
+                            remotes={remoteNames}
                             onTagPush={handleTagPush}
                             onTagDelete={handleTagDelete}
                             onTagDeleteRemote={handleTagDeleteRemote}
                             onBranchCheckout={handleBranchCheckout}
                             onBranchRename={handleBranchRename}
+                            onBranchPush={handleBranchPush}
                             onBranchSetUpstream={handleSetUpstream}
                             upstreamCandidatesFor={upstreamCandidatesFor}
                             onBranchDelete={handleBranchDelete}
@@ -2095,25 +2100,8 @@ function RemoteSyncToolbar({
         if (cancelRequestedRef.current) {
           // User cancelled — the failure is expected, no toast.
         } else {
-          const kindErr = gitErrorKind(e);
-          if (kindErr === "AuthFailed") {
-            notify.error(
-              "Authentication failed. Check this repo's git profile credentials " +
-                "(SSH key / credential helper) — a profile may need to be applied.",
-            );
-          } else if (kindErr === "PushRejected") {
-            notify.error(
-              "Push rejected — the remote has commits you don't have. Pull first, " +
-                "or use Force-push (with lease).",
-            );
-          } else if (kindErr === "UnpushedSubmodules") {
-            notify.error(
-              "Push blocked: a submodule has commits that exist on no remote. " +
-                "Push inside the submodule first, or set the guard to on-demand.",
-            );
-          } else {
-            notify.error(formatAppError(e));
-          }
+          // Classified wording shared with the branch menus' push action.
+          notify.error(remoteOpErrorMessage(e));
         }
       } finally {
         useRemoteProgressStore.getState().clear(opId);
@@ -2159,7 +2147,9 @@ function RemoteSyncToolbar({
     };
     return runSync(
       "push",
-      (opId) => repoPush(repoId, opts, opId),
+      // Auto-push-tags follow-up rides inside the op (gated on the setting);
+      // its failures toast separately and never fail the push.
+      (opId) => pushWithTagFollowUp(queryClient, repoId, opts, opId),
       hasUpstream ? `Pushed to ${remote}` : "Published branch",
     );
   };

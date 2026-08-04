@@ -71,6 +71,10 @@ export interface GlobalSettings {
   stash_include_untracked?: boolean;
   /** `push --recurse-submodules` guard mode (null = off). */
   push_recurse_submodules?: PushRecurseMode | null;
+  /** Auto-push tags with their commit (default off): a push also pushes the
+   * tags whose target commit became public through it, and a tag created on
+   * an already-public commit is pushed immediately. Repo-overridable. */
+  auto_push_tags?: boolean;
   submodule_attach_branch?: boolean;
   /** Show author Gravatars in the commit graph. OFF by default — enabling it
    * sends hashed author emails to gravatar.com. */
@@ -112,6 +116,8 @@ export interface RepoSettings {
   submodule_auto_update?: boolean | null;
   /** Show remote-tracking branches in the commit tree (null = default ON). */
   show_remote_branches?: boolean | null;
+  /** Per-repo override for auto-push tags (null = inherit global). */
+  auto_push_tags?: boolean | null;
 }
 
 export interface RestoreResult {
