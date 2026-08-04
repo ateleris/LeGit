@@ -99,6 +99,35 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   `--renormalize` implies `-u`, so it also stages pending unstaged edits of
   tracked files - v1 warns with a count in the confirm step; a refinement
   could restrict the pathspec to files without unstaged edits.
+- **Auto-push tags with their commit** (setting, default off; idea 2026-08-04,
+  refined with Simon 2026-08-04). One rule at two trigger points - the
+  invariant "a tag whose commit is public is public", maintained going
+  forward only:
+  (a) *push-time*: a successful branch push also pushes the tags whose target
+  commit became public through THAT push - scoped to the pushed range, NOT a
+  repo-wide sweep (tags predating the setting stay local: the user declined
+  to publish them back then; a "publish all publishable tags" could exist as
+  a separate explicit one-time action, never automatic);
+  (b) *create-time*: creating a tag whose target is already on the remote
+  pushes it immediately.
+  Design decisions:
+  - Do NOT use `--follow-tags`: it only moves annotated tags, and the row
+    menu creates lightweight tags - the in-app common case would silently
+    skip. Compute the tag set app-side instead. Elegant scoping without
+    range arithmetic: snapshot the tag list's `target_on_remote` flags
+    before the push, recompute after, push exactly the tags that flipped
+    false -> true (reuses existing logic, handles first publish for free).
+  - Global setting + per-repo override via the `RepoSettings` `Option<T>`
+    inherit pattern: "tags are releases" is a property of a repo, not the
+    user. Default off - tag pushes commonly trigger CI release/deploy
+    pipelines, and un-pushing a tag is sticky (remote deletion is separate;
+    anyone who fetched keeps it), so (b) removes the review pause between
+    "create tag" and "publish tag" and must be a deliberate opt-in.
+  - Failure isolation: branch push succeeds + tag push fails must still
+    report the push as successful, with a separate toast for the tag
+    (partial success is an outcome, not an error).
+  - Never force-push a tag: a same-named remote tag with a different target
+    is skipped with a warning, not clobbered.
 - **Git LFS-aware content views.** LeGit is already LFS-*compatible* for the
   core workflow (real git CLI inherits the user's `git-lfs` filters), but
   content views that read committed blobs (`git show <rev>:<path>` / diff at
@@ -158,6 +187,11 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   (needs per-commit message injection), warning when the plan rewrites
   pushed commits. (Reword beyond HEAD as a standalone feature was dropped
   2026-07-05 by decision - not planned.)
+- **Test the interactive rebase in the test repo** (`../LeGit-Test`): run the
+  feature manually against real histories - pick/squash/fixup/drop/reorder
+  plans, a plan that conflicts (resolve + continue, and abort), and skip -
+  verifying plan execution, conflict UX, and the resulting log match
+  expectations.
 - **E2E extensions.** Discard-with-confirm, branch create/switch, and stash
   create/pop specs added 2026-07-11 (awaiting their first CI runs). Still
   open: clone-via-"+"-menu flow, and push/pull against a local bare-remote
