@@ -23,8 +23,10 @@ export default defineConfig({
     // the default minifier is exactly that, so no explicit setting.
     outDir: "dist",
     // Tauri loads assets from disk — no network latency, so chunk size has no
-    // performance impact. Raise the limit to silence the irrelevant warning.
-    chunkSizeWarningLimit: 1000,
+    // performance impact. Raise the limit (default 1000) above the main
+    // chunk's current ~1.4 MB so the irrelevant warning stays silent but a
+    // genuine size regression (2 MB+) still surfaces.
+    chunkSizeWarningLimit: 2000,
   },
   test: {
     // The wdio E2E suite (e2e/) has its own runner; vitest must not collect it.

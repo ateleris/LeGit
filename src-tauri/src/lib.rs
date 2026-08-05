@@ -319,6 +319,25 @@ pub fn run() {
                 }
             }
 
+            // The main window is created hidden (`visible: false` in
+            // tauri.conf.json): the frontend shows it once the persisted
+            // theme has painted, so the first visible frame - splash
+            // included - is already themed (App.tsx). If the frontend never
+            // boots (bundle error, crashed webview) it can never call
+            // show(), so reveal the window after a grace period rather than
+            // leaving the app running invisibly.
+            if let Some(win) = app.get_webview_window("main") {
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(4));
+                    if !win.is_visible().unwrap_or(true) {
+                        tracing::warn!(
+                            "frontend did not reveal the main window in time - failsafe show"
+                        );
+                        let _ = win.show();
+                    }
+                });
+            }
+
             // In-app credential prompt: start the broker and point every git
             // invocation's credential machinery at it. Registered BEFORE any
             // RepoSession/GitRunner exists so every runner snapshot includes
