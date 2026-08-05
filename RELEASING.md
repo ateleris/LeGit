@@ -7,12 +7,17 @@ LeGit uses Tauri's built-in bundler. Each platform must be built natively — cr
 1. Decide on the version number (semver, e.g. `0.9.0`)
 2. Update `Cargo.toml` → `[workspace.package] version = "0.9.0"`
 3. Update `src-tauri/tauri.conf.json` → `"version": "0.9.0"`
-4. Smoke-test **upgrade over the previous version** on Windows: with the
+4. Update `package.json` → `"version": "0.9.0"`
+5. Smoke-test **upgrade over the previous version** on Windows: with the
    previous release installed, run the new NSIS `.exe` — it must replace the
    old install (one entry in Apps, new version, `themes/` intact). See
    "Windows upgrade behaviour" below for the cross-format caveats.
-5. Commit: `git commit -am "chore: bump version to 0.9.0"`
-6. Tag: `git tag v0.9.0`
+6. Commit: `git commit -am "chore: bump version to 0.9.0"`
+7. Tag: `git tag v0.9.0`
+
+The release workflow refuses to build if the tag disagrees with any of the
+three version files (`verify-version` job in `release.yml`) — a forgotten bump
+fails fast instead of drafting a release with the old version.
 
 ## Automated release (recommended)
 

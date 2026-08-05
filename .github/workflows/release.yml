@@ -14,8 +14,33 @@ permissions:
   contents: write
 
 jobs:
+  # Fail fast (before any platform build starts or a draft release is
+  # created) if the pushed tag does not match the version in the sources —
+  # otherwise a stale tree would ship installers named after the OLD version.
+  verify-version:
+    name: Verify tag matches source versions
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare tag against Cargo.toml, tauri.conf.json, package.json
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          CARGO=$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -n1)
+          TAURI=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          NPM=$(node -p "require('./package.json').version")
+          echo "tag=$TAG  Cargo.toml=$CARGO  tauri.conf.json=$TAURI  package.json=$NPM"
+          FAIL=0
+          [ "$CARGO" = "$TAG" ] || { echo "::error file=Cargo.toml::workspace version is $CARGO but tag is v$TAG"; FAIL=1; }
+          [ "$TAURI" = "$TAG" ] || { echo "::error file=src-tauri/tauri.conf.json::version is $TAURI but tag is v$TAG"; FAIL=1; }
+          [ "$NPM" = "$TAG" ] || { echo "::error file=package.json::version is $NPM but tag is v$TAG"; FAIL=1; }
+          if [ "$FAIL" -ne 0 ]; then
+            echo "Version mismatch — bump the sources (see RELEASING.md), retag, and push again."
+            exit 1
+          fi
+
   release:
     name: Build ${{ matrix.label }}
+    needs: verify-version
     strategy:
       fail-fast: false
       matrix:
