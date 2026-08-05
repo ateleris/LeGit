@@ -3,7 +3,7 @@ import { CheckIcon } from "../icons";
 import { useDockviewStore } from "../store/dockview";
 import { notify } from "../store/notifications";
 import { GLOBAL_PANELS, REPO_PANELS } from "./registry";
-import { buildDefaultGlobalLayout, openGlobalPanel } from "./GlobalDock";
+import { buildDefaultGlobalLayout, summonGlobalPanel } from "./GlobalDock";
 import { buildDefaultRepoLayout, openRepoPanel } from "./RepoDock";
 import {
   applyBakedGlobalLayout,
@@ -100,7 +100,9 @@ export function ViewMenu() {
           <SectionLabel>Global panels</SectionLabel>
           {GLOBAL_PANELS.map((p) =>
             menuItem(p.id, p.title, !!globalApi?.getPanel(p.id), () => {
-              openGlobalPanel(globalApi, p.id);
+              // Summon (not a plain open): expands the global region first if
+              // it is collapsed, where globalApi would be null.
+              summonGlobalPanel(p.id);
               setOpen(false);
             })
           )}

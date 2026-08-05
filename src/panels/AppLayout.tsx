@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useSettingsStore, UI_FONT_SIZE_DEFAULT } from "../store/settings";
 import { useRepoStore } from "../store/repos";
 import { useSummonStore } from "../store/summon";
+import { useGlobalRegionStore } from "../store/globalRegion";
 import { useGitLogStore } from "../store/gitLog";
 import { useConsoleStore } from "../store/console";
 import { useRemoteProgressStore } from "../store/remoteProgress";
@@ -134,7 +135,11 @@ export function AppLayout() {
   }, [activeRepoId]);
 
   const [placement, setPlacementState] = useState<RegionPlacement>("top");
-  const [collapsed, setCollapsed] = useState(false);
+  // Collapse state lives in a store (not component state) so actions outside
+  // this component can expand the region - the View menu's summonGlobalPanel
+  // must be able to uncollapse before opening a global panel.
+  const collapsed = useGlobalRegionStore((s) => s.collapsed);
+  const setCollapsed = useGlobalRegionStore((s) => s.setCollapsed);
   const [sizeTop, setSizeTop] = useState(DEFAULT_SIZE_TOP);
   const [sizeLeft, setSizeLeft] = useState(DEFAULT_SIZE_LEFT);
 
@@ -149,10 +154,13 @@ export function AppLayout() {
   useEffect(() => {
     if (settingsLoaded.current || !settings) return;
     settingsLoaded.current = true;
+    // Sync the transition ref too, so restoring the persisted collapse state
+    // is not treated as a user toggle (no size stash, no re-persist).
+    prevCollapsedRef.current = settings.global_dock_collapsed;
     setCollapsed(settings.global_dock_collapsed);
     if (settings.global_region_size_top != null) setSizeTop(settings.global_region_size_top);
     if (settings.global_region_size_left != null) setSizeLeft(settings.global_region_size_left);
-  }, [settings]);
+  }, [settings, setCollapsed]);
 
   // Placement is a preference — react to store changes (e.g. from Global Settings).
   const persistedPlacement = useSettingsStore((s) => s.settings?.global_region_placement);
@@ -189,26 +197,33 @@ export function AppLayout() {
   );
 
   const toggleCollapsed = useCallback(() => {
-    setCollapsed((prev) => {
-      const next = !prev;
-      if (!prev) {
-        // Collapsing — remember current size so we can restore it.
-        heightBeforeCollapse.current =
-          placementRef.current === "top" ? sizeTopRef.current : sizeLeftRef.current;
-      } else {
-        // Expanding — restore remembered size.
-        if (placementRef.current === "top") setSizeTop(heightBeforeCollapse.current);
-        else setSizeLeft(heightBeforeCollapse.current);
-      }
-      saveRegionState(
-        placementRef.current,
-        sizeTopRef.current,
-        sizeLeftRef.current,
-        next
-      );
-      return next;
-    });
-  }, []);
+    setCollapsed(!collapsedRef.current);
+  }, [setCollapsed]);
+
+  // React to collapse changes from ANY source (divider toggle, View-menu
+  // summon): stash the region size when collapsing, restore it when
+  // expanding, and persist the new state.
+  const prevCollapsedRef = useRef(collapsed);
+  useEffect(() => {
+    const prev = prevCollapsedRef.current;
+    if (prev === collapsed) return;
+    prevCollapsedRef.current = collapsed;
+    if (collapsed) {
+      // Collapsing — remember current size so we can restore it.
+      heightBeforeCollapse.current =
+        placementRef.current === "top" ? sizeTopRef.current : sizeLeftRef.current;
+    } else {
+      // Expanding — restore remembered size.
+      if (placementRef.current === "top") setSizeTop(heightBeforeCollapse.current);
+      else setSizeLeft(heightBeforeCollapse.current);
+    }
+    saveRegionState(
+      placementRef.current,
+      sizeTopRef.current,
+      sizeLeftRef.current,
+      collapsed
+    );
+  }, [collapsed]);
 
   // Drag handler shared by both modes.
   const dragging = useRef(false);
