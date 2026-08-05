@@ -138,6 +138,16 @@ export function MenuLevelProvider({ children }: { children: React.ReactNode }) {
 }
 
 /**
+ * Pin propagation: clicking a submenu trigger pins its flyout (see Submenu),
+ * and the pin must extend to every ancestor flyout — otherwise the parent
+ * would still grace-close on mouse-out and unmount the pinned child with it.
+ * Each Submenu provides its own `pin` to the flyout's children; a nested
+ * Submenu's pin chains to it. The root menu shell never closes on mouse-out,
+ * so the chain safely ends there (null).
+ */
+const PinParent = createContext<(() => void) | null>(null);
+
+/**
  * A menu entry that opens a flyout with further entries (hover or click).
  * The flyout renders the same primitives as the root menu, so shared sections
  * (BranchMenuSection, …) can be used as flyout content unchanged — including
@@ -163,6 +173,10 @@ export function Submenu({
   testId?: string;
 }) {
   const [open, setOpen] = useState(false);
+  // Pinned = clicked open (native behavior: an explicitly opened submenu does
+  // not vanish when the pointer moves off it). A pinned flyout ignores the
+  // grace-delay close; it still closes on sibling takeover and with the menu.
+  const [pinned, setPinned] = useState(false);
   const [hover, setHover] = useState(false);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -170,6 +184,7 @@ export function Submenu({
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const level = useContext(MenuLevel);
   const levelId = useId();
+  const parentPin = useContext(PinParent);
 
   const cancelClose = useCallback(() => {
     if (closeTimer.current != null) {
@@ -184,16 +199,29 @@ export function Submenu({
     setOpen(true);
   }, [level, levelId, cancelClose]);
 
+  /** Pin this flyout open (and the whole ancestor chain with it). */
+  const pin = useCallback(() => {
+    setPinned(true);
+    parentPin?.();
+  }, [parentPin]);
+
   /** Schedule this submenu's close after the grace delay — the pointer may be
    *  travelling diagonally from the trigger into the flyout (crossing sibling
    *  entries), so leaving never closes instantly. Re-entering trigger or
-   *  flyout cancels via `enter`. */
+   *  flyout cancels via `enter`. A pinned flyout does not close on leave. */
   const scheduleClose = useCallback(() => {
+    if (pinned) return;
     cancelClose();
     closeTimer.current = setTimeout(() => setOpen(false), SUBMENU_CLOSE_DELAY_MS);
-  }, [cancelClose]);
+  }, [pinned, cancelClose]);
 
   useEffect(() => cancelClose, [cancelClose]);
+
+  // Any close (sibling takeover, menu dismissal) clears the pin, so the next
+  // hover-open is transient again.
+  useEffect(() => {
+    if (!open) setPinned(false);
+  }, [open]);
 
   // A sibling became the level's active submenu: close now, no grace delay.
   useEffect(() => {
@@ -231,7 +259,14 @@ export function Submenu({
         aria-haspopup="menu"
         aria-expanded={open}
         data-testid={testId}
-        onClick={() => (open ? setOpen(false) : enter())}
+        // Open (or keep open) AND pin on click, never toggle closed: with a
+        // mouse the hover has already opened the flyout, so a toggle would
+        // close it on every click. Click-only activation (keyboard
+        // Enter/Space) opens too.
+        onClick={() => {
+          enter();
+          pin();
+        }}
         onMouseEnter={() => {
           setHover(true);
           enter();
@@ -274,7 +309,9 @@ export function Submenu({
               visibility: pos ? "visible" : "hidden",
             }}
           >
-            <MenuLevelProvider>{children}</MenuLevelProvider>
+            <PinParent.Provider value={pin}>
+              <MenuLevelProvider>{children}</MenuLevelProvider>
+            </PinParent.Provider>
           </div>,
           document.body,
         )}

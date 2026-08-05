@@ -100,11 +100,35 @@ async function moveMouse(from: Element, to: Element) {
   });
 }
 
+async function click(el: Element) {
+  await act(async () => {
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
 describe("Submenu", () => {
   it("opens its flyout on trigger hover", async () => {
     await act(async () => root.render(<TwoSubmenus />));
     expect(byTestId("item-a")).toBeNull();
     await hover(byTestId("sub-a")!);
+    expect(byTestId("item-a")).not.toBeNull();
+  });
+
+  it("keeps the flyout open when the trigger is clicked after hover-open", async () => {
+    // Native menu behavior: clicking an entry whose submenu is showing keeps
+    // the submenu open. With a mouse, hover has already opened the flyout by
+    // the time the click lands, so a toggle handler would close it here.
+    await act(async () => root.render(<TwoSubmenus />));
+    const trigger = byTestId("sub-a")!;
+    await hover(trigger);
+    expect(byTestId("item-a")).not.toBeNull();
+    await click(trigger);
+    expect(byTestId("item-a")).not.toBeNull();
+  });
+
+  it("opens the flyout on click without prior hover (keyboard activation)", async () => {
+    await act(async () => root.render(<TwoSubmenus />));
+    await click(byTestId("sub-a")!);
     expect(byTestId("item-a")).not.toBeNull();
   });
 
@@ -167,6 +191,64 @@ describe("Submenu", () => {
     });
     expect(byTestId("merge-default")).toBeNull();
     expect(byTestId("rename")).toBeNull();
+  });
+
+  it("click pins the flyout: it survives the pointer leaving the whole stack", async () => {
+    // Native menus never close a submenu just because the pointer moved off
+    // it; LeGit keeps hover transient but an explicit click pins the flyout.
+    await act(async () => root.render(<TwoSubmenus />));
+    const trigger = byTestId("sub-a")!;
+    await hover(trigger);
+    await click(trigger);
+    await unhover(trigger);
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(byTestId("item-a")).not.toBeNull();
+  });
+
+  it("a pinned flyout still closes when a sibling submenu opens", async () => {
+    await act(async () => root.render(<TwoSubmenus />));
+    const trigger = byTestId("sub-a")!;
+    await hover(trigger);
+    await click(trigger);
+    await unhover(trigger);
+    await hover(byTestId("sub-b")!);
+    expect(byTestId("item-a")).toBeNull();
+    expect(byTestId("item-b")).not.toBeNull();
+  });
+
+  it("pinning a nested flyout pins its ancestors too", async () => {
+    // Without upward propagation the parent flyout would grace-close and
+    // unmount the pinned child with it.
+    await act(async () => root.render(<NestedSubmenus />));
+    await hover(byTestId("sub-1")!);
+    await moveMouse(byTestId("sub-1")!, byTestId("sub-2")!);
+    await click(byTestId("sub-2")!);
+    await unhover(byTestId("sub-2")!);
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(byTestId("merge-default")).not.toBeNull();
+    expect(byTestId("rename")).not.toBeNull();
+  });
+
+  it("the pin resets when the flyout closes", async () => {
+    // Pin, close via sibling takeover, reopen by hover: the flyout must be
+    // transient again (a stale pin would make every later hover sticky).
+    await act(async () => root.render(<TwoSubmenus />));
+    const trigger = byTestId("sub-a")!;
+    await hover(trigger);
+    await click(trigger);
+    await unhover(trigger);
+    await hover(byTestId("sub-b")!);
+    await unhover(byTestId("sub-b")!);
+    await hover(trigger);
+    await unhover(trigger);
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(byTestId("item-a")).toBeNull();
   });
 
   it("keeps the flyout open through the grace delay for diagonal travel", async () => {
