@@ -303,17 +303,27 @@ pub async fn console_feed(op_id: String, lines: u32) -> Result<bool, AppError> {
     }
 }
 
+/// How many paused-stdout lines the pump parks OUTSIDE the channel so that
+/// stderr and `Finished` queued behind them still flow (pagers gate stdout
+/// only). Bounded: past this the channel gate closes again and the bounded
+/// channel blocks git as before.
+const HELD_STDOUT_CAP: usize = 500;
+
 /// Coalesce runner events into batches for `emit(events, paused)`. Flushes
 /// on a `Finished` event, when the batch hits `MAX_BATCH`, when the stdout
 /// credit runs out (flagging the batch `paused`), on the flush tick, and on
 /// channel close.
 ///
-/// While out of credit the pump stops consuming entirely - combined with
-/// the bounded channel this is what blocks git (see module docs). A
-/// `console_feed` top-up is noticed on the next tick. Once `cancelled` is
-/// set, pending and future output is dropped and consumption resumes so the
-/// stream can drain; only `Finished` is still delivered (it carries the
-/// "killed" status the panel prints).
+/// While out of credit, stdout lines are parked in a bounded side buffer
+/// (`HELD_STDOUT_CAP`) instead of being emitted, so stderr and `Finished`
+/// behind them in the channel still flow - only once the buffer fills does
+/// the pump stop consuming, and the bounded channel blocks git (see module
+/// docs). A `Finished` that arrives while stdout is parked is itself held:
+/// the pause persists until the user pages through (`console_feed`) or
+/// cancels. Feed/cancel are noticed via `wake` or on the next tick. Once
+/// `cancelled` is set, parked and future output is dropped and consumption
+/// resumes so the stream can drain; only `Finished` is still delivered (it
+/// carries the "killed" status the panel prints).
 async fn pump_console_events(
     mut rx: mpsc::Receiver<RunnerEvent>,
     state: Arc<ConsoleOpState>,
@@ -321,23 +331,36 @@ async fn pump_console_events(
     mut emit: impl FnMut(Vec<RunnerEvent>, bool) -> bool,
 ) {
     let mut pending: Vec<RunnerEvent> = Vec::new();
+    // Stdout received with no credit left, parked unemitted (see above).
+    let mut held: std::collections::VecDeque<RunnerEvent> = std::collections::VecDeque::new();
+    // A `Finished` that arrived while stdout was parked - delivered when the
+    // parked lines have drained (or on cancel).
+    let mut finished_held: Option<RunnerEvent> = None;
+    let mut rx_closed = false;
     // Whether the frontend has been told about the current pause, so quiet
     // ticks don't repeat the empty `paused` payload.
     let mut announced_pause = false;
-    let mut ticker = tokio::time::interval(FLUSH_INTERVAL);
+    // First tick one interval OUT: `interval()` fires its first tick
+    // immediately, and select! polls branches in random order, so that
+    // ready-from-birth tick could win an early iteration and flush a partial
+    // batch (a real flake: MAX_BATCH batches split at arbitrary points).
+    let mut ticker = tokio::time::interval_at(
+        tokio::time::Instant::now() + FLUSH_INTERVAL,
+        FLUSH_INTERVAL,
+    );
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         let cancelled = state.cancelled.load(Ordering::Relaxed);
-        let out_of_credit =
-            !cancelled && state.stdout_credit.load(Ordering::Relaxed) <= 0;
+        let recv_open = !rx_closed && (cancelled || held.len() < HELD_STDOUT_CAP);
         tokio::select! {
-            // A cancel/feed landed: re-evaluate the flags immediately.
+            // A cancel/feed landed: fall through to the post-step below.
             _ = state.wake.notified() => {}
-            maybe = rx.recv(), if !out_of_credit => match maybe {
+            maybe = rx.recv(), if recv_open => match maybe {
                 Some(event) => {
                     let finished = matches!(event, RunnerEvent::Finished { .. });
                     if cancelled && !finished {
                         pending.clear();
+                        held.clear();
                         continue;
                     }
                     if let RunnerEvent::Stdout { line } = &event {
@@ -347,7 +370,15 @@ async fn pump_console_events(
                         if !filters.iter().all(|f| f.matches(line)) {
                             continue;
                         }
+                        if state.stdout_credit.load(Ordering::Relaxed) <= 0 {
+                            held.push_back(event);
+                            continue;
+                        }
                         state.stdout_credit.fetch_sub(1, Ordering::Relaxed);
+                    }
+                    if finished && !cancelled && !held.is_empty() {
+                        finished_held = Some(event);
+                        continue;
                     }
                     pending.push(event);
                     let now_paused = !finished
@@ -362,39 +393,65 @@ async fn pump_console_events(
                             return;
                         }
                     }
-                }
-                None => {
-                    if !pending.is_empty() {
-                        let _ = emit(std::mem::take(&mut pending), false);
-                    }
-                    return;
-                }
-            },
-            _ = ticker.tick() => {
-                // Re-read fresh: a cancel or feed may have landed since the
-                // loop-top snapshot that gated the select.
-                if state.cancelled.load(Ordering::Relaxed) {
-                    pending.clear();
                     continue;
                 }
-                let paused_now = state.stdout_credit.load(Ordering::Relaxed) <= 0;
-                if !pending.is_empty() {
-                    if !emit(std::mem::take(&mut pending), paused_now) {
-                        return;
-                    }
-                    announced_pause = paused_now;
-                } else if paused_now && !announced_pause {
-                    // Nothing buffered but the op is holding: tell the
-                    // frontend once so it can show the "-- More --" state.
-                    if !emit(Vec::new(), true) {
-                        return;
-                    }
-                    announced_pause = true;
+                None => {
+                    rx_closed = true;
                 }
-                if !paused_now {
-                    announced_pause = false;
-                }
+            },
+            _ = ticker.tick() => {}
+        }
+
+        // Post-step, reached on wake, tick, or channel close: cancel wins,
+        // then fresh credit drains the parked stdout, then flush.
+        if state.cancelled.load(Ordering::Relaxed) {
+            pending.clear();
+            held.clear();
+            if let Some(finished) = finished_held.take() {
+                let _ = emit(vec![finished], false);
+                return;
             }
+            if rx_closed {
+                // Nothing more can arrive and there is no Finished to wait
+                // for - the runner died without one.
+                return;
+            }
+            continue;
+        }
+        while !held.is_empty() && state.stdout_credit.load(Ordering::Relaxed) > 0 {
+            state.stdout_credit.fetch_sub(1, Ordering::Relaxed);
+            pending.push(held.pop_front().expect("checked non-empty"));
+        }
+        if held.is_empty() {
+            if let Some(finished) = finished_held.take() {
+                pending.push(finished);
+                let _ = emit(std::mem::take(&mut pending), false);
+                return;
+            }
+            if rx_closed {
+                if !pending.is_empty() {
+                    let _ = emit(std::mem::take(&mut pending), false);
+                }
+                return;
+            }
+        }
+        let paused_now =
+            state.stdout_credit.load(Ordering::Relaxed) <= 0 || !held.is_empty();
+        if !pending.is_empty() {
+            if !emit(std::mem::take(&mut pending), paused_now) {
+                return;
+            }
+            announced_pause = paused_now;
+        } else if paused_now && !announced_pause {
+            // Nothing buffered but the op is holding: tell the frontend once
+            // so it can show the "-- More --" state.
+            if !emit(Vec::new(), true) {
+                return;
+            }
+            announced_pause = true;
+        }
+        if !paused_now {
+            announced_pause = false;
         }
     }
 }
@@ -458,7 +515,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rejects_C_arg() {
+    fn rejects_upper_c_arg() {
         let argv = vec!["-C".to_string(), "/etc".to_string(), "status".to_string()];
         assert!(matches!(
             validate_console_args(&argv),
@@ -681,6 +738,47 @@ mod tests {
 
         assert_eq!(total_stderr, 5, "stderr must flow with exhausted stdout credit");
         assert!(saw_finished);
+    }
+
+    /// A `Finished` that arrives while stdout is parked must wait: the pager
+    /// stays in "-- More --" until the user pages through, and the remaining
+    /// lines arrive BEFORE Finished once credit is granted.
+    #[tokio::test(start_paused = true)]
+    async fn pump_finished_waits_for_parked_stdout() {
+        let (tx, rx) = mpsc::channel(16);
+        for i in 0..3 {
+            tx.send(stdout(&format!("line {i}"))).await.unwrap();
+        }
+        tx.send(finished()).await.unwrap();
+        drop(tx);
+
+        let state = op_state(1);
+        let state_for_pump = state.clone();
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel::<(Vec<RunnerEvent>, bool)>();
+        let pump = tokio::spawn(async move {
+            pump_console_events(rx, state_for_pump, Vec::new(), move |events, paused| {
+                out_tx.send((events, paused)).is_ok()
+            })
+            .await;
+        });
+
+        let (events, paused) = out_rx.recv().await.expect("first batch");
+        assert_eq!(events.len(), 1);
+        assert!(paused, "credit exhausted after the first line");
+
+        // Finished is queued behind two parked lines: it must NOT surface yet.
+        tokio::task::yield_now().await;
+        assert!(out_rx.try_recv().is_err(), "Finished must wait for the parked lines");
+
+        state.stdout_credit.fetch_add(10, Ordering::Relaxed);
+        state.wake.notify_one();
+        let (events, paused) = out_rx.recv().await.expect("drained batch");
+        assert_eq!(events.len(), 3, "two parked lines then Finished");
+        assert!(matches!(events[0], RunnerEvent::Stdout { .. }));
+        assert!(matches!(events[1], RunnerEvent::Stdout { .. }));
+        assert!(matches!(events[2], RunnerEvent::Finished { .. }));
+        assert!(!paused);
+        pump.await.unwrap();
     }
 
     /// Cancelling a PAUSED op drains and drops the held output and still

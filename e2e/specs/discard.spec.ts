@@ -1,7 +1,7 @@
 // Discard flow: the data-loss path behind the confirm-destructive gate.
 // Discards the fixture's unstaged modification via the Working Changes
-// context menu, passes the inline confirmation, and verifies the change is
-// gone from BOTH the UI and the working tree on disk.
+// context menu, passes the central confirm dialog, and verifies the change
+// is gone from BOTH the UI and the working tree on disk.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { browser, $ } from "@wdio/globals";
@@ -42,14 +42,16 @@ describe("discard: confirm-gated discard of an unstaged change", () => {
     await discardItem.click();
   });
 
-  it("confirms the inline prompt (confirm-destructive defaults ON)", async () => {
-    // The panel-level confirm bar ("Discard changes to notes.txt? This
-    // cannot be undone.") carries a bare "Discard" danger button - distinct
-    // from the menu entry's "Discard changes" label.
-    const confirmBtn = $('//button[normalize-space(text())="Discard"]');
+  it("confirms the dialog (confirm-destructive defaults ON)", async () => {
+    // The central confirm dialog (ConfirmDialogHost). Target it by testid: a
+    // bare //button[text()="Discard"] is ambiguous (the Diff toolbar has a
+    // hunk-level "Discard" too, earlier in DOM order) and the dialog's
+    // full-screen backdrop makes that first match unclickable - the modal
+    // would time the wait out.
+    const confirmBtn = $('[data-testid="confirm-dialog-confirm"]');
     await confirmBtn.waitForClickable({
       timeout: 10_000,
-      timeoutMsg: "the discard confirmation prompt did not appear",
+      timeoutMsg: "the discard confirmation dialog did not appear",
     });
     await confirmBtn.click();
   });

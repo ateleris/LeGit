@@ -94,6 +94,7 @@ function ConfirmDialog({ request }: { request: PendingConfirm }) {
       />
       <div
         ref={dialogRef}
+        data-testid="confirm-dialog"
         role="alertdialog"
         aria-modal="true"
         aria-label={request.title ?? request.message}
@@ -138,10 +139,14 @@ function ConfirmDialog({ request }: { request: PendingConfirm }) {
           </strong>
         )}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5em" }}>
-          <button autoFocus onClick={cancel}>
+          <button autoFocus data-testid="confirm-dialog-cancel" onClick={cancel}>
             {request.cancelLabel ?? "Cancel"}
           </button>
-          <Button variant={(request.danger ?? true) ? "danger" : "primary"} onClick={confirm}>
+          <Button
+            variant={(request.danger ?? true) ? "danger" : "primary"}
+            data-testid="confirm-dialog-confirm"
+            onClick={confirm}
+          >
             {request.confirmLabel}
           </Button>
         </div>
