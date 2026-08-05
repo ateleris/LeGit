@@ -193,13 +193,27 @@ project memory for details.
 - Follow existing panel/store/parser patterns; keep files focused.
 - The diff viewer's inline and split views must keep **action parity** (wire new
   per-hunk/per-line capabilities through the shared helpers, apply to both).
-- **Destructive actions confirm inline in every menu that offers them** (drop
-  stash, delete branch). Share the menu section component
-  (e.g. `StashMenuSection`) between the row menu and the chip menu so the
-  confirm step can't drift out of parity. Every such confirmation is gated by
-  the global "Destructive action confirmation" setting — consult
-  `useConfirmDestructive()` (store/settings) and run the action immediately
-  when it is off; never hardcode a confirm step.
+- **Feedback never renders into a pane's scroll content.** Panel-embedded
+  banners/confirm boxes scroll out of view (the user sees nothing happen)
+  and reflow the pane; they were removed 2026-08-04. The allowed surfaces:
+  - **ALL destructive confirmations go through the central dialog**
+    (`confirmDialog` in `store/confirm.ts`, rendered by `ConfirmDialogHost`
+    near the pointer — `dialogPlacement.ts` keeps the buttons away from the
+    click point). Menu entries route through `useMenuConfirm`, which closes
+    the menu and raises the dialog; buttons call `confirmDialog` directly
+    with a title + named target. Focus starts on Cancel, Esc/backdrop
+    cancels. Workflow prompts (decisions after an async step, e.g. the
+    submodule gitdir-deletion offer) use the same host and are always shown.
+  - **Action errors surface as toasts** (`notify.error`; errors persist
+    until dismissed, clicking opens the Git Command Log). Exception: errors
+    adjacent to the input that caused them (settings forms, the commit
+    composer's warnings) stay next to that input, and a panel whose DATA
+    query failed may render that as its content state.
+  Every destructive confirmation is gated by the global "Destructive action
+  confirmation" setting — consult `useConfirmDestructive()` (store/settings)
+  and run the action immediately when it is off; never hardcode a confirm
+  step. History/data-loss WARNINGS (detached-HEAD commit, amend-pushed,
+  gitdir deletion) are deliberately NOT gated.
 - **Renames edit in place**: an input appears where the text is (subject cell,
   ref chip), Enter approves, Esc discards (`InlineRenameInput`). Don't summon
   another panel for a rename.

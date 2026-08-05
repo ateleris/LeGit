@@ -2,20 +2,18 @@ import { useState } from "react";
 import { submoduleBadge } from "../../lib/submodules";
 import type { SubmoduleInfo } from "../../lib/types";
 import { ToolbarButton } from "../shared/ToolbarButton";
-import { Button } from "../shared/buttons";
 import { InlineRenameInput } from "../Commits/cells/InlineRenameInput";
 
 /**
  * One submodule row: path, branch or "(detached)", state badge, short SHA,
  * and the operation buttons. URL/branch edits happen in place
  * (InlineRenameInput: Enter approves, Esc discards - per the app-wide rename
- * convention); the remove confirmation renders inline and is gated by the
- * section (global destructive-confirm setting).
+ * convention); the remove confirmation is a central dialog (raised by the
+ * section, gated there by the global destructive-confirm setting).
  */
 export function SubmoduleRow({
   info,
   busy,
-  removing,
   onOpen,
   onInitUpdate,
   onUpdate,
@@ -27,13 +25,9 @@ export function SubmoduleRow({
   onMovePath,
   onCreateBranch,
   onRemove,
-  onConfirmRemove,
-  onCancelRemove,
 }: {
   info: SubmoduleInfo;
   busy: boolean;
-  /** Non-null when this row's remove is awaiting inline confirmation. */
-  removing: "confirm" | null;
   onOpen: () => void;
   onInitUpdate: () => void;
   onUpdate: () => void;
@@ -47,8 +41,6 @@ export function SubmoduleRow({
   /** Create a branch at the submodule's detached HEAD. */
   onCreateBranch: (name: string) => void;
   onRemove: () => void;
-  onConfirmRemove: () => void;
-  onCancelRemove: () => void;
 }) {
   const badge = submoduleBadge(info);
   const sha = info.checked_out_sha ?? info.recorded_sha;
@@ -194,21 +186,7 @@ export function SubmoduleRow({
         </div>
       )}
 
-      {removing === "confirm" ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ fontSize: "var(--fz-md)", flex: 1 }}>
-            Remove this submodule? Its .gitmodules entry and working tree go
-            away; the repository data under .git/modules is kept.
-          </span>
-          <Button variant="danger" disabled={busy} onClick={onConfirmRemove}>
-            Remove
-          </Button>
-          <button disabled={busy} onClick={onCancelRemove}>
-            Cancel
-          </button>
-        </div>
-      ) : (
-        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
           {uninitialized ? (
             <ToolbarButton
               label={"Init & update"}
@@ -291,7 +269,6 @@ export function SubmoduleRow({
             onClick={onRemove}
           />
         </div>
-      )}
     </div>
   );
 }

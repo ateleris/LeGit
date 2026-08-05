@@ -7,6 +7,7 @@ import { DEFAULT_THEME } from "./defaults";
 import { bindingRef } from "./filters";
 import lightThemeJson from "../../themes/Light.legit-theme.json";
 import darkThemeJson from "../../themes/Dark.legit-theme.json";
+import sourceTreeLightThemeJson from "../../themes/SourceTree Light.legit-theme.json";
 
 // Read as a plain file: vite's `?raw` pipeline returns an empty string for
 // .css under vitest, so the raw-import shortcut silently checks nothing.
@@ -14,7 +15,7 @@ const themeCss = readFileSync(new URL("../styles/theme.css", import.meta.url), "
 
 // Enforces the "4 places" rule for theme tokens (see CLAUDE.md): every token
 // in TOKEN_CONTRACT must exist in defaults.ts, styles/theme.css (:root
-// fallback), and both bundled themes — and every binding must point at a real
+// fallback), and all bundled themes — and every binding must point at a real
 // palette entry. Adding a token and forgetting a place fails here instead of
 // silently rendering with fallback colours.
 
@@ -24,6 +25,7 @@ interface ThemeJson {
 }
 const lightTheme = lightThemeJson as ThemeJson;
 const darkTheme = darkThemeJson as ThemeJson;
+const sourceTreeLightTheme = sourceTreeLightThemeJson as ThemeJson;
 
 const tokenVar = (name: string) => `--${name.replace(/\./g, "-")}`;
 
@@ -60,6 +62,7 @@ describe("theme token contract (4 places)", () => {
   for (const [label, theme] of [
     ["Light", lightTheme],
     ["Dark", darkTheme],
+    ["SourceTree Light", sourceTreeLightTheme],
   ] as const) {
     it(`${label}.legit-theme.json binds every contract token to an existing palette entry`, () => {
       for (const t of TOKEN_CONTRACT) {

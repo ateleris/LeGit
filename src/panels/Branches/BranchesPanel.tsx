@@ -1,5 +1,4 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import { PanelError } from "../shared/PanelError";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
@@ -30,6 +29,7 @@ import { PUSH_DOMAINS } from "../Commits/useCommitActions";
 import { pushWithTagFollowUp } from "../../lib/autoPushTags";
 import { notifyMergeOutcome, notifyOpError, notifyRebaseOutcome } from "../../lib/mergeFeedback";
 import { notify } from "../../store/notifications";
+import { confirmDialog } from "../../store/confirm";
 import { OP_DOMAINS, useOpState } from "../../lib/useOpState";
 import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
 import { coerceRefsSortMode, sortRefs } from "../../lib/refSort";
@@ -45,10 +45,7 @@ import { BranchMenuSection, RemoteBranchMenuSection } from "../Commits/menu/Bran
 // Switching can create/consume an auto-stash, so "stashes" is invalidated too.
 const AFFECTED_DOMAINS = ["branches", "log", "status", "tracking", "stashes"];
 
-type EditState =
-  | { name: string; mode: "rename" }
-  | { name: string; mode: "delete" }
-  | null;
+type EditState = { name: string; mode: "rename" } | null;
 
 /** localStorage key for the collapsed-remote-groups set (by remote name). */
 const COLLAPSED_REMOTES_KEY = "legit.branches-collapsed-remotes";
@@ -92,7 +89,6 @@ export function BranchesSection() {
   const reload = useCallback(() => { refetch(); }, [refetch]);
   usePanelFocusEffect(reload);
 
-  const [error, setError] = useState<string | null>(null);
   const [edit, setEdit] = useState<EditState>(null);
   const [draftName, setDraftName] = useState("");
   const [createName, setCreateName] = useState("");
@@ -104,19 +100,19 @@ export function BranchesSection() {
   }, [queryClient, repo]);
 
   // Rename/delete/create/set-upstream are near-instant local git calls.
+  // Errors surface as toasts (never panel-embedded banners: those scroll out
+  // of view and reflow the pane); full detail is in the Git Command Log.
   const { busy: mutBusy, run: runMut } = usePanelRunner({
     enabled: !!repo,
-    onStart: () => setError(null),
     onSuccess: invalidate,
-    onError: (e) => setError(formatAppError(e)),
+    onError: (e) => notify.error(formatAppError(e)),
   });
   // Checkouts get their own runner: same delayed-busy/guard, but switch
   // failures classify through formatSwitchError (WouldOverwrite... etc.).
   const { busy: switchBusy, run: runSwitch } = usePanelRunner({
     enabled: !!repo,
-    onStart: () => setError(null),
     onSuccess: invalidate,
-    onError: (e) => setError(formatSwitchError(e)),
+    onError: (e) => notify.error(formatSwitchError(e)),
   });
   // Merge/rebase: notify-based feedback, and a failed attempt can still
   // leave op state behind - domains refresh on settle either way.
@@ -219,7 +215,6 @@ export function BranchesSection() {
   };
 
   const openRename = (b: Branch) => {
-    setError(null);
     setDraftName(b.name);
     setEdit({ name: b.name, mode: "rename" });
   };
@@ -230,16 +225,22 @@ export function BranchesSection() {
     if (await runMut(() => repoRenameBranch(repo!.id, name, next))) setEdit(null);
   };
 
-  // With destructive confirmations off, Delete runs a safe delete
-  // immediately (force delete stays reachable via the ref-chip menu).
+  // The row's Delete button runs a SAFE delete (confirmed via the central
+  // dialog when the destructive-confirm setting is on); force delete stays
+  // reachable via the ref-chip / row context menu, which keeps its own
+  // inline confirm section.
   const confirmDestructive = useConfirmDestructive();
-  const openDelete = (b: Branch) => {
-    setError(null);
-    if (!confirmDestructive) {
-      void doDelete(b.name, false);
-      return;
+  const openDelete = async (b: Branch) => {
+    if (confirmDestructive) {
+      const ok = await confirmDialog({
+        title: "Delete branch",
+        message: "Deletes the local branch (safe delete: git refuses if it is not fully merged).",
+        detail: b.name,
+        confirmLabel: "Delete branch",
+      });
+      if (!ok) return;
     }
-    setEdit({ name: b.name, mode: "delete" });
+    void doDelete(b.name, false);
   };
 
   const doDelete = async (name: string, force: boolean) => {
@@ -359,10 +360,6 @@ export function BranchesSection() {
         className="legit-panel__body"
         style={{ display: "flex", flexDirection: "column", gap: 10 }}
       >
-        {error && (
-          <PanelError error={error} margin={0} />
-        )}
-
         {localBranches.length > 0 && (() => {
           // One row renderer shared by both modes so flat mode stays exactly
           // the pre-tree rendering; tree mode indents it and shows the leaf
@@ -378,8 +375,7 @@ export function BranchesSection() {
               onDraftChange={setDraftName}
               onOpenRename={() => openRename(b)}
               onSaveRename={() => saveRename(b.name)}
-              onOpenDelete={() => openDelete(b)}
-              onDoDelete={(force) => doDelete(b.name, force)}
+              onOpenDelete={() => void openDelete(b)}
               onCheckout={() => doCheckout(b.name)}
               onCancelEdit={() => setEdit(null)}
               onContextMenu={(e) =>
@@ -706,7 +702,6 @@ function LocalBranchRow({
   onOpenRename,
   onSaveRename,
   onOpenDelete,
-  onDoDelete,
   onCheckout,
   onCancelEdit,
   onContextMenu,
@@ -722,7 +717,6 @@ function LocalBranchRow({
   onOpenRename: () => void;
   onSaveRename: () => void;
   onOpenDelete: () => void;
-  onDoDelete: (force: boolean) => void;
   onCheckout: () => void;
   onCancelEdit: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
@@ -768,21 +762,6 @@ function LocalBranchRow({
             style={mono}
           />
         </InlineEditor>
-      ) : isEditing && edit?.mode === "delete" ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <span style={{ fontSize: "var(--fz-md)" }}>
-            Delete <strong>{branch.name}</strong>?
-          </span>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <Button variant="danger" disabled={busy} onClick={() => onDoDelete(false)}>
-              Delete
-            </Button>
-            <ToolbarButton label="Force Delete" disabled={busy} onClick={() => onDoDelete(true)} />
-            <button disabled={busy} onClick={onCancelEdit}>
-              Cancel
-            </button>
-          </div>
-        </div>
       ) : (
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span

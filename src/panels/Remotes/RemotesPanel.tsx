@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
-import { PanelError } from "../shared/PanelError";
+import { notify } from "../../store/notifications";
+import { confirmDialog } from "../../store/confirm";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
@@ -33,7 +34,6 @@ const AFFECTED_DOMAINS = ["remotes", "branches", "tracking", "log"];
 type EditState =
   | { name: string; mode: "rename" }
   | { name: string; mode: "urls" }
-  | { name: string; mode: "remove" }
   | null;
 
 /**
@@ -61,7 +61,6 @@ export function RemotesSection() {
 
   // Network op in flight, as `"fetch:<name>"` / `"prune:<name>"` (for the row spinner).
   const [busyNet, setBusyNet] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [edit, setEdit] = useState<EditState>(null);
   // Drafts for the inline editors.
   const [draftName, setDraftName] = useState("");
@@ -76,9 +75,8 @@ export function RemotesSection() {
   // success. Delayed busy + double-click guard per convention.
   const { busy, run: runMut } = usePanelRunner({
     enabled: !!repo,
-    onStart: () => setError(null),
     onSuccess: () => invalidateRepoDomains(queryClient, repo!.id, AFFECTED_DOMAINS),
-    onError: (e) => setError(formatAppError(e)),
+    onError: (e) => notify.error(formatAppError(e)),
   });
 
   // A cancellable network op (fetch / prune). `tag` is `"fetch:<name>"` etc.
@@ -94,13 +92,12 @@ export function RemotesSection() {
       opIdRef.current = opId;
       cancelRequestedRef.current = false;
       setBusyNet(tag);
-      setError(null);
       try {
         await fn(opId);
         invalidateRepoDomains(queryClient, repo.id, AFFECTED_DOMAINS);
       } catch (e) {
         if (!cancelRequestedRef.current) {
-          setError(
+          notify.error(
             gitErrorKind(e) === "AuthFailed"
               ? "Authentication failed — check this repo's git profile credentials (SSH key / credential helper)."
               : formatAppError(e),
@@ -123,12 +120,10 @@ export function RemotesSection() {
   }, [repo]);
 
   const openRename = (r: Remote) => {
-    setError(null);
     setDraftName(r.name);
     setEdit({ name: r.name, mode: "rename" });
   };
   const openUrls = (r: Remote) => {
-    setError(null);
     setDraftFetch(r.fetch_url);
     setDraftPush(r.push_url);
     setEdit({ name: r.name, mode: "urls" });
@@ -157,6 +152,21 @@ export function RemotesSection() {
     if (await runMut(() => repoRemoveRemote(repo!.id, name))) setEdit(null);
   };
 
+  // Central confirmation dialog (global destructive-confirmation setting:
+  // when off, remove runs immediately).
+  const requestRemove = async (name: string) => {
+    if (confirmDestructive) {
+      const ok = await confirmDialog({
+        title: "Remove remote",
+        message: "Removes the remote; its remote-tracking refs will be deleted.",
+        detail: name,
+        confirmLabel: "Remove remote",
+      });
+      if (!ok) return;
+    }
+    void doRemove(name);
+  };
+
   const addRemote = async (name: string, url: string): Promise<boolean> =>
     runMut(() => repoAddRemote(repo!.id, name, url));
 
@@ -176,10 +186,6 @@ export function RemotesSection() {
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
       <PanelLoadingBar active={isFetching} />
       <div className="legit-panel__body" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {error && (
-          <PanelError error={error} margin={0} />
-        )}
-
         {remotes.length === 0 ? (
           <span className="legit-subtle">No remotes configured.</span>
         ) : (
@@ -221,20 +227,6 @@ export function RemotesSection() {
                     <UrlField label="fetch" value={draftFetch} onChange={setDraftFetch} />
                     <UrlField label="push" value={draftPush} onChange={setDraftPush} />
                   </InlineEditor>
-                ) : edit?.name === r.name && edit.mode === "remove" ? (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    <span style={{ fontSize: "var(--fz-md)" }}>
-                      Remove remote <strong>{r.name}</strong>? Its remote-tracking refs will be deleted.
-                    </span>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      <Button variant="danger" disabled={busy} onClick={() => doRemove(r.name)}>
-                        Remove
-                      </Button>
-                      <button disabled={busy} onClick={() => setEdit(null)}>
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
                 ) : (
                   <>
                     <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
@@ -273,13 +265,7 @@ export function RemotesSection() {
                       <ToolbarButton
                         label="Remove"
                         disabled={blocked}
-                        onClick={() => {
-                          setError(null);
-                          // Global destructive-confirmation setting: when off,
-                          // remove runs immediately.
-                          if (confirmDestructive) setEdit({ name: r.name, mode: "remove" });
-                          else void doRemove(r.name);
-                        }}
+                        onClick={() => void requestRemove(r.name)}
                       />
                     </div>
                   </>

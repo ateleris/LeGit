@@ -10,6 +10,7 @@ import { formatAppError } from "../../lib/types";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { useCommitDraftStore } from "../../store/commitDraft";
 import { notify } from "../../store/notifications";
+import { confirmDialog } from "../../store/confirm";
 import { FileTree } from "../shared/FileTree/FileTree";
 import { LineEndingRowBadge } from "../shared/LineEndingBadge";
 import { useLineEndingStatusMap } from "../shared/lineEndingStatus";
@@ -141,12 +142,6 @@ interface Selection {
   paths: string[];
 }
 
-/** A pending discard confirmation: which paths and a human label. */
-interface DiscardRequest {
-  paths: string[];
-  label: string;
-}
-
 /**
  * Working Changes panel — Staged / Unstaged sections over the working tree,
  * with per-file and bulk stage/unstage/discard and a commit box. Summoned into
@@ -242,7 +237,6 @@ export function WorkingChangesPanel() {
   // at once (a partially-staged file shares its path across both). Drives both
   // row highlighting and the bulk context-menu actions.
   const [selected, setSelected] = useState<Selection | null>(null);
-  const [confirm, setConfirm] = useState<DiscardRequest | null>(null);
   const [confirmDetachedCommit, setConfirmDetachedCommit] = useState(false);
   const [confirmAmendPushed, setConfirmAmendPushed] = useState(false);
   const [confirmEolCommit, setConfirmEolCommit] = useState(false);
@@ -656,19 +650,20 @@ export function WorkingChangesPanel() {
     if (next && head && message.trim().length === 0) setMessage(head.message);
   };
 
-  // Confirm before discarding (destructive); then run it. The label defaults to
-  // the lone path, or "N files" for a bulk discard. When the confirmation
-  // setting is off, discard runs immediately.
-  const requestDiscard = (paths: string[], label?: string) => {
-    if (!confirmDiscardEnabled) {
-      doDiscard(paths);
-      return;
+  // Confirm before discarding (destructive) via the central dialog; then run
+  // it. The label defaults to the lone path, or "N files" for a bulk
+  // discard. When the confirmation setting is off, discard runs immediately.
+  const requestDiscard = async (paths: string[], label?: string) => {
+    if (confirmDiscardEnabled) {
+      const ok = await confirmDialog({
+        title: "Discard changes",
+        message: "Discards the working-tree changes. This cannot be undone.",
+        detail: label ?? (paths.length === 1 ? paths[0] : `${paths.length} files`),
+        confirmLabel: "Discard",
+      });
+      if (!ok) return;
     }
-    setConfirm({ paths, label: label ?? (paths.length === 1 ? paths[0] : `${paths.length} files`) });
-  };
-  const confirmDiscard = () => {
-    if (confirm) doDiscard(confirm.paths);
-    setConfirm(null);
+    doDiscard(paths);
   };
 
   if (!repo) {
@@ -726,26 +721,6 @@ export function WorkingChangesPanel() {
         <pre className="legit-error" style={{ margin: "8px 12px", fontSize: "var(--fz-md)" }}>
           {formatAppError(error)}
         </pre>
-      )}
-
-      {confirm && (
-        <div
-          style={{
-            margin: "8px 12px",
-            padding: "8px 10px",
-            border: "1px solid var(--panel-border)",
-            borderRadius: 4,
-            background: "var(--button-hover-bg)",
-          }}
-        >
-          <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
-            Discard changes to <strong>{confirm.label}</strong>? This cannot be undone.
-          </div>
-          <div style={{ display: "flex", gap: 6 }}>
-            <Button variant="danger" disabled={busy} onClick={confirmDiscard}>Discard</Button>
-            <button disabled={busy} onClick={() => setConfirm(null)}>Cancel</button>
-          </div>
-        </div>
       )}
 
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -861,7 +836,7 @@ export function WorkingChangesPanel() {
                       {many ? `Stage ${targets.length} selected` : "Stage"}
                     </MenuItem>
                     <MenuItem
-                      onClick={() => { requestDiscard(targets); closeMenu(); }}
+                      onClick={() => { void requestDiscard(targets); closeMenu(); }}
                     >
                       {many
                         ? `Discard ${targets.length} selected`
@@ -955,7 +930,7 @@ export function WorkingChangesPanel() {
                     <MenuItem onClick={() => { stage(paths); closeMenu(); }}>
                       Stage folder ({fileCountLabel(paths.length)})
                     </MenuItem>
-                    <MenuItem onClick={() => { requestDiscard(paths, dir); closeMenu(); }}>
+                    <MenuItem onClick={() => { void requestDiscard(paths, dir); closeMenu(); }}>
                       Discard folder ({fileCountLabel(paths.length)})
                     </MenuItem>
                   </>,

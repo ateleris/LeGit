@@ -1,5 +1,4 @@
 import { useCallback, useState } from "react";
-import { PanelError } from "../shared/PanelError";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
@@ -7,6 +6,7 @@ import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { autoUpdateSubmodules } from "../../lib/submodules";
 import { repoCheckoutCommit, repoReflog, repoReset } from "../../lib/commands";
 import { notify } from "../../store/notifications";
+import { confirmDialog } from "../../store/confirm";
 import { useConfirmDestructive } from "../../store/settings";
 import { notifySwitchOutcome, formatSwitchError } from "../../lib/switchFeedback";
 import type { ReflogEntry } from "../../lib/types";
@@ -14,7 +14,6 @@ import { formatAppError } from "../../lib/types";
 import { formatRelative } from "../../lib/time";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
-import { Button } from "../shared/buttons";
 import { ToolbarButton } from "../shared/ToolbarButton";
 
 const MAX_ENTRIES = 200;
@@ -45,24 +44,18 @@ export function ReflogSection() {
   const reload = useCallback(() => { refetch(); }, [refetch]);
   usePanelFocusEffect(reload);
 
-  const [error, setError] = useState<string | null>(null);
   // Two runners, one per error classification (checkout failures go through
   // the switch classifier). Delayed busy + double-click guard per convention.
   const { busy: switchBusy, run: runSwitch } = usePanelRunner({
     enabled: !!repo,
-    onStart: () => setError(null),
-    onError: (e) => setError(formatSwitchError(e)),
+    onError: (e) => notify.error(formatSwitchError(e)),
   });
   const { busy: resetBusy, run: runReset } = usePanelRunner({
     enabled: !!repo,
-    onStart: () => setError(null),
-    onError: (e) => setError(formatAppError(e)),
+    onError: (e) => notify.error(formatAppError(e)),
   });
   const busy = switchBusy || resetBusy;
   const confirmDestructive = useConfirmDestructive();
-  // Keyed by selector: unlike stashes, a reflog entry's sha can appear many
-  // times (checkout back and forth), so the selector is the unique row key.
-  const [confirmReset, setConfirmReset] = useState<string | null>(null);
 
   const invalidate = useCallback(() => {
     if (!repo) return;
@@ -81,14 +74,22 @@ export function ReflogSection() {
     runReset(async () => {
       await repoReset(repo!.id, e.sha, "hard");
       invalidate();
-      setConfirmReset(null);
       notify.info(`Hard-reset to ${e.sha.slice(0, 8)} (${e.selector}).`);
     });
 
-  const requestReset = (e: ReflogEntry) => {
-    setError(null);
-    if (confirmDestructive) setConfirmReset(e.selector);
-    else void doReset(e);
+  // Central confirmation dialog (global destructive-confirmation setting:
+  // when off, reset runs immediately).
+  const requestReset = async (e: ReflogEntry) => {
+    if (confirmDestructive) {
+      const ok = await confirmDialog({
+        title: "Hard reset",
+        message: "Moves HEAD and the working tree to this entry. Uncommitted changes will be discarded.",
+        detail: `${e.sha.slice(0, 8)}  ${e.selector}`,
+        confirmLabel: "Hard-reset",
+      });
+      if (!ok) return;
+    }
+    void doReset(e);
   };
 
   if (!repo) {
@@ -108,10 +109,6 @@ export function ReflogSection() {
         className="legit-panel__body"
         style={{ display: "flex", flexDirection: "column", gap: 4 }}
       >
-        {error && (
-          <PanelError error={error} margin={0} />
-        )}
-
         {entries.length === 0 ? (
           <span className="legit-subtle" style={{ fontSize: "var(--fz-md)" }}>
             No reflog entries.
@@ -122,11 +119,8 @@ export function ReflogSection() {
               key={e.selector}
               entry={e}
               busy={busy}
-              confirmingReset={confirmReset === e.selector}
               onCheckout={() => doCheckout(e)}
-              onRequestReset={() => requestReset(e)}
-              onConfirmReset={() => doReset(e)}
-              onCancelReset={() => setConfirmReset(null)}
+              onRequestReset={() => void requestReset(e)}
             />
           ))
         )}
@@ -138,19 +132,13 @@ export function ReflogSection() {
 function ReflogRow({
   entry,
   busy,
-  confirmingReset,
   onCheckout,
   onRequestReset,
-  onConfirmReset,
-  onCancelReset,
 }: {
   entry: ReflogEntry;
   busy: boolean;
-  confirmingReset: boolean;
   onCheckout: () => void;
   onRequestReset: () => void;
-  onConfirmReset: () => void;
-  onCancelReset: () => void;
 }) {
   return (
     <div
@@ -193,20 +181,7 @@ function ReflogRow({
         </span>
       </div>
 
-      {confirmingReset ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-          <span style={{ fontSize: "var(--fz-md)", flex: 1 }}>
-            Hard-reset to {entry.sha.slice(0, 8)}? Uncommitted changes will be discarded.
-          </span>
-          <Button variant="danger" disabled={busy} onClick={onConfirmReset}>
-            Reset
-          </Button>
-          <button disabled={busy} onClick={onCancelReset}>
-            Cancel
-          </button>
-        </div>
-      ) : (
-        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
           <ToolbarButton
             label="Checkout"
             title="Check out this commit (detached HEAD)"
@@ -220,7 +195,6 @@ function ReflogRow({
             onClick={onRequestReset}
           />
         </div>
-      )}
     </div>
   );
 }

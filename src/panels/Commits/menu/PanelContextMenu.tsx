@@ -21,6 +21,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { confirmDialog } from "../../../store/confirm";
 import {
   MENU_LAYER_ATTR,
   MenuItem,
@@ -140,25 +141,23 @@ export function PanelContextMenuProvider({ baseline, children }: ProviderProps) 
 }
 
 /**
- * Standard destructive-confirmation takeover: replaces the whole menu with a
- * question plus Confirm/Cancel. Cancel returns to the normal menu. Callers are
+ * Standard destructive confirmation from a menu entry: closes the menu and
+ * raises the central confirmation dialog (`ConfirmDialogHost`, near the
+ * pointer) with the question; the action runs only on confirm. Callers are
  * expected to have already consulted the global destructive-confirmation
  * setting (`useConfirmDestructive`) and to skip straight to the action when
  * it is off.
  */
 export function useMenuConfirm() {
-  const { requestConfirm } = usePanelContextMenu();
+  const { closeMenu } = usePanelContextMenu();
   return useCallback(
     (question: string, onConfirm: () => void) => {
-      requestConfirm(
-        <>
-          <SectionLabel>{question}</SectionLabel>
-          <MenuItem onClick={onConfirm}>Confirm</MenuItem>
-          <MenuItem onClick={() => requestConfirm(null)}>Cancel</MenuItem>
-        </>,
-      );
+      closeMenu();
+      void confirmDialog({ message: question, confirmLabel: "Confirm" }).then((confirmed) => {
+        if (confirmed) onConfirm();
+      });
     },
-    [requestConfirm],
+    [closeMenu],
   );
 }
 

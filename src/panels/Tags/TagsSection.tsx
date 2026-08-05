@@ -15,6 +15,7 @@ import {
 import { pickTagRemote, pushedTagNames } from "../../lib/tags";
 import { autoPushTagAfterCreate } from "../../lib/autoPushTags";
 import { notify } from "../../store/notifications";
+import { confirmDialog } from "../../store/confirm";
 import type { Remote, RemoteTag, TagInfo } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { RemoteIcon, TagIcon } from "../../icons";
@@ -79,20 +80,13 @@ export function TagsSection() {
   const reload = useCallback(() => { refetch(); }, [refetch]);
   usePanelFocusEffect(reload);
 
-  const [error, setError] = useState<string | null>(null);
   const [createName, setCreateName] = useState("");
   const [createMsg, setCreateMsg] = useState("");
-  // Pending delete confirmation: which tag, and whether it targets the remote
-  // copy (local and remote deletion are separate actions, GitKraken-style).
-  const [confirmDelete, setConfirmDelete] = useState<
-    { name: string; remote: boolean } | null
-  >(null);
 
   const { busy, run } = usePanelRunner({
     enabled: !!repo,
-    onStart: () => setError(null),
     onSuccess: () => invalidateRepoDomains(queryClient, repo!.id, AFFECTED_DOMAINS),
-    onError: (e) => setError(formatAppError(e)),
+    onError: (e) => notify.error(formatAppError(e)),
   });
 
   const doCreate = () =>
@@ -106,19 +100,32 @@ export function TagsSection() {
       void autoPushTagAfterCreate(queryClient, repo!.id, name);
     });
 
-  const doDelete = (name: string) =>
-    run(async () => {
-      await repoDeleteTag(repo!.id, name);
-      setConfirmDelete(null);
-    });
+  const doDelete = (name: string) => run(() => repoDeleteTag(repo!.id, name));
 
   const doDeleteRemote = (name: string) =>
     run(async () => {
       await repoDeleteRemoteTag(repo!.id, tagRemote!, name, crypto.randomUUID());
       notify.success(`Deleted tag '${name}' from ${tagRemote}`);
-      setConfirmDelete(null);
       invalidateRepoDomains(queryClient, repo!.id, ["remote-tags"]);
     });
+
+  // Central confirmation dialog: local and remote deletion are separate
+  // actions (GitKraken-style). Gated by the global destructive-confirm
+  // setting; when off, delete runs immediately.
+  const requestDelete = async (name: string, remoteSide: boolean) => {
+    if (confirmDestructive) {
+      const ok = await confirmDialog({
+        title: remoteSide ? "Delete remote tag" : "Delete tag",
+        message: remoteSide
+          ? `Deletes the tag from ${tagRemote}. Local copies (yours and other clones') stay.`
+          : "Deletes the local tag. A copy already pushed to a remote stays there.",
+        detail: name,
+        confirmLabel: remoteSide ? `Delete from ${tagRemote}` : "Delete tag",
+      });
+      if (!ok) return;
+    }
+    void (remoteSide ? doDeleteRemote(name) : doDelete(name));
+  };
 
   const doPush = (name: string) =>
     run(async () => {
@@ -144,12 +151,6 @@ export function TagsSection() {
         className="legit-panel__body"
         style={{ display: "flex", flexDirection: "column", gap: 10 }}
       >
-        {error && (
-          <pre className="legit-error" style={{ margin: 0, fontSize: "var(--fz-md)" }}>
-            {error}
-          </pre>
-        )}
-
         {remotes.length > 1 && (
           <label
             style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fz-md)" }}
@@ -185,17 +186,8 @@ export function TagsSection() {
                 pushed={pushed.has(t.name)}
                 remote={tagRemote}
                 busy={busy}
-                confirming={confirmDelete?.name === t.name ? confirmDelete.remote ? "remote" : "local" : null}
                 onPush={() => doPush(t.name)}
-                onOpenDelete={(remoteSide) => {
-                  setError(null);
-                  if (confirmDestructive) setConfirmDelete({ name: t.name, remote: remoteSide });
-                  else void (remoteSide ? doDeleteRemote(t.name) : doDelete(t.name));
-                }}
-                onConfirmDelete={(remoteSide) =>
-                  remoteSide ? doDeleteRemote(t.name) : doDelete(t.name)
-                }
-                onCancelDelete={() => setConfirmDelete(null)}
+                onOpenDelete={(remoteSide) => void requestDelete(t.name, remoteSide)}
               />
             ))}
           </div>
@@ -250,29 +242,22 @@ function TagRow({
   pushed,
   remote,
   busy,
-  confirming,
   onPush,
   onOpenDelete,
-  onConfirmDelete,
-  onCancelDelete,
 }: {
   tag: TagInfo;
   pushed: boolean;
   remote: string | null;
   busy: boolean;
-  /** Which delete is awaiting confirmation, if any. */
-  confirming: "local" | "remote" | null;
   onPush: () => void;
   onOpenDelete: (remoteSide: boolean) => void;
-  onConfirmDelete: (remoteSide: boolean) => void;
-  onCancelDelete: () => void;
 }) {
   return (
     <div
       onClick={(e) => {
-        // Background click = show the tagged commit in the graph; not while
-        // the delete confirmation is open, and never for the row's buttons.
-        if (confirming === null && isRowBackgroundClick(e.target)) {
+        // Background click = show the tagged commit in the graph; never for
+        // the row's buttons.
+        if (isRowBackgroundClick(e.target)) {
           jumpPanelsToCommit(tag.target_sha);
         }
       }}
@@ -346,22 +331,7 @@ function TagRow({
         </span>
       </div>
 
-      {confirming !== null ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", flexBasis: "100%" }}>
-          <span style={{ fontSize: "var(--fz-md)", flex: 1 }}>
-            {confirming === "remote"
-              ? `Delete this tag from ${remote}?`
-              : "Delete this tag locally?"}
-          </span>
-          <Button variant="danger" disabled={busy} onClick={() => onConfirmDelete(confirming === "remote")}>
-            Delete
-          </Button>
-          <button disabled={busy} onClick={onCancelDelete}>
-            Cancel
-          </button>
-        </div>
-      ) : (
-        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap", marginLeft: "auto" }}>
+      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap", marginLeft: "auto" }}>
           <ToolbarButton
             label={pushed ? "Pushed" : remote ? `Push to ${remote}` : "Push"}
             title={
@@ -386,7 +356,6 @@ function TagRow({
             />
           )}
         </div>
-      )}
     </div>
   );
 }

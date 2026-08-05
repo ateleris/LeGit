@@ -14,6 +14,7 @@ import {
 } from "../../lib/commands";
 import { formatSwitchError } from "../../lib/switchFeedback";
 import { notify } from "../../store/notifications";
+import { confirmDialog } from "../../store/confirm";
 import { useSummonStore } from "../../store/summon";
 import { useConfirmDestructive } from "../../store/settings";
 import type { StashEntry } from "../../lib/types";
@@ -71,23 +72,19 @@ export function StashesSection() {
   // through the switch classifier (it checks out the new branch).
   const { busy: mutBusy, run } = usePanelRunner({
     enabled: !!repo,
-    onStart: () => setError(null),
-    onError: (e) => setError(formatAppError(e)),
+    onError: (e) => notify.error(formatAppError(e)),
   });
   const { busy: branchBusy, run: runBranch } = usePanelRunner({
     enabled: !!repo,
-    onStart: () => setError(null),
-    onError: (e) => setError(formatSwitchError(e)),
+    onError: (e) => notify.error(formatSwitchError(e)),
   });
   const busy = mutBusy || branchBusy;
-  const [error, setError] = useState<string | null>(null);
   const [createMsg, setCreateMsg] = useState("");
   // Default on: a stash should capture the full working state, untracked files
   // included. Users can still opt out per-stash.
   const [includeUntracked, setIncludeUntracked] = useState(true);
   const [keepIndex, setKeepIndex] = useState(false);
   const confirmDestructive = useConfirmDestructive();
-  const [confirmDrop, setConfirmDrop] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draftMsg, setDraftMsg] = useState("");
   const [branching, setBranching] = useState<string | null>(null);
@@ -99,16 +96,12 @@ export function StashesSection() {
   }, [queryClient, repo]);
 
   const openRename = (s: StashEntry) => {
-    setError(null);
-    setConfirmDrop(null);
     setBranching(null);
     setDraftMsg(s.message);
     setRenaming(s.stash_sha);
   };
 
   const openBranch = (s: StashEntry) => {
-    setError(null);
-    setConfirmDrop(null);
     setRenaming(null);
     setDraftBranch("");
     setBranching(s.stash_sha);
@@ -180,8 +173,23 @@ export function StashesSection() {
     run(async () => {
       await repoDropStash(repo!.id, sha);
       invalidate();
-      setConfirmDrop(null);
     });
+
+  // Central confirmation dialog (global destructive-confirmation setting:
+  // when off, drop runs immediately). The row context menu keeps its own
+  // inline confirm section.
+  const requestDrop = async (s: StashEntry) => {
+    if (confirmDestructive) {
+      const ok = await confirmDialog({
+        title: "Drop stash",
+        message: "Deletes the stash entry; its changes are not applied anywhere.",
+        detail: s.message,
+        confirmLabel: "Drop stash",
+      });
+      if (!ok) return;
+    }
+    void doDrop(s.stash_sha);
+  };
 
   if (!repo) {
     return (
@@ -200,12 +208,6 @@ export function StashesSection() {
         className="legit-panel__body"
         style={{ display: "flex", flexDirection: "column", gap: 10 }}
       >
-        {error && (
-          <pre className="legit-error" style={{ margin: 0, fontSize: "var(--fz-md)" }}>
-            {error}
-          </pre>
-        )}
-
         {stashes.length === 0 ? (
           <span className="legit-subtle" style={{ fontSize: "var(--fz-md)" }}>
             No stashes.
@@ -220,7 +222,6 @@ export function StashesSection() {
                 key={s.stash_sha}
                 stash={s}
                 busy={busy}
-                confirmingDrop={confirmDrop === s.stash_sha}
                 editing={renaming === s.stash_sha}
                 draftMsg={draftMsg}
                 onDraftChange={setDraftMsg}
@@ -236,14 +237,7 @@ export function StashesSection() {
                 onOpenRename={() => openRename(s)}
                 onSaveRename={() => doRename(s.stash_sha)}
                 onCancelEdit={() => setRenaming(null)}
-                onOpenDrop={() => {
-                  setError(null);
-                  // Global destructive-confirmation setting: when off, drop runs immediately.
-                  if (confirmDestructive) setConfirmDrop(s.stash_sha);
-                  else void doDrop(s.stash_sha);
-                }}
-                onConfirmDrop={() => doDrop(s.stash_sha)}
-                onCancelDrop={() => setConfirmDrop(null)}
+                onOpenDrop={() => void requestDrop(s)}
               />
             ))}
           </div>
@@ -332,7 +326,6 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 function StashRow({
   stash,
   busy,
-  confirmingDrop,
   editing,
   draftMsg,
   onDraftChange,
@@ -349,12 +342,9 @@ function StashRow({
   onSaveRename,
   onCancelEdit,
   onOpenDrop,
-  onConfirmDrop,
-  onCancelDrop,
 }: {
   stash: StashEntry;
   busy: boolean;
-  confirmingDrop: boolean;
   editing: boolean;
   draftMsg: string;
   onDraftChange: (v: string) => void;
@@ -371,8 +361,6 @@ function StashRow({
   onSaveRename: () => void;
   onCancelEdit: () => void;
   onOpenDrop: () => void;
-  onConfirmDrop: () => void;
-  onCancelDrop: () => void;
 }) {
   return (
     <div
@@ -380,7 +368,7 @@ function StashRow({
         // Background click = show the stash's node in the graph (stash nodes
         // are injected into the log by their commit SHA); not while an inline
         // rename/branch/drop flow is open, and never for the row's buttons.
-        if (!editing && !branching && !confirmingDrop && isRowBackgroundClick(e.target)) {
+        if (!editing && !branching && isRowBackgroundClick(e.target)) {
           jumpPanelsToCommit(stash.stash_sha);
         }
       }}
@@ -451,18 +439,6 @@ function StashRow({
             style={{ fontSize: "var(--fz-md)" }}
           />
         </InlineEditor>
-      ) : confirmingDrop ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-          <span style={{ fontSize: "var(--fz-md)", flex: 1 }}>
-            Drop this stash?
-          </span>
-          <Button variant="danger" disabled={busy} onClick={onConfirmDrop}>
-            Drop
-          </Button>
-          <button disabled={busy} onClick={onCancelDrop}>
-            Cancel
-          </button>
-        </div>
       ) : (
         <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
           <ToolbarButton label="View diff" disabled={busy} onClick={onViewDiff} />

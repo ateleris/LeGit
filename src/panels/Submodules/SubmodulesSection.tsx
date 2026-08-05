@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
@@ -26,6 +26,7 @@ import {
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notifySubmoduleUpdateResults } from "../../lib/submodules";
 import { notify } from "../../store/notifications";
+import { confirmDialog } from "../../store/confirm";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { ToolbarButton } from "../shared/ToolbarButton";
@@ -59,33 +60,19 @@ export function SubmodulesSection() {
   const reload = useCallback(() => { refetch(); }, [refetch]);
   usePanelFocusEffect(reload);
 
-  const [error, setError] = useState<string | null>(null);
   const [recursive, setRecursive] = useState(false);
   const [strategy, setStrategy] = useState<SubmoduleUpdateStrategy>("checkout");
-  const [confirmRemove, setConfirmRemove] = useState<string | null>(null); // path
-  // Post-remove gitdir prompt: name + info of the retained gitdir.
-  const [gitdirPrompt, setGitdirPrompt] = useState<
-    { name: string; info: SubmoduleGitdirInfo } | null
-  >(null);
   const [addUrl, setAddUrl] = useState("");
   const [addPath, setAddPath] = useState("");
   const [addBranch, setAddBranch] = useState("");
 
-  // Error banners, pending remove confirms, and the gitdir prompt all refer
-  // to a specific repo - clear them when the active repo changes, or they
-  // linger over the next repo's submodule list.
-  const repoId = repo?.id;
-  useEffect(() => {
-    setError(null);
-    setConfirmRemove(null);
-    setGitdirPrompt(null);
-  }, [repoId]);
-
   const { busy, run } = usePanelRunner({
     enabled: !!repo,
-    onStart: () => setError(null),
     onSuccess: () => invalidateRepoDomains(queryClient, repo!.id, AFFECTED_DOMAINS),
-    onError: (e) => setError(formatAppError(e)),
+    // Errors go to the toast overlay (never a panel-embedded banner: those
+    // scroll out of view and reflow the pane); the full failing command +
+    // stderr is in the Git Command Log, which the toast links to.
+    onError: (e) => notify.error(formatAppError(e)),
   });
 
   // A submodule opens as its own peer repo tab; `register_open_repo` dedupes
@@ -111,21 +98,43 @@ export function SubmodulesSection() {
       notifySubmoduleUpdateResults(results);
     });
 
-  const doRemove = (s: SubmoduleInfo) =>
-    run(async () => {
+  const doRemove = async (s: SubmoduleInfo) => {
+    // Object holder (not a plain `let`): assigned inside the run() closure.
+    const retained: { info: SubmoduleGitdirInfo | null } = { info: null };
+    const ok = await run(async () => {
       await repoSubmoduleRemove(repo!.id, s.path);
-      setConfirmRemove(null);
-      // Second stage: offer gitdir deletion only if one was retained. This
-      // prompt is ALWAYS explicit (even with the confirm setting off): it
-      // permanently destroys any unpushed commits (spec: separate step).
-      const info = await repoSubmoduleGitdirInfo(repo!.id, s.name);
-      if (info) setGitdirPrompt({ name: s.name, info });
+      retained.info = await repoSubmoduleGitdirInfo(repo!.id, s.name);
     });
+    if (!ok || !retained.info) return;
+    // Second stage: offer gitdir deletion only if one was retained. This
+    // prompt is ALWAYS explicit (even with the confirm setting off): it
+    // permanently destroys any unpushed commits (spec: separate step).
+    const del = await confirmDialog({
+      title: "Submodule removed - repository data kept",
+      message:
+        "Its repository data is kept at the path below, so the submodule can be re-added later. Delete it permanently instead?",
+      detail: retained.info.path,
+      warning: retained.info.unpushed
+        ? "It contains commits that are on no remote: deleting destroys them permanently."
+        : undefined,
+      confirmLabel: "Delete repository data",
+      cancelLabel: "Keep",
+    });
+    if (del) void run(() => repoSubmoduleDeleteGitdir(repo!.id, s.name));
+  };
 
-  const requestRemove = (s: SubmoduleInfo) => {
-    setError(null);
-    if (confirmDestructive) setConfirmRemove(s.path);
-    else void doRemove(s);
+  const requestRemove = async (s: SubmoduleInfo) => {
+    if (confirmDestructive) {
+      const ok = await confirmDialog({
+        title: "Remove submodule",
+        message:
+          "Removes its .gitmodules entry and working tree. The repository data under .git/modules is kept.",
+        detail: s.path,
+        confirmLabel: "Remove submodule",
+      });
+      if (!ok) return;
+    }
+    void doRemove(s);
   };
 
   const doAdd = () =>
@@ -156,52 +165,6 @@ export function SubmodulesSection() {
         className="legit-panel__body"
         style={{ display: "flex", flexDirection: "column", gap: 6 }}
       >
-        {error && (
-          <pre className="legit-error" style={{ margin: 0, fontSize: "var(--fz-md)" }}>
-            {error}
-          </pre>
-        )}
-
-        {gitdirPrompt && (
-          <div
-            style={{
-              padding: "8px 10px",
-              border: "1px solid var(--panel-border)",
-              borderRadius: 4,
-              background: "var(--button-hover-bg)",
-            }}
-          >
-            <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
-              Submodule removed. Its repository data is kept at{" "}
-              <span style={{ fontFamily: "monospace" }}>{gitdirPrompt.info.path}</span> (so it
-              can be re-added later).
-              {gitdirPrompt.info.unpushed && (
-                <strong>
-                  {" "}
-                  It contains commits that are on no remote - deleting destroys them permanently.
-                </strong>
-              )}
-            </div>
-            <div style={{ display: "flex", gap: 6 }}>
-              <Button
-                variant="danger"
-                disabled={busy}
-                onClick={() =>
-                  run(async () => {
-                    await repoSubmoduleDeleteGitdir(repo.id, gitdirPrompt.name);
-                    setGitdirPrompt(null);
-                  })
-                }
-              >
-                Delete repository data
-              </Button>
-              <button disabled={busy} onClick={() => setGitdirPrompt(null)}>
-                Keep
-              </button>
-            </div>
-          </div>
-        )}
-
         {subs.length > 0 && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <ToolbarButton
@@ -251,7 +214,6 @@ export function SubmodulesSection() {
               key={s.name}
               info={s}
               busy={busy}
-              removing={confirmRemove === s.path ? "confirm" : null}
               onOpen={() => openSubmodule(s)}
               onInitUpdate={() =>
                 run(() =>
@@ -292,9 +254,7 @@ export function SubmodulesSection() {
               onCreateBranch={(name) =>
                 run(() => repoSubmoduleCreateBranch(repo.id, s.path, name))
               }
-              onRemove={() => requestRemove(s)}
-              onConfirmRemove={() => void doRemove(s)}
-              onCancelRemove={() => setConfirmRemove(null)}
+              onRemove={() => void requestRemove(s)}
             />
           ))
         )}

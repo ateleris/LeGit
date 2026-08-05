@@ -16,6 +16,7 @@ import { OpStateStrip } from "./OpStateStrip";
 import { RepoDock } from "./RepoDock";
 import { RepoTabBar } from "./RepoTabBar";
 import { CredentialPromptHost } from "./CredentialPrompt";
+import { ConfirmDialogHost } from "./ConfirmDialogHost";
 
 const DEFAULT_SIZE_TOP = 240;
 const DEFAULT_SIZE_LEFT = 280;
@@ -317,6 +318,7 @@ export function AppLayout() {
           </div>
         </div>
         <CredentialPromptHost />
+        <ConfirmDialogHost />
       </div>
     );
   }
@@ -346,6 +348,7 @@ export function AppLayout() {
         <RepoDock />
       </div>
       <CredentialPromptHost />
+      <ConfirmDialogHost />
     </div>
   );
 }
