@@ -20,7 +20,15 @@ export function invalidateRepoDomains(
   qc: QueryClient,
   repoId: string,
   domains: Iterable<string>,
-  opts?: { coalesce?: boolean; now?: number },
+  opts?: {
+    coalesce?: boolean;
+    now?: number;
+    /** Forwarded to react-query. "none" marks caches stale without fetching —
+     *  the focus gate: an unfocused window defers the refetch to the
+     *  refetchOnWindowFocus catch-up when focus returns. Default (undefined)
+     *  is react-query's "active": stale queries refetch immediately. */
+    refetchType?: "active" | "inactive" | "all" | "none";
+  },
 ) {
   const coalesce = opts?.coalesce ?? false;
   const now = opts?.now ?? Date.now();
@@ -31,7 +39,7 @@ export function invalidateRepoDomains(
       if (prev !== undefined && now - prev < SUPPRESS_MS) continue; // redundant repeat
     }
     lastFired.set(k, now);
-    qc.invalidateQueries({ queryKey: [repoId, domain] });
+    qc.invalidateQueries({ queryKey: [repoId, domain], refetchType: opts?.refetchType });
   }
 }
 

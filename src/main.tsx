@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "./App";
+import { initWindowFocusTracking } from "./lib/windowFocus";
 import "./styles/theme.css";
 import "./styles/global.css";
 import "dockview-react/dist/styles/dockview.css";
@@ -17,14 +18,20 @@ document.addEventListener("contextmenu", (e) => {
   e.preventDefault();
 });
 
+// Focus comes from Tauri's window events (not the WebView's visibility, which
+// misses alt-tab); it gates watcher refetches and drives the focus catch-up.
+initWindowFocusTracking();
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 30_000,
       retry: 1,
       // Re-read git state when the window regains focus, so changes made in a
-      // terminal/editor while the app was in the background show up. staleTime
-      // throttles this — only queries older than their staleTime actually refetch.
+      // terminal/editor while the app was in the background show up. This is
+      // also the catch-up for watcher events gated while unfocused (they only
+      // mark queries stale - see useRepoChangeListener); staleTime throttles
+      // the rest — only queries older than their staleTime refetch.
       refetchOnWindowFocus: true,
     },
   },

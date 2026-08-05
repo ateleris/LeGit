@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { onRepoChanged } from "./events";
 import { invalidateRepoDomains, withDerivedDomains } from "./repoInvalidation";
+import { isWindowFocused } from "./windowFocus";
 import { useGitLogStore } from "../store/gitLog";
 
 /**
@@ -27,8 +28,13 @@ export function useRepoChangeListener() {
       // Coalescing backstop: skip any domain a manual refresh (or an earlier
       // emission of this same change) already invalidated within the window, so
       // one action triggers one refetch. See repoInvalidation.ts.
+      // Focus gate: while the window is unfocused, only mark caches stale
+      // ("none") - background churn (builds, editors) must not trigger git
+      // refetches nobody sees. The refetchOnWindowFocus catch-up (main.tsx,
+      // driven by windowFocus.ts) refetches the stale queries on focus.
       invalidateRepoDomains(queryClient, payload.repo_id, withDerivedDomains(payload.domains), {
         coalesce: true,
+        refetchType: isWindowFocused() ? "active" : "none",
       });
     }).then((fn) => {
       // The async listen() may resolve after unmount (StrictMode double-run).

@@ -130,6 +130,17 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 
 ## Smaller follow-ups
 
+- **View dropdown: summoning a global panel must uncollapse the global
+  region** (added 2026-08-05). Clicking a global-scope panel entry in the
+  View dropdown while the global dock region is collapsed currently does
+  nothing visible - the panel opens/focuses inside a region with no size.
+  Expected: uncollapse the global region and bring that panel to the front.
+  Approach: the collapse state lives in `AppLayout.tsx` (`collapsed`,
+  persisted as `global_dock_collapsed`); the summon path
+  (`store/summon.ts`) has no way to reach it today. Either move/mirror the
+  collapsed flag into a store AppLayout subscribes to (so `summon(id)` of a
+  global-scope panel - scope is in `panels/registry.tsx` - can clear it), or
+  have the View menu handler clear the collapse itself before summoning.
 - **Files panel:** untrack a folder (`rm_cached` needs `-r` for a
   directory); persist view mode / show-ignored (ephemeral component state
   today; mirror `changed_files_view_mode`); escape `*`, `?`, `[` in

@@ -4,18 +4,20 @@
 // test uses a unique repo id to stay isolated from the others.
 
 import { describe, test, expect, vi } from "vitest";
-import type { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryObserver, focusManager } from "@tanstack/react-query";
 import { invalidateRepoDomains, withDerivedDomains } from "./repoInvalidation";
 
 /** A QueryClient stub that just records the keys it was asked to invalidate. */
 function fakeClient() {
   const calls: unknown[][] = [];
+  const filters: { queryKey: unknown[]; refetchType?: string }[] = [];
   const qc = {
-    invalidateQueries: ({ queryKey }: { queryKey: unknown[] }) => {
-      calls.push(queryKey);
+    invalidateQueries: (f: { queryKey: unknown[]; refetchType?: string }) => {
+      calls.push(f.queryKey);
+      filters.push(f);
     },
   } as unknown as QueryClient;
-  return { qc, calls };
+  return { qc, calls, filters };
 }
 
 describe("invalidateRepoDomains", () => {
@@ -63,6 +65,68 @@ describe("invalidateRepoDomains", () => {
     invalidateRepoDomains(qc, "r6", ["log"], { coalesce: true });
     spy.mockRestore();
     expect(calls).toEqual([["r6", "log"]]);
+  });
+});
+
+describe("invalidateRepoDomains refetchType forwarding (focus gate)", () => {
+  test("passes refetchType through to invalidateQueries", () => {
+    const { qc, filters } = fakeClient();
+    invalidateRepoDomains(qc, "r7", ["log"], { coalesce: true, refetchType: "none" });
+    expect(filters).toEqual([{ queryKey: ["r7", "log"], refetchType: "none" }]);
+  });
+
+  test("omits refetchType by default (react-query's default: refetch active)", () => {
+    const { qc, filters } = fakeClient();
+    invalidateRepoDomains(qc, "r8", ["log"]);
+    expect(filters[0].refetchType).toBeUndefined();
+  });
+});
+
+// Encodes the react-query behavior the focus gate is built on, against the
+// real library: invalidating with refetchType "none" leaves an active query
+// stale WITHOUT refetching, and the focusManager's focus event then delivers
+// the catch-up refetch (refetchOnWindowFocus).
+describe("stale-while-unfocused, refetch-on-focus (real QueryClient)", () => {
+  test("refetchType none defers the refetch to the next focus", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: true } },
+    });
+    client.mount(); // subscribes the cache to focusManager, as the Provider does
+    let fetches = 0;
+    const observer = new QueryObserver(client, {
+      queryKey: ["repo-focus-test", "log"],
+      queryFn: async () => ++fetches,
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    try {
+      // Wait for the initial fetch to fully COMMIT (fetchStatus idle), not
+      // just for the queryFn to have been called: a success landing after the
+      // invalidation would silently clear isInvalidated again.
+      await vi.waitFor(() => {
+        const s = client.getQueryState(["repo-focus-test", "log"]);
+        expect(s?.status).toBe("success");
+        expect(s?.fetchStatus).toBe("idle");
+      });
+      expect(fetches).toBe(1);
+
+      focusManager.setFocused(false);
+      invalidateRepoDomains(client, "repo-focus-test", ["log"], {
+        coalesce: true,
+        refetchType: "none",
+      });
+      // Stale, but no refetch while unfocused.
+      await new Promise((r) => setTimeout(r, 20));
+      expect(client.getQueryState(["repo-focus-test", "log"])?.isInvalidated).toBe(true);
+      expect(observer.getCurrentResult().isStale).toBe(true);
+      expect(fetches).toBe(1);
+
+      focusManager.setFocused(true);
+      await vi.waitFor(() => expect(fetches).toBe(2));
+    } finally {
+      unsubscribe();
+      client.unmount();
+      focusManager.setFocused(undefined);
+    }
   });
 });
 
