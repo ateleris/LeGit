@@ -17,6 +17,7 @@ import {
 } from "../../lib/commands";
 import { useConfirmDestructive } from "../../store/settings";
 import { Button } from "../shared/buttons";
+import { useDelayedBusy } from "../shared/useDelayedBusy";
 import { Section, FieldNote } from "./primitives";
 import { SSH_PLATFORMS } from "./SshKeyTools";
 
@@ -30,7 +31,7 @@ export function ConnectedAccountsSection() {
   const [accounts, setAccounts] = useState<ConnectedAccountStatus[] | null>(null);
   const [platform, setPlatform] = useState(SSH_PLATFORMS[0].id);
   const [token, setToken] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useDelayedBusy();
   const [error, setError] = useState<string | null>(null);
   const [confirmingDisconnect, setConfirmingDisconnect] = useState<string | null>(null);
   const confirmDestructive = useConfirmDestructive();
@@ -46,34 +47,31 @@ export function ConnectedAccountsSection() {
 
   const platformLabel = (id: string) => SSH_PLATFORMS.find((p) => p.id === id)?.label ?? id;
 
-  const connect = async () => {
-    if (busy || token.trim() === "") return;
-    setBusy(true);
-    setError(null);
-    try {
-      await connectAccountPat(platform, token);
-      setToken("");
-      load();
-    } catch (e) {
-      setError(formatAppError(e));
-    } finally {
-      setBusy(false);
-    }
+  const connect = () => {
+    if (token.trim() === "") return;
+    return run(async () => {
+      setError(null);
+      try {
+        await connectAccountPat(platform, token);
+        setToken("");
+        load();
+      } catch (e) {
+        setError(formatAppError(e));
+      }
+    });
   };
 
-  const doDisconnect = async (id: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await disconnectAccount(id);
-      setConfirmingDisconnect(null);
-      load();
-    } catch (e) {
-      setError(formatAppError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const doDisconnect = (id: string) =>
+    run(async () => {
+      setError(null);
+      try {
+        await disconnectAccount(id);
+        setConfirmingDisconnect(null);
+        load();
+      } catch (e) {
+        setError(formatAppError(e));
+      }
+    });
 
   const onDisconnect = (id: string) => {
     if (!confirmDestructive) return void doDisconnect(id);

@@ -1,4 +1,5 @@
 import type { IDockviewPanelHeaderProps } from "dockview-react";
+import { confirmDialog } from "../store/confirm";
 import { usePanelDirtyStore } from "../store/panel-dirty";
 
 /**
@@ -6,16 +7,26 @@ import { usePanelDirtyStore } from "../store/panel-dirty";
  * panel has unsaved changes. Register as tabComponent "confirm-close" in
  * GlobalDock and RepoDock.
  *
+ * A data-loss WARNING, deliberately NOT gated by the destructive-action
+ * confirmation setting: it always shows (like detached-HEAD commit and
+ * amend-pushed).
+ *
  * Uses dockview's exact DOM structure (dv-default-tab / dv-default-tab-content /
  * dv-default-tab-action + SVG) so it looks identical to the default tab.
  */
 export function ConfirmCloseTab({ api }: IDockviewPanelHeaderProps) {
   const isDirty = usePanelDirtyStore((s) => s.dirty[api.id] ?? false);
 
-  const handleClose = (e: React.MouseEvent) => {
+  const handleClose = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isDirty) {
-      const ok = window.confirm("Discard unsaved changes and close this panel?");
+      const ok = await confirmDialog({
+        title: "Close panel",
+        message: "This panel has unsaved changes.",
+        detail: api.title,
+        warning: "Closing it discards them.",
+        confirmLabel: "Discard and close",
+      });
       if (!ok) return;
     }
     api.close();

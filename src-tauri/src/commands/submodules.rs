@@ -22,20 +22,9 @@ pub async fn repo_submodules(
     session.backend.submodules().await.map_err(AppError::Git)
 }
 
-/// Register submodules (`git submodule init`).
-#[tauri::command]
-#[specta::specta]
-pub async fn repo_submodule_init(
-    state: tauri::State<'_, AppState>,
-    repo_id: String,
-    paths: Vec<String>,
-) -> Result<(), AppError> {
-    let session = state.get_session(&repo_id).await?;
-    let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
-    session.backend.submodule_init(&paths).await.map_err(AppError::Git)
-}
-
 /// Check out recorded submodule SHAs (`git submodule update`). Cancellable.
+/// Registration is folded in via `opts.init` (`--init`); there is no separate
+/// init command.
 #[tauri::command]
 #[specta::specta]
 pub async fn repo_submodule_update(

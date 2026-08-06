@@ -208,10 +208,6 @@ pub trait GitBackend: Send + Sync {
         to: &CommitId,
     ) -> Result<SubmoduleLog, GitError>;
 
-    /// Register submodules in `.git/config` (`git submodule init`). Empty
-    /// `paths` = all.
-    async fn submodule_init(&self, paths: &[PathBuf]) -> Result<(), GitError>;
-
     /// Check out the recorded SHA (`git submodule update`), optionally
     /// registering (`--init`) and recursing. May fetch - cancellable.
     async fn submodule_update(

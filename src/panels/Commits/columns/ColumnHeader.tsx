@@ -17,8 +17,6 @@ interface ColumnHeaderProps {
   isDraggable: boolean;
   isResizable: boolean;
   isHideable: boolean;
-  /** Full visible column order — only used to label "show" submenu items. */
-  order: ColumnId[];
   /** Hidden columns — surfaced in the "Show columns" submenu. */
   hidden: ColumnId[];
   /** Map from ColumnId to its human-readable label. */

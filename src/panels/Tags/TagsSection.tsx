@@ -12,7 +12,7 @@ import {
   repoRemoteTags,
   repoTags,
 } from "../../lib/commands";
-import { pickTagRemote, pushedTagNames } from "../../lib/tags";
+import { pushedTagNames, resolveTagRemote } from "../../lib/tags";
 import { autoPushTagAfterCreate } from "../../lib/autoPushTags";
 import { notify } from "../../store/notifications";
 import { confirmDialog } from "../../store/confirm";
@@ -25,6 +25,7 @@ import { ToolbarButton } from "../shared/ToolbarButton";
 import { isRowBackgroundClick, jumpPanelsToCommit } from "../shared/jumpToCommit";
 import { Button } from "../shared/buttons";
 import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
+import { useTagRemoteChoice, useTagRemoteStore } from "../../store/tagRemote";
 import { coerceRefsSortMode, sortRefs } from "../../lib/refSort";
 
 // A tag mutation touches the tag list and the graph decorations.
@@ -56,11 +57,14 @@ export function TagsSection() {
   // Remote targeted by push / delete-on-remote / the pushed indicator.
   // Default is `pickTagRemote` (origin, else first); with multiple remotes a
   // selector overrides it. A stale selection (remote removed) falls back.
-  const [remoteChoice, setRemoteChoice] = useState("");
-  const tagRemote = useMemo(() => {
-    if (remoteChoice && remotes.some((r) => r.name === remoteChoice)) return remoteChoice;
-    return pickTagRemote(remotes);
-  }, [remoteChoice, remotes]);
+  // The choice lives in a shared per-repo store so the Commits panel's tag
+  // indicators resolve the SAME remote (and share the remote-tags query).
+  const remoteChoice = useTagRemoteChoice(repo?.id);
+  const setRemoteChoice = useTagRemoteStore((s) => s.setChoice);
+  const tagRemote = useMemo(
+    () => resolveTagRemote(remoteChoice, remotes),
+    [remoteChoice, remotes],
+  );
   const { data: remoteTags = [] } = useQuery<RemoteTag[]>({
     queryKey: [repo?.id, "remote-tags", tagRemote],
     queryFn: () => repoRemoteTags(repo!.id, tagRemote!, crypto.randomUUID()),
@@ -160,7 +164,7 @@ export function TagsSection() {
             </span>
             <select
               value={tagRemote ?? ""}
-              onChange={(e) => setRemoteChoice(e.target.value)}
+              onChange={(e) => setRemoteChoice(repo.id, e.target.value)}
               style={{ flex: 1 }}
               title="Remote used for pushing tags, deleting remote tags, and the pushed indicator"
             >

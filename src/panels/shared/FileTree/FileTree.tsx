@@ -337,10 +337,13 @@ export function FileTree({
                 whiteSpace: "nowrap",
                 // Ignored files (Files tree) render dimmed to set them apart.
                 opacity: row.kind === "file" && row.file.dimmed ? 0.55 : 1,
+                // Fallbacks mirror the built-in Dark theme values (pre-theme-load
+                // safety nets only): selected = row-selected-bg, focused = its
+                // "faded" (45% alpha) variant.
                 background: isSelected
-                  ? "var(--graph-row-selected-bg, rgba(255,255,255,0.10))"
+                  ? "var(--graph-row-selected-bg, #4a9eff33)"
                   : isFocused
-                  ? "var(--graph-row-selected-bg, rgba(255,255,255,0.04))"
+                  ? "var(--graph-row-focused-bg, #4a9eff17)"
                   : "transparent",
               }}
             >

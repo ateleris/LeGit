@@ -25,6 +25,8 @@ import {
   globalWriteSigning,
 } from "../../lib/commands";
 import { Button } from "../shared/buttons";
+import { useDelayedBusy } from "../shared/useDelayedBusy";
+import { useDelayedFlag } from "../shared/useDelayedFlag";
 import { Section, FieldNote } from "./primitives";
 import { CredentialHelperField } from "./CredentialHelperField";
 import { DefaultSshKeysField } from "./SshKeyTools";
@@ -52,9 +54,11 @@ export function GlobalGitConfigSection() {
   const [allowedSigners, setAllowedSigners] = useState("");
   const [helper, setHelper] = useState("");
 
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
   const [error, setError] = useState<string | null>(null);
   const [confirmPending, setConfirmPending] = useState(false);
+  // Debounced loading indicator: fast loads never flash "Loading…".
+  const showLoading = useDelayedFlag(loading);
 
   const resetDrafts = useCallback(
     (id: IdentityView, sg: SigningView, ch: CredentialHelperView) => {
@@ -114,7 +118,11 @@ export function GlobalGitConfigSection() {
   const title = "Identity, signing & credentials (global)";
 
   if (loading) {
-    return <Section title={title} scope="git"><span className="legit-subtle">Loading…</span></Section>;
+    return (
+      <Section title={title} scope="git">
+        {showLoading && <span className="legit-subtle">Loading…</span>}
+      </Section>
+    );
   }
   if (!identity || !signing || !helperView) return null;
 
@@ -132,27 +140,25 @@ export function GlobalGitConfigSection() {
   push("gpg.ssh.allowedSignersFile", globalVal(signing.allowed_signers), normSigners);
   push("credential.helper", helperView.helper_global, normHelper);
 
-  const handleConfirm = async () => {
-    setConfirmPending(false);
-    setSaving(true);
-    setError(null);
-    try {
-      let id = identity;
-      let sg = signing;
-      let ch = helperView;
-      if (identityChanged) id = await globalWriteIdentity(normName, normEmail);
-      if (signingChanged) sg = await globalWriteSigning(gpgsign, format, normKey, normSigners);
-      if (helperChanged) ch = await globalWriteCredentialHelper(normHelper);
-      setIdentity(id);
-      setSigning(sg);
-      setHelperView(ch);
-      resetDrafts(id, sg, ch);
-    } catch (e) {
-      setError(formatAppError(e));
-    } finally {
-      setSaving(false);
-    }
-  };
+  const handleConfirm = () =>
+    run(async () => {
+      setConfirmPending(false);
+      setError(null);
+      try {
+        let id = identity;
+        let sg = signing;
+        let ch = helperView;
+        if (identityChanged) id = await globalWriteIdentity(normName, normEmail);
+        if (signingChanged) sg = await globalWriteSigning(gpgsign, format, normKey, normSigners);
+        if (helperChanged) ch = await globalWriteCredentialHelper(normHelper);
+        setIdentity(id);
+        setSigning(sg);
+        setHelperView(ch);
+        resetDrafts(id, sg, ch);
+      } catch (e) {
+        setError(formatAppError(e));
+      }
+    });
 
   const handleCancel = () => resetDrafts(identity, signing, helperView);
 

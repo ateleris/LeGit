@@ -263,6 +263,7 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "graph.lane.5", group: "Graph", documentation: "Lane 5 colour." },
   { name: "graph.lane.fallback", group: "Graph", documentation: "Fallback colour for lanes beyond index 5." },
   { name: "graph.row.selected.bg", group: "Graph", documentation: "Background of the selected commit row." },
+  { name: "graph.row.focused.bg", group: "Graph", documentation: "Background of the keyboard-focused (but not selected) row in file trees." },
   { name: "graph.row.hover.bg", group: "Graph", documentation: "Background of a hovered commit row." },
 
   { name: "status.added", group: "File Status", documentation: "Added-file icon and +N line count (Changed Files panel)." },

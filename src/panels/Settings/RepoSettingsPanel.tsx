@@ -11,6 +11,8 @@ import { RepoIdentitySection } from "./RepoIdentitySection";
 import { NormalizeLineEndingsBlock } from "./NormalizeLineEndingsBlock";
 import { Section, Row, FieldNote, SettingsGroup, GitConfigPill } from "./primitives";
 import { Button } from "../shared/buttons";
+import { useDelayedBusy } from "../shared/useDelayedBusy";
+import { useDelayedFlag } from "../shared/useDelayedFlag";
 
 /**
  * Repo Settings panel — edits repo-scope settings for the active repo.
@@ -27,7 +29,7 @@ export function RepoSettingsPanel() {
   const setActive = useRepoStore((s) => s.setActive);
 
   const [draft, setDraft] = useState("");
-  const [applying, setApplying] = useState(false);
+  const { busy: applying, run: runApply } = useDelayedBusy();
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -62,23 +64,21 @@ export function RepoSettingsPanel() {
     if (typeof selected === "string") setDraft(selected);
   };
 
-  const apply = async (path: string | null) => {
-    setError(null);
-    setSuccessMsg(null);
-    setApplying(true);
-    try {
-      // Command tears down the old session and returns a fresh RepoSummary.
-      const newSummary = await setRepoGitPath(activeRepo.id, path);
-      await refresh();
-      setActive(newSummary.id);
-      setSuccessMsg("Git path updated. Session restarted.");
-      setDraft("");
-    } catch (e) {
-      setError(formatAppError(e));
-    } finally {
-      setApplying(false);
-    }
-  };
+  const apply = (path: string | null) =>
+    runApply(async () => {
+      setError(null);
+      setSuccessMsg(null);
+      try {
+        // Command tears down the old session and returns a fresh RepoSummary.
+        const newSummary = await setRepoGitPath(activeRepo.id, path);
+        await refresh();
+        setActive(newSummary.id);
+        setSuccessMsg("Git path updated. Session restarted.");
+        setDraft("");
+      } catch (e) {
+        setError(formatAppError(e));
+      }
+    });
 
   return (
     <div className="legit-panel">
@@ -179,22 +179,19 @@ function ExternalEditorRepoSection({
   const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
   const stored = repoSettings?.external_editor_command ?? "";
   const [draft, setDraft] = useState(stored);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
 
   // Follow the stored value on repo switch / external reload.
   useEffect(() => setDraft(stored), [stored, repoId]);
 
-  const commit = async () => {
+  const commit = () => {
     if (!repoSettings) return;
     const normalized = draft.trim() === "" ? null : draft;
     if ((normalized ?? "") === (repoSettings.external_editor_command ?? "")) return;
-    setSaving(true);
-    try {
+    return run(async () => {
       await updateRepoSettings(repoId, { ...repoSettings, external_editor_command: normalized });
       await loadRepoSettings(repoId);
-    } finally {
-      setSaving(false);
-    }
+    });
   };
 
   return (
@@ -243,20 +240,17 @@ function LineEndingChangesRepoSection({
   const globalChips = useSettingsStore((s) => s.settings?.line_ending_chips_in_changes ?? true);
   const globalWarn = useSettingsStore((s) => s.settings?.warn_on_line_ending_commit ?? true);
   const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
 
-  const setOverride = async (
+  const setOverride = (
     key: "line_ending_chips_in_changes" | "warn_on_line_ending_commit",
     value: boolean | null,
   ) => {
     if (!repoSettings) return;
-    setSaving(true);
-    try {
+    return run(async () => {
       await updateRepoSettings(repoId, { ...repoSettings, [key]: value });
       await loadRepoSettings(repoId);
-    } finally {
-      setSaving(false);
-    }
+    });
   };
 
   const groups = [
@@ -316,19 +310,16 @@ function CommitTreeRepoSection({
   repoSettings: RepoSettings | null;
 }) {
   const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
   // null = default ON.
   const enabled = repoSettings?.show_remote_branches ?? true;
 
-  const setEnabled = async (value: boolean) => {
+  const setEnabled = (value: boolean) => {
     if (!repoSettings) return;
-    setSaving(true);
-    try {
+    return run(async () => {
       await updateRepoSettings(repoId, { ...repoSettings, show_remote_branches: value });
       await loadRepoSettings(repoId);
-    } finally {
-      setSaving(false);
-    }
+    });
   };
 
   return (
@@ -370,19 +361,16 @@ function SubmoduleAutoUpdateSection({
   repoSettings: import("../../lib/types").RepoSettings | null;
 }) {
   const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
   // null = default ON.
   const enabled = repoSettings?.submodule_auto_update ?? true;
 
-  const setEnabled = async (value: boolean) => {
+  const setEnabled = (value: boolean) => {
     if (!repoSettings) return;
-    setSaving(true);
-    try {
+    return run(async () => {
       await updateRepoSettings(repoId, { ...repoSettings, submodule_auto_update: value });
       await loadRepoSettings(repoId);
-    } finally {
-      setSaving(false);
-    }
+    });
   };
 
   return (
@@ -424,18 +412,15 @@ function AutoPushTagsRepoSection({
 }) {
   const globalEnabled = useSettingsStore((s) => s.settings?.auto_push_tags ?? false);
   const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
   const override = repoSettings?.auto_push_tags ?? null;
 
-  const setOverride = async (value: boolean | null) => {
+  const setOverride = (value: boolean | null) => {
     if (!repoSettings) return;
-    setSaving(true);
-    try {
+    return run(async () => {
       await updateRepoSettings(repoId, { ...repoSettings, auto_push_tags: value });
       await loadRepoSettings(repoId);
-    } finally {
-      setSaving(false);
-    }
+    });
   };
 
   return (
@@ -481,9 +466,11 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
   const [loading, setLoading] = useState(true);
   const [draftAutocrlf, setDraftAutocrlf] = useState<string | null>(null);
   const [draftEol, setDraftEol] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
   const [error, setError] = useState<string | null>(null);
   const [confirmPending, setConfirmPending] = useState(false);
+  // Debounced loading indicator: fast loads never flash "Loading…".
+  const showLoading = useDelayedFlag(loading);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -509,7 +496,13 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
 
   usePanelDirty(dirty);
 
-  if (loading) return <Section title="Line endings (this repo)" scope="git"><span className="legit-subtle">Loading…</span></Section>;
+  if (loading) {
+    return (
+      <Section title="Line endings (this repo)" scope="git">
+        {showLoading && <span className="legit-subtle">Loading…</span>}
+      </Section>
+    );
+  }
   if (!view) return null;
 
   const coversAll = view.gitattributes_covers_all;
@@ -522,21 +515,19 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
 
   const handleSave = () => setConfirmPending(true);
 
-  const handleConfirm = async () => {
-    setConfirmPending(false);
-    setSaving(true);
-    setError(null);
-    try {
-      const updated = await repoWriteLineEndings(repoId, draftAutocrlf, draftEol);
-      setView(updated);
-      setDraftAutocrlf(updated.autocrlf_local.value ?? null);
-      setDraftEol(updated.eol_local.value ?? null);
-    } catch (e) {
-      setError(formatAppError(e));
-    } finally {
-      setSaving(false);
-    }
-  };
+  const handleConfirm = () =>
+    run(async () => {
+      setConfirmPending(false);
+      setError(null);
+      try {
+        const updated = await repoWriteLineEndings(repoId, draftAutocrlf, draftEol);
+        setView(updated);
+        setDraftAutocrlf(updated.autocrlf_local.value ?? null);
+        setDraftEol(updated.eol_local.value ?? null);
+      } catch (e) {
+        setError(formatAppError(e));
+      }
+    });
 
   const handleCancel = () => {
     setDraftAutocrlf(view.autocrlf_local.value ?? null);

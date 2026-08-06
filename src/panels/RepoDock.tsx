@@ -5,6 +5,7 @@ import {
   type DockviewReadyEvent,
 } from "dockview-react";
 import { applyPanelConstraints, useDockviewStore } from "../store/dockview";
+import { notify } from "../store/notifications";
 import { useThemeStore } from "../store/themes";
 import { useSummonStore } from "../store/summon";
 import { validateTheme } from "../theme/validate";
@@ -92,17 +93,19 @@ export function RepoDock() {
           const json = JSON.parse(text);
           const result = validateTheme(json);
           if (!result.ok) {
-            window.alert(
-              `Cannot import ${file.name}:\n` +
-                result.errors.map((er) => `  ${er.field}: ${er.message}`).join("\n")
-            );
+            // Toasts render newlines (pre-wrap) but clamp at 3 lines: show
+            // the first two validation errors and count the rest.
+            const lines = result.errors.map((er) => `${er.field}: ${er.message}`);
+            const shown = lines.slice(0, 2).join("\n");
+            const more = lines.length > 2 ? `\n(+${lines.length - 2} more)` : "";
+            notify.error(`Cannot import ${file.name}:\n${shown}${more}`);
             continue;
           }
           await useThemeStore
             .getState()
             .importThemeFromJson(json, file.name.replace(/\.legit-theme\.json$/i, ""));
         } catch (err) {
-          window.alert(`Failed to import ${file.name}: ${(err as Error).message}`);
+          notify.error(`Failed to import ${file.name}: ${(err as Error).message}`);
         }
       }
     };

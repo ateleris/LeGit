@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   repoRenormalize,
@@ -10,6 +10,7 @@ import type { LineEndingsView, RenormalizePreview } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { useConfirmDestructive } from "../../store/settings";
 import { Button } from "../shared/buttons";
+import { useDelayedBusy } from "../shared/useDelayedBusy";
 
 /**
  * The Normalize block of the Repo Settings "Line endings" section: a
@@ -28,13 +29,12 @@ export function NormalizeLineEndingsBlock({
 }) {
   const [preview, setPreview] = useState<RenormalizePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const { busy, run: guardedRun } = useDelayedBusy();
   const [confirming, setConfirming] = useState(false);
   const [outcome, setOutcome] = useState<string | null>(null);
   const [eolChoice, setEolChoice] = useState<"" | "lf" | "crlf">("");
   const confirmDestructive = useConfirmDestructive();
   const qc = useQueryClient();
-  const runningRef = useRef(false);
 
   const loadPreview = useCallback(() => {
     repoRenormalizePreview(repoId)
@@ -48,23 +48,17 @@ export function NormalizeLineEndingsBlock({
     loadPreview();
   }, [loadPreview, view]);
 
-  // Delayed busy indicator + re-entry guard: fast runs never flicker,
-  // double-clicks are blocked immediately.
-  const run = async (fn: () => Promise<void>) => {
-    if (runningRef.current) return;
-    runningRef.current = true;
-    const timer = setTimeout(() => setBusy(true), 150);
-    setError(null);
-    try {
-      await fn();
-    } catch (e) {
-      setError(formatAppError(e));
-    } finally {
-      clearTimeout(timer);
-      setBusy(false);
-      runningRef.current = false;
-    }
-  };
+  // Delayed busy indicator + re-entry guard (useDelayedBusy); errors land in
+  // the inline error state next to the actions.
+  const run = (fn: () => Promise<void>) =>
+    guardedRun(async () => {
+      setError(null);
+      try {
+        await fn();
+      } catch (e) {
+        setError(formatAppError(e));
+      }
+    });
 
   const writeAttributes = () =>
     run(async () => {

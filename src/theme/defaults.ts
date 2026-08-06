@@ -223,8 +223,10 @@ export const DEFAULT_THEME: ThemeDocument = {
     "graph.lane.5": "graph-lane-5",
     "graph.lane.fallback": "graph-lane-fallback",
     "graph.row.selected.bg": "row-selected-bg",
-    // Derived via a filter: the hover wash is the selection colour at reduced
-    // strength, so themes only maintain one row-highlight colour.
+    // Derived via a filter: the focus and hover washes are the selection
+    // colour at reduced strength, so themes only maintain one row-highlight
+    // colour.
+    "graph.row.focused.bg": { ref: "row-selected-bg", filter: "faded" },
     "graph.row.hover.bg": { ref: "row-selected-bg", filter: "faded" },
     "menu.hover.bg": { ref: "accent", filter: "subtle" },
     "syntax.keyword": "syn-keyword",

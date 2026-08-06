@@ -11,6 +11,7 @@ import { repoFileAtRevision, repoFileWorktree } from "../../lib/commands";
 import type { FileAtRevision } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { LineEndingBadge } from "../shared/LineEndingBadge";
+import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
 import { baseTheme, readOnly } from "../Diff/DiffEditor";
 import { loadLanguageForPath, syntaxColorTheme } from "../Diff/syntaxLanguages";
 
@@ -97,17 +98,20 @@ export function FileViewPanel() {
   const repo = useActiveRepo();
   const [request, setRequest] = useState<FileViewRequest | null>(null);
 
-  // Reset when the repo changes — the request belongs to the previous repo.
-  const prevRepoId = useRef(repo?.id);
-  useEffect(() => {
-    if (prevRepoId.current === repo?.id) return;
-    prevRepoId.current = repo?.id;
-    setRequest(null);
-  }, [repo?.id]);
+  // Reset when the repo changes (the request belongs to the previous repo) -
+  // except when the request was summoned FOR the repo being switched to, and
+  // not on first mount. Full rationale in useRepoSwitchClear.
+  const markDelivered = useRepoSwitchClear(
+    repo?.id,
+    useCallback(() => setRequest(null), []),
+  );
 
   const onReceive = useCallback((payload: unknown) => {
-    if (isFileViewRequest(payload)) setRequest(payload);
-  }, []);
+    if (isFileViewRequest(payload)) {
+      setRequest(payload);
+      markDelivered();
+    }
+  }, [markDelivered]);
   useSummonTarget("file-view", onReceive);
 
   // Working-tree mode when no rev is given: read the file from disk (works for

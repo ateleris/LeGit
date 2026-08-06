@@ -652,14 +652,6 @@ impl GitRunner {
         }
     }
 
-    /// Number of in-flight operations against this runner.
-    pub fn in_flight(&self) -> usize {
-        self.running
-            .lock()
-            .expect("running map poisoned")
-            .len()
-    }
-
     fn build_command(&self, args: &[&str]) -> Command {
         self.build_command_with_env(args, &[])
     }

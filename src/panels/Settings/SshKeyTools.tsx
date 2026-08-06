@@ -7,7 +7,7 @@
 // (ADO accepts only RSA with rsa-sha2 signatures). Keys are generated without
 // a passphrase for now (no SSH_ASKPASS shim yet: see BACKLOG).
 
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { formatAppError } from "../../lib/types";
 import type { ConnectedAccountStatus, SshKeyStatus, SshTestOutcome } from "../../lib/types";
 import {
@@ -21,6 +21,7 @@ import {
 } from "../../lib/commands";
 import { copyText } from "../../lib/clipboard";
 import { Button } from "../shared/buttons";
+import { useDelayedBusy } from "../shared/useDelayedBusy";
 import { FieldNote } from "./primitives";
 
 export const SSH_PLATFORMS = [
@@ -28,29 +29,6 @@ export const SSH_PLATFORMS = [
   { id: "gitlab", label: "GitLab", host: "gitlab.com", keyType: "ed25519" as const },
   { id: "azure_devops", label: "Azure DevOps", host: "ssh.dev.azure.com", keyType: "rsa" as const },
 ];
-
-/**
- * Delayed busy indicator + immediate re-entry guard (the project's busy
- * convention): the visual flag appears only after ~150ms so fast operations
- * never flicker, while the ref blocks double-clicks immediately.
- */
-function useGuardedRun() {
-  const runningRef = useRef(false);
-  const [busy, setBusy] = useState(false);
-  const run = useCallback(async (fn: () => Promise<void>) => {
-    if (runningRef.current) return;
-    runningRef.current = true;
-    const timer = window.setTimeout(() => setBusy(true), 150);
-    try {
-      await fn();
-    } finally {
-      window.clearTimeout(timer);
-      setBusy(false);
-      runningRef.current = false;
-    }
-  }, []);
-  return { busy, run };
-}
 
 /**
  * Shared grid for the key-tool rows: name/label column, key-type column,
@@ -109,7 +87,7 @@ function PlatformKeyTargets({
   const [accounts, setAccounts] = useState<ConnectedAccountStatus[]>([]);
   const [uploaded, setUploaded] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
-  const { busy, run } = useGuardedRun();
+  const { busy, run } = useDelayedBusy();
 
   useEffect(() => {
     listConnectedAccounts().then(setAccounts).catch(() => setAccounts([]));
@@ -182,7 +160,7 @@ function SshTestRow({ privateKeyPath }: { privateKeyPath: string | null }) {
   const [host, setHost] = useState(SSH_PLATFORMS[0].host);
   const [result, setResult] = useState<SshTestOutcome | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const { busy, run } = useGuardedRun();
+  const { busy, run } = useDelayedBusy();
 
   const test = () =>
     run(async () => {
@@ -338,7 +316,7 @@ export function GenerateSshKeyForm({
   const [nameEdited, setNameEdited] = useState(false);
   const [comment, setComment] = useState(defaultComment);
   const [error, setError] = useState<string | null>(null);
-  const { busy, run } = useGuardedRun();
+  const { busy, run } = useDelayedBusy();
 
   const selectType = (t: "ed25519" | "rsa") => {
     setKeyType(t);
@@ -425,7 +403,7 @@ const DEFAULT_KEY_LABELS: Record<string, string> = {
 export function DefaultSshKeysField() {
   const [keys, setKeys] = useState<SshKeyStatus[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const { busy, run } = useGuardedRun();
+  const { busy, run } = useDelayedBusy();
 
   const load = useCallback(() => {
     defaultSshKeysStatus()

@@ -137,7 +137,7 @@ export interface RestoreResult {
   active_id: string | null;
 }
 
-export type RunnerEvent =
+type RunnerEvent =
   | { kind: "stdout"; line: string }
   | { kind: "stderr"; line: string }
   | { kind: "finished"; exit_code: number | null; success: boolean; duration_ms: number };
@@ -226,7 +226,6 @@ export type AppError =
   | { kind: "Settings"; details: string }
   | { kind: "ParseArgs"; details: string }
   | { kind: "InvalidLockIndex"; details: number }
-  | { kind: "OperationNotFound"; details: string }
   | { kind: "UnknownProfile"; details: string };
 
 /** Human-readable labels for `GitError` variants that carry no message. */

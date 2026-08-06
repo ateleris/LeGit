@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
 import { LinkIcon, UnlinkIcon, WarningIcon } from "../../icons";
 import { Button, IconButton } from "../shared/buttons";
+import { useDelayedBusy } from "../shared/useDelayedBusy";
+import { useDelayedFlag } from "../shared/useDelayedFlag";
 import { useAppVersion } from "../../lib/appVersion";
 
 /** localStorage key for the line-height ↔ lane-width link toggle (default on). */
@@ -204,26 +206,14 @@ function GeneralSection() {
   const setRegionPlacement = useSettingsStore((s) => s.setRegionPlacement);
   const fontSize = useSettingsStore((s) => s.settings?.ui_font_size ?? UI_FONT_SIZE_DEFAULT);
   const setUiFontSize = useSettingsStore((s) => s.setUiFontSize);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
 
-  const selectPlacement = async (p: RegionPlacement) => {
-    if (p === placement || saving) return;
-    setSaving(true);
-    try {
-      await setRegionPlacement(p);
-    } finally {
-      setSaving(false);
-    }
+  const selectPlacement = (p: RegionPlacement) => {
+    if (p === placement) return;
+    void run(() => setRegionPlacement(p));
   };
 
-  const saveFont = async (v: number) => {
-    setSaving(true);
-    try {
-      await setUiFontSize(v);
-    } finally {
-      setSaving(false);
-    }
-  };
+  const saveFont = (v: number) => run(() => setUiFontSize(v));
 
   return (
     <Section title="General">
@@ -296,21 +286,14 @@ function CommitsGraphSection() {
     (s) => s.settings?.commits_line_width ?? COMMITS_LINE_WIDTH_DEFAULT,
   );
   const setMetrics = useSettingsStore((s) => s.setCommitsGraphMetrics);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
 
   // Author avatars are strictly opt-in: off by default, because fetching one
   // sends the hashed author email to gravatar.com.
   const avatars = useSettingsStore((s) => s.settings?.commit_avatars ?? false);
   const setCommitAvatars = useSettingsStore((s) => s.setCommitAvatars);
-  const [savingAvatars, setSavingAvatars] = useState(false);
-  const toggleAvatars = async () => {
-    setSavingAvatars(true);
-    try {
-      await setCommitAvatars(!avatars);
-    } finally {
-      setSavingAvatars(false);
-    }
-  };
+  const { busy: savingAvatars, run: runAvatars } = useDelayedBusy();
+  const toggleAvatars = () => runAvatars(() => setCommitAvatars(!avatars));
 
   // Date column: relative ("2d ago", the default) vs the full author datetime,
   // in a user-picked format.
@@ -320,31 +303,11 @@ function CommitsGraphSection() {
   const setCommitDateAbsolute = useSettingsStore((s) => s.setCommitDateAbsolute);
   const setCommitDateFormat = useSettingsStore((s) => s.setCommitDateFormat);
   const setCommitDateShowTime = useSettingsStore((s) => s.setCommitDateShowTime);
-  const [savingDate, setSavingDate] = useState(false);
-  const toggleDateAbsolute = async () => {
-    setSavingDate(true);
-    try {
-      await setCommitDateAbsolute(!dateAbsolute);
-    } finally {
-      setSavingDate(false);
-    }
-  };
-  const selectDateFormat = async (format: CommitDateFormat) => {
-    setSavingDate(true);
-    try {
-      await setCommitDateFormat(format);
-    } finally {
-      setSavingDate(false);
-    }
-  };
-  const toggleDateShowTime = async () => {
-    setSavingDate(true);
-    try {
-      await setCommitDateShowTime(!dateShowTime);
-    } finally {
-      setSavingDate(false);
-    }
-  };
+  const { busy: savingDate, run: runDate } = useDelayedBusy();
+  const toggleDateAbsolute = () => runDate(() => setCommitDateAbsolute(!dateAbsolute));
+  const selectDateFormat = (format: CommitDateFormat) =>
+    runDate(() => setCommitDateFormat(format));
+  const toggleDateShowTime = () => runDate(() => setCommitDateShowTime(!dateShowTime));
   // Option labels are format patterns (YYYY-MM-DD style), tracking the time
   // toggle so they always mirror the column's shape.
   const datePattern = (format: CommitDateFormat) => {
@@ -358,19 +321,12 @@ function CommitsGraphSection() {
     return format === "us" ? `${base} h:mm AM/PM` : `${base} HH:mm`;
   };
 
-  const save = async (
+  const save = (
     nextRow: number,
     nextLane: number,
     nextDot: number,
     nextLine: number,
-  ) => {
-    setSaving(true);
-    try {
-      await setMetrics(nextRow, nextLane, nextDot, nextLine);
-    } finally {
-      setSaving(false);
-    }
-  };
+  ) => run(() => setMetrics(nextRow, nextLane, nextDot, nextLine));
 
   // Lane width shares the row height's font-derived floor.
   const effectiveLaneWidth = Math.max(laneWidth, rowHeightMin);
@@ -657,16 +613,9 @@ function NumberField({
 function DiffViewerSection() {
   const enabled = useSettingsStore((s) => s.settings?.diff_syntax_highlighting ?? false);
   const setDiffSyntaxHighlighting = useSettingsStore((s) => s.setDiffSyntaxHighlighting);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
 
-  const toggle = async () => {
-    setSaving(true);
-    try {
-      await setDiffSyntaxHighlighting(!enabled);
-    } finally {
-      setSaving(false);
-    }
-  };
+  const toggle = () => run(() => setDiffSyntaxHighlighting(!enabled));
 
   return (
     <Section title="Diff viewer">
@@ -700,23 +649,18 @@ function AutoOpenPanelsSection() {
     (s) => s.settings?.suppressed_auto_open_panels ?? EMPTY_PANELS,
   );
   const setSuppressed = useSettingsStore((s) => s.setSuppressedAutoOpenPanels);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
 
   const titleFor = (id: string) => ALL_PANELS.find((p) => p.id === id)?.title ?? id;
 
-  const toggle = async (id: string, autoOpen: boolean) => {
+  const toggle = (id: string, autoOpen: boolean) => {
     // autoOpen = keep it in the auto-open set (not suppressed).
     const next = autoOpen
       ? suppressed.filter((p) => p !== id)
       : suppressed.includes(id)
         ? suppressed
         : [...suppressed, id];
-    setSaving(true);
-    try {
-      await setSuppressed(next);
-    } finally {
-      setSaving(false);
-    }
+    return run(() => setSuppressed(next));
   };
 
   return (
@@ -755,19 +699,14 @@ function WorkingChangesLayoutSection() {
     useSettingsStore((s) => s.settings?.working_changes_section_order),
   );
   const setOrder = useSettingsStore((s) => s.setWorkingChangesSectionOrder);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
 
-  const move = async (i: number, delta: number) => {
+  const move = (i: number, delta: number) => {
     const j = i + delta;
     if (j < 0 || j >= order.length) return;
     const next = [...order];
     [next[i], next[j]] = [next[j], next[i]];
-    setSaving(true);
-    try {
-      await setOrder(next);
-    } finally {
-      setSaving(false);
-    }
+    return run(() => setOrder(next));
   };
 
   return (
@@ -800,16 +739,9 @@ function WorkingChangesLayoutSection() {
 function AutoRefreshSection() {
   const enabled = useSettingsStore((s) => s.settings?.watcher_enabled ?? true);
   const setWatcherEnabled = useSettingsStore((s) => s.setWatcherEnabled);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
 
-  const toggle = async () => {
-    setSaving(true);
-    try {
-      await setWatcherEnabled(!enabled);
-    } finally {
-      setSaving(false);
-    }
-  };
+  const toggle = () => run(() => setWatcherEnabled(!enabled));
 
   return (
     <Section title="Auto-refresh">
@@ -838,22 +770,15 @@ function AutoFetchSection() {
   const minutes = useSettingsStore((s) => s.settings?.auto_fetch_interval_minutes ?? 15);
   const setAutoFetchEnabled = useSettingsStore((s) => s.setAutoFetchEnabled);
   const setAutoFetchIntervalMinutes = useSettingsStore((s) => s.setAutoFetchIntervalMinutes);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
   const [draft, setDraft] = useState(String(minutes));
 
   // Follow external changes to the stored value (e.g. settings re-init).
   useEffect(() => setDraft(String(minutes)), [minutes]);
 
-  const toggle = async () => {
-    setSaving(true);
-    try {
-      await setAutoFetchEnabled(!enabled);
-    } finally {
-      setSaving(false);
-    }
-  };
+  const toggle = () => run(() => setAutoFetchEnabled(!enabled));
 
-  const commitMinutes = async () => {
+  const commitMinutes = () => {
     const parsed = Math.round(Number(draft));
     if (!Number.isFinite(parsed) || parsed < 1) {
       setDraft(String(minutes));
@@ -863,12 +788,7 @@ function AutoFetchSection() {
       setDraft(String(parsed));
       return;
     }
-    setSaving(true);
-    try {
-      await setAutoFetchIntervalMinutes(parsed);
-    } finally {
-      setSaving(false);
-    }
+    return run(() => setAutoFetchIntervalMinutes(parsed));
   };
 
   return (
@@ -918,20 +838,15 @@ function ExternalEditorSection() {
   const stored = useSettingsStore((s) => s.settings?.external_editor_command ?? "");
   const setExternalEditorCommand = useSettingsStore((s) => s.setExternalEditorCommand);
   const [draft, setDraft] = useState(stored ?? "");
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
 
   // Follow external changes to the stored value (e.g. settings re-init).
   useEffect(() => setDraft(stored ?? ""), [stored]);
 
-  const commit = async () => {
+  const commit = () => {
     const normalized = draft.trim();
     if (normalized === (stored ?? "").trim()) return;
-    setSaving(true);
-    try {
-      await setExternalEditorCommand(normalized === "" ? null : draft);
-    } finally {
-      setSaving(false);
-    }
+    return run(() => setExternalEditorCommand(normalized === "" ? null : draft));
   };
 
   const placeholder =
@@ -969,16 +884,9 @@ function ExternalEditorSection() {
 function RefsSortSection() {
   const mode = coerceRefsSortMode(useSettingsStore((s) => s.settings?.refs_sort_mode));
   const setRefsSortMode = useSettingsStore((s) => s.setRefsSortMode);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
 
-  const select = async (next: RefsSortMode) => {
-    setSaving(true);
-    try {
-      await setRefsSortMode(next);
-    } finally {
-      setSaving(false);
-    }
-  };
+  const select = (next: RefsSortMode) => run(() => setRefsSortMode(next));
 
   return (
     <Section title="Refs sorting">
@@ -1009,16 +917,9 @@ function RefsSortSection() {
 function BranchCreationSection() {
   const enabled = useSettingsStore((s) => s.settings?.checkout_new_branch ?? true);
   const setCheckoutNewBranch = useSettingsStore((s) => s.setCheckoutNewBranch);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
 
-  const toggle = async () => {
-    setSaving(true);
-    try {
-      await setCheckoutNewBranch(!enabled);
-    } finally {
-      setSaving(false);
-    }
-  };
+  const toggle = () => run(() => setCheckoutNewBranch(!enabled));
 
   return (
     <Section title="Branch creation">
@@ -1048,16 +949,9 @@ function BranchCreationSection() {
 function ConfirmDiscardSection() {
   const confirm = useSettingsStore((s) => s.settings?.confirm_discard ?? true);
   const setConfirmDiscard = useSettingsStore((s) => s.setConfirmDiscard);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
 
-  const toggle = async () => {
-    setSaving(true);
-    try {
-      await setConfirmDiscard(!confirm);
-    } finally {
-      setSaving(false);
-    }
-  };
+  const toggle = () => run(() => setConfirmDiscard(!confirm));
 
   return (
     <Section title="Destructive action confirmation">
@@ -1086,16 +980,9 @@ function ConfirmDiscardSection() {
 function SubmoduleAttachSection() {
   const enabled = useSettingsStore((s) => s.settings?.submodule_attach_branch ?? false);
   const setSubmoduleAttachBranch = useSettingsStore((s) => s.setSubmoduleAttachBranch);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
 
-  const toggle = async () => {
-    setSaving(true);
-    try {
-      await setSubmoduleAttachBranch(!enabled);
-    } finally {
-      setSaving(false);
-    }
-  };
+  const toggle = () => run(() => setSubmoduleAttachBranch(!enabled));
 
   return (
     <Section title="Submodule branch attach">
@@ -1126,16 +1013,11 @@ function SubmoduleAttachSection() {
 function PushGuardSection() {
   const mode = useSettingsStore((s) => s.settings?.push_recurse_submodules ?? null);
   const setPushRecurseSubmodules = useSettingsStore((s) => s.setPushRecurseSubmodules);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
 
-  const select = async (m: PushRecurseMode | null) => {
-    if (m === mode || saving) return;
-    setSaving(true);
-    try {
-      await setPushRecurseSubmodules(m);
-    } finally {
-      setSaving(false);
-    }
+  const select = (m: PushRecurseMode | null) => {
+    if (m === mode) return;
+    return run(() => setPushRecurseSubmodules(m));
   };
 
   return (
@@ -1171,16 +1053,9 @@ function PushGuardSection() {
 function AutoPushTagsSection() {
   const enabled = useSettingsStore((s) => s.settings?.auto_push_tags ?? false);
   const setAutoPushTags = useSettingsStore((s) => s.setAutoPushTags);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
 
-  const toggle = async () => {
-    setSaving(true);
-    try {
-      await setAutoPushTags(!enabled);
-    } finally {
-      setSaving(false);
-    }
-  };
+  const toggle = () => run(() => setAutoPushTags(!enabled));
 
   return (
     <Section title="Auto-push tags">
@@ -1214,16 +1089,11 @@ function BranchSwitchingSection() {
     (s) => s.settings?.switch_dirty_behavior ?? "try_directly",
   );
   const setSwitchDirtyBehavior = useSettingsStore((s) => s.setSwitchDirtyBehavior);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
 
-  const select = async (b: SwitchDirtyBehavior) => {
-    if (b === behavior || saving) return;
-    setSaving(true);
-    try {
-      await setSwitchDirtyBehavior(b);
-    } finally {
-      setSaving(false);
-    }
+  const select = (b: SwitchDirtyBehavior) => {
+    if (b === behavior) return;
+    return run(() => setSwitchDirtyBehavior(b));
   };
 
   return (
@@ -1295,11 +1165,10 @@ function BranchSwitchingSection() {
 function LineEndingChangesSection() {
   const chips = useSettingsStore((s) => s.settings?.line_ending_chips_in_changes ?? true);
   const warn = useSettingsStore((s) => s.settings?.warn_on_line_ending_commit ?? true);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
 
-  const toggle = async (key: "chips" | "warn") => {
-    setSaving(true);
-    try {
+  const toggle = (key: "chips" | "warn") =>
+    run(async () => {
       if (key === "chips") {
         await setLineEndingChipsInChanges(!chips);
         useSettingsStore.setState((s) =>
@@ -1311,10 +1180,7 @@ function LineEndingChangesSection() {
           s.settings ? { settings: { ...s.settings, warn_on_line_ending_commit: !warn } } : {}
         );
       }
-    } finally {
-      setSaving(false);
-    }
-  };
+    });
 
   return (
     <Section title="Line ending changes">
@@ -1352,9 +1218,11 @@ function LineEndingsGlobalSection() {
   const [loading, setLoading] = useState(true);
   const [draftAutocrlf, setDraftAutocrlf] = useState<string | null>(null);
   const [draftEol, setDraftEol] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
   const [error, setError] = useState<string | null>(null);
   const [confirmPending, setConfirmPending] = useState(false);
+  // Debounced loading indicator: fast loads never flash "Loading…".
+  const showLoading = useDelayedFlag(loading);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -1378,7 +1246,13 @@ function LineEndingsGlobalSection() {
 
   usePanelDirty(dirty);
 
-  if (loading) return <Section title="Line endings (global)" scope="git"><span className="legit-subtle">Loading…</span></Section>;
+  if (loading) {
+    return (
+      <Section title="Line endings (global)" scope="git">
+        {showLoading && <span className="legit-subtle">Loading…</span>}
+      </Section>
+    );
+  }
   if (!view) return null;
 
   const changes = getChangedValues(
@@ -1388,21 +1262,19 @@ function LineEndingsGlobalSection() {
 
   const handleSave = () => setConfirmPending(true);
 
-  const handleConfirm = async () => {
-    setConfirmPending(false);
-    setSaving(true);
-    setError(null);
-    try {
-      const updated = await globalWriteLineEndings(draftAutocrlf, draftEol);
-      setView(updated);
-      setDraftAutocrlf(updated.autocrlf_global.value ?? null);
-      setDraftEol(updated.eol_global.value ?? null);
-    } catch (e) {
-      setError(formatAppError(e));
-    } finally {
-      setSaving(false);
-    }
-  };
+  const handleConfirm = () =>
+    run(async () => {
+      setConfirmPending(false);
+      setError(null);
+      try {
+        const updated = await globalWriteLineEndings(draftAutocrlf, draftEol);
+        setView(updated);
+        setDraftAutocrlf(updated.autocrlf_global.value ?? null);
+        setDraftEol(updated.eol_global.value ?? null);
+      } catch (e) {
+        setError(formatAppError(e));
+      }
+    });
 
   const handleCancel = () => {
     setDraftAutocrlf(view.autocrlf_global.value ?? null);

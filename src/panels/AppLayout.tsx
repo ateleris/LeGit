@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSettingsStore, UI_FONT_SIZE_DEFAULT } from "../store/settings";
 import { useRepoStore } from "../store/repos";
@@ -8,6 +7,7 @@ import { useGlobalRegionStore } from "../store/globalRegion";
 import { useGitLogStore } from "../store/gitLog";
 import { useConsoleStore } from "../store/console";
 import { useRemoteProgressStore } from "../store/remoteProgress";
+import { saveRegionState } from "../lib/commands";
 import { onConsoleOutput, onGitInvocation, onRemoteProgress } from "../lib/events";
 import { useRepoChangeListener } from "../lib/useRepoChangeListener";
 import { useAutoFetch } from "../lib/useAutoFetch";
@@ -37,13 +37,14 @@ const TAB_BAR_HEIGHT = 32;
  * click that toggles the global region rather than a resize drag. */
 const CLICK_DRAG_THRESHOLD = 4;
 
-function saveRegionState(
+/** Fire-and-forget persistence of the region layout (failures only warn). */
+function persistRegionState(
   placement: RegionPlacement,
   sizeTop: number | null,
   sizeLeft: number | null,
   collapsed: boolean
 ) {
-  invoke("save_region_state", { placement, sizeTop, sizeLeft, collapsed }).catch(
+  saveRegionState(placement, sizeTop, sizeLeft, collapsed).catch(
     (e) => console.warn("save_region_state failed", e)
   );
 }
@@ -190,7 +191,7 @@ export function AppLayout() {
     (st: number | null, sl: number | null) => {
       if (persistTimer.current) clearTimeout(persistTimer.current);
       persistTimer.current = setTimeout(() => {
-        saveRegionState(placementRef.current, st, sl, collapsedRef.current);
+        persistRegionState(placementRef.current, st, sl, collapsedRef.current);
       }, 400);
     },
     []
@@ -217,7 +218,7 @@ export function AppLayout() {
       if (placementRef.current === "top") setSizeTop(heightBeforeCollapse.current);
       else setSizeLeft(heightBeforeCollapse.current);
     }
-    saveRegionState(
+    persistRegionState(
       placementRef.current,
       sizeTopRef.current,
       sizeLeftRef.current,

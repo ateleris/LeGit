@@ -214,8 +214,7 @@ input[type="radio"]:disabled {
   /* No resize when collapsed; the whole bar is a click-to-expand target. */
   cursor: pointer;
 }
-.legit-region-divider__toggle,
-.legit-region-divider__mode {
+.legit-region-divider__toggle {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -229,15 +228,13 @@ input[type="radio"]:disabled {
   line-height: 1;
   height: 100%;
 }
-.legit-region-divider--vertical .legit-region-divider__toggle,
-.legit-region-divider--vertical .legit-region-divider__mode {
+.legit-region-divider--vertical .legit-region-divider__toggle {
   height: auto;
   width: 100%;
   padding: 0;
   writing-mode: vertical-lr;
 }
-button.legit-region-divider__toggle:hover,
-button.legit-region-divider__mode:hover {
+button.legit-region-divider__toggle:hover {
   color: var(--panel-fg);
   background: transparent;
 }

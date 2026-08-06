@@ -1623,14 +1623,12 @@ async fn submodule_update_attach_enumerates_then_checks_out() {
 }
 
 #[tokio::test]
-async fn submodule_init_sync_fetch_build_expected_argv() {
+async fn submodule_sync_fetch_build_expected_argv() {
     let fake = FakeExecutor::default();
-    fake.expect(&["submodule", "init", "--", "lib"], ok(""));
     fake.expect(&["submodule", "sync", "--recursive", "--", "lib"], ok(""));
     fake.expect(&["-C", "lib", "fetch"], ok(""));
     let (b, exec) = backend(fake);
 
-    b.submodule_init(&[PathBuf::from("lib")]).await.unwrap();
     b.submodule_sync(&[PathBuf::from("lib")], true).await.unwrap();
     b.submodule_fetch(Path::new("lib"), OperationId("op".into())).await.unwrap();
     exec.assert_done();
@@ -1895,6 +1893,92 @@ async fn submodule_auto_update_pop_conflict_rolls_back_and_reapplies() {
     );
     // assert_done: no bare `stash pop`, no second update, nothing after the
     // clean reapply.
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn submodule_auto_update_failed_before_stash_list_read_skips() {
+    // Regression: a failed BEFORE-push `stash list` used to read as an empty
+    // list, so a leftover marker entry from an earlier crash could be adopted
+    // as "ours" and popped. The update must abort loudly instead: Skipped,
+    // and neither the stash push nor the move may run.
+    let rec = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let old = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let fake = FakeExecutor::default();
+    // -- submodules() enumeration: pointer moved, dirty tracked --
+    fake.expect(&["ls-files", "--stage", "-z"], ok(&format!("160000 {rec} 0\tlib\0")));
+    fake.expect(
+        &["config", "-f", ".gitmodules", "-z", "--get-regexp", "^submodule\\."],
+        ok("submodule.lib.path\nlib\0submodule.lib.url\nu\0"),
+    );
+    fake.expect(&["config", "-z", "--get-regexp", "^submodule\\."], ok("submodule.lib.url\nu\0"));
+    fake.expect(
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        ok("1 .M SCM. 160000 160000 160000 aaaaaaa bbbbbbb lib\0"),
+    );
+    fake.expect(&["-C", "lib", "rev-parse", "--show-prefix", "HEAD"], ok(&format!("\n{old}\n")));
+    fake.expect(&["-C", "lib", "rev-parse", "--abbrev-ref", "HEAD"], ok("HEAD\n"));
+    // -- the BEFORE stash-list read fails --
+    fake.expect(
+        &["-C", "lib", "stash", "list", "--format=%H %s"],
+        fail(128, "fatal: unable to read the stash reflog"),
+    );
+    // assert_done proves no `stash push` and no `submodule update` ran.
+    let (b, exec) = backend(fake);
+
+    let results = b.submodule_auto_update(SwitchDirtyBehavior::AutoStash, false).await.unwrap();
+    assert_eq!(results.len(), 1);
+    let SubmoduleAutoUpdateStatus::Skipped { message } = &results[0].status else {
+        panic!("expected Skipped, got {results:?}");
+    };
+    assert!(message.contains("stash list"), "{message}");
+    assert!(message.contains("left untouched"), "{message}");
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn submodule_auto_update_failed_after_stash_list_read_is_loud() {
+    // Regression: a failed AFTER-push `stash list` used to read as an empty
+    // list, so `find_created_stash` saw nothing, the clean-tree branch moved
+    // the submodule, and a plain Updated hid that the user's changes sat in
+    // the submodule's stash. The outcome must be LOUD (ChangesInStash) and
+    // the submodule must NOT move.
+    let rec = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let old = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let fake = FakeExecutor::default();
+    // -- submodules() enumeration: pointer moved, dirty tracked --
+    fake.expect(&["ls-files", "--stage", "-z"], ok(&format!("160000 {rec} 0\tlib\0")));
+    fake.expect(
+        &["config", "-f", ".gitmodules", "-z", "--get-regexp", "^submodule\\."],
+        ok("submodule.lib.path\nlib\0submodule.lib.url\nu\0"),
+    );
+    fake.expect(&["config", "-z", "--get-regexp", "^submodule\\."], ok("submodule.lib.url\nu\0"));
+    fake.expect(
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        ok("1 .M SCM. 160000 160000 160000 aaaaaaa bbbbbbb lib\0"),
+    );
+    fake.expect(&["-C", "lib", "rev-parse", "--show-prefix", "HEAD"], ok(&format!("\n{old}\n")));
+    fake.expect(&["-C", "lib", "rev-parse", "--abbrev-ref", "HEAD"], ok("HEAD\n"));
+    // -- auto-stash: before-list ok, push ok, AFTER-list read fails --
+    fake.expect(&["-C", "lib", "stash", "list", "--format=%H %s"], ok(""));
+    fake.expect(
+        &["-C", "lib", "stash", "push", "--include-untracked", "-m", "legit: auto-stash before submodule update"],
+        ok("Saved"),
+    );
+    fake.expect(
+        &["-C", "lib", "stash", "list", "--format=%H %s"],
+        fail(128, "fatal: unable to read the stash reflog"),
+    );
+    // assert_done proves no `submodule update` (no silent Updated) and no pop.
+    let (b, exec) = backend(fake);
+
+    let results = b.submodule_auto_update(SwitchDirtyBehavior::AutoStash, false).await.unwrap();
+    assert_eq!(results.len(), 1);
+    let SubmoduleAutoUpdateStatus::ChangesInStash { message } = &results[0].status else {
+        panic!("expected ChangesInStash, got {results:?}");
+    };
+    assert!(message.contains("may have been auto-stashed"), "{message}");
+    assert!(message.contains("stash list"), "{message}");
     exec.assert_done();
 }
 

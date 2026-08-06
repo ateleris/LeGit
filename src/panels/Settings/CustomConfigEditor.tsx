@@ -11,6 +11,7 @@ import { formatAppError } from "../../lib/types";
 import type { ManagedKeys, ProfileStatus } from "../../lib/types";
 import { writeRepoManagedConfig } from "../../lib/commands";
 import { Button } from "../shared/buttons";
+import { useDelayedBusy } from "../shared/useDelayedBusy";
 import { FieldNote } from "./primitives";
 import { CredentialHelperField } from "./CredentialHelperField";
 import { GenerateSshKeyForm, SshKeyActions } from "./SshKeyTools";
@@ -41,7 +42,7 @@ export function CustomConfigEditor({
   const [authKey, setAuthKey] = useState(local.auth_ssh_key ?? "");
   const [helper, setHelper] = useState(local.credential_helper ?? "");
   const [showGenerateKey, setShowGenerateKey] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useDelayedBusy();
   const [confirmPending, setConfirmPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -81,19 +82,17 @@ export function CustomConfigEditor({
   const inheritPlaceholder = (v: string | null, fallback: string) =>
     v ? `inherits: ${v}` : fallback;
 
-  const handleConfirm = async () => {
-    setConfirmPending(false);
-    setSaving(true);
-    setError(null);
-    try {
-      const s = await writeRepoManagedConfig(repoId, draft);
-      onSaved(s);
-    } catch (e) {
-      setError(formatAppError(e));
-    } finally {
-      setSaving(false);
-    }
-  };
+  const handleConfirm = () =>
+    run(async () => {
+      setConfirmPending(false);
+      setError(null);
+      try {
+        const s = await writeRepoManagedConfig(repoId, draft);
+        onSaved(s);
+      } catch (e) {
+        setError(formatAppError(e));
+      }
+    });
 
   const handleCancel = () => {
     setName(local.user_name ?? "");

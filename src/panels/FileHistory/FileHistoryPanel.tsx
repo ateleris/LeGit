@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { PanelError } from "../shared/PanelError";
+import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
 import { useQuery } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useConfirmDestructive } from "../../store/settings";
@@ -58,21 +59,24 @@ function FileHistoryBody() {
   // How many pages to request; "Load more" bumps it, a new file resets it.
   const [pageCount, setPageCount] = useState(1);
 
-  // Reset when the repo changes — the path belongs to the previous repo.
-  const prevRepoId = useRef(repo?.id);
-  useEffect(() => {
-    if (prevRepoId.current === repo?.id) return;
-    prevRepoId.current = repo?.id;
-    setPath(null);
-    setRev(null);
-    setPageCount(1);
-  }, [repo?.id]);
+  // Reset when the repo changes (the path belongs to the previous repo) -
+  // except when the selection was summoned FOR the repo being switched to,
+  // and not on first mount. Full rationale in useRepoSwitchClear.
+  const markDelivered = useRepoSwitchClear(
+    repo?.id,
+    useCallback(() => {
+      setPath(null);
+      setRev(null);
+      setPageCount(1);
+    }, []),
+  );
 
   const onReceive = useCallback((payload: unknown) => {
     if (typeof payload === "string") {
       setPath(payload);
       setRev(null);
       setPageCount(1);
+      markDelivered();
       return;
     }
     const p = payload as Partial<FileHistoryRequest> | null;
@@ -80,8 +84,9 @@ function FileHistoryBody() {
       setPath(p.path);
       setRev(typeof p.rev === "string" ? p.rev : null);
       setPageCount(1);
+      markDelivered();
     }
-  }, []);
+  }, [markDelivered]);
   useSummonTarget("file-history", onReceive);
 
   const { data: entries = [], isFetching, isError, error, refetch } = useQuery<FileHistoryEntry[]>({

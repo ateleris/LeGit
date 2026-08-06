@@ -3,6 +3,7 @@ import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatAppError } from "../../lib/types";
 import { useThemeStore } from "../../store/themes";
+import { confirmDialog } from "../../store/confirm";
 import { useConfirmDestructive } from "../../store/settings";
 import { contrastRatio, wcagBadge } from "../../theme/contrast";
 import { DEFAULT_THEME } from "../../theme/defaults";
@@ -183,7 +184,15 @@ export function ThemeEditorPanel() {
 
   const onDeleteUserTheme = async (name: string) => {
     // Global destructive-confirmation setting: when off, delete immediately.
-    if (confirmDestructive && !window.confirm(`Delete theme "${name}"?`)) return;
+    if (confirmDestructive) {
+      const ok = await confirmDialog({
+        title: "Delete theme",
+        message: "Deletes the user theme file. Built-in themes are unaffected.",
+        detail: name,
+        confirmLabel: "Delete theme",
+      });
+      if (!ok) return;
+    }
     try {
       await deleteUserTheme(name);
     } catch (e) {

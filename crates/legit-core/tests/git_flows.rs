@@ -2114,7 +2114,7 @@ async fn submodule_log_reports_the_commits_between_pointers() {
 }
 
 #[tokio::test]
-async fn submodule_ops_roundtrip_deinit_init_update() {
+async fn submodule_ops_roundtrip_deinit_update_init() {
     let (sup, _lib) = repo_with_submodule().await;
 
     // Make it uninitialized+unpopulated the way a fresh clone would be.
@@ -2122,20 +2122,25 @@ async fn submodule_ops_roundtrip_deinit_init_update() {
     let subs = sup.backend.submodules().await.unwrap();
     assert!(!subs[0].state.initialized && !subs[0].state.populated);
 
-    // init registers, update populates at the recorded SHA.
-    sup.backend.submodule_init(&[PathBuf::from("lib")]).await.unwrap();
-    let subs = sup.backend.submodules().await.unwrap();
-    assert!(subs[0].state.initialized && !subs[0].state.populated);
-
+    // `update --init` registers AND populates at the recorded SHA (the
+    // registration is folded into the update; there is no separate init).
     sup.backend
         .submodule_update(
-            SubmoduleUpdateOptions { paths: vec![PathBuf::from("lib")], ..Default::default() },
+            SubmoduleUpdateOptions {
+                init: true,
+                paths: vec![PathBuf::from("lib")],
+                ..Default::default()
+            },
             OperationId("t".into()),
         )
         .await
         .unwrap();
     let subs = sup.backend.submodules().await.unwrap();
-    assert!(subs[0].state.populated && !subs[0].state.pointer_moved);
+    assert!(
+        subs[0].state.initialized && subs[0].state.populated && !subs[0].state.pointer_moved,
+        "{:?}",
+        subs[0].state
+    );
 
     // sync succeeds (URL copy is a no-op here but must not error).
     sup.backend.submodule_sync(&[PathBuf::from("lib")], false).await.unwrap();

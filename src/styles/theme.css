@@ -4,8 +4,9 @@
  * `applyTheme` runs, these are replaced.
  *
  * Per DESIGN.md §6.2: no component anywhere uses a literal colour — only
- * `var(--<token>)`. The lint rule that enforces this lives at the
- * project level (TODO once the codebase has more CSS).
+ * `var(--<token>)`. Enforced by src/theme/noLiteralColors.test.ts (no colour
+ * literals outside the theme system) and src/theme/contract.test.ts (every
+ * token defined in all 4 required places).
  */
 :root {
   /* Palette */
@@ -229,6 +230,7 @@
   --graph-lane-fallback: var(--palette-graph-lane-fallback);
   --graph-row-selected-bg: var(--palette-row-selected-bg);
   /* Mirrors the "faded" token filter over the selection colour. */
+  --graph-row-focused-bg: color-mix(in srgb, var(--palette-row-selected-bg), transparent 55%);
   --graph-row-hover-bg: color-mix(in srgb, var(--palette-row-selected-bg), transparent 55%);
   /* Mirrors the "subtle" token filter over the accent. */
   --menu-hover-bg: color-mix(in srgb, var(--palette-accent), transparent 85%);

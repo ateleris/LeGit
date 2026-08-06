@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pickTagRemote, pushedTagNames } from "./tags";
+import { pickTagRemote, pushedTagNames, resolveTagRemote } from "./tags";
 import type { Remote, RemoteTag, TagInfo } from "./types";
 
 const tag = (name: string, sha: string): TagInfo => ({
@@ -41,5 +41,27 @@ describe("pickTagRemote", () => {
     expect(pickTagRemote([remote("up"), remote("origin")])).toBe("origin");
     expect(pickTagRemote([remote("up"), remote("fork")])).toBe("up");
     expect(pickTagRemote([])).toBeNull();
+  });
+});
+
+describe("resolveTagRemote", () => {
+  it("honors the user's choice when that remote still exists", () => {
+    expect(resolveTagRemote("fork", [remote("origin"), remote("fork")])).toBe("fork");
+  });
+
+  it("falls back to the default when the choice is stale (remote removed)", () => {
+    expect(resolveTagRemote("gone", [remote("up"), remote("origin")])).toBe("origin");
+    expect(resolveTagRemote("gone", [remote("up"), remote("fork")])).toBe("up");
+  });
+
+  it("falls back to the default when no choice was made", () => {
+    expect(resolveTagRemote(null, [remote("up"), remote("origin")])).toBe("origin");
+    expect(resolveTagRemote(undefined, [remote("up")])).toBe("up");
+    expect(resolveTagRemote("", [remote("up")])).toBe("up");
+  });
+
+  it("returns null when there are no remotes at all", () => {
+    expect(resolveTagRemote("origin", [])).toBeNull();
+    expect(resolveTagRemote(null, [])).toBeNull();
   });
 });

@@ -35,9 +35,6 @@ export interface PanelDescriptor {
   id: string;
   title: string;
   scope: "global" | "repo";
-  /** IDs of panels this panel may summon. Informational only - `summon()`
-   *  does not enforce it; keep it in sync when adding summon() calls. */
-  summons?: string[];
   /** Where to open the panel the first time it's ever opened. */
   defaultPlacement?: DefaultPlacement;
   /** Panel this one shares a dock slot with: summoning one while the other is
@@ -73,15 +70,9 @@ export const REPO_PANELS: PanelDescriptor[] = [
     id: "refs",
     title: "Refs",
     scope: "repo",
-    summons: ["commit-details", "changed-files", "working-changes"],
     defaultPlacement: { direction: "left", referencePanel: "log" },
   },
-  {
-    id: "log",
-    title: "Commits",
-    scope: "repo",
-    summons: ["commit-details", "changed-files", "working-changes", "interactive-rebase", "compare", "files"],
-  },
+  { id: "log", title: "Commits", scope: "repo" },
   {
     id: "interactive-rebase",
     title: "Interactive Rebase",
@@ -92,36 +83,24 @@ export const REPO_PANELS: PanelDescriptor[] = [
     id: "compare",
     title: "Compare",
     scope: "repo",
-    summons: ["diff"],
     defaultPlacement: { direction: "right", referencePanel: "log" },
   },
   {
     id: "files",
     title: "Files",
     scope: "repo",
-    summons: ["blame", "file-history", "file-view"],
     defaultPlacement: { direction: "left", referencePanel: "log" },
   },
   {
     id: "blame",
     title: "Blame",
     scope: "repo",
-    summons: ["commit-details", "changed-files", "file-history", "log"],
     defaultPlacement: { direction: "right", referencePanel: "log" },
   },
   {
     id: "file-history",
     title: "File History",
     scope: "repo",
-    summons: [
-      "commit-details",
-      "changed-files",
-      "working-changes",
-      "file-view",
-      "blame",
-      "diff",
-      "log",
-    ],
     defaultPlacement: { direction: "right", referencePanel: "log" },
   },
   {
@@ -134,7 +113,6 @@ export const REPO_PANELS: PanelDescriptor[] = [
     id: "changed-files",
     title: "Changed Files",
     scope: "repo",
-    summons: ["diff", "file-view"],
     defaultPlacement: { direction: "below", referencePanel: "commit-details" },
   },
   {
@@ -147,7 +125,6 @@ export const REPO_PANELS: PanelDescriptor[] = [
     id: "working-changes",
     title: "Working Changes",
     scope: "repo",
-    summons: ["diff"],
     // Same slot as Changed Files — the two swap in/out of this spot.
     defaultPlacement: { direction: "below", referencePanel: "commit-details" },
   },

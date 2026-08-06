@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PanelError } from "../shared/PanelError";
+import { segStyle } from "../shared/segmented";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useSettingsStore, useConfirmDestructive } from "../../store/settings";
@@ -407,15 +408,3 @@ function FileAtCommitMenuSection({
   );
 }
 
-function segStyle(active: boolean, side: "left" | "right"): React.CSSProperties {
-  return {
-    fontSize: "var(--fz-sm)",
-    padding: "2px 8px",
-    border: "1px solid var(--panel-border)",
-    borderRadius: side === "left" ? "3px 0 0 3px" : "0 3px 3px 0",
-    marginLeft: side === "right" ? -1 : 0,
-    background: active ? "var(--button-active-bg, rgba(255,255,255,0.12))" : "transparent",
-    color: "var(--panel-fg)",
-    cursor: "pointer",
-  };
-}

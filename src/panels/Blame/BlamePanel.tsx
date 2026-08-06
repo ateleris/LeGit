@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { PanelError } from "../shared/PanelError";
+import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
 import { useQuery } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
@@ -47,27 +48,31 @@ export function BlamePanel() {
   const [revDraft, setRevDraft] = useState("");
   useEffect(() => setRevDraft(rev ?? ""), [rev]);
 
-  // Reset when the repo changes — the path belongs to the previous repo.
-  const prevRepoId = useRef(repo?.id);
-  useEffect(() => {
-    if (prevRepoId.current === repo?.id) return;
-    prevRepoId.current = repo?.id;
-    setPath(null);
-    setRev(null);
-  }, [repo?.id]);
+  // Reset when the repo changes (the path belongs to the previous repo) -
+  // except when the selection was summoned FOR the repo being switched to,
+  // and not on first mount. Full rationale in useRepoSwitchClear.
+  const markDelivered = useRepoSwitchClear(
+    repo?.id,
+    useCallback(() => {
+      setPath(null);
+      setRev(null);
+    }, []),
+  );
 
   const onReceive = useCallback((payload: unknown) => {
     if (typeof payload === "string") {
       setPath(payload);
       setRev(null);
+      markDelivered();
       return;
     }
     const p = payload as Partial<BlameRequest> | null;
     if (p && typeof p.path === "string") {
       setPath(p.path);
       setRev(typeof p.rev === "string" ? p.rev : null);
+      markDelivered();
     }
-  }, []);
+  }, [markDelivered]);
   useSummonTarget("blame", onReceive);
 
   const { data: hunks = [], isFetching, isError, error, refetch } = useQuery<BlameHunk[]>({

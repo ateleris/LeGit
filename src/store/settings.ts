@@ -1,8 +1,8 @@
 import { create } from "zustand";
-import { invoke } from "@tauri-apps/api/core";
 import {
   getGlobalSettings,
   saveBranchListView,
+  saveRegionState,
   saveChangedFilesViewMode,
   saveRefsSortMode,
   saveCommitsGraphMetrics,
@@ -142,12 +142,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   async setRegionPlacement(placement: RegionPlacement) {
     const s = get().settings;
-    await invoke("save_region_state", {
+    await saveRegionState(
       placement,
-      sizeTop: s?.global_region_size_top ?? null,
-      sizeLeft: s?.global_region_size_left ?? null,
-      collapsed: s?.global_dock_collapsed ?? false,
-    });
+      s?.global_region_size_top ?? null,
+      s?.global_region_size_left ?? null,
+      s?.global_dock_collapsed ?? false,
+    );
     if (s) {
       set({ settings: { ...s, global_region_placement: placement } });
     }

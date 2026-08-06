@@ -11,6 +11,7 @@ import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { useCommitDraftStore } from "../../store/commitDraft";
 import { notify } from "../../store/notifications";
 import { confirmDialog } from "../../store/confirm";
+import { segStyle } from "../shared/segmented";
 import { FileTree } from "../shared/FileTree/FileTree";
 import { LineEndingRowBadge } from "../shared/LineEndingBadge";
 import { useLineEndingStatusMap } from "../shared/lineEndingStatus";
@@ -1333,15 +1334,3 @@ function Section({
   );
 }
 
-function segStyle(active: boolean, side: "left" | "right"): React.CSSProperties {
-  return {
-    fontSize: "var(--fz-sm)",
-    padding: "2px 8px",
-    border: "1px solid var(--panel-border)",
-    borderRadius: side === "left" ? "3px 0 0 3px" : "0 3px 3px 0",
-    marginLeft: side === "right" ? -1 : 0,
-    background: active ? "var(--button-active-bg, rgba(255,255,255,0.12))" : "transparent",
-    color: "var(--panel-fg)",
-    cursor: "pointer",
-  };
-}

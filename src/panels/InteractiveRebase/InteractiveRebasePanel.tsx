@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useSummonTarget } from "../../store/summon";
@@ -11,6 +11,7 @@ import { notifyOpError, notifyRebaseOutcome } from "../../lib/mergeFeedback";
 import { Button, IconButton } from "../shared/buttons";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
+import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
 
 /** One editable plan row (UI order = todo order, oldest first). */
 interface PlanRow {
@@ -60,21 +61,24 @@ export function InteractiveRebasePanel() {
     },
   });
 
-  // Reset when the active repo changes — the base belongs to the old repo.
-  const prevRepoId = useRef(repo?.id);
-  useEffect(() => {
-    if (prevRepoId.current === repo?.id) return;
-    prevRepoId.current = repo?.id;
-    setBase(null);
-    setRows([]);
-  }, [repo?.id]);
+  // Reset when the active repo changes (the base belongs to the old repo) -
+  // except when the base was summoned FOR the repo being switched to, and
+  // not on first mount. Full rationale in useRepoSwitchClear.
+  const markDelivered = useRepoSwitchClear(
+    repo?.id,
+    useCallback(() => {
+      setBase(null);
+      setRows([]);
+    }, []),
+  );
 
   const onReceive = useCallback((payload: unknown) => {
     if (typeof payload === "string") {
       setBase(payload);
       setRows([]);
+      markDelivered();
     }
-  }, []);
+  }, [markDelivered]);
   useSummonTarget("interactive-rebase", onReceive);
 
   // base..HEAD, oldest first (git log returns newest first).

@@ -23,3 +23,18 @@ export function pickTagRemote(remotes: Remote[]): string | null {
   if (remotes.length === 0) return null;
   return remotes.some((r) => r.name === "origin") ? "origin" : remotes[0].name;
 }
+
+/**
+ * The effective tag remote given the user's per-repo choice: the choice if it
+ * still names an existing remote, else the `pickTagRemote` default. A stale
+ * choice (remote removed/renamed) falls back rather than erroring. Shared by
+ * the Commits panel and the Tags section so their "pushed" indicators (and
+ * the `remote-tags` query key) always agree.
+ */
+export function resolveTagRemote(
+  choice: string | null | undefined,
+  remotes: Remote[],
+): string | null {
+  if (choice && remotes.some((r) => r.name === choice)) return choice;
+  return pickTagRemote(remotes);
+}

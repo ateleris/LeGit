@@ -605,19 +605,44 @@ impl<E: GitExecutor> GitCliBackend<E> {
                 // on a clean tree; never by the tip alone: a concurrently
                 // created entry must not be adopted and later popped).
                 const SUB_MARKER: &str = "legit: auto-stash before submodule update";
-                let sub_list = |o: Option<crate::runner::RunOutput>| -> String {
-                    match o {
-                        Some(out) if out.success => out.stdout,
-                        _ => String::new(),
-                    }
-                };
+                // A failed list read must be LOUD, never treated as an empty
+                // list: an empty "before" could adopt a leftover marker entry
+                // from an earlier crash, and an empty "after" would take the
+                // clean-tree branch below - the submodule would move, report a
+                // plain Updated, and the user's changes would sit silently in
+                // the submodule's stash (best-effort failure must never be
+                // silent; house rule).
+                let sub_list =
+                    |o: Result<crate::runner::RunOutput, crate::runner::RunnerError>| -> Result<String, String> {
+                        match o {
+                            Ok(out) if out.success => Ok(out.stdout),
+                            Ok(out) => {
+                                let msg = out.stderr.trim().to_string();
+                                Err(if msg.is_empty() {
+                                    format!("git stash list exited with {:?}", out.exit_code)
+                                } else {
+                                    msg
+                                })
+                            }
+                            Err(e) => Err(e.to_string()),
+                        }
+                    };
                 let runner = self.runner().await;
-                let before = sub_list(
+                let before = match sub_list(
                     runner
                         .run(&["-C", &p, "stash", "list", "--format=%H %s"])
-                        .await
-                        .ok(),
-                );
+                        .await,
+                ) {
+                    Ok(list) => list,
+                    // Nothing has been touched yet: abort this submodule's
+                    // update instead of risking adopting (and later popping)
+                    // a stash entry we did not create.
+                    Err(e) => {
+                        return skip(format!(
+                            "could not read the submodule's stash list before auto-stashing ({e}); the submodule was left untouched"
+                        ));
+                    }
+                };
                 drop(runner);
                 if let Err(e) = self
                     .run_simple(&[
@@ -634,12 +659,24 @@ impl<E: GitExecutor> GitCliBackend<E> {
                     return skip(format!("could not stash local changes: {e}"));
                 }
                 let runner = self.runner().await;
-                let after = sub_list(
+                let after = match sub_list(
                     runner
                         .run(&["-C", &p, "stash", "list", "--format=%H %s"])
-                        .await
-                        .ok(),
-                );
+                        .await,
+                ) {
+                    Ok(list) => list,
+                    // The stash push already ran: the changes MAY be parked in
+                    // the submodule's stash, but without the list we cannot
+                    // verify it (nor pop by SHA). Stop here - do NOT move the
+                    // submodule - and say so prominently.
+                    Err(e) => {
+                        return SubmoduleAutoUpdateStatus::ChangesInStash {
+                            message: format!(
+                                "your local changes may have been auto-stashed, but reading the submodule's stash list to verify failed ({e}); the submodule was left at its previous commit - check `git stash list` inside the submodule"
+                            ),
+                        };
+                    }
+                };
                 drop(runner);
                 let Some(stash_sha) = find_created_stash(&before, &after, SUB_MARKER) else {
                     // Race: tree turned out clean - just move.
@@ -1785,13 +1822,6 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             .await?;
         Self::ensure_success(&out)?;
         Ok(SubmoduleLog::Commits { commits: sub::parse_submodule_log(&out.stdout) })
-    }
-
-    async fn submodule_init(&self, paths: &[PathBuf]) -> Result<(), GitError> {
-        if paths.is_empty() {
-            return self.run_simple(&["submodule", "init"]).await;
-        }
-        self.run_pathspec(&["submodule", "init", "--"], paths).await
     }
 
     async fn submodule_update(
@@ -3087,12 +3117,13 @@ fn parse_ls_tree_files(stdout: &str) -> Vec<RepoFileEntry> {
 
 /// Whether a file's bytes hold MIXED (CRLF + bare-LF) line endings:
 /// `Some(true)` mixed, `Some(false)` uniform (incl. no newlines at all),
-/// `None` binary (NUL in the leading 512 bytes - git's heuristic). The LF of
-/// a CRLF pair never counts as a bare LF, and old-Mac lone CRs count as
-/// neither. Pure sibling of `classify_line_endings`; backs the
-/// mixed-endings warning.
+/// `None` binary (NUL in the leading `BINARY_SNIFF_WINDOW` bytes - git's
+/// heuristic, shared with `classify_line_endings` so both classify a blob
+/// identically). The LF of a CRLF pair never counts as a bare LF, and
+/// old-Mac lone CRs count as neither. Pure sibling of
+/// `classify_line_endings`; backs the mixed-endings warning.
 pub fn mixed_endings_in_bytes(bytes: &[u8]) -> Option<bool> {
-    let probe = &bytes[..bytes.len().min(512)];
+    let probe = &bytes[..bytes.len().min(BINARY_SNIFF_WINDOW)];
     if probe.contains(&0u8) {
         return None;
     }
@@ -4136,6 +4167,38 @@ mod tests {
     #[test]
     fn mixed_endings_binary_is_none() {
         assert_eq!(mixed_endings_in_bytes(b"ab\0cd\r\nx\n"), None);
+    }
+
+    #[test]
+    fn mixed_endings_sniff_window_matches_classify_line_endings() {
+        // Regression: the NUL probe once stopped at 512 bytes while
+        // classify_line_endings used BINARY_SNIFF_WINDOW (8000, git's
+        // buffer_is_binary) - a NUL between the two made the siblings
+        // disagree. Both must classify identically across the boundary.
+
+        // NUL inside the window but past the old 512-byte probe: binary.
+        let mut inside = vec![b'a'; 600];
+        inside[599] = 0;
+        inside.extend_from_slice(b"\r\nx\n");
+        assert_eq!(mixed_endings_in_bytes(&inside), None);
+        let inside_text = String::from_utf8(inside).unwrap();
+        assert_eq!(classify_line_endings(&inside_text), LineEndingKind::Binary);
+
+        // NUL at the last in-window byte: still binary.
+        let mut edge = vec![b'a'; BINARY_SNIFF_WINDOW];
+        edge[BINARY_SNIFF_WINDOW - 1] = 0;
+        edge.extend_from_slice(b"\r\nx\n");
+        assert_eq!(mixed_endings_in_bytes(&edge), None);
+        let edge_text = String::from_utf8(edge).unwrap();
+        assert_eq!(classify_line_endings(&edge_text), LineEndingKind::Binary);
+
+        // NUL just past the window: text for both (git's heuristic ignores
+        // it), so the mixed endings still register.
+        let mut outside = vec![b'a'; BINARY_SNIFF_WINDOW];
+        outside.extend_from_slice(b"\0\r\nx\n");
+        assert_eq!(mixed_endings_in_bytes(&outside), Some(true));
+        let outside_text = String::from_utf8(outside).unwrap();
+        assert_eq!(classify_line_endings(&outside_text), LineEndingKind::Mixed);
     }
 
     #[test]

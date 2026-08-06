@@ -35,6 +35,16 @@ pub fn resolve_repo_git_path(
     global_git_path.to_path_buf()
 }
 
+/// Session bookkeeping (open-repo list, active repo, tab order) is
+/// deliberately best-effort: a failed settings persist must never fail the
+/// primary operation. But it must not be silent either (house rule): log a
+/// warning so "my tabs did not survive a restart" is diagnosable.
+fn warn_if_bookkeeping_persist_failed(what: &str, result: Result<(), AppError>) {
+    if let Err(e) = result {
+        tracing::warn!(err = %e, what, "session bookkeeping persist failed");
+    }
+}
+
 /// Open (or reuse) a session for `toplevel`, loading its `RepoSettings`
 /// and resolving the git binary through the scope hierarchy. Starts a
 /// filesystem watcher for the new session when watching is enabled.
@@ -140,19 +150,21 @@ async fn register_open_repo(
     // comparison, atomically with the insert) or creates one.
     let summary = open_session(state, app, git_path, toplevel).await;
 
-    state
-        .mutate_global(|settings| {
-            let p = summary.path.clone();
-            settings.last_open_repos.retain(|other| other != &p);
-            settings.last_open_repos.insert(0, p.clone());
-            settings.last_open_repos.truncate(20);
-            if !settings.currently_open.iter().any(|x| x == &p) {
-                settings.currently_open.push(p.clone());
-            }
-            settings.active_open_repo = Some(p);
-        })
-        .await
-        .ok();
+    warn_if_bookkeeping_persist_failed(
+        "record opened repo",
+        state
+            .mutate_global(|settings| {
+                let p = summary.path.clone();
+                settings.last_open_repos.retain(|other| other != &p);
+                settings.last_open_repos.insert(0, p.clone());
+                settings.last_open_repos.truncate(20);
+                if !settings.currently_open.iter().any(|x| x == &p) {
+                    settings.currently_open.push(p.clone());
+                }
+                settings.active_open_repo = Some(p);
+            })
+            .await,
+    );
 
     Ok(summary)
 }
@@ -373,15 +385,17 @@ pub async fn close_repo(
     state.watchers.lock().unwrap().remove(&repo_id);
 
     if let Some(path) = path {
-        state
-            .mutate_global(|settings| {
-                settings.currently_open.retain(|p| p != &path);
-                if settings.active_open_repo.as_deref() == Some(path.as_str()) {
-                    settings.active_open_repo = settings.currently_open.last().cloned();
-                }
-            })
-            .await
-            .ok();
+        warn_if_bookkeeping_persist_failed(
+            "record closed repo",
+            state
+                .mutate_global(|settings| {
+                    settings.currently_open.retain(|p| p != &path);
+                    if settings.active_open_repo.as_deref() == Some(path.as_str()) {
+                        settings.active_open_repo = settings.currently_open.last().cloned();
+                    }
+                })
+                .await,
+        );
     }
     Ok(())
 }
@@ -402,10 +416,12 @@ pub async fn set_active_repo(
     } else {
         None
     };
-    state
-        .mutate_global(|settings| settings.active_open_repo = path)
-        .await
-        .ok();
+    warn_if_bookkeeping_persist_failed(
+        "record active repo",
+        state
+            .mutate_global(|settings| settings.active_open_repo = path)
+            .await,
+    );
     Ok(())
 }
 
@@ -419,10 +435,14 @@ pub async fn set_watcher_enabled(
     app: tauri::AppHandle,
     enabled: bool,
 ) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.watcher_enabled = enabled;
-    })
-    .await.ok();
+    warn_if_bookkeeping_persist_failed(
+        "record watcher toggle",
+        state
+            .mutate_global(|s| {
+                s.watcher_enabled = enabled;
+            })
+            .await,
+    );
 
     if enabled {
         let sessions: Vec<Arc<RepoSession>> =
@@ -560,27 +580,29 @@ pub async fn restore_open_repos(
         active_id = summaries.first().map(|s| s.id.clone());
     }
 
-    state
-        .mutate_global(|settings| {
-            // Merge instead of overwrite: keep any paths that were opened while
-            // restore was running (they weren't in our snapshot), in their order.
-            let mut merged = still_valid;
-            for p in &settings.currently_open {
-                if !snapshot.contains(p) && !merged.contains(p) {
-                    merged.push(p.clone());
+    warn_if_bookkeeping_persist_failed(
+        "record restored repos",
+        state
+            .mutate_global(|settings| {
+                // Merge instead of overwrite: keep any paths that were opened while
+                // restore was running (they weren't in our snapshot), in their order.
+                let mut merged = still_valid;
+                for p in &settings.currently_open {
+                    if !snapshot.contains(p) && !merged.contains(p) {
+                        merged.push(p.clone());
+                    }
                 }
-            }
-            settings.currently_open = merged;
-            // Keep active consistent with the list: clear it when nothing
-            // restored, rather than leaving a pointer at a repo that is gone.
-            settings.active_open_repo = active_id
-                .as_ref()
-                .and_then(|id| summaries.iter().find(|s| &s.id == id))
-                .map(|s| s.path.clone())
-                .or_else(|| settings.currently_open.first().cloned());
-        })
-        .await
-        .ok();
+                settings.currently_open = merged;
+                // Keep active consistent with the list: clear it when nothing
+                // restored, rather than leaving a pointer at a repo that is gone.
+                settings.active_open_repo = active_id
+                    .as_ref()
+                    .and_then(|id| summaries.iter().find(|s| &s.id == id))
+                    .map(|s| s.path.clone())
+                    .or_else(|| settings.currently_open.first().cloned());
+            })
+            .await,
+    );
 
     Ok(RestoreResult {
         repos: summaries,
@@ -604,18 +626,20 @@ pub async fn set_open_repos_order(
             .filter_map(|id| repos.get(id).map(|s| s.summary().path))
             .collect()
     };
-    state
-        .mutate_global(|settings| {
-            let mut next = ordered_paths;
-            for p in &settings.currently_open {
-                if !next.contains(p) {
-                    next.push(p.clone());
+    warn_if_bookkeeping_persist_failed(
+        "record tab order",
+        state
+            .mutate_global(|settings| {
+                let mut next = ordered_paths;
+                for p in &settings.currently_open {
+                    if !next.contains(p) {
+                        next.push(p.clone());
+                    }
                 }
-            }
-            settings.currently_open = next;
-        })
-        .await
-        .ok();
+                settings.currently_open = next;
+            })
+            .await,
+    );
     Ok(())
 }
 

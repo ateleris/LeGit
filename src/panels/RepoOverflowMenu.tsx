@@ -4,10 +4,92 @@ import { repoOpenInEditor } from "../lib/commands";
 import { editorActionLabel, editorOpensFolder, effectiveEditorTemplate } from "../lib/editorAction";
 import { useSettingsStore } from "../store/settings";
 import { formatAppError } from "../lib/types";
+import type { RepoSummary } from "../lib/types";
 import { notify } from "../store/notifications";
 import { ExternalEditorIcon, FolderIcon } from "../icons";
 import { SectionLabel } from "./Commits/menu/primitives";
 import { IconButton } from "./shared/buttons";
+
+/** One repo entry in the dropdown. Hover feedback matches the View menu's
+ * entries (`--menu-hover-bg`); the active repo is marked by the dot only,
+ * not a background (user decision 2026-08-06). */
+function RepoRow({
+  repo,
+  isActive,
+  editorTemplate,
+  onActivate,
+  onOpenEditor,
+  onClose,
+}: {
+  repo: RepoSummary;
+  isActive: boolean;
+  editorTemplate: string;
+  onActivate: () => void;
+  onOpenEditor: () => void;
+  onClose: () => void;
+}) {
+  const [hover, setHover] = useState(false);
+  const editorLabel = editorActionLabel(editorTemplate);
+  const opensFolder = editorOpensFolder(editorTemplate);
+  return (
+    <div
+      role="menuitem"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "4px 8px",
+        borderRadius: 3,
+        background: hover ? "var(--menu-hover-bg, rgba(255,255,255,0.08))" : "transparent",
+        cursor: "pointer",
+      }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onClick={onActivate}
+    >
+      <span style={{ display: "inline-block", width: 14, textAlign: "center" }}>
+        {isActive ? "●" : ""}
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {repo.name}
+        </div>
+        <div
+          className="legit-subtle"
+          style={{
+            fontSize: "var(--fz-sm)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {repo.path}
+        </div>
+      </div>
+      <IconButton
+        aria-label={`${editorLabel}: ${repo.name}`}
+        title={editorLabel}
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpenEditor();
+        }}
+        style={{ color: "inherit", fontSize: "inherit", padding: "0 4px" }}
+      >
+        {opensFolder ? <FolderIcon /> : <ExternalEditorIcon />}
+      </IconButton>
+      <IconButton
+        aria-label={`Close ${repo.name}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
+        style={{ color: "inherit", fontSize: "inherit", padding: "0 4px" }}
+      >
+        ×
+      </IconButton>
+    </div>
+  );
+}
 
 /**
  * Dropdown that lists every open repo, so a user can jump to a buried tab
@@ -71,74 +153,26 @@ export function RepoOverflowMenu() {
         >
           <SectionLabel>Open repositories</SectionLabel>
           {repos.map((r) => {
-            const isActive = r.id === activeId;
             const editorTemplate = effectiveEditorTemplate(
               repoSettingsMap[r.id]?.external_editor_command,
               globalEditorTemplate,
             );
-            const editorLabel = editorActionLabel(editorTemplate);
-            const opensFolder = editorOpensFolder(editorTemplate);
             return (
-              <div
+              <RepoRow
                 key={r.id}
-                role="menuitem"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "4px 8px",
-                  borderRadius: 3,
-                  background: isActive ? "var(--tab-active-bg)" : "transparent",
-                  color: isActive ? "var(--tab-active-fg)" : "inherit",
-                  cursor: "pointer",
-                }}
-                onClick={() => {
+                repo={r}
+                isActive={r.id === activeId}
+                editorTemplate={editorTemplate}
+                onActivate={() => {
                   setActive(r.id);
                   setOpen(false);
                 }}
-              >
-                <span style={{ display: "inline-block", width: 14, textAlign: "center" }}>
-                  {isActive ? "●" : ""}
-                </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {r.name}
-                  </div>
-                  <div
-                    className="legit-subtle"
-                    style={{
-                      fontSize: "var(--fz-sm)",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {r.path}
-                  </div>
-                </div>
-                <IconButton
-                  aria-label={`${editorLabel}: ${r.name}`}
-                  title={editorLabel}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setOpen(false);
-                    repoOpenInEditor(r.id).catch((err) => notify.error(formatAppError(err)));
-                  }}
-                  style={{ color: "inherit", fontSize: "inherit", padding: "0 4px" }}
-                >
-                  {opensFolder ? <FolderIcon /> : <ExternalEditorIcon />}
-                </IconButton>
-                <IconButton
-                  aria-label={`Close ${r.name}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    closeRepo(r.id);
-                  }}
-                  style={{ color: "inherit", fontSize: "inherit", padding: "0 4px" }}
-                >
-                  ×
-                </IconButton>
-              </div>
+                onOpenEditor={() => {
+                  setOpen(false);
+                  repoOpenInEditor(r.id).catch((err) => notify.error(formatAppError(err)));
+                }}
+                onClose={() => closeRepo(r.id)}
+              />
             );
           })}
         </div>

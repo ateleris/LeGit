@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { PanelError } from "../shared/PanelError";
 import { segStyle } from "../shared/segmented";
+import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileCheck, FilePlus, FileX, GitFork } from "lucide-react";
 import type { ReactNode } from "react";
@@ -59,22 +60,25 @@ export function FilesPanel() {
 
   const { rowHeight, iconSize } = useFileRowMetrics();
 
-  // Reset when the repo changes — the rev belongs to the previous repo.
-  const prevRepoId = useRef(repo?.id);
-  useEffect(() => {
-    if (prevRepoId.current === repo?.id) return;
-    prevRepoId.current = repo?.id;
-    setRev(null);
-    setSelectedPath(null);
-  }, [repo?.id]);
+  // Reset when the repo changes (the rev belongs to the previous repo) -
+  // except when the mode was summoned FOR the repo being switched to, and
+  // not on first mount. Full rationale in useRepoSwitchClear.
+  const markDelivered = useRepoSwitchClear(
+    repo?.id,
+    useCallback(() => {
+      setRev(null);
+      setSelectedPath(null);
+    }, []),
+  );
 
   const onReceive = useCallback((payload: unknown) => {
     const p = payload as Partial<FilesAtRevRequest> | null;
     if (p && typeof p === "object" && "rev" in p) {
       setRev(typeof p.rev === "string" ? p.rev : null);
       setSelectedPath(null);
+      markDelivered();
     }
-  }, []);
+  }, [markDelivered]);
   useSummonTarget("files", onReceive);
 
   // Keyed under the "status" domain: the watcher emits Status on any worktree

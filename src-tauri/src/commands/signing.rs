@@ -5,10 +5,11 @@
 //! SSH signing is the priority path, so `gpg.ssh.allowedSignersFile` (needed
 //! for SSH signatures to verify as trusted) is surfaced alongside the core
 //! keys. All reads/writes go through `GitRunner`; system scope is read-only.
+//! Only the GLOBAL scope has commands here: repo-local signing config is
+//! managed through git profiles (`profiles.rs` reuses the `KEY_*` constants).
 
 use crate::commands::config_util::{
-    read_config_all_scopes, read_config_global_scopes, write_config_global, write_config_local,
-    ScopedConfig,
+    read_config_global_scopes, write_config_global, ScopedConfig,
 };
 use crate::error::AppError;
 use crate::state::AppState;
@@ -35,15 +36,6 @@ pub struct SigningView {
     pub allowed_signers: ScopedConfig,
 }
 
-async fn read_signing_view(runner: &GitRunner) -> SigningView {
-    SigningView {
-        gpgsign: read_config_all_scopes(runner, KEY_GPGSIGN).await.into(),
-        format: read_config_all_scopes(runner, KEY_FORMAT).await.into(),
-        signing_key: read_config_all_scopes(runner, KEY_SIGNING_KEY).await.into(),
-        allowed_signers: read_config_all_scopes(runner, KEY_ALLOWED_SIGNERS).await.into(),
-    }
-}
-
 /// Global-settings variant: global + system scope only. The unbound runner's
 /// cwd may lie inside some repo, and an all-scopes read would leak that
 /// repo's local config into the view (see `read_config_global_scopes`).
@@ -56,18 +48,6 @@ async fn read_signing_view_global(runner: &GitRunner) -> SigningView {
     }
 }
 
-/// Read signing config for the active repo (resolved across local/global/system).
-#[tauri::command]
-#[specta::specta]
-pub async fn repo_signing_config(
-    state: tauri::State<'_, AppState>,
-    repo_id: String,
-) -> Result<SigningView, AppError> {
-    let session = state.get_session(&repo_id).await?;
-    let runner = session.runner.read().await.clone();
-    Ok(read_signing_view(&runner).await)
-}
-
 /// Read signing config at global scope (no repo required).
 #[tauri::command]
 #[specta::specta]
@@ -77,27 +57,6 @@ pub async fn global_signing_config(
     let git_path = state.git_path.read().await.clone();
     let runner = GitRunner::unbound(&git_path);
     Ok(read_signing_view_global(&runner).await)
-}
-
-/// Write signing config to the repo's `.git/config`. `None` for a field unsets
-/// the key at local scope. Returns the refreshed view.
-#[tauri::command]
-#[specta::specta]
-pub async fn repo_write_signing(
-    state: tauri::State<'_, AppState>,
-    repo_id: String,
-    gpgsign: Option<String>,
-    format: Option<String>,
-    signing_key: Option<String>,
-    allowed_signers: Option<String>,
-) -> Result<SigningView, AppError> {
-    let session = state.get_session(&repo_id).await?;
-    let runner = session.runner.read().await.clone();
-    write_config_local(&runner, KEY_GPGSIGN, gpgsign.as_deref()).await?;
-    write_config_local(&runner, KEY_FORMAT, format.as_deref()).await?;
-    write_config_local(&runner, KEY_SIGNING_KEY, signing_key.as_deref()).await?;
-    write_config_local(&runner, KEY_ALLOWED_SIGNERS, allowed_signers.as_deref()).await?;
-    Ok(read_signing_view(&runner).await)
 }
 
 /// Write signing config to `~/.gitconfig`. `None` for a field unsets the key.

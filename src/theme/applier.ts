@@ -65,12 +65,3 @@ export function applyTheme(doc: ThemeDocument, root: HTMLElement = document.docu
 function tokenCssValue(binding: ThemeTokenBinding): string {
   return bindingCssValue(binding, `var(${paletteVar(bindingRef(binding))})`);
 }
-
-/** Useful in the Theme Editor for live previews. */
-export function applyOverride(token: string, binding: ThemeTokenBinding, root: HTMLElement = document.documentElement) {
-  root.style.setProperty(tokenToVar(token), tokenCssValue(binding));
-}
-
-export function applyPaletteValue(name: string, color: string, root: HTMLElement = document.documentElement) {
-  root.style.setProperty(paletteVar(name), color);
-}

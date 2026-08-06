@@ -38,7 +38,7 @@ import {
   repoTags,
   repoRemoteTags,
 } from "../../lib/commands";
-import { pushedTagNames, pickTagRemote } from "../../lib/tags";
+import { pushedTagNames, resolveTagRemote } from "../../lib/tags";
 import { openStashDiff } from "../Stashes/StashesPanel";
 import { notifySwitchError } from "../../lib/switchFeedback";
 import { useOpState } from "../../lib/useOpState";
@@ -51,6 +51,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { notify } from "../../store/notifications";
 import { BranchIcon, BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon, RemoteIcon, SignedIcon, StashIcon, TagIcon } from "../../icons";
 import { useSignatureStore } from "../../store/signatures";
+import { useTagRemoteChoice } from "../../store/tagRemote";
 import { formatAbsolute, formatFull, formatRelative } from "../../lib/time";
 import { RefsCell } from "./cells/RefsCell";
 import { InlineRenameInput } from "./cells/InlineRenameInput";
@@ -406,7 +407,13 @@ export function CommitsPanel() {
     enabled: !!repo,
     staleTime: 5_000,
   });
-  const tagRemote = useMemo(() => pickTagRemote(remotesList), [remotesList]);
+  // Same per-repo choice + resolver as the Tags section, so the "pushed"
+  // indicators agree across panels and the remote-tags query is shared.
+  const tagRemoteChoice = useTagRemoteChoice(repo?.id);
+  const tagRemote = useMemo(
+    () => resolveTagRemote(tagRemoteChoice, remotesList),
+    [tagRemoteChoice, remotesList],
+  );
   const remoteNames = useMemo(() => remotesList.map((r) => r.name), [remotesList]);
 
   // Verification verdicts for every commit inspected in Commit Details this
@@ -1294,7 +1301,6 @@ export function CommitsPanel() {
                 isDraggable={true}
                 isResizable={!NON_RESIZABLE.includes(colId)}
                 isHideable={!NON_HIDEABLE.includes(colId)}
-                order={colState.order}
                 hidden={colState.hidden}
                 labels={COLUMN_LABELS}
                 onReorder={handleReorder}
@@ -1338,7 +1344,6 @@ export function CommitsPanel() {
               isDraggable={true}
               isResizable={!NON_RESIZABLE.includes(colId)}
               isHideable={!NON_HIDEABLE.includes(colId)}
-              order={colState.order}
               hidden={colState.hidden}
               labels={COLUMN_LABELS}
               onReorder={handleReorder}

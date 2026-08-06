@@ -22,6 +22,7 @@ import { formatAppError } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notifyResolutionInvisible } from "../../lib/mergeFeedback";
 import { notify } from "../../store/notifications";
+import { segStyle } from "../shared/segmented";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { LineEndingBadge } from "../shared/LineEndingBadge";
@@ -35,20 +36,6 @@ import {
   type ParsedConflicts,
 } from "../Diff/conflictModel";
 import { MergeView, type MergeViewHandle } from "./MergeView";
-
-/** Segmented-toggle button style (matches the Diff panel's Chunks/Full file). */
-function segStyle(active: boolean, side: "left" | "right"): React.CSSProperties {
-  return {
-    fontSize: "var(--fz-sm)",
-    padding: "2px 8px",
-    border: "1px solid var(--panel-border)",
-    borderRadius: side === "left" ? "3px 0 0 3px" : "0 3px 3px 0",
-    marginLeft: side === "right" ? -1 : 0,
-    background: active ? "var(--button-active-bg, rgba(255,255,255,0.12))" : "transparent",
-    color: "var(--panel-fg)",
-    cursor: "pointer",
-  };
-}
 
 /** Payload for summoning the Merge panel. */
 export interface MergeRequest {

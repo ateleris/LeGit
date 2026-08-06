@@ -203,59 +203,24 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   fix). The `crates/legit-providers` keep-or-delete question is
   resolved: **keep** - it hosts the SSH-first platform-integrations item
   under "Git features".
-- **2026-08-06 state-of-the-app review follow-ups** (full findings with
-  file:line in `design/2026-08-06-state-of-the-app-review.md`; the two
-  user-visible bugs and the classifier misfire were fixed same day). By
-  theme:
-  - *Backend robustness:* submodule auto-stash maps a failed `stash list`
-    read to "empty list" (`cli_impl/mod.rs` `update_one_submodule`) - an
-    after-push read failure reports `Updated` while changes sit in the
-    submodule stash; make it loud per `append_error_note`. Unify the
-    binary-sniff window (`mixed_endings_in_bytes` probes 512 bytes vs
-    `BINARY_SNIFF_WINDOW = 8000` in its siblings). Add at least a log to the
-    `.ok()`-swallowed session-bookkeeping persists in `commands/repo.rs`.
-  - *Adopt-the-helper pass:* ~30 busy states in the settings panels bypass
-    the 150ms delay (usePanelRunner or a shared delayed flag);
-    `useRepoSwitchClear` for the six summon-target panels still hand-rolling
-    the pre-fix clear-on-repo-switch (Blame, Compare, FileHistory, Files,
-    FileView, InteractiveRebase - latent clobber if a cross-repo summon ever
-    targets them); 4 `window.confirm`/`window.alert` sites to
-    confirmDialog/notify (ThemeEditorPanel, ConfirmCloseTab, RepoDock x2);
-    `segStyle` duplicated in 4 panels despite `shared/segmented.ts`; route
-    the two raw `invoke("save_region_state")` calls (AppLayout, settings
-    store) through the commands.ts wrapper.
-  - *CI:* add `tsc --noEmit` to ci.yml (today type errors surface only at
-    release build); fix the stale "two-spec" e2e comment (there are 6).
-  - *Dead surface (decide keep-or-delete):* IPC commands
-    `repo_signing_config` / `repo_write_signing` (superseded by profiles?)
-    and `repo_submodule_init` (UI uses update --init) plus their
-    backend-only helpers; unused deps `@codemirror/merge` + `codemirror`
-    (package.json) and `serde_json` (legit-core); dead exports
-    (`theme/applier.ts` `applyOverride`/`applyPaletteValue`,
-    `GitRunner::in_flight`, `AppError::OperationNotFound`); never-read
-    `PanelDescriptor.summons` metadata (already stale - delete or test it);
-    dead CSS `.legit-region-divider__mode`; unused `ColumnHeader.order`
-    prop.
-  - *UX/theming:* FileTree focused-row styling needs its own token - it
-    reuses `--graph-row-selected-bg` so focus and selection only differ
-    before a theme loads; tag-remote choice divergence (CommitsPanel uses
-    `pickTagRemote` only, TagsSection honors the user's remote choice - the
-    "pushed" indicators can disagree with multiple remotes); confirm the
-    release-notes panel being reachable only via the View menu is intended.
-  - *Config nits:* devUrl `localhost` vs vite `127.0.0.1`; redundant
-    tsconfig include globs; stale TODO in `theme.css:8` (the promised lint
-    rule exists as `noLiteralColors.test.ts`).
-  - *Structural (split when next touched, per convention):*
-    `CommitsPanel.tsx` (1720-line component; queries hook + row context
-    menu + RemoteSyncToolbar are natural splits), `WorkingChangesPanel.tsx`
-    (1130-line function; CommitComposer + shared FileRowMenu),
-    `cli_impl/mod.rs` (4951 lines; submodule + line-ending blocks).
-- **Release notes panel follow-ups.** The panel shipped 2026-07-31 (plain
-  text, flat list, merges included - Git Extensions parity; spec:
-  `docs/superpowers/specs/2026-07-31-release-notes-panel-design.md`).
-  Deferred by decision: Markdown/HTML output, conventional-commit grouping,
-  merge filtering, templates, `git describe`-based default tag. Pick up only
-  if the plain list proves insufficient.
+- **2026-08-06 state-of-the-app review follow-ups.** Executed 2026-08-06
+  (full findings in `design/2026-08-06-state-of-the-app-review.md`):
+  backend robustness (loud submodule auto-stash list-read failures, unified
+  binary-sniff window, logged session persists), the adopt-the-helper pass
+  (`useDelayedBusy` for ~30 settings busy states, `useRepoSwitchClear` in
+  six panels, confirmDialog/notify for the window.confirm/alert sites,
+  segStyle dedup, save_region_state wrapper), CI `tsc --noEmit`, dead
+  surface deleted (decided: `repo_signing_config` / `repo_write_signing` /
+  `repo_submodule_init` removed; `repo_search_paths` stays), unused deps
+  removed, FileTree focused-row token (`graph.row.focused.bg`), shared
+  tag-remote choice (`store/tagRemote.ts` + `resolveTagRemote`), config
+  nits. Decided: the Release Notes panel staying View-menu-only is
+  intentional. Open remainder - *structural splits, when next touched* (per
+  convention): `CommitsPanel.tsx` (1720-line component; queries hook + row
+  context menu + RemoteSyncToolbar are natural splits),
+  `WorkingChangesPanel.tsx` (1130-line function; CommitComposer + shared
+  FileRowMenu), `cli_impl/mod.rs` (4951 lines; submodule + line-ending
+  blocks).
 - **Internationalization: decide want/need (2026-08-04).** Open product
   question, not a commitment: is a non-English UI worth it for LeGit's
   audience? Today every user-facing string is hardcoded English. Inputs for

@@ -25,6 +25,7 @@ import {
 } from "../../lib/commands";
 import { useGitProfiles, invalidateGitProfiles } from "../../lib/useGitProfiles";
 import { Button } from "../shared/buttons";
+import { useDelayedBusy } from "../shared/useDelayedBusy";
 import { Section, FieldNote } from "./primitives";
 import { EffectiveValuesSummary } from "./EffectiveValuesSummary";
 import { CustomConfigEditor } from "./CustomConfigEditor";
@@ -43,10 +44,10 @@ export function RepoIdentitySection({ repoId, repoName }: { repoId: string; repo
   const [pending, setPending] = useState<{ profileId: string; diffs: KeyDiff[] } | null>(null);
   const [clearPending, setClearPending] = useState(false);
   const [customPicked, setCustomPicked] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useDelayedBusy();
   const [error, setError] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
-  const [savingNew, setSavingNew] = useState(false);
+  const { busy: savingNew, run: runSaveNew } = useDelayedBusy();
 
   const load = useCallback(() => {
     setPending(null);
@@ -110,63 +111,58 @@ export function RepoIdentitySection({ repoId, repoName }: { repoId: string; repo
       setClearPending(m.kind !== "inherit"); // re-selecting the current mode is a no-op
       return;
     }
-    try {
-      setBusy(true);
-      const diffs = await previewApplyProfile(repoId, value);
-      setClearPending(false);
-      setPending({ profileId: value, diffs });
-    } catch (e) {
-      setError(formatAppError(e));
-    } finally {
-      setBusy(false);
-    }
+    return run(async () => {
+      try {
+        const diffs = await previewApplyProfile(repoId, value);
+        setClearPending(false);
+        setPending({ profileId: value, diffs });
+      } catch (e) {
+        setError(formatAppError(e));
+      }
+    });
   };
 
-  const confirmApply = async () => {
+  const confirmApply = () => {
     if (!pending) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const s = await applyProfileToRepo(repoId, pending.profileId);
-      applyResult(s);
-      setPending(null);
-    } catch (e) {
-      setError(formatAppError(e));
-    } finally {
-      setBusy(false);
-    }
+    return run(async () => {
+      setError(null);
+      try {
+        const s = await applyProfileToRepo(repoId, pending.profileId);
+        applyResult(s);
+        setPending(null);
+      } catch (e) {
+        setError(formatAppError(e));
+      }
+    });
   };
 
-  const confirmClear = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const s = await clearRepoProfile(repoId);
-      applyResult(s);
-      setClearPending(false);
-    } catch (e) {
-      setError(formatAppError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const confirmClear = () =>
+    run(async () => {
+      setError(null);
+      try {
+        const s = await clearRepoProfile(repoId);
+        applyResult(s);
+        setClearPending(false);
+      } catch (e) {
+        setError(formatAppError(e));
+      }
+    });
 
-  const saveAsProfile = async () => {
+  const saveAsProfile = () => {
     if (newName.trim() === "") return;
-    setSavingNew(true);
-    setError(null);
-    try {
-      await createProfileFromRepo(repoId, newName.trim());
-      setNewName("");
-      setCustomPicked(false);
-      // List invalidation refetches the shared query; the effect above then
-      // re-detects (now Active on the new profile).
-      invalidateGitProfiles(queryClient);
-    } catch (e) {
-      setError(formatAppError(e));
-    } finally {
-      setSavingNew(false);
-    }
+    return runSaveNew(async () => {
+      setError(null);
+      try {
+        await createProfileFromRepo(repoId, newName.trim());
+        setNewName("");
+        setCustomPicked(false);
+        // List invalidation refetches the shared query; the effect above then
+        // re-detects (now Active on the new profile).
+        invalidateGitProfiles(queryClient);
+      } catch (e) {
+        setError(formatAppError(e));
+      }
+    });
   };
 
   return (

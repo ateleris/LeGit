@@ -159,6 +159,10 @@
     "graph.lane.4": "graph-lane-4",
     "graph.lane.5": "graph-lane-5",
     "graph.lane.fallback": "graph-lane-fallback",
+    "graph.row.focused.bg": {
+      "ref": "row-selected-bg",
+      "filter": "faded"
+    },
     "graph.row.hover.bg": {
       "ref": "row-selected-bg",
       "filter": "faded"

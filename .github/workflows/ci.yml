@@ -52,11 +52,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Typecheck
+        run: npx tsc --noEmit
+
       - name: Run tests
         run: npm test
 
   # Heavier than the other jobs (full debug build + WebDriver stack); kept to
-  # a two-spec smoke suite by design. See
+  # a small smoke suite by design. See
   # docs/superpowers/specs/2026-07-10-e2e-ui-tests-design.md.
   e2e-tests:
     name: E2E UI tests

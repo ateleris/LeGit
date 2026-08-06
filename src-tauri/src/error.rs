@@ -43,9 +43,6 @@ pub enum AppError {
     #[error("lane index {0} exceeds maximum of 64")]
     InvalidLockIndex(u32),
 
-    #[error("operation not found: {0}")]
-    OperationNotFound(String),
-
     #[error("unknown git profile id: {0}")]
     UnknownProfile(String),
 }

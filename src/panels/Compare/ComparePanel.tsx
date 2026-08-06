@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { PanelError } from "../shared/PanelError";
+import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
 import { useQuery } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
@@ -52,16 +53,17 @@ export function ComparePanel() {
 
   // Reset when the repo changes - the revs (and any resolved merge base)
   // belong to the previous repo; the repo-keyed query would otherwise re-run
-  // them against the new one. Same guard as Blame/FileView/ChangedFiles.
-  const prevRepoId = useRef(repo?.id);
-  useEffect(() => {
-    if (prevRepoId.current === repo?.id) return;
-    prevRepoId.current = repo?.id;
-    setFrom("");
-    setTo("HEAD");
-    setRange(null);
-    setResolveError(null);
-  }, [repo?.id]);
+  // them against the new one. Except when the range was summoned FOR the
+  // repo being switched to, and not on first mount (useRepoSwitchClear).
+  const markDelivered = useRepoSwitchClear(
+    repo?.id,
+    useCallback(() => {
+      setFrom("");
+      setTo("HEAD");
+      setRange(null);
+      setResolveError(null);
+    }, []),
+  );
 
   const onReceive = useCallback((payload: unknown) => {
     const p = payload as Partial<CompareRequest> | null;
@@ -72,8 +74,9 @@ export function ComparePanel() {
       setMode("two-dot"); // a summoned range is a direct snapshot compare
       setResolveError(null);
       setRange({ ...next, displayFrom: next.from });
+      markDelivered();
     }
-  }, []);
+  }, [markDelivered]);
   useSummonTarget("compare", onReceive);
 
   const { data: files = [], isFetching, isError, error, refetch } = useQuery<CommitFileChange[]>({

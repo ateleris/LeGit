@@ -9,6 +9,7 @@ import type { GitProfile } from "../../lib/types";
 import { formatAppError, gitErrorKind } from "../../lib/types";
 import { useRemoteProgressStore } from "../../store/remoteProgress";
 import { Button } from "../shared/buttons";
+import { useDelayedBusy } from "../shared/useDelayedBusy";
 
 /** Derive a default clone target folder from a URL (last path segment, sans `.git`). */
 export function deriveName(url: string): string {
@@ -190,27 +191,28 @@ export function InitForm({
   const [profileId, setProfileId] = useState("");
   const [bare, setBare] = useState(false);
   const [initialBranch, setInitialBranch] = useState("");
-  const [busy, setBusy] = useState(false);
+  // Delayed busy (unlike Clone's, which is a genuinely slow network op and
+  // may show busy immediately): a local init is usually instant.
+  const { busy, run } = useDelayedBusy();
 
   const browse = async () => {
     const sel = await openDialog({ directory: true, multiple: false });
     if (typeof sel === "string") setDir(sel);
   };
 
-  const submit = async () => {
+  const submit = () => {
     if (!dir.trim()) return;
-    setBusy(true);
-    onError(null);
-    try {
-      await onInit(dir.trim(), profileId || null, {
-        bare,
-        initialBranch: initialBranch.trim() || null,
-      });
-    } catch (e) {
-      onError(formatAppError(e));
-    } finally {
-      setBusy(false);
-    }
+    return run(async () => {
+      onError(null);
+      try {
+        await onInit(dir.trim(), profileId || null, {
+          bare,
+          initialBranch: initialBranch.trim() || null,
+        });
+      } catch (e) {
+        onError(formatAppError(e));
+      }
+    });
   };
 
   return (
