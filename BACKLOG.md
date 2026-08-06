@@ -19,14 +19,23 @@ In rough order:
 1. **LICENSE file.** The repo has no LICENSE yet - pick one and add it before
    the release is public (the Releases page implies redistribution). Also
    replace the workspace `license = "TBD"` in Cargo.toml.
-2. **README vibecoding disclaimer.** Add a disclaimer stating that this whole
-   tool was vibecoded (AI-assisted development), so users know what they are
-   getting before relying on it. Short, honest, near the top of the README.
+2. **Interactive rebase polish** (promoted from "Smaller follow-ups"
+   2026-08-06): drag-to-reorder rows, reword as a plan step (needs
+   per-commit message injection), warning when the plan rewrites pushed
+   commits. (Reword beyond HEAD as a standalone feature was dropped
+   2026-07-05 by decision - not planned.)
+3. **Manual interactive-rebase test pass** (promoted from "Smaller
+   follow-ups" 2026-08-06; naturally follows the polish work above): run the
+   feature manually against real histories in `../LeGit-Test` -
+   pick/squash/fixup/drop/reorder plans, a plan that conflicts (resolve +
+   continue, and abort), and skip - verifying plan execution, conflict UX,
+   and the resulting log match expectations.
 
 (Screenshots blocker resolved: `docs/screenshots/hero_{light,dark}.png` are
 wired into the README via a theme-aware picture element - verified in the
 2026-08-06 review. Only the branding-matches-logo spot check was not
-machine-verifiable; eyeball it once before release.)
+machine-verifiable; eyeball it once before release. Vibecoding disclaimer
+added to the README 2026-08-06.)
 
 Decided and recorded, no action: **git is not bundled** (trade study
 `design/2026-07-07-bundled-git-trade-study.md`; install-relative config,
@@ -178,15 +187,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   Working Changes / Changed Files (`repo_open_file_in_editor`, `$FILE`,
   shared `OpenInEditorMenuItem`); File History, Compare, and Search share
   `CopyPathMenuSection` and could get the same entry.
-- **Interactive rebase polish:** drag-to-reorder rows, reword as a plan step
-  (needs per-commit message injection), warning when the plan rewrites
-  pushed commits. (Reword beyond HEAD as a standalone feature was dropped
-  2026-07-05 by decision - not planned.)
-- **Test the interactive rebase in the test repo** (`../LeGit-Test`): run the
-  feature manually against real histories - pick/squash/fixup/drop/reorder
-  plans, a plan that conflicts (resolve + continue, and abort), and skip -
-  verifying plan execution, conflict UX, and the resulting log match
-  expectations.
 - **E2E extensions.** Discard-with-confirm, branch create/switch, and stash
   create/pop specs added 2026-07-11 (awaiting their first CI runs). Still
   open: clone-via-"+"-menu flow, and push/pull against a local bare-remote

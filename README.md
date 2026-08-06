@@ -13,6 +13,15 @@ hooks, credential helpers, and Git-LFS setup.
   <img src="docs/screenshots/hero_light.png" alt="LeGit main window: branches, commit graph, changed files, and diff viewer">
 </picture>
 
+> [!NOTE]
+> **This tool was vibecoded.** LeGit is built almost entirely through
+> AI-assisted development, with a human directing, reviewing, and testing the
+> result. It has a substantial automated test suite (including one that runs
+> every git flow against the real binary) and sees daily use. And since every
+> operation is an ordinary invocation of your normal `git` executable (LeGit
+> never touches a repository's internals by hand), it cannot do anything
+> stranger to your repositories than regular git commands allow.
+
 ## Features
 
 - Commit graph, working changes with hunk- and line-level staging, interactive
