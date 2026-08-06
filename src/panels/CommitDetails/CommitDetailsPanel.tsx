@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { PanelError } from "../shared/PanelError";
 import { useQuery } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
@@ -6,6 +6,7 @@ import { useSignatureStore } from "../../store/signatures";
 import { useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
+import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
 import { repoCommitDetails } from "../../lib/commands";
 import { formatFull, formatRelative } from "../../lib/time";
 import type { CommitDetails, CommitId, SignatureVerification } from "../../lib/types";
@@ -16,19 +17,19 @@ export function CommitDetailsPanel() {
   const repo = useActiveRepo();
   const [selectedId, setSelectedId] = useState<CommitId | null>(null);
 
-  // Reset only on an actual repo change, not on first mount — otherwise
-  // StrictMode's second effect pass clobbers an already-delivered summon
-  // payload back to null (see ChangedFilesPanel for the full rationale).
-  const prevRepoId = useRef(repo?.id);
-  useEffect(() => {
-    if (prevRepoId.current === repo?.id) return;
-    prevRepoId.current = repo?.id;
-    setSelectedId(null);
-  }, [repo?.id]);
+  // Reset on an actual repo change - except when the selection was summoned
+  // for the repo being switched to (open-submodule-at-commit), and not on
+  // first mount (StrictMode). Full rationale in useRepoSwitchClear.
+  const markDelivered = useRepoSwitchClear(
+    repo?.id,
+    useCallback(() => setSelectedId(null), []),
+  );
 
   const onReceive = useCallback((id: unknown) => {
-    if (typeof id === "string") setSelectedId(id as CommitId);
-  }, []);
+    if (typeof id !== "string") return;
+    setSelectedId(id as CommitId);
+    markDelivered();
+  }, [markDelivered]);
 
   useSummonTarget("commit-details", onReceive);
 

@@ -21,6 +21,9 @@ In rough order:
 2. **README screenshots.** Add one or two once the UI is deemed presentable,
    and check the README/release-page branding matches the new logo
    (swapped in 2026-07-09).
+3. **README vibecoding disclaimer.** Add a disclaimer stating that this whole
+   tool was vibecoded (AI-assisted development), so users know what they are
+   getting before relying on it. Short, honest, near the top of the README.
 
 Decided and recorded, no action: **git is not bundled** (trade study
 `design/2026-07-07-bundled-git-trade-study.md`; install-relative config,

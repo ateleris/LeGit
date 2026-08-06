@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { submoduleBadge } from "./submodules";
-import type { SubmoduleInfo, SubmoduleState } from "./types";
+import { submoduleBadge, submoduleSelectTarget } from "./submodules";
+import type { DiffEntry, SubmoduleChange, SubmoduleInfo, SubmoduleState } from "./types";
 
 const state = (over: Partial<SubmoduleState> = {}): SubmoduleState => ({
   initialized: true,
@@ -48,5 +48,31 @@ describe("submoduleBadge", () => {
       state: state({ initialized: false, populated: false }),
     });
     expect(submoduleBadge(i)?.label).toBe("uninitialized");
+  });
+});
+
+describe("submoduleSelectTarget", () => {
+  const NEW = "b".repeat(40);
+  const sub = (over: Partial<SubmoduleChange> = {}): DiffEntry => ({
+    Submodule: {
+      path: "vendor/lib",
+      old_sha: "a".repeat(40),
+      new_sha: NEW,
+      dirty: false,
+      ...over,
+    },
+  });
+
+  it("returns the new pointer of a submodule diff", () => {
+    expect(submoduleSelectTarget(sub())).toBe(NEW);
+  });
+  it("returns null when the submodule was removed (no new pointer)", () => {
+    expect(submoduleSelectTarget(sub({ new_sha: null }))).toBeNull();
+  });
+  it("returns null for a non-submodule diff", () => {
+    const text: DiffEntry = {
+      Text: { old_path: "a.txt", new_path: "a.txt", hunks: [] },
+    };
+    expect(submoduleSelectTarget(text)).toBeNull();
   });
 });

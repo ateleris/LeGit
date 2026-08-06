@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { PanelError } from "../shared/PanelError";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useActiveRepo, useRepoStore } from "../../store/repos";
+import { useActiveRepo } from "../../store/repos";
 import { useSettingsStore, useConfirmDestructive } from "../../store/settings";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
@@ -13,6 +13,8 @@ import {
   repoStashes,
 } from "../../lib/commands";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
+import { openSubmoduleRepo } from "../../lib/submodules";
+import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
 import { notify } from "../../store/notifications";
 import type { CommitDetails, CommitFileChange, CommitId, DiffRequest, StashEntry } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
@@ -50,16 +52,16 @@ export function ChangedFilesPanel() {
   const { rowHeight, iconSize } = useFileRowMetrics();
 
   // Clear the selection only when the repo actually changes — NOT on first
-  // mount, where selectedId already starts null. A blind reset here would, under
-  // StrictMode's double-invoked effects, run after a queued summon payload has
-  // already been delivered and clobber it back to null (placeholder shown).
-  const prevRepoId = useRef(repo?.id);
-  useEffect(() => {
-    if (prevRepoId.current === repo?.id) return;
-    prevRepoId.current = repo?.id;
-    setSelectedId(null);
-    setSelectedPath(null);
-  }, [repo?.id]);
+  // mount (StrictMode would clobber a queued summon payload), and NOT when
+  // the selection was summoned for the repo being switched to
+  // (open-submodule-at-commit). Full rationale in useRepoSwitchClear.
+  const markDelivered = useRepoSwitchClear(
+    repo?.id,
+    useCallback(() => {
+      setSelectedId(null);
+      setSelectedPath(null);
+    }, []),
+  );
 
   const onReceive = useCallback((payload: unknown) => {
     // Payload is either a bare commit SHA (most callers) or
@@ -77,12 +79,13 @@ export function ChangedFilesPanel() {
     setSelectedId(id as CommitId);
     setSelectedPath(null);
     setPendingSelectPath(selectPath);
+    markDelivered();
     // No file is selected for the new commit yet — clear the Diff and Merge
     // panels (only if open). Both are always tied to a file selection.
     // (When `selectPath` is set, the effect below opens the diff once files load.)
     useSummonStore.getState().notifyIfOpen("diff", null);
     useSummonStore.getState().notifyIfOpen("merge", null);
-  }, []);
+  }, [markDelivered]);
   useSummonTarget("changed-files", onReceive);
 
   const {
@@ -284,10 +287,13 @@ export function ChangedFilesPanel() {
                 commitShort={selectedId.slice(0, 8)}
                 stash={isStash}
                 onOpenSubmodule={() => {
-                  void useRepoStore
-                    .getState()
-                    .openRepo(`${repo!.path}/${file.path}`)
-                    .catch((err: unknown) => notify.error(formatAppError(err)));
+                  // Select the pointer this commit recorded in the opened
+                  // submodule (a stash entry is a commit too, so it works
+                  // for both).
+                  void openSubmoduleRepo(repo!.id, repo!.path, file.path, {
+                    kind: "commit",
+                    commit_id: selectedId,
+                  }).catch((err: unknown) => notify.error(formatAppError(err)));
                 }}
                 onView={() => handleViewAtCommit(file.path)}
                 onRestore={() => handleRestoreToCommit(file.path)}

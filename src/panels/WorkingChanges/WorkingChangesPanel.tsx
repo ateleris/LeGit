@@ -28,6 +28,7 @@ import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notifyResolutionInvisible } from "../../lib/mergeFeedback";
+import { openSubmoduleRepo } from "../../lib/submodules";
 import { useOpState } from "../../lib/useOpState";
 import { isDetachedHead } from "../../lib/detachedHead";
 import { takeSideLabels } from "./conflictLabels";
@@ -573,11 +574,13 @@ export function WorkingChangesPanel() {
   };
 
   // Open a submodule row's repo as a peer tab (sessions dedupe by toplevel).
-  const openSubmodule = (path: string) => {
-    void useRepoStore
-      .getState()
-      .openRepo(`${repo!.path}/${path}`)
-      .catch((err: unknown) => notify.error(formatAppError(err)));
+  // A pointer-move row passes its diff source so the entry's new pointer is
+  // selected in the submodule's log; a dirty-only row has no commit to jump
+  // to and opens plain (source null).
+  const openSubmodule = (path: string, source: DiffSource | null) => {
+    void openSubmoduleRepo(repo!.id, repo!.path, path, source).catch(
+      (err: unknown) => notify.error(formatAppError(err)),
+    );
   };
 
   const doDiscard = (paths: string[]) =>
@@ -788,7 +791,7 @@ export function WorkingChangesPanel() {
                   openMenu(
                     e,
                     <>
-                      <MenuItem onClick={() => { closeMenu(); openSubmodule(f.path); }}>
+                      <MenuItem onClick={() => { closeMenu(); openSubmodule(f.path, null); }}>
                         Open submodule
                       </MenuItem>
                       <MenuItem
@@ -820,7 +823,12 @@ export function WorkingChangesPanel() {
                       </>
                     )}
                     {!many && f.change === "SubmoduleChanged" && (
-                      <MenuItem onClick={() => { closeMenu(); openSubmodule(f.path); }}>
+                      <MenuItem
+                        onClick={() => {
+                          closeMenu();
+                          openSubmodule(f.path, { kind: "working_unstaged" });
+                        }}
+                      >
                         Open submodule
                       </MenuItem>
                     )}
@@ -974,7 +982,12 @@ export function WorkingChangesPanel() {
                   e,
                   <>
                     {targets.length === 1 && f.change === "SubmoduleChanged" && (
-                      <MenuItem onClick={() => { closeMenu(); openSubmodule(f.path); }}>
+                      <MenuItem
+                        onClick={() => {
+                          closeMenu();
+                          openSubmodule(f.path, { kind: "working_staged" });
+                        }}
+                      >
                         Open submodule
                       </MenuItem>
                     )}

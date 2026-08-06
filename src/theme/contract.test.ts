@@ -7,7 +7,6 @@ import { DEFAULT_THEME } from "./defaults";
 import { bindingRef } from "./filters";
 import lightThemeJson from "../../themes/Light.legit-theme.json";
 import darkThemeJson from "../../themes/Dark.legit-theme.json";
-import sourceTreeLightThemeJson from "../../themes/SourceTree Light.legit-theme.json";
 
 // Read as a plain file: vite's `?raw` pipeline returns an empty string for
 // .css under vitest, so the raw-import shortcut silently checks nothing.
@@ -25,7 +24,6 @@ interface ThemeJson {
 }
 const lightTheme = lightThemeJson as ThemeJson;
 const darkTheme = darkThemeJson as ThemeJson;
-const sourceTreeLightTheme = sourceTreeLightThemeJson as ThemeJson;
 
 const tokenVar = (name: string) => `--${name.replace(/\./g, "-")}`;
 
@@ -62,7 +60,6 @@ describe("theme token contract (4 places)", () => {
   for (const [label, theme] of [
     ["Light", lightTheme],
     ["Dark", darkTheme],
-    ["SourceTree Light", sourceTreeLightTheme],
   ] as const) {
     it(`${label}.legit-theme.json binds every contract token to an existing palette entry`, () => {
       for (const t of TOKEN_CONTRACT) {
