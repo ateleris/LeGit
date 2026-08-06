@@ -185,6 +185,11 @@ pub struct GlobalSettings {
     /// Repos that were open at last shutdown; re-opened on launch.
     #[serde(default)]
     pub currently_open: Vec<String>,
+    /// Parent directory of the most recent successful clone. Prefills the
+    /// clone (and init) dialog's folder field - most users keep one source
+    /// directory where all their repositories live. None = never cloned.
+    #[serde(default)]
+    pub last_clone_parent_dir: Option<String>,
     /// Canonical path of the repo active at last shutdown.
     pub active_open_repo: Option<String>,
     /// Name of the active theme.
@@ -347,6 +352,7 @@ impl Default for GlobalSettings {
             git_path_override: None,
             last_open_repos: vec![],
             currently_open: vec![],
+            last_clone_parent_dir: None,
             active_open_repo: None,
             active_theme: None,
             global_region_placement: RegionPlacement::Top,
@@ -663,4 +669,40 @@ pub async fn persist_repo_settings(
     let json = serde_json::to_string_pretty(settings)?;
     tokio::fs::write(settings_path, json).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Settings files written before a field existed must keep parsing: every
+    // additive GlobalSettings field is `Option`/`#[serde(default)]` by
+    // convention. This pins the assumption for a minimal old-style document
+    // (the shape a pre-0.9.12 install has on disk).
+    #[test]
+    fn old_global_settings_without_new_fields_parse() {
+        let old = r#"{
+            "git_path_override": null,
+            "active_open_repo": null,
+            "active_theme": null,
+            "global_region_placement": "top",
+            "global_region_size_top": null,
+            "global_region_size_left": null,
+            "global_dock_collapsed": false,
+            "switch_dirty_behavior": null
+        }"#;
+        let parsed: GlobalSettings =
+            serde_json::from_str(old).expect("old settings document must parse");
+        assert_eq!(parsed.last_clone_parent_dir, None);
+        assert!(parsed.currently_open.is_empty());
+    }
+
+    #[test]
+    fn last_clone_parent_dir_roundtrips() {
+        let mut s = GlobalSettings::default();
+        s.last_clone_parent_dir = Some("C:/src".into());
+        let json = serde_json::to_string(&s).unwrap();
+        let back: GlobalSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.last_clone_parent_dir.as_deref(), Some("C:/src"));
+    }
 }

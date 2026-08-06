@@ -16,6 +16,7 @@ import type { CloneOptions, InitOptions } from "../lib/commands";
 import type { RepoId, RepoSettings, RepoSummary } from "../lib/types";
 import { pickNextActive, pushActivation } from "./repoActivation";
 import { useConsoleStore } from "./console";
+import { useSettingsStore } from "./settings";
 
 interface RepoStore {
   openRepos: RepoSummary[];
@@ -168,6 +169,12 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
 
   async cloneRepo(url, parentDir, name, profileId, opId, options) {
     const summary = await repoCloneCmd(url, parentDir, name, profileId, opId, options);
+    // The backend persisted parentDir as `last_clone_parent_dir` (clone-form
+    // prefill); patch the cached settings so a second clone this session
+    // prefills the fresh value without a settings refetch.
+    useSettingsStore.setState((s) =>
+      s.settings ? { settings: { ...s.settings, last_clone_parent_dir: parentDir } } : s,
+    );
     await get().refresh();
     get().setActive(summary.id);
     return summary;

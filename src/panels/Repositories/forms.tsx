@@ -8,6 +8,7 @@ import type { CloneOptions, InitOptions } from "../../lib/commands";
 import type { GitProfile } from "../../lib/types";
 import { formatAppError, gitErrorKind } from "../../lib/types";
 import { useRemoteProgressStore } from "../../store/remoteProgress";
+import { useSettingsStore } from "../../store/settings";
 import { Button } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
 
@@ -42,7 +43,12 @@ export function CloneForm({
   onBusyChange?: (busy: boolean) => void;
 }) {
   const [url, setUrl] = useState("");
-  const [parentDir, setParentDir] = useState("");
+  // Prefilled with the previous clone's parent - most users keep one source
+  // folder for all their repositories. Read once on mount (getState, no
+  // subscription): the field is user-editable afterwards.
+  const [parentDir, setParentDir] = useState(
+    () => useSettingsStore.getState().settings?.last_clone_parent_dir ?? "",
+  );
   const [name, setName] = useState("");
   const [profileId, setProfileId] = useState("");
   const [depth, setDepth] = useState("");

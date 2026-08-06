@@ -24,6 +24,9 @@ export interface GlobalSettings {
   git_path_override: string | null;
   last_open_repos?: string[];
   currently_open?: string[];
+  /** Parent directory of the most recent successful clone; prefills the
+   * clone/init dialog's folder field. */
+  last_clone_parent_dir?: string | null;
   active_open_repo: string | null;
   active_theme: string | null;
   global_region_placement: RegionPlacement;

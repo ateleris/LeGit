@@ -346,6 +346,14 @@ pub async fn repo_clone(
     }
 
     let summary = register_open_repo(&state, &app, git_path, parent.join(&name)).await?;
+    // Remember where this clone went: the next clone dialog prefills its
+    // folder field with it (session bookkeeping - never fails the clone).
+    warn_if_bookkeeping_persist_failed(
+        "remember clone parent dir",
+        state
+            .mutate_global(|s| s.last_clone_parent_dir = Some(parent_dir.clone()))
+            .await,
+    );
     if let Some(pid) = profile_id {
         let session = state.get_session(&summary.id).await?;
         crate::commands::profiles::apply_profile_core(&state, &session, &pid).await?;
