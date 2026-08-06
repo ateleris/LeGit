@@ -794,9 +794,11 @@ export function CommitsPanel() {
   // and the synthetic working-dir row alike. Nothing is special-cased out of the
   // graph: each node's parents drive its lane and edges through the one
   // algorithm. The working-dir row hangs off HEAD and a stash hangs off its base
-  // exactly as any childless commit would. Synthetic nodes are flagged so
-  // they may sit on a locked lane when their parent owns it (they belong to
-  // that branch's line) instead of being pushed off by the lane reservation.
+  // exactly as any childless commit would. Only the working-dir row is flagged
+  // to inherit its parent's locked lane (it continues HEAD's line). Stashes
+  // deliberately are NOT (revised 2026-08-06): they render on free side lanes
+  // exactly as they do without a lock - flagging them piled every stash onto
+  // the locked lane (design/2026-07-09-lane-lock-synthetic-nodes.md).
   const { assignments, edges: allEdges } = useMemo((): LaneResult => {
     // An author-filtered walk is an arbitrary, mostly-disconnected subset:
     // the graph column is hidden, so skip the lane walk entirely (it would
@@ -805,8 +807,7 @@ export function CommitsPanel() {
     const forGraph = laneRows.map((c) => ({
       id: c.id,
       parentIds: c.parents,
-      inheritsParentLane:
-        c.id === WORKING_DIR_ID || stashSelectorById.has(c.id) || undefined,
+      inheritsParentLane: c.id === WORKING_DIR_ID || undefined,
     }));
     const prevIds = prevRowIdsRef.current;
     const isPrefixAppend =

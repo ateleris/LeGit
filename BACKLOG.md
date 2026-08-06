@@ -152,6 +152,14 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   containing them would become a glob).
 - **Git Log panel:** filter/search the log, copy a command, jump a toast to
   its specific log entry (today it just opens the panel).
+- **Clone dialog: remember the parent folder** (added 2026-08-06). Prefill
+  the "into folder" field with the parent directory of the previous clone -
+  most users keep one source folder where all their repositories live.
+  Approach: persist the last-used clone parent in `GlobalSettings`
+  (`Option<String>` + serde default, set after each successful clone) and
+  seed the clone form from it; the existing repo-lifecycle settings fields
+  show the pattern. Also consider the Init form's folder field for the same
+  treatment.
 - **Commits panel: incremental log appending** (decided 2026-07-30). Today
   every window growth (infinite scroll, and the jump-seek that loads until a
   clicked ref's commit appears) refetches the WHOLE window from offset 0 and

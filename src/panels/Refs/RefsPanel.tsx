@@ -4,11 +4,12 @@
 // the expanded sections share the vertical space. Expansion state, order, and
 // sizes persist to localStorage like the dock layouts do.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FunctionComponent } from "react";
 import {
   PaneviewReact,
   type IPaneviewPanelProps,
+  type PaneviewApi,
   type PaneviewReadyEvent,
 } from "dockview-react";
 import { ChevronDownIcon } from "../../icons";
@@ -19,7 +20,7 @@ import { StashesSection } from "../Stashes/StashesPanel";
 import { SubmodulesSection } from "../Submodules/SubmodulesSection";
 import { TagsSection } from "../Tags/TagsSection";
 import { ReflogSection } from "../Reflog/ReflogSection";
-import { sanitizePaneviewLayout } from "./refsLayout";
+import { defaultPaneSizes, sanitizePaneviewLayout } from "./refsLayout";
 
 const LAYOUT_KEY = "legit.refs-paneview";
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -114,8 +115,30 @@ export function RefsPanel() {
   );
   const headerSize = Math.round(uiFontSize * 1.8);
 
+  // PaneviewReact measures its element exactly ONCE, at mount, right before
+  // onReady - it has no ResizeObserver (unlike DockviewReact). When the
+  // mount happens before the dock group is sized (observed on WebKitGTK in
+  // the e2e harness), that one measure reads 0x0 and the paneview stays
+  // zero-height forever; it also means a later container resize never
+  // reaches the paneview. Track the container ourselves and forward its
+  // size (the RO also fires once on observe, which delivers the first real
+  // measurement).
+  const containerRef = useRef<HTMLDivElement>(null);
+  const apiRef = useRef<PaneviewApi | null>(null);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const rect = entries[entries.length - 1]?.contentRect;
+      if (rect && rect.height > 0) apiRef.current?.layout(rect.width, rect.height);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const onReady = useCallback((event: PaneviewReadyEvent) => {
     const api = event.api;
+    apiRef.current = api;
 
     let restored = false;
     const raw = localStorage.getItem(LAYOUT_KEY);
@@ -162,6 +185,35 @@ export function RefsPanel() {
           headerSize,
         });
       }
+      // The panes above were added while the container is typically still
+      // unmeasured (onReady runs before the ResizeObserver's first tick), so
+      // each entered at size 0 and the first real layout hands ALL the
+      // height to the last expanded pane - Branches rendered zero-height,
+      // its rows overflowing under Stashes (found via the branch/conflict
+      // e2e specs, which always start from a fresh profile). Distribute the
+      // measured height explicitly; the sizes are only a starting point,
+      // user drags persist via the layout snapshot as before.
+      //
+      // Bounded poll, NOT api.onDidLayoutChange: dockview does not emit
+      // layout-change for the initial programmatic layout()/measure (that is
+      // also why a never-touched paneview persists no snapshot), so an
+      // event-based fixup never runs. Polling the height is the reliable
+      // "container is measured now" signal; it self-terminates.
+      const applyDefaultSizes = () => {
+        const sizes = defaultPaneSizes(
+          api.height,
+          headerSize,
+          api.panels.map((p) => ({ id: p.id, expanded: p.api.isExpanded })),
+        );
+        for (const [id, size] of sizes) api.getPanel(id)?.api.setSize({ size });
+        return sizes.size > 0;
+      };
+      if (!applyDefaultSizes()) {
+        const started = Date.now();
+        const poll = setInterval(() => {
+          if (applyDefaultSizes() || Date.now() - started > 5000) clearInterval(poll);
+        }, 50);
+      }
     } else {
       // Layouts saved before a section existed (e.g. Tags) restore without
       // it — append any missing default panes so new sections always appear.
@@ -189,7 +241,11 @@ export function RefsPanel() {
     // The theme class only supplies dockview's structural defaults (sash
     // hit-areas etc.); the visible header chrome comes from PaneHeader's
     // theme tokens.
-    <div className="legit-panel dockview-theme-abyss" style={{ height: "100%" }}>
+    <div
+      ref={containerRef}
+      className="legit-panel dockview-theme-abyss"
+      style={{ height: "100%" }}
+    >
       <PaneviewReact
         // Re-created when the UI font size changes so the JS-number header
         // size (see above) tracks it; the layout restores from localStorage.

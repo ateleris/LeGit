@@ -772,13 +772,15 @@ describe("computeLanes — first-parent ownership", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Synthetic nodes (working-dir row, injected stashes) may sit on a locked
-// lane when their first parent is owned by it. The `inheritsParentLane`
-// flag confines this to synthetic nodes — a regular branch tip forked off a
-// locked branch must NOT jump onto the locked lane.
+// Only the working-dir row is flagged `inheritsParentLane` (it continues
+// HEAD's line onto the locked lane). Stashes are deliberately NOT flagged
+// (revised 2026-08-06): they must render on free side lanes exactly as they
+// do without a lock - the original design flagged them too, which piled
+// every stash of the locked branch onto the locked lane. A regular branch
+// tip forked off a locked branch must NOT jump onto the locked lane either.
 // ---------------------------------------------------------------------------
 
-describe("computeLanes — synthetic nodes inherit locked lanes", () => {
+describe("computeLanes — synthetic nodes vs locked lanes", () => {
   const LOCKS: LockMap = { "refs/heads/main": 0 };
   const refs: RefsAtCommit = new Map([["T", ["refs/heads/main"]]]);
 
@@ -795,24 +797,34 @@ describe("computeLanes — synthetic nodes inherit locked lanes", () => {
     expect(r.assignments.get("WD")).toBe(0);
   });
 
-  test("flagged stash with an owned base inherits the locked lane", () => {
+  test("stash (unflagged) with a base on the locked lane takes a free side lane", () => {
+    // Pre-revision bug: stash nodes were flagged and inherited lane 0, so
+    // locking main piled every stash onto main's lane. They must land on
+    // side lanes exactly as without the lock.
     const commits: CommitForGraph[] = [
       ...makeCommits([["T", "B"]]),
-      { id: "ST", parentIds: ["B"], inheritsParentLane: true },
+      { id: "ST1", parentIds: ["B"] },
+      { id: "ST2", parentIds: ["B"] },
       ...makeCommits([
         ["B", "R"],
         ["R"],
       ]),
     ];
     const r = computeLanes(commits, LOCKS, refs);
-    expect(r.assignments.get("ST")).toBe(0);
+    expect(r.assignments.get("ST1")).not.toBe(0);
+    expect(r.assignments.get("ST2")).not.toBe(0);
+    expect(r.assignments.get("ST1")).not.toBe(r.assignments.get("ST2"));
+    // The locked branch itself stays on its lane.
+    expect(r.assignments.get("T")).toBe(0);
+    expect(r.assignments.get("B")).toBe(0);
   });
 
-  test("flagged stash with an unowned base stays off the locked lane", () => {
-    // F is a feature commit off R, not on main's first-parent line.
+  test("flagged node with an unowned parent stays off the locked lane", () => {
+    // F is a feature commit off R, not on main's first-parent line - a
+    // working-dir row on a detached/feature HEAD follows its parent's lane.
     const commits: CommitForGraph[] = [
       ...makeCommits([["T", "B"]]),
-      { id: "ST", parentIds: ["F"], inheritsParentLane: true },
+      { id: "WD", parentIds: ["F"], inheritsParentLane: true },
       ...makeCommits([
         ["F", "R"],
         ["B", "R"],
@@ -820,8 +832,8 @@ describe("computeLanes — synthetic nodes inherit locked lanes", () => {
       ]),
     ];
     const r = computeLanes(commits, LOCKS, refs);
-    expect(r.assignments.get("ST")).not.toBe(0);
-    expect(r.assignments.get("ST")).toBe(r.assignments.get("F"));
+    expect(r.assignments.get("WD")).not.toBe(0);
+    expect(r.assignments.get("WD")).toBe(r.assignments.get("F"));
   });
 
   test("unflagged child of an owned commit does not inherit (regression guard)", () => {
