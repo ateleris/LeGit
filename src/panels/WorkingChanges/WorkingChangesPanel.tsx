@@ -29,6 +29,7 @@ import { usePanelRunner } from "../shared/usePanelRunner";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notifyResolutionInvisible } from "../../lib/mergeFeedback";
 import { openSubmoduleRepo } from "../../lib/submodules";
+import { summonGlobalPanel } from "../GlobalDock";
 import { useOpState } from "../../lib/useOpState";
 import { isDetachedHead } from "../../lib/detachedHead";
 import { takeSideLabels } from "./conflictLabels";
@@ -1110,7 +1111,7 @@ export function WorkingChangesPanel() {
                 {!identity?.user_name && !identity?.user_email && ", "}
                 {!identity?.user_email && <code>user.email</code>}): committing will fail.
               </span>
-              <button onClick={() => useSummonStore.getState().summon("global-settings")}>
+              <button onClick={() => summonGlobalPanel("global-settings")}>
                 Set identity…
               </button>
             </div>

@@ -3679,9 +3679,13 @@ fn classify_rebase_output(
         }
         return Ok(RebaseOutcome::Completed);
     }
+    // "conflict (" is the merge machinery's `CONFLICT (...)` marker, not a
+    // bare token: a bare match would misfire on pathnames (e.g. a blocking
+    // `conflicts.md` in a would-be-overwritten file list) - same lesson as
+    // `stash_apply_left_conflicts`.
     if err_lc.contains("could not apply")
-        || out_lc.contains("conflict")
-        || err_lc.contains("conflict")
+        || out_lc.contains("conflict (")
+        || err_lc.contains("conflict (")
         || err_lc.contains("you have unmerged files")
     {
         return Ok(RebaseOutcome::Conflicts {
@@ -3764,10 +3768,12 @@ fn classify_sequence_output(
     if exit_code == 0 {
         return Ok(SequenceOutcome::Completed);
     }
+    // "conflict (" instead of a bare token for the same pathname-misfire
+    // reason as classify_rebase_output / stash_apply_left_conflicts.
     if err_lc.contains("could not apply")
         || err_lc.contains("could not revert")
-        || out_lc.contains("conflict")
-        || err_lc.contains("conflict")
+        || out_lc.contains("conflict (")
+        || err_lc.contains("conflict (")
         || err_lc.contains("you have unmerged files")
         || err_lc.contains("is now empty")
         || err_lc.contains("nothing to commit")
@@ -4009,6 +4015,22 @@ mod tests {
                 "{stderr:?} -> {r:?}"
             );
         }
+    }
+
+    #[test]
+    fn sequence_overwrite_with_conflictish_pathname_is_not_conflicts() {
+        // The dirty-tree refusal lists the blocking paths; a path containing
+        // the word "conflict" must not steal the classification from
+        // WouldOverwriteLocalChanges (pre-fix: bare token match misfired).
+        let r = classify_sequence_output(
+            1,
+            "",
+            "error: Your local changes to the following files would be overwritten by merge:\n\
+             \tdocs/conflicts.md\n\
+             Please commit your changes or stash them before you merge.\n\
+             Aborting\n",
+        );
+        assert!(matches!(r, Err(GitError::WouldOverwriteLocalChanges(_))), "{r:?}");
     }
 
     #[test]
@@ -4908,6 +4930,22 @@ mod tests {
             "error: could not apply 1a2b3c4... subject\n",
         );
         assert!(matches!(out, Ok(RebaseOutcome::Conflicts { .. })));
+    }
+
+    #[test]
+    fn rebase_overwrite_with_conflictish_pathname_is_not_conflicts() {
+        // Same misfire class as the sequencer sibling: a blocking path named
+        // "conflicts.md" in the refusal's file list must not classify as the
+        // Conflicts outcome ("resolve, then continue" - nothing is running).
+        let r = classify_rebase_output(
+            1,
+            "",
+            "error: The following untracked working tree files would be overwritten by checkout:\n\
+             \tdocs/conflicts.md\n\
+             Please move or remove them before you switch branches.\n\
+             Aborting\n",
+        );
+        assert!(matches!(r, Err(GitError::WouldOverwriteLocalChanges(_))), "{r:?}");
     }
 
     #[test]

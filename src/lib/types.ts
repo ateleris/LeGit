@@ -99,6 +99,12 @@ export interface GlobalSettings {
   working_changes_section_order?: string[];
   /** User-defined git identity profiles (camelCase key — serde rename). */
   gitProfiles?: GitProfilesDoc;
+  /** Connected platform accounts (managed via connect/disconnect commands,
+   * read via list_connected_accounts). Mirrored so a hand-built
+   * GlobalSettings can never silently drop it (same rationale as
+   * RepoSettings.laneLocks; global settings currently have no whole-struct
+   * write command, so this is preventive). */
+  connected_accounts?: ConnectedAccountMeta[];
 }
 
 export interface RepoSettings {
@@ -118,6 +124,12 @@ export interface RepoSettings {
   show_remote_branches?: boolean | null;
   /** Per-repo override for auto-push tags (null = inherit global). */
   auto_push_tags?: boolean | null;
+  /** Commit-graph lane locks (managed via set/unset_lane_lock, NOT the
+   * settings panel). Present here because `update_repo_settings` replaces
+   * the WHOLE struct: a `RepoSettings` built without this field would
+   * silently wipe all lane locks. Always spread the freshly loaded doc
+   * (`updateRepoSetting` in store/repos.ts does) - never hand-build one. */
+  laneLocks?: LaneLocksDoc;
 }
 
 export interface RestoreResult {
@@ -735,6 +747,10 @@ export type RefDecoration =
   | { type: "other"; value: string };
 
 export type LaneLock = { refName: string; laneIndex: number };
+
+/** Versioned on-disk envelope for a repo's lane locks (matches state.rs
+ * `LaneLocksDoc`; serialized into `RepoSettings` as `laneLocks`). */
+export type LaneLocksDoc = { format: string; formatVersion: number; locks: LaneLock[] };
 
 /** A local or remote-tracking branch (matches legit-core `Branch`). */
 export interface Branch {

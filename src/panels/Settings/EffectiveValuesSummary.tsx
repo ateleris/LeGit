@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ManagedKeys } from "../../lib/types";
-import { useSummonStore } from "../../store/summon";
+import { summonGlobalPanel } from "../GlobalDock";
 
 const ROWS: { label: string; pick: (v: ManagedKeys) => string | null }[] = [
   { label: "user.name", pick: (v) => v.user_name },
@@ -35,7 +35,7 @@ export function EffectiveValuesSummary({ values }: { values: ManagedKeys }) {
             </div>
           ))}
           <div style={{ marginTop: 6 }}>
-            <button onClick={() => useSummonStore.getState().summon("global-settings")}>
+            <button onClick={() => summonGlobalPanel("global-settings")}>
               Edit in Global Settings
             </button>
           </div>

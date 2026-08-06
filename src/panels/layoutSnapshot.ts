@@ -151,8 +151,14 @@ export function sanitizeDockviewLayout(
   return result;
 }
 
-const REPO_COMPONENT_IDS: ReadonlySet<string> = new Set(Object.keys(REPO_DOCKVIEW_COMPONENTS));
-const GLOBAL_COMPONENT_IDS: ReadonlySet<string> = new Set(Object.keys(GLOBAL_DOCKVIEW_COMPONENTS));
+// Computed lazily, NOT at module init: this module sits inside the
+// registry's import cycle (registry -> panels -> GlobalDock -> here ->
+// registry), so the registry consts are still undefined when a panel's
+// import triggers this module first. Reading them inside the functions
+// (like store/summon does) makes the cycle harmless.
+const repoComponentIds = (): ReadonlySet<string> => new Set(Object.keys(REPO_DOCKVIEW_COMPONENTS));
+const globalComponentIds = (): ReadonlySet<string> =>
+  new Set(Object.keys(GLOBAL_DOCKVIEW_COMPONENTS));
 
 /**
  * Snapshot the current group ID and fallback position for every open panel
@@ -189,7 +195,7 @@ export function captureRepoLayoutEnvelope(api: DockviewApi): RepoLayoutEnvelope 
 export function applyRepoLayoutEnvelope(api: DockviewApi, envelope: RepoLayoutEnvelope): boolean {
   // Retired panels are pruned first - a stale reference would make fromJSON
   // throw and nuke the whole layout.
-  const dockview = sanitizeDockviewLayout(envelope.dockview, REPO_COMPONENT_IDS, PANEL_TITLES);
+  const dockview = sanitizeDockviewLayout(envelope.dockview, repoComponentIds(), PANEL_TITLES);
   if (dockview === null) return false;
   const { capturePlacement, captureFallback } = useSummonStore.getState();
   for (const [panelId, groupId] of Object.entries(envelope.placements)) {
@@ -241,7 +247,7 @@ export function applySavedRepoLayout(api: DockviewApi): boolean {
  * Shared by the startup restore, the saved default, and the baked default.
  */
 export function applyGlobalLayoutJson(api: DockviewApi, json: unknown): boolean {
-  const layout = sanitizeDockviewLayout(json, GLOBAL_COMPONENT_IDS, PANEL_TITLES);
+  const layout = sanitizeDockviewLayout(json, globalComponentIds(), PANEL_TITLES);
   if (layout === null) return false;
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

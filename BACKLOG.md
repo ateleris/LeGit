@@ -17,13 +17,16 @@ shipped items, re-prioritised). Companion state-of-the-app review:
 In rough order:
 
 1. **LICENSE file.** The repo has no LICENSE yet - pick one and add it before
-   the release is public (the Releases page implies redistribution).
-2. **README screenshots.** Add one or two once the UI is deemed presentable,
-   and check the README/release-page branding matches the new logo
-   (swapped in 2026-07-09).
-3. **README vibecoding disclaimer.** Add a disclaimer stating that this whole
+   the release is public (the Releases page implies redistribution). Also
+   replace the workspace `license = "TBD"` in Cargo.toml.
+2. **README vibecoding disclaimer.** Add a disclaimer stating that this whole
    tool was vibecoded (AI-assisted development), so users know what they are
    getting before relying on it. Short, honest, near the top of the README.
+
+(Screenshots blocker resolved: `docs/screenshots/hero_{light,dark}.png` are
+wired into the README via a theme-aware picture element - verified in the
+2026-08-06 review. Only the branding-matches-logo spot check was not
+machine-verifiable; eyeball it once before release.)
 
 Decided and recorded, no action: **git is not bundled** (trade study
 `design/2026-07-07-bundled-git-trade-study.md`; install-relative config,
@@ -192,12 +195,61 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 - **Frontend consolidation (from the 2026-07-11 hardening review, section
   D).** Deliberately parked: shared Popover/useDismissable for the 6
   hand-rolled dropdowns, shared composite file-row menu section, STALE
-  query-time constants, summon-registry cross-check test, fixed-px padding
+  query-time constants, fixed-px padding
   sweep, theme.css value-equality test, GlobalSettingsPanel split (1309
   lines), GitBackend naming normalization (batch with the next backend
-  feature). The `crates/legit-providers` keep-or-delete question is
+  feature). The summon-registry cross-check test shipped 2026-08-06
+  (`src/panels/summonRegistry.test.ts`, with the global-settings summon
+  fix). The `crates/legit-providers` keep-or-delete question is
   resolved: **keep** - it hosts the SSH-first platform-integrations item
   under "Git features".
+- **2026-08-06 state-of-the-app review follow-ups** (full findings with
+  file:line in `design/2026-08-06-state-of-the-app-review.md`; the two
+  user-visible bugs and the classifier misfire were fixed same day). By
+  theme:
+  - *Backend robustness:* submodule auto-stash maps a failed `stash list`
+    read to "empty list" (`cli_impl/mod.rs` `update_one_submodule`) - an
+    after-push read failure reports `Updated` while changes sit in the
+    submodule stash; make it loud per `append_error_note`. Unify the
+    binary-sniff window (`mixed_endings_in_bytes` probes 512 bytes vs
+    `BINARY_SNIFF_WINDOW = 8000` in its siblings). Add at least a log to the
+    `.ok()`-swallowed session-bookkeeping persists in `commands/repo.rs`.
+  - *Adopt-the-helper pass:* ~30 busy states in the settings panels bypass
+    the 150ms delay (usePanelRunner or a shared delayed flag);
+    `useRepoSwitchClear` for the six summon-target panels still hand-rolling
+    the pre-fix clear-on-repo-switch (Blame, Compare, FileHistory, Files,
+    FileView, InteractiveRebase - latent clobber if a cross-repo summon ever
+    targets them); 4 `window.confirm`/`window.alert` sites to
+    confirmDialog/notify (ThemeEditorPanel, ConfirmCloseTab, RepoDock x2);
+    `segStyle` duplicated in 4 panels despite `shared/segmented.ts`; route
+    the two raw `invoke("save_region_state")` calls (AppLayout, settings
+    store) through the commands.ts wrapper.
+  - *CI:* add `tsc --noEmit` to ci.yml (today type errors surface only at
+    release build); fix the stale "two-spec" e2e comment (there are 6).
+  - *Dead surface (decide keep-or-delete):* IPC commands
+    `repo_signing_config` / `repo_write_signing` (superseded by profiles?)
+    and `repo_submodule_init` (UI uses update --init) plus their
+    backend-only helpers; unused deps `@codemirror/merge` + `codemirror`
+    (package.json) and `serde_json` (legit-core); dead exports
+    (`theme/applier.ts` `applyOverride`/`applyPaletteValue`,
+    `GitRunner::in_flight`, `AppError::OperationNotFound`); never-read
+    `PanelDescriptor.summons` metadata (already stale - delete or test it);
+    dead CSS `.legit-region-divider__mode`; unused `ColumnHeader.order`
+    prop.
+  - *UX/theming:* FileTree focused-row styling needs its own token - it
+    reuses `--graph-row-selected-bg` so focus and selection only differ
+    before a theme loads; tag-remote choice divergence (CommitsPanel uses
+    `pickTagRemote` only, TagsSection honors the user's remote choice - the
+    "pushed" indicators can disagree with multiple remotes); confirm the
+    release-notes panel being reachable only via the View menu is intended.
+  - *Config nits:* devUrl `localhost` vs vite `127.0.0.1`; redundant
+    tsconfig include globs; stale TODO in `theme.css:8` (the promised lint
+    rule exists as `noLiteralColors.test.ts`).
+  - *Structural (split when next touched, per convention):*
+    `CommitsPanel.tsx` (1720-line component; queries hook + row context
+    menu + RemoteSyncToolbar are natural splits), `WorkingChangesPanel.tsx`
+    (1130-line function; CommitComposer + shared FileRowMenu),
+    `cli_impl/mod.rs` (4951 lines; submodule + line-ending blocks).
 - **Release notes panel follow-ups.** The panel shipped 2026-07-31 (plain
   text, flat list, merges included - Git Extensions parity; spec:
   `docs/superpowers/specs/2026-07-31-release-notes-panel-design.md`).
