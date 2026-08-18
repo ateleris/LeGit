@@ -13,7 +13,8 @@
 //! autocrlf) locally, so a developer's global config cannot skew outcomes.
 
 use legit_core::{
-    CommitId, GitError, ConflictKind, ConflictSide, DiffEntry, DiffSource, FetchOptions, FileState,
+    BlobBytes, CommitId, GitError, ConflictKind, ConflictSide, DiffEntry, DiffSource, FetchOptions,
+    FileState,
     GitBackend, GitCliBackend, GitRunner, LogOptions, MergeOptions, MergeOutcome, OperationId,
     PullOptions, PullStrategy, PushOptions, PushRecurseMode, RebaseOutcome, RefDecoration,
     RefSelector, RemoteProgress, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode,
@@ -3898,4 +3899,34 @@ async fn lfs_tracked_subset_matches_check_attr_against_real_git() {
         .await
         .expect("check-attr");
     assert_eq!(subset, vec!["logo.png".to_string()]);
+}
+
+/// Pins the blob_bytes contract against the real binary: byte-exact content
+/// through the batch framing (NULs + invalid UTF-8 survive), "missing" for
+/// an absent path AND for a root commit's `^` (both exit 0), cap reporting.
+#[tokio::test]
+async fn blob_bytes_is_byte_exact_and_classifies_missing() {
+    let repo = TestRepo::init().await;
+    let bytes: Vec<u8> = vec![0x89, b'P', b'N', b'G', 0x00, 0xFF, 0xFE, 0x0A, 0x00];
+    std::fs::write(repo.path.join("img.png"), &bytes).expect("write binary");
+    repo.commit_all("img").await;
+
+    match repo.backend.blob_bytes("HEAD:img.png", 1024).await.unwrap() {
+        BlobBytes::Bytes(b) => assert_eq!(b, bytes, "bytes must round-trip exactly"),
+        other => panic!("expected Bytes, got {other:?}"),
+    }
+    assert_eq!(
+        repo.backend.blob_bytes("HEAD:absent.png", 1024).await.unwrap(),
+        BlobBytes::Missing
+    );
+    // Root commit has no parent: the diff preview's old side (`<sha>^`)
+    // resolves to Missing, which renders as "added".
+    assert_eq!(
+        repo.backend.blob_bytes("HEAD^:img.png", 1024).await.unwrap(),
+        BlobBytes::Missing
+    );
+    assert_eq!(
+        repo.backend.blob_bytes("HEAD:img.png", 4).await.unwrap(),
+        BlobBytes::TooLarge { size: bytes.len() as u64 }
+    );
 }

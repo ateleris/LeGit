@@ -181,6 +181,8 @@
     "pane.header.bg": "panel-bg",
     "pane.header.border": "panel-border",
     "pane.header.fg": "subtle-fg",
+    "preview.checker.a": "panel-bg",
+    "preview.checker.b": "panel-border",
     "panel.tab.active.bg": "input-bg",
     "panel.tab.active.fg": "main-fg",
     "panel.tab.bg": "panel-bg",

@@ -158,20 +158,17 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   action - these matter mainly to asset-heavy teams, which LeGit does
   not currently target.
 
-- **Diff viewer: rich preview for displayable binary files (images, audio).**
-  Today any binary file gets the generic binary placeholder. Common git
-  clients preview at least images; extend the diff viewer to render a
-  preview when the file type supports it: images (PNG/JPEG/GIF/WebP/SVG)
-  as old/new side-by-side (and possibly swipe/onion-skin later), audio
-  (MP3/WAV/OGG) as a playable element per side. Rough approach: detect the
-  type by extension + content sniff (reuse the unified binary-sniff
-  window); a backend command returns the blob bytes (`git show <rev>:<path>`
-  for committed sides, filesystem read for the working tree) base64- or
-  data-URL-encoded with a size cap; the frontend renders `<img>`/`<audio>`
-  panes instead of the placeholder, honoring theme tokens for the chrome.
-  Keep action parity rules in mind (stage/discard still apply at file
-  level only). Ties into the LFS release blocker: once pointer blobs are
-  detected, a smudged-on-demand LFS image could use the same preview path.
+- **Diff viewer: rich preview for displayable binary files** - image half
+  SHIPPED 2026-08-18 (spec:
+  `docs/superpowers/specs/2026-08-18-binary-image-preview-design.md`):
+  PNG/JPEG/GIF/WebP/BMP/ICO previews (magic-byte sniff) in the Diff panel
+  (old/new panes, read-only, both view modes) and File View, incl. LFS
+  pointers resolved against local `.git/lfs/objects` (never fetches);
+  20 MiB per-side cap; base64 over IPC via the new byte-exact
+  `GitBackend::blob_bytes` (`cat-file --batch`). Open remainder, add on
+  demand: audio (MP3/WAV/OGG playable panes - the RIFF/WAV sniff case is
+  already encoded), SVG (text to git, needs an extension-triggered path),
+  zoom / 1:1 toggle, swipe/onion-skin comparison.
 
 ## Smaller follow-ups
 

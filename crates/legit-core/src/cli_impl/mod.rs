@@ -13,7 +13,7 @@ use crate::error::GitError;
 use crate::executor::GitExecutor;
 use crate::runner::{GitRunner, OperationId};
 use crate::types::{
-    BlameHunk, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
+    BlameHunk, BlobBytes, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
     FetchOptions, FfMode, FileAtRevision, FileHistoryEntry, FileState, FileStatus,
     HunkOp, LfsStatus, LineEndingKind, LineEndingStatusEntry, LineEndingTransition, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullStrategy, PushOptions, PushRecurseMode,
@@ -41,14 +41,15 @@ const EMPTY_TREE_OID: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 /// content binary. The window matches git's own (`buffer_is_binary`, 8000
 /// bytes) so LeGit and git classify a blob identically; lossy UTF-8 decoding
 /// preserves NUL bytes, so sniffing the decoded string is sound.
-const BINARY_SNIFF_WINDOW: usize = 8000;
+pub const BINARY_SNIFF_WINDOW: usize = 8000;
+
+/// Byte-level form of the sniff, for callers that hold raw bytes.
+pub fn is_binary_bytes(bytes: &[u8]) -> bool {
+    bytes.iter().take(BINARY_SNIFF_WINDOW).any(|&b| b == 0)
+}
 
 fn is_binary_content(content: &str) -> bool {
-    content
-        .as_bytes()
-        .iter()
-        .take(BINARY_SNIFF_WINDOW)
-        .any(|&b| b == 0)
+    is_binary_bytes(content.as_bytes())
 }
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
@@ -1653,6 +1654,27 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             GitError::Internal(format!("unexpected `cat-file -s` output: {:?}", size.stdout))
         })?;
         Ok(FileAtRevision::Binary { size_bytes })
+    }
+
+    async fn blob_bytes(&self, spec: &str, cap: u64) -> Result<BlobBytes, GitError> {
+        let runner = self.runner().await;
+        let stdin = format!("{spec}\n");
+        let out = runner.run_with_stdin_bytes(&["cat-file", "--batch"], &stdin).await?;
+        if !out.success {
+            return Err(GitError::CommandFailed {
+                exit_code: out.exit_code.unwrap_or(-1),
+                stderr: out.stderr.trim().to_string(),
+            });
+        }
+        let entries = parse_cat_file_batch(&out.stdout)
+            .ok_or_else(|| GitError::Internal("malformed cat-file --batch output".to_string()))?;
+        match entries.into_iter().next().flatten() {
+            None => Ok(BlobBytes::Missing),
+            Some(bytes) if bytes.len() as u64 > cap => {
+                Ok(BlobBytes::TooLarge { size: bytes.len() as u64 })
+            }
+            Some(bytes) => Ok(BlobBytes::Bytes(bytes)),
+        }
     }
 
     async fn restore_file_at_revision(&self, rev: &str, path: &Path) -> Result<(), GitError> {

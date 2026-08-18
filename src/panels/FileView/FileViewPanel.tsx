@@ -12,6 +12,8 @@ import type { FileAtRevision } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { LineEndingBadge } from "../shared/LineEndingBadge";
 import { LfsPointerNotice } from "../shared/LfsPointerNotice";
+import { ImagePane } from "../shared/ImagePane";
+import { useFilePreview } from "../../lib/useFilePreview";
 import { parseLfsPointer } from "../../lib/lfsPointer";
 import { formatByteSize } from "../../lib/formatBytes";
 import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
@@ -122,6 +124,15 @@ export function FileViewPanel() {
   // Committed blobs are never smudged (and a working-tree stub from a broken
   // git-lfs setup has the same shape): show the placeholder, not the pointer.
   const lfsInfo = content != null ? parseLfsPointer(content) : null;
+  // Image preview for the two placeholder cases (binary blob, LFS pointer);
+  // enable-gated, so it never fires for text content or without a request.
+  const previewWanted = (data != null && "Binary" in data) || lfsInfo != null;
+  const { data: preview } = useFilePreview(
+    repo?.id,
+    worktree ? null : request?.rev ?? null,
+    request?.path,
+    previewWanted,
+  );
   const syntaxEnabled = useSettingsStore((s) => s.settings?.diff_syntax_highlighting ?? false);
   usePanelFocusEffect(useCallback(() => { refetch(); }, [refetch]));
 
@@ -161,11 +172,19 @@ export function FileViewPanel() {
         {isError ? (
           <PanelError error={error} margin={8} />
         ) : data && "Binary" in data ? (
-          <span className="legit-subtle" style={{ display: "block", padding: 8, fontSize: "var(--fz-md)" }}>
-            Binary file, {formatByteSize(data.Binary.size_bytes)}. No text content to show.
-          </span>
+          preview?.kind === "image" ? (
+            <ImagePane preview={preview} />
+          ) : (
+            <span className="legit-subtle" style={{ display: "block", padding: 8, fontSize: "var(--fz-md)" }}>
+              Binary file, {formatByteSize(data.Binary.size_bytes)}. No text content to show.
+            </span>
+          )
         ) : lfsInfo ? (
-          <LfsPointerNotice info={lfsInfo} />
+          preview?.kind === "image" ? (
+            <ImagePane preview={preview} />
+          ) : (
+            <LfsPointerNotice info={lfsInfo} />
+          )
         ) : (
           content != null && (
             <FileContentView content={content} path={request.path} syntaxEnabled={syntaxEnabled} />

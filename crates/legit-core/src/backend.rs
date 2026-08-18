@@ -9,7 +9,7 @@
 use crate::error::GitError;
 use crate::runner::OperationId;
 use crate::types::{
-    BlameHunk, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
+    BlameHunk, BlobBytes, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
     FetchOptions, FileAtRevision, FileHistoryEntry, FileStatus, HunkOp, LfsStatus, LogOptions,
     MergeOptions, MergeOutcome, PullOptions, PushOptions, RebaseOutcome, RebaseStep,
@@ -58,6 +58,12 @@ pub trait GitBackend: Send + Sync {
     /// (`git cat-file -s`) so the UI can describe the file instead of
     /// rendering lossy bytes.
     async fn file_at_revision(&self, rev: &str, path: &Path) -> Result<FileAtRevision, GitError>;
+
+    /// Byte-exact content of the blob at `spec` (any `<rev>:<path>` /
+    /// `:<path>` rev spec), for binary previews. Uses `cat-file --batch` raw
+    /// stdout - the plain runner output is lossy-decoded and must never carry
+    /// image bytes. An unresolvable spec is `Missing`, not an error.
+    async fn blob_bytes(&self, spec: &str, cap: u64) -> Result<BlobBytes, GitError>;
 
     /// A single file's commit history, newest first, following renames
     /// (`git log --follow --name-status`). Each entry carries the file's path

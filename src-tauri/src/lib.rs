@@ -79,6 +79,7 @@ pub fn run() {
         commands::repo_lfs_patterns,
         commands::repo_lfs_track,
         commands::repo_lfs_untrack,
+        commands::repo_file_preview,
         commands::repo_write_gitattributes_eol,
         commands::global_signing_config,
         commands::global_write_signing,

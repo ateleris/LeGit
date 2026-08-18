@@ -12,9 +12,6 @@ use crate::state::AppState;
 use legit_core::types::{FileAtRevision, RepoFileEntry};
 use std::path::PathBuf;
 
-/// Git's binary-sniff window: a NUL byte within the leading 8000 bytes marks
-/// the content binary (matches git's own heuristic and `file_at_revision`).
-const BINARY_SNIFF_WINDOW: usize = 8000;
 
 /// Every file in the repo, classified tracked/untracked/(ignored). Backs the
 /// Files tree.
@@ -115,12 +112,12 @@ pub async fn repo_file_worktree(
     Ok(classify_worktree_bytes(&bytes))
 }
 
-/// Classify raw working-tree bytes as text or binary, matching git's
-/// leading-window NUL heuristic. Text is decoded lossily (like the runner),
-/// so a non-UTF-8 but NUL-free file still shows as text.
+/// Classify raw working-tree bytes as text or binary via legit-core's
+/// unified sniff (git's leading-window NUL heuristic, same window as
+/// `file_at_revision`). Text is decoded lossily (like the runner), so a
+/// non-UTF-8 but NUL-free file still shows as text.
 fn classify_worktree_bytes(bytes: &[u8]) -> FileAtRevision {
-    let binary = bytes.iter().take(BINARY_SNIFF_WINDOW).any(|&b| b == 0);
-    if binary {
+    if legit_core::is_binary_bytes(bytes) {
         FileAtRevision::Binary { size_bytes: bytes.len() as u64 }
     } else {
         FileAtRevision::Text(String::from_utf8_lossy(bytes).into_owned())
@@ -354,7 +351,7 @@ mod tests {
     #[test]
     fn classify_worktree_nul_beyond_window_is_text() {
         // A NUL past the 8000-byte sniff window doesn't count (matches git).
-        let mut bytes = vec![b'a'; BINARY_SNIFF_WINDOW];
+        let mut bytes = vec![b'a'; legit_core::BINARY_SNIFF_WINDOW];
         bytes.push(0);
         assert!(matches!(classify_worktree_bytes(&bytes), FileAtRevision::Text(_)));
     }

@@ -36,6 +36,7 @@ specta = { workspace = true }
 specta-typescript = { workspace = true }
 
 shlex = "1"
+base64 = "0.22"
 # Console `| grep` stages (the console is not a shell; grep is built in).
 regex = "1"
 which = "8"

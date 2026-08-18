@@ -46,6 +46,7 @@ import type {
   RepoFileEntry,
   LfsStatus,
   LfsPatternsView,
+  FilePreview,
   LineEndingKind,
   LineEndingStatusEntry,
   RenormalizeOutcome,
@@ -510,6 +511,10 @@ export const repoLfsStatus = (repoId: string) =>
 /** LFS-tracked subset of the repo's file listing (worktree attributes). */
 export const repoLfsFiles = (repoId: string, showIgnored: boolean) =>
   invoke<string[]>("repo_lfs_files", { repoId, showIgnored });
+
+/** Image preview of a file at a rev (null = working tree); read-only. */
+export const repoFilePreview = (repoId: string, rev: string | null, path: string) =>
+  invoke<FilePreview>("repo_file_preview", { repoId, rev, path });
 
 /** The repo's LFS patterns (root = manageable, nested = read-only). */
 export const repoLfsPatterns = (repoId: string) =>

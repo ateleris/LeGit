@@ -10,15 +10,17 @@
 use super::*;
 use crate::executor::GitExecutor;
 use crate::runner::{RunOutput, RunnerError};
-use crate::types::KeyId;
+use crate::types::{BlobBytes, KeyId};
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
 /// One scripted step: the exact args expected, the env overrides expected
-/// (None = a plain run), and the output to return.
+/// (None = a plain run), the stdin expected (None = not asserted), and the
+/// output to return.
 struct Step {
     args: Vec<String>,
     env: Option<Vec<(String, String)>>,
+    stdin: Option<String>,
     output: RunOutput,
 }
 
@@ -53,6 +55,7 @@ impl FakeExecutor {
         self.script.lock().unwrap().push_back(Step {
             args: args.iter().map(|s| s.to_string()).collect(),
             env: None,
+            stdin: None,
             output,
         });
         self
@@ -63,12 +66,33 @@ impl FakeExecutor {
         self.script.lock().unwrap().push_back(Step {
             args: args.iter().map(|s| s.to_string()).collect(),
             env: Some(env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()),
+            stdin: None,
+            output,
+        });
+        self
+    }
+
+    /// Expect an invocation fed the given stdin (asserted exactly).
+    fn expect_stdin(&self, args: &[&str], stdin: &str, output: RunOutput) -> &Self {
+        self.script.lock().unwrap().push_back(Step {
+            args: args.iter().map(|s| s.to_string()).collect(),
+            env: None,
+            stdin: Some(stdin.to_string()),
             output,
         });
         self
     }
 
     fn next(&self, actual: &[&str], actual_env: Option<&[(&str, &str)]>) -> RunOutput {
+        self.next_with_stdin(actual, actual_env, None)
+    }
+
+    fn next_with_stdin(
+        &self,
+        actual: &[&str],
+        actual_env: Option<&[(&str, &str)]>,
+        actual_stdin: Option<&str>,
+    ) -> RunOutput {
         let mut script = self.script.lock().unwrap();
         let step = script
             .pop_front()
@@ -81,6 +105,16 @@ impl FakeExecutor {
         let actual_env: Option<Vec<(String, String)>> = actual_env
             .map(|e| e.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect());
         assert_eq!(actual_env, step.env, "git invoked with unexpected env overrides");
+        // Stdin is asserted only when the step declares an expectation:
+        // legacy steps script stdin-fed commands (check-attr, apply) via
+        // plain `expect` and keep asserting nothing.
+        if step.stdin.is_some() {
+            assert_eq!(
+                actual_stdin.map(str::to_string),
+                step.stdin,
+                "git invoked with unexpected stdin"
+            );
+        }
         step.output
     }
 
@@ -112,9 +146,9 @@ impl GitExecutor for FakeExecutor {
     async fn run_with_stdin(
         &self,
         args: &[&str],
-        _stdin_data: &str,
+        stdin_data: &str,
     ) -> Result<RunOutput, RunnerError> {
-        Ok(self.next(args, None))
+        Ok(self.next_with_stdin(args, None, Some(stdin_data)))
     }
 
     async fn run_with_env(
@@ -2733,4 +2767,39 @@ async fn lfs_tracked_subset_skips_git_entirely_for_no_paths() {
     let subset = backend.lfs_tracked_subset(&[]).await.expect("subset");
     assert!(subset.is_empty());
     fake.assert_done();
+}
+
+// ---------------------------------------------------------------------------
+// blob_bytes - byte framing, cap, and missing classification
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn blob_bytes_parses_found_capped_and_missing() {
+    // Found, within cap: exact bytes back.
+    let script = FakeExecutor::default();
+    script.expect_stdin(
+        &["cat-file", "--batch"],
+        "HEAD:img.png\n",
+        ok("abc123 blob 4\nPNG!\n"),
+    );
+    let (b, exec) = backend(script);
+    assert_eq!(
+        b.blob_bytes("HEAD:img.png", 100).await.unwrap(),
+        BlobBytes::Bytes(b"PNG!".to_vec())
+    );
+    exec.assert_done();
+
+    // Found, over cap: size reported, bytes withheld.
+    let script = FakeExecutor::default();
+    script.expect_stdin(&["cat-file", "--batch"], "HEAD:img.png\n", ok("abc123 blob 4\nPNG!\n"));
+    let (b, exec) = backend(script);
+    assert_eq!(b.blob_bytes("HEAD:img.png", 3).await.unwrap(), BlobBytes::TooLarge { size: 4 });
+    exec.assert_done();
+
+    // Unresolvable spec: cat-file exits 0 and reports "missing" on stdout.
+    let script = FakeExecutor::default();
+    script.expect_stdin(&["cat-file", "--batch"], "HEAD:gone.png\n", ok("HEAD:gone.png missing\n"));
+    let (b, exec) = backend(script);
+    assert_eq!(b.blob_bytes("HEAD:gone.png", 100).await.unwrap(), BlobBytes::Missing);
+    exec.assert_done();
 }

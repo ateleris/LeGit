@@ -985,6 +985,18 @@ export interface LfsStatus {
   initialized: boolean;
 }
 
+export type ImageFormat = "png" | "jpeg" | "gif" | "webp" | "bmp" | "ico";
+
+/** Preview of a file's content at a rev (mirror of legit-app's FilePreview):
+ * an image payload, or why there is none. `absent` covers unresolvable
+ * specs (deleted side, root commit's `^`) so the UI renders added/removed. */
+export type FilePreview =
+  | { kind: "image"; format: ImageFormat; size: number; base64: string }
+  | { kind: "too_large"; size: number }
+  | { kind: "not_previewable"; size: number }
+  | { kind: "absent" }
+  | { kind: "lfs_missing"; oid: string; size: number };
+
 /** LFS patterns of the repo (mirror of legit-app's LfsPatternsView):
  * manageable root `.gitattributes` patterns + read-only nested attribute
  * files that also declare `filter=lfs`. */

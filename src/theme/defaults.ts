@@ -105,6 +105,8 @@ export const DEFAULT_THEME: ThemeDocument = {
     "panel.header.fg": "main-fg",
     "pane.header.bg": "panel-bg",
     "pane.header.fg": "subtle-fg",
+    "preview.checker.a": "panel-bg",
+    "preview.checker.b": "panel-border",
     "pane.header.border": "panel-border",
     "progress.bar.bg": "accent",
     "shadow.color": "shadow",

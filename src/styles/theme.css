@@ -104,6 +104,8 @@
   --panel-header-fg: var(--palette-main-fg);
   --pane-header-bg: var(--palette-panel-bg);
   --pane-header-fg: var(--palette-subtle-fg);
+  --preview-checker-a: var(--palette-panel-bg);
+  --preview-checker-b: var(--palette-panel-border);
   --pane-header-border: var(--palette-panel-border);
   --shadow-color: var(--palette-shadow);
   --dnd-overlay-bg: var(--palette-row-selected-bg);

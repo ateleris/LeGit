@@ -388,6 +388,18 @@ pub enum FileAtRevision {
     Binary { size_bytes: u64 },
 }
 
+/// Byte-exact blob content for a rev spec, capped. Internal to the backend
+/// API (never crosses IPC): previews re-encode it before shipping.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BlobBytes {
+    /// Blob exists and is within the cap.
+    Bytes(Vec<u8>),
+    /// Blob exists but exceeds the cap; bytes withheld.
+    TooLarge { size: u64 },
+    /// The spec does not resolve (bad rev, absent path, root commit's `^`).
+    Missing,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, Default)]
 pub struct Diff {
     pub entries: Vec<DiffEntry>,

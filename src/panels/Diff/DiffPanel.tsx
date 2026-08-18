@@ -18,9 +18,12 @@ import {
   repoUnstageLines,
   repoWriteWorktreeFile,
 } from "../../lib/commands";
-import type { DiffEntry, DiffRequest, DiffSource } from "../../lib/types";
+import type { DiffEntry, DiffRequest } from "../../lib/types";
+import { diffSides } from "../../lib/diffSides";
 import { LineEndingBadge, RevertableLineEndingBadge } from "../shared/LineEndingBadge";
 import { SubmoduleDiffView, SubmoduleDirtyNotice } from "./SubmoduleDiffView";
+import { ImageDiffView } from "./ImageDiffView";
+import { binarySizes } from "../../lib/previewSurface";
 import { LfsPointerNotice } from "../shared/LfsPointerNotice";
 import { lfsPointerDiffSides } from "../../lib/lfsPointer";
 import { formatAppError } from "../../lib/types";
@@ -67,24 +70,6 @@ function loadPref<T extends string>(key: string, fallback: T): T {
 }
 
 /** Per-hunk actions offered for a given diff source. Commit diffs are read-only. */
-/**
- * The two sides to check line endings for, per diff source. `rev`: null =
- * working tree, ":" = index, else a rev spec. The badge shows the new side,
- * or "old→new" when they differ.
- */
-function lineEndingSides(source: DiffSource): { rev: string | null; oldRev: string | null } {
-  switch (source.kind) {
-    case "working_unstaged":
-      return { rev: null, oldRev: ":" }; // working tree vs index
-    case "working_staged":
-      return { rev: ":", oldRev: "HEAD" }; // index vs HEAD
-    case "commit":
-      return { rev: source.commit_id, oldRev: `${source.commit_id}^` }; // commit vs first parent
-    case "commit_range":
-      return { rev: source.to, oldRev: source.from };
-  }
-}
-
 function actionsForSource(req: DiffRequest | null): HunkAction[] {
   if (!req) return [];
   switch (req.source.kind) {
@@ -446,7 +431,7 @@ export function DiffPanel() {
           {request.path}
         </span>
         {(() => {
-          const s = lineEndingSides(request.source);
+          const s = diffSides(request.source);
           // Only the unstaged diff offers the revert action — its new side is
           // the working tree, the one side we can rewrite safely.
           return request.source.kind === "working_unstaged" ? (
@@ -633,10 +618,26 @@ function DiffBody({
   if (!data) return null;
 
   if ("Binary" in data) {
+    // Image preview when at least one side decodes as an image; otherwise
+    // the plain placeholder, enriched with the sizes the preview calls
+    // returned (BinaryDiff itself never carries sizes).
     return (
-      <div className="legit-panel__body">
-        <span className="legit-subtle">Binary file — no text diff to show.</span>
-      </div>
+      <ImageDiffView
+        repoId={request.repoId}
+        source={request.source}
+        path={request.path}
+        oldPath={request.oldPath ?? null}
+        fallback={(o, n) => {
+          const sizes = binarySizes(o, n);
+          return (
+            <div className="legit-panel__body">
+              <span className="legit-subtle">
+                Binary file{sizes ? ` (${sizes})` : ""}, no preview available.
+              </span>
+            </div>
+          );
+        }}
+      />
     );
   }
   if ("Submodule" in data) {
@@ -665,10 +666,20 @@ function DiffBody({
   // returns null unless every present side is a pointer).
   const lfsSides = lfsPointerDiffSides(text.hunks);
   if (lfsSides) {
+    // The preview command resolves pointers to local LFS objects; when no
+    // side yields an image the pointer notice renders as before.
     return (
-      <div className="legit-panel__body">
-        <LfsPointerNotice oldInfo={lfsSides.oldInfo} newInfo={lfsSides.newInfo} />
-      </div>
+      <ImageDiffView
+        repoId={request.repoId}
+        source={request.source}
+        path={request.path}
+        oldPath={request.oldPath ?? null}
+        fallback={() => (
+          <div className="legit-panel__body">
+            <LfsPointerNotice oldInfo={lfsSides.oldInfo} newInfo={lfsSides.newInfo} />
+          </div>
+        )}
+      />
     );
   }
 

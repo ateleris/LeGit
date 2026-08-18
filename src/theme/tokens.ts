@@ -128,6 +128,8 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "panel.header.fg", group: "Panel", documentation: "Panel header text." },
   { name: "pane.header.bg", group: "Panel", documentation: "Accordion section header background (e.g. the Refs panel's Branches/Remotes/Stashes headers)." },
   { name: "pane.header.fg", group: "Panel", documentation: "Accordion section header text." },
+  { name: "preview.checker.a", group: "Panel", documentation: "Image-preview checkerboard backdrop, first tile shade (makes transparency visible)." },
+  { name: "preview.checker.b", group: "Panel", documentation: "Image-preview checkerboard backdrop, second tile shade." },
   { name: "pane.header.border", group: "Panel", documentation: "Accordion section header bottom border." },
   { name: "progress.bar.bg", group: "Panel", documentation: "Indeterminate loading bar pinned to a panel's top edge." },
   { name: "shadow.color", group: "Panel", documentation: "Drop-shadow colour for floating surfaces (menus, popovers, toasts, floating groups)." },
