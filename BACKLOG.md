@@ -30,6 +30,19 @@ In rough order:
    pick/squash/fixup/drop/reorder plans, a plan that conflicts (resolve +
    continue, and abort), and skip - verifying plan execution, conflict UX,
    and the resulting log match expectations.
+(LFS blocker resolved 2026-08-17, both halves shipped the same day:
+detection + warning banner + Files panel icons (spec:
+`docs/superpowers/specs/2026-08-17-lfs-detection-warning-design.md`) and
+the pointer placeholder in File View / Diff / Blame (spec:
+`docs/superpowers/specs/2026-08-17-lfs-pointer-placeholder-design.md`).
+Smudge-on-demand on the placeholder and an explicit "fetch LFS content"
+action were **dropped by decision 2026-08-17**: the current version is
+always on disk, previously-seen versions sit in `.git/lfs/objects`, and
+displaying fetched bytes of a typical LFS binary would still end at the
+binary placeholder - the value only materializes with rendered previews,
+so the LFS fetch case is folded into the "rich preview for displayable
+binary files" item below. Stub recovery stays `git lfs pull` in the
+Console, surfaced by the warning banner.)
 
 (Screenshots blocker resolved: `docs/screenshots/hero_{light,dark}.png` are
 wired into the README via a theme-aware picture element - verified in the
@@ -132,16 +145,33 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   a warning, never clobbered. Not built (add only if wanted): an explicit
   one-time "publish all publishable tags" action for pre-existing local
   tags.
-- **Git LFS-aware content views.** LeGit is already LFS-*compatible* for the
-  core workflow (real git CLI inherits the user's `git-lfs` filters), but
-  content views that read committed blobs (`git show <rev>:<path>` / diff at
-  a revision) do NOT smudge, so File View / Blame / Diff at a revision show
-  the ~3-line LFS pointer instead of the real content (working-tree views
-  are fine). Fix options: (a) minimal - detect a pointer blob (starts with
-  `version https://git-lfs.github.com/spec/`) and render a placeholder like
-  the existing binary-file handling; (b) later - smudge on demand (gated for
-  size/network). Also consider a warning when `.gitattributes` has
-  `filter=lfs` but `git-lfs` isn't installed.
+
+- **Git LFS track/pattern-management UI** - v1 SHIPPED 2026-08-18 (spec:
+  `docs/superpowers/specs/2026-08-17-lfs-track-management-design.md`):
+  list/track/untrack root-`.gitattributes` LFS patterns in the Repo
+  Settings "Git LFS" section (`repo_lfs_patterns/track/untrack` in
+  `commands/lfs.rs`; nested attribute files listed read-only; untrack
+  refuses lines carrying extra attributes; caption warns that
+  already-committed files need `git lfs migrate`, out of scope).
+  Still deferred, add only on demand: a Files-panel context-menu entry,
+  file locking (`git lfs locks`), and an explicit "fetch LFS content"
+  action - these matter mainly to asset-heavy teams, which LeGit does
+  not currently target.
+
+- **Diff viewer: rich preview for displayable binary files (images, audio).**
+  Today any binary file gets the generic binary placeholder. Common git
+  clients preview at least images; extend the diff viewer to render a
+  preview when the file type supports it: images (PNG/JPEG/GIF/WebP/SVG)
+  as old/new side-by-side (and possibly swipe/onion-skin later), audio
+  (MP3/WAV/OGG) as a playable element per side. Rough approach: detect the
+  type by extension + content sniff (reuse the unified binary-sniff
+  window); a backend command returns the blob bytes (`git show <rev>:<path>`
+  for committed sides, filesystem read for the working tree) base64- or
+  data-URL-encoded with a size cap; the frontend renders `<img>`/`<audio>`
+  panes instead of the placeholder, honoring theme tokens for the chrome.
+  Keep action parity rules in mind (stage/discard still apply at file
+  level only). Ties into the LFS release blocker: once pointer blobs are
+  detected, a smudged-on-demand LFS image could use the same preview path.
 
 ## Smaller follow-ups
 

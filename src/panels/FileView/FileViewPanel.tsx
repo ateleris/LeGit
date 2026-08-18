@@ -11,6 +11,9 @@ import { repoFileAtRevision, repoFileWorktree } from "../../lib/commands";
 import type { FileAtRevision } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { LineEndingBadge } from "../shared/LineEndingBadge";
+import { LfsPointerNotice } from "../shared/LfsPointerNotice";
+import { parseLfsPointer } from "../../lib/lfsPointer";
+import { formatByteSize } from "../../lib/formatBytes";
 import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
 import { baseTheme, readOnly } from "../Diff/DiffEditor";
 import { loadLanguageForPath, syntaxColorTheme } from "../Diff/syntaxLanguages";
@@ -23,20 +26,6 @@ import { loadLanguageForPath, syntaxColorTheme } from "../Diff/syntaxLanguages";
 export interface FileViewRequest {
   path: string;
   rev?: string | null;
-}
-
-/** "51234" -> "50.0 KiB" (exact bytes for small values). */
-function formatByteSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} bytes`;
-  const units = ["KiB", "MiB", "GiB"];
-  let value = bytes;
-  let unit = "bytes";
-  for (const next of units) {
-    if (value < 1024) break;
-    value /= 1024;
-    unit = next;
-  }
-  return `${value.toFixed(1)} ${unit} (${bytes.toLocaleString()} bytes)`;
 }
 
 function isFileViewRequest(payload: unknown): payload is FileViewRequest {
@@ -130,6 +119,9 @@ export function FileViewPanel() {
     staleTime: worktree ? 5_000 : 60_000,
   });
   const content = data && "Text" in data ? data.Text : null;
+  // Committed blobs are never smudged (and a working-tree stub from a broken
+  // git-lfs setup has the same shape): show the placeholder, not the pointer.
+  const lfsInfo = content != null ? parseLfsPointer(content) : null;
   const syntaxEnabled = useSettingsStore((s) => s.settings?.diff_syntax_highlighting ?? false);
   usePanelFocusEffect(useCallback(() => { refetch(); }, [refetch]));
 
@@ -172,6 +164,8 @@ export function FileViewPanel() {
           <span className="legit-subtle" style={{ display: "block", padding: 8, fontSize: "var(--fz-md)" }}>
             Binary file, {formatByteSize(data.Binary.size_bytes)}. No text content to show.
           </span>
+        ) : lfsInfo ? (
+          <LfsPointerNotice info={lfsInfo} />
         ) : (
           content != null && (
             <FileContentView content={content} path={request.path} syntaxEnabled={syntaxEnabled} />

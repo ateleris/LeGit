@@ -44,6 +44,8 @@ import type {
   FileAtRevision,
   FileHistoryEntry,
   RepoFileEntry,
+  LfsStatus,
+  LfsPatternsView,
   LineEndingKind,
   LineEndingStatusEntry,
   RenormalizeOutcome,
@@ -500,6 +502,28 @@ export const repoFilesAtRevision = (repoId: string, rev: string) =>
 
 export const repoListFiles = (repoId: string, showIgnored: boolean) =>
   invoke<RepoFileEntry[]>("repo_list_files", { repoId, showIgnored });
+
+/** LFS usage/availability probe (missing binary is a field, never an error). */
+export const repoLfsStatus = (repoId: string) =>
+  invoke<LfsStatus>("repo_lfs_status", { repoId });
+
+/** LFS-tracked subset of the repo's file listing (worktree attributes). */
+export const repoLfsFiles = (repoId: string, showIgnored: boolean) =>
+  invoke<string[]>("repo_lfs_files", { repoId, showIgnored });
+
+/** The repo's LFS patterns (root = manageable, nested = read-only). */
+export const repoLfsPatterns = (repoId: string) =>
+  invoke<LfsPatternsView>("repo_lfs_patterns", { repoId });
+
+/** Track a pattern in LFS: appends the standard line to the root
+ * `.gitattributes` as an uncommitted worktree edit. */
+export const repoLfsTrack = (repoId: string, pattern: string) =>
+  invoke<LfsPatternsView>("repo_lfs_track", { repoId, pattern });
+
+/** Untrack a pattern (remove its standard LFS line from the root
+ * `.gitattributes`); refuses when the line carries extra attributes. */
+export const repoLfsUntrack = (repoId: string, pattern: string) =>
+  invoke<LfsPatternsView>("repo_lfs_untrack", { repoId, pattern });
 
 /** Append a path to the repo-root `.gitignore` (`path/` when it's a directory). */
 export const repoAddToGitignore = (repoId: string, path: string, isDir: boolean) =>

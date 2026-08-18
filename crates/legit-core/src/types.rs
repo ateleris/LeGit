@@ -840,6 +840,22 @@ pub struct TrackingStatus {
     pub behind: u32,
 }
 
+/// Repo LFS probe. `uses_lfs` comes from tracked `.gitattributes`
+/// (`filter=lfs`); the binary/config probes run only when it is true
+/// (false means installed/version/initialized report false/None unprobed).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct LfsStatus {
+    /// Any tracked `.gitattributes` contains `filter=lfs`.
+    pub uses_lfs: bool,
+    /// `git lfs version` succeeded.
+    pub installed: bool,
+    /// First line of `git lfs version` stdout (e.g. `git-lfs/3.4.1 (...)`).
+    pub version: Option<String>,
+    /// `filter.lfs.smudge` is set in git config (repo context, so local
+    /// config counts) - i.e. `git lfs install` has been run.
+    pub initialized: bool,
+}
+
 /// A configured git remote. `git remote -v` always lists a fetch and a push URL
 /// per remote; they're equal unless a separate push URL was set.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]

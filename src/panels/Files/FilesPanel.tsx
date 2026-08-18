@@ -3,7 +3,7 @@ import { PanelError } from "../shared/PanelError";
 import { segStyle } from "../shared/segmented";
 import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileCheck, FilePlus, FileX, GitFork } from "lucide-react";
+import { FileBox, FileCheck, FilePlus, FileX, GitFork } from "lucide-react";
 import type { ReactNode } from "react";
 import { useActiveRepo } from "../../store/repos";
 import { useConfirmDestructive } from "../../store/settings";
@@ -11,13 +11,15 @@ import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import {
   repoFilesAtRevision,
+  repoLfsFiles,
+  repoLfsStatus,
   repoListFiles,
   repoUntrackPath,
   repoRevealPath,
 } from "../../lib/commands";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notify } from "../../store/notifications";
-import type { RepoFileEntry, RepoFileKind } from "../../lib/types";
+import type { LfsStatus, RepoFileEntry, RepoFileKind } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { FileTree } from "../shared/FileTree/FileTree";
@@ -100,6 +102,30 @@ export function FilesPanel() {
     staleTime: Infinity,
   });
 
+  // Shares [repoId, "lfs"] with LfsWarningBanner: one probe per repo.
+  const lfsStatus = useQuery<LfsStatus>({
+    queryKey: [repo?.id, "lfs"],
+    queryFn: () => repoLfsStatus(repo!.id),
+    enabled: !!repo,
+    staleTime: 300_000,
+  });
+  const usesLfs = lfsStatus.data?.uses_lfs === true;
+
+  // LFS-tracked paths for the icon override. Working-tree view only: the
+  // subset comes from worktree attributes (check-attr has no --source
+  // here), so applying it to browse-at-commit listings could mislabel.
+  // Keyed under the "status" domain like the listing above, so watcher
+  // invalidations refresh both together; the command lists files
+  // server-side, so the subset never races a stale paths snapshot.
+  // Non-LFS repos never fetch (enabled gate) - zero extra git calls.
+  const lfsFiles = useQuery<string[]>({
+    queryKey: [repo?.id, "status", "lfs-files", showIgnored],
+    queryFn: () => repoLfsFiles(repo!.id, showIgnored),
+    enabled: !!repo && rev === null && usesLfs,
+    staleTime: 5_000,
+  });
+  const lfsPaths = useMemo(() => new Set(lfsFiles.data ?? []), [lfsFiles.data]);
+
   const { isFetching, isError, error, refetch } = rev === null ? live : atRev;
   const files = (rev === null ? live.data : atRev.data) ?? [];
 
@@ -147,13 +173,27 @@ export function FilesPanel() {
       const kind = kindByPath.get(file.path);
       const meta = ICON_META[kind ?? "tracked"];
       // Submodules / nested repos get the fork glyph (same as the FileTree
-      // status icons use for submodule changes); the colour still follows
-      // the kind so untracked nested repos keep the "new" tint.
-      const Icon = submodulePaths.has(file.path) ? GitFork : meta.Icon;
-      const label = submodulePaths.has(file.path) ? `${kind} submodule` : kind;
-      return <Icon size={iconSize} color={meta.color} aria-label={label} />;
+      // status icons use for submodule changes); LFS-tracked files get the
+      // box glyph (content stored outside the object db). The colour still
+      // follows the kind so untracked nested repos keep the "new" tint.
+      const isLfs = lfsPaths.has(file.path);
+      const Icon = submodulePaths.has(file.path) ? GitFork : isLfs ? FileBox : meta.Icon;
+      const label = submodulePaths.has(file.path)
+        ? `${kind} submodule`
+        : isLfs
+          ? `${kind} (LFS)`
+          : kind;
+      // Wrapped in a titled span: FileTree's icon-slot wrapper carries a
+      // generic "tracked" title, and the innermost title wins on hover, so
+      // this is what makes the submodule/LFS distinction visible as a
+      // tooltip (an aria-label on the SVG alone never shows one).
+      return (
+        <span title={label} aria-label={label} style={{ display: "inline-flex" }}>
+          <Icon size={iconSize} color={meta.color} />
+        </span>
+      );
     },
-    [kindByPath, submodulePaths, iconSize],
+    [kindByPath, submodulePaths, lfsPaths, iconSize],
   );
 
   const onIgnored = useCallback(

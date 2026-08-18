@@ -127,6 +127,8 @@ export interface RepoSettings {
   show_remote_branches?: boolean | null;
   /** Per-repo override for auto-push tags (null = inherit global). */
   auto_push_tags?: boolean | null;
+  /** Suppress the missing-git-lfs warning banner (null = warn). */
+  suppress_lfs_warning?: boolean | null;
   /** Commit-graph lane locks (managed via set/unset_lane_lock, NOT the
    * settings panel). Present here because `update_repo_settings` replaces
    * the WHOLE struct: a `RepoSettings` built without this field would
@@ -971,6 +973,24 @@ export interface TrackingStatus {
   upstream: string;
   ahead: number;
   behind: number;
+}
+
+/** Repo LFS probe (mirror of legit-core's LfsStatus). `uses_lfs` comes from
+ * tracked .gitattributes; binary/config probes are skipped (false/null)
+ * when the repo does not use LFS. */
+export interface LfsStatus {
+  uses_lfs: boolean;
+  installed: boolean;
+  version: string | null;
+  initialized: boolean;
+}
+
+/** LFS patterns of the repo (mirror of legit-app's LfsPatternsView):
+ * manageable root `.gitattributes` patterns + read-only nested attribute
+ * files that also declare `filter=lfs`. */
+export interface LfsPatternsView {
+  root_patterns: string[];
+  nested_files: string[];
 }
 
 /** A configured git remote with its fetch/push URLs (matches legit-core `Remote`). */

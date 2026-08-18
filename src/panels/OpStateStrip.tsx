@@ -28,11 +28,11 @@ import {
 import { ToolbarButton } from "./shared/ToolbarButton";
 import { usePanelRunner } from "./shared/usePanelRunner";
 
-// The banner's ghost buttons sit on op-banner-bg, not a panel surface, so
+// The banner's ghost buttons sit on banner-op-bg, not a panel surface, so
 // their text and border must follow the banner's own foreground token.
 const BANNER_BUTTON_STYLE: React.CSSProperties = {
-  color: "var(--op-banner-fg)",
-  borderColor: "var(--op-banner-fg)",
+  color: "var(--banner-op-fg)",
+  borderColor: "var(--banner-op-fg)",
 };
 
 /** What the strip shows and can do per in-progress operation kind. */
@@ -202,9 +202,12 @@ export function OpStateBanner({
         alignItems: "center",
         gap: 8,
         padding: "4px 8px",
-        background: "var(--op-banner-bg)",
-        color: "var(--op-banner-fg)",
+        background: "var(--banner-op-bg)",
+        color: "var(--banner-op-fg)",
         fontSize: "var(--fz-sm)",
+        // Hairline: separates this banner from a banner stacked below it
+        // (LfsWarningBanner) and from the repo region when it is the last.
+        borderBottom: "1px solid var(--panel-border)",
       }}
     >
       {confirmingAbort ? (

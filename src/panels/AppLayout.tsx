@@ -14,6 +14,7 @@ import { useAutoFetch } from "../lib/useAutoFetch";
 import type { RegionPlacement } from "../lib/types";
 import { GlobalDock } from "./GlobalDock";
 import { OpStateStrip } from "./OpStateStrip";
+import { LfsWarningBanner } from "./LfsWarningBanner";
 import { RepoDock } from "./RepoDock";
 import { RepoTabBar } from "./RepoTabBar";
 import { CredentialPromptHost } from "./CredentialPrompt";
@@ -328,6 +329,7 @@ export function AppLayout() {
           <div style={{ flex: 1, minWidth: collapsed ? 0 : MIN_WIDTH, display: "flex", flexDirection: "column" }}>
             <RepoTabBar />
             <OpStateStrip />
+            <LfsWarningBanner />
             <div className="legit-repo-region" style={{ flex: 1, minHeight: 0 }}>
               <RepoDock />
             </div>
@@ -360,6 +362,7 @@ export function AppLayout() {
       </div>
       <RepoTabBar />
       <OpStateStrip />
+      <LfsWarningBanner />
       <div className="legit-repo-region" style={{ flex: 1, minHeight: 0 }}>
         <RepoDock />
       </div>

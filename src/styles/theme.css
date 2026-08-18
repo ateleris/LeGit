@@ -177,8 +177,10 @@
   --merge-fold-fg: var(--palette-subtle-fg);
   --blame-alt-bg: var(--palette-input-bg);
   --diff-edited-bg: var(--palette-diff-hunk-header);
-  --op-banner-bg: var(--palette-diff-hunk-header);
-  --op-banner-fg: var(--palette-main-fg);
+  --banner-op-bg: var(--palette-diff-hunk-header);
+  --banner-op-fg: var(--palette-main-fg);
+  --banner-warning-bg: var(--palette-diff-hunk-header);
+  --banner-warning-fg: var(--palette-warning);
   --syntax-keyword: var(--palette-syn-keyword);
   --syntax-string: var(--palette-syn-string);
   --syntax-number: var(--palette-syn-number);

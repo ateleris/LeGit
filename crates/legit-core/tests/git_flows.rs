@@ -3841,3 +3841,61 @@ async fn console_color_flag_yields_ansi_on_pipes_but_not_in_porcelain() {
         "porcelain output must stay machine-clean under color.ui=always, got: {porcelain:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// LFS probes (spec: 2026-08-17-lfs-detection-warning-design.md). These pin
+// the encoded assumptions against the real binary: git grep's exit-1-no-hits
+// contract, `:(glob)**/.gitattributes` matching root AND nested files, and
+// check-attr's output shape. They must pass whether or not git-lfs is
+// installed on this machine: nothing asserts the machine-dependent value of
+// `installed`.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn lfs_status_detects_usage_from_root_and_nested_gitattributes() {
+    let repo = TestRepo::init().await;
+    repo.write("readme.md", "hi\n");
+    repo.commit_all("init").await;
+
+    // No .gitattributes anywhere: grep exits 1 ("no hits") - must classify
+    // as "does not use LFS", not as an error.
+    let status = repo.backend.lfs_status().await.expect("no-lfs repo");
+    assert!(!status.uses_lfs);
+    assert!(!status.installed);
+    assert_eq!(status.version, None);
+    assert!(!status.initialized);
+
+    // Rules in a NESTED .gitattributes must be found (monorepo layout).
+    std::fs::create_dir_all(repo.path.join("assets")).expect("mkdir assets");
+    repo.write("assets/.gitattributes", "*.png filter=lfs diff=lfs merge=lfs -text\n");
+    repo.commit_all("track pngs via lfs (nested)").await;
+    let status = repo.backend.lfs_status().await.expect("nested lfs repo");
+    assert!(status.uses_lfs);
+    // installed/initialized are machine-dependent (git-lfs may be absent
+    // here) - assert structure only: a missing binary must not report a
+    // version, and the call itself must never error.
+    if !status.installed {
+        assert_eq!(status.version, None);
+    }
+
+    // Root .gitattributes works too.
+    repo.write(".gitattributes", "*.bin filter=lfs diff=lfs merge=lfs -text\n");
+    repo.commit_all("track bins via lfs (root)").await;
+    assert!(repo.backend.lfs_status().await.expect("root lfs repo").uses_lfs);
+}
+
+#[tokio::test]
+async fn lfs_tracked_subset_matches_check_attr_against_real_git() {
+    let repo = TestRepo::init().await;
+    repo.write(".gitattributes", "*.png filter=lfs diff=lfs merge=lfs -text\n");
+    repo.write("logo.png", "not a real png\n");
+    repo.write("notes.txt", "text\n");
+    repo.commit_all("seed").await;
+
+    let subset = repo
+        .backend
+        .lfs_tracked_subset(&["logo.png".to_string(), "notes.txt".to_string()])
+        .await
+        .expect("check-attr");
+    assert_eq!(subset, vec!["logo.png".to_string()]);
+}

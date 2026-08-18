@@ -11,7 +11,7 @@ use crate::runner::OperationId;
 use crate::types::{
     BlameHunk, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
-    FetchOptions, FileAtRevision, FileHistoryEntry, FileStatus, HunkOp, LogOptions,
+    FetchOptions, FileAtRevision, FileHistoryEntry, FileStatus, HunkOp, LfsStatus, LogOptions,
     MergeOptions, MergeOutcome, PullOptions, PushOptions, RebaseOutcome, RebaseStep,
     ReflogEntry, Remote, RemoteTag, RenormalizeOutcome, RepoFileEntry, RepoOpState, ResetMode, SequenceOutcome, StashApplyOutcome,
     StashEntry, StashOutcome, SubmoduleAutoUpdateResult, SubmoduleGitdirInfo, SubmoduleInfo,
@@ -227,6 +227,17 @@ pub trait GitBackend: Send + Sync {
     /// repo is not checked out as a submodule
     /// (`git rev-parse --show-superproject-working-tree`).
     async fn superproject_path(&self) -> Result<Option<PathBuf>, GitError>;
+
+    /// Whether tracked `.gitattributes` declare LFS (`filter=lfs`), plus
+    /// whether the `git-lfs` binary and its smudge-filter config are
+    /// available. Missing binary / unset config are ANSWERS (status fields),
+    /// never errors; probes are skipped when the repo does not use LFS.
+    async fn lfs_status(&self) -> Result<LfsStatus, GitError>;
+
+    /// The subset of `paths` whose effective `filter` attribute is `lfs`
+    /// (`git check-attr -z --stdin filter`), in input order. Worktree
+    /// attributes - callers must not apply the result to at-revision views.
+    async fn lfs_tracked_subset(&self, paths: &[String]) -> Result<Vec<String>, GitError>;
 
     /// Add a submodule (`git submodule add [-b <branch>] -- <url> <path>`).
     /// Clones - cancellable. Relative URLs resolve against origin (git-native).

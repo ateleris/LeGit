@@ -115,8 +115,10 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "app.fg", group: "App", documentation: "Top-level default text." },
   { name: "accent", group: "App", documentation: "General accent: focus rings, active markers, highlighted icons." },
   { name: "accent.fg", group: "App", documentation: "Text/icons drawn on accent-coloured surfaces." },
-  { name: "op.banner.bg", group: "App", documentation: "Background of the merge/rebase-in-progress banner (app chrome, below the repo tabs)." },
-  { name: "op.banner.fg", group: "App", documentation: "Text of the merge/rebase-in-progress banner, including its buttons' text and border." },
+  { name: "banner.op.bg", group: "App", documentation: "Background of the merge/rebase-in-progress banner (app chrome, below the repo tabs)." },
+  { name: "banner.op.fg", group: "App", documentation: "Text of the merge/rebase-in-progress banner, including its buttons' text and border." },
+  { name: "banner.warning.bg", group: "App", documentation: "Background of app-chrome warning banners (e.g. the missing-git-lfs warning below the repo tabs)." },
+  { name: "banner.warning.fg", group: "App", documentation: "Text of app-chrome warning banners, including their buttons' text and border." },
 
   { name: "panel.bg", group: "Panel", documentation: "Panel body background." },
   { name: "panel.fg", group: "Panel", documentation: "Panel body text." },
@@ -138,10 +140,10 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "tab.active.fg", group: "Repo Tabs", documentation: "Active repository tab text." },
   { name: "tab.border", group: "Repo Tabs", documentation: "Repository tab strip border." },
 
-  { name: "panel-tab.bg", group: "Panel Tabs", documentation: "Panel tab strip background (dockview panels)." },
-  { name: "panel-tab.fg", group: "Panel Tabs", documentation: "Inactive panel tab text." },
-  { name: "panel-tab.active.bg", group: "Panel Tabs", documentation: "Active panel tab background." },
-  { name: "panel-tab.active.fg", group: "Panel Tabs", documentation: "Active panel tab text." },
+  { name: "panel.tab.bg", group: "Panel Tabs", documentation: "Panel tab strip background (dockview panels)." },
+  { name: "panel.tab.fg", group: "Panel Tabs", documentation: "Inactive panel tab text." },
+  { name: "panel.tab.active.bg", group: "Panel Tabs", documentation: "Active panel tab background." },
+  { name: "panel.tab.active.fg", group: "Panel Tabs", documentation: "Active panel tab text." },
 
   { name: "button.bg", group: "Controls", documentation: "Default button background." },
   { name: "button.fg", group: "Controls", documentation: "Default button text." },

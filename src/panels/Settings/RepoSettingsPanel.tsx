@@ -2,8 +2,9 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useState } from "react";
 import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
 import { formatAppError } from "../../lib/types";
-import type { ConfigScope, LineEndingsView, GitAttrRule, RepoSettings } from "../../lib/types";
-import { setRepoGitPath, repoLineEndingsView, repoWriteLineEndings, updateRepoSettings } from "../../lib/commands";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { ConfigScope, LineEndingsView, GitAttrRule, LfsPatternsView, LfsStatus, RepoSettings } from "../../lib/types";
+import { setRepoGitPath, repoLfsPatterns, repoLfsStatus, repoLfsTrack, repoLfsUntrack, repoLineEndingsView, repoWriteLineEndings, updateRepoSettings } from "../../lib/commands";
 import { useGitStatusStore } from "../../store/git-status";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
@@ -162,6 +163,7 @@ export function RepoSettingsPanel() {
 
           <RepoIdentitySection repoId={activeRepo.id} repoName={activeRepo.name} />
           <LineEndingsRepoSection repoId={activeRepo.id} />
+          <LfsWarningRepoSection repoId={activeRepo.id} repoSettings={repoSettings} />
         </SettingsGroup>
       </div>
     </div>
@@ -458,6 +460,186 @@ function AutoPushTagsRepoSection({
         globally, on for repos whose tags should always be public.
       </div>
     </Section>
+  );
+}
+
+function LfsWarningRepoSection({
+  repoId,
+  repoSettings,
+}: {
+  repoId: string;
+  repoSettings: RepoSettings | null;
+}) {
+  const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
+  const { busy: saving, run } = useDelayedBusy();
+  const suppressed = repoSettings?.suppress_lfs_warning === true;
+  // Same cache entry the warning banner reads ([repoId, "lfs"]). This
+  // section doubles as the always-reachable re-probe: the banner's own
+  // Re-check only exists while the banner shows, and the probe's long
+  // staleTime means a condition that changed underneath (git-lfs installed
+  // or removed, config edited in a terminal) is invisible until a fresh
+  // probe - this button is that trigger.
+  const queryClient = useQueryClient();
+  const { data: lfs, dataUpdatedAt } = useQuery<LfsStatus>({
+    queryKey: [repoId, "lfs"],
+    queryFn: () => repoLfsStatus(repoId),
+    staleTime: 300_000,
+  });
+
+  // Stored as true (suppressed) or null (warn - the default); never false,
+  // so old settings files and the banner's `=== true` check stay aligned.
+  const setSuppressed = (value: boolean) => {
+    if (!repoSettings) return;
+    return run(async () => {
+      await updateRepoSettings(repoId, {
+        ...repoSettings,
+        suppress_lfs_warning: value ? true : null,
+      });
+      await loadRepoSettings(repoId);
+    });
+  };
+
+  return (
+    <Section title="Git LFS">
+      <FieldNote>writes to: repos/&lt;hash&gt;/settings.json (this repo only)</FieldNote>
+      <label
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginTop: 8,
+          cursor: saving ? "default" : "pointer",
+          opacity: saving ? 0.5 : 1,
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={!suppressed}
+          disabled={saving}
+          onChange={(e) => setSuppressed(!e.target.checked)}
+        />
+        <span style={{ fontSize: "var(--fz-lg)" }}>
+          Warn when this repository uses Git LFS but git-lfs is unavailable
+        </span>
+      </label>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 10, fontSize: "var(--fz-md)" }}>
+        <div>Repository uses LFS: {lfs ? (lfs.uses_lfs ? "yes" : "no") : "checking…"}</div>
+        {lfs?.uses_lfs && (
+          <>
+            <div>git-lfs binary: {lfs.installed ? (lfs.version ?? "installed") : "not found"}</div>
+            <div>Set up for this repo (git lfs install): {lfs.initialized ? "yes" : "no"}</div>
+          </>
+        )}
+        <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 8 }}>
+          <Button onClick={() => queryClient.invalidateQueries({ queryKey: [repoId, "lfs"] })}>
+            Re-check
+          </Button>
+          {/* Always-visible reaction to the button: a re-probe whose result
+              is unchanged would otherwise be indistinguishable from a dead
+              click (the probe is fast, so per the 150ms rule there is no
+              busy state either). */}
+          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
+            Last checked: {lfs ? new Date(dataUpdatedAt).toLocaleTimeString() : "…"}
+          </span>
+        </div>
+      </div>
+      {/* Track/pattern management (root .gitattributes only; spec:
+          2026-08-17-lfs-track-management-design.md). Only offered when
+          git-lfs is actually usable: tracking without the filter installed
+          would commit corrupt (non-pointer) content. */}
+      {lfs?.installed && lfs.initialized && <LfsPatternsBlock repoId={repoId} />}
+    </Section>
+  );
+}
+
+function LfsPatternsBlock({ repoId }: { repoId: string }) {
+  const queryClient = useQueryClient();
+  // Outside edits to .gitattributes reach this via the watcher's status
+  // domain; the short staleTime keeps a reopened panel fresh regardless.
+  const { data: view } = useQuery<LfsPatternsView>({
+    queryKey: [repoId, "status", "lfs-patterns"],
+    queryFn: () => repoLfsPatterns(repoId),
+    staleTime: 5_000,
+  });
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const { busy, run } = useDelayedBusy();
+
+  const applyResult = (next: LfsPatternsView) => {
+    queryClient.setQueryData([repoId, "status", "lfs-patterns"], next);
+    // The first/last pattern flips uses_lfs - banner and Files icons react.
+    queryClient.invalidateQueries({ queryKey: [repoId, "lfs"] });
+  };
+
+  const track = () => {
+    const pattern = draft.trim();
+    if (!pattern) return;
+    return run(async () => {
+      setError(null);
+      try {
+        applyResult(await repoLfsTrack(repoId, pattern));
+        setDraft("");
+      } catch (e) {
+        setError(formatAppError(e));
+      }
+    });
+  };
+
+  const untrack = (pattern: string) =>
+    run(async () => {
+      setError(null);
+      try {
+        applyResult(await repoLfsUntrack(repoId, pattern));
+      } catch (e) {
+        setError(formatAppError(e));
+      }
+    });
+
+  return (
+    <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ fontSize: "var(--fz-md)" }}>Tracked patterns (root .gitattributes)</div>
+      {view && view.root_patterns.length === 0 && (
+        <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
+          No LFS patterns in the root .gitattributes.
+        </span>
+      )}
+      {view?.root_patterns.map((p) => (
+        <div key={p} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <code style={{ fontFamily: "monospace", flex: 1 }}>{p}</code>
+          <Button disabled={busy} onClick={() => untrack(p)}>
+            Untrack
+          </Button>
+        </div>
+      ))}
+      <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+        <input
+          style={{ flex: 1, fontFamily: "monospace" }}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") track();
+          }}
+          placeholder="e.g. *.psd"
+          disabled={busy}
+        />
+        <Button disabled={busy || draft.trim() === ""} onClick={track}>
+          Track
+        </Button>
+      </div>
+      {error && <pre className="legit-error" style={{ margin: 0 }}>{error}</pre>}
+      {view && view.nested_files.length > 0 && (
+        <div className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
+          LFS patterns also defined in: {view.nested_files.join(", ")} (edit
+          those files directly)
+        </div>
+      )}
+      <FieldNote>
+        Tracking affects newly added files only. Already-committed files keep
+        their history (converting them is <code>git lfs migrate</code>, not
+        offered here). The change lands as an uncommitted{" "}
+        <code>.gitattributes</code> edit for you to review and commit.
+      </FieldNote>
+    </div>
   );
 }
 

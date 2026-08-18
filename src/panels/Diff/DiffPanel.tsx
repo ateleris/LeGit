@@ -21,6 +21,8 @@ import {
 import type { DiffEntry, DiffRequest, DiffSource } from "../../lib/types";
 import { LineEndingBadge, RevertableLineEndingBadge } from "../shared/LineEndingBadge";
 import { SubmoduleDiffView, SubmoduleDirtyNotice } from "./SubmoduleDiffView";
+import { LfsPointerNotice } from "../shared/LfsPointerNotice";
+import { lfsPointerDiffSides } from "../../lib/lfsPointer";
 import { formatAppError } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notify } from "../../store/notifications";
@@ -653,6 +655,19 @@ function DiffBody({
             ? `Renamed${request.oldPath ? ` from ${request.oldPath}` : ""} → ${request.path} (no content changes)`
             : "No changes."}
         </span>
+      </div>
+    );
+  }
+
+  // A pointer-to-pointer change (LFS file modified/added/removed) reads as
+  // 3 lines of pointer noise as a text diff - render the LFS notice instead.
+  // An LFS-to-text conversion deliberately keeps the normal diff (the helper
+  // returns null unless every present side is a pointer).
+  const lfsSides = lfsPointerDiffSides(text.hunks);
+  if (lfsSides) {
+    return (
+      <div className="legit-panel__body">
+        <LfsPointerNotice oldInfo={lfsSides.oldInfo} newInfo={lfsSides.newInfo} />
       </div>
     );
   }

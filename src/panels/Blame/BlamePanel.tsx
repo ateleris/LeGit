@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { PanelError } from "../shared/PanelError";
 import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
 import { useQuery } from "@tanstack/react-query";
@@ -11,6 +11,8 @@ import type { BlameHunk } from "../../lib/types";
 import { formatRelative } from "../../lib/time";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { LineEndingBadge } from "../shared/LineEndingBadge";
+import { LfsPointerNotice } from "../shared/LfsPointerNotice";
+import { parseLfsPointer } from "../../lib/lfsPointer";
 import { RevPicker } from "../shared/RevPicker";
 import {
   MAX_SYNTAX_CHARS,
@@ -83,6 +85,13 @@ export function BlamePanel() {
     staleTime: 5_000,
   });
   usePanelFocusEffect(useCallback(() => { refetch(); }, [refetch]));
+
+  // `git blame` never smudges: an LFS-tracked file blames as its ~3 pointer
+  // lines. Detect that and short-circuit to the notice in the body below.
+  const lfsInfo = useMemo(
+    () => (hunks.length ? parseLfsPointer(hunks.flatMap((h) => h.lines).join("\n")) : null),
+    [hunks],
+  );
 
   // Syntax highlighting (global opt-in). Blame hunks tile the whole file in
   // order, so the full file is reconstructed and parsed once (full fidelity);
@@ -196,6 +205,10 @@ export function BlamePanel() {
       <div className="legit-panel__body" style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 0 }}>
         {isError ? (
           <PanelError error={error} margin={8} />
+        ) : lfsInfo ? (
+          // Blaming a pointer blob attributes 3 lines of LFS plumbing, not
+          // the real content - say what the file is instead.
+          <LfsPointerNotice info={lfsInfo} />
         ) : (
           // Sized to the widest row (min 100%) so every row's tint/border spans
           // the full scroll width instead of ending at its own line length.

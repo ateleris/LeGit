@@ -461,6 +461,11 @@ pub struct RepoSettings {
     /// Per-repo override for auto-push tags (None = inherit global).
     #[serde(default)]
     pub auto_push_tags: Option<bool>,
+    /// Suppress the "uses LFS but git-lfs unavailable" warning banner for
+    /// this repo (None = warn, the default; set via the banner's
+    /// "Don't warn for this repo" or the Repo Settings panel).
+    #[serde(default)]
+    pub suppress_lfs_warning: Option<bool>,
 }
 
 // ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@ use crate::types::{
     BlameHunk, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
     FetchOptions, FfMode, FileAtRevision, FileHistoryEntry, FileState, FileStatus,
-    HunkOp, LineEndingKind, LineEndingStatusEntry, LineEndingTransition, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullStrategy, PushOptions, PushRecurseMode,
+    HunkOp, LfsStatus, LineEndingKind, LineEndingStatusEntry, LineEndingTransition, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullStrategy, PushOptions, PushRecurseMode,
     RebaseOutcome, RebaseStep, RefDecoration, RefSelector, ReflogEntry, Remote, RemoteTag,
     RenormalizeOutcome, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode, SequenceOutcome, SignMode, StashApplyOutcome, StashEntry,
     StashOutcome, SubmoduleAutoUpdateResult, SubmoduleAutoUpdateStatus, SubmoduleGitdirInfo,
@@ -51,7 +51,7 @@ fn is_binary_content(content: &str) -> bool {
         .any(|&b| b == 0)
 }
 use async_trait::async_trait;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -1910,6 +1910,71 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         Ok(if path.is_empty() { None } else { Some(PathBuf::from(path)) })
     }
 
+    async fn lfs_status(&self) -> Result<LfsStatus, GitError> {
+        let runner = self.runner().await;
+        // `:(glob)**/.gitattributes` matches the root file and nested ones
+        // (a leading `**/` matches zero or more directories). git grep
+        // searches tracked files, which is the right scope: `git lfs track`
+        // always writes .gitattributes, and LFS rules are committed.
+        // Exit 1 = "no hits" - an answer (run_expecting logs it as OK).
+        let grep = runner
+            .run_expecting(
+                &["grep", "-l", "-e", "filter=lfs", "--", ":(glob)**/.gitattributes"],
+                &[1],
+            )
+            .await?;
+        let uses_lfs = match grep.exit_code {
+            Some(0) => true,
+            Some(1) => false,
+            _ => {
+                Self::ensure_success(&grep)?;
+                false
+            }
+        };
+        if !uses_lfs {
+            return Ok(LfsStatus {
+                uses_lfs: false,
+                installed: false,
+                version: None,
+                initialized: false,
+            });
+        }
+        // A missing git-lfs makes this exit non-zero ("git: 'lfs' is not a
+        // git command") - that IS the probe result, never an error.
+        let ver = runner.run(&["lfs", "version"]).await?;
+        let installed = ver.success;
+        let version = if installed {
+            ver.stdout
+                .lines()
+                .next()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+        } else {
+            None
+        };
+        // Unset key exits 1 (expected). Set + non-empty = `git lfs install`
+        // has registered the smudge filter for this repo's context.
+        let cfg = runner
+            .run_expecting(&["config", "--get", "filter.lfs.smudge"], &[1])
+            .await?;
+        let initialized = cfg.success && !cfg.stdout.trim().is_empty();
+        Ok(LfsStatus { uses_lfs, installed, version, initialized })
+    }
+
+    async fn lfs_tracked_subset(&self, paths: &[String]) -> Result<Vec<String>, GitError> {
+        if paths.is_empty() {
+            return Ok(vec![]);
+        }
+        let runner = self.runner().await;
+        let stdin: String = paths.iter().map(|p| format!("{p}\0")).collect();
+        let out = runner
+            .run_with_stdin(&["check-attr", "-z", "--stdin", "filter"], &stdin)
+            .await?;
+        Self::ensure_success(&out)?;
+        let lfs = parse_check_attr_filter_lfs(&out.stdout);
+        Ok(paths.iter().filter(|p| lfs.contains(p.as_str())).cloned().collect())
+    }
+
     async fn submodule_add(
         &self,
         url: &str,
@@ -3353,6 +3418,23 @@ pub fn parse_check_attr_z(stdout: &str) -> HashMap<String, (EolTextAttr, bool)> 
     map
 }
 
+/// Parse `git check-attr -z --stdin filter` output (path NUL attr NUL value
+/// NUL triples) into the set of paths whose `filter` attribute resolves to
+/// `lfs`. Output shape validated against the real binary in git_flows.rs.
+pub fn parse_check_attr_filter_lfs(stdout: &str) -> HashSet<String> {
+    let mut set = HashSet::new();
+    let mut it = stdout.split('\0');
+    while let (Some(path), Some(attr), Some(value)) = (it.next(), it.next(), it.next()) {
+        if path.is_empty() {
+            break;
+        }
+        if attr == "filter" && value == "lfs" {
+            set.insert(path.to_string());
+        }
+    }
+    set
+}
+
 /// Kinds that can appear in a transition chip: an actual line-ending style.
 fn transitionable(kind: LineEndingKind) -> bool {
     matches!(
@@ -4314,6 +4396,19 @@ mod tests {
         assert_eq!(map["b.bin"], (T::Unset, false));
         assert_eq!(map["c.txt"], (T::Auto, true));
         assert_eq!(map["d.txt"], (T::Unspecified, false));
+    }
+
+    #[test]
+    fn parse_check_attr_filter_lfs_shapes() {
+        // path NUL attr NUL value NUL triples, exactly like check-attr -z.
+        let stdout = "a.png\0filter\0lfs\0b.txt\0filter\0unspecified\0c.bin\0filter\0lfs\0";
+        let set = parse_check_attr_filter_lfs(stdout);
+        assert!(set.contains("a.png"));
+        assert!(set.contains("c.bin"));
+        assert!(!set.contains("b.txt"));
+        assert_eq!(set.len(), 2);
+        // Empty output (no paths sent / all unspecified) parses to empty.
+        assert!(parse_check_attr_filter_lfs("").is_empty());
     }
 
     #[test]
