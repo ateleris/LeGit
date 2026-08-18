@@ -83,6 +83,7 @@ import { branchesAt } from "./cells/refChips";
 import {
   COLUMN_GAP,
   columnGridTrack,
+  columnsMinWidth,
   NON_HIDEABLE,
   NON_RESIZABLE,
 } from "./columns/types";
@@ -228,6 +229,12 @@ export function CommitsPanel() {
   // graph column hides while this is active. Combines with the branch filter.
   const [authorFilter, setAuthorFilter] = useState<{ name: string; email: string } | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
+  // The list's horizontal scroll offset, mirrored onto the header grid as a
+  // translateX. A transform (not wrapper scrollLeft) because the header
+  // wrapper's own max scroll is SMALLER than the list's (the vertical
+  // scrollbar narrows the list viewport), so a scrollLeft sync clamps near
+  // the end and the columns drift apart on the final few pixels.
+  const [headerShift, setHeaderShift] = useState(0);
 
   // In-place editing in the Subject column: rewording a commit's subject line
   // or renaming a stash's message. The row keeps its normal layout — only the
@@ -1006,6 +1013,17 @@ export function CommitsPanel() {
 
   const GRID_COLUMNS = visibleColumns.map(colWidth).join(" ");
 
+  // Shared width floor for the header grid and the row container: a bare
+  // `width: 100%` resolves to the scroller's VIEWPORT width, so with a
+  // horizontal scrollbar the selection background ended mid-row. 24 = the
+  // rows'/header's horizontal padding (border-box).
+  const minRowWidth = columnsMinWidth(
+    visibleColumns,
+    { graphColWidth, signedColWidth, subjectMinWidth, widths: colState.widths },
+    COLUMN_GAP,
+    24,
+  );
+
   const handleReorder = (
     draggedId: ColumnId,
     targetId: ColumnId,
@@ -1269,7 +1287,10 @@ export function CommitsPanel() {
         <PanelError error={error} />
       )}
 
-      {/* Column headers — sticky above the virtualised list */}
+      {/* Column headers - fixed above the virtualised list; the grid is
+          translated by the list's horizontal scroll offset so the header
+          columns stay exactly over their cells (see headerShift). */}
+      <div style={{ overflow: "hidden", flexShrink: 0 }}>
       <div
         style={{
           display: "grid",
@@ -1278,10 +1299,9 @@ export function CommitsPanel() {
           padding: "3px 12px",
           borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.10))",
           background: "var(--panel-bg, transparent)",
-          position: "sticky",
-          top: 0,
-          zIndex: 1,
+          minWidth: minRowWidth,
           minHeight: 22,
+          transform: `translateX(${-headerShift}px)`,
         }}
       >
         {visibleColumns.map((colId, colIndex) => {
@@ -1357,6 +1377,7 @@ export function CommitsPanel() {
           );
         })}
       </div>
+      </div>
 
       {/* Virtualised rows. A little top padding keeps the first row clear of
           the header so a tall chip on the top commit isn't clipped against it;
@@ -1366,6 +1387,11 @@ export function CommitsPanel() {
         ref={parentRef}
         tabIndex={0}
         onKeyDown={handleQuickSearchKey}
+        onScroll={(e) => {
+          // Keep the (vertically fixed) header horizontally in lockstep.
+          // Same-value updates bail out, so vertical scrolling is free.
+          setHeaderShift(e.currentTarget.scrollLeft);
+        }}
         style={{ flex: 1, overflow: "auto", position: "relative", paddingTop: 4, outline: "none" }}
       >
         {/* Quick-search indicator: what's been typed, while the buffer is
@@ -1404,6 +1430,10 @@ export function CommitsPanel() {
           style={{
             height: rowVirtualizer.getTotalSize(),
             width: "100%",
+            // Wider than the viewport when the columns overflow: the rows
+            // are width-100% OF THIS BOX, so their selection/hover
+            // backgrounds span the whole scrollable line.
+            minWidth: minRowWidth,
             position: "relative",
           }}
         >

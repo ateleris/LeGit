@@ -50,20 +50,42 @@ export const DEFAULT_WIDTHS: Partial<Record<ColumnId, number>> = {
  *  fixed columns' sum (the 1280x800 E2E window hit this - subjects were
  *  invisible and unclickable), while `minmax` keeps it readable and lets the
  *  grid overflow-scroll instead. Pinned by useColumnState.test.ts. */
-export function columnGridTrack(
-  id: ColumnId,
-  ctx: {
-    graphColWidth: number;
-    signedColWidth: number;
-    subjectMinWidth: number;
-    widths: Partial<Record<ColumnId, number>>;
-  },
-): string {
-  if (id === "graph") return `${ctx.graphColWidth}px`;
-  if (id === "signed") return `${ctx.signedColWidth}px`;
+interface ColumnWidthCtx {
+  graphColWidth: number;
+  signedColWidth: number;
+  subjectMinWidth: number;
+  widths: Partial<Record<ColumnId, number>>;
+}
+
+/** One column's minimum px width (subject: its minmax floor). */
+function columnMinPx(id: ColumnId, ctx: ColumnWidthCtx): number {
+  if (id === "graph") return ctx.graphColWidth;
+  if (id === "signed") return ctx.signedColWidth;
+  if (id === "subject") return ctx.subjectMinWidth;
+  return ctx.widths[id] ?? DEFAULT_WIDTHS[id] ?? 100;
+}
+
+export function columnGridTrack(id: ColumnId, ctx: ColumnWidthCtx): string {
   if (id === "subject") return `minmax(${ctx.subjectMinWidth}px, 1fr)`;
-  const w = ctx.widths[id] ?? DEFAULT_WIDTHS[id] ?? 100;
-  return `${w}px`;
+  return `${columnMinPx(id, ctx)}px`;
+}
+
+/**
+ * The visible columns' total minimum width in px (tracks + gaps +
+ * horizontal padding, border-box). The header grid AND the row container
+ * both take this as `minWidth` so they always span the full horizontally
+ * scrollable line - a bare `width: 100%` resolves to the scroller's
+ * VIEWPORT width, which ended the selection background (and the header)
+ * mid-row whenever the panel had a horizontal scrollbar.
+ */
+export function columnsMinWidth(
+  ids: readonly ColumnId[],
+  ctx: ColumnWidthCtx,
+  gap: number,
+  horizontalPadding: number,
+): number {
+  const tracks = ids.reduce((sum, id) => sum + columnMinPx(id, ctx), 0);
+  return Math.ceil(tracks + gap * Math.max(0, ids.length - 1) + horizontalPadding);
 }
 
 /** All known column ids — used for validation when reading persisted prefs. */

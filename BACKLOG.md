@@ -63,19 +63,17 @@ SmartScreen/Gatekeeper warnings documented.
 
 ## Known bugs
 
-- **Commits panel: row selection highlight does not span the full row when
-  the panel scrolls horizontally** (reported 2026-08-18). With a horizontal
-  scrollbar (narrow panel / wide columns), the selected row's background
-  ends at the viewport width instead of the content width, so part of the
-  row (e.g. the trailing columns once scrolled) sits outside the highlight.
-  Repro: shrink the Commits panel until the horizontal scrollbar appears,
-  select a row, scroll right. Rough approach: the virtualized row divs use
-  `width: "100%"` (CommitsPanel.tsx render rows), which resolves against
-  the scroll container's viewport, not its scroll width - give rows
-  `min-width: max-content` (or size them to the columns' total width) so
-  the background paints across the whole scrollable line.
-
-(the diff-viewer cursor-in-chrome-rows bug was fixed
+(none currently - the Commits-panel horizontal-scroll pair was fixed
+2026-08-18: the selection/hover background ended at the viewport width and
+the column header did not scroll with the columns. Root cause: `width:
+"100%"` resolves to the scroller's viewport, and the header lived outside
+the scroll container. Fix: shared `columnsMinWidth` floor (columns/types.ts,
+unit-tested) as `minWidth` on the header grid + row container, plus a
+a translateX of the list's scroll offset on the header grid - a transform,
+not a wrapper scrollLeft sync: the header wrapper's max scroll is smaller
+than the list's (vertical scrollbar narrows the list viewport), so a
+scrollLeft sync clamps and drifts on the last few pixels.
+The diff-viewer cursor-in-chrome-rows bug was fixed
 2026-07-31 via `selectionGuard` in `Diff/editableState.ts`, regression tests
 in `editableState.test.ts`. The Merge panel was checked as the entry asked:
 its fold rows are REAL CodeMirror folds over genuine content - only the
