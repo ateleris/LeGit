@@ -816,15 +816,15 @@ export type RebaseOutcome =
 /** Mode for `git reset` (matches legit-core `ResetMode`). Hard is destructive. */
 export type ResetMode = "soft" | "mixed" | "hard";
 
+/** What a rebase step does with its commit (matches legit-core `RebaseAction`). */
+export type RebaseAction = "pick" | "squash" | "fixup" | "drop";
+
 /** One interactive-rebase step (matches legit-core `RebaseStep`). Slice order
  *  is the new commit order, oldest first — git's todo order. */
-export type RebaseStep =
-  | { action: "pick"; sha: CommitId }
-  | { action: "squash"; sha: CommitId }
-  | { action: "fixup"; sha: CommitId }
-  | { action: "drop"; sha: CommitId };
-
-export type RebaseAction = RebaseStep["action"];
+export interface RebaseStep {
+  action: RebaseAction;
+  sha: CommitId;
+}
 
 /** Index stages of a conflicted path (matches `ConflictFileSides`); a side is
  *  null when that stage is absent (add/add, delete conflicts). */

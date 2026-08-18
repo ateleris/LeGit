@@ -115,11 +115,13 @@ export function BranchesSection() {
     onError: (e) => notify.error(formatSwitchError(e)),
   });
   // Merge/rebase: notify-based feedback, and a failed attempt can still
-  // leave op state behind - domains refresh on settle either way.
+  // leave op state behind - domains refresh on settle either way. "stashes"
+  // too: rebase runs --autostash, which creates and reapplies (or keeps) a
+  // stash entry.
   const { busy: opBusy, run: runOp } = usePanelRunner({
     enabled: !!repo,
     onSettled: () => {
-      if (repo) invalidateRepoDomains(queryClient, repo.id, OP_DOMAINS);
+      if (repo) invalidateRepoDomains(queryClient, repo.id, [...OP_DOMAINS, "stashes"]);
     },
     onError: notifyOpError,
   });

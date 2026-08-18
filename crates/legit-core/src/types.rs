@@ -744,21 +744,38 @@ pub struct ConflictFileSides {
 /// message. Rewording is deliberately not a step — see the separate "reword
 /// beyond HEAD" plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(tag = "action", rename_all = "snake_case")]
-pub enum RebaseStep {
-    Pick { sha: CommitId },
-    Squash { sha: CommitId },
-    Fixup { sha: CommitId },
-    Drop { sha: CommitId },
+pub struct RebaseStep {
+    pub action: RebaseAction,
+    pub sha: CommitId,
 }
 
 impl RebaseStep {
-    pub fn sha(&self) -> &CommitId {
+    pub fn new(action: RebaseAction, sha: impl Into<String>) -> Self {
+        Self { action, sha: CommitId::new(sha) }
+    }
+}
+
+/// What a `RebaseStep` does with its commit (the todo keyword).
+/// Plan-validity rules (first kept step must be a pick, not everything
+/// dropped) are enforced by `build_rebase_todo` in `cli_impl`, mirrored
+/// for UX by `planError` in `InteractiveRebasePanel.tsx` - keep both in sync.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum RebaseAction {
+    Pick,
+    Squash,
+    Fixup,
+    Drop,
+}
+
+impl RebaseAction {
+    /// The git todo-file keyword.
+    pub fn keyword(self) -> &'static str {
         match self {
-            RebaseStep::Pick { sha }
-            | RebaseStep::Squash { sha }
-            | RebaseStep::Fixup { sha }
-            | RebaseStep::Drop { sha } => sha,
+            RebaseAction::Pick => "pick",
+            RebaseAction::Squash => "squash",
+            RebaseAction::Fixup => "fixup",
+            RebaseAction::Drop => "drop",
         }
     }
 }

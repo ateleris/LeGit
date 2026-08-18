@@ -17,7 +17,8 @@ use crate::types::{
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
     FetchOptions, FfMode, FileAtRevision, FileHistoryEntry, FileState, FileStatus,
     HunkOp, LfsStatus, LineEndingKind, LineEndingStatusEntry, LineEndingTransition, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullStrategy, PushOptions, PushRecurseMode,
-    RebaseOutcome, RebaseStep, RefDecoration, RefSelector, ReflogEntry, Remote, RemoteTag,
+    RebaseAction, RebaseOutcome, RebaseStep, RefDecoration, RefSelector, ReflogEntry, Remote,
+    RemoteTag,
     RenormalizeOutcome, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode, SequenceOutcome, SignMode, StashApplyOutcome, StashEntry,
     StashOutcome, SubmoduleAutoUpdateResult, SubmoduleAutoUpdateStatus, SubmoduleGitdirInfo,
     SubmoduleInfo, SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy,
@@ -2733,12 +2734,23 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         plan: &[RebaseStep],
     ) -> Result<RebaseOutcome, GitError> {
         let todo = build_rebase_todo(plan)?;
+        // The injected todo REPLACES git's generated one, and git silently
+        // drops any base..HEAD commit missing from the todo (the default
+        // rebase.missingCommitsCheck is "ignore" - verified against real git
+        // in tests/git_flows.rs). A stale or truncated plan would lose
+        // history without a word, so refuse any plan whose sha set is not
+        // exactly `rev-list base..HEAD` - and refuse merge commits outright
+        // (a `pick <merge>` wedges the rebase mid-flight: "is a merge but no
+        // -m option was given").
+        let range = format!("{base}..HEAD");
+        let listed = self.run_checked(&["rev-list", "--parents", &range]).await?;
+        verify_plan_covers_range(plan, &listed)?;
         // No temp script: sh completes `printf '<todo>' >` with the todo path
         // git appends, writing the plan straight into git's own todo file.
         // Safe to interpolate: `build_rebase_todo` rejects non-hex shas, so
         // the single-quoted printf format can never be broken out of.
         let editor = format!("printf '{todo}' >");
-        let env = [("GIT_SEQUENCE_EDITOR", editor.as_str()), ("GIT_EDITOR", "true")];
+        let env = [("GIT_SEQUENCE_EDITOR", editor.as_str()), EDITOR_ACCEPT_ENV[0]];
         let (code, stdout, stderr) = self
             .run_classified_env(&["rebase", "-i", "--autostash", base], &env)
             .await?;
@@ -3855,27 +3867,21 @@ fn build_rebase_todo(plan: &[RebaseStep]) -> Result<String, GitError> {
     let mut first_kept = true;
     let mut todo = String::new();
     for step in plan {
-        let sha = step.sha().as_str();
+        let sha = step.sha.as_str();
         if sha.is_empty() || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(GitError::Internal(format!(
                 "interactive rebase plan contains a non-hex sha: {sha:?}"
             )));
         }
-        let keyword = match step {
-            RebaseStep::Pick { .. } => "pick",
-            RebaseStep::Squash { .. } => "squash",
-            RebaseStep::Fixup { .. } => "fixup",
-            RebaseStep::Drop { .. } => "drop",
-        };
-        if matches!(step, RebaseStep::Squash { .. } | RebaseStep::Fixup { .. }) && first_kept {
+        if matches!(step.action, RebaseAction::Squash | RebaseAction::Fixup) && first_kept {
             return Err(GitError::Internal(
                 "interactive rebase plan starts with squash/fixup (nothing to meld into)".into(),
             ));
         }
-        if !matches!(step, RebaseStep::Drop { .. }) {
+        if step.action != RebaseAction::Drop {
             first_kept = false;
         }
-        todo.push_str(keyword);
+        todo.push_str(step.action.keyword());
         todo.push(' ');
         todo.push_str(sha);
         todo.push_str("\\n");
@@ -3886,6 +3892,38 @@ fn build_rebase_todo(plan: &[RebaseStep]) -> Result<String, GitError> {
         ));
     }
     Ok(todo)
+}
+
+/// Check an interactive-rebase plan against `git rev-list --parents
+/// base..HEAD` output before the todo is injected. The injected todo fully
+/// replaces git's generated one and missing lines mean silently DROPPED
+/// commits, so the plan's sha set must equal the range's sha set exactly:
+/// a truncated plan (UI listing cap) or a stale one (a commit landed after
+/// the plan was built) is refused instead of losing history. Merge commits
+/// are refused too - `pick <merge>` stops the rebase mid-flight with "is a
+/// merge but no -m option was given" and plain continue re-hits it.
+fn verify_plan_covers_range(plan: &[RebaseStep], rev_list_parents: &str) -> Result<(), GitError> {
+    let mut range: HashSet<&str> = HashSet::new();
+    for line in rev_list_parents.lines() {
+        let mut fields = line.split_whitespace();
+        let Some(sha) = fields.next() else { continue };
+        if fields.count() > 1 {
+            return Err(GitError::Internal(format!(
+                "the range contains a merge commit ({}); interactive rebase across merges is not supported",
+                &sha[..sha.len().min(8)]
+            )));
+        }
+        range.insert(sha);
+    }
+    let planned: HashSet<&str> = plan.iter().map(|s| s.sha.as_str()).collect();
+    if planned != range || plan.len() != range.len() {
+        return Err(GitError::Internal(
+            "the plan no longer matches the commits after the base (the repository changed since \
+             the plan was built); reload the plan and try again"
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Split the sequencer's (revert/cherry-pick) exit-1 ambiguity the same way
@@ -4187,10 +4225,10 @@ mod tests {
     #[test]
     fn rebase_todo_renders_keywords_in_order() {
         let plan = vec![
-            RebaseStep::Pick { sha: CommitId::new("aaa111") },
-            RebaseStep::Squash { sha: CommitId::new("bbb222") },
-            RebaseStep::Fixup { sha: CommitId::new("ccc333") },
-            RebaseStep::Drop { sha: CommitId::new("ddd444") },
+            RebaseStep::new(RebaseAction::Pick, "aaa111"),
+            RebaseStep::new(RebaseAction::Squash, "bbb222"),
+            RebaseStep::new(RebaseAction::Fixup, "ccc333"),
+            RebaseStep::new(RebaseAction::Drop, "ddd444"),
         ];
         let todo = build_rebase_todo(&plan).unwrap();
         // LITERAL backslash-n separators, not newlines: the todo is injected
@@ -4203,22 +4241,63 @@ mod tests {
     fn rebase_todo_rejects_bad_plans() {
         assert!(build_rebase_todo(&[]).is_err(), "empty plan");
         assert!(
-            build_rebase_todo(&[RebaseStep::Squash { sha: CommitId::new("aaa111") }]).is_err(),
+            build_rebase_todo(&[RebaseStep::new(RebaseAction::Squash, "aaa111")]).is_err(),
             "leading squash has nothing to meld into"
         );
         // A leading DROP does not count as the first kept step.
         assert!(
             build_rebase_todo(&[
-                RebaseStep::Drop { sha: CommitId::new("aaa111") },
-                RebaseStep::Fixup { sha: CommitId::new("bbb222") },
+                RebaseStep::new(RebaseAction::Drop, "aaa111"),
+                RebaseStep::new(RebaseAction::Fixup, "bbb222"),
             ])
             .is_err(),
             "fixup after only drops still has nothing to meld into"
         );
         assert!(
-            build_rebase_todo(&[RebaseStep::Pick { sha: CommitId::new("not-hex!") }]).is_err(),
+            build_rebase_todo(&[RebaseStep::new(RebaseAction::Pick, "not-hex!")]).is_err(),
             "non-hex sha must be rejected (it would be injected into the todo file)"
         );
+    }
+
+    // --- interactive rebase plan-vs-range guard -------------------------------
+
+    #[test]
+    fn rebase_plan_must_cover_the_range_exactly() {
+        let plan = vec![
+            RebaseStep::new(RebaseAction::Pick, "aaa111"),
+            RebaseStep::new(RebaseAction::Drop, "bbb222"),
+        ];
+        // Exact set match (rev-list order is irrelevant; each line is
+        // "<sha> <parent>").
+        let listed = "bbb222 aaa111\naaa111 base00\n";
+        assert!(verify_plan_covers_range(&plan, listed).is_ok());
+
+        // A range commit missing from the plan would be SILENTLY DROPPED by
+        // git (missing todo lines are drops) - refuse. This is the truncated
+        // or stale-plan case (regression test for the data-loss scenario).
+        let listed = "ccc333 bbb222\nbbb222 aaa111\naaa111 base00\n";
+        assert!(verify_plan_covers_range(&plan, listed).is_err(), "missing range commit");
+
+        // A plan sha outside the range is equally refused.
+        let listed = "aaa111 base00\n";
+        assert!(verify_plan_covers_range(&plan, listed).is_err(), "foreign plan sha");
+
+        // A merge commit in the range (two parents on the rev-list line)
+        // cannot be picked ("is a merge but no -m option was given").
+        let plan = vec![
+            RebaseStep::new(RebaseAction::Pick, "aaa111"),
+            RebaseStep::new(RebaseAction::Pick, "eee555"),
+        ];
+        let listed = "eee555 aaa111 fff666\naaa111 base00\n";
+        assert!(verify_plan_covers_range(&plan, listed).is_err(), "merge commit in range");
+
+        // Duplicate plan entries can never satisfy the set+length check.
+        let plan = vec![
+            RebaseStep::new(RebaseAction::Pick, "aaa111"),
+            RebaseStep::new(RebaseAction::Pick, "aaa111"),
+        ];
+        let listed = "bbb222 aaa111\naaa111 base00\n";
+        assert!(verify_plan_covers_range(&plan, listed).is_err(), "duplicate plan sha");
     }
 
     // --- stash apply/pop: conflict vs plain failure --------------------------

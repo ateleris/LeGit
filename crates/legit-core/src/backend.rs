@@ -534,7 +534,11 @@ pub trait GitBackend: Send + Sync {
     /// `--autostash`. Conflicts pause the normal rebase state machine —
     /// resolve via `rebase_continue` / `rebase_skip` / `rebase_abort`.
     /// Invalid plans (empty, leading squash/fixup, non-hex sha) fail before
-    /// any git runs.
+    /// any git runs. The plan must cover `base..HEAD` exactly (checked via
+    /// `rev-list` before the rebase starts): the injected todo replaces
+    /// git's own and missing lines would SILENTLY DROP those commits, so a
+    /// stale or truncated plan is refused - as is a range containing merge
+    /// commits, which `pick` cannot replay.
     async fn rebase_interactive(
         &self,
         base: &str,

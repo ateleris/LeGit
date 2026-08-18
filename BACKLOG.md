@@ -24,12 +24,15 @@ In rough order:
    per-commit message injection), warning when the plan rewrites pushed
    commits. (Reword beyond HEAD as a standalone feature was dropped
    2026-07-05 by decision - not planned.)
-3. **Manual interactive-rebase test pass** (promoted from "Smaller
-   follow-ups" 2026-08-06; naturally follows the polish work above): run the
-   feature manually against real histories in `../LeGit-Test` -
-   pick/squash/fixup/drop/reorder plans, a plan that conflicts (resolve +
-   continue, and abort), and skip - verifying plan execution, conflict UX,
-   and the resulting log match expectations.
+3. **Manual interactive-rebase test pass** - DONE 2026-08-18 (pre-polish):
+   Simon ran the full matrix on the `rebase-playground` branch in
+   `../LeGit-Test` (fixture: poem/recipe/scratch commits, re-arm via
+   `git reset --hard 041b4e7`) - pick/squash/fixup/drop, clean reorder,
+   conflicting reorder with resolve + continue, skip, and abort all passed.
+   Same-day fixes covered by the run: the plan-coverage/merge-commit
+   guards in `rebase_interactive` and the Merge panel's empty-side
+   anchor + selection fixes. Re-run the conflict/plan cases briefly after
+   the polish work in #2 lands (it touches the same plan UI).
 (LFS blocker resolved 2026-08-17, both halves shipped the same day:
 detection + warning banner + Files panel icons (spec:
 `docs/superpowers/specs/2026-08-17-lfs-detection-warning-design.md`) and
@@ -60,7 +63,19 @@ SmartScreen/Gatekeeper warnings documented.
 
 ## Known bugs
 
-(none currently - the diff-viewer cursor-in-chrome-rows bug was fixed
+- **Commits panel: row selection highlight does not span the full row when
+  the panel scrolls horizontally** (reported 2026-08-18). With a horizontal
+  scrollbar (narrow panel / wide columns), the selected row's background
+  ends at the viewport width instead of the content width, so part of the
+  row (e.g. the trailing columns once scrolled) sits outside the highlight.
+  Repro: shrink the Commits panel until the horizontal scrollbar appears,
+  select a row, scroll right. Rough approach: the virtualized row divs use
+  `width: "100%"` (CommitsPanel.tsx render rows), which resolves against
+  the scroll container's viewport, not its scroll width - give rows
+  `min-width: max-content` (or size them to the columns' total width) so
+  the background paints across the whole scrollable line.
+
+(the diff-viewer cursor-in-chrome-rows bug was fixed
 2026-07-31 via `selectionGuard` in `Diff/editableState.ts`, regression tests
 in `editableState.test.ts`. The Merge panel was checked as the entry asked:
 its fold rows are REAL CodeMirror folds over genuine content - only the
@@ -255,12 +270,26 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   clients anyway - "commit", "rebase", "stash" are rarely translated);
   git's own stderr/messages surface untranslated in toasts and the Git
   Command Log regardless, so a translated chrome around English git output
-  may feel half-done; effort is a full string extraction pass (hundreds of
-  inline strings across panels) plus a library choice (react-i18next /
-  lingui) and a process for keeping catalogs current. The 2026-08-04
-  panel-title centralization (`PANEL_TITLES` in `registry.tsx`) shows the
-  shape a string catalog would take and would be its first consumer. If the
-  answer is "not needed", record that decision here and drop the item.
+  may feel half-done. The 2026-08-04 panel-title centralization
+  (`PANEL_TITLES` in `registry.tsx`) shows the shape a string catalog would
+  take and would be its first consumer. If the answer is "not needed",
+  record that decision here and drop the item.
+  Sized 2026-08-18 (EN-only tokenization): ~600-800 distinct frontend
+  strings across 97 tsx files (~250-350 JSX messages, ~210 title/
+  placeholder/aria attrs, ~124 toasts + 18 confirms, plus label-builder
+  helpers). Approach when picked up: NO i18n library yet - a typed TS
+  catalog (`src/i18n/en.ts`) + tiny `t(key, params)` (type-safe, zero deps,
+  trivially migratable to react-i18next later); tests import the catalog
+  instead of repeating literals; enforcement after extraction via ESLint
+  `react/jsx-no-literals` scoped to `src/panels` (the noLiteralColors
+  equivalent). Scope = frontend chrome only: backend/git messages
+  (~95 Rust sites + git stderr) stay English - translating those means
+  error-kind enums over IPC, a separate larger project.
+  DECIDED 2026-08-18: NOT a 1.0 release blocker (zero user-visible value,
+  touches all panels at max regression/conflict risk, and the want/need
+  question is still open). Sequence: decide want/need first; if yes, do
+  infra + pilot panel, then sweep in chunks (~2-4 sessions) in the first
+  quiet post-release window.
 - **Submodules:** nested-tree overview (deliberately flat for now);
   hide-the-Refs-pane-when-no-gitlinks (paneview layouts persist panes);
   `--shallow-submodules` on clone when depth + submodules are both set

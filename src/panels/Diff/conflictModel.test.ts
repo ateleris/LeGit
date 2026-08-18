@@ -6,6 +6,9 @@ import {
   composeBlockLines,
   externalChangePending,
   locateRegionAnchors,
+  precedingCommonLines,
+  emptySelections,
+  blockOrigin,
   foldableRanges,
   initialBlockRanges,
   markerViewSpans,
@@ -377,6 +380,106 @@ describe("locateRegionAnchors", () => {
   it("falls back to the search position when a region is missing", () => {
     const doc = ["a", "o1", "b"];
     expect(locateRegionAnchors(doc, [["o1"], ["edited-away"]])).toEqual([1, 2]);
+  });
+
+  // Regression (2026-08-18): an empty ours region (e.g. a rebase replaying
+  // an append onto a shorter base) anchored at the raw search position,
+  // which never advances past common lines - the first conflict's block
+  // then anchored at line 0, putting the block checkbox ON the shared
+  // context line and inserting the alignment spacer ABOVE it.
+  it("anchors an empty first region after its preceding context", () => {
+    // Stage doc: only the context line; the conflict contributes nothing.
+    expect(locateRegionAnchors(["Roses are red"], [[]], [["Roses are red"]])).toEqual([1]);
+  });
+
+  it("anchors an empty later region after the context between conflicts", () => {
+    const doc = ["a", "o1", "b", "c"];
+    expect(
+      locateRegionAnchors(doc, [["o1"], []], [["a"], ["b", "c"]]),
+    ).toEqual([1, 4]);
+  });
+
+  it("ignores unfindable context (edited commons) gracefully", () => {
+    const doc = ["a", "o1", "b"];
+    expect(
+      locateRegionAnchors(doc, [["o1"], []], [["a"], ["edited-away"]]),
+    ).toEqual([1, 2]);
+  });
+});
+
+// Regression (2026-08-18): an empty side (zero lines) got zero selection
+// flags, so BOTH its gutter checkbox and the header side-all checkbox
+// mapped over an empty array - dead controls; "take the empty side"
+// (resolve the block to nothing) was unreachable by mouse.
+describe("empty-side selection (synthetic flag)", () => {
+  const EMPTY_OURS = [
+    "Roses are red",
+    "<<<<<<< HEAD",
+    "=======",
+    "Violets are blue",
+    "Sugar is sweet",
+    ">>>>>>> 19b013c",
+  ].join("\n") + "\n";
+
+  it("emptySelections gives an empty side one synthetic flag", () => {
+    const parsed = parseConflicts(EMPTY_OURS);
+    expect(emptySelections(parsed)).toEqual([{ ours: [false], theirs: [false, false] }]);
+    expect(emptySelections(null)).toEqual([]);
+  });
+
+  it("keeps per-line flags for non-empty sides", () => {
+    const parsed = parseConflicts(
+      ["<<<<<<< HEAD", "o1", "o2", "=======", "t1", ">>>>>>> b"].join("\n") + "\n",
+    );
+    expect(emptySelections(parsed)).toEqual([{ ours: [false, false], theirs: [false] }]);
+  });
+
+  it("choosing the empty side composes the block to nothing", () => {
+    const parsed = parseConflicts(EMPTY_OURS);
+    const regions = regionsFromParsed(parsed);
+    expect(
+      composeBlockLines(regions[0], blockSection(parsed, 0), {
+        ours: [true],
+        theirs: [false, false],
+      }),
+    ).toEqual([]);
+  });
+
+  it("blockOrigin counts contributed lines, not raw flags", () => {
+    const parsed = parseConflicts(EMPTY_OURS);
+    const regions = regionsFromParsed(parsed);
+    // The synthetic ours flag contributes no lines; a phantom count would
+    // tint a line that is not part of the composed block.
+    expect(blockOrigin(regions[0], { ours: [true], theirs: [false, false] })).toEqual({
+      ours: 0,
+      theirs: 0,
+    });
+    expect(blockOrigin(regions[0], { ours: [false], theirs: [true, false] })).toEqual({
+      ours: 0,
+      theirs: 1,
+    });
+  });
+});
+
+describe("precedingCommonLines", () => {
+  it("collects the common lines before each conflict", () => {
+    const text = [
+      "before",
+      "<<<<<<< HEAD", "o1", "=======", "t1", ">>>>>>> b",
+      "mid1",
+      "mid2",
+      "<<<<<<< HEAD", "o2", "=======", "t2", ">>>>>>> b",
+      "after",
+    ].join("\n") + "\n";
+    expect(precedingCommonLines(parseConflicts(text))).toEqual([
+      ["before"],
+      ["mid1", "mid2"],
+    ]);
+  });
+
+  it("yields an empty context for a conflict at the file start", () => {
+    const text = ["<<<<<<< HEAD", "o1", "=======", "t1", ">>>>>>> b"].join("\n") + "\n";
+    expect(precedingCommonLines(parseConflicts(text))).toEqual([[]]);
   });
 });
 

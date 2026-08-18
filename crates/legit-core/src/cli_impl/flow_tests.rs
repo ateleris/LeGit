@@ -1028,11 +1028,18 @@ async fn conflict_sides_read_the_three_stages_and_tolerate_missing_ones() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn interactive_rebase_injects_the_todo_via_sequence_editor() {
-    // No temp script: the sequence editor is `printf '<todo>' >`, which sh
-    // completes with the todo path git appends — the plan is written straight
-    // into git's own todo file. GIT_EDITOR=true accepts squash messages.
+async fn interactive_rebase_verifies_the_range_then_injects_the_todo() {
+    // The plan is checked against `rev-list --parents base..HEAD` FIRST -
+    // the injected todo fully replaces git's own, and any range commit
+    // missing from it would be silently dropped. Then, no temp script: the
+    // sequence editor is `printf '<todo>' >`, which sh completes with the
+    // todo path git appends — the plan is written straight into git's own
+    // todo file. GIT_EDITOR=true accepts squash messages.
     let fake = FakeExecutor::default();
+    fake.expect(
+        &["rev-list", "--parents", "base123..HEAD"],
+        ok("ccc333 bbb222\nbbb222 aaa111\naaa111 base123\n"),
+    );
     fake.expect_env(
         &["rebase", "-i", "--autostash", "base123"],
         &[
@@ -1047,12 +1054,55 @@ async fn interactive_rebase_injects_the_todo_via_sequence_editor() {
     let (b, exec) = backend(fake);
 
     let plan = vec![
-        RebaseStep::Pick { sha: CommitId::new("aaa111") },
-        RebaseStep::Drop { sha: CommitId::new("bbb222") },
-        RebaseStep::Squash { sha: CommitId::new("ccc333") },
+        RebaseStep::new(RebaseAction::Pick, "aaa111"),
+        RebaseStep::new(RebaseAction::Drop, "bbb222"),
+        RebaseStep::new(RebaseAction::Squash, "ccc333"),
     ];
     let outcome = b.rebase_interactive("base123", &plan).await.unwrap();
     assert_eq!(outcome, RebaseOutcome::Completed);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn interactive_rebase_refuses_a_plan_that_does_not_cover_the_range() {
+    // A stale plan (a commit landed after it was built) or a truncated one
+    // (UI listing cap) must be refused BEFORE `git rebase` runs - the todo
+    // overwrite would silently drop the unlisted commit. assert_done proves
+    // no rebase was attempted.
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["rev-list", "--parents", "base123..HEAD"],
+        // ccc333 exists in the range but not in the plan.
+        ok("ccc333 bbb222\nbbb222 aaa111\naaa111 base123\n"),
+    );
+    let (b, exec) = backend(fake);
+
+    let plan = vec![
+        RebaseStep::new(RebaseAction::Pick, "aaa111"),
+        RebaseStep::new(RebaseAction::Pick, "bbb222"),
+    ];
+    assert!(b.rebase_interactive("base123", &plan).await.is_err());
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn interactive_rebase_refuses_a_range_containing_a_merge() {
+    // `pick <merge>` stops the rebase mid-flight ("is a merge but no -m
+    // option was given") in a state plain continue re-hits - refuse up
+    // front, before any git mutation.
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["rev-list", "--parents", "base123..HEAD"],
+        // bbb222 has two parents: a merge commit.
+        ok("bbb222 aaa111 fff666\naaa111 base123\n"),
+    );
+    let (b, exec) = backend(fake);
+
+    let plan = vec![
+        RebaseStep::new(RebaseAction::Pick, "aaa111"),
+        RebaseStep::new(RebaseAction::Pick, "bbb222"),
+    ];
+    assert!(b.rebase_interactive("base123", &plan).await.is_err());
     exec.assert_done();
 }
 
@@ -1063,16 +1113,16 @@ async fn interactive_rebase_rejects_bad_plans_without_running_git() {
     // Empty plan.
     assert!(b.rebase_interactive("base", &[]).await.is_err());
     // First kept step cannot meld into a predecessor.
-    let squash_first = vec![RebaseStep::Squash { sha: CommitId::new("aaa111") }];
+    let squash_first = vec![RebaseStep::new(RebaseAction::Squash, "aaa111")];
     assert!(b.rebase_interactive("base", &squash_first).await.is_err());
     // Drops before a leading squash don't provide a predecessor either.
     let drop_then_squash = vec![
-        RebaseStep::Drop { sha: CommitId::new("aaa111") },
-        RebaseStep::Fixup { sha: CommitId::new("bbb222") },
+        RebaseStep::new(RebaseAction::Drop, "aaa111"),
+        RebaseStep::new(RebaseAction::Fixup, "bbb222"),
     ];
     assert!(b.rebase_interactive("base", &drop_then_squash).await.is_err());
     // A non-hex sha must never reach the shell-interpreted editor string.
-    let bad_sha = vec![RebaseStep::Pick { sha: CommitId::new("abc'; rm -rf") }];
+    let bad_sha = vec![RebaseStep::new(RebaseAction::Pick, "abc'; rm -rf")];
     assert!(b.rebase_interactive("base", &bad_sha).await.is_err());
 
     exec.assert_done();

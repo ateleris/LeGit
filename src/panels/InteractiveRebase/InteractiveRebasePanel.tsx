@@ -21,14 +21,17 @@ interface PlanRow {
   action: RebaseAction;
 }
 
-const ACTION_LABELS: Record<RebaseAction, string> = {
-  pick: "pick",
-  squash: "squash",
-  fixup: "fixup",
-  drop: "drop",
-};
+const ACTIONS: RebaseAction[] = ["pick", "squash", "fixup", "drop"];
 
-/** First kept (non-drop) step must be a pick — squash/fixup meld upward. */
+/** Listing cap for the plan query. A plan that does not cover ALL of
+ *  base..HEAD would make git silently drop the unlisted commits (the injected
+ *  todo replaces git's own), so a range larger than this is refused rather
+ *  than truncated - and the backend independently verifies plan == range. */
+const PLAN_LIMIT = 200;
+
+/** First kept (non-drop) step must be a pick — squash/fixup meld upward.
+ *  Mirrors `build_rebase_todo` in legit-core (the enforcing copy) for
+ *  immediate UX feedback - keep the two rule sets in sync. */
 function planError(rows: PlanRow[]): string | null {
   const kept = rows.filter((r) => r.action !== "drop");
   if (rows.length === 0) return null;
@@ -57,20 +60,21 @@ export function InteractiveRebasePanel() {
     onError: notifyOpError,
     // Even a failed start can leave op state behind; refresh either way.
     onSettled: () => {
-      if (repo) invalidateRepoDomains(queryClient, repo.id, [...OP_DOMAINS, "tracking"]);
+      // "stashes" too: the rebase always runs --autostash, which creates and
+      // reapplies (or, on conflict, keeps) a stash entry.
+      if (repo) invalidateRepoDomains(queryClient, repo.id, [...OP_DOMAINS, "tracking", "stashes"]);
     },
   });
+
+  const clearPlan = useCallback(() => {
+    setBase(null);
+    setRows([]);
+  }, []);
 
   // Reset when the active repo changes (the base belongs to the old repo) -
   // except when the base was summoned FOR the repo being switched to, and
   // not on first mount. Full rationale in useRepoSwitchClear.
-  const markDelivered = useRepoSwitchClear(
-    repo?.id,
-    useCallback(() => {
-      setBase(null);
-      setRows([]);
-    }, []),
-  );
+  const markDelivered = useRepoSwitchClear(repo?.id, clearPlan);
 
   const onReceive = useCallback((payload: unknown) => {
     if (typeof payload === "string") {
@@ -81,28 +85,42 @@ export function InteractiveRebasePanel() {
   }, [markDelivered]);
   useSummonTarget("interactive-rebase", onReceive);
 
-  // base..HEAD, oldest first (git log returns newest first).
+  // base..HEAD, oldest first (git log returns newest first). Fetched one
+  // past PLAN_LIMIT so truncation is detectable rather than silent.
   const { data: commits = [], isFetching, refetch } = useQuery<Commit[]>({
     queryKey: [repo?.id, "log", "interactive-rebase", base],
-    queryFn: () => repoLog(repo!.id, 200, undefined, `${base}..HEAD`),
+    queryFn: () => repoLog(repo!.id, PLAN_LIMIT + 1, undefined, `${base}..HEAD`),
     enabled: !!repo && !!base,
     staleTime: 5_000,
   });
   usePanelFocusEffect(useCallback(() => { refetch(); }, [refetch]));
+
+  const oldestFirst = useMemo(() => [...commits].reverse(), [commits]);
+
+  // Ranges the plan cannot represent are refused outright: a truncated plan
+  // (or one containing merges, which `pick` cannot replay) would make git
+  // silently drop or wedge on the affected commits.
+  const rangeError =
+    commits.length > PLAN_LIMIT
+      ? `More than ${PLAN_LIMIT} commits after this base - pick a closer base.`
+      : commits.some((c) => c.parents.length > 1)
+        ? "The commits after this base include a merge commit - interactive rebase across merges is not supported."
+        : null;
 
   // (Re)build the editable plan whenever the underlying range changes.
   // Deliberately NOT on every refetch result identity — only when the actual
   // commit ids change, so an in-progress plan edit survives focus refreshes.
   const commitIds = useMemo(() => commits.map((c) => c.id).join(","), [commits]);
   useEffect(() => {
-    const oldestFirst = [...commits].reverse();
     setRows(
-      oldestFirst.map((c) => ({
-        sha: c.id,
-        shortSha: c.id.slice(0, 8),
-        subject: c.message.split("\n")[0],
-        action: "pick" as RebaseAction,
-      })),
+      rangeError
+        ? []
+        : oldestFirst.map((c) => ({
+            sha: c.id,
+            shortSha: c.id.slice(0, 8),
+            subject: c.message.split("\n")[0],
+            action: "pick" as RebaseAction,
+          })),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [commitIds]);
@@ -125,10 +143,10 @@ export function InteractiveRebasePanel() {
   };
 
   const error = planError(rows);
-  const unchanged = rows.every((r, i) => {
-    const oldestFirst = [...commits].reverse();
-    return r.action === "pick" && oldestFirst[i]?.id === r.sha;
-  });
+  const unchanged = useMemo(
+    () => rows.every((r, i) => r.action === "pick" && oldestFirst[i]?.id === r.sha),
+    [rows, oldestFirst],
+  );
 
   const start = async () => {
     if (!base) return;
@@ -136,8 +154,7 @@ export function InteractiveRebasePanel() {
       const plan: RebaseStep[] = rows.map((r) => ({ action: r.action, sha: r.sha }));
       const outcome = await repoRebaseInteractive(repo!.id, base, plan);
       notifyRebaseOutcome(outcome, base.slice(0, 8));
-      setBase(null);
-      setRows([]);
+      clearPlan();
     });
   };
 
@@ -180,7 +197,7 @@ export function InteractiveRebasePanel() {
       >
         {rows.length === 0 && !isFetching && (
           <span className="legit-subtle" style={{ fontSize: "var(--fz-md)" }}>
-            No commits after the chosen base.
+            {rangeError ?? "No commits after the chosen base."}
           </span>
         )}
         {rows.map((r, i) => (
@@ -202,9 +219,9 @@ export function InteractiveRebasePanel() {
               onChange={(e) => setAction(i, e.target.value as RebaseAction)}
               style={{ fontSize: "var(--fz-sm)", width: "6.5em" }}
             >
-              {(Object.keys(ACTION_LABELS) as RebaseAction[]).map((a) => (
+              {ACTIONS.map((a) => (
                 <option key={a} value={a}>
-                  {ACTION_LABELS[a]}
+                  {a}
                 </option>
               ))}
             </select>
@@ -248,8 +265,10 @@ export function InteractiveRebasePanel() {
           gap: 8,
         }}
       >
-        {error ? (
-          <span className="legit-error" style={{ fontSize: "var(--fz-sm)", flex: 1 }}>{error}</span>
+        {error || rangeError ? (
+          <span className="legit-error" style={{ fontSize: "var(--fz-sm)", flex: 1 }}>
+            {error ?? rangeError}
+          </span>
         ) : opInProgress ? (
           <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", flex: 1 }}>
             Another operation is in progress — finish it first.
@@ -259,12 +278,12 @@ export function InteractiveRebasePanel() {
             Conflicts pause the rebase — resolve them in Working Changes.
           </span>
         )}
-        <Button disabled={busy} onClick={() => { setBase(null); setRows([]); }}>
+        <Button disabled={busy} onClick={clearPlan}>
           Cancel
         </Button>
         <Button
           variant="primary"
-          disabled={busy || !!error || rows.length === 0 || unchanged || opInProgress}
+          disabled={busy || !!error || !!rangeError || rows.length === 0 || unchanged || opInProgress}
           loading={busy}
           onClick={start}
           title={unchanged ? "The plan doesn't change anything yet" : "Run the rebase plan"}

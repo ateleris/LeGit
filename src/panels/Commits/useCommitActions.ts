@@ -134,12 +134,14 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
       handleRebaseOnto: async (onto: string) => {
         const repo = repoOf();
         if (!repo) return;
+        // "stashes" too: rebase runs --autostash, which creates and
+        // reapplies (or, on conflict, keeps) a stash entry.
         try {
           const outcome = await repoRebase(repo.id, onto);
-          invalidate(repo.id, OP_DOMAINS);
+          invalidate(repo.id, [...OP_DOMAINS, "stashes"]);
           notifyRebaseOutcome(outcome, onto);
         } catch (e) {
-          invalidate(repo.id, OP_DOMAINS);
+          invalidate(repo.id, [...OP_DOMAINS, "stashes"]);
           notifyOpError(e);
         }
       },

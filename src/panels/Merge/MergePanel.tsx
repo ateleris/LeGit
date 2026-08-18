@@ -29,6 +29,7 @@ import { LineEndingBadge } from "../shared/LineEndingBadge";
 import { applyEol } from "../Diff/editModel";
 import {
   conflictSideNames,
+  emptySelections,
   externalChangePending,
   parseConflicts,
   sideLabel,
@@ -43,16 +44,6 @@ export interface MergeRequest {
   path: string;
 }
 
-/** Fresh all-unselected per-line flags for a parse. */
-function emptySelections(parsed: ParsedConflicts | null): LineSelection[] {
-  if (!parsed) return [];
-  return parsed.sections
-    .filter((s) => s.kind === "conflict")
-    .map((s) => ({
-      ours: (s as { ours: string[] }).ours.map(() => false),
-      theirs: (s as { theirs: string[] }).theirs.map(() => false),
-    }));
-}
 
 export function MergePanel() {
   const queryClient = useQueryClient();

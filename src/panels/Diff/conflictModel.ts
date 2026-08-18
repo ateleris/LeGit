@@ -290,10 +290,42 @@ function conflictMarkerLines(c: ConflictBlock, ours: string[], theirs: string[])
 
 /** Per-line inclusion flags for one conflict block (merge view): index i
  *  covers the region's i-th line. The block checkbox derives from these
- *  (checked = all true, indeterminate = some). */
+ *  (checked = all true, indeterminate = some). An EMPTY side carries ONE
+ *  synthetic flag (see `emptySelections`) with no line behind it. */
 export interface LineSelection {
   ours: boolean[];
   theirs: boolean[];
+}
+
+/** Fresh all-unselected per-line flags for a parse. An EMPTY side (it
+ *  contributes no lines - e.g. ours while a rebase replays an append onto a
+ *  shorter base, or theirs on a delete/modify conflict) gets ONE synthetic
+ *  flag: "take this side" must stay selectable, and choosing it resolves
+ *  the block to nothing (`composeBlockLines`' deletion-side path). The
+ *  gutter renders no checkbox for an empty side - the header side-all
+ *  checkbox is its entry point. */
+export function emptySelections(parsed: ParsedConflicts | null): LineSelection[] {
+  if (!parsed) return [];
+  return parsed.sections
+    .filter((s): s is ConflictBlock => s.kind === "conflict")
+    .map((s) => ({
+      ours: s.ours.length > 0 ? s.ours.map(() => false) : [false],
+      theirs: s.theirs.length > 0 ? s.theirs.map(() => false) : [false],
+    }));
+}
+
+/** How many lines each side actually contributes to a composed block - the
+ *  result decoration's tint counts. Distinct from counting raw flags: an
+ *  empty side's synthetic flag contributes 0 lines, and a raw count would
+ *  tint a line that is not part of the block. */
+export function blockOrigin(
+  region: ResolveRegions,
+  sel: LineSelection,
+): { ours: number; theirs: number } {
+  return {
+    ours: region.ours.filter((_, i) => sel.ours[i]).length,
+    theirs: region.theirs.filter((_, i) => sel.theirs[i]).length,
+  };
 }
 
 /** The i-th conflict block of a parse (bounds-checked convenience). */
@@ -336,17 +368,42 @@ export function composeBlockLines(
  * CONTENT (sequential search), not by the marker file's structure. The
  * structural derivation (`conflictAnchors`) assumes the marker file's common
  * sections match the stage file line-for-line — which stops holding the
- * moment the user edits/saves commons in the result. An empty or unfindable
- * region anchors at the running search position (graceful degradation; the
- * scroll mapping clamps).
+ * moment the user edits/saves commons in the result. An unfindable region
+ * anchors at the running search position (graceful degradation; the scroll
+ * mapping clamps).
+ *
+ * `commons` (when given) are each region's PRECEDING common lines from the
+ * marker file (`precedingCommonLines`): the search position advances past a
+ * matched context before anchoring, so an EMPTY region (this side
+ * contributes nothing, e.g. a rebase replaying an append onto a shorter
+ * base) anchors after its context instead of on top of it — a wrong anchor
+ * there puts the block checkbox and alignment spacer on a shared context
+ * line. Edited/unfindable commons are skipped (same degradation as above).
  */
 export function locateRegionAnchors(
   sideLines: readonly string[],
   regions: readonly (readonly string[])[],
+  commons?: readonly (readonly string[])[],
 ): number[] {
   const anchors: number[] = [];
   let searchFrom = 0;
-  for (const region of regions) {
+  const matchAt = (needle: readonly string[], at: number): boolean => {
+    for (let j = 0; j < needle.length; j++) {
+      if (sideLines[at + j] !== needle[j]) return false;
+    }
+    return true;
+  };
+  for (let r = 0; r < regions.length; r++) {
+    const region = regions[r];
+    const context = commons?.[r];
+    if (context && context.length > 0) {
+      for (let i = searchFrom; i <= sideLines.length - context.length; i++) {
+        if (matchAt(context, i)) {
+          searchFrom = i + context.length;
+          break;
+        }
+      }
+    }
     if (region.length === 0) {
       anchors.push(Math.min(searchFrom, sideLines.length));
       continue;
@@ -474,4 +531,10 @@ export function regionsFromParsed(parsed: ParsedConflicts): ResolveRegions[] {
     out[out.length - 1] = { ...out[out.length - 1], trail: pending };
   }
   return out;
+}
+
+/** Each conflict's preceding common lines (`regionsFromParsed`'s leads) —
+ *  the context `locateRegionAnchors` advances through before anchoring. */
+export function precedingCommonLines(parsed: ParsedConflicts): string[][] {
+  return regionsFromParsed(parsed).map((r) => r.lead);
 }

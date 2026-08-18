@@ -898,9 +898,9 @@ async fn interactive_rebase_reorders_squashes_and_drops() {
 
     // Reorder (c2 first), squash c1 into it, drop c3.
     let plan = vec![
-        RebaseStep::Pick { sha: legit_core::CommitId::new(&c2) },
-        RebaseStep::Squash { sha: legit_core::CommitId::new(&c1) },
-        RebaseStep::Drop { sha: legit_core::CommitId::new(&c3) },
+        RebaseStep::new(legit_core::RebaseAction::Pick, &c2),
+        RebaseStep::new(legit_core::RebaseAction::Squash, &c1),
+        RebaseStep::new(legit_core::RebaseAction::Drop, &c3),
     ];
     let outcome = repo.backend.rebase_interactive(&base, &plan).await.unwrap();
     assert_eq!(outcome, RebaseOutcome::Completed);
@@ -934,8 +934,8 @@ async fn interactive_rebase_conflict_pauses_the_normal_rebase_machinery() {
 
     // Reordering two commits that touch the same lines must conflict.
     let plan = vec![
-        RebaseStep::Pick { sha: legit_core::CommitId::new(&c2) },
-        RebaseStep::Pick { sha: legit_core::CommitId::new(&c1) },
+        RebaseStep::new(legit_core::RebaseAction::Pick, &c2),
+        RebaseStep::new(legit_core::RebaseAction::Pick, &c1),
     ];
     let outcome = repo.backend.rebase_interactive(&base, &plan).await.unwrap();
     assert!(matches!(outcome, RebaseOutcome::Conflicts { .. }), "{outcome:?}");
@@ -948,6 +948,78 @@ async fn interactive_rebase_conflict_pauses_the_normal_rebase_machinery() {
     repo.backend.rebase_abort().await.unwrap();
     assert_eq!(repo.head().await, tip);
     assert_eq!(repo.read("a.txt"), "two\n");
+}
+
+#[tokio::test]
+async fn interactive_rebase_refuses_a_stale_plan_instead_of_dropping_commits() {
+    // Regression test for silent data loss: the injected todo REPLACES
+    // git's generated one, and with the default rebase.missingCommitsCheck
+    // ("ignore") git drops any base..HEAD commit missing from the todo
+    // without a word. A plan that does not cover the range exactly - stale
+    // (a commit landed after it was built) or truncated (UI listing cap) -
+    // must be refused before git runs.
+    use legit_core::{RebaseAction, RebaseStep};
+
+    let repo = TestRepo::init().await;
+    repo.write("base.txt", "base\n");
+    repo.commit_all("base").await;
+    let base = repo.head().await;
+    repo.write("a.txt", "a\n");
+    repo.commit_all("add a").await;
+    let c1 = repo.head().await;
+    repo.write("b.txt", "b\n");
+    repo.commit_all("add b").await;
+    let tip = repo.head().await;
+
+    // Plan built before "add b" existed: covers only c1.
+    let stale = vec![RebaseStep::new(RebaseAction::Pick, &c1)];
+    let err = repo.backend.rebase_interactive(&base, &stale).await;
+    assert!(err.is_err(), "stale plan must be refused: {err:?}");
+
+    // Nothing ran: history intact, no rebase in progress.
+    assert_eq!(repo.head().await, tip);
+    let count = repo.git(&["rev-list", "--count", "HEAD"]).await;
+    assert_eq!(count.trim(), "3");
+    assert!(matches!(repo.backend.op_state().await.unwrap(), RepoOpState::None));
+}
+
+#[tokio::test]
+async fn interactive_rebase_refuses_a_range_containing_a_merge_commit() {
+    // `pick <merge>` stops the rebase mid-flight ("is a merge but no -m
+    // option was given"; plain continue re-hits the rescheduled pick) -
+    // the range is refused up front, before any git mutation.
+    use legit_core::{RebaseAction, RebaseStep};
+
+    let repo = TestRepo::init().await;
+    repo.write("base.txt", "base\n");
+    repo.commit_all("base").await;
+    let base = repo.head().await;
+    let main = repo.git(&["rev-parse", "--abbrev-ref", "HEAD"]).await;
+    let main = main.trim().to_string();
+
+    repo.git(&["checkout", "-b", "side"]).await;
+    repo.write("side.txt", "side\n");
+    repo.commit_all("side work").await;
+    let side = repo.head().await;
+    repo.git(&["checkout", &main]).await;
+    repo.write("main.txt", "main\n");
+    repo.commit_all("main work").await;
+    let c1 = repo.head().await;
+    repo.git(&["merge", "--no-ff", "-m", "merge side", "side"]).await;
+    let merge = repo.head().await;
+    let tip = merge.clone();
+
+    // The panel's base..HEAD listing includes the merge and both parents'
+    // commits; picking the merge is unsupported and must be refused.
+    let plan = vec![
+        RebaseStep::new(RebaseAction::Pick, &c1),
+        RebaseStep::new(RebaseAction::Pick, &side),
+        RebaseStep::new(RebaseAction::Pick, &merge),
+    ];
+    let err = repo.backend.rebase_interactive(&base, &plan).await;
+    assert!(err.is_err(), "merge in range must be refused: {err:?}");
+    assert_eq!(repo.head().await, tip);
+    assert!(matches!(repo.backend.op_state().await.unwrap(), RepoOpState::None));
 }
 
 // ---------------------------------------------------------------------------

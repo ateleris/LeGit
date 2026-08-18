@@ -30,6 +30,7 @@ import { baseTheme, NumberMarker, plusMinusIcon, readOnly } from "../Diff/DiffEd
 import { loadLanguageForPath, syntaxColorTheme } from "../Diff/syntaxLanguages";
 import { splitLines } from "../Diff/editModel";
 import {
+  blockOrigin,
   blockSection,
   composeBlockLines,
   foldableRanges,
@@ -108,12 +109,18 @@ class BlockCheckMarker extends GutterMarker {
   constructor(
     readonly state: "all" | "some" | "none",
     readonly blockLines: number,
+    /** This side contributes no lines: checking it resolves to nothing. */
+    readonly empty: boolean,
     readonly onToggle: () => void,
   ) {
     super();
   }
   override eq(other: BlockCheckMarker): boolean {
-    return other.state === this.state && other.blockLines === this.blockLines;
+    return (
+      other.state === this.state &&
+      other.blockLines === this.blockLines &&
+      other.empty === this.empty
+    );
   }
   override toDOM(): HTMLElement {
     const wrap = document.createElement("div");
@@ -123,7 +130,9 @@ class BlockCheckMarker extends GutterMarker {
     box.type = "checkbox";
     box.checked = this.state === "all";
     box.indeterminate = this.state === "some";
-    box.title = "Include this side in the result";
+    box.title = this.empty
+      ? "This side is empty - include nothing from it (resolves the conflict to nothing)"
+      : "Include this side in the result";
     box.addEventListener("change", () => this.onToggle());
     // Reach lines originating from the checkbox's centre up to the block's
     // first line and down to its last, showing what the box covers.
@@ -321,14 +330,19 @@ export const MergeView = forwardRef<
     // result's common lines must not shift where the sides' blocks render.
     // splitLines (not a raw "\n" split): the parsed regions are \r-stripped,
     // so CRLF stage content must be too or no region would ever match.
+    // The preceding-context lines let empty regions (one side contributes
+    // nothing) anchor AFTER their context instead of on top of it.
+    const leads = regions.map((r) => r.lead);
     const sideAnchors = {
       ours: locateRegionAnchors(
         splitLines(ours ?? ""),
         regions.map((r) => r.ours),
+        leads,
       ),
       theirs: locateRegionAnchors(
         splitLines(theirs ?? ""),
         regions.map((r) => r.theirs),
+        leads,
       ),
     };
 
@@ -821,14 +835,17 @@ export const MergeView = forwardRef<
           const lineNo = view.state.doc.lineAt(line.from).number;
           const i = starts.indexOf(lineNo - 1);
           if (i === -1) return null;
+          // "all" derives from the flags, not the line count: an EMPTY side
+          // has one synthetic take-nothing flag (emptySelections) and its
+          // checkbox must read checked once that flag is set.
           const flags = sel()[i]?.[side] ?? [];
           const state =
-            lens[i] > 0 && flags.length === lens[i] && flags.every(Boolean)
+            flags.length > 0 && flags.every(Boolean)
               ? "all"
               : flags.some(Boolean)
                 ? "some"
                 : "none";
-          return new BlockCheckMarker(state, Math.max(lens[i], 1), () =>
+          return new BlockCheckMarker(state, Math.max(lens[i], 1), lens[i] === 0, () =>
             onToggleBlockRef.current(i, side),
           );
         },
@@ -1209,12 +1226,10 @@ export const MergeView = forwardRef<
       if (!region || !s) return;
       const lines = composeBlockLines(region, blockSection(parsed, index), s);
       const anySelected = s.ours.some(Boolean) || s.theirs.some(Boolean);
-      const origin = anySelected
-        ? {
-            ours: s.ours.filter(Boolean).length,
-            theirs: s.theirs.filter(Boolean).length,
-          }
-        : null;
+      // Origin counts CONTRIBUTED lines (blockOrigin), not raw flags: an
+      // empty side's synthetic flag adds no line, and a raw count would
+      // tint a line that is not part of the composed block.
+      const origin = anySelected ? blockOrigin(region, s) : null;
       const range = result.state.field(rangesField)[index];
       if (!range) return;
       const doc = result.state.doc;
