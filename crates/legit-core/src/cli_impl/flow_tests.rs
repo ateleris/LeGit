@@ -2853,3 +2853,106 @@ async fn blob_bytes_parses_found_capped_and_missing() {
     assert_eq!(b.blob_bytes("HEAD:gone.png", 100).await.unwrap(), BlobBytes::Missing);
     exec.assert_done();
 }
+
+// ---------------------------------------------------------------------------
+// interactive rebase - reword via carrier commits + fixup -C
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn interactive_rebase_reword_creates_carrier_and_expands_todo() {
+    let fake = FakeExecutor::default();
+    // 1. Coverage check (unchanged).
+    fake.expect(
+        &["rev-list", "--parents", "abc..HEAD"],
+        ok("2222 1111\n1111 abc\n"),
+    );
+    // 2. Author of the reworded commit.
+    fake.expect(
+        &["log", "-1", "--format=%an%x00%ae%x00%aD", "2222"],
+        ok("Ada\0ada@example.com\0Mon, 1 Jan 2024 10:00:00 +0100\n"),
+    );
+    // 3. Carrier: same tree, parent = original, message as plain argv,
+    //    author preserved via env.
+    fake.expect_env(
+        &["commit-tree", "2222^{tree}", "-p", "2222", "-m", "new subject\n\nnew body"],
+        &[
+            ("GIT_AUTHOR_NAME", "Ada"),
+            ("GIT_AUTHOR_EMAIL", "ada@example.com"),
+            ("GIT_AUTHOR_DATE", "Mon, 1 Jan 2024 10:00:00 +0100"),
+        ],
+        ok("cccc\n"),
+    );
+    // 4. The rebase itself, todo carrying the fixup -C line.
+    fake.expect_env(
+        &["rebase", "-i", "--autostash", "abc"],
+        &[
+            (
+                "GIT_SEQUENCE_EDITOR",
+                "printf 'pick 1111\\npick 2222\\nfixup -C cccc\\n' >",
+            ),
+            ("GIT_EDITOR", "true"),
+        ],
+        ok("Successfully rebased and updated refs/heads/main."),
+    );
+    let (b, exec) = backend(fake);
+    let plan = [
+        RebaseStep::new(RebaseAction::Pick, "1111"),
+        RebaseStep::reword("2222", "new subject\n\nnew body"),
+    ];
+    let outcome = b.rebase_interactive("abc", &plan).await.expect("rebase");
+    assert!(matches!(outcome, RebaseOutcome::Completed));
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn interactive_rebase_runs_nothing_on_a_blank_reword_message() {
+    let (b, exec) = backend(FakeExecutor::default());
+    let plan = [RebaseStep::reword("1111", "   ")];
+    assert!(b.rebase_interactive("abc", &plan).await.is_err());
+    exec.assert_done(); // not even the rev-list ran
+}
+
+#[tokio::test]
+async fn interactive_rebase_creates_no_carrier_when_coverage_fails() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-list", "--parents", "abc..HEAD"], ok("1111 abc\n"));
+    let (b, exec) = backend(fake);
+    // Plan claims a commit the range does not have: refused BEFORE any
+    // commit-tree runs.
+    let plan = [RebaseStep::reword("9999", "msg")];
+    assert!(b.rebase_interactive("abc", &plan).await.is_err());
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
+// rebase_range_info - pushed set + ancestry probes
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn rebase_range_info_reads_unpushed_and_ancestry() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-list", "abc..HEAD", "--not", "@{upstream}"], ok("1111\n2222\n"));
+    fake.expect(&["merge-base", "--is-ancestor", "abc", "HEAD"], ok(""));
+    let (b, exec) = backend(fake);
+    let info = b.rebase_range_info("abc").await.expect("info");
+    assert_eq!(info.unpushed, Some(vec!["1111".into(), "2222".into()]));
+    assert!(!info.transplant);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn rebase_range_info_handles_no_upstream_and_transplant() {
+    let fake = FakeExecutor::default();
+    // exit 128: no upstream configured - an answer, not an error.
+    fake.expect(
+        &["rev-list", "abc..HEAD", "--not", "@{upstream}"],
+        fail(128, "fatal: no upstream configured for branch 'main'"),
+    );
+    // exit 1: base is NOT an ancestor - transplant.
+    fake.expect(&["merge-base", "--is-ancestor", "abc", "HEAD"], out(1, "", ""));
+    let (b, exec) = backend(fake);
+    let info = b.rebase_range_info("abc").await.expect("info");
+    assert_eq!(info.unpushed, None);
+    assert!(info.transplant);
+    exec.assert_done();
+}

@@ -388,6 +388,17 @@ pub enum FileAtRevision {
     Binary { size_bytes: u64 },
 }
 
+/// Probe for the interactive-rebase panel: which range commits are already
+/// on the upstream (warn before rewriting), and whether the base is NOT an
+/// ancestor of HEAD (the rebase then RELOCATES the range onto the base).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct RebaseRangeInfo {
+    /// Range commits NOT reachable from `@{upstream}`; None = no upstream.
+    pub unpushed: Option<Vec<String>>,
+    /// True when the base is not an ancestor of HEAD (transplant).
+    pub transplant: bool,
+}
+
 /// Byte-exact blob content for a rev spec, capped. Internal to the backend
 /// API (never crosses IPC): previews re-encode it before shipping.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -741,38 +752,56 @@ pub struct ConflictFileSides {
 /// order, oldest first — exactly git's todo-file order. `Squash` melds the
 /// commit into the previous kept step combining both messages (accepted
 /// unchanged via `GIT_EDITOR=true`); `Fixup` melds keeping only the previous
-/// message. Rewording is deliberately not a step — see the separate "reword
-/// beyond HEAD" plan.
+/// message. `Reword` picks the commit and replaces its message (author
+/// preserved) via a carrier commit + `fixup -C` (git >= 2.32).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct RebaseStep {
     pub action: RebaseAction,
     pub sha: CommitId,
+    /// New commit message; required (non-blank) for `Reword`, refused
+    /// otherwise. `#[serde(default)]` keeps old callers/tests compiling.
+    #[serde(default)]
+    pub message: Option<String>,
 }
 
 impl RebaseStep {
     pub fn new(action: RebaseAction, sha: impl Into<String>) -> Self {
-        Self { action, sha: CommitId::new(sha) }
+        Self { action, sha: CommitId::new(sha), message: None }
+    }
+
+    pub fn reword(sha: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            action: RebaseAction::Reword,
+            sha: CommitId::new(sha),
+            message: Some(message.into()),
+        }
     }
 }
 
 /// What a `RebaseStep` does with its commit (the todo keyword).
-/// Plan-validity rules (first kept step must be a pick, not everything
-/// dropped) are enforced by `build_rebase_todo` in `cli_impl`, mirrored
-/// for UX by `planError` in `InteractiveRebasePanel.tsx` - keep both in sync.
+/// Plan-validity rules (first kept step must be a pick or reword, not
+/// everything dropped) are enforced by `validate_rebase_plan` in `cli_impl`,
+/// mirrored for UX by `planError` in `planModel.ts` - keep both in sync.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum RebaseAction {
     Pick,
+    /// Pick + replace the message (keeping the author). Expands to
+    /// `pick <sha>` + `fixup -C <carrier>` in the todo; there is no
+    /// single-line `reword` (it would open an editor, which the runner
+    /// hardens off).
+    Reword,
     Squash,
     Fixup,
     Drop,
 }
 
 impl RebaseAction {
-    /// The git todo-file keyword.
+    /// The git todo-file keyword. A reword IS a pick at the todo level;
+    /// its message rides the `fixup -C` line built next to it.
     pub fn keyword(self) -> &'static str {
         match self {
-            RebaseAction::Pick => "pick",
+            RebaseAction::Pick | RebaseAction::Reword => "pick",
             RebaseAction::Squash => "squash",
             RebaseAction::Fixup => "fixup",
             RebaseAction::Drop => "drop",

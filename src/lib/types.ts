@@ -817,13 +817,24 @@ export type RebaseOutcome =
 export type ResetMode = "soft" | "mixed" | "hard";
 
 /** What a rebase step does with its commit (matches legit-core `RebaseAction`). */
-export type RebaseAction = "pick" | "squash" | "fixup" | "drop";
+export type RebaseAction = "pick" | "reword" | "squash" | "fixup" | "drop";
 
 /** One interactive-rebase step (matches legit-core `RebaseStep`). Slice order
  *  is the new commit order, oldest first — git's todo order. */
 export interface RebaseStep {
   action: RebaseAction;
   sha: CommitId;
+  /** New commit message; set exactly for reword steps. */
+  message?: string | null;
+}
+
+/** Probe behind the rebase panel's pushed chips + transplant notice
+ *  (matches legit-core `RebaseRangeInfo`). */
+export interface RebaseRangeInfo {
+  /** Range commits NOT reachable from @{upstream}; null = no upstream. */
+  unpushed: string[] | null;
+  /** True when the base is not an ancestor of HEAD (the rebase relocates). */
+  transplant: boolean;
 }
 
 /** Index stages of a conflicted path (matches `ConflictFileSides`); a side is

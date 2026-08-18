@@ -13,7 +13,8 @@ use crate::types::{
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
     FetchOptions, FileAtRevision, FileHistoryEntry, FileStatus, HunkOp, LfsStatus, LogOptions,
     MergeOptions, MergeOutcome, PullOptions, PushOptions, RebaseOutcome, RebaseStep,
-    ReflogEntry, Remote, RemoteTag, RenormalizeOutcome, RepoFileEntry, RepoOpState, ResetMode, SequenceOutcome, StashApplyOutcome,
+    RebaseRangeInfo, ReflogEntry, Remote, RemoteTag, RenormalizeOutcome, RepoFileEntry, RepoOpState,
+    ResetMode, SequenceOutcome, StashApplyOutcome,
     StashEntry, StashOutcome, SubmoduleAutoUpdateResult, SubmoduleGitdirInfo, SubmoduleInfo,
     SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy, SwitchDirtyBehavior,
     SwitchOutcome, TagInfo, TrackingStatus,
@@ -533,17 +534,26 @@ pub trait GitBackend: Send + Sync {
     /// messages are git's auto-combined text, accepted unchanged. Always
     /// `--autostash`. Conflicts pause the normal rebase state machine —
     /// resolve via `rebase_continue` / `rebase_skip` / `rebase_abort`.
-    /// Invalid plans (empty, leading squash/fixup, non-hex sha) fail before
-    /// any git runs. The plan must cover `base..HEAD` exactly (checked via
-    /// `rev-list` before the rebase starts): the injected todo replaces
-    /// git's own and missing lines would SILENTLY DROP those commits, so a
-    /// stale or truncated plan is refused - as is a range containing merge
-    /// commits, which `pick` cannot replay.
+    /// Invalid plans (empty, leading squash/fixup, non-hex sha, blank
+    /// reword message) fail before any git runs. The plan must cover
+    /// `base..HEAD` exactly (checked via `rev-list` before the rebase
+    /// starts): the injected todo replaces git's own and missing lines
+    /// would SILENTLY DROP those commits, so a stale or truncated plan is
+    /// refused - as is a range containing merge commits, which `pick`
+    /// cannot replay. Reword steps run WITHOUT an editor: each gets an
+    /// unreferenced carrier commit (original tree + author, new message)
+    /// and a `fixup -C <carrier>` todo line (git >= 2.32).
     async fn rebase_interactive(
         &self,
         base: &str,
         plan: &[RebaseStep],
     ) -> Result<RebaseOutcome, GitError>;
+
+    /// Probe behind the interactive-rebase panel's pushed-commit chips and
+    /// transplant notice: which `base..HEAD` commits are NOT on
+    /// `@{upstream}` (None = no upstream), and whether `base` is NOT an
+    /// ancestor of HEAD (the rebase then relocates the range onto it).
+    async fn rebase_range_info(&self, base: &str) -> Result<RebaseRangeInfo, GitError>;
 
     /// `git reset --soft|--mixed|--hard <target>`. `Hard` is destructive
     /// (discards uncommitted changes) — the UI confirms before calling.

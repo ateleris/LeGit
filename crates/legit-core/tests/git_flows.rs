@@ -4002,3 +4002,89 @@ async fn blob_bytes_is_byte_exact_and_classifies_missing() {
         BlobBytes::TooLarge { size: bytes.len() as u64 }
     );
 }
+
+/// Reword via carrier + fixup -C, end to end: message replaced verbatim
+/// (multi-line body), author preserved, content untouched - combined with a
+/// reorder so the empty-diff carrier property is exercised.
+#[tokio::test]
+async fn interactive_rebase_rewords_a_mid_history_commit() {
+    use legit_core::{RebaseAction, RebaseStep};
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "a\n");
+    repo.commit_all("base").await;
+    let base = repo.head().await;
+    repo.write("b.txt", "b\n");
+    repo.git(&["add", "-A"]).await;
+    repo.git(&[
+        "-c", "user.name=Ada Lovelace",
+        "-c", "user.email=ada@example.invalid",
+        "commit", "-m", "second",
+    ])
+    .await;
+    let reworded = repo.head().await;
+    repo.write("c.txt", "c\n");
+    repo.commit_all("third").await;
+    let third = repo.head().await;
+
+    let plan = [
+        // Reorder: third first, then the reworded second.
+        RebaseStep::new(RebaseAction::Pick, &third),
+        RebaseStep::reword(&reworded, "renamed subject\n\nwith a body line"),
+    ];
+    let outcome = repo.backend.rebase_interactive(&base, &plan).await.expect("rebase");
+    assert!(matches!(outcome, RebaseOutcome::Completed), "got {outcome:?}");
+
+    let log = repo
+        .git(&["log", "--format=%s|%an|%ae", &format!("{base}..HEAD")])
+        .await;
+    let lines: Vec<&str> = log.trim().lines().collect();
+    // Newest first: the reworded commit is on top after the reorder.
+    assert_eq!(lines[0], "renamed subject|Ada Lovelace|ada@example.invalid");
+    assert_eq!(lines[1], "third|LeGit Test|test@example.invalid");
+    let body = repo.git(&["log", "-1", "--format=%b"]).await;
+    assert_eq!(body.trim(), "with a body line");
+    // Content untouched: both files exist with their content.
+    assert_eq!(repo.read("b.txt"), "b\n");
+    assert_eq!(repo.read("c.txt"), "c\n");
+}
+
+/// Pins the two probes behind the pushed-warning + transplant notice:
+/// `rev-list --not @{upstream}` (exit 128 without an upstream) and
+/// `merge-base --is-ancestor`'s 0/1 exit contract.
+#[tokio::test]
+async fn rebase_range_info_probes_upstream_and_ancestry() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "a\n");
+    repo.commit_all("base").await;
+    let base = repo.head().await;
+    repo.write("b.txt", "b\n");
+    repo.commit_all("pushed-commit").await;
+
+    // No upstream yet: unpushed = None; base is an ancestor.
+    let info = repo.backend.rebase_range_info(&base).await.expect("info");
+    assert_eq!(info.unpushed, None);
+    assert!(!info.transplant);
+
+    // Publish, then add one local-only commit: exactly it is unpushed.
+    let remote = tempfile::tempdir().expect("tempdir");
+    let remote_path = remote.path().to_string_lossy().into_owned();
+    let remote_runner = GitRunner::for_repo("git", remote.path());
+    let out = remote_runner.run(&["init", "--bare"]).await.expect("spawn git");
+    assert!(out.success, "bare init failed: {}", out.stderr);
+    repo.git(&["remote", "add", "origin", &remote_path]).await;
+    repo.git(&["push", "-u", "origin", "main"]).await;
+    repo.write("c.txt", "c\n");
+    repo.commit_all("local-only").await;
+    let local_only = repo.head().await;
+    let info = repo.backend.rebase_range_info(&base).await.expect("info");
+    assert_eq!(info.unpushed, Some(vec![local_only.clone()]));
+
+    // A base on a parallel branch: transplant = true.
+    repo.git(&["switch", "-c", "side", &base]).await;
+    repo.write("side.txt", "s\n");
+    repo.commit_all("side commit").await;
+    let side = repo.head().await;
+    repo.git(&["switch", "main"]).await;
+    let info = repo.backend.rebase_range_info(&side).await.expect("info");
+    assert!(info.transplant);
+}

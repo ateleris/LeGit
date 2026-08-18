@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useSummonTarget } from "../../store/summon";
+import { confirmDialog } from "../../store/confirm";
 import { usePanelFocusEffect } from "../PanelApiContext";
-import { repoLog, repoRebaseInteractive } from "../../lib/commands";
-import type { Commit, RebaseAction, RebaseStep } from "../../lib/types";
+import { repoLog, repoRebaseInteractive, repoRebaseRangeInfo } from "../../lib/commands";
+import type { Commit, RebaseAction, RebaseRangeInfo, RebaseStep } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { OP_DOMAINS, useOpState } from "../../lib/useOpState";
 import { notifyOpError, notifyRebaseOutcome } from "../../lib/mergeFeedback";
@@ -12,16 +13,16 @@ import { Button, IconButton } from "../shared/buttons";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
+import { useRowDragReorder } from "../shared/useRowDragReorder";
+import {
+  isUnchanged,
+  planError,
+  pushedShas,
+  toTodoOrder,
+  type PlanRow,
+} from "./planModel";
 
-/** One editable plan row (UI order = todo order, oldest first). */
-interface PlanRow {
-  sha: string;
-  shortSha: string;
-  subject: string;
-  action: RebaseAction;
-}
-
-const ACTIONS: RebaseAction[] = ["pick", "squash", "fixup", "drop"];
+const ACTIONS: RebaseAction[] = ["pick", "reword", "squash", "fixup", "drop"];
 
 /** Listing cap for the plan query. A plan that does not cover ALL of
  *  base..HEAD would make git silently drop the unlisted commits (the injected
@@ -29,25 +30,15 @@ const ACTIONS: RebaseAction[] = ["pick", "squash", "fixup", "drop"];
  *  than truncated - and the backend independently verifies plan == range. */
 const PLAN_LIMIT = 200;
 
-/** First kept (non-drop) step must be a pick — squash/fixup meld upward.
- *  Mirrors `build_rebase_todo` in legit-core (the enforcing copy) for
- *  immediate UX feedback - keep the two rule sets in sync. */
-function planError(rows: PlanRow[]): string | null {
-  const kept = rows.filter((r) => r.action !== "drop");
-  if (rows.length === 0) return null;
-  if (kept.length === 0) return "Every commit is dropped — nothing to rebase onto.";
-  if (kept[0].action !== "pick")
-    return "The first kept commit must be a pick — squash/fixup meld into the previous one.";
-  return null;
-}
-
 /**
  * Interactive Rebase panel — summoned from a commit row with the base sha:
- * lists `base..HEAD` (oldest first, git's todo order) with per-row
- * pick/squash/fixup/drop and reordering, then runs the plan in one go.
- * Conflicts pause the normal rebase machinery, so the Working Changes
- * banner's Continue/Skip/Abort takes over from there. Rewording is not a
- * step here (see the HEAD reword / reword-beyond-HEAD plans).
+ * lists `base..HEAD` NEWEST FIRST (matching the commit graph; git's
+ * oldest-first todo order is internal) with per-row
+ * pick/reword/squash/fixup/drop, drag or arrow reordering, and an inline
+ * message editor for rewords. Pushed commits carry a chip and Start
+ * confirms before rewriting them; a base outside HEAD's ancestry shows the
+ * transplant notice. Conflicts pause the normal rebase machinery, so the
+ * Working Changes banner's Continue/Skip/Abort takes over from there.
  */
 export function InteractiveRebasePanel() {
   const repo = useActiveRepo();
@@ -55,6 +46,10 @@ export function InteractiveRebasePanel() {
 
   const [base, setBase] = useState<string | null>(null);
   const [rows, setRows] = useState<PlanRow[]>([]);
+  // Live vertical drag-to-reorder (same pattern as RepoTabBar): the grabbed
+  // row follows the pointer and the row ORDER updates live, so it visibly
+  // lands where it is dragged. All state is local; nothing commits on drop.
+  const bodyRef = useRef<HTMLDivElement | null>(null);
   const { busy, run } = usePanelRunner({
     enabled: !!repo,
     onError: notifyOpError,
@@ -85,8 +80,8 @@ export function InteractiveRebasePanel() {
   }, [markDelivered]);
   useSummonTarget("interactive-rebase", onReceive);
 
-  // base..HEAD, oldest first (git log returns newest first). Fetched one
-  // past PLAN_LIMIT so truncation is detectable rather than silent.
+  // base..HEAD, newest first (git log's own order = the graph's order).
+  // Fetched one past PLAN_LIMIT so truncation is detectable, not silent.
   const { data: commits = [], isFetching, refetch } = useQuery<Commit[]>({
     queryKey: [repo?.id, "log", "interactive-rebase", base],
     queryFn: () => repoLog(repo!.id, PLAN_LIMIT + 1, undefined, `${base}..HEAD`),
@@ -95,7 +90,18 @@ export function InteractiveRebasePanel() {
   });
   usePanelFocusEffect(useCallback(() => { refetch(); }, [refetch]));
 
-  const oldestFirst = useMemo(() => [...commits].reverse(), [commits]);
+  // Pushed set + ancestry, one probe. Passive: failure or a missing
+  // upstream just means no chips, no dialog, no notice.
+  const { data: rangeInfo } = useQuery<RebaseRangeInfo>({
+    queryKey: [repo?.id, "log", "rebase-range-info", base],
+    queryFn: () => repoRebaseRangeInfo(repo!.id, base!),
+    enabled: !!repo && !!base,
+    staleTime: 5_000,
+  });
+  const pushed = useMemo(
+    () => pushedShas(rows.map((r) => r.sha), rangeInfo?.unpushed),
+    [rows, rangeInfo],
+  );
 
   // Ranges the plan cannot represent are refused outright: a truncated plan
   // (or one containing merges, which `pick` cannot replay) would make git
@@ -115,11 +121,13 @@ export function InteractiveRebasePanel() {
     setRows(
       rangeError
         ? []
-        : oldestFirst.map((c) => ({
+        : commits.map((c) => ({
             sha: c.id,
             shortSha: c.id.slice(0, 8),
             subject: c.message.split("\n")[0],
             action: "pick" as RebaseAction,
+            originalMessage: c.message,
+            message: "",
           })),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -138,20 +146,74 @@ export function InteractiveRebasePanel() {
     });
   };
 
+  const { draggingKey: draggingSha, dragY, registerItem, beginDrag } = useRowDragReorder({
+    container: bodyRef,
+    order: rows.map((r) => r.sha),
+    onReorder: (next) =>
+      setRows((rs) => next.flatMap((sha) => rs.find((r) => r.sha === sha) ?? [])),
+    disabled: busy,
+  });
+
   const setAction = (index: number, action: RebaseAction) => {
-    setRows((rs) => rs.map((r, i) => (i === index ? { ...r, action } : r)));
+    setRows((rs) =>
+      rs.map((r, i) =>
+        i === index
+          ? {
+              ...r,
+              action,
+              // Prefill the reword draft with the full original message the
+              // first time; leaving reword discards the draft.
+              message:
+                action === "reword"
+                  ? r.action === "reword"
+                    ? r.message
+                    : r.originalMessage
+                  : "",
+            }
+          : r,
+      ),
+    );
   };
 
-  const error = planError(rows);
+  // The base commit itself, shown as a non-interactive anchor row below the
+  // plan: it is what the commits are applied ONTO (and it visualises the
+  // newest-first direction). `log <base> -1` is exactly that commit.
+  const { data: baseCommit } = useQuery<Commit | null>({
+    queryKey: [repo?.id, "log", "rebase-base-commit", base],
+    queryFn: async () => (await repoLog(repo!.id, 1, undefined, base!))[0] ?? null,
+    enabled: !!repo && !!base,
+    staleTime: 60_000,
+  });
+
+  const error = planError(toTodoOrder(rows));
   const unchanged = useMemo(
-    () => rows.every((r, i) => r.action === "pick" && oldestFirst[i]?.id === r.sha),
-    [rows, oldestFirst],
+    () => isUnchanged(rows, commits.map((c) => c.id)),
+    [rows, commits],
   );
 
   const start = async () => {
     if (!base) return;
+    // Rewriting commits the upstream already has needs a deliberate choice:
+    // the branch will diverge and need a force-push. Deliberately NOT gated
+    // by the destructive-confirmation setting (history-warning house rule,
+    // same as amend-pushed).
+    if (pushed.size > 0) {
+      const ok = await confirmDialog({
+        title: "Rewrite pushed commits?",
+        message: `${pushed.size} of the ${rows.length} commits in this plan ${
+          pushed.size === 1 ? "is" : "are"
+        } already on the upstream. Running the plan rewrites them - the branch will need a force-push afterwards.`,
+        detail: base.slice(0, 8),
+        confirmLabel: "Rewrite history",
+      });
+      if (!ok) return;
+    }
     await run(async () => {
-      const plan: RebaseStep[] = rows.map((r) => ({ action: r.action, sha: r.sha }));
+      const plan: RebaseStep[] = toTodoOrder(rows).map((r) => ({
+        action: r.action,
+        sha: r.sha,
+        message: r.action === "reword" ? r.message : null,
+      }));
       const outcome = await repoRebaseInteractive(repo!.id, base, plan);
       notifyRebaseOutcome(outcome, base.slice(0, 8));
       clearPlan();
@@ -187,14 +249,33 @@ export function InteractiveRebasePanel() {
       <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
           Rebasing {rows.length} commit{rows.length === 1 ? "" : "s"} onto{" "}
-          <span style={{ fontFamily: "monospace" }}>{base.slice(0, 8)}</span> · applied top to bottom
+          <span style={{ fontFamily: "monospace" }}>{base.slice(0, 8)}</span> · newest on top, like
+          the graph - applied bottom to top
         </span>
       </div>
 
       <div
+        ref={bodyRef}
         className="legit-panel__body"
-        style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: "auto",
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+          // offsetTop of the rows must resolve against THIS scroll container
+          // (the drag math runs in its content space).
+          position: "relative",
+        }}
       >
+        {rangeInfo?.transplant && rows.length > 0 && (
+          <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
+            The base is not an ancestor of the current branch: these commits are REPLAYED ONTO{" "}
+            <span style={{ fontFamily: "monospace" }}>{base.slice(0, 8)}</span> and move to that
+            commit's history.
+          </span>
+        )}
         {rows.length === 0 && !isFetching && (
           <span className="legit-subtle" style={{ fontSize: "var(--fz-md)" }}>
             {rangeError ?? "No commits after the chosen base."}
@@ -203,30 +284,132 @@ export function InteractiveRebasePanel() {
         {rows.map((r, i) => (
           <div
             key={r.sha}
+            ref={registerItem(r.sha)}
+            onPointerDown={(e) => beginDrag(e, r.sha)}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              border: "1px solid var(--panel-border)",
+              borderRadius: 4,
+              padding: "4px 8px",
+              background: "var(--panel-bg)",
+              // Rows are drag handles: without this, dragging selects the
+              // subject text along the way (same fix as the repo tabs).
+              userSelect: "none",
+              opacity: r.action === "drop" ? 0.5 : 1,
+              cursor: busy ? undefined : draggingSha === r.sha ? "grabbing" : "grab",
+              // The dragged row follows the pointer and floats above its
+              // (live-reordered) siblings.
+              transform: draggingSha === r.sha ? `translateY(${dragY}px)` : undefined,
+              zIndex: draggingSha === r.sha ? 1 : undefined,
+              boxShadow: draggingSha === r.sha ? "0 2px 8px var(--shadow-color)" : undefined,
+              position: "relative",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <select
+                value={r.action}
+                disabled={busy}
+                onChange={(e) => setAction(i, e.target.value as RebaseAction)}
+                style={{ fontSize: "var(--fz-sm)", width: "6.5em" }}
+              >
+                {ACTIONS.map((a) => (
+                  <option key={a} value={a}>
+                    {a}
+                  </option>
+                ))}
+              </select>
+              <span
+                className="legit-subtle"
+                style={{ fontFamily: "monospace", fontSize: "var(--fz-sm)", flexShrink: 0 }}
+              >
+                {r.shortSha}
+              </span>
+              <span
+                style={{
+                  fontSize: "var(--fz-md)",
+                  flex: 1,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  textDecoration: r.action === "drop" ? "line-through" : undefined,
+                }}
+                title={r.subject}
+              >
+                {r.subject}
+              </span>
+              {pushed.has(r.sha) && (
+                <span
+                  className="legit-subtle"
+                  title="Already on the upstream - running this plan rewrites published history"
+                  style={{
+                    fontSize: "var(--fz-sm)",
+                    border: "1px solid var(--panel-border)",
+                    borderRadius: 3,
+                    padding: "0 4px",
+                    flexShrink: 0,
+                  }}
+                >
+                  pushed
+                </span>
+              )}
+              <IconButton
+                title="Move up (applied later)"
+                disabled={busy || i === 0}
+                onClick={() => move(i, -1)}
+              >
+                ↑
+              </IconButton>
+              <IconButton
+                title="Move down (applied earlier)"
+                disabled={busy || i === rows.length - 1}
+                onClick={() => move(i, 1)}
+              >
+                ↓
+              </IconButton>
+            </div>
+            {r.action === "reword" && (
+              <textarea
+                value={r.message}
+                disabled={busy}
+                rows={Math.min(8, Math.max(2, r.message.split("\n").length))}
+                onChange={(e) =>
+                  setRows((rs) =>
+                    rs.map((row2, i2) => (i2 === i ? { ...row2, message: e.target.value } : row2)),
+                  )
+                }
+                style={{
+                  width: "100%",
+                  marginTop: 4,
+                  fontSize: "var(--fz-md)",
+                  fontFamily: "monospace",
+                  resize: "vertical",
+                  boxSizing: "border-box",
+                  // Editable text stays selectable despite the row's
+                  // drag-handle user-select: none.
+                  userSelect: "text",
+                }}
+              />
+            )}
+          </div>
+        ))}
+        {rows.length > 0 && (
+          // The base itself: a non-interactive anchor showing what the plan
+          // is applied ONTO (and thereby the newest-first direction).
+          <div
+            className="legit-subtle"
             style={{
               display: "flex",
               alignItems: "center",
               gap: 8,
-              border: "1px solid var(--panel-border)",
+              border: "1px dashed var(--panel-border)",
               borderRadius: 4,
               padding: "4px 8px",
-              opacity: r.action === "drop" ? 0.5 : 1,
             }}
           >
-            <select
-              value={r.action}
-              disabled={busy}
-              onChange={(e) => setAction(i, e.target.value as RebaseAction)}
-              style={{ fontSize: "var(--fz-sm)", width: "6.5em" }}
-            >
-              {ACTIONS.map((a) => (
-                <option key={a} value={a}>
-                  {a}
-                </option>
-              ))}
-            </select>
-            <span className="legit-subtle" style={{ fontFamily: "monospace", fontSize: "var(--fz-sm)", flexShrink: 0 }}>
-              {r.shortSha}
+            <span style={{ fontSize: "var(--fz-sm)", width: "6.5em", flexShrink: 0 }}>base</span>
+            <span style={{ fontFamily: "monospace", fontSize: "var(--fz-sm)", flexShrink: 0 }}>
+              {base.slice(0, 8)}
             </span>
             <span
               style={{
@@ -235,24 +418,16 @@ export function InteractiveRebasePanel() {
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
-                textDecoration: r.action === "drop" ? "line-through" : undefined,
               }}
-              title={r.subject}
+              title={baseCommit?.message}
             >
-              {r.subject}
+              {baseCommit ? baseCommit.message.split("\n")[0] : ""}
             </span>
-            <IconButton title="Move up (earlier)" disabled={busy || i === 0} onClick={() => move(i, -1)}>
-              ↑
-            </IconButton>
-            <IconButton
-              title="Move down (later)"
-              disabled={busy || i === rows.length - 1}
-              onClick={() => move(i, 1)}
-            >
-              ↓
-            </IconButton>
+            <span style={{ fontSize: "var(--fz-sm)", flexShrink: 0 }}>
+              commits above are applied onto this
+            </span>
           </div>
-        ))}
+        )}
       </div>
 
       <div

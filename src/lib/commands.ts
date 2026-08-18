@@ -74,6 +74,7 @@ import type {
   MergeOptions,
   MergeOutcome,
   RebaseOutcome,
+  RebaseRangeInfo,
   RebaseStep,
   ReflogEntry,
   RepoOpState,
@@ -675,6 +676,10 @@ export const repoRebaseAbort = (repoId: string) =>
  *  first). Conflicts pause the normal rebase machinery (banner handles them). */
 export const repoRebaseInteractive = (repoId: string, base: string, plan: RebaseStep[]) =>
   invoke<RebaseOutcome>("repo_rebase_interactive", { repoId, base, plan });
+
+/** Pushed-set + ancestry probe for the interactive-rebase panel. */
+export const repoRebaseRangeInfo = (repoId: string, base: string) =>
+  invoke<RebaseRangeInfo>("repo_rebase_range_info", { repoId, base });
 
 /** The index stages of a conflicted path, for the 3-way resolve view. */
 export const repoConflictFileSides = (repoId: string, path: string) =>

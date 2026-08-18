@@ -214,6 +214,7 @@ pub fn run() {
         commands::repo_rebase_skip,
         commands::repo_rebase_abort,
         commands::repo_rebase_interactive,
+        commands::repo_rebase_range_info,
         commands::repo_conflict_file_sides,
         commands::repo_reset,
         commands::repo_revert,

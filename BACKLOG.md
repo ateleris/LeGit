@@ -6,79 +6,38 @@ add it here with: what it is, why it's deferred, and a rough approach so it can
 be picked up cleanly. Completed items are removed (git history keeps the
 record); an item that is partially done keeps only its open remainder.
 
-Last full review: 2026-07-11 (audited every item against the code, dropped
-shipped items, re-prioritised). Companion state-of-the-app review:
-`design/2026-07-11-state-of-the-app.md`.
+Last full review: 2026-08-18 (dropped the shipped 2026-08 wave: LFS
+detection/placeholders/track-management, binary image previews, the
+interactive-rebase polish + manual passes, and the fixed known bugs).
+Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
 
 ---
 
 ## Release blockers (v0.9.x -> first public release)
 
-In rough order:
-
 1. **LICENSE file.** The repo has no LICENSE yet - pick one and add it before
    the release is public (the Releases page implies redistribution). Also
    replace the workspace `license = "TBD"` in Cargo.toml.
-2. **Interactive rebase polish** (promoted from "Smaller follow-ups"
-   2026-08-06): drag-to-reorder rows, reword as a plan step (needs
-   per-commit message injection), warning when the plan rewrites pushed
-   commits. (Reword beyond HEAD as a standalone feature was dropped
-   2026-07-05 by decision - not planned.)
-3. **Manual interactive-rebase test pass** - DONE 2026-08-18 (pre-polish):
-   Simon ran the full matrix on the `rebase-playground` branch in
-   `../LeGit-Test` (fixture: poem/recipe/scratch commits, re-arm via
-   `git reset --hard 041b4e7`) - pick/squash/fixup/drop, clean reorder,
-   conflicting reorder with resolve + continue, skip, and abort all passed.
-   Same-day fixes covered by the run: the plan-coverage/merge-commit
-   guards in `rebase_interactive` and the Merge panel's empty-side
-   anchor + selection fixes. Re-run the conflict/plan cases briefly after
-   the polish work in #2 lands (it touches the same plan UI).
-(LFS blocker resolved 2026-08-17, both halves shipped the same day:
-detection + warning banner + Files panel icons (spec:
-`docs/superpowers/specs/2026-08-17-lfs-detection-warning-design.md`) and
-the pointer placeholder in File View / Diff / Blame (spec:
-`docs/superpowers/specs/2026-08-17-lfs-pointer-placeholder-design.md`).
-Smudge-on-demand on the placeholder and an explicit "fetch LFS content"
-action were **dropped by decision 2026-08-17**: the current version is
-always on disk, previously-seen versions sit in `.git/lfs/objects`, and
-displaying fetched bytes of a typical LFS binary would still end at the
-binary placeholder - the value only materializes with rendered previews,
-so the LFS fetch case is folded into the "rich preview for displayable
-binary files" item below. Stub recovery stays `git lfs pull` in the
-Console, surfaced by the warning banner.)
 
-(Screenshots blocker resolved: `docs/screenshots/hero_{light,dark}.png` are
-wired into the README via a theme-aware picture element - verified in the
-2026-08-06 review. Only the branding-matches-logo spot check was not
-machine-verifiable; eyeball it once before release. Vibecoding disclaimer
-added to the README 2026-08-06.)
-
-Decided and recorded, no action: **git is not bundled** (trade study
-`design/2026-07-07-bundled-git-trade-study.md`; install-relative config,
-size, and CVE ownership; revisit trigger + download-on-demand fallback
-design are in the study). Code signing stays deferred with the
-SmartScreen/Gatekeeper warnings documented.
+Decided and recorded, no action:
+- **Git is not bundled** (trade study
+  `design/2026-07-07-bundled-git-trade-study.md`; revisit trigger +
+  download-on-demand fallback design are in the study).
+- **Code signing stays deferred**, SmartScreen/Gatekeeper warnings
+  documented.
+- **Standalone reword-a-commit action** (outside the interactive-rebase
+  panel): dropped 2026-07-05; the rebase panel's reword step covers it.
+- **LFS smudge-on-demand + "fetch LFS content" action**: dropped
+  2026-08-17 - content is on disk / in `.git/lfs/objects`, and display
+  value only materializes with rendered previews (now shipped for images).
+  Stub recovery stays `git lfs pull` in the Console.
+- **README screenshot branding spot check**: dropped 2026-08-18.
 
 ---
 
 ## Known bugs
 
-(none currently - the Commits-panel horizontal-scroll pair was fixed
-2026-08-18: the selection/hover background ended at the viewport width and
-the column header did not scroll with the columns. Root cause: `width:
-"100%"` resolves to the scroller's viewport, and the header lived outside
-the scroll container. Fix: shared `columnsMinWidth` floor (columns/types.ts,
-unit-tested) as `minWidth` on the header grid + row container, plus a
-a translateX of the list's scroll offset on the header grid - a transform,
-not a wrapper scrollLeft sync: the header wrapper's max scroll is smaller
-than the list's (vertical scrollbar narrows the list viewport), so a
-scrollLeft sync clamps and drifts on the last few pixels.
-The diff-viewer cursor-in-chrome-rows bug was fixed
-2026-07-31 via `selectionGuard` in `Diff/editableState.ts`, regression tests
-in `editableState.test.ts`. The Merge panel was checked as the entry asked:
-its fold rows are REAL CodeMirror folds over genuine content - only the
-visual band comes from `hunkExpanders`' `headerBand` - so caret behavior
-there is native fold UX, not this bug.)
+(none currently)
 
 ## Git features (missing vs a normal client)
 
@@ -89,205 +48,105 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 - **Worktrees** (add/list/remove) and **bisect**. The two whole-feature gaps
   left vs a full-featured client. Deferred to post v1.0.0 (decided
   2026-07-20).
-- **Platform integrations, SSH-first: GitHub, GitLab, Azure DevOps.**
-  (Scoped 2026-07-13 with Simon: he authenticates via SSH and uses exactly
-  these three platforms.) Lives in the reserved `crates/legit-providers`
-  stub. Phased:
-  1. *SSH key management* - **shipped 2026-07-13**
-     (`commands/ssh_keys.rs` + `Settings/SshKeyTools.tsx`): generate
-     (Ed25519 / RSA-4096 for ADO, passphrase-less, into `~/.ssh`), public-key
-     copy, platform deep links, `ssh -T` test with output-based
-     classification (GitHub exits 1 on success - encoded in unit tests).
-     Per profile via `auth_ssh_key`; global = ssh's default keys as a
-     filesystem-only field in the global form (zero git-config writes).
-     Open follow-ups: passphrase support blocks on the `SSH_ASKPASS` item
-     below; the connection test could later surface WHICH account
-     authenticated (parse the "Hi <user>!" line).
-  2. *Connected accounts* - **PAT flow shipped 2026-07-13**
-     (`crates/legit-providers` + `commands/accounts.rs` +
-     `Settings/ConnectedAccountsSection.tsx`): paste-a-token connect for all
-     three platforms (validated via the platform API), token stored in the
-     OS keychain under the broker's `https://<host>` key (settings hold
-     metadata only), one-click public-key upload for GitHub/GitLab in the
-     SSH key tools, scope-prefilled token-creation deep links. Open
-     remainder: **OAuth device flows** (GitHub client-id-only, GitLab
-     device grant, Entra device code for ADO) - blocked on registering app
-     client IDs (Simon's account/org), the code seam is
-     `legit_providers::validate_token`. Self-hosted GitLab hosts are also
-     out (gitlab.com fixed for now).
-  3. *HTTPS auth via the broker* - **shipped 2026-07-13** with phase 2 plus
-     hardening: connect/disconnect evict the broker's session cache for the
-     host (`forget_session`: the cache is consulted BEFORE the keychain, so
-     a stale entry would shadow the new token until restart), and
-     `list_connected_accounts` reports live keychain presence, so a token
-     git erased (revoked) shows as "reconnect needed" instead of silently
-     looking connected. Remaining edge: legacy `org.visualstudio.com` ADO
-     remotes miss the `dev.azure.com` keychain entry (only if it hurts).
-  4. *(Separate product decision)* repo listing for the clone dialog,
-     PR/issue surfaces.
+- **Platform integrations, open remainders** (SSH key tools, PAT connect,
+  and broker HTTPS auth shipped 2026-07-13; scope = GitHub/GitLab/ADO,
+  SSH-first, per 2026-07-13 decision; code lives in
+  `crates/legit-providers` + `commands/accounts.rs` / `ssh_keys.rs`):
+  - **OAuth device flows** (GitHub client-id-only, GitLab device grant,
+    Entra device code for ADO) - blocked on registering app client IDs
+    (Simon's account/org); the code seam is
+    `legit_providers::validate_token`.
+  - **Self-hosted GitLab hosts** (gitlab.com fixed for now).
+  - `ssh -T` connection test could surface WHICH account authenticated
+    (parse the "Hi <user>!" line).
+  - Legacy `org.visualstudio.com` ADO remotes miss the `dev.azure.com`
+    keychain entry (fix only if it hurts).
+  - *(Separate product decision)* repo listing for the clone dialog,
+    PR/issue surfaces.
 - **SSH passphrase prompting** (`SSH_ASKPASS` shim mode): the credential
   helper covers HTTP(S) only; encrypted SSH keys without an agent still
-  fail non-interactively. Also relevant to generated keys from the
-  integrations item above (passphrase-protected keys need this or an
-  agent).
+  fail non-interactively. Also what passphrase-protected generated keys
+  from the integrations item would need.
 - **Keychain management UI**: list/forget credentials LeGit remembered
   (today: delete the "LeGit Git Credentials" entries in the OS keychain).
-- **Line-ending normalization: skip-unstaged refinement.** The Normalize
-  block shipped 2026-07-29 (spec:
-  `docs/superpowers/specs/2026-07-29-renormalize-line-endings-design.md`):
-  `.gitattributes` covers-all writer + `git add --renormalize` with a
-  throwaway-index preview in `LineEndingsRepoSection`. Open remainder:
-  `--renormalize` implies `-u`, so it also stages pending unstaged edits of
-  tracked files - v1 warns with a count in the confirm step; a refinement
-  could restrict the pathspec to files without unstaged edits.
-- **Auto-push tags with their commit** - **shipped 2026-08-04** (idea +
-  refinement + implementation same day). The invariant "a tag whose commit
-  is public is public", maintained going forward only, at two trigger
-  points: a push also pushes the tags whose target became public through it
-  (scoped by diffing `target_on_remote` around the push - never a repo-wide
-  sweep of older local tags), and a tag created on an already-public commit
-  is pushed immediately. Core: `src/lib/autoPushTags.ts`
-  (`resolveAutoPushTags` unit-tested; `pushWithTagFollowUp` wraps all three
-  branch-push sites; `autoPushTagAfterCreate` on both create sites). The
-  push-flips-`target_on_remote` assumption is pinned in
-  `tests/git_flows.rs`. Setting: global (`auto_push_tags`, default off - CI
-  release pipelines) + per-repo inherit/on/off override. Deliberately NOT
-  `--follow-tags` (annotated-only; row-menu tags are lightweight). Failure
-  isolation: tag-push problems toast separately, the branch push still
-  succeeds; a same-named remote tag with a different target is skipped with
-  a warning, never clobbered. Not built (add only if wanted): an explicit
-  one-time "publish all publishable tags" action for pre-existing local
-  tags.
-
-- **Git LFS track/pattern-management UI** - v1 SHIPPED 2026-08-18 (spec:
-  `docs/superpowers/specs/2026-08-17-lfs-track-management-design.md`):
-  list/track/untrack root-`.gitattributes` LFS patterns in the Repo
-  Settings "Git LFS" section (`repo_lfs_patterns/track/untrack` in
-  `commands/lfs.rs`; nested attribute files listed read-only; untrack
-  refuses lines carrying extra attributes; caption warns that
-  already-committed files need `git lfs migrate`, out of scope).
-  Still deferred, add only on demand: a Files-panel context-menu entry,
-  file locking (`git lfs locks`), and an explicit "fetch LFS content"
-  action - these matter mainly to asset-heavy teams, which LeGit does
-  not currently target.
-
-- **Diff viewer: rich preview for displayable binary files** - image half
-  SHIPPED 2026-08-18 (spec:
+- **Line-ending normalization: skip-unstaged refinement.** `--renormalize`
+  implies `-u`, so the shipped Normalize block (2026-07-29) also stages
+  pending unstaged edits of tracked files - v1 warns with a count in the
+  confirm step; the refinement restricts the pathspec to files without
+  unstaged edits.
+- **Git LFS, add only on demand** (detection/banner/icons, pointer
+  placeholders, and root-`.gitattributes` track management all shipped
+  2026-08-17/18): a Files-panel context-menu track/untrack entry, file
+  locking (`git lfs locks`) - these matter mainly to asset-heavy teams,
+  which LeGit does not currently target.
+- **Binary preview remainder** (image previews in Diff + File View incl.
+  local LFS objects shipped 2026-08-18, spec
   `docs/superpowers/specs/2026-08-18-binary-image-preview-design.md`):
-  PNG/JPEG/GIF/WebP/BMP/ICO previews (magic-byte sniff) in the Diff panel
-  (old/new panes, read-only, both view modes) and File View, incl. LFS
-  pointers resolved against local `.git/lfs/objects` (never fetches);
-  20 MiB per-side cap; base64 over IPC via the new byte-exact
-  `GitBackend::blob_bytes` (`cat-file --batch`). Open remainder, add on
-  demand: audio (MP3/WAV/OGG playable panes - the RIFF/WAV sniff case is
-  already encoded), SVG (text to git, needs an extension-triggered path),
-  zoom / 1:1 toggle, swipe/onion-skin comparison.
+  audio (MP3/WAV/OGG playable panes - the RIFF/WAV sniff case is already
+  encoded), SVG (text to git, needs an extension-triggered path),
+  zoom / 1:1 toggle, swipe/onion-skin comparison. Add on demand.
 
 ## Smaller follow-ups
 
 - **Files panel:** untrack a folder (`rm_cached` needs `-r` for a
   directory); persist view mode / show-ignored (ephemeral component state
   today; mirror `changed_files_view_mode`); escape `*`, `?`, `[` in
-  `gitignore_line` (a filename
-  containing them would become a glob).
+  `gitignore_line` (a filename containing them would become a glob).
 - **Git Log panel:** filter/search the log, copy a command, jump a toast to
   its specific log entry (today it just opens the panel).
 - **Commits panel: incremental log appending** (decided 2026-07-30). Today
-  every window growth (infinite scroll, and the jump-seek that loads until a
-  clicked ref's commit appears) refetches the WHOLE window from offset 0 and
-  re-parses it - O(n^2) total work, currently mitigated for the seek by
-  exponential window doubling (`growJumpWindow`). The clean fix: fetch only
-  the next page (`repoLog` already takes an offset) and append - the lane
-  algorithm was designed for exactly this (`previousAssignments` keeps
-  existing rows stable under appended pages; the edge-loss bug in that
-  path was fixed 2026-07-30 - the incremental pass now re-walks the whole
-  window with prior lanes pinned, so an incremental result always equals a
-  full recompute, pinned by the "load-more … edge set" tests in
-  `lanes.test.ts`). Likely React Query infinite-query style. Caveat to design around: offset pages are only
-  consistent while refs don't move, so a watcher invalidation mid-walk must
-  restart the walk (or re-fetch the full window once). Include a guardrail
-  on the auto-seek: past a large bound (~50k commits), stop and ask via
-  toast instead of silently walking a huge history. Keep-everything-loaded
-  stays the model (industry norm; graph lanes need all rows above, and
-  virtualization already makes rendering O(visible)) - windowed unloading
-  was considered 2026-07-30 and rejected.
-- **Commits panel search: touched-path query kind.** The search bar shipped
-  2026-07-30: one box, no mode dropdown - Enter cycles the selection
-  through full-history hits inside the intact graph (Shift+Enter
-  backwards); hits = message OR author matches (two walks merged), and a
-  query that rev-parses (SHA, branch, tag, HEAD~2) becomes the first hit.
-  Plus GitExtensions-style type-to-jump quick search over loaded rows.
-  Open remainder: a touched-path kind (`git log -- <path>`). NOTE: the
-  Search panel was removed 2026-07-30 as redundant - with it went the UI
+  every window growth (infinite scroll, and the jump-seek) refetches the
+  WHOLE window from offset 0 and re-parses it - O(n^2) total work,
+  mitigated for the seek by exponential window doubling (`growJumpWindow`).
+  The clean fix: fetch only the next page (`repoLog` already takes an
+  offset) and append - the lane algorithm was designed for this
+  (`previousAssignments` keeps existing rows stable; incremental == full
+  recompute is pinned by the "load-more … edge set" tests in
+  `lanes.test.ts`). Likely React Query infinite-query style. Caveats:
+  offset pages are only consistent while refs don't move (a watcher
+  invalidation mid-walk must restart the walk), and the auto-seek needs a
+  guardrail (~50k commits: stop and ask via toast). Keep-everything-loaded
+  stays the model; windowed unloading was rejected 2026-07-30.
+- **Commits panel search: touched-path query kind** (`git log -- <path>`) -
+  the one search mode the shipped search bar (2026-07-30) lacks. NOTE: the
+  Search panel was removed 2026-07-30 as redundant; with it went the UI
   for content search (pickaxe `-S` / `-G`) and path search. The backend
   (`search_commits` Content/ContentRegex kinds, `search_paths`) is kept
-  and tested; re-adding is a small UI task if content search is missed
-  ("when did this string change?" archaeology has no UI today).
-- **"Open in editor" on more file rows.** Shipped 2026-07-11 for Files /
-  Working Changes / Changed Files (`repo_open_file_in_editor`, `$FILE`,
-  shared `OpenInEditorMenuItem`); File History, Compare, and Search share
-  `CopyPathMenuSection` and could get the same entry.
-- **E2E extensions.** Discard-with-confirm, branch create/switch, and stash
-  create/pop specs added 2026-07-11 (awaiting their first CI runs). Still
-  open: clone-via-"+"-menu flow, and push/pull against a local bare-remote
-  fixture (`buildRemoteFixture`). Keep it a small smoke suite; Linux-only
-  remains fine.
-- **Frontend consolidation (from the 2026-07-11 hardening review, section
-  D).** Deliberately parked: shared Popover/useDismissable for the 6
-  hand-rolled dropdowns, shared composite file-row menu section, STALE
-  query-time constants, fixed-px padding
-  sweep, theme.css value-equality test, GlobalSettingsPanel split (1309
-  lines), GitBackend naming normalization (batch with the next backend
-  feature). The summon-registry cross-check test shipped 2026-08-06
-  (`src/panels/summonRegistry.test.ts`, with the global-settings summon
-  fix). The `crates/legit-providers` keep-or-delete question is
-  resolved: **keep** - it hosts the SSH-first platform-integrations item
-  under "Git features".
-- **2026-08-06 state-of-the-app review follow-ups.** Executed 2026-08-06
-  (full findings in `design/2026-08-06-state-of-the-app-review.md`):
-  backend robustness (loud submodule auto-stash list-read failures, unified
-  binary-sniff window, logged session persists), the adopt-the-helper pass
-  (`useDelayedBusy` for ~30 settings busy states, `useRepoSwitchClear` in
-  six panels, confirmDialog/notify for the window.confirm/alert sites,
-  segStyle dedup, save_region_state wrapper), CI `tsc --noEmit`, dead
-  surface deleted (decided: `repo_signing_config` / `repo_write_signing` /
-  `repo_submodule_init` removed; `repo_search_paths` stays), unused deps
-  removed, FileTree focused-row token (`graph.row.focused.bg`), shared
-  tag-remote choice (`store/tagRemote.ts` + `resolveTagRemote`), config
-  nits. Decided: the Release Notes panel staying View-menu-only is
-  intentional. Open remainder - *structural splits, when next touched* (per
-  convention): `CommitsPanel.tsx` (1720-line component; queries hook + row
-  context menu + RemoteSyncToolbar are natural splits),
-  `WorkingChangesPanel.tsx` (1130-line function; CommitComposer + shared
-  FileRowMenu), `cli_impl/mod.rs` (4951 lines; submodule + line-ending
-  blocks).
+  and tested; re-adding is a small UI task if "when did this string
+  change?" archaeology is missed.
+- **"Open in editor" on more file rows.** Shipped for Files / Working
+  Changes / Changed Files (shared `OpenInEditorMenuItem`); File History
+  and Compare share `CopyPathMenuSection` and could get the same entry.
+- **E2E extensions.** Still open: clone-via-"+"-menu flow, and push/pull
+  against a local bare-remote fixture (`buildRemoteFixture`). Keep it a
+  small smoke suite; Linux-only remains fine.
+- **Frontend consolidation (parked, from the 2026-07-11 hardening
+  review):** shared Popover/useDismissable for the hand-rolled dropdowns,
+  shared composite file-row menu section, STALE query-time constants,
+  fixed-px padding sweep, theme.css value-equality test,
+  GlobalSettingsPanel split, GitBackend naming normalization (batch with
+  the next backend feature).
+- **Structural splits, when next touched** (2026-08-06 review remainder):
+  `CommitsPanel.tsx` (~1700-line component; queries hook + row context
+  menu + RemoteSyncToolbar are natural splits), `WorkingChangesPanel.tsx`
+  (~1100-line function; CommitComposer + shared FileRowMenu),
+  `cli_impl/mod.rs` (~5000 lines; submodule + line-ending blocks).
 - **Internationalization: decide want/need (2026-08-04).** Open product
   question, not a commitment: is a non-English UI worth it for LeGit's
-  audience? Today every user-facing string is hardcoded English. Inputs for
-  the decision: who the users are (git terminology stays English in most
-  clients anyway - "commit", "rebase", "stash" are rarely translated);
-  git's own stderr/messages surface untranslated in toasts and the Git
-  Command Log regardless, so a translated chrome around English git output
-  may feel half-done. The 2026-08-04 panel-title centralization
-  (`PANEL_TITLES` in `registry.tsx`) shows the shape a string catalog would
-  take and would be its first consumer. If the answer is "not needed",
-  record that decision here and drop the item.
-  Sized 2026-08-18 (EN-only tokenization): ~600-800 distinct frontend
-  strings across 97 tsx files (~250-350 JSX messages, ~210 title/
-  placeholder/aria attrs, ~124 toasts + 18 confirms, plus label-builder
-  helpers). Approach when picked up: NO i18n library yet - a typed TS
-  catalog (`src/i18n/en.ts`) + tiny `t(key, params)` (type-safe, zero deps,
-  trivially migratable to react-i18next later); tests import the catalog
-  instead of repeating literals; enforcement after extraction via ESLint
-  `react/jsx-no-literals` scoped to `src/panels` (the noLiteralColors
-  equivalent). Scope = frontend chrome only: backend/git messages
-  (~95 Rust sites + git stderr) stay English - translating those means
-  error-kind enums over IPC, a separate larger project.
-  DECIDED 2026-08-18: NOT a 1.0 release blocker (zero user-visible value,
-  touches all panels at max regression/conflict risk, and the want/need
-  question is still open). Sequence: decide want/need first; if yes, do
-  infra + pilot panel, then sweep in chunks (~2-4 sessions) in the first
-  quiet post-release window.
+  audience? Inputs: git terminology stays English in most clients, and
+  git's own stderr surfaces untranslated regardless, so translated chrome
+  around English git output may feel half-done. Sized 2026-08-18 (EN-only
+  tokenization): ~600-800 distinct frontend strings across 97 tsx files.
+  Approach when picked up: NO i18n library yet - a typed TS catalog
+  (`src/i18n/en.ts`) + tiny `t(key, params)`, tests import the catalog,
+  enforcement via ESLint `react/jsx-no-literals` scoped to `src/panels`
+  (the noLiteralColors equivalent). Scope = frontend chrome only (backend
+  messages + git stderr stay English; translating those means error-kind
+  enums over IPC, a separate project). DECIDED 2026-08-18: NOT a 1.0
+  blocker - decide want/need first; if yes, infra + pilot panel, then a
+  chunked sweep (~2-4 sessions) in the first quiet post-release window.
+  `PANEL_TITLES` in `registry.tsx` shows the catalog shape and would be
+  its first consumer. If "not needed": record that here and drop the item.
 - **Submodules:** nested-tree overview (deliberately flat for now);
   hide-the-Refs-pane-when-no-gitlinks (paneview layouts persist panes);
   `--shallow-submodules` on clone when depth + submodules are both set
@@ -300,3 +159,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   still mis-parse. Full fidelity means fetching both full blobs, parsing
   each once, and mapping by line number - only worth it if the per-hunk
   approximation proves insufficient.
+- **"Publish all publishable tags" one-time action** for pre-existing
+  local tags - the auto-push-tags feature (2026-08-04) deliberately covers
+  the invariant going forward only; add the sweep only if wanted.

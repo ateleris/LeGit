@@ -17,7 +17,8 @@ use crate::types::{
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
     FetchOptions, FfMode, FileAtRevision, FileHistoryEntry, FileState, FileStatus,
     HunkOp, LfsStatus, LineEndingKind, LineEndingStatusEntry, LineEndingTransition, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullStrategy, PushOptions, PushRecurseMode,
-    RebaseAction, RebaseOutcome, RebaseStep, RefDecoration, RefSelector, ReflogEntry, Remote,
+    RebaseAction, RebaseOutcome, RebaseRangeInfo, RebaseStep, RefDecoration, RefSelector,
+    ReflogEntry, Remote,
     RemoteTag,
     RenormalizeOutcome, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode, SequenceOutcome, SignMode, StashApplyOutcome, StashEntry,
     StashOutcome, SubmoduleAutoUpdateResult, SubmoduleAutoUpdateStatus, SubmoduleGitdirInfo,
@@ -2733,7 +2734,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         base: &str,
         plan: &[RebaseStep],
     ) -> Result<RebaseOutcome, GitError> {
-        let todo = build_rebase_todo(plan)?;
+        validate_rebase_plan(plan)?;
         // The injected todo REPLACES git's generated one, and git silently
         // drops any base..HEAD commit missing from the todo (the default
         // rebase.missingCommitsCheck is "ignore" - verified against real git
@@ -2745,16 +2746,109 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let range = format!("{base}..HEAD");
         let listed = self.run_checked(&["rev-list", "--parents", &range]).await?;
         verify_plan_covers_range(plan, &listed)?;
+        // Message carriers for reword steps: an unreferenced commit with the
+        // ORIGINAL's tree and the original as parent (empty diff, applies
+        // anywhere in a reordered plan) holding the new message + the
+        // original author. `fixup -C` then takes message and author from it
+        // without opening an editor - git's own non-interactive reword lane
+        // (what `commit --fixup=reword:` compiles down to; git >= 2.32).
+        // The message travels as a plain argv argument: the runner spawns
+        // without a shell, so it is byte-safe and may be multi-line.
+        let runner = self.runner().await;
+        let mut carriers: HashMap<String, String> = HashMap::new();
+        for step in plan {
+            if step.action != RebaseAction::Reword {
+                continue;
+            }
+            let sha = step.sha.as_str();
+            let author = self
+                .run_checked(&["log", "-1", "--format=%an%x00%ae%x00%aD", sha])
+                .await?;
+            let (name, email, date) = parse_author_fields(&author).ok_or_else(|| {
+                GitError::Internal(format!("unexpected author format for {sha}: {author:?}"))
+            })?;
+            let tree = format!("{sha}^{{tree}}");
+            let message = step.message.as_deref().unwrap_or_default();
+            let out = runner
+                .run_with_env(
+                    &["commit-tree", &tree, "-p", sha, "-m", message],
+                    &[
+                        ("GIT_AUTHOR_NAME", &name),
+                        ("GIT_AUTHOR_EMAIL", &email),
+                        ("GIT_AUTHOR_DATE", &date),
+                    ],
+                )
+                .await?;
+            if !out.success {
+                return Err(GitError::CommandFailed {
+                    exit_code: out.exit_code.unwrap_or(-1),
+                    stderr: out.stderr.trim().to_string(),
+                });
+            }
+            carriers.insert(sha.to_string(), out.stdout.trim().to_string());
+        }
+        let todo = build_rebase_todo(plan, &carriers)?;
         // No temp script: sh completes `printf '<todo>' >` with the todo path
         // git appends, writing the plan straight into git's own todo file.
-        // Safe to interpolate: `build_rebase_todo` rejects non-hex shas, so
-        // the single-quoted printf format can never be broken out of.
+        // Safe to interpolate: the plan validation rejects non-hex shas (and
+        // build_rebase_todo re-checks the carriers), so the single-quoted
+        // printf format can never be broken out of.
         let editor = format!("printf '{todo}' >");
         let env = [("GIT_SEQUENCE_EDITOR", editor.as_str()), EDITOR_ACCEPT_ENV[0]];
         let (code, stdout, stderr) = self
             .run_classified_env(&["rebase", "-i", "--autostash", base], &env)
             .await?;
-        classify_rebase_output(code, &stdout, &stderr)
+        // Older git rejects the `fixup -C` todo line at parse time ("invalid
+        // line ...: fixup -C <sha>"); name the floor so the error is
+        // actionable rather than cryptic. Only for plans that actually
+        // reword, and only when the failure mentions the fixup line.
+        match classify_rebase_output(code, &stdout, &stderr) {
+            Err(e) if !carriers.is_empty() && stderr.to_lowercase().contains("fixup") => {
+                Err(append_error_note(
+                    e,
+                    "note: rewording via interactive rebase needs git 2.32 or newer (the `fixup -C` todo command)",
+                ))
+            }
+            other => other,
+        }
+    }
+
+    async fn rebase_range_info(&self, base: &str) -> Result<RebaseRangeInfo, GitError> {
+        let runner = self.runner().await;
+        // Range commits NOT reachable from the upstream. Exit 128 = HEAD has
+        // no upstream: no pushed-warning is possible - an answer, not an
+        // error.
+        let range = format!("{base}..HEAD");
+        let up = runner
+            .run_expecting(&["rev-list", &range, "--not", "@{upstream}"], &[128])
+            .await?;
+        let unpushed = if up.success {
+            Some(up.stdout.lines().map(str::to_string).collect())
+        } else if up.exit_code == Some(128) {
+            None
+        } else {
+            return Err(GitError::CommandFailed {
+                exit_code: up.exit_code.unwrap_or(-1),
+                stderr: up.stderr.trim().to_string(),
+            });
+        };
+        // Exit 0 = base IS an ancestor of HEAD (plain history edit); exit 1
+        // = it is not (the rebase RELOCATES the range onto the base). Any
+        // other exit is a real failure.
+        let anc = runner
+            .run_expecting(&["merge-base", "--is-ancestor", base, "HEAD"], &[1])
+            .await?;
+        let transplant = match anc.exit_code {
+            Some(0) => false,
+            Some(1) => true,
+            _ => {
+                return Err(GitError::CommandFailed {
+                    exit_code: anc.exit_code.unwrap_or(-1),
+                    stderr: anc.stderr.trim().to_string(),
+                });
+            }
+        };
+        Ok(RebaseRangeInfo { unpushed, transplant })
     }
 
     async fn reset(&self, target: &str, mode: ResetMode) -> Result<(), GitError> {
@@ -3851,21 +3945,20 @@ fn classify_rebase_output(
     })
 }
 
-/// Build the printf format string for an interactive-rebase todo (lines
-/// `pick <sha>` / `squash <sha>` / `fixup <sha>` / `drop <sha>`, `\n`
-/// separated as printf escapes). Validates the plan up front:
-/// - non-empty, with at least one kept (non-drop) step;
-/// - the first kept step must be a `pick` (squash/fixup meld into a
-///   predecessor that wouldn't exist);
-/// - every sha must be plain hex — the todo is interpolated into a
-///   single-quoted, shell-interpreted editor string, so anything else is
-///   rejected outright rather than escaped.
-fn build_rebase_todo(plan: &[RebaseStep]) -> Result<String, GitError> {
+/// Plan-validity rules, checked BEFORE anything runs (also mirrored for UX
+/// by `planError` in `planModel.ts` - keep in sync):
+/// - non-empty; not everything dropped;
+/// - the first kept step must be a pick OR reword (squash/fixup meld into
+///   a predecessor that would not exist);
+/// - shas are plain hex (the todo is interpolated into a single-quoted,
+///   shell-interpreted editor string, so anything else is rejected
+///   outright rather than escaped);
+/// - reword steps carry a non-blank message, non-reword steps carry none.
+fn validate_rebase_plan(plan: &[RebaseStep]) -> Result<(), GitError> {
     if plan.is_empty() {
         return Err(GitError::Internal("interactive rebase plan is empty".into()));
     }
     let mut first_kept = true;
-    let mut todo = String::new();
     for step in plan {
         let sha = step.sha.as_str();
         if sha.is_empty() || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -3881,17 +3974,74 @@ fn build_rebase_todo(plan: &[RebaseStep]) -> Result<String, GitError> {
         if step.action != RebaseAction::Drop {
             first_kept = false;
         }
-        todo.push_str(step.action.keyword());
-        todo.push(' ');
-        todo.push_str(sha);
-        todo.push_str("\\n");
+        match (step.action, &step.message) {
+            (RebaseAction::Reword, Some(m)) if !m.trim().is_empty() => {}
+            (RebaseAction::Reword, _) => {
+                return Err(GitError::Internal(
+                    "a reword step needs a non-empty message".into(),
+                ));
+            }
+            (_, Some(_)) => {
+                return Err(GitError::Internal(
+                    "only reword steps may carry a message".into(),
+                ));
+            }
+            (_, None) => {}
+        }
     }
     if first_kept {
         return Err(GitError::Internal(
             "interactive rebase plan drops every commit".into(),
         ));
     }
+    Ok(())
+}
+
+/// Build the printf format string for the injected todo (`\n` separated as
+/// printf escapes). Assumes `validate_rebase_plan` passed; `carriers` maps
+/// each reword step's sha to its message-carrier commit (created by
+/// `rebase_interactive`). A reword emits `pick <sha>` + `fixup -C <carrier>`
+/// - fixup -C takes message AND author from the carrier without opening an
+/// editor (git >= 2.32).
+fn build_rebase_todo(
+    plan: &[RebaseStep],
+    carriers: &HashMap<String, String>,
+) -> Result<String, GitError> {
+    let mut todo = String::new();
+    for step in plan {
+        let sha = step.sha.as_str();
+        todo.push_str(step.action.keyword());
+        todo.push(' ');
+        todo.push_str(sha);
+        todo.push_str("\\n");
+        if step.action == RebaseAction::Reword {
+            let carrier = carriers.get(sha).ok_or_else(|| {
+                GitError::Internal(format!("no message carrier for reword {sha}"))
+            })?;
+            if carrier.is_empty() || !carrier.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err(GitError::Internal(format!(
+                    "carrier commit id is not hex: {carrier:?}"
+                )));
+            }
+            todo.push_str("fixup -C ");
+            todo.push_str(carrier);
+            todo.push_str("\\n");
+        }
+    }
     Ok(todo)
+}
+
+/// Parse `git log -1 --format=%an%x00%ae%x00%aD` output into
+/// (name, email, date). NUL-separated: names/emails may contain anything
+/// printable, dates contain spaces.
+fn parse_author_fields(s: &str) -> Option<(String, String, String)> {
+    let mut it = s.trim_end_matches('\n').splitn(3, '\0');
+    match (it.next(), it.next(), it.next()) {
+        (Some(n), Some(e), Some(d)) if !n.is_empty() && !d.is_empty() => {
+            Some((n.to_string(), e.to_string(), d.to_string()))
+        }
+        _ => None,
+    }
 }
 
 /// Check an interactive-rebase plan against `git rev-list --parents
@@ -4230,7 +4380,7 @@ mod tests {
             RebaseStep::new(RebaseAction::Fixup, "ccc333"),
             RebaseStep::new(RebaseAction::Drop, "ddd444"),
         ];
-        let todo = build_rebase_todo(&plan).unwrap();
+        let todo = build_rebase_todo(&plan, &HashMap::new()).unwrap();
         // LITERAL backslash-n separators, not newlines: the todo is injected
         // through `GIT_SEQUENCE_EDITOR="printf '%s' ... >"`-style shell
         // expansion, where printf expands the \n escapes into real newlines.
@@ -4238,15 +4388,34 @@ mod tests {
     }
 
     #[test]
-    fn rebase_todo_rejects_bad_plans() {
-        assert!(build_rebase_todo(&[]).is_err(), "empty plan");
+    fn build_rebase_todo_expands_rewords() {
+        let carriers = HashMap::from([("bbb222".to_string(), "ccc333".to_string())]);
+        let todo = build_rebase_todo(
+            &[
+                RebaseStep::new(RebaseAction::Pick, "aaa111"),
+                RebaseStep::reword("bbb222", "new message"),
+            ],
+            &carriers,
+        )
+        .expect("todo");
+        assert_eq!(todo, r"pick aaa111\npick bbb222\nfixup -C ccc333\n");
+        // A reword without its carrier is a programmer error, not a git run.
+        assert!(build_rebase_todo(&[RebaseStep::reword("bbb222", "m")], &HashMap::new()).is_err());
+        // A non-hex carrier must never reach the shell-interpolated todo.
+        let bad = HashMap::from([("bbb222".to_string(), "evil'".to_string())]);
+        assert!(build_rebase_todo(&[RebaseStep::reword("bbb222", "m")], &bad).is_err());
+    }
+
+    #[test]
+    fn validate_rebase_plan_rules() {
+        assert!(validate_rebase_plan(&[]).is_err(), "empty plan");
         assert!(
-            build_rebase_todo(&[RebaseStep::new(RebaseAction::Squash, "aaa111")]).is_err(),
+            validate_rebase_plan(&[RebaseStep::new(RebaseAction::Squash, "aaa111")]).is_err(),
             "leading squash has nothing to meld into"
         );
         // A leading DROP does not count as the first kept step.
         assert!(
-            build_rebase_todo(&[
+            validate_rebase_plan(&[
                 RebaseStep::new(RebaseAction::Drop, "aaa111"),
                 RebaseStep::new(RebaseAction::Fixup, "bbb222"),
             ])
@@ -4254,9 +4423,37 @@ mod tests {
             "fixup after only drops still has nothing to meld into"
         );
         assert!(
-            build_rebase_todo(&[RebaseStep::new(RebaseAction::Pick, "not-hex!")]).is_err(),
+            validate_rebase_plan(&[RebaseStep::new(RebaseAction::Pick, "not-hex!")]).is_err(),
             "non-hex sha must be rejected (it would be injected into the todo file)"
         );
+        assert!(
+            validate_rebase_plan(&[RebaseStep::new(RebaseAction::Drop, "aaa111")]).is_err(),
+            "all-dropped plan"
+        );
+        // Reword counts as a kept first step.
+        assert!(validate_rebase_plan(&[RebaseStep::reword("aaa111", "msg")]).is_ok());
+        // Blank / missing reword message refused.
+        assert!(validate_rebase_plan(&[RebaseStep::reword("aaa111", "  \n")]).is_err());
+        let mut no_msg = RebaseStep::new(RebaseAction::Reword, "aaa111");
+        no_msg.message = None;
+        assert!(validate_rebase_plan(&[no_msg]).is_err());
+        // A message on a non-reword step would silently do nothing: refused.
+        let mut pick_msg = RebaseStep::new(RebaseAction::Pick, "aaa111");
+        pick_msg.message = Some("m".into());
+        assert!(validate_rebase_plan(&[pick_msg]).is_err());
+    }
+
+    #[test]
+    fn parses_author_fields() {
+        assert_eq!(
+            parse_author_fields("Ada\0ada@example.com\0Mon, 1 Jan 2024 10:00:00 +0100\n"),
+            Some((
+                "Ada".into(),
+                "ada@example.com".into(),
+                "Mon, 1 Jan 2024 10:00:00 +0100".into()
+            ))
+        );
+        assert_eq!(parse_author_fields("no separators"), None);
     }
 
     // --- interactive rebase plan-vs-range guard -------------------------------

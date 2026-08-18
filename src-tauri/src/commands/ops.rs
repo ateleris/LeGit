@@ -6,7 +6,7 @@ use crate::error::AppError;
 use crate::state::AppState;
 use legit_core::types::{
     ConflictEntry, ConflictFileSides, ConflictSide, MergeOptions, MergeOutcome, RebaseOutcome,
-    RebaseStep, ReflogEntry, RepoOpState, ResetMode, SequenceOutcome,
+    RebaseRangeInfo, RebaseStep, ReflogEntry, RepoOpState, ResetMode, SequenceOutcome,
 };
 use std::path::PathBuf;
 
@@ -95,6 +95,24 @@ pub async fn repo_rebase_interactive(
     session
         .backend
         .rebase_interactive(&base, &plan)
+        .await
+        .map_err(AppError::Git)
+}
+
+/// Probe behind the interactive-rebase panel's pushed-commit chips and
+/// transplant notice (which range commits are not on the upstream; whether
+/// the base is an ancestor of HEAD).
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_rebase_range_info(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    base: String,
+) -> Result<RebaseRangeInfo, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .rebase_range_info(&base)
         .await
         .map_err(AppError::Git)
 }
