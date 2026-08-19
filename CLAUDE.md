@@ -73,8 +73,9 @@ token maps to a palette entry). `applyTheme` writes CSS custom properties
 (`--token-name: var(--palette-entry)`); `resolveTheme` merges over
 `DEFAULT_THEME`. Components **never use literal colours — only `var(--token)`**.
 A new token must be added in **4 places**: `src/theme/tokens.ts` (`TOKEN_CONTRACT`),
-`src/theme/defaults.ts`, `src/styles/theme.css` (`:root` fallback), and **both**
-`themes/Light.legit-theme.json` + `Dark.legit-theme.json`. `TOKEN_CONTRACT` /
+`src/theme/defaults.ts`, `src/styles/theme.css` (`:root` fallback), and **every**
+bundled theme in `themes/*.legit-theme.json` (all of which ship as built-ins;
+`contract.test.ts` enumerates the directory). `TOKEN_CONTRACT` /
 `PALETTE_CONTRACT` are a user-facing contract: **adding is safe; renaming/removing
 breaks user themes.** The **Theme Editor** (`ThemeEditorPanel`) edits palette +
 token bindings live; rules: a palette entry can be **deleted only if no token
@@ -169,7 +170,7 @@ project memory for details.
     `abyss` class remains only as a structural fallback); extend that block
     when new dockview surfaces appear.
   - New tokens go in 4 places (`tokens.ts`, `defaults.ts`,
-    `styles/theme.css`, both bundled themes) — enforced by
+    `styles/theme.css`, every theme in `themes/`) — enforced by
     `src/theme/contract.test.ts`; a token missing from any place fails the
     suite. Literal colours are enforced by
     `src/theme/noLiteralColors.test.ts`, which fails on any colour literal

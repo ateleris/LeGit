@@ -7,8 +7,6 @@ import { contrastRatio } from "./contrast";
 import { DEFAULT_THEME } from "./defaults";
 import { bindingRef, resolveBindingColor } from "./filters";
 import type { ThemeTokenBinding } from "../lib/types";
-import lightThemeJson from "../../themes/Light.legit-theme.json";
-import darkThemeJson from "../../themes/Dark.legit-theme.json";
 
 // Read as a plain file: vite's `?raw` pipeline returns an empty string for
 // .css under vitest, so the raw-import shortcut silently checks nothing.
@@ -21,11 +19,44 @@ const themeCss = readFileSync(new URL("../styles/theme.css", import.meta.url), "
 // silently rendering with fallback colours.
 
 interface ThemeJson {
+  name?: string;
   palette: Record<string, string>;
   tokens: Record<string, string | { ref: string; filter: string }>;
 }
-const lightTheme = lightThemeJson as ThemeJson;
-const darkTheme = darkThemeJson as ThemeJson;
+
+// Every theme in themes/ ships as a built-in (tauri.conf.json bundles the
+// whole directory), so the suites below enumerate the directory instead of a
+// hardcoded list — a new bundled theme is enforced the moment the file lands.
+const THEMES_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "themes");
+const THEME_EXT = ".legit-theme.json";
+const bundledThemes: readonly (readonly [string, ThemeJson])[] = readdirSync(THEMES_DIR)
+  .filter((f) => f.endsWith(THEME_EXT))
+  .map(
+    (f) =>
+      [
+        f.slice(0, -THEME_EXT.length),
+        JSON.parse(readFileSync(join(THEMES_DIR, f), "utf8")) as ThemeJson,
+      ] as const,
+  );
+
+describe("bundled theme discovery", () => {
+  it("finds the canonical Light and Dark themes", () => {
+    const names = bundledThemes.map(([label]) => label);
+    expect(names).toContain("Light");
+    expect(names).toContain("Dark");
+  });
+
+  // The picker and load path address themes by file stem, so a stem that
+  // differs from the document's `name` shows users a different name than the
+  // theme declares.
+  it("every bundled theme's file stem matches its name field", () => {
+    for (const [label, theme] of bundledThemes) {
+      expect(theme.name, `${label}${THEME_EXT}: name field vs file stem`).toBe(label);
+    }
+  });
+});
+
+const darkTheme = bundledThemes.find(([label]) => label === "Dark")?.[1];
 
 const tokenVar = (name: string) => `--${name.replace(/\./g, "-")}`;
 
@@ -59,10 +90,7 @@ describe("theme token contract (4 places)", () => {
     }
   });
 
-  for (const [label, theme] of [
-    ["Light", lightTheme],
-    ["Dark", darkTheme],
-  ] as const) {
+  for (const [label, theme] of bundledThemes) {
     it(`${label}.legit-theme.json binds every contract token to an existing palette entry`, () => {
       for (const t of TOKEN_CONTRACT) {
         const binding = theme.tokens[t.name];
@@ -111,10 +139,7 @@ describe("built-in themes meet every contrast pair's floor", () => {
   const baseList = (base: string | readonly string[] | undefined): readonly string[] =>
     base === undefined ? [] : typeof base === "string" ? [base] : base;
 
-  for (const [label, theme] of [
-    ["Light", lightTheme],
-    ["Dark", darkTheme],
-  ] as const) {
+  for (const [label, theme] of bundledThemes) {
     it(`${label} meets the floor of every CONTRAST_PAIRS entry`, () => {
       const resolve = (token: string): string => {
         const binding = theme.tokens[token];
@@ -153,8 +178,9 @@ describe("built-in Dark theme is the default theme", () => {
   // theme resolves over) must be the same colours — otherwise "unset" tokens
   // in user themes would render differently from the theme users copy from.
   it("Dark.legit-theme.json palette and tokens equal DEFAULT_THEME", () => {
-    expect(darkTheme.palette).toEqual(DEFAULT_THEME.palette);
-    expect(darkTheme.tokens).toEqual(DEFAULT_THEME.tokens);
+    expect(darkTheme).toBeDefined();
+    expect(darkTheme!.palette).toEqual(DEFAULT_THEME.palette);
+    expect(darkTheme!.tokens).toEqual(DEFAULT_THEME.tokens);
   });
 });
 

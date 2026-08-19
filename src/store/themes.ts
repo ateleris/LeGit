@@ -41,6 +41,32 @@ interface ThemeStore {
   importThemeFromJson: (json: unknown, suggestedName?: string) => Promise<ThemeEntry>;
 }
 
+/** Theme to activate at startup: the persisted choice always wins; a fresh
+ *  install (nothing persisted) starts on the built-in Dark theme - NOT the
+ *  alphabetically first entry; only when Dark is missing entirely (broken
+ *  install) fall back to whatever theme exists. `undefined` means no theme is
+ *  available at all (caller applies the embedded default). */
+export function pickInitialThemeName(
+  persisted: string | null | undefined,
+  themes: ThemeEntry[],
+): string | undefined {
+  return (
+    persisted ?? themes.find((t) => t.name === "Dark")?.name ?? themes[0]?.name
+  );
+}
+
+/** Split a theme list for pickers: built-ins first, then user themes, each
+ *  group keeping the backend's alphabetical order. */
+export function partitionThemes(themes: ThemeEntry[]): {
+  builtin: ThemeEntry[];
+  user: ThemeEntry[];
+} {
+  return {
+    builtin: themes.filter((t) => t.source === "builtin"),
+    user: themes.filter((t) => t.source === "user"),
+  };
+}
+
 export const useThemeStore = create<ThemeStore>((set, get) => ({
   themes: [],
   activeThemeName: null,
@@ -52,10 +78,7 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
   async init() {
     await get().refreshList();
     const settings = useSettingsStore.getState().settings;
-    const candidate =
-      settings?.active_theme ??
-      get().themes.find((t) => t.name === "Dark")?.name ??
-      get().themes[0]?.name;
+    const candidate = pickInitialThemeName(settings?.active_theme, get().themes);
     if (candidate) {
       await get().setActive(candidate);
     } else {

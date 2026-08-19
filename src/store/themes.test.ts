@@ -3,7 +3,7 @@
 // leave the active theme untouched.
 
 import { describe, test, expect, vi, beforeEach } from "vitest";
-import { useThemeStore } from "./themes";
+import { partitionThemes, pickInitialThemeName, useThemeStore } from "./themes";
 import { listThemes, loadTheme, saveTheme, setActiveTheme } from "../lib/commands";
 import { applyTheme } from "../theme/applier";
 import { DEFAULT_THEME } from "../theme/defaults";
@@ -36,6 +36,52 @@ beforeEach(() => {
     draft: null,
     draftDirty: false,
     draftOrigin: null,
+  });
+});
+
+describe("pickInitialThemeName", () => {
+  const entry = (name: string, source: "builtin" | "user" = "builtin") => ({
+    name,
+    source,
+    path: `themes/${name}.legit-theme.json`,
+  });
+  // Alphabetical, as the backend returns it — "Dark" is NOT first.
+  const themes = [entry("Ateleris"), entry("Cozy"), entry("Dark"), entry("Light")];
+
+  test("first install (no persisted choice) starts on Dark, not the first entry", () => {
+    expect(pickInitialThemeName(null, themes)).toBe("Dark");
+    expect(pickInitialThemeName(undefined, themes)).toBe("Dark");
+  });
+
+  test("a persisted choice always wins", () => {
+    expect(pickInitialThemeName("Cozy", themes)).toBe("Cozy");
+  });
+
+  test("without Dark, falls back to the first available theme", () => {
+    expect(pickInitialThemeName(null, [entry("Ateleris"), entry("Light")])).toBe("Ateleris");
+    expect(pickInitialThemeName(null, [])).toBeUndefined();
+  });
+});
+
+describe("partitionThemes", () => {
+  test("splits built-ins from user themes, keeping each group's order", () => {
+    const entry = (name: string, source: "builtin" | "user") => ({
+      name,
+      source,
+      path: `themes/${name}.legit-theme.json`,
+    });
+    // Backend order is alphabetical across sources — the picker regroups it.
+    const mixed = [
+      entry("Cozy Light", "user"),
+      entry("Dark", "builtin"),
+      entry("Light", "builtin"),
+      entry("Unicorn Light", "user"),
+    ];
+
+    const { builtin, user } = partitionThemes(mixed);
+
+    expect(builtin.map((t) => t.name)).toEqual(["Dark", "Light"]);
+    expect(user.map((t) => t.name)).toEqual(["Cozy Light", "Unicorn Light"]);
   });
 });
 

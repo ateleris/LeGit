@@ -2,7 +2,7 @@ import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialo
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatAppError } from "../../lib/types";
-import { useThemeStore } from "../../store/themes";
+import { partitionThemes, useThemeStore } from "../../store/themes";
 import { notify } from "../../store/notifications";
 import { confirmDialog } from "../../store/confirm";
 import { useConfirmDestructive } from "../../store/settings";
@@ -249,15 +249,27 @@ export function ThemeEditorPanel() {
 
   const isUserTheme = (n: string) => themes.find((t) => t.name === n)?.source === "user";
 
+  const themePicker = partitionThemes(themes);
+
   return (
     <div className="legit-panel">
       <div className="legit-panel__toolbar" style={{ flexWrap: "wrap" }}>
         <label>
           Theme:&nbsp;
           <select value={activeName ?? ""} onChange={(e) => setActive(e.target.value)}>
-            {themes.map((t) => (
+            {themePicker.builtin.map((t) => (
               <option key={`${t.source}:${t.name}`} value={t.name}>
-                {t.source === "builtin" ? `${t.name} (built-in)` : t.name}
+                {`${t.name} (built-in)`}
+              </option>
+            ))}
+            {themePicker.builtin.length > 0 && themePicker.user.length > 0 && (
+              <option value="─separator─" disabled>
+                ────────────
+              </option>
+            )}
+            {themePicker.user.map((t) => (
+              <option key={`${t.source}:${t.name}`} value={t.name}>
+                {t.name}
               </option>
             ))}
           </select>
