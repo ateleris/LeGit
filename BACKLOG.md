@@ -147,6 +147,27 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   chunked sweep (~2-4 sessions) in the first quiet post-release window.
   `PANEL_TITLES` in `registry.tsx` shows the catalog shape and would be
   its first consumer. If "not needed": record that here and drop the item.
+- **Commit graph: user-swappable shape tilesets** (designed 2026-08-19,
+  stopped after approach approval; no spec yet). Let users restyle the
+  graph's connectors and nodes with their own SVG fragments: a "texture
+  pack" for the graph, eventually editable in a dedicated panel and
+  loadable from a JSON file (analogous to `.legit-theme.json`). Decided
+  architecture ("approach A"): split `GraphCell` into a pure part
+  decomposition (`run-vertical`, `run-horizontal`, `corner-{ne,nw,se,sw}`,
+  `crossing`, `node-{commit,merge,stash,workdir,avatar}`) plus two
+  renderers behind that seam: the parametric renderer (today's
+  lines/arcs/gradients, kept pixel-identical for the default look) and a
+  tile renderer stamping tileset SVG via shared `<symbol>`/`<use>`. Tile
+  contract: unit `0 0 100 100` viewBox, line anchors at edge midpoints,
+  `currentColor` tinting (plus `var(--panel-bg)`), straight runs repeat
+  stamps (never stretch), cross-lane colour fades step per stamp via
+  `color-mix()`. Every part is optional and falls back to the parametric
+  renderer (`node-merge` -> `node-commit` -> built-in dot), so partial
+  tilesets work. Tilesets are JSON-serializable
+  (`{ name, parts: { [partId]: { svg } } }`); at least one built-in
+  alternate tileset should ship to prove the engine. Rejected: rendering
+  the default look through the tile engine (smooth gradients cannot
+  survive tiling and the byte-identical default test would be lost).
 - **Submodules:** nested-tree overview (deliberately flat for now);
   hide-the-Refs-pane-when-no-gitlinks (paneview layouts persist panes);
   `--shallow-submodules` on clone when depth + submodules are both set
