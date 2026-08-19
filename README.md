@@ -74,6 +74,9 @@ npm run tauri:build    # produce an installer/bundle under src-tauri/target/rele
 ```
 
 ## Who
+<a href="https://github.com/ateleris">
+  <img src="https://github.com/ateleris.png?size=100" width="100" alt="Ateleris' avatar"/>
+</a>
 <a href="https://github.com/beckicious">
   <img src="https://github.com/beckicious.png?size=100" width="100" alt="Simon Beck's avatar"/>
 </a>

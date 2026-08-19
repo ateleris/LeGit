@@ -3,9 +3,11 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "./App";
 import { initWindowFocusTracking } from "./lib/windowFocus";
+// Vendor styles first: global.css overrides dockview's theme variables at
+// equal specificity, so cascade order decides who wins (cssImportOrder.test.ts).
+import "dockview-react/dist/styles/dockview.css";
 import "./styles/theme.css";
 import "./styles/global.css";
-import "dockview-react/dist/styles/dockview.css";
 
 // Suppress the webview's native context menu (Inspect, Save as…) everywhere.
 // Our own context menus open from their React onContextMenu handlers, which set

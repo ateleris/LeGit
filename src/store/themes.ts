@@ -186,6 +186,9 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
     const name = suggestedName ?? doc.name;
     const entry = await saveThemeCmd(name, doc);
     await get().refreshList();
+    // An import is an explicit "use this" gesture: activate it right away
+    // (applies + persists). Note this discards any open editor draft.
+    await get().setActive(entry.name);
     return entry;
   },
 }));
