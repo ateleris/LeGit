@@ -1,4 +1,4 @@
-import type { RebaseAction } from "../../lib/types";
+import type { RebaseAction, RebaseOutcome, RepoOpState } from "../../lib/types";
 
 /** One editable plan row. DISPLAY order = newest first (matches the commit
  *  graph); `toTodoOrder` flips into git's oldest-first todo order at the
@@ -45,6 +45,32 @@ export function isUnchanged(rows: readonly PlanRow[], newestFirstIds: readonly s
     if (r.action === "reword") return r.message === r.originalMessage;
     return false;
   });
+}
+
+/** The panel is transient: after a successful Start it closes as soon as it
+ *  has no further role. Only a conflict keeps it open (as a pointer to the
+ *  Working Changes banner, which owns Continue/Skip/Abort) - a stash-reapply
+ *  conflict does NOT: the rebase itself is finished. */
+export function closesAfterOutcome(kind: RebaseOutcome["kind"]): boolean {
+  return kind !== "conflicts";
+}
+
+export interface RebaseWatch {
+  armed: boolean;
+  close: boolean;
+}
+
+/** One step of the close-when-the-rebase-ends watch (conflict case). The
+ *  watch must first OBSERVE the rebase op ("armed") before a `none` may close
+ *  the panel - the op-state query can still hold a stale `none` from before
+ *  the conflicted start landed. `null` = op state still loading. */
+export function nextRebaseWatch(
+  armed: boolean,
+  opKind: RepoOpState["kind"] | null,
+): RebaseWatch {
+  if (opKind === "rebase") return { armed: true, close: false };
+  if (opKind === "none") return { armed, close: armed };
+  return { armed, close: false };
 }
 
 /** Plan shas already on the upstream (null = no upstream = none). */

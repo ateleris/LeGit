@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useSummonTarget } from "../../store/summon";
 import { confirmDialog } from "../../store/confirm";
-import { usePanelFocusEffect } from "../PanelApiContext";
+import { usePanelApi, usePanelFocusEffect } from "../PanelApiContext";
 import { repoLog, repoRebaseInteractive, repoRebaseRangeInfo } from "../../lib/commands";
 import type { Commit, RebaseAction, RebaseRangeInfo, RebaseStep } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
@@ -15,7 +15,9 @@ import { usePanelRunner } from "../shared/usePanelRunner";
 import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
 import { useRowDragReorder } from "../shared/useRowDragReorder";
 import {
+  closesAfterOutcome,
   isUnchanged,
+  nextRebaseWatch,
   planError,
   pushedShas,
   toTodoOrder,
@@ -39,13 +41,24 @@ const PLAN_LIMIT = 200;
  * confirms before rewriting them; a base outside HEAD's ancestry shows the
  * transplant notice. Conflicts pause the normal rebase machinery, so the
  * Working Changes banner's Continue/Skip/Abort takes over from there.
+ *
+ * The panel is TRANSIENT (summon-only, no View-menu entry): it closes itself
+ * once it has no further role. A clean Start closes it immediately; a
+ * conflicted Start keeps it open as a pointer to Working Changes until the
+ * rebase ends (finished via Continue or aborted) - see `closesAfterOutcome` /
+ * `nextRebaseWatch`. A failed Start keeps the plan for a retry.
  */
 export function InteractiveRebasePanel() {
   const repo = useActiveRepo();
   const queryClient = useQueryClient();
+  const panelApi = usePanelApi();
 
   const [base, setBase] = useState<string | null>(null);
   const [rows, setRows] = useState<PlanRow[]>([]);
+  // Conflicted Start: the plan is gone (git owns the todo) and the panel only
+  // waits for the rebase to end. `armed` per nextRebaseWatch's stale guard.
+  const [inProgress, setInProgress] = useState(false);
+  const armedRef = useRef(false);
   // Live vertical drag-to-reorder (same pattern as RepoTabBar): the grabbed
   // row follows the pointer and the row ORDER updates live, so it visibly
   // lands where it is dragged. All state is local; nothing commits on drop.
@@ -66,15 +79,25 @@ export function InteractiveRebasePanel() {
     setRows([]);
   }, []);
 
-  // Reset when the active repo changes (the base belongs to the old repo) -
-  // except when the base was summoned FOR the repo being switched to, and
-  // not on first mount. Full rationale in useRepoSwitchClear.
-  const markDelivered = useRepoSwitchClear(repo?.id, clearPlan);
+  const closePanel = useCallback(() => {
+    if (panelApi) panelApi.close();
+    else clearPlan(); // outside dockview (should not happen) - degrade to reset
+  }, [panelApi, clearPlan]);
+
+  // Close when the active repo changes (a transient panel for the old repo's
+  // rebase has no meaning in the new one) - except when the base was summoned
+  // FOR the repo being switched to, and not on first mount. Full rationale in
+  // useRepoSwitchClear.
+  const markDelivered = useRepoSwitchClear(repo?.id, closePanel);
 
   const onReceive = useCallback((payload: unknown) => {
     if (typeof payload === "string") {
       setBase(payload);
       setRows([]);
+      // A fresh summon always (re)enters plan editing, even if the panel was
+      // idling in its waiting-for-the-rebase-to-end state.
+      setInProgress(false);
+      armedRef.current = false;
       markDelivered();
     }
   }, [markDelivered]);
@@ -135,6 +158,15 @@ export function InteractiveRebasePanel() {
 
   const opState = useOpState(repo?.id);
   const opInProgress = !!opState && opState.kind !== "none";
+
+  // Conflict handoff: the panel waits out the rebase and closes when it ends
+  // (finished via Continue or aborted via Abort - both land on kind "none").
+  useEffect(() => {
+    if (!inProgress) return;
+    const next = nextRebaseWatch(armedRef.current, opState?.kind ?? null);
+    armedRef.current = next.armed;
+    if (next.close) closePanel();
+  }, [inProgress, opState, closePanel]);
 
   const move = (index: number, delta: -1 | 1) => {
     setRows((rs) => {
@@ -216,7 +248,16 @@ export function InteractiveRebasePanel() {
       }));
       const outcome = await repoRebaseInteractive(repo!.id, base, plan);
       notifyRebaseOutcome(outcome, base.slice(0, 8));
-      clearPlan();
+      if (closesAfterOutcome(outcome.kind)) {
+        // Rebase over (completed / up to date / done with a stash-reapply
+        // conflict, which Working Changes surfaces) - the panel's job ends.
+        closePanel();
+      } else {
+        // Conflict: git owns the todo now; wait for the rebase to end.
+        clearPlan();
+        armedRef.current = false;
+        setInProgress(true);
+      }
     });
   };
 
@@ -225,6 +266,20 @@ export function InteractiveRebasePanel() {
       <div className="legit-panel">
         <div className="legit-panel__body">
           <span className="legit-subtle">No repository open.</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (inProgress) {
+    return (
+      <div className="legit-panel">
+        <div className="legit-panel__body">
+          <span className="legit-subtle" style={{ fontSize: "var(--fz-md)" }}>
+            Rebase in progress - resolve the conflicts in Working Changes;
+            Continue, Skip and Abort live there. This panel closes when the
+            rebase ends.
+          </span>
         </div>
       </div>
     );
@@ -453,7 +508,9 @@ export function InteractiveRebasePanel() {
             Conflicts pause the rebase — resolve them in Working Changes.
           </span>
         )}
-        <Button disabled={busy} onClick={clearPlan}>
+        {/* Cancel discards the (never-started) plan - and the panel with it:
+            transient panels don't linger in the hint state. */}
+        <Button disabled={busy} onClick={closePanel}>
           Cancel
         </Button>
         <Button

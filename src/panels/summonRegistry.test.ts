@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { GLOBAL_PANELS, REPO_PANELS } from "./registry";
+import { GLOBAL_PANELS, REPO_PANELS, SUPPRESSIBLE_SUMMON_PANELS } from "./registry";
 
 // Summon-registry cross-check: every summon target id written as a string
 // literal in the source must be resolvable by the mechanism it is passed to.
@@ -59,6 +59,33 @@ describe("summon targets resolve in the registry scope they are passed to", () =
       }
     }
     expect(offenders, offenders.join("\n")).toEqual([]);
+  });
+
+  it("interactive-rebase is summon-only: it lives and dies with a rebase", () => {
+    expect(REPO_PANELS.find((p) => p.id === "interactive-rebase")?.summonOnly).toBe(true);
+  });
+
+  it("only selection-side-effect panels are suppressible - never explicit commands", () => {
+    // The "Auto-open panels" opt-out exists for panels that pop open as a
+    // side effect of SELECTING data (a commit, a file row). A panel whose
+    // summon is itself the action (context-menu "Blame" / "File history" /
+    // "Compare" / "Browse files" / "View file" / "resolve in merge editor")
+    // must NOT be suppressible: suppressing it turns that click into a
+    // silent no-op (decided 2026-08-19).
+    expect([...SUPPRESSIBLE_SUMMON_PANELS].sort()).toEqual([
+      "changed-files",
+      "commit-details",
+      "diff",
+      "working-changes",
+    ]);
+  });
+
+  it("summon-only panels are never suppressible - suppression would make them unreachable", () => {
+    // A summon to a suppressed panel degrades to notifyIfOpen; for a panel
+    // whose ONLY entry point is the summon, that is a permanent no-op.
+    for (const p of REPO_PANELS.filter((p) => p.summonOnly)) {
+      expect(SUPPRESSIBLE_SUMMON_PANELS, `${p.id} must not be suppressible`).not.toContain(p.id);
+    }
   });
 
   it("summonGlobalPanel ids are global panels", () => {

@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { isUnchanged, planError, pushedShas, toTodoOrder, type PlanRow } from "./planModel";
+import {
+  closesAfterOutcome,
+  isUnchanged,
+  nextRebaseWatch,
+  planError,
+  pushedShas,
+  toTodoOrder,
+  type PlanRow,
+} from "./planModel";
 
 const row = (sha: string, action: PlanRow["action"] = "pick", message = ""): PlanRow => ({
   sha,
@@ -44,5 +52,35 @@ describe("planModel", () => {
     expect(pushedShas(["a", "b", "c"], ["b"])).toEqual(new Set(["a", "c"]));
     expect(pushedShas(["a"], null)).toEqual(new Set());
     expect(pushedShas(["a"], undefined)).toEqual(new Set());
+  });
+});
+
+describe("transient panel lifecycle", () => {
+  it("closesAfterOutcome: only a conflict keeps the panel open", () => {
+    expect(closesAfterOutcome("completed")).toBe(true);
+    expect(closesAfterOutcome("already_up_to_date")).toBe(true);
+    // The REBASE is finished; the leftover stash conflict is resolved in
+    // Working Changes, not here.
+    expect(closesAfterOutcome("completed_with_stash_conflicts")).toBe(true);
+    expect(closesAfterOutcome("conflicts")).toBe(false);
+  });
+
+  it("nextRebaseWatch: a stale 'none' before the rebase op was observed never closes", () => {
+    // The op-state query may still hold "none" from before the conflicted
+    // start landed - closing on that would kill the panel instantly.
+    expect(nextRebaseWatch(false, "none")).toEqual({ armed: false, close: false });
+  });
+
+  it("nextRebaseWatch: arms on seeing the rebase op, closes when it ends", () => {
+    expect(nextRebaseWatch(false, "rebase")).toEqual({ armed: true, close: false });
+    expect(nextRebaseWatch(true, "rebase")).toEqual({ armed: true, close: false });
+    // Finished via Continue or aborted via Abort - both end as kind "none".
+    expect(nextRebaseWatch(true, "none")).toEqual({ armed: true, close: true });
+  });
+
+  it("nextRebaseWatch: loading (null) and foreign ops leave the watch unchanged", () => {
+    expect(nextRebaseWatch(false, null)).toEqual({ armed: false, close: false });
+    expect(nextRebaseWatch(true, null)).toEqual({ armed: true, close: false });
+    expect(nextRebaseWatch(false, "merge")).toEqual({ armed: false, close: false });
   });
 });

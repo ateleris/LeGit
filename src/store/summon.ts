@@ -2,18 +2,22 @@ import { useEffect } from "react";
 import { create } from "zustand";
 import { useDockviewStore } from "./dockview";
 import { useSettingsStore } from "./settings";
-import { REPO_PANELS } from "../panels/registry";
+import { REPO_PANELS, SUPPRESSIBLE_SUMMON_PANELS } from "../panels/registry";
 
 /**
  * True when the user has opted this panel out of auto-opening (Settings →
  * "Auto-open panels"). A `summon`/`swapSummon` to a suppressed panel degrades
  * to `notifyIfOpen`: it updates the panel only if it's already open, never
  * creates or focuses it. Read lazily (getState) so it always reflects the
- * current setting.
+ * current setting. SUPPRESSIBLE_SUMMON_PANELS is the authority: a stored id
+ * no longer on that list (e.g. interactive-rebase, summon-only since
+ * 2026-08-19) is inert - otherwise a stale settings entry could suppress a
+ * panel that no longer offers the toggle to undo it.
  */
 function isSuppressed(panelId: string): boolean {
   return (
-    useSettingsStore.getState().settings?.suppressed_auto_open_panels?.includes(panelId) ?? false
+    SUPPRESSIBLE_SUMMON_PANELS.includes(panelId) &&
+    (useSettingsStore.getState().settings?.suppressed_auto_open_panels?.includes(panelId) ?? false)
   );
 }
 

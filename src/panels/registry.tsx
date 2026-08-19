@@ -40,6 +40,10 @@ export interface PanelDescriptor {
   /** Panel this one shares a dock slot with: summoning one while the other is
    *  open takes over its group and closes it (enforced by `summon()`). */
   swapsWith?: string;
+  /** Transient panel whose ONLY entry point is a summon: it has no View-menu
+   *  entry and must never be suppressible (a suppressed summon degrades to
+   *  notifyIfOpen, which would make the panel permanently unreachable). */
+  summonOnly?: boolean;
 }
 
 export const GLOBAL_PANELS: PanelDescriptor[] = [
@@ -74,10 +78,13 @@ export const REPO_PANELS: PanelDescriptor[] = [
   },
   { id: "log", title: "Commits", scope: "repo" },
   {
+    // Transient: summoned from a commit row's context menu, closes itself
+    // when the rebase ends (see InteractiveRebasePanel).
     id: "interactive-rebase",
     title: "Interactive Rebase",
     scope: "repo",
     defaultPlacement: { direction: "right", referencePanel: "log" },
+    summonOnly: true,
   },
   {
     id: "compare",
@@ -158,23 +165,23 @@ export const PANEL_TITLES: Readonly<Record<string, string>> = Object.fromEntries
 );
 
 /**
- * Detail/secondary panels that appear via `summon` and that the user may opt
- * out of auto-opening (Settings → "Auto-open panels"): a summon to a suppressed
- * one degrades to `notifyIfOpen`. Deliberately excludes `log` (Commits), which
- * the app opens on startup, and non-summoned panels.
+ * Panels that pop open as a SIDE EFFECT of selecting data (a commit, a file
+ * row) and that the user may opt out of auto-opening (Settings → "Auto-open
+ * panels"): a summon to a suppressed one degrades to `notifyIfOpen`.
+ * Deliberately narrow (decided 2026-08-19): a panel whose summon IS the
+ * user's explicit action (context-menu "Blame" / "File history" / "Compare" /
+ * "Browse files" / "View file", the merge editor) must NOT be listed -
+ * suppressing it would turn that click into a silent no-op. Same for
+ * `summonOnly` panels (interactive-rebase, unreachable if suppressed) and
+ * `log` (Commits), which the app opens on startup. This list is also the
+ * AUTHORITY for what a stored settings entry may suppress (`isSuppressed` in
+ * store/summon.ts), so a stale persisted id is inert.
  */
 export const SUPPRESSIBLE_SUMMON_PANELS: string[] = [
   "commit-details",
   "changed-files",
   "working-changes",
   "diff",
-  "merge",
-  "file-view",
-  "file-history",
-  "blame",
-  "compare",
-  "interactive-rebase",
-  "files",
 ];
 
 const TAB_COMPONENTS: Record<string, FunctionComponent<IDockviewPanelHeaderProps>> = {

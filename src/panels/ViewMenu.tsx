@@ -108,7 +108,9 @@ export function ViewMenu() {
           )}
           <Separator />
           <SectionLabel>Repo panels</SectionLabel>
-          {REPO_PANELS.map((p) =>
+          {/* summonOnly panels (interactive-rebase) are transient: they exist
+              only while their operation does, so they get no re-open entry. */}
+          {REPO_PANELS.filter((p) => !p.summonOnly).map((p) =>
             menuItem(p.id, p.title, !!repoApi?.getPanel(p.id), () => {
               openRepoPanel(repoApi, p.id);
               setOpen(false);

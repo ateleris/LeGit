@@ -14,6 +14,12 @@ export function PanelApiProvider({
   return <PanelApiContext.Provider value={api}>{children}</PanelApiContext.Provider>;
 }
 
+/** This panel's own dockview api (null outside a panel) - e.g. for a
+ *  transient panel closing itself (`api.close()`). */
+export function usePanelApi(): DockviewPanelApi | null {
+  return useContext(PanelApiContext);
+}
+
 /**
  * Register this panel's dirty state so the custom close tab can show a
  * confirm dialog before closing when there are unsaved changes.
