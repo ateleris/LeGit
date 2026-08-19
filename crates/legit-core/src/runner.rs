@@ -286,9 +286,7 @@ impl GitRunner {
         let exit_code = tokio::select! {
             _ = kill_rx => {
                 warn!(op_id = %op_id, "git invocation cancelled — killing child");
-                kill_tree(&child);
-                let _ = child.start_kill();
-                let status = child.wait().await.map_err(RunnerError::Io)?;
+                let status = terminate_tree(&mut child).await.map_err(RunnerError::Io)?;
                 self.remove_running(&op_id);
                 // Do NOT wait for pipe EOF here: a descendant that survived
                 // the kill (Git for Windows' `cmd\git.exe` shim wraps the
@@ -393,9 +391,7 @@ impl GitRunner {
         let exit_code = tokio::select! {
             _ = kill_rx => {
                 warn!(op_id = %op_id, "git invocation cancelled — killing child");
-                kill_tree(&child);
-                let _ = child.start_kill();
-                let status = child.wait().await.map_err(RunnerError::Io)?;
+                let status = terminate_tree(&mut child).await.map_err(RunnerError::Io)?;
                 self.remove_running(&op_id);
                 // Do NOT wait for pipe EOF here: a descendant that survived
                 // the kill (Git for Windows' `cmd\git.exe` shim wraps the
@@ -588,9 +584,7 @@ impl GitRunner {
         let status = tokio::select! {
             _ = kill_rx => {
                 warn!(op_id = %op_id, "streaming git invocation cancelled — killing child");
-                kill_tree(&child);
-                let _ = child.start_kill();
-                let status = child.wait().await.map_err(RunnerError::Io)?;
+                let status = terminate_tree(&mut child).await.map_err(RunnerError::Io)?;
                 // The kill hits only the direct child, but git spawns its
                 // own children that inherit the pipes (Git for Windows'
                 // `cmd\git.exe` shim wraps the real git; git forks helpers
@@ -770,27 +764,57 @@ impl GitRunner {
     }
 }
 
-/// Kill an in-flight invocation's whole process tree, not just the direct
-/// child. git forks helpers (remote-https, index-pack, ...) that inherit our
-/// pipes and do the real work, so killing only the direct child can leave the
-/// operation effectively running (on Git for Windows even the real git
-/// itself: `cmd\git.exe` is a shim around it).
+/// Terminate a cancelled invocation's whole process tree, not just the
+/// direct child. git forks helpers (remote-https, index-pack, ...) that
+/// inherit our pipes and do the real work, so killing only the direct child
+/// can leave the operation effectively running (on Git for Windows even the
+/// real git itself: `cmd\git.exe` is a shim around it).
 ///
 /// Unix: the child leads its own process group (see `build_command_with_env`),
-/// so one group signal reaches every descendant. Windows: there is no group
-/// signal here; the caller still kills the direct child, survivors die on
-/// broken pipe once the reader tasks are aborted, and the app-lifetime job
-/// object (`app_job`) reaps any straggler at exit.
-fn kill_tree(child: &tokio::process::Child) {
+/// so one group signal reaches every descendant - and the termination is
+/// gentle first: SIGTERM lets git run its own cleanup handlers (a terminated
+/// clone removes its partial target, lockfiles get released) before any hard
+/// kill. The group is swept with SIGKILL afterwards for stragglers.
+///
+/// Windows: there is no group signal here; only the direct child is killed,
+/// survivors die on broken pipe once the reader tasks are aborted, and the
+/// app-lifetime job object (`app_job`) reaps any straggler at exit.
+/// How long a SIGTERMed git gets to run its cleanup handlers before the hard
+/// SIGKILL. Long enough for normal junk removal and lock release, short
+/// enough that a cancel of a signal-ignoring process still feels immediate.
+#[cfg(unix)]
+const TERM_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
+async fn terminate_tree(
+    child: &mut tokio::process::Child,
+) -> std::io::Result<std::process::ExitStatus> {
     #[cfg(unix)]
     if let Some(pid) = child.id() {
         // Negative pid: signal the whole process group the child leads.
+        let pgid = -(pid as i32);
         unsafe {
-            libc::kill(-(pid as i32), libc::SIGKILL);
+            libc::kill(pgid, libc::SIGTERM);
         }
+        let status = match tokio::time::timeout(TERM_GRACE, child.wait()).await {
+            Ok(status) => status?,
+            Err(_elapsed) => {
+                warn!("cancelled git ignored SIGTERM - escalating to SIGKILL");
+                unsafe {
+                    libc::kill(pgid, libc::SIGKILL);
+                }
+                child.wait().await?
+            }
+        };
+        // Sweep the group for stragglers that outlived the direct child.
+        // (Daemons git means to leave behind, e.g. fsmonitor--daemon, have
+        // detached into their own session and are not hit by this.)
+        unsafe {
+            libc::kill(pgid, libc::SIGKILL);
+        }
+        return Ok(status);
     }
-    #[cfg(not(unix))]
-    let _ = child;
+    let _ = child.start_kill();
+    child.wait().await
 }
 
 /// Windows: an app-lifetime job object with `KILL_ON_JOB_CLOSE`. Every git we
@@ -1286,6 +1310,85 @@ mod tests {
             );
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
+    }
+
+    /// A cancel must be gentle first: SIGTERM (to the group), so git's own
+    /// signal handlers run - a terminated clone removes its partial target,
+    /// lockfiles get released - before any hard kill. Modeled with a TERM
+    /// trap that leaves a marker: an immediate SIGKILL never writes it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancel_lets_a_term_handler_run_before_the_kill() {
+        let dir = tempfile::tempdir().unwrap();
+        let runner = GitRunner::for_repo("sh", dir.path());
+        let op = OperationId::new();
+        let op_for_cancel = op.clone();
+
+        let runner_for_run = runner.clone();
+        let run = tokio::spawn(async move {
+            runner_for_run
+                .run_with_op(
+                    &["-c", "trap 'touch cleaned; exit 0' TERM; touch started; sleep 30"],
+                    op,
+                )
+                .await
+        });
+
+        wait_for_marker(&dir.path().join("started")).await;
+
+        assert!(runner.cancel(&op_for_cancel));
+        let out = tokio::time::timeout(std::time::Duration::from_secs(5), run)
+            .await
+            .expect("cancelled run did not return")
+            .unwrap()
+            .unwrap();
+        // Cancellation is always reported as non-success, whatever exit
+        // status the trap produced.
+        assert!(!out.success);
+        assert!(
+            dir.path().join("cleaned").exists(),
+            "the child's TERM handler never ran - it was killed hard"
+        );
+    }
+
+    /// The gentle SIGTERM must escalate: a child that ignores it still dies
+    /// within the grace period, and the cancel still returns. The `while`
+    /// loop matters - the group TERM kills the foreground `sleep`, so a
+    /// straight-line script would exit on its own and never need the kill.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancel_escalates_to_sigkill_when_term_is_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let runner = GitRunner::for_repo("sh", dir.path());
+        let op = OperationId::new();
+        let op_for_cancel = op.clone();
+
+        let runner_for_run = runner.clone();
+        let run = tokio::spawn(async move {
+            runner_for_run
+                .run_with_op(
+                    &["-c", "trap '' TERM; touch started; while :; do sleep 30; done"],
+                    op,
+                )
+                .await
+        });
+
+        wait_for_marker(&dir.path().join("started")).await;
+
+        let started = Instant::now();
+        assert!(runner.cancel(&op_for_cancel));
+        let out = tokio::time::timeout(std::time::Duration::from_secs(6), run)
+            .await
+            .expect("cancel never escalated - a TERM-ignoring child hung it")
+            .unwrap()
+            .unwrap();
+        assert!(!out.success);
+        // Grace period plus a scheduling margin.
+        assert!(
+            started.elapsed() < TERM_GRACE + std::time::Duration::from_secs(2),
+            "escalation took {} ms",
+            started.elapsed().as_millis()
+        );
     }
 
     /// Per-invocation env overrides must be applied AFTER the hardened base

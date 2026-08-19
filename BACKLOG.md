@@ -217,9 +217,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   still mis-parse. Full fidelity means fetching both full blobs, parsing
   each once, and mapping by line number - only worth it if the per-hunk
   approximation proves insufficient.
-- **"Publish all publishable tags" one-time action** for pre-existing
-  local tags - the auto-push-tags feature (2026-08-04) deliberately covers
-  the invariant going forward only; add the sweep only if wanted.
 - **Commit-graph file for large repos.** The bulk log's `--date-order`
   (added 2026-08-19 for the equal-timestamp parent-order fix) makes git's
   walk "limited": measured on a synthetic 100k-commit repo (git 2.43), the
