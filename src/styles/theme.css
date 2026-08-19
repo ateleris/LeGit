@@ -16,12 +16,12 @@
   --palette-panel-border: #333333;
   --palette-accent: #4a9eff;
   --palette-accent-hover: #6ab4ff;
-  --palette-accent-fg: #ffffff;
+  --palette-accent-fg: #183454;
   --palette-danger: #e58e26;
   --palette-danger-hover: #f4a340;
   --palette-success: #3498db;
   --palette-warning: #f1fa8c;
-  --palette-subtle-fg: #888888;
+  --palette-subtle-fg: #a1a1a1;
   --palette-shadow: #00000066;
   --palette-input-bg: #2d2d30;
   --palette-console-bg: #1a1a1a;
@@ -43,7 +43,9 @@
   --palette-ansi-bright-cyan: #29b8db;
   --palette-ansi-bright-white: #ffffff;
   --palette-diff-added-line: #3498db33;
+  --palette-diff-added-word: #3498db73;
   --palette-diff-removed-line: #e58e2633;
+  --palette-diff-removed-word: #e58e2659;
   --palette-diff-hunk-header: #4a9eff24;
   --palette-merge-fold: #9aa0a626;
   --palette-syn-keyword: #569cd6;
@@ -167,10 +169,10 @@
   --warning-fg: var(--palette-warning);
   --diff-added-bg: var(--palette-diff-added-line);
   --diff-added-fg: var(--palette-main-fg);
-  --diff-added-word-bg: var(--palette-success);
+  --diff-added-word-bg: var(--palette-diff-added-word);
   --diff-removed-bg: var(--palette-diff-removed-line);
   --diff-removed-fg: var(--palette-main-fg);
-  --diff-removed-word-bg: var(--palette-danger);
+  --diff-removed-word-bg: var(--palette-diff-removed-word);
   --diff-gutter-bg: var(--palette-panel-bg);
   --diff-gutter-fg: var(--palette-subtle-fg);
   --diff-hunk-header-bg: var(--palette-merge-fold);

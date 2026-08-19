@@ -150,7 +150,7 @@ function LockMenu({
         style={{
           padding: "4px 14px",
           fontSize: "var(--fz-sm)",
-          color: "var(--subtle-fg, #888)",
+          color: "var(--subtle-fg, #a1a1a1)",
           whiteSpace: "nowrap",
           cursor: "default",
         }}

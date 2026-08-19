@@ -5,9 +5,9 @@ import { formatAppError } from "../../lib/types";
 import { useThemeStore } from "../../store/themes";
 import { confirmDialog } from "../../store/confirm";
 import { useConfirmDestructive } from "../../store/settings";
-import { contrastRatio, wcagBadge } from "../../theme/contrast";
+import { contrastRatio, wcagBadge, type WcagBadge } from "../../theme/contrast";
 import { DEFAULT_THEME } from "../../theme/defaults";
-import { CONTRAST_PAIRS, TOKEN_CONTRACT } from "../../theme/tokens";
+import { CONTRAST_PAIRS, TOKEN_CONTRACT, type ContrastPair } from "../../theme/tokens";
 import {
   bindingFilter,
   bindingRef,
@@ -17,8 +17,26 @@ import {
   withRef,
 } from "../../theme/filters";
 import { validateTheme } from "../../theme/validate";
-import type { ThemeDocument, TokenFilterId } from "../../lib/types";
+import type { ThemeDocument, ThemeTokenBinding, TokenFilterId } from "../../lib/types";
 import { Button } from "../shared/buttons";
+import { SettingsGroup } from "../Settings/primitives";
+
+/**
+ * The binding a token actually renders with (mirrors resolveTheme): the
+ * theme's own binding when it exists and points at a defined palette entry,
+ * otherwise the built-in default's binding.
+ */
+function effectiveBinding(working: ThemeDocument, token: string): ThemeTokenBinding | undefined {
+  const b = working.tokens[token];
+  return b !== undefined && working.palette[bindingRef(b)] !== undefined
+    ? b
+    : DEFAULT_THEME.tokens[token];
+}
+
+/** A pair's base surface stack as an array (nearest-first; empty for an opaque bg). */
+function baseTokens(pair: ContrastPair): readonly string[] {
+  return pair.base === undefined ? [] : typeof pair.base === "string" ? [pair.base] : pair.base;
+}
 
 export function ThemeEditorPanel() {
   const confirmDestructive = useConfirmDestructive();
@@ -249,88 +267,46 @@ export function ThemeEditorPanel() {
       <div className="legit-panel__body">
         {error && <pre className="legit-error">{error}</pre>}
 
-        <SectionTitle>Metadata</SectionTitle>
-        <div style={{ display: "grid", gap: 6, gridTemplateColumns: "120px 1fr", marginBottom: 12 }}>
-          <label>Name</label>
-          <input
-            value={working.name}
-            onChange={(e) => editing && updateDraftMeta({ name: e.target.value })}
-            disabled={!editing}
-          />
-          <label>Author</label>
-          <input
-            value={working.author ?? ""}
-            onChange={(e) => editing && updateDraftMeta({ author: e.target.value })}
-            disabled={!editing}
-          />
-          <label>Description</label>
-          <input
-            value={working.description ?? ""}
-            onChange={(e) => editing && updateDraftMeta({ description: e.target.value })}
-            disabled={!editing}
-          />
-        </div>
+        <SettingsGroup id="theme-editor.metadata" title="Metadata">
+          <div
+            style={{ display: "grid", gap: 6, gridTemplateColumns: "120px 1fr", marginBottom: 12 }}
+          >
+            <label>Name</label>
+            <input
+              value={working.name}
+              onChange={(e) => editing && updateDraftMeta({ name: e.target.value })}
+              disabled={!editing}
+            />
+            <label>Author</label>
+            <input
+              value={working.author ?? ""}
+              onChange={(e) => editing && updateDraftMeta({ author: e.target.value })}
+              disabled={!editing}
+            />
+            <label>Description</label>
+            <input
+              value={working.description ?? ""}
+              onChange={(e) => editing && updateDraftMeta({ description: e.target.value })}
+              disabled={!editing}
+            />
+          </div>
+        </SettingsGroup>
 
-        <SectionTitle>Contrast (WCAG)</SectionTitle>
-        <div style={{ marginBottom: 12 }}>
-          {CONTRAST_PAIRS.map((pair) => {
-            // Effective bindings (theme value or built-in fallback), resolved
-            // against the merged palette — mirrors what actually renders.
-            const mergedPalette = { ...DEFAULT_THEME.palette, ...working.palette };
-            const effective = (name: string) => {
-              const b = working.tokens[name];
-              return b !== undefined && working.palette[bindingRef(b)] !== undefined
-                ? b
-                : DEFAULT_THEME.tokens[name];
-            };
-            const fgBinding = effective(pair.fg);
-            const bgBinding = effective(pair.bg);
-            const fg = fgBinding && resolveBindingColor(fgBinding, mergedPalette);
-            const bg = bgBinding && resolveBindingColor(bgBinding, mergedPalette);
-            const ratio = fg && bg ? contrastRatio(fg, bg) : null;
-            const badge = wcagBadge(ratio);
-            return (
-              <div
-                key={pair.label}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: "2px 0",
-                }}
-              >
-                <span
-                  style={{
-                    background: `var(--${pair.bg.replace(/\./g, "-")})`,
-                    color: `var(--${pair.fg.replace(/\./g, "-")})`,
-                    padding: "2px 8px",
-                    borderRadius: 3,
-                    minWidth: 100,
-                    textAlign: "center",
-                  }}
-                >
-                  Sample
-                </span>
-                <span style={{ flex: 1 }}>{pair.label}</span>
-                <span className="legit-subtle">{ratio ? ratio.toFixed(2) : "—"}</span>
-                <span className={badge === "Fail" ? "legit-error" : "legit-success"}>{badge}</span>
-              </div>
-            );
-          })}
-        </div>
+        <ContrastSection working={working} />
 
-        <SectionTitle>Palette</SectionTitle>
-        <PaletteEditor
-          palette={working.palette}
-          usedNames={new Set(Object.values(working.tokens).map(bindingRef))}
-          disabled={!editing}
-          onChange={setPaletteValue}
-          onRename={renamePaletteEntry}
-          onRemove={removePaletteEntry}
-          onAdd={addPaletteEntry}
-        />
+        <SettingsGroup id="theme-editor.palette" title="Palette">
+          <PaletteEditor
+            palette={working.palette}
+            usedNames={new Set(Object.values(working.tokens).map(bindingRef))}
+            disabled={!editing}
+            onChange={setPaletteValue}
+            onRename={renamePaletteEntry}
+            onRemove={removePaletteEntry}
+            onAdd={addPaletteEntry}
+          />
+        </SettingsGroup>
 
-        <SectionTitle>Tokens</SectionTitle>
+        <SettingsGroup id="theme-editor.tokens" title="Tokens" defaultOpen={false}>
         {groups.map(([group, tokens]) => (
           <div key={group} style={{ marginBottom: 12 }}>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>{group}</div>
@@ -452,8 +428,108 @@ export function ThemeEditorPanel() {
             })}
           </div>
         ))}
+        </SettingsGroup>
       </div>
     </div>
+  );
+}
+
+/**
+ * The WCAG contrast section. Ratios are computed against what actually
+ * renders: effective bindings resolved over the merged palette, with
+ * translucent backgrounds composited over their `base` surface. Failing pairs
+ * sort first within their group, and the header caption summarises the result
+ * so the (collapsed-by-default) section is informative without expanding it.
+ */
+function ContrastSection({ working }: { working: ThemeDocument }) {
+  const rows = useMemo(() => {
+    const mergedPalette = { ...DEFAULT_THEME.palette, ...working.palette };
+    const resolve = (token: string) => {
+      const b = effectiveBinding(working, token);
+      return b ? resolveBindingColor(b, mergedPalette) : undefined;
+    };
+    return CONTRAST_PAIRS.map((pair) => {
+      const fg = resolve(pair.fg);
+      const bg = resolve(pair.bg);
+      const base = baseTokens(pair).map(resolve);
+      const ratio =
+        fg && bg && base.every((c) => c !== undefined)
+          ? contrastRatio(fg, bg, base as string[])
+          : null;
+      return { pair, ratio, badge: wcagBadge(ratio) };
+    });
+  }, [working]);
+
+  const failing = rows.filter((r) => r.badge === "Fail").length;
+  const caption =
+    failing > 0 ? `${failing} of ${rows.length} pairs failing` : `all ${rows.length} pairs pass`;
+
+  const grouped = useMemo(() => {
+    const map = new Map<string, typeof rows>();
+    for (const row of rows) {
+      const list = map.get(row.pair.group) ?? [];
+      list.push(row);
+      map.set(row.pair.group, list);
+    }
+    // Failing pairs first within each group (stable otherwise).
+    for (const list of map.values()) {
+      list.sort((a, b) => Number(b.badge === "Fail") - Number(a.badge === "Fail"));
+    }
+    return Array.from(map.entries());
+  }, [rows]);
+
+  const badgeClass = (badge: WcagBadge) =>
+    badge === "Fail" ? "legit-error" : badge === "n/a" ? "legit-subtle" : "legit-success";
+  const cssVar = (token: string) => `var(--${token.replace(/\./g, "-")})`;
+
+  return (
+    <SettingsGroup id="theme-editor.contrast" title="Contrast (WCAG)" caption={caption} defaultOpen={false}>
+      {grouped.map(([group, list]) => (
+        <div key={group} style={{ marginBottom: 12 }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>{group}</div>
+          {list.map(({ pair, ratio, badge }) => (
+            <div
+              key={pair.label}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "2px 0",
+              }}
+            >
+              {/* The sample nests inside the pair's base surface(s), deepest
+                  outermost, so translucent backgrounds preview as they
+                  composite in the real UI. */}
+              <span style={{ borderRadius: 3, minWidth: 100, textAlign: "center" }}>
+                {baseTokens(pair).reduceRight(
+                  (child, baseToken) => (
+                    <span
+                      style={{ display: "block", background: cssVar(baseToken), borderRadius: 3 }}
+                    >
+                      {child}
+                    </span>
+                  ),
+                  <span
+                    style={{
+                      display: "block",
+                      background: cssVar(pair.bg),
+                      color: cssVar(pair.fg),
+                      padding: "2px 8px",
+                      borderRadius: 3,
+                    }}
+                  >
+                    Sample
+                  </span>,
+                )}
+              </span>
+              <span style={{ flex: 1 }}>{pair.label}</span>
+              <span className="legit-subtle">{ratio ? ratio.toFixed(2) : "—"}</span>
+              <span className={badgeClass(badge)}>{badge}</span>
+            </div>
+          ))}
+        </div>
+      ))}
+    </SettingsGroup>
   );
 }
 
@@ -582,21 +658,4 @@ function hexForPicker(color: string): string {
     return `#${ex}`;
   }
   return "#000000";
-}
-
-function SectionTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        fontSize: "var(--fz-sm)",
-        textTransform: "uppercase",
-        letterSpacing: 0.5,
-        color: "var(--subtle-fg)",
-        marginBottom: 6,
-        marginTop: 4,
-      }}
-    >
-      {children}
-    </div>
-  );
 }

@@ -6,28 +6,35 @@ import { ChevronDownIcon } from "../../icons";
 
 /**
  * A collapsible top-level category (Appearance, Behavior, Git, About). Expanded
- * by default; the collapsed/expanded state is remembered per `id` in
- * localStorage — a pure UI preference, so it deliberately does NOT touch the
- * settings store. The uppercase header is the category label; the setting names
- * inside use `Section` (normal weight), giving a clear two-level hierarchy.
+ * by default (override with `defaultOpen`); the collapsed/expanded state is
+ * remembered per `id` in localStorage — a pure UI preference, so it
+ * deliberately does NOT touch the settings store. The uppercase header is the
+ * category label; the setting names inside use `Section` (normal weight),
+ * giving a clear two-level hierarchy.
  */
 export function SettingsGroup({
   id,
   title,
   caption,
+  defaultOpen = true,
   children,
 }: {
   id: string;
   title: string;
   caption?: string;
+  /** Initial state when the user hasn't toggled this group yet. */
+  defaultOpen?: boolean;
   children: ReactNode;
 }) {
   const key = `legit.settings-group.${id}`;
   const [open, setOpen] = useState(() => {
     try {
-      return localStorage.getItem(key) !== "collapsed";
+      const stored = localStorage.getItem(key);
+      if (stored === "collapsed") return false;
+      if (stored === "expanded") return true;
+      return defaultOpen;
     } catch {
-      return true;
+      return defaultOpen;
     }
   });
   const toggle = () =>

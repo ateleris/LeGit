@@ -92,7 +92,9 @@ export const PALETTE_CONTRACT: readonly PaletteDescriptor[] = [
   // Diff line-background tints (lighter than the full success/danger used for
   // changed characters). Use an alpha so the line reads as a wash.
   { name: "diff-added-line", documentation: "Whole-line background for an added/modified diff line (light tint)." },
+  { name: "diff-added-word", documentation: "Background for the changed characters within an added/modified line (stronger tint; translucent so line text stays AA-readable)." },
   { name: "diff-removed-line", documentation: "Whole-line background for a removed/modified diff line (light tint)." },
+  { name: "diff-removed-word", documentation: "Background for the changed characters within a removed/modified line (stronger tint; translucent so line text stays AA-readable)." },
   { name: "diff-hunk-header", documentation: "Background band behind a diff hunk's `@@` header row." },
   { name: "merge-fold", documentation: "Background band behind the merge view's folded-lines bars (neutral: must not read as either conflict side)." },
   // Syntax highlighting colours (diff viewer code).
@@ -278,15 +280,205 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "status.conflicted", group: "File Status", documentation: "Conflicted-file icon." },
 ] as const;
 
+export interface ContrastPair {
+  fg: string;
+  bg: string;
+  /**
+   * The surface a translucent `bg` renders on (diff washes, chip fills,
+   * banners) — one token, or a layer stack ordered nearest-first when the
+   * surface is itself translucent (word highlights sit on the line wash on
+   * the panel). The check composites bg over the stack before measuring;
+   * omitted when `bg` is expected to be opaque.
+   */
+  base?: string | readonly string[];
+  label: string;
+  /** Heading the editor groups the pair under. */
+  group: string;
+}
+
 /** Pairs whose contrast the editor surfaces for the user. */
-export const CONTRAST_PAIRS: readonly { fg: string; bg: string; label: string }[] = [
-  { fg: "panel.fg", bg: "panel.bg", label: "Panel body" },
-  { fg: "tab.active.fg", bg: "tab.active.bg", label: "Active tab" },
-  { fg: "button.fg", bg: "button.bg", label: "Default button" },
-  { fg: "button.primary.fg", bg: "button.primary.bg", label: "Primary button" },
-  { fg: "input.fg", bg: "input.bg", label: "Text input" },
-  { fg: "console.fg", bg: "console.bg", label: "Console body" },
-  { fg: "console.stderr.fg", bg: "console.bg", label: "Console stderr" },
-  { fg: "diff.added.fg", bg: "diff.added.bg", label: "Diff added" },
-  { fg: "diff.removed.fg", bg: "diff.removed.bg", label: "Diff removed" },
+export const CONTRAST_PAIRS: readonly ContrastPair[] = [
+  { fg: "panel.fg", bg: "panel.bg", label: "Panel body", group: "Core surfaces" },
+  { fg: "app.fg", bg: "app.bg", label: "App chrome", group: "Core surfaces" },
+  { fg: "subtle.fg", bg: "panel.bg", label: "Muted text", group: "Core surfaces" },
+  { fg: "error.fg", bg: "panel.bg", label: "Error text", group: "Core surfaces" },
+  { fg: "success.fg", bg: "panel.bg", label: "Success text", group: "Core surfaces" },
+  { fg: "warning.fg", bg: "panel.bg", label: "Warning text", group: "Core surfaces" },
+  { fg: "accent.fg", bg: "accent", label: "Accent surface", group: "Core surfaces" },
+  {
+    fg: "panel.fg",
+    bg: "graph.row.selected.bg",
+    base: "panel.bg",
+    label: "Selected row",
+    group: "Core surfaces",
+  },
+  { fg: "tab.active.fg", bg: "tab.active.bg", label: "Active repo tab", group: "Tabs & headers" },
+  {
+    fg: "tab.fg",
+    bg: "tab.bg",
+    base: "tab.strip.bg",
+    label: "Inactive repo tab",
+    group: "Tabs & headers",
+  },
+  {
+    fg: "panel.tab.active.fg",
+    bg: "panel.tab.active.bg",
+    base: "panel.tab.bg",
+    label: "Active panel tab",
+    group: "Tabs & headers",
+  },
+  {
+    fg: "panel.tab.fg",
+    bg: "panel.tab.bg",
+    base: "panel.bg",
+    label: "Inactive panel tab",
+    group: "Tabs & headers",
+  },
+  {
+    fg: "panel.header.fg",
+    bg: "panel.header.bg",
+    base: "panel.bg",
+    label: "Panel header",
+    group: "Tabs & headers",
+  },
+  {
+    fg: "pane.header.fg",
+    bg: "pane.header.bg",
+    base: "panel.bg",
+    label: "Accordion header",
+    group: "Tabs & headers",
+  },
+  {
+    fg: "banner.op.fg",
+    bg: "banner.op.bg",
+    base: "app.bg",
+    label: "Operation banner",
+    group: "Tabs & headers",
+  },
+  {
+    fg: "banner.warning.fg",
+    bg: "banner.warning.bg",
+    base: "app.bg",
+    label: "Warning banner",
+    group: "Tabs & headers",
+  },
+  { fg: "button.fg", bg: "button.bg", label: "Default button", group: "Controls" },
+  {
+    fg: "button.fg",
+    bg: "button.hover.bg",
+    label: "Default button (hover)",
+    group: "Controls",
+  },
+  { fg: "button.primary.fg", bg: "button.primary.bg", label: "Primary button", group: "Controls" },
+  {
+    fg: "button.primary.fg",
+    bg: "button.primary.hover.bg",
+    label: "Primary button (hover)",
+    group: "Controls",
+  },
+  { fg: "button.danger.fg", bg: "button.danger.bg", label: "Danger button", group: "Controls" },
+  {
+    fg: "button.danger.fg",
+    bg: "button.danger.hover.bg",
+    label: "Danger button (hover)",
+    group: "Controls",
+  },
+  { fg: "input.fg", bg: "input.bg", label: "Text input", group: "Controls" },
+  { fg: "console.fg", bg: "console.bg", label: "Console body", group: "Console" },
+  { fg: "console.stderr.fg", bg: "console.bg", label: "Console stderr", group: "Console" },
+  { fg: "console.prompt.fg", bg: "console.bg", label: "Console prompt", group: "Console" },
+  { fg: "diff.added.fg", bg: "diff.added.bg", base: "panel.bg", label: "Diff added", group: "Diff" },
+  {
+    fg: "diff.added.fg",
+    bg: "diff.added.word.bg",
+    base: ["diff.added.bg", "panel.bg"],
+    label: "Diff added word",
+    group: "Diff",
+  },
+  {
+    fg: "diff.removed.fg",
+    bg: "diff.removed.bg",
+    base: "panel.bg",
+    label: "Diff removed",
+    group: "Diff",
+  },
+  {
+    fg: "diff.removed.fg",
+    bg: "diff.removed.word.bg",
+    base: ["diff.removed.bg", "panel.bg"],
+    label: "Diff removed word",
+    group: "Diff",
+  },
+  {
+    fg: "diff.gutter.fg",
+    bg: "diff.gutter.bg",
+    base: "panel.bg",
+    label: "Diff gutter",
+    group: "Diff",
+  },
+  {
+    fg: "diff.hunk.header.fg",
+    bg: "diff.hunk.header.bg",
+    base: "panel.bg",
+    label: "Hunk header",
+    group: "Diff",
+  },
+  {
+    fg: "merge.fold.fg",
+    bg: "merge.fold.bg",
+    base: "panel.bg",
+    label: "Merge folded bar",
+    group: "Diff",
+  },
+  {
+    fg: "diff.action.fg",
+    bg: "diff.action.bg",
+    base: "panel.bg",
+    label: "Hunk action button",
+    group: "Diff",
+  },
+  {
+    fg: "diff.action.hover.fg",
+    bg: "diff.action.hover.bg",
+    base: "panel.bg",
+    label: "Hunk action button (hover)",
+    group: "Diff",
+  },
+  {
+    fg: "diff.discard.fg",
+    bg: "diff.discard.bg",
+    base: "panel.bg",
+    label: "Hunk discard button",
+    group: "Diff",
+  },
+  {
+    fg: "diff.discard.hover.fg",
+    bg: "diff.discard.hover.bg",
+    base: "panel.bg",
+    label: "Hunk discard button (hover)",
+    group: "Diff",
+  },
+  {
+    fg: "ref.branch.fg",
+    bg: "ref.branch.bg",
+    base: "panel.bg",
+    label: "Branch chip",
+    group: "Ref chips",
+  },
+  {
+    fg: "ref.branch.current.fg",
+    bg: "ref.branch.current.bg",
+    base: "panel.bg",
+    label: "Current branch chip",
+    group: "Ref chips",
+  },
+  {
+    fg: "ref.remote.fg",
+    bg: "ref.remote.bg",
+    base: "panel.bg",
+    label: "Remote chip",
+    group: "Ref chips",
+  },
+  { fg: "ref.tag.fg", bg: "ref.tag.bg", base: "panel.bg", label: "Tag chip", group: "Ref chips" },
+  { fg: "ref.head.fg", bg: "ref.head.bg", base: "panel.bg", label: "HEAD chip", group: "Ref chips" },
 ] as const;

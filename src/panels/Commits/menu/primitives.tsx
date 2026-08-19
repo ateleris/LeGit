@@ -78,7 +78,7 @@ export function MenuItem({
         padding: "6px 14px",
         cursor: disabled ? "default" : "pointer",
         whiteSpace: "nowrap",
-        color: disabled ? "var(--subtle-fg, #777)" : "var(--panel-fg, #ccc)",
+        color: disabled ? "var(--subtle-fg, #a1a1a1)" : "var(--panel-fg, #ccc)",
         background: hover && !disabled ? "var(--menu-hover-bg, rgba(255,255,255,0.08))" : "transparent",
         opacity: disabled ? 0.6 : 1,
       }}
@@ -106,7 +106,7 @@ export function SectionLabel({ children }: { children: React.ReactNode }) {
       style={{
         padding: "4px 14px",
         fontSize: "var(--fz-sm)",
-        color: "var(--subtle-fg, #888)",
+        color: "var(--subtle-fg, #a1a1a1)",
         textTransform: "uppercase",
         letterSpacing: "0.04em",
         cursor: "default",
@@ -292,7 +292,7 @@ export function Submenu({
         }}
       >
         <span style={{ display: "inline-flex", alignItems: "center", gap: "0.5em" }}>{label}</span>
-        <ChevronRightIcon style={{ color: "var(--subtle-fg, #888)" }} />
+        <ChevronRightIcon style={{ color: "var(--subtle-fg, #a1a1a1)" }} />
       </button>
       {open &&
         createPortal(

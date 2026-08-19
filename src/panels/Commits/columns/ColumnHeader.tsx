@@ -230,10 +230,10 @@ export function ColumnHeader({
   // Border highlight for drop targets.
   const dropBorder = useMemo<React.CSSProperties>(() => {
     if (dragOverSide === "left") {
-      return { boxShadow: "inset 2px 0 0 0 var(--accent-fg, #4a9eff)" };
+      return { boxShadow: "inset 2px 0 0 0 var(--accent, #4a9eff)" };
     }
     if (dragOverSide === "right") {
-      return { boxShadow: "inset -2px 0 0 0 var(--accent-fg, #4a9eff)" };
+      return { boxShadow: "inset -2px 0 0 0 var(--accent, #4a9eff)" };
     }
     return {};
   }, [dragOverSide]);

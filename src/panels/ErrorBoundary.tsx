@@ -43,7 +43,7 @@ export class ErrorBoundary extends Component<Props, State> {
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
             fontSize: "var(--fz-md)",
-            color: "var(--subtle-fg, #888)",
+            color: "var(--subtle-fg, #a1a1a1)",
           }}>
             {this.state.error.message}
           </pre>

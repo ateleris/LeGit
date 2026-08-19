@@ -2,9 +2,11 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { PALETTE_CONTRACT, TOKEN_CONTRACT } from "./tokens";
+import { CONTRAST_PAIRS, PALETTE_CONTRACT, TOKEN_CONTRACT } from "./tokens";
+import { contrastRatio } from "./contrast";
 import { DEFAULT_THEME } from "./defaults";
-import { bindingRef } from "./filters";
+import { bindingRef, resolveBindingColor } from "./filters";
+import type { ThemeTokenBinding } from "../lib/types";
 import lightThemeJson from "../../themes/Light.legit-theme.json";
 import darkThemeJson from "../../themes/Dark.legit-theme.json";
 
@@ -71,6 +73,69 @@ describe("theme token contract (4 places)", () => {
           `token "${t.name}" binds to unknown palette entry "${JSON.stringify(binding)}" in ${label} theme`,
         ).toBeDefined();
       }
+    });
+  }
+});
+
+// CONTRAST_PAIRS drives the Theme Editor's WCAG section; a pair referencing a
+// renamed/removed token would silently check the default fallback instead of
+// what the theme renders.
+describe("contrast pairs reference contract tokens", () => {
+  it("every fg/bg/base in CONTRAST_PAIRS is a TOKEN_CONTRACT name", () => {
+    const names = new Set(TOKEN_CONTRACT.map((t) => t.name));
+    for (const pair of CONTRAST_PAIRS) {
+      expect(names.has(pair.fg), `pair "${pair.label}": unknown fg token "${pair.fg}"`).toBe(true);
+      expect(names.has(pair.bg), `pair "${pair.label}": unknown bg token "${pair.bg}"`).toBe(true);
+      const bases =
+        pair.base === undefined ? [] : typeof pair.base === "string" ? [pair.base] : pair.base;
+      for (const base of bases) {
+        expect(names.has(base), `pair "${pair.label}": unknown base token "${base}"`).toBe(true);
+      }
+    }
+  });
+
+  it("pair labels are unique (they key the editor rows)", () => {
+    const labels = CONTRAST_PAIRS.map((p) => p.label);
+    expect(new Set(labels).size).toBe(labels.length);
+  });
+});
+
+// The shipped themes must pass our own readability bar: at least WCAG AA
+// (4.5:1) on every contrast pair the Theme Editor surfaces, measured the way
+// the editor measures it (translucent backgrounds composited over their base
+// surface stack). A palette tweak that drops a pair below AA fails here
+// instead of shipping.
+describe("built-in themes meet AA on every contrast pair", () => {
+  const baseList = (base: string | readonly string[] | undefined): readonly string[] =>
+    base === undefined ? [] : typeof base === "string" ? [base] : base;
+
+  for (const [label, theme] of [
+    ["Light", lightTheme],
+    ["Dark", darkTheme],
+  ] as const) {
+    it(`${label} scores at least 4.5:1 on every CONTRAST_PAIRS entry`, () => {
+      const resolve = (token: string): string => {
+        const binding = theme.tokens[token];
+        expect(binding, `token "${token}" missing from ${label} theme`).toBeDefined();
+        const color = resolveBindingColor(binding as ThemeTokenBinding, theme.palette);
+        expect(color, `token "${token}" unresolvable in ${label} theme`).toBeDefined();
+        return color!;
+      };
+      const failures: string[] = [];
+      for (const pair of CONTRAST_PAIRS) {
+        const ratio = contrastRatio(
+          resolve(pair.fg),
+          resolve(pair.bg),
+          baseList(pair.base).map(resolve),
+        );
+        if (ratio === null || ratio < 4.5) {
+          failures.push(`${pair.label}: ${ratio === null ? "n/a" : ratio.toFixed(2)}`);
+        }
+      }
+      expect(
+        failures,
+        `${label} theme pairs below AA (4.5:1):\n${failures.join("\n")}`,
+      ).toEqual([]);
     });
   }
 });
