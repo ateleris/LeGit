@@ -100,12 +100,14 @@ describe("contrast pairs reference contract tokens", () => {
   });
 });
 
-// The shipped themes must pass our own readability bar: at least WCAG AA
-// (4.5:1) on every contrast pair the Theme Editor surfaces, measured the way
-// the editor measures it (translucent backgrounds composited over their base
-// surface stack). A palette tweak that drops a pair below AA fails here
-// instead of shipping.
-describe("built-in themes meet AA on every contrast pair", () => {
+// The shipped themes must pass our own readability bar: every contrast pair
+// the Theme Editor surfaces must meet its floor — WCAG AA (4.5:1) by
+// default, or the pair's declared `minRatio` (the syntax-over-diff-wash
+// pairs use the 3:1 AA-Large tier) — measured the way the editor measures it
+// (translucent backgrounds composited over their base surface stack). A
+// palette tweak that drops a pair below its floor fails here instead of
+// shipping.
+describe("built-in themes meet every contrast pair's floor", () => {
   const baseList = (base: string | readonly string[] | undefined): readonly string[] =>
     base === undefined ? [] : typeof base === "string" ? [base] : base;
 
@@ -113,7 +115,7 @@ describe("built-in themes meet AA on every contrast pair", () => {
     ["Light", lightTheme],
     ["Dark", darkTheme],
   ] as const) {
-    it(`${label} scores at least 4.5:1 on every CONTRAST_PAIRS entry`, () => {
+    it(`${label} meets the floor of every CONTRAST_PAIRS entry`, () => {
       const resolve = (token: string): string => {
         const binding = theme.tokens[token];
         expect(binding, `token "${token}" missing from ${label} theme`).toBeDefined();
@@ -123,18 +125,24 @@ describe("built-in themes meet AA on every contrast pair", () => {
       };
       const failures: string[] = [];
       for (const pair of CONTRAST_PAIRS) {
+        // Advisory pairs (syntax over word highlights) are informational
+        // only — no floor to enforce.
+        if (pair.advisory) continue;
         const ratio = contrastRatio(
           resolve(pair.fg),
           resolve(pair.bg),
           baseList(pair.base).map(resolve),
         );
-        if (ratio === null || ratio < 4.5) {
-          failures.push(`${pair.label}: ${ratio === null ? "n/a" : ratio.toFixed(2)}`);
+        const floor = pair.minRatio ?? 4.5;
+        if (ratio === null || ratio < floor) {
+          failures.push(
+            `${pair.label}: ${ratio === null ? "n/a" : ratio.toFixed(2)} (floor ${floor})`,
+          );
         }
       }
       expect(
         failures,
-        `${label} theme pairs below AA (4.5:1):\n${failures.join("\n")}`,
+        `${label} theme pairs below their contrast floor:\n${failures.join("\n")}`,
       ).toEqual([]);
     });
   }

@@ -3,6 +3,7 @@ import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatAppError } from "../../lib/types";
 import { useThemeStore } from "../../store/themes";
+import { notify } from "../../store/notifications";
 import { confirmDialog } from "../../store/confirm";
 import { useConfirmDestructive } from "../../store/settings";
 import { contrastRatio, wcagBadge, type WcagBadge } from "../../theme/contrast";
@@ -19,6 +20,7 @@ import {
 import { validateTheme } from "../../theme/validate";
 import type { ThemeDocument, ThemeTokenBinding, TokenFilterId } from "../../lib/types";
 import { Button } from "../shared/buttons";
+import { ChevronDownIcon } from "../../icons";
 import { SettingsGroup } from "../Settings/primitives";
 
 /**
@@ -61,6 +63,27 @@ export function ThemeEditorPanel() {
   const editing = draft != null;
   const working = (draft ?? activeDoc) as ThemeDocument | null;
 
+  // User themes edit implicitly: the controls stay live in view mode and the
+  // first change starts the draft (the toolbar flips to Save/Cancel). Only
+  // built-in themes are truly read-only.
+  const activeIsBuiltin = themes.find((t) => t.name === activeName)?.source === "builtin";
+  const readOnly = !editing && activeIsBuiltin;
+
+  // Clicking around a read-only built-in must not feel broken: explain and
+  // point at the fix. Rate-limited so a burst of clicks yields one toast.
+  const lastHintRef = useRef(0);
+  const onReadOnlyPointerDown = (e: React.PointerEvent) => {
+    if (!readOnly) return;
+    // Live controls (section headers, a panel whose data query failed, ...)
+    // handle their own clicks - no hint for those.
+    const target = e.target as HTMLElement;
+    if (target.closest("button:enabled, select:enabled, input:enabled, textarea:enabled")) return;
+    const now = Date.now();
+    if (now - lastHintRef.current < 4000) return;
+    lastHintRef.current = now;
+    notify.info("Built-in themes are read-only. Use New to create an editable copy.");
+  };
+
   const groups = useMemo(() => {
     const map = new Map<string, typeof TOKEN_CONTRACT[number][]>();
     for (const t of TOKEN_CONTRACT) {
@@ -78,6 +101,12 @@ export function ThemeEditorPanel() {
       </div>
     );
   }
+
+  const setMeta = (patch: { name?: string; author?: string; description?: string }) => {
+    if (readOnly) return;
+    if (!draft) startEditing();
+    updateDraftMeta(patch);
+  };
 
   const setPaletteValue = (name: string, value: string) => {
     if (!draft) startEditing();
@@ -264,7 +293,7 @@ export function ThemeEditorPanel() {
           </Button>
         )}
       </div>
-      <div className="legit-panel__body">
+      <div className="legit-panel__body" onPointerDown={onReadOnlyPointerDown}>
         {error && <pre className="legit-error">{error}</pre>}
 
         <SettingsGroup id="theme-editor.metadata" title="Metadata">
@@ -274,20 +303,20 @@ export function ThemeEditorPanel() {
             <label>Name</label>
             <input
               value={working.name}
-              onChange={(e) => editing && updateDraftMeta({ name: e.target.value })}
-              disabled={!editing}
+              onChange={(e) => setMeta({ name: e.target.value })}
+              disabled={readOnly}
             />
             <label>Author</label>
             <input
               value={working.author ?? ""}
-              onChange={(e) => editing && updateDraftMeta({ author: e.target.value })}
-              disabled={!editing}
+              onChange={(e) => setMeta({ author: e.target.value })}
+              disabled={readOnly}
             />
             <label>Description</label>
             <input
               value={working.description ?? ""}
-              onChange={(e) => editing && updateDraftMeta({ description: e.target.value })}
-              disabled={!editing}
+              onChange={(e) => setMeta({ description: e.target.value })}
+              disabled={readOnly}
             />
           </div>
         </SettingsGroup>
@@ -298,7 +327,7 @@ export function ThemeEditorPanel() {
           <PaletteEditor
             palette={working.palette}
             usedNames={new Set(Object.values(working.tokens).map(bindingRef))}
-            disabled={!editing}
+            disabled={readOnly}
             onChange={setPaletteValue}
             onRename={renamePaletteEntry}
             onRemove={removePaletteEntry}
@@ -352,7 +381,7 @@ export function ThemeEditorPanel() {
                   <select
                     value={currentRef}
                     onChange={(e) => setTokenBinding(t.name, e.target.value, currentFilter)}
-                    disabled={!editing}
+                    disabled={readOnly}
                   >
                     {!working.palette[currentRef] && (
                       // The default binding references a palette entry this
@@ -377,7 +406,7 @@ export function ThemeEditorPanel() {
                         (e.target.value || null) as TokenFilterId | null,
                       )
                     }
-                    disabled={!editing || !currentRef}
+                    disabled={readOnly || !currentRef}
                   >
                     <option value="">No filter</option>
                     {TOKEN_FILTERS.map((f) => (
@@ -391,7 +420,7 @@ export function ThemeEditorPanel() {
                   {bound !== undefined ? (
                     <button
                       onClick={() => resetToken(t.name)}
-                      disabled={!editing}
+                      disabled={readOnly}
                       title="Reset to built-in default"
                       aria-label={`Reset ${t.name} to built-in default`}
                       style={{
@@ -404,7 +433,7 @@ export function ThemeEditorPanel() {
                         border: "1px solid var(--panel-border)",
                         borderRadius: 3,
                         color: "var(--subtle-fg)",
-                        cursor: editing ? "pointer" : "default",
+                        cursor: readOnly ? "default" : "pointer",
                       }}
                     >
                       ↺
@@ -456,13 +485,20 @@ function ContrastSection({ working }: { working: ThemeDocument }) {
         fg && bg && base.every((c) => c !== undefined)
           ? contrastRatio(fg, bg, base as string[])
           : null;
-      return { pair, ratio, badge: wcagBadge(ratio) };
+      // Below the pair's own floor (AA by default) — distinct from the badge,
+      // which always names the absolute WCAG tier. Advisory pairs have no
+      // floor: informational only.
+      const below = !pair.advisory && ratio !== null && ratio < (pair.minRatio ?? 4.5);
+      return { pair, ratio, badge: wcagBadge(ratio), below };
     });
   }, [working]);
 
-  const failing = rows.filter((r) => r.badge === "Fail").length;
+  const failing = rows.filter((r) => r.below).length;
+  const enforced = rows.filter((r) => !r.pair.advisory).length;
   const caption =
-    failing > 0 ? `${failing} of ${rows.length} pairs failing` : `all ${rows.length} pairs pass`;
+    failing > 0
+      ? `${failing} of ${enforced} pairs below target`
+      : `all ${enforced} pairs meet their target`;
 
   const grouped = useMemo(() => {
     const map = new Map<string, typeof rows>();
@@ -471,23 +507,32 @@ function ContrastSection({ working }: { working: ThemeDocument }) {
       list.push(row);
       map.set(row.pair.group, list);
     }
-    // Failing pairs first within each group (stable otherwise).
+    // Below-target pairs first within each group (stable otherwise).
     for (const list of map.values()) {
-      list.sort((a, b) => Number(b.badge === "Fail") - Number(a.badge === "Fail"));
+      list.sort((a, b) => Number(b.below) - Number(a.below));
     }
     return Array.from(map.entries());
   }, [rows]);
 
-  const badgeClass = (badge: WcagBadge) =>
-    badge === "Fail" ? "legit-error" : badge === "n/a" ? "legit-subtle" : "legit-success";
+  const badgeClass = (below: boolean, badge: WcagBadge, advisory: boolean | undefined) =>
+    below ? "legit-error" : advisory || badge === "n/a" ? "legit-subtle" : "legit-success";
   const cssVar = (token: string) => `var(--${token.replace(/\./g, "-")})`;
 
   return (
     <SettingsGroup id="theme-editor.contrast" title="Contrast (WCAG)" caption={caption} defaultOpen={false}>
-      {grouped.map(([group, list]) => (
-        <div key={group} style={{ marginBottom: 12 }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>{group}</div>
-          {list.map(({ pair, ratio, badge }) => (
+      {grouped.map(([group, list]) => {
+        const groupBelow = list.filter((r) => r.below).length;
+        return (
+        <ContrastGroup
+          key={group}
+          id={group}
+          title={group}
+          caption={groupBelow > 0 ? `${groupBelow} below target` : undefined}
+          // Syntax highlighting is opt-in in the diff viewer, so its (large)
+          // group starts collapsed.
+          defaultOpen={group !== "Syntax highlighting"}
+        >
+          {list.map(({ pair, ratio, badge, below }) => (
             <div
               key={pair.label}
               style={{
@@ -524,12 +569,100 @@ function ContrastSection({ working }: { working: ThemeDocument }) {
               </span>
               <span style={{ flex: 1 }}>{pair.label}</span>
               <span className="legit-subtle">{ratio ? ratio.toFixed(2) : "—"}</span>
-              <span className={badgeClass(badge)}>{badge}</span>
+              <span
+                className={badgeClass(below, badge, pair.advisory)}
+                title={
+                  pair.advisory
+                    ? "advisory: no required floor (word highlights are character-level emphasis)"
+                    : `target: at least ${pair.minRatio ?? 4.5}:1`
+                }
+              >
+                {badge}
+              </span>
             </div>
           ))}
-        </div>
-      ))}
+        </ContrastGroup>
+        );
+      })}
     </SettingsGroup>
+  );
+}
+
+/**
+ * A collapsible group inside the Contrast section. Same persistence pattern
+ * as `SettingsGroup`, but styled as the section's inner group headings so the
+ * two-level hierarchy stays readable.
+ */
+function ContrastGroup({
+  id,
+  title,
+  caption,
+  defaultOpen = true,
+  children,
+}: {
+  id: string;
+  title: string;
+  caption?: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const key = `legit.theme-editor.contrast-group.${id}`;
+  const [open, setOpen] = useState(() => {
+    try {
+      const stored = localStorage.getItem(key);
+      if (stored === "collapsed") return false;
+      if (stored === "expanded") return true;
+      return defaultOpen;
+    } catch {
+      return defaultOpen;
+    }
+  });
+  const toggle = () =>
+    setOpen((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(key, next ? "expanded" : "collapsed");
+      } catch {
+        /* private mode / quota — the toggle still works for the session */
+      }
+      return next;
+    });
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          background: "transparent",
+          border: "none",
+          padding: "2px 0",
+          cursor: "pointer",
+          color: "var(--panel-fg)",
+          fontWeight: 600,
+        }}
+      >
+        <ChevronDownIcon
+          size="1em"
+          style={{
+            flexShrink: 0,
+            transform: open ? "none" : "rotate(-90deg)",
+            transition: "transform 0.12s",
+          }}
+        />
+        <span>{title}</span>
+        {caption && (
+          <span className="legit-error" style={{ fontWeight: 400 }}>
+            {caption}
+          </span>
+        )}
+      </button>
+      {open && <div style={{ marginTop: 4 }}>{children}</div>}
+    </div>
   );
 }
 
@@ -623,14 +756,24 @@ function PaletteRow(p: PaletteRowProps) {
         disabled={p.disabled}
         onChange={(e) => p.onChange(p.name, e.target.value)}
       />
-      <input
-        ref={pickerRef}
-        type="color"
-        className="palette-row__picker"
-        disabled={p.disabled}
-        value={picker}
-        onChange={(e) => setPicker(e.target.value)}
-      />
+      {p.disabled ? (
+        // A plain swatch instead of a disabled <input type="color">: the
+        // WebView mutes disabled colour inputs, which misrepresents the
+        // palette entry's actual colour in view mode.
+        <span
+          className="palette-row__picker palette-row__picker--static"
+          style={{ background: p.value }}
+          aria-hidden
+        />
+      ) : (
+        <input
+          ref={pickerRef}
+          type="color"
+          className="palette-row__picker"
+          value={picker}
+          onChange={(e) => setPicker(e.target.value)}
+        />
+      )}
       <button
         className="palette-row__delete"
         disabled={p.disabled || p.inUse}

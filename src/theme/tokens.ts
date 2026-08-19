@@ -222,18 +222,18 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "diff.discard.hover.fg", group: "Diff", documentation: "Text of the hunk discard button on hover." },
   { name: "blame.alt.bg", group: "Blame", documentation: "Background of the alternating (every-other) commit rows in the Blame panel." },
 
-  { name: "syntax.keyword", group: "Syntax", documentation: "Keywords (`if`, `fn`, `const`, ...) in the diff viewer's code." },
-  { name: "syntax.string", group: "Syntax", documentation: "String, character, and regexp literals." },
-  { name: "syntax.number", group: "Syntax", documentation: "Numeric literals." },
-  { name: "syntax.comment", group: "Syntax", documentation: "Comments and preprocessor/meta lines." },
-  { name: "syntax.function", group: "Syntax", documentation: "Function and macro names." },
-  { name: "syntax.type", group: "Syntax", documentation: "Type, class, and namespace names." },
-  { name: "syntax.variable", group: "Syntax", documentation: "Variable names." },
-  { name: "syntax.property", group: "Syntax", documentation: "Object properties and markup attribute names." },
-  { name: "syntax.operator", group: "Syntax", documentation: "Operators." },
-  { name: "syntax.punctuation", group: "Syntax", documentation: "Punctuation and brackets." },
-  { name: "syntax.constant", group: "Syntax", documentation: "Built-in constants (`true`, `null`, `self`, ...)." },
-  { name: "syntax.tag", group: "Syntax", documentation: "Markup tag names and headings." },
+  { name: "syntax.keyword", group: "Syntax highlighting", documentation: "Keywords (`if`, `fn`, `const`, ...) in the diff viewer's code." },
+  { name: "syntax.string", group: "Syntax highlighting", documentation: "String, character, and regexp literals." },
+  { name: "syntax.number", group: "Syntax highlighting", documentation: "Numeric literals." },
+  { name: "syntax.comment", group: "Syntax highlighting", documentation: "Comments and preprocessor/meta lines." },
+  { name: "syntax.function", group: "Syntax highlighting", documentation: "Function and macro names." },
+  { name: "syntax.type", group: "Syntax highlighting", documentation: "Type, class, and namespace names." },
+  { name: "syntax.variable", group: "Syntax highlighting", documentation: "Variable names." },
+  { name: "syntax.property", group: "Syntax highlighting", documentation: "Object properties and markup attribute names." },
+  { name: "syntax.operator", group: "Syntax highlighting", documentation: "Operators." },
+  { name: "syntax.punctuation", group: "Syntax highlighting", documentation: "Punctuation and brackets." },
+  { name: "syntax.constant", group: "Syntax highlighting", documentation: "Built-in constants (`true`, `null`, `self`, ...)." },
+  { name: "syntax.tag", group: "Syntax highlighting", documentation: "Markup tag names and headings." },
 
   { name: "menu.hover.bg", group: "Menus", documentation: "Background of a hovered context-menu item." },
 
@@ -294,6 +294,20 @@ export interface ContrastPair {
   label: string;
   /** Heading the editor groups the pair under. */
   group: string;
+  /**
+   * Contrast floor for this pair: the built-in themes must meet it and the
+   * editor counts a pair below it as failing. Defaults to 4.5 (WCAG AA).
+   * Pairs where AA would neuter the design (syntax colours over the diff
+   * line washes) declare 3 (the WCAG AA-Large tier) instead.
+   */
+  minRatio?: number;
+  /**
+   * Informational only: the editor shows the ratio and tier for theme
+   * authors, but the pair has no floor — it never counts as failing and is
+   * not enforced for the built-in themes. Used where any floor would defeat
+   * the surface's purpose (syntax colours over the diff word highlights).
+   */
+  advisory?: boolean;
 }
 
 /** Pairs whose contrast the editor surfaces for the user. */
@@ -481,4 +495,59 @@ export const CONTRAST_PAIRS: readonly ContrastPair[] = [
   },
   { fg: "ref.tag.fg", bg: "ref.tag.bg", base: "panel.bg", label: "Tag chip", group: "Ref chips" },
   { fg: "ref.head.fg", bg: "ref.head.bg", base: "panel.bg", label: "HEAD chip", group: "Ref chips" },
-] as const;
+  // Syntax colours are read as body text on plain code (AA) and on the diff
+  // line washes (3:1 — holding AA there would force either a washed-out
+  // syntax palette or near-invisible line tints). The word-highlight pairs
+  // are advisory: they inform theme authors but carry no floor — word
+  // highlights are character-level emphasis, and any enforceable floor
+  // would push the word washes toward invisibility. See
+  // design/2026-08-19-contrast-checks-aa.md.
+  ...[
+    "keyword",
+    "string",
+    "number",
+    "comment",
+    "function",
+    "type",
+    "variable",
+    "property",
+    "operator",
+    "punctuation",
+    "constant",
+    "tag",
+  ].flatMap((s): ContrastPair[] => [
+    { fg: `syntax.${s}`, bg: "panel.bg", label: `Syntax ${s}`, group: "Syntax highlighting" },
+    {
+      fg: `syntax.${s}`,
+      bg: "diff.added.bg",
+      base: "panel.bg",
+      minRatio: 3,
+      label: `Syntax ${s} (added)`,
+      group: "Syntax highlighting",
+    },
+    {
+      fg: `syntax.${s}`,
+      bg: "diff.added.word.bg",
+      base: ["diff.added.bg", "panel.bg"],
+      advisory: true,
+      label: `Syntax ${s} (added word)`,
+      group: "Syntax highlighting",
+    },
+    {
+      fg: `syntax.${s}`,
+      bg: "diff.removed.bg",
+      base: "panel.bg",
+      minRatio: 3,
+      label: `Syntax ${s} (removed)`,
+      group: "Syntax highlighting",
+    },
+    {
+      fg: `syntax.${s}`,
+      bg: "diff.removed.word.bg",
+      base: ["diff.removed.bg", "panel.bg"],
+      advisory: true,
+      label: `Syntax ${s} (removed word)`,
+      group: "Syntax highlighting",
+    },
+  ]),
+];

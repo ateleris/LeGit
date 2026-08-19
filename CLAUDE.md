@@ -174,6 +174,16 @@ project memory for details.
     suite. Literal colours are enforced by
     `src/theme/noLiteralColors.test.ts`, which fails on any colour literal
     outside the theme system or a `var()` fallback.
+  - **Built-in themes must meet every contrast pair's floor** in
+    `CONTRAST_PAIRS` (`src/theme/tokens.ts`): WCAG AA (4.5:1) by default, or
+    the pair's declared `minRatio` (e.g. 3:1 for syntax colours over the
+    diff line washes), measured with translucent backgrounds composited over
+    their `base` surface stack - enforced by `contract.test.ts`. When a new
+    fg/bg token combination becomes user-visible text, add a pair entry
+    (with a `base` stack if the bg is a wash) and retune the built-ins if
+    the new pair fails; themes created on request should also meet the same
+    floors (only deliberately garish demo themes are exempt). See
+    `design/2026-08-19-contrast-checks-aa.md`.
 - **Every UI dimension scales with the global UI font size — no fixed-px
   chrome.** `--ui-font-size` is the single base; changing it must resize the
   whole app coherently. Concretely:

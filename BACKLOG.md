@@ -17,7 +17,44 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
 
 1. **LICENSE file.** The repo has no LICENSE yet - pick one and add it before
    the release is public (the Releases page implies redistribution). Also
-   replace the workspace `license = "TBD"` in Cargo.toml.
+   replace the workspace `license = "TBD"` in Cargo.toml. Depends on the
+   release-model decision below; candidates discussed 2026-08-19:
+   - **MIT / Apache-2.0** (permissive; max adoption, closed forks allowed;
+     Apache adds a patent grant),
+   - **GPL-3.0** (copyleft; blocks proprietary forks, but locks LeGit itself
+     out of later relicensing once outside contributions land, unless a CLA
+     is required),
+   - **FSL/BSL** (fair source, GitButler-style; source public + free for
+     users, competitors can't commercialize it, converts to MIT/Apache after
+     ~2 years - keeps a paid-commercial option open).
+   All deps (Tauri, React) are permissive, so nothing constrains the choice.
+
+2. **Release / distribution model decision** (discussed 2026-08-19). Options
+   weighed: (a) open source + donations - best adoption/trust for a git
+   client and the strongest Ateleris marketing; (b) closed source, free
+   download - assessed as weakest (no community benefit, no revenue, full
+   SmartScreen/Gatekeeper friction); (c) fair source (FSL) - most of (a)'s
+   trust while keeping commercialization rights; (d) free-for-personal +
+   paid commercial license (Sublime Merge/Fork model) - the only real
+   revenue path, needs licensing infra; (e) open core - only if paid team
+   features are actually foreseen. Recommendation on record: (a) with
+   MIT/Apache, or (c) if keeping the door open to charging companies
+   matters. Donation income is negligible under every option - it's a tip
+   jar, not a plan.
+
+3. **Funding links** (once the repo is public; discussed 2026-08-19).
+   - `.github/FUNDING.yml` so the repo gets a Sponsor button. Platform
+     shortlist: **GitHub Sponsors** (0% personal fee, in-GitHub one-click,
+     needs Stripe Connect signup - Simon may skip this) and/or **Ko-fi**
+     (0% fee, one-time + monthly, PayPal/Stripe payout) vs **Buy Me a
+     Coffee** (same product, 5% fee, more mainstream brand). `custom:`
+     entries (up to 4 URLs, e.g. PayPal.Me) work with zero platform signup.
+     Multiple entries can coexist; adding Sponsors later is a one-line
+     append.
+   - README support link: a shields.io badge in the header badge row
+     (license + CI + support) plus a short "Support" section near the end -
+     keep it subtle, no big donation button above the fold. Fold into the
+     same README pass as the screenshots.
 
 Decided and recorded, no action:
 - **Git is not bundled** (trade study

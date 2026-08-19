@@ -585,9 +585,11 @@ button.legit-tab__close:hover {
   background: transparent;
   cursor: pointer;
 }
-.palette-row__picker:disabled {
+/* View-mode swatch (plain span, not a disabled colour input - the WebView
+ * mutes those, which would misrepresent the palette entry's true colour). */
+.palette-row__picker--static {
+  display: inline-block;
   cursor: default;
-  opacity: 0.5;
 }
 .palette-row__delete {
   /* Font-relative box (26px/16px at the 12px default base). */
