@@ -220,3 +220,12 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 - **"Publish all publishable tags" one-time action** for pre-existing
   local tags - the auto-push-tags feature (2026-08-04) deliberately covers
   the invariant going forward only; add the sweep only if wanted.
+- **Commit-graph file for large repos.** The bulk log's `--date-order`
+  (added 2026-08-19 for the equal-timestamp parent-order fix) makes git's
+  walk "limited": measured on a synthetic 100k-commit repo (git 2.43), the
+  first page costs ~0.5s without a commit-graph file and ~13ms with one
+  (deep `--skip` pages converge either way; default order was ~instant).
+  Repos that have been gc'd usually have one (`gc.writeCommitGraph`
+  defaults on). If first-page latency ever hurts on a huge fresh clone,
+  run `git commit-graph write --reachable` on repo open (or as a
+  maintenance action).

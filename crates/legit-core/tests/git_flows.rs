@@ -1326,6 +1326,90 @@ async fn range_walk_injects_only_stashes_based_in_the_window() {
     assert!(!has_stash(&plain), "{plain:?}");
 }
 
+/// Commit the worktree with a pinned author+committer date (ISO 8601). The
+/// runner scrubs inherited GIT_* vars, so the dates ride a per-invocation
+/// `run_with_env` override.
+async fn commit_all_at(repo: &TestRepo, msg: &str, date: &str) {
+    repo.git(&["add", "-A"]).await;
+    git_at(repo, &["commit", "-m", msg], date).await;
+}
+
+async fn git_at(repo: &TestRepo, args: &[&str], date: &str) {
+    let runner = GitRunner::for_repo("git", &repo.path);
+    let out = runner
+        .run_with_env(args, &[("GIT_AUTHOR_DATE", date), ("GIT_COMMITTER_DATE", date)])
+        .await
+        .expect("spawn git");
+    assert!(out.success, "`git {args:?}` failed: {}", out.stderr);
+}
+
+#[tokio::test]
+async fn log_lists_children_before_parents_on_equal_timestamps() {
+    // Regression (found 2026-08-19 in a real repo): git log's DEFAULT order
+    // is a commit-date priority queue with NO parent-after-child guarantee.
+    // When a parent is discovered early via one child and then TIES another
+    // child on committer timestamp, git emits the parent first - and the
+    // graph's lane algorithm (which walks children -> parents downward)
+    // breaks the connector edge. `--date-order` adds exactly the missing
+    // guarantee; this pins it against the real binary.
+    //
+    // Topology (t2 is the tie):
+    //   A(t0) -- M(t2, merge A+P) -- Cm(t3) -- T(t5, merge Cm+Cp)   [main]
+    //     \      /                            /
+    //      P(t2) ------------------ Cp(t4) --                       [via side]
+    //
+    // Walking from T: Cp(t4) pops before Cm(t3) and discovers P(t2) FIRST;
+    // Cm then discovers M(t2), which ties P and (insert-after-equal) queues
+    // behind it -> default order emits parent P before its child M.
+    let repo = TestRepo::init().await;
+    repo.write("base.txt", "base\n");
+    commit_all_at(&repo, "A base", "2026-01-01T10:00:00+00:00").await;
+
+    repo.git(&["switch", "-c", "side"]).await;
+    repo.write("p.txt", "p\n");
+    commit_all_at(&repo, "P tied parent", "2026-01-01T10:02:00+00:00").await;
+    let p = repo.head().await;
+
+    repo.git(&["switch", "main"]).await;
+    git_at(
+        &repo,
+        &["merge", "--no-ff", "-m", "M tied child (merge)", "side"],
+        "2026-01-01T10:02:00+00:00",
+    )
+    .await;
+    let m = repo.head().await;
+
+    // P's OTHER, newer child - the discovery path that seeds P early.
+    repo.git(&["switch", "-c", "other", "side"]).await;
+    repo.write("cp.txt", "cp\n");
+    commit_all_at(&repo, "Cp late child of P", "2026-01-01T10:04:00+00:00").await;
+
+    repo.git(&["switch", "main"]).await;
+    repo.write("cm.txt", "cm\n");
+    commit_all_at(&repo, "Cm child of M", "2026-01-01T10:03:00+00:00").await;
+    git_at(
+        &repo,
+        &["merge", "--no-ff", "-m", "T top merge", "other"],
+        "2026-01-01T10:05:00+00:00",
+    )
+    .await;
+
+    let commits = repo.backend.log(LogOptions::default()).await.unwrap();
+    let pos = |sha: &str| {
+        commits
+            .iter()
+            .position(|c| c.id.as_str() == sha)
+            .unwrap_or_else(|| panic!("{sha} missing from the walk"))
+    };
+    assert!(
+        pos(&m) < pos(&p),
+        "child M must be listed before its parent P despite the timestamp tie \
+         (got M at {}, P at {})",
+        pos(&m),
+        pos(&p),
+    );
+}
+
 // ---------------------------------------------------------------------------
 // resolve_commit: rev-parse expressions name commits; tags peel; junk errors
 // ---------------------------------------------------------------------------

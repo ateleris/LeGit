@@ -1050,7 +1050,14 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             .filter(|a| !a.is_empty())
             .map(|a| format!("--author={a}"));
 
-        let mut args = vec!["log", &fmt_arg, &max_count_arg];
+        // --date-order = the default commit-timestamp order PLUS the
+        // guarantee that no parent lists before all of its children. The
+        // default order lacks that guarantee: a parent discovered via one
+        // child can win a committer-timestamp tie against another child and
+        // list first, which breaks the commit graph's child->parent lane
+        // edges (regression: log_lists_children_before_parents_on_equal_
+        // timestamps in tests/git_flows.rs).
+        let mut args = vec!["log", &fmt_arg, &max_count_arg, "--date-order"];
         if skip > 0 {
             args.push(&skip_arg);
         }

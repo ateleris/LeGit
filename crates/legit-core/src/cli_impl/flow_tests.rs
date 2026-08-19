@@ -691,9 +691,14 @@ async fn log_all_branches_and_remotes_walks_remote_refs_too() {
     let fmt = format!("--format={}", parsers::log::LOG_FORMAT);
     let stash_fmt = format!("--format={}", parsers::stash::STASH_FORMAT);
     let fake = FakeExecutor::default();
+    // --date-order is load-bearing: git's DEFAULT order has no
+    // parent-after-child guarantee (a parent discovered via another child can
+    // win a committer-timestamp tie), which breaks the graph's lane edges -
+    // real-git case in tests/git_flows.rs
+    // (log_lists_children_before_parents_on_equal_timestamps).
     fake.expect(
         &[
-            "log", fmt.as_str(), "--max-count=500",
+            "log", fmt.as_str(), "--max-count=500", "--date-order",
             "HEAD", "--branches", "--remotes", "--decorate=full",
         ],
         ok(""),
@@ -751,7 +756,7 @@ async fn log_never_scans_signatures() {
     let fmt = format!("--format={}", parsers::log::LOG_FORMAT);
     let fake = FakeExecutor::default();
     fake.expect(
-        &["log", fmt.as_str(), "--max-count=500", "--decorate=full"],
+        &["log", fmt.as_str(), "--max-count=500", "--date-order", "--decorate=full"],
         ok(&log_record(SIG_SHA_A, "some commit")),
     );
     let (b, exec) = backend(fake);
