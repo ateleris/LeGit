@@ -15,6 +15,22 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 specta = { workspace = true }
 
+# Process-tree lifetime control (see runner.rs): each git runs in its own
+# process group so cancel can kill the whole tree, and children must not
+# outlive the app.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    # CreateJobObjectW's signature names SECURITY_ATTRIBUTES.
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    # JOBOBJECT_EXTENDED_LIMIT_INFORMATION is gated behind this.
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 tokio = { workspace = true }
 tempfile = "3"

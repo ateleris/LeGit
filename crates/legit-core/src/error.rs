@@ -28,6 +28,13 @@ pub enum GitError {
     #[error("git command failed (exit {exit_code}): {stderr}")]
     CommandFailed { exit_code: i32, stderr: String },
 
+    /// A clone the user cancelled: an expected outcome the UI stays silent
+    /// about - unless removing the partial clone's files failed, in which
+    /// case `cleanup_failed` carries the note the user must see (a failed
+    /// best-effort cleanup is never silent).
+    #[error("clone cancelled")]
+    CloneCancelled { cleanup_failed: Option<String> },
+
     #[error("failed to parse git output: {0}")]
     Parse(String),
 

@@ -1898,6 +1898,7 @@ version = "0.9.14"
 dependencies = [
  "async-trait",
  "chrono",
+ "libc",
  "serde",
  "specta",
  "tempfile",
@@ -1905,6 +1906,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

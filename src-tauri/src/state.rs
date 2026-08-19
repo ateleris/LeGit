@@ -557,7 +557,17 @@ pub struct AppState {
     /// In-flight session-less git operations (currently `git clone`), keyed by
     /// `OperationId`, so a separate cancel command can reach the runner. Entries
     /// are inserted for the op's duration and removed when it finishes.
-    pub transient_ops: Mutex<HashMap<OperationId, Arc<GitRunner>>>,
+    pub transient_ops: Mutex<HashMap<OperationId, Arc<TransientOp>>>,
+}
+
+/// An in-flight session-less git operation (see `AppState::transient_ops`).
+pub struct TransientOp {
+    pub runner: Arc<GitRunner>,
+    /// Set by the cancel command BEFORE the kill is delivered, so when the
+    /// kill unblocks the operation's own future it can already tell a
+    /// user cancellation apart from a real failure (the killed process's
+    /// exit status alone cannot).
+    pub cancelled: std::sync::atomic::AtomicBool,
 }
 
 impl AppState {

@@ -277,6 +277,18 @@ export function gitErrorKind(e: unknown): string | null {
   return null;
 }
 
+/** For a cancelled clone (`GitError::CloneCancelled`): the note describing a
+ *  FAILED removal of the partial clone's files, which the UI must surface
+ *  (a failed best-effort cleanup is never silent). Null when the cleanup
+ *  succeeded or the error is anything else - a plain cancel stays silent. */
+export function cloneCancelCleanupFailure(e: unknown): string | null {
+  if (gitErrorKind(e) !== "CloneCancelled") return null;
+  const git = (e as AppError).details as { details?: unknown };
+  if (!git.details || typeof git.details !== "object") return null;
+  const note = (git.details as Record<string, unknown>).cleanup_failed;
+  return typeof note === "string" ? note : null;
+}
+
 // --- Line endings types (matches §H of DESIGN-v0.2.md) ---
 
 export type ConfigScope = "local" | "global" | "system" | "unset";

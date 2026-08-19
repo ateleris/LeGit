@@ -4172,3 +4172,52 @@ async fn rebase_range_info_probes_upstream_and_ancestry() {
     let info = repo.backend.rebase_range_info(&side).await.expect("info");
     assert!(info.transplant);
 }
+
+/// Assumptions behind the cancelled-clone cleanup (`CloneCleanup` in the
+/// app layer): git REFUSES to clone into a non-empty directory without
+/// touching its contents (so a cancel racing that early failure has nothing
+/// it may delete), and ACCEPTS an existing empty directory (so cleanup there
+/// removes the contents git wrote but keeps the user's directory itself).
+#[tokio::test]
+async fn clone_target_directory_assumptions() {
+    let origin = TestRepo::init().await;
+    origin.write("a.txt", "x\n");
+    origin.commit_all("c1").await;
+    let origin_path = origin.path.to_string_lossy().into_owned();
+
+    let work = tempfile::tempdir().expect("tempdir");
+    let runner = GitRunner::for_repo("git", work.path());
+
+    // Non-empty target: refused, contents untouched.
+    let occupied = work.path().join("occupied");
+    std::fs::create_dir(&occupied).expect("mkdir");
+    std::fs::write(occupied.join("precious.txt"), "user data").expect("write");
+    let out = runner
+        .run(&["clone", &origin_path, "occupied"])
+        .await
+        .expect("spawn git");
+    assert!(!out.success, "git must refuse a non-empty clone target");
+    assert_eq!(
+        std::fs::read_to_string(occupied.join("precious.txt")).expect("read"),
+        "user data"
+    );
+    assert_eq!(
+        std::fs::read_dir(&occupied).expect("read_dir").count(),
+        1,
+        "the refused clone must not have added or removed anything"
+    );
+
+    // Existing empty target: accepted, git fills the directory.
+    let empty = work.path().join("empty");
+    std::fs::create_dir(&empty).expect("mkdir");
+    let out = runner
+        .run(&["clone", &origin_path, "empty"])
+        .await
+        .expect("spawn git");
+    assert!(
+        out.success,
+        "git must accept an existing empty clone target: {}",
+        out.stderr
+    );
+    assert!(empty.join(".git").exists());
+}

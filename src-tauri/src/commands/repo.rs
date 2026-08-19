@@ -5,7 +5,7 @@
 use crate::error::AppError;
 use crate::state::{
     load_repo_settings_sync, AppState, LaneLock, RepoSession, RepoSettings,
-    RepoSummary,
+    RepoSummary, TransientOp,
 };
 use legit_core::{classify_remote_error, GitError, GitRunner, OperationId};
 use std::path::{Path, PathBuf};
@@ -275,6 +275,132 @@ fn build_clone_args(
     args
 }
 
+/// What a cancelled clone may delete. Decided BEFORE git runs, so the answer
+/// cannot be confused by whatever the killed clone left behind - a kill gives
+/// git no chance to clean up after itself.
+#[derive(Debug)]
+enum CloneCleanup {
+    /// The target did not exist: the clone created it, remove it whole.
+    RemoveDir(PathBuf),
+    /// The target existed but was empty: remove what the clone put inside,
+    /// keep the user's directory itself.
+    RemoveContents(PathBuf),
+    /// The target existed with content: git refuses such a destination, so
+    /// nothing inside is ours - a cancel racing that early failure must not
+    /// touch the user's files.
+    Nothing,
+}
+
+impl CloneCleanup {
+    fn plan(target: &Path) -> Self {
+        if !target.exists() {
+            return Self::RemoveDir(target.to_path_buf());
+        }
+        match std::fs::read_dir(target) {
+            Ok(mut entries) => {
+                if entries.next().is_none() {
+                    Self::RemoveContents(target.to_path_buf())
+                } else {
+                    Self::Nothing
+                }
+            }
+            // Unreadable target: treat as occupied - deleting blind is worse
+            // than leaving debris.
+            Err(_) => Self::Nothing,
+        }
+    }
+
+    /// Execute the plan (best-effort). Returns a user-facing note when the
+    /// removal failed (a failed cleanup must never be silent), None on
+    /// success.
+    fn run(&self) -> Option<String> {
+        let (dir, keep_root) = match self {
+            Self::RemoveDir(p) => (p, false),
+            Self::RemoveContents(p) => (p, true),
+            Self::Nothing => return None,
+        };
+        remove_clone_debris(dir, keep_root).err().map(|e| {
+            format!(
+                "The partial clone at '{}' could not be removed: {e}",
+                dir.display()
+            )
+        })
+    }
+}
+
+/// Remove a killed clone's debris: `remove_dir_all` (or, with `keep_root`,
+/// of each entry inside) with the two twists a kill needs on Windows - git's
+/// object files are read-only, which blocks plain deletion there, and the
+/// killed clone's helper processes can hold handles for a moment after the
+/// kill (they die on broken pipe, not synchronously). So failed attempts are
+/// retried briefly, clearing read-only flags in between. Never touches
+/// anything outside `dir`.
+fn remove_clone_debris(dir: &Path, keep_root: bool) -> std::io::Result<()> {
+    const ATTEMPTS: u32 = 10;
+    let mut last_err = None;
+    for attempt in 0..ATTEMPTS {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            #[cfg(windows)]
+            clear_readonly_recursive(dir);
+        }
+        match try_remove(dir, keep_root) {
+            Ok(()) => return Ok(()),
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.expect("loop ran at least once"))
+}
+
+fn try_remove(dir: &Path, keep_root: bool) -> std::io::Result<()> {
+    if !keep_root {
+        return match std::fs::remove_dir_all(dir) {
+            // Already gone (a cancel can race the clone's own early
+            // failure, before git created anything): that IS the goal state.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            other => other,
+        };
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    for entry in entries {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            std::fs::remove_dir_all(entry.path())?;
+        } else {
+            std::fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+/// Windows only: deletion fails on read-only files (git object files are),
+/// so clear the flag throughout the target before a retry. On Unix deletion
+/// is governed by the parent directory's permissions instead, and we must
+/// not "fix" permissions to force a removal through.
+#[cfg(windows)]
+fn clear_readonly_recursive(path: &Path) {
+    let Ok(meta) = path.symlink_metadata() else {
+        return;
+    };
+    let mut perms = meta.permissions();
+    if perms.readonly() {
+        perms.set_readonly(false);
+        let _ = std::fs::set_permissions(path, perms);
+    }
+    if meta.is_dir() {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            clear_readonly_recursive(&entry.path());
+        }
+    }
+}
+
 /// Clone `url` into `parent_dir/name`, open it, and optionally apply (and select)
 /// a profile. When a profile is given its auth is injected into the clone via
 /// `-c` (so the clone authenticates with that identity) and then applied to the
@@ -325,20 +451,38 @@ pub async fn repo_clone(
         recurse_submodules,
     ));
 
+    // Decide NOW what a cancelled clone may delete: after the kill, the
+    // target's content says nothing about who created it (see CloneCleanup).
+    let target = parent.join(&name);
+    let cleanup = CloneCleanup::plan(&target);
+
     // Run on a transient runner registered for the op so cancel_clone can reach it.
     let oid = OperationId(op_id);
     let runner = Arc::new(GitRunner::for_repo(git_path.clone(), &parent));
+    let op = Arc::new(TransientOp {
+        runner: runner.clone(),
+        cancelled: std::sync::atomic::AtomicBool::new(false),
+    });
     state
         .transient_ops
         .lock()
         .unwrap()
-        .insert(oid.clone(), runner.clone());
+        .insert(oid.clone(), op.clone());
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let result = runner.run_with_op_progress(&arg_refs, oid.clone()).await;
     state.transient_ops.lock().unwrap().remove(&oid);
 
     let out = result.map_err(AppError::from)?;
     if !out.success {
+        // Cancelled by the user: a kill gives git no chance to clean up its
+        // partial target, so remove it ourselves (blocking fs work off the
+        // async thread). An expected outcome, not a remote error.
+        if op.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+            let cleanup_failed = tokio::task::spawn_blocking(move || cleanup.run())
+                .await
+                .unwrap_or_else(|e| Some(format!("clone cleanup task failed: {e}")));
+            return Err(AppError::Git(GitError::CloneCancelled { cleanup_failed }));
+        }
         return Err(AppError::Git(classify_remote_error(
             out.exit_code.unwrap_or(-1),
             &out.stderr,
@@ -369,9 +513,15 @@ pub async fn cancel_clone(
     op_id: String,
 ) -> Result<bool, AppError> {
     let oid = OperationId(op_id);
-    let runner = state.transient_ops.lock().unwrap().get(&oid).cloned();
-    Ok(match runner {
-        Some(r) => r.cancel(&oid),
+    let op = state.transient_ops.lock().unwrap().get(&oid).cloned();
+    Ok(match op {
+        Some(op) => {
+            // Order matters: mark cancelled first, then kill - when the kill
+            // unblocks the clone's future, the flag must already be visible.
+            op.cancelled
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            op.runner.cancel(&oid)
+        }
         None => false,
     })
 }
@@ -749,7 +899,115 @@ mod tests {
         assert!(!super::same_dir(&a, &a.join("elsewhere")));
     }
 
-    use super::{build_clone_args, build_init_args};
+    use super::{build_clone_args, build_init_args, CloneCleanup};
+
+    #[test]
+    fn cleanup_plan_removes_whole_dir_when_target_does_not_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("repo");
+        assert!(matches!(
+            CloneCleanup::plan(&target),
+            CloneCleanup::RemoveDir(p) if p == target
+        ));
+    }
+
+    #[test]
+    fn cleanup_plan_removes_contents_when_target_is_an_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("repo");
+        std::fs::create_dir(&target).unwrap();
+        assert!(matches!(
+            CloneCleanup::plan(&target),
+            CloneCleanup::RemoveContents(p) if p == target
+        ));
+    }
+
+    #[test]
+    fn cleanup_plan_touches_nothing_when_target_has_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("repo");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("precious.txt"), "user data").unwrap();
+        assert!(matches!(
+            CloneCleanup::plan(&target),
+            CloneCleanup::Nothing
+        ));
+    }
+
+    /// The debris of a killed clone includes read-only files (git object
+    /// files); removal must handle them.
+    #[test]
+    fn cleanup_remove_dir_deletes_readonly_debris() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("repo");
+        std::fs::create_dir_all(target.join(".git/objects/ab")).unwrap();
+        let obj = target.join(".git/objects/ab/cdef");
+        std::fs::write(&obj, "loose object").unwrap();
+        let mut perms = std::fs::metadata(&obj).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&obj, perms).unwrap();
+
+        assert_eq!(CloneCleanup::RemoveDir(target.clone()).run(), None);
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn cleanup_remove_contents_keeps_the_users_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("repo");
+        std::fs::create_dir_all(target.join(".git")).unwrap();
+        std::fs::write(target.join(".git/HEAD"), "ref: x").unwrap();
+        std::fs::write(target.join("partial.txt"), "x").unwrap();
+
+        assert_eq!(CloneCleanup::RemoveContents(target.clone()).run(), None);
+        assert!(target.exists());
+        assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn cleanup_nothing_leaves_files_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("repo");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("precious.txt"), "user data").unwrap();
+
+        assert_eq!(CloneCleanup::Nothing.run(), None);
+        assert!(target.join("precious.txt").exists());
+    }
+
+    /// A cancel can race the clone's own early failure, before git created
+    /// anything: removing a target that is already gone is a success.
+    #[test]
+    fn cleanup_remove_dir_of_already_missing_target_is_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("repo");
+        assert_eq!(CloneCleanup::RemoveDir(target).run(), None);
+    }
+
+    /// A cleanup that genuinely cannot remove the debris must say so (the
+    /// note reaches the user), and must never fix permissions OUTSIDE the
+    /// target to force the removal through.
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_reports_a_note_when_removal_is_blocked() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("repo");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("debris"), "x").unwrap();
+        // An unwritable parent blocks unlinking `repo` from it.
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let note = CloneCleanup::RemoveDir(target.clone()).run();
+
+        // Restore before asserting so the tempdir can always be dropped.
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        let note = note.expect("blocked removal must produce a note");
+        assert!(
+            note.contains("repo"),
+            "note should name the path, got: {note}"
+        );
+    }
 
     #[test]
     fn clone_args_default_is_progress_url_name() {

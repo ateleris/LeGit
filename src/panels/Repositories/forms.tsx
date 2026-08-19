@@ -6,7 +6,7 @@ import { useRef, useState } from "react";
 import { cancelClone } from "../../lib/commands";
 import type { CloneOptions, InitOptions } from "../../lib/commands";
 import type { GitProfile } from "../../lib/types";
-import { formatAppError, gitErrorKind } from "../../lib/types";
+import { cloneCancelCleanupFailure, formatAppError, gitErrorKind } from "../../lib/types";
 import { useRemoteProgressStore } from "../../store/remoteProgress";
 import { useSettingsStore } from "../../store/settings";
 import { Button } from "../shared/buttons";
@@ -88,7 +88,12 @@ export function CloneForm({
         recurseSubmodules,
       });
     } catch (e) {
-      if (!cancelRequestedRef.current) {
+      if (gitErrorKind(e) === "CloneCancelled") {
+        // Expected outcome of the Cancel button: stay silent - unless the
+        // backend could not remove the partial clone's files.
+        const note = cloneCancelCleanupFailure(e);
+        if (note) onError(note);
+      } else if (!cancelRequestedRef.current) {
         onError(
           gitErrorKind(e) === "AuthFailed"
             ? "Authentication failed. Pick a profile with the right credentials, or fix your global git credentials."
