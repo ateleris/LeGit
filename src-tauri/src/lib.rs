@@ -235,6 +235,7 @@ pub fn run() {
         commands::repo_unstaged_marker_paths,
         commands::repo_conflict_reopen,
         commands::repo_commit,
+        commands::repo_gitmodules_consistency,
         commands::repo_reword_commit,
         commands::repo_fetch,
         commands::repo_pull,

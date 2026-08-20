@@ -16,6 +16,7 @@ use crate::types::{
     BlameHunk, BlobBytes, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
     FastForwardResult, FetchOptions, FfMode, FileAtRevision, FileHistoryEntry, FileState, FileStatus,
+    GitmodulesFinding,
     HunkOp, LfsStatus, LineEndingKind, LineEndingStatusEntry, LineEndingTransition, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullStrategy, PushOptions, PushRecurseMode,
     RebaseAction, RebaseOutcome, RebaseRangeInfo, RebaseStep, RefDecoration, RefSelector,
     ReflogEntry, Remote,
@@ -2102,6 +2103,34 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             self.run_pathspec(&["add", "--"], &to_stage).await?;
         }
         Ok(results)
+    }
+
+    async fn gitmodules_consistency(&self) -> Result<Vec<GitmodulesFinding>, GitError> {
+        let runner = self.runner().await;
+        // Gate: one cheap staged diff. Failure (e.g. unborn HEAD on some git
+        // versions) falls through to the full check - the gate is an
+        // optimization and must neither error out nor silently skip.
+        let gate = runner.run(&parsers::submodules::STAGED_RAW_DIFF_ARGS).await?;
+        if gate.success
+            && !parsers::submodules::staged_touches_submodule_config(&gate.stdout)
+        {
+            return Ok(Vec::new());
+        }
+        // The STAGED blob (`:.gitmodules`), not the worktree file: the check
+        // is about what the commit will record. Non-zero exit = no staged
+        // .gitmodules / no sections - an empty entry set, not an error.
+        let cfg = runner
+            .run(&parsers::submodules::STAGED_GITMODULES_CONFIG_ARGS)
+            .await?;
+        let entries = if cfg.success {
+            parsers::submodules::parse_submodule_config(&cfg.stdout)
+        } else {
+            std::collections::HashMap::new()
+        };
+        let ls = runner.run(&parsers::submodules::LS_FILES_STAGE_ARGS).await?;
+        Self::ensure_success(&ls)?;
+        let gitlinks = parsers::submodules::parse_gitlinks(&ls.stdout);
+        Ok(parsers::submodules::check_gitmodules_consistency(&entries, &gitlinks))
     }
 
     async fn submodule_remove(&self, path: &Path) -> Result<(), GitError> {

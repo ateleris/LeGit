@@ -1060,6 +1060,21 @@ pub enum SubmoduleUpdateStrategy {
     Merge,
 }
 
+/// One inconsistency between the STAGED `.gitmodules` blob and the staged
+/// gitlinks - i.e. what the next commit would record. Surfaced as a
+/// pre-commit warning, never a block: git itself permits these states, but
+/// committing one breaks consumers (`submodule init`, clone recursion,
+/// `push --recurse-submodules`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GitmodulesFinding {
+    /// A `.gitmodules` section whose `path` has no gitlink in the index
+    /// (an empty `path` means the section has no usable path at all).
+    EntryWithoutGitlink { name: String, path: String },
+    /// An indexed gitlink that no `.gitmodules` section points at.
+    GitlinkWithoutEntry { path: String },
+}
+
 /// State of a removed submodule's retained gitdir (`.git/modules/<name>`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct SubmoduleGitdirInfo {

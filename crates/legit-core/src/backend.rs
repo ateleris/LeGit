@@ -11,7 +11,7 @@ use crate::runner::OperationId;
 use crate::types::{
     BlameHunk, BlobBytes, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
-    FetchOptions, FileAtRevision, FileHistoryEntry, FileStatus, HunkOp,
+    FetchOptions, FileAtRevision, FileHistoryEntry, FileStatus, GitmodulesFinding, HunkOp,
     LfsStatus, LogOptions,
     MergeOptions, MergeOutcome, PullOptions, PushOptions, RebaseOutcome, RebaseStep,
     RebaseRangeInfo, ReflogEntry, Remote, RemoteCheckoutOutcome, RemoteTag, RenormalizeOutcome,
@@ -282,6 +282,15 @@ pub trait GitBackend: Send + Sync {
         attach_branch: bool,
         op_id: OperationId,
     ) -> Result<Vec<SubmoduleAutoUpdateResult>, GitError>;
+
+    /// Compare the STAGED `.gitmodules` blob against the staged gitlinks and
+    /// report every mismatch (dangling entry / orphaned gitlink) - i.e. what
+    /// the next commit would record. Cheap when the staged diff touches
+    /// neither `.gitmodules` nor a gitlink: only the gate diff runs.
+    /// Findings feed a pre-commit WARNING, never a block - git permits these
+    /// states, but committing one breaks consumers (`submodule init`, clone
+    /// recursion, `push --recurse-submodules`).
+    async fn gitmodules_consistency(&self) -> Result<Vec<GitmodulesFinding>, GitError>;
 
     /// Remove a submodule the safe way (magit semantics): refuse if its
     /// worktree is dirty/conflicted, absorb an embedded gitdir, `deinit -f`,

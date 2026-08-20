@@ -831,6 +831,13 @@ export interface RemoteCheckoutOutcome {
   fast_forward: FastForwardResult;
 }
 
+/** One mismatch between the STAGED .gitmodules blob and the staged gitlinks
+ *  (what the next commit would record). Feeds the composer's pre-commit
+ *  warning banner - a warning, never a block. */
+export type GitmodulesFinding =
+  | { kind: "entry_without_gitlink"; name: string; path: string }
+  | { kind: "gitlink_without_entry"; path: string };
+
 export type SwitchDirtyBehavior = "try_directly" | "auto_stash" | "stash_and_keep";
 
 /** Fast-forward behavior for a merge (matches legit-core `FfMode`). */

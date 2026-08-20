@@ -14,7 +14,7 @@
 
 use legit_core::{
     BlobBytes, CommitId, GitError, ConflictKind, ConflictSide, DiffEntry, DiffSource, FastForwardResult,
-    FetchOptions, FileState,
+    FetchOptions, FileState, GitmodulesFinding,
     GitBackend, GitCliBackend, GitRunner, LogOptions, MergeOptions, MergeOutcome, OperationId,
     PullOptions, PullStrategy, PushOptions, PushRecurseMode, RebaseOutcome, RefDecoration,
     RefSelector, RemoteProgress, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode,
@@ -2967,6 +2967,65 @@ async fn pull_fast_forwards_then_merges_divergence() {
         "expected a two-parent merge commit, got: {parents}"
     );
     assert!(repo.exists("b.txt") && repo.exists("c.txt"));
+}
+
+#[tokio::test]
+async fn gitmodules_consistency_reflects_staged_state_only() {
+    let (sup, _lib) = repo_with_submodule().await;
+
+    // Clean tree: the gate diff is empty, no findings, nothing else runs.
+    assert_eq!(sup.backend.gitmodules_consistency().await.unwrap(), vec![]);
+
+    // A staged pointer bump makes the gate fire (gitlink mode in the staged
+    // diff) but the state is consistent - still no findings.
+    sup.write("lib/lib.txt", "v2\n");
+    sup.git(&["-C", "lib", "add", "."]).await;
+    sup.git(&["-C", "lib", "commit", "-m", "lib v2"]).await;
+    sup.git(&["add", "lib"]).await;
+    assert_eq!(sup.backend.gitmodules_consistency().await.unwrap(), vec![]);
+    sup.git(&["commit", "-m", "bump"]).await;
+
+    // The Aug-4 breakage shape: section removed, gitlink kept.
+    sup.git(&["config", "-f", ".gitmodules", "--remove-section", "submodule.lib"]).await;
+    sup.git(&["add", ".gitmodules"]).await;
+    assert_eq!(
+        sup.backend.gitmodules_consistency().await.unwrap(),
+        vec![GitmodulesFinding::GitlinkWithoutEntry { path: "lib".into() }]
+    );
+
+    // STAGED semantics: restoring the WORKTREE file without restaging must
+    // not change the verdict - the commit would still record the broken blob.
+    sup.git(&["restore", "--worktree", "--source=HEAD", "--", ".gitmodules"]).await;
+    assert_eq!(
+        sup.backend.gitmodules_consistency().await.unwrap(),
+        vec![GitmodulesFinding::GitlinkWithoutEntry { path: "lib".into() }]
+    );
+
+    // Staging the restored file heals it.
+    sup.git(&["add", ".gitmodules"]).await;
+    assert_eq!(sup.backend.gitmodules_consistency().await.unwrap(), vec![]);
+
+    // Dangling entry: a section whose path has no gitlink.
+    sup.git(&["config", "-f", ".gitmodules", "submodule.ghost.path", "ghost"]).await;
+    sup.git(&["add", ".gitmodules"]).await;
+    assert_eq!(
+        sup.backend.gitmodules_consistency().await.unwrap(),
+        vec![GitmodulesFinding::EntryWithoutGitlink {
+            name: "ghost".into(),
+            path: "ghost".into(),
+        }]
+    );
+}
+
+#[tokio::test]
+async fn gitmodules_consistency_handles_unborn_head() {
+    // Before the first commit `diff --cached` has no HEAD to compare with -
+    // the check must not error (gate failure falls through to the full
+    // check, which finds a consistent empty state).
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "x\n");
+    repo.git(&["add", "a.txt"]).await;
+    assert_eq!(repo.backend.gitmodules_consistency().await.unwrap(), vec![]);
 }
 
 #[tokio::test]

@@ -8,8 +8,8 @@
 //! superproject porcelain-v2 status (`S<c><m><u>` dirt flags), and one
 //! `rev-parse` probe per populated submodule.
 
-use crate::types::{CommitId, SubmoduleInfo, SubmoduleLogEntry, SubmoduleState};
-use std::collections::HashMap;
+use crate::types::{CommitId, GitmodulesFinding, SubmoduleInfo, SubmoduleLogEntry, SubmoduleState};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 /// Index listing; gitlinks are the mode-160000 entries.
@@ -28,6 +28,85 @@ pub const LOCAL_SUBMODULE_CONFIG_ARGS: [&str; 4] =
 
 /// `git log` format for submodule pointer ranges: `<sha>\0<subject>\0` pairs.
 pub const SUBMODULE_LOG_FORMAT: &str = "--format=%H%x00%s%x00";
+
+/// Staged diff, raw form: gates the `.gitmodules` consistency check to
+/// commits that actually touch submodule config (the root `.gitmodules`, or
+/// any gitlink add/remove/mode flip).
+pub const STAGED_RAW_DIFF_ARGS: [&str; 5] =
+    ["diff", "--cached", "--raw", "-z", "--no-renames"];
+
+/// All `submodule.*` keys from the STAGED `.gitmodules` blob - what the next
+/// commit will record, deliberately not the worktree file. Exits non-zero
+/// when nothing is staged at that path or there are no matches - treat as
+/// empty.
+pub const STAGED_GITMODULES_CONFIG_ARGS: [&str; 6] =
+    ["config", "--blob", ":.gitmodules", "-z", "--get-regexp", "^submodule\\."];
+
+/// Whether the staged diff (`STAGED_RAW_DIFF_ARGS` output) touches submodule
+/// config at all: the root `.gitmodules`, or any entry whose old or new mode
+/// is a gitlink (160000). `--raw -z --no-renames` alternates meta records
+/// (`:oldmode newmode oldsha newsha status`) and path records.
+pub fn staged_touches_submodule_config(raw_z: &str) -> bool {
+    let mut records = raw_z.split('\0');
+    while let Some(meta) = records.next() {
+        let Some(meta) = meta.strip_prefix(':') else { continue };
+        let mut fields = meta.split(' ');
+        let old_mode = fields.next().unwrap_or("");
+        let new_mode = fields.next().unwrap_or("");
+        let Some(path) = records.next() else { break };
+        if old_mode == "160000" || new_mode == "160000" || path == ".gitmodules" {
+            return true;
+        }
+    }
+    false
+}
+
+/// Compare the staged `.gitmodules` sections against the staged gitlinks and
+/// report every mismatch, deterministically ordered (dangling entries by
+/// name, then orphaned gitlinks by path) so the warning list is stable
+/// across runs.
+pub fn check_gitmodules_consistency(
+    entries: &HashMap<String, SubmoduleConfigEntry>,
+    gitlinks: &[(PathBuf, CommitId)],
+) -> Vec<GitmodulesFinding> {
+    let link_set: HashSet<&PathBuf> = gitlinks.iter().map(|(p, _)| p).collect();
+    let mut dangling: Vec<GitmodulesFinding> = entries
+        .iter()
+        .filter(|(_, e)| {
+            e.path
+                .as_ref()
+                .map(|p| !link_set.contains(&PathBuf::from(p)))
+                .unwrap_or(true)
+        })
+        .map(|(name, e)| GitmodulesFinding::EntryWithoutGitlink {
+            name: name.clone(),
+            path: e.path.clone().unwrap_or_default(),
+        })
+        .collect();
+    dangling.sort_by(|a, b| match (a, b) {
+        (
+            GitmodulesFinding::EntryWithoutGitlink { name: an, .. },
+            GitmodulesFinding::EntryWithoutGitlink { name: bn, .. },
+        ) => an.cmp(bn),
+        _ => std::cmp::Ordering::Equal,
+    });
+
+    let covered: HashSet<PathBuf> = entries
+        .values()
+        .filter_map(|e| e.path.as_ref().map(PathBuf::from))
+        .collect();
+    let mut orphans: Vec<&PathBuf> = gitlinks
+        .iter()
+        .map(|(p, _)| p)
+        .filter(|p| !covered.contains(*p))
+        .collect();
+    orphans.sort();
+
+    dangling.extend(orphans.into_iter().map(|p| GitmodulesFinding::GitlinkWithoutEntry {
+        path: p.to_string_lossy().into_owned(),
+    }));
+    dangling
+}
 
 /// Cap the range walk: the diff view shows "what's between the pointers",
 /// not a full history browser.
@@ -291,6 +370,137 @@ mod tests {
         let out = z(&[&format!("160000 {SHA_A} 0\tdir with space/sub")]);
         assert_eq!(parse_gitlinks(&out)[0].0, PathBuf::from("dir with space/sub"));
         assert_eq!(parse_gitlinks(""), vec![]);
+    }
+
+    // -- staged_touches_submodule_config --------------------------------------
+
+    #[test]
+    fn gate_ignores_plain_file_changes() {
+        let out = z(&[
+            &format!(":100644 100644 {SHA_A} {SHA_B} M"),
+            "src/main.rs",
+        ]);
+        assert!(!staged_touches_submodule_config(&out));
+        assert!(!staged_touches_submodule_config(""));
+    }
+
+    #[test]
+    fn gate_fires_on_gitmodules_change() {
+        let out = z(&[
+            &format!(":100644 100644 {SHA_A} {SHA_B} M"),
+            ".gitmodules",
+        ]);
+        assert!(staged_touches_submodule_config(&out));
+    }
+
+    #[test]
+    fn gate_fires_on_gitlink_add_and_delete() {
+        let zero = "0000000000000000000000000000000000000000";
+        let del = z(&[
+            &format!(":160000 000000 {SHA_A} {zero} D"),
+            "subs/gone",
+        ]);
+        assert!(staged_touches_submodule_config(&del));
+        let add = z(&[
+            &format!(":000000 160000 {zero} {SHA_A} A"),
+            "subs/new",
+        ]);
+        assert!(staged_touches_submodule_config(&add));
+    }
+
+    #[test]
+    fn gate_does_not_fire_on_a_nested_gitmodules_file() {
+        // Only the ROOT .gitmodules declares submodules.
+        let out = z(&[
+            &format!(":100644 100644 {SHA_A} {SHA_B} M"),
+            "vendor/lib/.gitmodules",
+        ]);
+        assert!(!staged_touches_submodule_config(&out));
+    }
+
+    // -- check_gitmodules_consistency ------------------------------------------
+
+    fn entries(pairs: &[(&str, Option<&str>)]) -> HashMap<String, SubmoduleConfigEntry> {
+        pairs
+            .iter()
+            .map(|(name, path)| {
+                let mut e = SubmoduleConfigEntry::default();
+                e.path = path.map(|p| p.to_string());
+                (name.to_string(), e)
+            })
+            .collect()
+    }
+
+    fn links(paths: &[&str]) -> Vec<(PathBuf, CommitId)> {
+        paths.iter().map(|p| (PathBuf::from(p), CommitId::new(SHA_A))).collect()
+    }
+
+    #[test]
+    fn consistent_state_yields_no_findings() {
+        let out = check_gitmodules_consistency(
+            &entries(&[("lib", Some("vendor/lib"))]),
+            &links(&["vendor/lib"]),
+        );
+        assert_eq!(out, vec![]);
+    }
+
+    #[test]
+    fn dangling_entry_is_flagged() {
+        let out = check_gitmodules_consistency(
+            &entries(&[("lib", Some("vendor/lib"))]),
+            &links(&[]),
+        );
+        assert_eq!(
+            out,
+            vec![GitmodulesFinding::EntryWithoutGitlink {
+                name: "lib".into(),
+                path: "vendor/lib".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn orphaned_gitlink_is_flagged() {
+        let out = check_gitmodules_consistency(&entries(&[]), &links(&["subs/x"]));
+        assert_eq!(
+            out,
+            vec![GitmodulesFinding::GitlinkWithoutEntry { path: "subs/x".into() }]
+        );
+    }
+
+    #[test]
+    fn section_without_path_key_is_a_dangling_entry() {
+        let out = check_gitmodules_consistency(&entries(&[("ghost", None)]), &links(&[]));
+        assert_eq!(
+            out,
+            vec![GitmodulesFinding::EntryWithoutGitlink {
+                name: "ghost".into(),
+                path: String::new(),
+            }]
+        );
+    }
+
+    #[test]
+    fn mixed_findings_are_deterministically_ordered() {
+        // Entries (by name) before gitlinks (by path), so the warning list
+        // is stable across runs regardless of HashMap iteration order.
+        let out = check_gitmodulesconsistency_ordered_helper();
+        assert_eq!(
+            out,
+            vec![
+                GitmodulesFinding::EntryWithoutGitlink { name: "a".into(), path: "pa".into() },
+                GitmodulesFinding::EntryWithoutGitlink { name: "b".into(), path: "pb".into() },
+                GitmodulesFinding::GitlinkWithoutEntry { path: "subs/one" .into() },
+                GitmodulesFinding::GitlinkWithoutEntry { path: "subs/two".into() },
+            ]
+        );
+    }
+
+    fn check_gitmodulesconsistency_ordered_helper() -> Vec<GitmodulesFinding> {
+        check_gitmodules_consistency(
+            &entries(&[("b", Some("pb")), ("a", Some("pa"))]),
+            &links(&["subs/two", "subs/one"]),
+        )
     }
 
     // -- parse_submodule_config ---------------------------------------------

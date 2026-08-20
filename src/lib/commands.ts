@@ -57,6 +57,7 @@ import type {
   PushOptions,
   PushRecurseMode,
   TrackingStatus,
+  GitmodulesFinding,
   Remote,
   RemoteCheckoutOutcome,
   SwitchOutcome,
@@ -760,6 +761,10 @@ export const repoConflictReopen = (repoId: string, path: string) =>
 
 export const repoCommit = (repoId: string, message: string, amend = false) =>
   invoke<string>("repo_commit", { repoId, message, amend });
+
+/** Pre-commit check: staged .gitmodules vs staged gitlinks (empty = consistent). */
+export const repoGitmodulesConsistency = (repoId: string) =>
+  invoke<GitmodulesFinding[]>("repo_gitmodules_consistency", { repoId });
 
 /// Reword (rename) a commit's message; returns the new commit id. v1 rewords
 /// HEAD only and refuses commits already pushed to a remote.

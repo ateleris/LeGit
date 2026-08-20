@@ -77,6 +77,22 @@ pub async fn repo_restore_file_at_revision(
         .map_err(AppError::Git)
 }
 
+/// Pre-commit consistency check: staged `.gitmodules` vs staged gitlinks.
+/// Findings feed the composer's warning banner; empty = nothing to warn about.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_gitmodules_consistency(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<Vec<legit_core::GitmodulesFinding>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .gitmodules_consistency()
+        .await
+        .map_err(AppError::Git)
+}
+
 /// Commit the staged changes with the given message; returns the new commit id.
 /// When `amend` is set, rewrites HEAD instead of creating a new commit.
 #[tauri::command]

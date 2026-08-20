@@ -4,8 +4,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
 import { usePanelActiveEffect, usePanelFocusEffect } from "../PanelApiContext";
-import { repoBranches, repoCommit, repoConflictEntries, repoConflictReopen, repoCreateStashPaths, repoDiscard, repoListRemotes, repoLog, repoResolvedIdentity, repoResolveTakeSide, repoResolveUndoPaths, repoStage, repoStagedMarkerPaths, repoStatus, repoTrackingStatus, repoUnstage, repoUnstagedMarkerPaths } from "../../lib/commands";
-import type { Branch, Commit, CommitButtonMode, ConflictEntry, ConflictSide, DiffRequest, DiffSource, FileStatus, Remote, ResolvedIdentity, TrackingStatus } from "../../lib/types";
+import { repoBranches, repoCommit, repoConflictEntries, repoConflictReopen, repoCreateStashPaths, repoDiscard, repoGitmodulesConsistency, repoListRemotes, repoLog, repoResolvedIdentity, repoResolveTakeSide, repoResolveUndoPaths, repoStage, repoStagedMarkerPaths, repoStatus, repoTrackingStatus, repoUnstage, repoUnstagedMarkerPaths } from "../../lib/commands";
+import type { Branch, Commit, CommitButtonMode, ConflictEntry, ConflictSide, DiffRequest, DiffSource, FileStatus, GitmodulesFinding, Remote, ResolvedIdentity, TrackingStatus } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { useCommitDraftStore } from "../../store/commitDraft";
@@ -44,6 +44,7 @@ import {
   commitPushSuccessMessage,
   type CommitPushTarget,
 } from "./commitButtonMode";
+import { gitmodulesFindingLabel } from "./gitmodulesWarning";
 import { takeSideLabels } from "./conflictLabels";
 import { formatEolChanges, stagedEolChanges } from "./lineEndingWarning";
 import {
@@ -267,6 +268,8 @@ export function WorkingChangesPanel() {
   const [confirmDetachedCommit, setConfirmDetachedCommit] = useState(false);
   const [confirmAmendPushed, setConfirmAmendPushed] = useState(false);
   const [confirmEolCommit, setConfirmEolCommit] = useState(false);
+  // Non-empty = the .gitmodules consistency warning banner is up.
+  const [gitmodulesFindings, setGitmodulesFindings] = useState<GitmodulesFinding[]>([]);
   const [commitMenuOpen, setCommitMenuOpen] = useState(false);
 
   // Clear the selection when the repo changes — a stale path from the previous
@@ -276,6 +279,7 @@ export function WorkingChangesPanel() {
     if (prevRepoId.current === repo?.id) return;
     prevRepoId.current = repo?.id;
     setSelected(null);
+    setGitmodulesFindings([]);
   }, [repo?.id]);
 
   const {
@@ -679,13 +683,31 @@ export function WorkingChangesPanel() {
   const detached = isDetachedHead(head);
   // Final gate before the actual commit: the line-ending warning (per its
   // setting). Runs LAST so it also covers commits approved through the
-  // detached-HEAD / amend-pushed confirms.
-  const proceedCommit = () => {
+  // detached-HEAD / amend-pushed / .gitmodules confirms.
+  const proceedEolGate = () => {
     if (warnEolCommit && eolChanges.length > 0) {
       setConfirmEolCommit(true);
       return;
     }
     commit();
+  };
+  // .gitmodules consistency gate: warn before committing a staged state
+  // whose .gitmodules and gitlinks disagree (manual edits, half-done
+  // removals). Always on - it fires only on genuinely broken states, and it
+  // is a repo-integrity warning like detached-HEAD, deliberately not gated
+  // by the confirm setting. Best-effort: a failing CHECK must never block
+  // committing.
+  const proceedCommit = () => {
+    void (async () => {
+      const findings = await repoGitmodulesConsistency(repo!.id).catch(
+        () => [] as GitmodulesFinding[],
+      );
+      if (findings.length > 0) {
+        setGitmodulesFindings(findings);
+        return;
+      }
+      proceedEolGate();
+    })();
   };
   // The split button's plan under the persisted mode: the label shown, and
   // whether the commit chains a push. Amend/detached/no-target all degrade to
@@ -1274,6 +1296,42 @@ export function WorkingChangesPanel() {
                   Amend anyway
                 </Button>
                 <button disabled={busy} onClick={() => setConfirmAmendPushed(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : gitmodulesFindings.length > 0 ? (
+            <div
+              style={{
+                padding: "8px 10px",
+                border: "1px solid var(--panel-border)",
+                borderRadius: 4,
+                background: "var(--button-hover-bg)",
+              }}
+            >
+              <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
+                This commit records a <strong>.gitmodules</strong> that does not match its
+                submodules:
+                <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                  {gitmodulesFindings.map((f) => (
+                    <li key={`${f.kind}:${"name" in f ? f.name : ""}:${f.path}`}>
+                      {gitmodulesFindingLabel(f)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <Button
+                  variant="danger"
+                  disabled={busy}
+                  onClick={() => {
+                    setGitmodulesFindings([]);
+                    proceedEolGate();
+                  }}
+                >
+                  Commit anyway
+                </Button>
+                <button disabled={busy} onClick={() => setGitmodulesFindings([])}>
                   Cancel
                 </button>
               </div>

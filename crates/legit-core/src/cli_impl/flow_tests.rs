@@ -585,6 +585,89 @@ async fn checkout_remote_branch_ff_skips_merge_for_new_tracking_branch() {
 }
 
 // ---------------------------------------------------------------------------
+// gitmodules_consistency - staged .gitmodules vs staged gitlinks
+// ---------------------------------------------------------------------------
+
+const RAW_DIFF: [&str; 5] = ["diff", "--cached", "--raw", "-z", "--no-renames"];
+const STAGED_GITMODULES: [&str; 6] =
+    ["config", "--blob", ":.gitmodules", "-z", "--get-regexp", "^submodule\\."];
+
+#[tokio::test]
+async fn gitmodules_check_skips_when_staged_diff_is_irrelevant() {
+    // A commit touching neither .gitmodules nor a gitlink must cost exactly
+    // one gate diff - assert_done pins that config/ls-files never run.
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &RAW_DIFF,
+        ok(":100644 100644 aaa bbb M\0src/main.rs\0"),
+    );
+    let (b, exec) = backend(fake);
+
+    let findings = b.gitmodules_consistency().await.unwrap();
+    assert_eq!(findings, vec![]);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn gitmodules_check_flags_orphaned_gitlink() {
+    // .gitmodules changed; the staged blob has no sections left (config
+    // exits 1) while a gitlink is still staged - the Aug-4 "sure" breakage.
+    let fake = FakeExecutor::default();
+    fake.expect(&RAW_DIFF, ok(":100644 100644 aaa bbb M\0.gitmodules\0"));
+    fake.expect(&STAGED_GITMODULES, fail(1, ""));
+    fake.expect(
+        &["ls-files", "--stage", "-z"],
+        ok("160000 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tsubs/x\0"),
+    );
+    let (b, exec) = backend(fake);
+
+    let findings = b.gitmodules_consistency().await.unwrap();
+    assert_eq!(
+        findings,
+        vec![GitmodulesFinding::GitlinkWithoutEntry { path: "subs/x".into() }]
+    );
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn gitmodules_check_flags_dangling_entry() {
+    let fake = FakeExecutor::default();
+    fake.expect(&RAW_DIFF, ok(":100644 100644 aaa bbb M\0.gitmodules\0"));
+    fake.expect(
+        &STAGED_GITMODULES,
+        ok("submodule.lib.path\nvendor/lib\0submodule.lib.url\nhttps://x.invalid/lib.git\0"),
+    );
+    fake.expect(&["ls-files", "--stage", "-z"], ok(""));
+    let (b, exec) = backend(fake);
+
+    let findings = b.gitmodules_consistency().await.unwrap();
+    assert_eq!(
+        findings,
+        vec![GitmodulesFinding::EntryWithoutGitlink {
+            name: "lib".into(),
+            path: "vendor/lib".into(),
+        }]
+    );
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn gitmodules_check_gate_failure_falls_through_to_the_full_check() {
+    // The gate diff is an optimization: if it fails (e.g. unborn HEAD on
+    // some git versions), the check proceeds rather than erroring or
+    // silently skipping.
+    let fake = FakeExecutor::default();
+    fake.expect(&RAW_DIFF, fail(128, "fatal: bad revision 'HEAD'\n"));
+    fake.expect(&STAGED_GITMODULES, fail(1, ""));
+    fake.expect(&["ls-files", "--stage", "-z"], ok(""));
+    let (b, exec) = backend(fake);
+
+    let findings = b.gitmodules_consistency().await.unwrap();
+    assert_eq!(findings, vec![]);
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
 // merge/rebase continue - the editor env override
 // ---------------------------------------------------------------------------
 
