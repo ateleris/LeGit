@@ -67,6 +67,10 @@ export interface GlobalSettings {
   external_editor_command?: string | null;
   /** How to handle uncommitted changes when switching branches (null = try_directly). */
   switch_dirty_behavior: SwitchDirtyBehavior | null;
+  /** Checking out a remote branch also fast-forwards the local branch to the
+   * remote tip (a LOCAL `merge --ff-only`, never a network pull). Default ON;
+   * consumers read `?? true`. Off = plain checkout like other git clients. */
+  checkout_remote_fast_forward?: boolean;
   /** Pull integration strategy (null = Default: the repo's pull.rebase decides). */
   pull_strategy?: PullStrategy | null;
   /** Default mode for the Commits-toolbar Stash button: include untracked
@@ -798,6 +802,26 @@ export type SwitchOutcome =
   /** Auto-stash could not be applied at all — the changes remain parked in
    *  the stash entry. */
   | { kind: "stash_pop_failed"; message: string };
+
+/** What the optional local fast-forward step of a remote-branch checkout did.
+ *  Every non-happy case is an outcome, not an error: the checkout succeeded. */
+export type FastForwardResult =
+  | { kind: "not_attempted" }
+  | { kind: "fast_forwarded" }
+  /** Already at the remote tip - including a just-created tracking branch. */
+  | { kind: "up_to_date" }
+  /** Local and remote have diverged; the local branch was left untouched. */
+  | { kind: "diverged" }
+  /** The ff failed for another reason; the local branch was left untouched. */
+  | { kind: "failed"; message: string };
+
+/** Outcome of checking out a remote branch: switch result + ff step result. */
+export interface RemoteCheckoutOutcome {
+  /** Short local branch name derived from the remote ref (`origin/x` -> `x`). */
+  local_branch: string;
+  switch: SwitchOutcome;
+  fast_forward: FastForwardResult;
+}
 
 export type SwitchDirtyBehavior = "try_directly" | "auto_stash" | "stash_and_keep";
 

@@ -41,7 +41,11 @@ import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { autoUpdateSubmodules } from "../../lib/submodules";
 import { notify } from "../../store/notifications";
 import { useSettingsStore } from "../../store/settings";
-import { notifySwitchOutcome, notifySwitchError } from "../../lib/switchFeedback";
+import {
+  notifySwitchOutcome,
+  notifyRemoteCheckoutOutcome,
+  notifySwitchError,
+} from "../../lib/switchFeedback";
 import { remoteOpErrorMessage } from "../../lib/pushFeedback";
 import { autoPushTagAfterCreate, pushWithTagFollowUp } from "../../lib/autoPushTags";
 import {
@@ -166,7 +170,7 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
         try {
           const outcome = await repoCheckoutRemoteBranch(repo.id, remoteRef);
           invalidate(repo.id, BRANCH_DOMAINS);
-          notifySwitchOutcome(outcome, remoteRef);
+          notifyRemoteCheckoutOutcome(outcome, remoteRef);
           void autoUpdateSubmodules(queryClient, repo.id);
         } catch (e) {
           notifySwitchError(e);

@@ -269,6 +269,13 @@ pub struct GlobalSettings {
     pub external_editor_command: Option<String>,
     /// How to handle uncommitted changes when switching branches. `None` = `TryDirectly`.
     pub switch_dirty_behavior: Option<SwitchDirtyBehavior>,
+    /// Checking out a remote branch also fast-forwards the local branch to
+    /// the remote tip (a LOCAL `merge --ff-only`, never a network pull).
+    /// Default ON - landing on a stale local branch after double-clicking a
+    /// remote chip is the confusing behavior this setting exists to fix; off
+    /// = plain checkout like other git clients.
+    #[serde(default = "default_true")]
+    pub checkout_remote_fast_forward: bool,
     /// Pull integration strategy for the sync toolbar. `None` = `Default`
     /// (the repo's `pull.rebase` config decides).
     #[serde(default)]
@@ -377,6 +384,7 @@ impl Default for GlobalSettings {
             auto_fetch_interval_minutes: default_auto_fetch_interval(),
             external_editor_command: None,
             switch_dirty_behavior: None,
+            checkout_remote_fast_forward: true,
             pull_strategy: None,
             stash_include_untracked: false,
             push_recurse_submodules: None,
@@ -710,6 +718,10 @@ mod tests {
             serde_json::from_str(old).expect("old settings document must parse");
         assert_eq!(parsed.last_clone_parent_dir, None);
         assert!(parsed.currently_open.is_empty());
+        assert!(
+            parsed.checkout_remote_fast_forward,
+            "checkout_remote_fast_forward must default ON for old settings files"
+        );
     }
 
     #[test]

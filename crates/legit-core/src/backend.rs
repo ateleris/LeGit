@@ -11,9 +11,11 @@ use crate::runner::OperationId;
 use crate::types::{
     BlameHunk, BlobBytes, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
-    FetchOptions, FileAtRevision, FileHistoryEntry, FileStatus, HunkOp, LfsStatus, LogOptions,
+    FetchOptions, FileAtRevision, FileHistoryEntry, FileStatus, HunkOp,
+    LfsStatus, LogOptions,
     MergeOptions, MergeOutcome, PullOptions, PushOptions, RebaseOutcome, RebaseStep,
-    RebaseRangeInfo, ReflogEntry, Remote, RemoteTag, RenormalizeOutcome, RepoFileEntry, RepoOpState,
+    RebaseRangeInfo, ReflogEntry, Remote, RemoteCheckoutOutcome, RemoteTag, RenormalizeOutcome,
+    RepoFileEntry, RepoOpState,
     ResetMode, SequenceOutcome, StashApplyOutcome,
     StashEntry, StashOutcome, SubmoduleAutoUpdateResult, SubmoduleGitdirInfo, SubmoduleInfo,
     SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy, SwitchDirtyBehavior,
@@ -375,8 +377,12 @@ pub trait GitBackend: Send + Sync {
     /// full `refs/remotes/origin/feature-x`. Creates a local tracking branch
     /// (`git switch --track`); if the local counterpart already exists, plain-
     /// switches to it instead. Honors `behavior` for dirty-tree handling
-    /// identically to `switch_branch`.
-    async fn checkout_remote_branch(&self, remote_ref: &str, behavior: SwitchDirtyBehavior) -> Result<SwitchOutcome, GitError>;
+    /// identically to `switch_branch`. With `fast_forward = true`, a
+    /// pre-existing local branch is additionally fast-forwarded to the remote
+    /// tip via a LOCAL `merge --ff-only` (never a network pull); divergence
+    /// or any other ff failure is an outcome (`FastForwardResult`), not an
+    /// error - the switch already succeeded.
+    async fn checkout_remote_branch(&self, remote_ref: &str, behavior: SwitchDirtyBehavior, fast_forward: bool) -> Result<RemoteCheckoutOutcome, GitError>;
 
     /// Delete a local branch. `force = true` maps to `-D`; `false` uses `-d`.
     async fn delete_branch(&self, name: &str, force: bool) -> Result<(), GitError>;

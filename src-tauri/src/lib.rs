@@ -115,6 +115,7 @@ pub fn run() {
         commands::set_warn_on_line_ending_commit,
         commands::set_confirm_discard,
         commands::set_submodule_attach_branch,
+        commands::set_checkout_remote_fast_forward,
         commands::set_auto_fetch_enabled,
         commands::set_auto_fetch_interval_minutes,
         commands::set_external_editor_command,

@@ -15,11 +15,11 @@ use crate::runner::{GitRunner, OperationId};
 use crate::types::{
     BlameHunk, BlobBytes, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
-    FetchOptions, FfMode, FileAtRevision, FileHistoryEntry, FileState, FileStatus,
+    FastForwardResult, FetchOptions, FfMode, FileAtRevision, FileHistoryEntry, FileState, FileStatus,
     HunkOp, LfsStatus, LineEndingKind, LineEndingStatusEntry, LineEndingTransition, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullStrategy, PushOptions, PushRecurseMode,
     RebaseAction, RebaseOutcome, RebaseRangeInfo, RebaseStep, RefDecoration, RefSelector,
     ReflogEntry, Remote,
-    RemoteTag,
+    RemoteCheckoutOutcome, RemoteTag,
     RenormalizeOutcome, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode, SequenceOutcome, SignMode, StashApplyOutcome, StashEntry,
     StashOutcome, SubmoduleAutoUpdateResult, SubmoduleAutoUpdateStatus, SubmoduleGitdirInfo,
     SubmoduleInfo, SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy,
@@ -2394,7 +2394,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         &self,
         remote_ref: &str,
         behavior: SwitchDirtyBehavior,
-    ) -> Result<SwitchOutcome, GitError> {
+        fast_forward: bool,
+    ) -> Result<RemoteCheckoutOutcome, GitError> {
         let (short, local) = remote_ref_names(remote_ref);
         // `switch --track` refuses when the local branch already exists — the
         // common case of checking out a remote ref that was checked out once
@@ -2413,7 +2414,28 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         } else {
             &["switch", "--track", short]
         };
-        self.run_with_auto_stash(behavior, args).await
+        let switch = self.run_with_auto_stash(behavior, args).await?;
+        let ff = if !fast_forward {
+            FastForwardResult::NotAttempted
+        } else if !local_exists {
+            // `switch --track` created the branch AT the remote tip - a merge
+            // afterwards is pointless.
+            FastForwardResult::UpToDate
+        } else {
+            // LOCAL ff-only merge against the already-fetched remote-tracking
+            // ref - deliberately not a pull: a double-click must never cause
+            // network I/O or auth prompts. Its failure modes are outcomes,
+            // never errors: the switch above already succeeded.
+            let out = self
+                .run_classified(&["merge", "--ff-only", "--no-edit", short])
+                .await?;
+            classify_fast_forward(out.0, &out.1, &out.2)
+        };
+        Ok(RemoteCheckoutOutcome {
+            local_branch: local.to_string(),
+            switch,
+            fast_forward: ff,
+        })
     }
 
     async fn delete_branch(&self, name: &str, force: bool) -> Result<(), GitError> {
@@ -3904,6 +3926,28 @@ fn classify_merge_output(
     })
 }
 
+/// Classify the local `merge --ff-only <remote-ref>` step of
+/// `checkout_remote_branch`. Exit 0 leaves only two possibilities (a merge
+/// commit cannot happen under `--ff-only`): already up to date, or a
+/// fast-forward. The divergence refusal is an OUTCOME (`Diverged`) - the
+/// checkout it follows already succeeded - and any other failure carries
+/// git's own message (`Failed`), never an `Err`. Validated against the real
+/// binary in `tests/git_flows.rs`.
+fn classify_fast_forward(exit_code: i32, stdout: &str, stderr: &str) -> FastForwardResult {
+    if exit_code == 0 {
+        if stdout.to_lowercase().contains("already up to date") {
+            return FastForwardResult::UpToDate;
+        }
+        return FastForwardResult::FastForwarded;
+    }
+    if stderr.to_lowercase().contains("not possible to fast-forward") {
+        return FastForwardResult::Diverged;
+    }
+    FastForwardResult::Failed {
+        message: compose_output(stdout, stderr),
+    }
+}
+
 /// Split `git rebase`'s exit codes the same way. On exit 0 the autostash may
 /// still have conflicted ("Applying autostash resulted in conflicts"); the
 /// rebase itself succeeded, so that is a distinct success-flavored outcome.
@@ -5381,6 +5425,47 @@ mod tests {
             classify_merge_output(128, "", "fatal: Not possible to fast-forward, aborting.\n", false),
             Err(GitError::CommandFailed { .. })
         ));
+    }
+
+    // --- fast-forward step classification (checkout_remote_branch) ---
+
+    #[test]
+    fn fast_forward_success_without_up_to_date_marker_is_fast_forwarded() {
+        // `--ff-only` exit 0 leaves only two possibilities: already up to
+        // date, or an actual fast-forward - no merge commit can happen.
+        let r = classify_fast_forward(
+            0,
+            "Updating abc123..def456\nFast-forward\n a.txt | 1 +\n",
+            "",
+        );
+        assert_eq!(r, FastForwardResult::FastForwarded);
+    }
+
+    #[test]
+    fn fast_forward_already_up_to_date_is_up_to_date() {
+        let r = classify_fast_forward(0, "Already up to date.\n", "");
+        assert_eq!(r, FastForwardResult::UpToDate);
+    }
+
+    #[test]
+    fn fast_forward_refusal_is_diverged() {
+        let r = classify_fast_forward(128, "", "fatal: Not possible to fast-forward, aborting.\n");
+        assert_eq!(r, FastForwardResult::Diverged);
+    }
+
+    #[test]
+    fn fast_forward_other_failure_carries_gits_message() {
+        let r = classify_fast_forward(
+            1,
+            "",
+            "error: Your local changes to the following files would be overwritten by merge:\n\ta.txt\n",
+        );
+        match r {
+            FastForwardResult::Failed { message } => {
+                assert!(message.contains("would be overwritten"), "{message}");
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
     }
 
     // --- rebase output classification ---

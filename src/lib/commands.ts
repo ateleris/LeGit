@@ -58,6 +58,7 @@ import type {
   PushRecurseMode,
   TrackingStatus,
   Remote,
+  RemoteCheckoutOutcome,
   SwitchOutcome,
   SwitchDirtyBehavior,
   StashEntry,
@@ -230,6 +231,9 @@ export const setCheckoutNewBranch = (enabled: boolean) =>
 
 export const setSubmoduleAttachBranch = (enabled: boolean) =>
   invoke<null>("set_submodule_attach_branch", { enabled });
+
+export const setCheckoutRemoteFastForward = (enabled: boolean) =>
+  invoke<null>("set_checkout_remote_fast_forward", { enabled });
 
 export const setExternalEditorCommand = (command: string | null) =>
   invoke<null>("set_external_editor_command", { command });
@@ -789,7 +793,7 @@ export const repoRenameBranch = (repoId: string, oldName: string, newName: strin
   invoke<void>("repo_rename_branch", { repoId, oldName, newName });
 
 export const repoCheckoutRemoteBranch = (repoId: string, remoteRef: string) =>
-  invoke<SwitchOutcome>("repo_checkout_remote_branch", { repoId, remoteRef });
+  invoke<RemoteCheckoutOutcome>("repo_checkout_remote_branch", { repoId, remoteRef });
 
 export const repoCheckoutCommit = (repoId: string, sha: string) =>
   invoke<SwitchOutcome>("repo_checkout_commit", { repoId, sha });

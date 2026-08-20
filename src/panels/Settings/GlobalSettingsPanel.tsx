@@ -99,6 +99,7 @@ export function GlobalSettingsPanel() {
           <ConfirmDiscardSection />
           <BranchCreationSection />
           <BranchSwitchingSection />
+          <CheckoutRemoteFastForwardSection />
           <PushGuardSection />
           <AutoPushTagsSection />
           <SubmoduleAttachSection />
@@ -1025,6 +1026,39 @@ function ConfirmDiscardSection() {
         Covers discarding changes, deleting branches, dropping stashes, and
         removing remotes or themes. When off, these run immediately without a
         prompt.
+      </FieldNote>
+    </Section>
+  );
+}
+
+function CheckoutRemoteFastForwardSection() {
+  const enabled = useSettingsStore((s) => s.settings?.checkout_remote_fast_forward ?? true);
+  const setCheckoutRemoteFastForward = useSettingsStore((s) => s.setCheckoutRemoteFastForward);
+  const { busy: saving, run } = useDelayedBusy();
+
+  const toggle = () => run(() => setCheckoutRemoteFastForward(!enabled));
+
+  return (
+    <Section title="Remote branch checkout">
+      <FieldNote>writes to: global settings (applies to all repos)</FieldNote>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <input
+          type="checkbox"
+          id="global-checkout-remote-ff"
+          checked={enabled}
+          onChange={toggle}
+          disabled={saving}
+        />
+        <label htmlFor="global-checkout-remote-ff" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
+          Fast-forward the local branch when checking out a remote branch
+        </label>
+      </div>
+      <FieldNote>
+        Checking out a remote branch (double-clicking its chip, or the context
+        menu) switches to the local branch and moves it up to date with the
+        remote tip. Purely local (fast-forward only, no network): if local and
+        remote have diverged, the branch is left as-is and a toast says so.
+        When off, checkout leaves a stale local branch where it was.
       </FieldNote>
     </Section>
   );

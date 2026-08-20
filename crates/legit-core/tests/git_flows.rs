@@ -13,8 +13,8 @@
 //! autocrlf) locally, so a developer's global config cannot skew outcomes.
 
 use legit_core::{
-    BlobBytes, CommitId, GitError, ConflictKind, ConflictSide, DiffEntry, DiffSource, FetchOptions,
-    FileState,
+    BlobBytes, CommitId, GitError, ConflictKind, ConflictSide, DiffEntry, DiffSource, FastForwardResult,
+    FetchOptions, FileState,
     GitBackend, GitCliBackend, GitRunner, LogOptions, MergeOptions, MergeOutcome, OperationId,
     PullOptions, PullStrategy, PushOptions, PushRecurseMode, RebaseOutcome, RefDecoration,
     RefSelector, RemoteProgress, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode,
@@ -2967,6 +2967,125 @@ async fn pull_fast_forwards_then_merges_divergence() {
         "expected a two-parent merge commit, got: {parents}"
     );
     assert!(repo.exists("b.txt") && repo.exists("c.txt"));
+}
+
+#[tokio::test]
+async fn checkout_remote_branch_tracks_then_fast_forwards_stale_local() {
+    let (_keep, _, url) = bare_remote().await;
+
+    // Publisher seeds main + a topic branch on the remote.
+    let seed = TestRepo::init().await;
+    seed.write("a.txt", "base\n");
+    seed.commit_all("base").await;
+    seed.git(&["remote", "add", "origin", &url]).await;
+    seed.git(&["push", "-u", "origin", "main"]).await;
+    seed.git(&["switch", "-c", "topic"]).await;
+    seed.write("t.txt", "t1\n");
+    seed.commit_all("t1").await;
+    seed.git(&["push", "-u", "origin", "topic"]).await;
+    let t1 = seed.head().await;
+
+    // Consumer knows the remote but has no local topic yet.
+    let repo = TestRepo::init().await;
+    repo.git(&["remote", "add", "origin", &url]).await;
+    repo.git(&["fetch", "origin"]).await;
+    repo.git(&["reset", "--hard", "origin/main"]).await;
+
+    // No local counterpart: creates a tracking branch at the remote tip.
+    let outcome = repo
+        .backend
+        .checkout_remote_branch("origin/topic", SwitchDirtyBehavior::TryDirectly, true)
+        .await
+        .unwrap();
+    assert_eq!(outcome.switch, SwitchOutcome::Clean);
+    assert_eq!(outcome.fast_forward, FastForwardResult::UpToDate);
+    assert_eq!(outcome.local_branch, "topic");
+    assert_eq!(repo.head().await, t1);
+    let upstream = repo.git(&["rev-parse", "--abbrev-ref", "topic@{upstream}"]).await;
+    assert_eq!(upstream.trim(), "origin/topic");
+
+    // Remote advances; the consumer's local topic goes stale.
+    seed.write("t.txt", "t2\n");
+    seed.commit_all("t2").await;
+    seed.git(&["push", "origin", "topic"]).await;
+    let t2 = seed.head().await;
+    repo.git(&["switch", "main"]).await;
+    repo.git(&["fetch", "origin"]).await;
+
+    // fast_forward = false: plain checkout, the stale tip stays stale.
+    let outcome = repo
+        .backend
+        .checkout_remote_branch("origin/topic", SwitchDirtyBehavior::TryDirectly, false)
+        .await
+        .unwrap();
+    assert_eq!(outcome.fast_forward, FastForwardResult::NotAttempted);
+    assert_eq!(repo.head().await, t1);
+
+    // fast_forward = true: the branch moves to the remote tip. Validates the
+    // real ff-only stdout against `classify_fast_forward`.
+    repo.git(&["switch", "main"]).await;
+    let outcome = repo
+        .backend
+        .checkout_remote_branch("origin/topic", SwitchDirtyBehavior::TryDirectly, true)
+        .await
+        .unwrap();
+    assert_eq!(outcome.switch, SwitchOutcome::Clean);
+    assert_eq!(outcome.fast_forward, FastForwardResult::FastForwarded);
+    assert_eq!(repo.head().await, t2);
+    assert_eq!(repo.read("t.txt"), "t2\n");
+
+    // Re-running when already at the tip reports UpToDate.
+    repo.git(&["switch", "main"]).await;
+    let outcome = repo
+        .backend
+        .checkout_remote_branch("origin/topic", SwitchDirtyBehavior::TryDirectly, true)
+        .await
+        .unwrap();
+    assert_eq!(outcome.fast_forward, FastForwardResult::UpToDate);
+}
+
+#[tokio::test]
+async fn checkout_remote_branch_divergence_is_outcome_and_leaves_branch_untouched() {
+    let (_keep, _, url) = bare_remote().await;
+
+    let seed = TestRepo::init().await;
+    seed.write("a.txt", "base\n");
+    seed.commit_all("base").await;
+    seed.git(&["remote", "add", "origin", &url]).await;
+    seed.git(&["push", "-u", "origin", "main"]).await;
+    seed.git(&["switch", "-c", "topic"]).await;
+    seed.write("t.txt", "t1\n");
+    seed.commit_all("t1").await;
+    seed.git(&["push", "-u", "origin", "topic"]).await;
+
+    // Consumer holds topic at t1 plus a local-only commit; the remote gains
+    // a different commit: diverged.
+    let repo = TestRepo::init().await;
+    repo.git(&["remote", "add", "origin", &url]).await;
+    repo.git(&["fetch", "origin"]).await;
+    repo.git(&["reset", "--hard", "origin/main"]).await;
+    repo.git(&["switch", "--track", "origin/topic"]).await;
+    repo.write("local.txt", "mine\n");
+    repo.commit_all("local-only").await;
+    let local_tip = repo.head().await;
+    seed.write("t.txt", "t2\n");
+    seed.commit_all("t2").await;
+    seed.git(&["push", "origin", "topic"]).await;
+    repo.git(&["switch", "main"]).await;
+    repo.git(&["fetch", "origin"]).await;
+
+    // Validates the real "Not possible to fast-forward" refusal is classified
+    // as the Diverged OUTCOME (never an error) and mutates nothing.
+    let outcome = repo
+        .backend
+        .checkout_remote_branch("origin/topic", SwitchDirtyBehavior::TryDirectly, true)
+        .await
+        .unwrap();
+    assert_eq!(outcome.switch, SwitchOutcome::Clean);
+    assert_eq!(outcome.fast_forward, FastForwardResult::Diverged);
+    assert_eq!(repo.head().await, local_tip, "diverged branch must be left untouched");
+    let on = repo.git(&["rev-parse", "--abbrev-ref", "HEAD"]).await;
+    assert_eq!(on.trim(), "topic", "the checkout itself must still land on the branch");
 }
 
 #[tokio::test]

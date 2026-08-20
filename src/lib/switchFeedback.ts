@@ -1,7 +1,7 @@
 // Shared user feedback for branch/commit switching — used by the Commits and
 // Branches panels so the messaging (and its accuracy) stays in one place.
 
-import type { SwitchOutcome } from "./types";
+import type { RemoteCheckoutOutcome, SwitchOutcome } from "./types";
 import { formatAppError, gitErrorKind } from "./types";
 import { notify } from "../store/notifications";
 
@@ -28,6 +28,41 @@ export function notifySwitchOutcome(outcome: SwitchOutcome, target: string) {
     notify.info(
       `Switched to '${target}', but your auto-stashed changes could not be ` +
         `reapplied. They are safe in the stash — apply it from the Stashes panel.`,
+    );
+  }
+}
+
+/**
+ * Toast the outcome of a remote-branch checkout (switch + optional local
+ * fast-forward). A clean switch that needed no fast-forward stays silent
+ * (parity with `notifySwitchOutcome`); a fast-forward is state the click
+ * moved beyond the obvious, so it is always announced. Non-clean switch
+ * outcomes keep their stash guidance, with the ff result as a second toast.
+ */
+export function notifyRemoteCheckoutOutcome(
+  outcome: RemoteCheckoutOutcome,
+  remoteRef: string,
+) {
+  const local = outcome.local_branch;
+  const ff = outcome.fast_forward;
+  const clean = outcome.switch.kind === "clean";
+  if (!clean) {
+    notifySwitchOutcome(outcome.switch, local);
+  }
+  if (ff.kind === "fast_forwarded") {
+    notify.info(
+      clean
+        ? `Switched to '${local}' and fast-forwarded to '${remoteRef}'.`
+        : `'${local}' was also fast-forwarded to '${remoteRef}'.`,
+    );
+  } else if (ff.kind === "diverged") {
+    notify.info(
+      `Switched to '${local}', which has diverged from '${remoteRef}' - ` +
+        `it was left as-is. Merge or rebase to reconcile.`,
+    );
+  } else if (ff.kind === "failed") {
+    notify.error(
+      `Switched to '${local}', but fast-forwarding to '${remoteRef}' failed: ${ff.message}`,
     );
   }
 }

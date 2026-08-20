@@ -480,6 +480,38 @@ pub enum SwitchOutcome {
     StashPopFailed { message: String },
 }
 
+/// What the optional local fast-forward step of `checkout_remote_branch` did.
+/// The step is `git merge --ff-only <remote-ref>` against the already-fetched
+/// remote-tracking ref - purely local, never a network pull. Every non-happy
+/// case here is an outcome, not an error: the checkout itself succeeded.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FastForwardResult {
+    /// Fast-forwarding was not requested (the setting is off).
+    NotAttempted,
+    /// The local branch was behind and now points at the remote tip.
+    FastForwarded,
+    /// Already at the remote tip - including a tracking branch that
+    /// `switch --track` just created there.
+    UpToDate,
+    /// Local and remote have diverged: a fast-forward is impossible and the
+    /// local branch was left untouched.
+    Diverged,
+    /// The fast-forward failed for another reason (e.g. reapplied auto-stash
+    /// changes would be overwritten); the local branch was left untouched.
+    Failed { message: String },
+}
+
+/// Outcome of `checkout_remote_branch`: the switch result plus what the
+/// fast-forward step did, so partial success crosses IPC as data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct RemoteCheckoutOutcome {
+    /// Short local branch name derived from the remote ref (`origin/x` -> `x`).
+    pub local_branch: String,
+    pub switch: SwitchOutcome,
+    pub fast_forward: FastForwardResult,
+}
+
 /// Result of `git add --renormalize`: the files git restaged through the
 /// clean filter (captured via the dry run immediately beforehand). Empty
 /// means the repo was already normalized: an outcome, not an error.

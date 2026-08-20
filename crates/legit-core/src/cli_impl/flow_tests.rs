@@ -407,10 +407,15 @@ async fn checkout_remote_branch_switches_to_existing_local() {
     let (b, exec) = backend(fake);
 
     let outcome = b
-        .checkout_remote_branch("origin/feature-x", SwitchDirtyBehavior::TryDirectly)
+        .checkout_remote_branch("origin/feature-x", SwitchDirtyBehavior::TryDirectly, false)
         .await
         .unwrap();
-    assert_eq!(outcome, SwitchOutcome::Clean);
+    assert_eq!(outcome.switch, SwitchOutcome::Clean);
+    assert_eq!(outcome.local_branch, "feature-x");
+    // fast_forward = false must never run a merge (the "no network / no
+    // surprise mutation" half of the setting) - assert_done pins that the
+    // script ended at the switch.
+    assert_eq!(outcome.fast_forward, FastForwardResult::NotAttempted);
     exec.assert_done();
 }
 
@@ -425,10 +430,10 @@ async fn checkout_remote_branch_tracks_when_no_local_exists() {
     let (b, exec) = backend(fake);
 
     let outcome = b
-        .checkout_remote_branch("origin/feature-x", SwitchDirtyBehavior::TryDirectly)
+        .checkout_remote_branch("origin/feature-x", SwitchDirtyBehavior::TryDirectly, false)
         .await
         .unwrap();
-    assert_eq!(outcome, SwitchOutcome::Clean);
+    assert_eq!(outcome.switch, SwitchOutcome::Clean);
     exec.assert_done();
 }
 
@@ -442,12 +447,140 @@ async fn checkout_remote_branch_accepts_full_ref_form() {
     fake.expect(&["switch", "--track", "origin/feat/nested"], ok(""));
     let (b, exec) = backend(fake);
 
-    b.checkout_remote_branch(
-        "refs/remotes/origin/feat/nested",
-        SwitchDirtyBehavior::TryDirectly,
-    )
-    .await
-    .unwrap();
+    let outcome = b
+        .checkout_remote_branch(
+            "refs/remotes/origin/feat/nested",
+            SwitchDirtyBehavior::TryDirectly,
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome.local_branch, "feat/nested");
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
+// checkout_remote_branch - the fast-forward step ("Fast-forward on remote
+// checkout" setting). Must be a LOCAL `merge --ff-only` against the
+// remote-tracking ref, never a network pull.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn checkout_remote_branch_fast_forwards_existing_local() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["rev-parse", "-q", "--verify", "refs/heads/feature-x"],
+        ok("abc123\n"),
+    );
+    fake.expect(&["switch", "feature-x"], ok(""));
+    fake.expect(
+        &["merge", "--ff-only", "--no-edit", "origin/feature-x"],
+        ok("Updating abc123..def456\nFast-forward\n a.txt | 1 +\n"),
+    );
+    let (b, exec) = backend(fake);
+
+    let outcome = b
+        .checkout_remote_branch("origin/feature-x", SwitchDirtyBehavior::TryDirectly, true)
+        .await
+        .unwrap();
+    assert_eq!(outcome.switch, SwitchOutcome::Clean);
+    assert_eq!(outcome.fast_forward, FastForwardResult::FastForwarded);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn checkout_remote_branch_ff_reports_up_to_date() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["rev-parse", "-q", "--verify", "refs/heads/feature-x"],
+        ok("abc123\n"),
+    );
+    fake.expect(&["switch", "feature-x"], ok(""));
+    fake.expect(
+        &["merge", "--ff-only", "--no-edit", "origin/feature-x"],
+        ok("Already up to date.\n"),
+    );
+    let (b, exec) = backend(fake);
+
+    let outcome = b
+        .checkout_remote_branch("origin/feature-x", SwitchDirtyBehavior::TryDirectly, true)
+        .await
+        .unwrap();
+    assert_eq!(outcome.fast_forward, FastForwardResult::UpToDate);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn checkout_remote_branch_ff_divergence_is_outcome_not_error() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["rev-parse", "-q", "--verify", "refs/heads/feature-x"],
+        ok("abc123\n"),
+    );
+    fake.expect(&["switch", "feature-x"], ok(""));
+    fake.expect(
+        &["merge", "--ff-only", "--no-edit", "origin/feature-x"],
+        fail(128, "fatal: Not possible to fast-forward, aborting.\n"),
+    );
+    let (b, exec) = backend(fake);
+
+    let outcome = b
+        .checkout_remote_branch("origin/feature-x", SwitchDirtyBehavior::TryDirectly, true)
+        .await
+        .unwrap();
+    assert_eq!(outcome.switch, SwitchOutcome::Clean);
+    assert_eq!(outcome.fast_forward, FastForwardResult::Diverged);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn checkout_remote_branch_ff_other_failure_is_outcome_with_message() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["rev-parse", "-q", "--verify", "refs/heads/feature-x"],
+        ok("abc123\n"),
+    );
+    fake.expect(&["switch", "feature-x"], ok(""));
+    fake.expect(
+        &["merge", "--ff-only", "--no-edit", "origin/feature-x"],
+        fail(
+            1,
+            "error: Your local changes to the following files would be overwritten by merge:\n\ta.txt\n",
+        ),
+    );
+    let (b, exec) = backend(fake);
+
+    let outcome = b
+        .checkout_remote_branch("origin/feature-x", SwitchDirtyBehavior::TryDirectly, true)
+        .await
+        .unwrap();
+    assert_eq!(outcome.switch, SwitchOutcome::Clean);
+    match outcome.fast_forward {
+        FastForwardResult::Failed { message } => {
+            assert!(message.contains("would be overwritten"), "{message}");
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn checkout_remote_branch_ff_skips_merge_for_new_tracking_branch() {
+    // `switch --track` creates the local branch AT the remote tip - a merge
+    // afterwards is pointless, so it must NOT run (assert_done pins that).
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["rev-parse", "-q", "--verify", "refs/heads/feature-x"],
+        fail(1, ""),
+    );
+    fake.expect(&["switch", "--track", "origin/feature-x"], ok(""));
+    let (b, exec) = backend(fake);
+
+    let outcome = b
+        .checkout_remote_branch("origin/feature-x", SwitchDirtyBehavior::TryDirectly, true)
+        .await
+        .unwrap();
+    assert_eq!(outcome.fast_forward, FastForwardResult::UpToDate);
     exec.assert_done();
 }
 

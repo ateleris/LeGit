@@ -2,7 +2,7 @@
 //! See DESIGN-v0.2.md §D.3 for repo-scoped command patterns.
 
 use crate::{error::AppError, state::AppState};
-use legit_core::{OperationId, SwitchOutcome};
+use legit_core::{OperationId, RemoteCheckoutOutcome, SwitchOutcome};
 
 #[tauri::command]
 #[specta::specta]
@@ -61,15 +61,18 @@ pub async fn repo_checkout_remote_branch(
     state: tauri::State<'_, AppState>,
     repo_id: String,
     remote_ref: String,
-) -> Result<SwitchOutcome, AppError> {
-    let behavior = {
+) -> Result<RemoteCheckoutOutcome, AppError> {
+    let (behavior, fast_forward) = {
         let s = state.global_settings.read().await;
-        s.switch_dirty_behavior.unwrap_or_default()
+        (
+            s.switch_dirty_behavior.unwrap_or_default(),
+            s.checkout_remote_fast_forward,
+        )
     };
     let session = state.get_session(&repo_id).await?;
     session
         .backend
-        .checkout_remote_branch(&remote_ref, behavior)
+        .checkout_remote_branch(&remote_ref, behavior, fast_forward)
         .await
         .map_err(AppError::Git)
 }

@@ -10,6 +10,7 @@ import {
   setWatcherEnabled,
   setConfirmDiscard,
   setCheckoutNewBranch,
+  setCheckoutRemoteFastForward,
   setSubmoduleAttachBranch,
   setAutoFetchEnabled,
   setAutoFetchIntervalMinutes,
@@ -112,6 +113,7 @@ interface SettingsStore {
   setWatcherEnabled: (enabled: boolean) => Promise<void>;
   setConfirmDiscard: (confirm: boolean) => Promise<void>;
   setCheckoutNewBranch: (enabled: boolean) => Promise<void>;
+  setCheckoutRemoteFastForward: (enabled: boolean) => Promise<void>;
   setSubmoduleAttachBranch: (enabled: boolean) => Promise<void>;
   setAutoFetchEnabled: (enabled: boolean) => Promise<void>;
   setAutoFetchIntervalMinutes: (minutes: number) => Promise<void>;
@@ -224,6 +226,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     await setCheckoutNewBranch(enabled);
     const s = get().settings;
     if (s) set({ settings: { ...s, checkout_new_branch: enabled } });
+  },
+
+  async setCheckoutRemoteFastForward(enabled) {
+    await setCheckoutRemoteFastForward(enabled);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, checkout_remote_fast_forward: enabled } });
   },
 
   async setSubmoduleAttachBranch(enabled) {

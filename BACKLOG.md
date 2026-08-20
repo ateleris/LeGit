@@ -151,6 +151,16 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   (`search_commits` Content/ContentRegex kinds, `search_paths`) is kept
   and tested; re-adding is a small UI task if "when did this string
   change?" archaeology is missed.
+- **Auto-push on commit** (global setting + per-repo override, noted
+  2026-08-20). A "Push after commit" toggle: global default in the settings
+  store, overridable per repo via the usual `RepoSettings` `Option<bool>` +
+  `#[serde(default)]` inherit pattern (3 places: Rust struct, `types.ts`
+  mirror, `RepoSettingsPanel` section; consumers read
+  `repoSettings?.field ?? global`). When effective-on, the commit action
+  chains a push and the commit button text changes to reflect it (e.g.
+  "Commit & Push") so the behavior is never a surprise. Wiring lives in the
+  commit composer (WorkingChangesPanel); a failed push after a successful
+  commit must surface as its own error, not roll into the commit result.
 - **"Open in editor" on more file rows.** Shipped for Files / Working
   Changes / Changed Files (shared `OpenInEditorMenuItem`); File History
   and Compare share `CopyPathMenuSection` and could get the same entry.
@@ -184,6 +194,26 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   chunked sweep (~2-4 sessions) in the first quiet post-release window.
   `PANEL_TITLES` in `registry.tsx` shows the catalog shape and would be
   its first consumer. If "not needed": record that here and drop the item.
+- **Keyboard shortcuts system** (possible future idea, surveyed
+  2026-08-19; no commitment). Today the app has NO global shortcuts, no
+  native menu/accelerators, no command palette, no configurable keymap -
+  every key handler is local, focus-scoped, and hard-coded inline
+  (~25 sites). What exists: Enter-submit in forms, Enter/Esc inline
+  renames, Esc-dismiss in six overlays (two menus lack it), Commits
+  type-to-jump (+ Alt+arrows through matches), full arrow-nav in the
+  shared FileTree, Console history/Ctrl+C/pager keys, Ctrl+S in editable
+  CodeMirror panes. Notable gaps if picked up: no app-wide actions
+  (commit, fetch/pull/push, refresh, panel/repo-tab switch), Commits list
+  has no plain arrow row-navigation, Working Changes and Interactive
+  Rebase are mouse-only, no Ctrl+F in diff/merge/file view (CodeMirror
+  `searchKeymap` unregistered), most panels' rows are not focusable, no
+  focus trap in dialogs, zero keyboard tests. Approach when picked up:
+  a small central keymap registry (single arbitration point, e.g. for
+  the overloaded Escape; testable; user-remappable later) seeded with a
+  few high-value bindings (Ctrl+Enter commit, refresh, commits-list
+  arrows), NOT more inline handlers. Related deferred note: a shortcut
+  to open the commits context menu
+  (`design/2026-06-16-commits-context-menu-design.md`).
 - **Commit graph: user-swappable shape tilesets** (designed 2026-08-19,
   stopped after approach approval; no spec yet). Let users restyle the
   graph's connectors and nodes with their own SVG fragments: a "texture

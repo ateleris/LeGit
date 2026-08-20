@@ -221,6 +221,18 @@ pub async fn set_checkout_new_branch(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn set_checkout_remote_fast_forward(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state.mutate_global(|s| {
+        s.checkout_remote_fast_forward = enabled;
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn set_submodule_attach_branch(
     state: tauri::State<'_, AppState>,
     enabled: bool,

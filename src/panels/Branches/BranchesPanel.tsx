@@ -23,7 +23,11 @@ import { Button } from "../shared/buttons";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { segStyle } from "../shared/segmented";
 import { branchTreeRows, folderHoldsCurrent, leafName } from "./branchTree";
-import { notifySwitchOutcome, formatSwitchError } from "../../lib/switchFeedback";
+import {
+  notifySwitchOutcome,
+  notifyRemoteCheckoutOutcome,
+  formatSwitchError,
+} from "../../lib/switchFeedback";
 import { remoteOpErrorMessage } from "../../lib/pushFeedback";
 import { PUSH_DOMAINS } from "../Commits/useCommitActions";
 import { pushWithTagFollowUp } from "../../lib/autoPushTags";
@@ -260,7 +264,7 @@ export function BranchesSection() {
   const doRemoteCheckout = useCallback(async (fullRef: string) => {
     await runSwitch(async () => {
       const outcome = await repoCheckoutRemoteBranch(repo!.id, fullRef);
-      notifySwitchOutcome(outcome, fullRef.replace(/^refs\/remotes\//, ""));
+      notifyRemoteCheckoutOutcome(outcome, fullRef.replace(/^refs\/remotes\//, ""));
       void autoUpdateSubmodules(queryClient, repo!.id);
     });
   }, [repo, runSwitch, queryClient]);
