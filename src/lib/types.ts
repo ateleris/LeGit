@@ -114,6 +114,10 @@ export interface GlobalSettings {
   connected_accounts?: ConnectedAccountMeta[];
 }
 
+/** Default action of the Working Changes commit button (matches the Rust
+ *  `CommitButtonMode` in state.rs, snake_case variants). */
+export type CommitButtonMode = "commit" | "commit_and_push";
+
 export interface RepoSettings {
   git_path_override: string | null;
   /** Per-repo override for the Working Changes chips (null = inherit). */
@@ -133,6 +137,10 @@ export interface RepoSettings {
   auto_push_tags?: boolean | null;
   /** Suppress the missing-git-lfs warning banner (null = warn). */
   suppress_lfs_warning?: boolean | null;
+  /** Working Changes commit button default (null = plain commit).
+   * Deliberately per-repo only and set only via the button's caret menu -
+   * no settings-panel section (see the BACKLOG "Commit & Push" entry). */
+  commit_button_mode?: CommitButtonMode | null;
   /** Commit-graph lane locks (managed via set/unset_lane_lock, NOT the
    * settings panel). Present here because `update_repo_settings` replaces
    * the WHOLE struct: a `RepoSettings` built without this field would

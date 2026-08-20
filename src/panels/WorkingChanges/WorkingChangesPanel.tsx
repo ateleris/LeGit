@@ -4,8 +4,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
 import { usePanelActiveEffect, usePanelFocusEffect } from "../PanelApiContext";
-import { repoCommit, repoConflictEntries, repoConflictReopen, repoCreateStashPaths, repoDiscard, repoLog, repoResolvedIdentity, repoResolveTakeSide, repoResolveUndoPaths, repoStage, repoStagedMarkerPaths, repoStatus, repoTrackingStatus, repoUnstage, repoUnstagedMarkerPaths } from "../../lib/commands";
-import type { Commit, ConflictEntry, ConflictSide, DiffRequest, DiffSource, FileStatus, ResolvedIdentity, TrackingStatus } from "../../lib/types";
+import { repoBranches, repoCommit, repoConflictEntries, repoConflictReopen, repoCreateStashPaths, repoDiscard, repoListRemotes, repoLog, repoResolvedIdentity, repoResolveTakeSide, repoResolveUndoPaths, repoStage, repoStagedMarkerPaths, repoStatus, repoTrackingStatus, repoUnstage, repoUnstagedMarkerPaths } from "../../lib/commands";
+import type { Branch, Commit, CommitButtonMode, ConflictEntry, ConflictSide, DiffRequest, DiffSource, FileStatus, Remote, ResolvedIdentity, TrackingStatus } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { useCommitDraftStore } from "../../store/commitDraft";
@@ -19,7 +19,7 @@ import { ToolbarButton } from "../shared/ToolbarButton";
 import { Button, IconButton } from "../shared/buttons";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
-import { StageIcon, UnstageIcon, WarningIcon } from "../../icons";
+import { ChevronDownIcon, StageIcon, UnstageIcon, WarningIcon } from "../../icons";
 import { PanelContextMenuProvider, useMenuConfirm, type BaselineEntry } from "../Commits/menu/PanelContextMenu";
 import { MenuItem } from "../Commits/menu/primitives";
 import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
@@ -33,6 +33,17 @@ import { openSubmoduleRepo } from "../../lib/submodules";
 import { summonGlobalPanel } from "../GlobalDock";
 import { useOpState } from "../../lib/useOpState";
 import { isDetachedHead } from "../../lib/detachedHead";
+import { pushWithTagFollowUp } from "../../lib/autoPushTags";
+import { remoteOpErrorMessage } from "../../lib/pushFeedback";
+import { PUSH_DOMAINS } from "../Commits/useCommitActions";
+import { CaretDropdown } from "../shared/CaretDropdown";
+import {
+  commitAndPushMenuLabel,
+  commitButtonPlan,
+  commitPushFailureMessage,
+  commitPushSuccessMessage,
+  type CommitPushTarget,
+} from "./commitButtonMode";
 import { takeSideLabels } from "./conflictLabels";
 import { formatEolChanges, stagedEolChanges } from "./lineEndingWarning";
 import {
@@ -165,9 +176,22 @@ export function WorkingChangesPanel() {
   // Line-ending features: repo override else global (both default on).
   const chipsGlobal = useSettingsStore((s) => s.settings?.line_ending_chips_in_changes ?? true);
   const warnEolGlobal = useSettingsStore((s) => s.settings?.warn_on_line_ending_commit ?? true);
-  const repoEolSettings = useRepoStore((s) => (repo ? s.repoSettings[repo.id] : undefined));
-  const chipsEnabled = repoEolSettings?.line_ending_chips_in_changes ?? chipsGlobal;
-  const warnEolCommit = repoEolSettings?.warn_on_line_ending_commit ?? warnEolGlobal;
+  const repoSettings = useRepoStore((s) => (repo ? s.repoSettings[repo.id] : undefined));
+  const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
+  const updateRepoSetting = useRepoStore((s) => s.updateRepoSetting);
+  const chipsEnabled = repoSettings?.line_ending_chips_in_changes ?? chipsGlobal;
+  const warnEolCommit = repoSettings?.warn_on_line_ending_commit ?? warnEolGlobal;
+  // Commit button default: plain commit vs commit-and-push. Per-repo ONLY,
+  // set via the button's caret menu (deliberately no settings-panel section).
+  const commitMode: CommitButtonMode = repoSettings?.commit_button_mode ?? "commit";
+  const pushRecurseSubmodules = useSettingsStore(
+    (s) => s.settings?.push_recurse_submodules ?? null,
+  );
+  // Belt and braces: the cache is normally filled by setActive, but the caret
+  // menu persists through it, so make sure it is actually loaded.
+  useEffect(() => {
+    if (repo && !repoSettings) void loadRepoSettings(repo.id);
+  }, [repo?.id, repoSettings, loadRepoSettings]);
   const setViewMode = useSettingsStore((s) => s.setChangedFilesViewMode);
   const { rowHeight, iconSize } = useFileRowMetrics();
 
@@ -243,6 +267,7 @@ export function WorkingChangesPanel() {
   const [confirmDetachedCommit, setConfirmDetachedCommit] = useState(false);
   const [confirmAmendPushed, setConfirmAmendPushed] = useState(false);
   const [confirmEolCommit, setConfirmEolCommit] = useState(false);
+  const [commitMenuOpen, setCommitMenuOpen] = useState(false);
 
   // Clear the selection when the repo changes — a stale path from the previous
   // repo must not leak into actions or a diff summon for the new repo.
@@ -293,6 +318,25 @@ export function WorkingChangesPanel() {
   // ahead of it (ahead === 0 → the tip is on the remote). Amending then rewrites
   // pushed history and needs a force-push.
   const amendingPushed = amend && !!tracking && tracking.ahead === 0;
+
+  // Branches + remotes — drive the split commit button's Push/Publish label
+  // and push target (`tracking` cannot: it is null for detached, untracked
+  // AND gone upstreams alike, and `upstream_gone` lives only on `Branch`).
+  // Both share React Query's cache with the Commits panel (same keys).
+  const { data: branches = [] } = useQuery<Branch[]>({
+    queryKey: [repo?.id, "branches"],
+    queryFn: () => repoBranches(repo!.id),
+    enabled: !!repo,
+    staleTime: 5_000,
+  });
+  const { data: remotes = [] } = useQuery<Remote[]>({
+    queryKey: [repo?.id, "remotes"],
+    queryFn: () => repoListRemotes(repo!.id),
+    enabled: !!repo,
+    staleTime: 5_000,
+  });
+  const currentBranch = branches.find((b) => b.is_current && !b.is_remote) ?? null;
+  const remoteNames = remotes.map((r) => r.name);
 
   // Commit identity resolved across all config scopes: when name or email is
   // missing everywhere, a commit fails with git's "Please tell me who you are";
@@ -592,11 +636,39 @@ export function WorkingChangesPanel() {
       setSelected(next);
       syncOpenDiff(selected, next);
     });
+  // The push leg the in-flight commit chains (set by requestCommit from the
+  // plan, consumed by commit). A ref, not state: the confirm banners defer
+  // commit() to a later click and the value must survive that gap unchanged.
+  const pendingPushRef = useRef<CommitPushTarget | null>(null);
   const commit = () =>
     run(async () => {
+      const push = pendingPushRef.current;
+      pendingPushRef.current = null;
       await repoCommit(repo!.id, message, amend);
       setMessage("");
       setAmend(false);
+      if (push) {
+        // Push failures are their own outcome — the commit already stands, so
+        // they must never surface through run()'s onError as a failed commit.
+        try {
+          await pushWithTagFollowUp(
+            queryClient,
+            repo!.id,
+            {
+              remote: push.remote,
+              branch: push.branch,
+              set_upstream: push.setUpstream,
+              force_with_lease: false,
+              recurse_submodules: pushRecurseSubmodules,
+            },
+            crypto.randomUUID(),
+          );
+          notify.success(commitPushSuccessMessage(push));
+        } catch (e) {
+          notify.error(commitPushFailureMessage(remoteOpErrorMessage(e)));
+        }
+        invalidateRepoDomains(queryClient, repo!.id, PUSH_DOMAINS);
+      }
     });
 
   // A detached-HEAD commit is reachable only through the reflog once HEAD
@@ -615,7 +687,21 @@ export function WorkingChangesPanel() {
     }
     commit();
   };
+  // The split button's plan under the persisted mode: the label shown, and
+  // whether the commit chains a push. Amend/detached/no-target all degrade to
+  // a plain commit inside the plan, so the label never over-promises.
+  const commitPlan = commitButtonPlan({
+    mode: commitMode,
+    amend,
+    detached,
+    currentBranch,
+    remotes: remoteNames,
+  });
   const requestCommit = () => {
+    // The push leg is decided at request time and parked in the ref: the
+    // confirm banners defer commit() to a later click, and the plan must
+    // survive that gap unchanged.
+    pendingPushRef.current = commitPlan.push;
     if (detached) {
       setConfirmDetachedCommit(true);
       return;
@@ -628,6 +714,14 @@ export function WorkingChangesPanel() {
       return;
     }
     proceedCommit();
+  };
+  // Caret-menu pick configures the button (persists the mode for this repo),
+  // it does not commit — the same semantics as the Stash and Pull-strategy
+  // carets. Committing stays one explicit click on the (now relabeled) button.
+  const pickCommitMode = (mode: CommitButtonMode) => {
+    setCommitMenuOpen(false);
+    if (!repo) return;
+    void updateRepoSetting(repo.id, "commit_button_mode", mode);
   };
 
   // Drop a pending detached-HEAD confirmation once HEAD is back on a branch
@@ -1223,9 +1317,46 @@ export function WorkingChangesPanel() {
                 <input type="checkbox" checked={amend} disabled={!head || busy} onChange={(e) => toggleAmend(e.target.checked)} />
                 Amend last commit
               </label>
-              <Button variant="primary" data-testid="commit-button" disabled={!canCommit} onClick={requestCommit} style={{ marginLeft: "auto" }}>
-                {amend ? "Amend" : "Commit"} {!amend && staged.length > 0 ? `(${staged.length})` : ""}
-              </Button>
+              {/* Split button: the action half runs the persisted mode, the
+                  caret configures it (persist-only, per repo, like the Stash
+                  caret). The label is the plan's — it already degrades
+                  (amend/detached/no target), so it never promises a push that
+                  will not happen. */}
+              <div style={{ position: "relative", display: "flex", marginLeft: "auto" }}>
+                <Button variant="primary" rounded="left" data-testid="commit-button" disabled={!canCommit} onClick={requestCommit}>
+                  {commitPlan.label} {!amend && staged.length > 0 ? `(${staged.length})` : ""}
+                </Button>
+                <Button
+                  variant="primary"
+                  rounded="right"
+                  title="Commit mode"
+                  disabled={busy}
+                  onClick={() => setCommitMenuOpen((o) => !o)}
+                  style={{ padding: "2px 4px", marginLeft: 1 }}
+                >
+                  <ChevronDownIcon />
+                </Button>
+                {commitMenuOpen && (
+                  <CaretDropdown onClose={() => setCommitMenuOpen(false)}>
+                    {(
+                      [
+                        { mode: "commit" as const, label: "Commit" },
+                        {
+                          mode: "commit_and_push" as const,
+                          label: commitAndPushMenuLabel(currentBranch, remoteNames),
+                        },
+                      ]
+                    ).map((entry) => (
+                      <MenuItem key={entry.mode} onClick={() => pickCommitMode(entry.mode)}>
+                        <span style={{ fontWeight: entry.mode === commitMode ? 600 : 400 }}>
+                          {entry.mode === commitMode ? "✓ " : " "}
+                          {entry.label}
+                        </span>
+                      </MenuItem>
+                    ))}
+                  </CaretDropdown>
+                )}
+              </div>
             </div>
           )}
         </div>

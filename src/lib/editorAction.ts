@@ -19,6 +19,14 @@ export function editorActionLabel(template: string | null | undefined): string {
   return program ? `Open in ${program}` : "Open folder (no editor configured)";
 }
 
+/** Label for the FILE-row variant of the action (`repoOpenFileInEditor`):
+ * its no-editor fallback reveals the file in the OS file manager, so the
+ * fallback wording differs from the repo action's "Open folder". */
+export function editorFileActionLabel(template: string | null | undefined): string {
+  const program = templateProgram(template ?? "");
+  return program ? `Open in ${program}` : "Reveal in file manager (no editor configured)";
+}
+
 /** True when the action will open the repo FOLDER (no editor configured) -
  * the icon must follow the same rule as the label's folder wording. */
 export function editorOpensFolder(template: string | null | undefined): boolean {
@@ -43,11 +51,17 @@ export function effectiveEditorTemplate(
  * they can never disagree) — the action itself always resolves the override
  * on the backend.
  */
-export function useEditorAction(repoId?: string): { label: string; opensFolder: boolean } {
+export function useEditorAction(
+  repoId?: string,
+): { label: string; fileLabel: string; opensFolder: boolean } {
   const globalTemplate = useSettingsStore((s) => s.settings?.external_editor_command ?? "");
   const repoTemplate = useRepoStore((s) =>
     repoId ? s.repoSettings[repoId]?.external_editor_command : null,
   );
   const template = effectiveEditorTemplate(repoTemplate, globalTemplate);
-  return { label: editorActionLabel(template), opensFolder: editorOpensFolder(template) };
+  return {
+    label: editorActionLabel(template),
+    fileLabel: editorFileActionLabel(template),
+    opensFolder: editorOpensFolder(template),
+  };
 }

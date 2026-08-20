@@ -19,6 +19,7 @@ import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { useDelayedFlag } from "../shared/useDelayedFlag";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { Button } from "../shared/buttons";
+import { CaretDropdown } from "../shared/CaretDropdown";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { autoUpdateSubmodules } from "../../lib/submodules";
 import {
@@ -2001,38 +2002,6 @@ const STASH_MODES: { includeUntracked: boolean; label: string }[] = [
   { includeUntracked: true, label: "Include untracked files" },
 ];
 
-/** Hand-rolled caret dropdown shared by the Pull and Push toolbar buttons:
- *  a fixed click-away overlay plus a right-aligned panel under the anchor. */
-function SyncDropdown({
-  onClose,
-  children,
-}: {
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <>
-      <div style={{ position: "fixed", inset: 0, zIndex: 10 }} onClick={onClose} />
-      <div
-        style={{
-          position: "absolute",
-          top: "100%",
-          right: 0,
-          marginTop: 2,
-          zIndex: 11,
-          background: "var(--panel-bg, #222)",
-          border: "1px solid var(--panel-border)",
-          borderRadius: 4,
-          boxShadow: "0 2px 8px var(--shadow-color)",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {children}
-      </div>
-    </>
-  );
-}
-
 function RemoteSyncToolbar({
   repoId,
   branches,
@@ -2243,7 +2212,7 @@ function RemoteSyncToolbar({
           <ChevronDownIcon />
         </Button>
         {pullMenuOpen && (
-          <SyncDropdown onClose={() => setPullMenuOpen(false)}>
+          <CaretDropdown onClose={() => setPullMenuOpen(false)}>
             {(Object.keys(PULL_STRATEGY_LABELS) as PullStrategy[]).map((s) => (
               <MenuItem
                 key={s}
@@ -2258,7 +2227,7 @@ function RemoteSyncToolbar({
                 </span>
               </MenuItem>
             ))}
-          </SyncDropdown>
+          </CaretDropdown>
         )}
       </div>
 
@@ -2294,7 +2263,7 @@ function RemoteSyncToolbar({
           <ChevronDownIcon />
         </Button>
         {menuOpen && (
-          <SyncDropdown onClose={() => setMenuOpen(false)}>
+          <CaretDropdown onClose={() => setMenuOpen(false)}>
             <MenuItem onClick={() => doPush(true)}>Force-push (with lease)</MenuItem>
             {/* With several remotes, offer a one-off push to each other one
                 (the button itself targets the upstream's / default remote). */}
@@ -2310,7 +2279,7 @@ function RemoteSyncToolbar({
                   ))}
               </>
             )}
-          </SyncDropdown>
+          </CaretDropdown>
         )}
       </div>
 
@@ -2358,7 +2327,7 @@ function RemoteSyncToolbar({
           <ChevronDownIcon />
         </Button>
         {stashMenuOpen && (
-          <SyncDropdown onClose={() => setStashMenuOpen(false)}>
+          <CaretDropdown onClose={() => setStashMenuOpen(false)}>
             {STASH_MODES.map((mode) => (
               <MenuItem
                 key={mode.label}
@@ -2378,7 +2347,7 @@ function RemoteSyncToolbar({
                 </span>
               </MenuItem>
             ))}
-          </SyncDropdown>
+          </CaretDropdown>
         )}
       </div>
 

@@ -151,16 +151,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   (`search_commits` Content/ContentRegex kinds, `search_paths`) is kept
   and tested; re-adding is a small UI task if "when did this string
   change?" archaeology is missed.
-- **Auto-push on commit** (global setting + per-repo override, noted
-  2026-08-20). A "Push after commit" toggle: global default in the settings
-  store, overridable per repo via the usual `RepoSettings` `Option<bool>` +
-  `#[serde(default)]` inherit pattern (3 places: Rust struct, `types.ts`
-  mirror, `RepoSettingsPanel` section; consumers read
-  `repoSettings?.field ?? global`). When effective-on, the commit action
-  chains a push and the commit button text changes to reflect it (e.g.
-  "Commit & Push") so the behavior is never a surprise. Wiring lives in the
-  commit composer (WorkingChangesPanel); a failed push after a successful
-  commit must surface as its own error, not roll into the commit result.
 - **"Open in editor" on more file rows.** Shipped for Files / Working
   Changes / Changed Files (shared `OpenInEditorMenuItem`); File History
   and Compare share `CopyPathMenuSection` and could get the same entry.

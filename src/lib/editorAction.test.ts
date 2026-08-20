@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   editorActionLabel,
+  editorFileActionLabel,
   editorOpensFolder,
   effectiveEditorTemplate,
   templateProgram,
@@ -31,6 +32,25 @@ describe("editorActionLabel", () => {
   it("falls back to the folder wording when nothing is configured", () => {
     expect(editorActionLabel("")).toBe("Open folder (no editor configured)");
     expect(editorActionLabel(null)).toBe("Open folder (no editor configured)");
+  });
+});
+
+describe("editorFileActionLabel", () => {
+  it("names the configured program, like the repo action", () => {
+    expect(editorFileActionLabel("code $FILE")).toBe("Open in code");
+  });
+
+  it("says what the fallback actually does with a FILE: reveal, not open a folder", () => {
+    // The file-row action's no-editor fallback selects the file in the OS
+    // file manager (repo_open_file_in_editor), so the label must not promise
+    // an editor - and must not borrow the repo action's "Open folder" either.
+    expect(editorFileActionLabel("")).toBe("Reveal in file manager (no editor configured)");
+    expect(editorFileActionLabel(null)).toBe(
+      "Reveal in file manager (no editor configured)",
+    );
+    expect(editorFileActionLabel(undefined)).toBe(
+      "Reveal in file manager (no editor configured)",
+    );
   });
 });
 

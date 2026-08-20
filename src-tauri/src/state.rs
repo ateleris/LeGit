@@ -434,6 +434,20 @@ impl Default for LaneLocksDoc {
     }
 }
 
+/// Default action of the Working Changes commit button: plain commit, or
+/// commit followed by a push of the current branch. Deliberately per-repo
+/// ONLY (no global default): push is outward-facing, and a globally
+/// persisted Commit & Push would silently follow the user from a hobby repo
+/// into one where every push triggers CI. The button's caret menu is the
+/// only UI - there is deliberately no RepoSettingsPanel section (see the
+/// BACKLOG "Commit & Push" entry).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum CommitButtonMode {
+    Commit,
+    CommitAndPush,
+}
+
 /// Settings that persist for a specific repo. On disk as
 /// `<app-data>/repos/<hash>/settings.json`. Loaded into the `RepoSession`
 /// when the repo is opened; persisted eagerly on each change.
@@ -474,6 +488,10 @@ pub struct RepoSettings {
     /// "Don't warn for this repo" or the Repo Settings panel).
     #[serde(default)]
     pub suppress_lfs_warning: Option<bool>,
+    /// Commit button default: plain commit vs commit-and-push
+    /// (None = plain commit). Set only via the button's caret menu.
+    #[serde(default)]
+    pub commit_button_mode: Option<CommitButtonMode>,
 }
 
 // ---------------------------------------------------------------------------
@@ -722,6 +740,39 @@ mod tests {
             parsed.checkout_remote_fast_forward,
             "checkout_remote_fast_forward must default ON for old settings files"
         );
+    }
+
+    // Same convention for RepoSettings - and doubly important there, because
+    // `load_repo_settings_sync` falls back to `RepoSettings::default()` on ANY
+    // parse failure, so a field that breaks old documents would silently wipe
+    // every per-repo setting (including lane locks) instead of erroring.
+    #[test]
+    fn old_repo_settings_without_new_fields_parse() {
+        let old = r#"{
+            "git_path_override": null,
+            "line_ending_chips_in_changes": true,
+            "laneLocks": { "format": "legit-lane-locks", "formatVersion": 1, "locks": [] }
+        }"#;
+        let parsed: RepoSettings =
+            serde_json::from_str(old).expect("old repo settings document must parse");
+        assert_eq!(parsed.line_ending_chips_in_changes, Some(true));
+        assert!(
+            parsed.commit_button_mode.is_none(),
+            "commit_button_mode must default to None (= plain commit) for old files"
+        );
+    }
+
+    #[test]
+    fn commit_button_mode_roundtrips_snake_case() {
+        let mut s = RepoSettings::default();
+        s.commit_button_mode = Some(CommitButtonMode::CommitAndPush);
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(
+            json.contains(r#""commit_button_mode":"commit_and_push""#),
+            "TS mirror relies on snake_case variants: {json}"
+        );
+        let back: RepoSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.commit_button_mode, Some(CommitButtonMode::CommitAndPush));
     }
 
     #[test]

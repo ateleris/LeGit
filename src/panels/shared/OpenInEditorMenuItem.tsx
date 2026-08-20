@@ -10,6 +10,7 @@ import { repoOpenFileInEditor } from "../../lib/commands";
 import { useActiveRepo } from "../../store/repos";
 import { notify } from "../../store/notifications";
 import { formatAppError } from "../../lib/types";
+import { useEditorAction } from "../../lib/editorAction";
 
 export function OpenInEditorMenuItem({
   path,
@@ -20,6 +21,9 @@ export function OpenInEditorMenuItem({
   onClose: () => void;
 }) {
   const repo = useActiveRepo();
+  // Same adaptive wording as the tab bar's editor button: name the configured
+  // program, or say what the fallback really does (reveal in file manager).
+  const { fileLabel } = useEditorAction(repo?.id);
   if (repo === null) return null;
 
   return (
@@ -31,7 +35,7 @@ export function OpenInEditorMenuItem({
         );
       }}
     >
-      Open in editor
+      {fileLabel}
     </MenuItem>
   );
 }
