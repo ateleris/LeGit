@@ -95,11 +95,13 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
         }
       },
 
-      handleCherryPick: async (sha: string) => {
+      // `mainline` (1-based parent number) comes from the merge-commit
+      // parent picker; regular commits pass none.
+      handleCherryPick: async (sha: string, mainline?: number) => {
         const repo = repoOf();
         if (!repo) return;
         try {
-          const outcome = await repoCherryPick(repo.id, sha);
+          const outcome = await repoCherryPick(repo.id, sha, mainline);
           invalidate(repo.id, OP_DOMAINS);
           notifySequenceOutcome(outcome, "cherry-pick", sha.slice(0, 8));
         } catch (e) {
@@ -108,11 +110,11 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
         }
       },
 
-      handleRevert: async (sha: string) => {
+      handleRevert: async (sha: string, mainline?: number) => {
         const repo = repoOf();
         if (!repo) return;
         try {
-          const outcome = await repoRevert(repo.id, sha);
+          const outcome = await repoRevert(repo.id, sha, mainline);
           invalidate(repo.id, OP_DOMAINS);
           notifySequenceOutcome(outcome, "revert", sha.slice(0, 8));
         } catch (e) {

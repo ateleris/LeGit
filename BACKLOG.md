@@ -141,11 +141,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   multi-commit continue/abort already), revert a set, compare two selected
   commits (feed the Compare panel), create patch from range. Touches row
   selection state + context-menu plumbing; the backends are largely present.
-- **Cherry-pick / revert of merge commits + `-x`** (2026-08-20 review; Git
-  Extensions has the full set). Today a merge commit surfaces git's raw
-  "-m required" error: detect >1 parent and offer a mainline picker
-  (parent 1/2 with subjects) mapping to `-m N`. Add an optional
-  "record origin (`-x`)" toggle on cherry-pick.
 
 ## Smaller follow-ups
 
@@ -189,6 +184,12 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   escape short of the Console. A small "bypass commit hooks" caret/checkbox
   on the commit composer (per-invocation, never persisted - silently
   skipping hooks by default is a footgun) mapping to `commit --no-verify`.
+- **Cherry-pick: "record origin" option (`-x`)** (split out 2026-08-20 - a
+  genuinely new, tiny feature, unlike the merge-commit support above).
+  Appends "(cherry picked from commit <sha>)" to the message - the
+  conventional breadcrumb when porting fixes across long-lived/release
+  branches. Per-invocation choice (e.g. a second menu entry or a caret),
+  not a persisted setting.
 - **Branch list: filter box** (2026-08-20 review; table stakes in every
   surveyed tool). A small text filter above the Branches section narrowing
   local + remote lists (substring on the short name, keep folder groups),

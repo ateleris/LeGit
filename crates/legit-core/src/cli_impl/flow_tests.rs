@@ -1380,7 +1380,32 @@ async fn revert_runs_no_edit_and_completes() {
     );
     let (b, exec) = backend(fake);
 
-    let outcome = b.revert("abc123").await.unwrap();
+    let outcome = b.revert("abc123", None).await.unwrap();
+    assert_eq!(outcome, SequenceOutcome::Completed);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn revert_of_a_merge_passes_the_mainline_parent() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["revert", "--no-edit", "-m", "1", "abc123"],
+        ok("[main 1a2b3c] Revert \"merge x\""),
+    );
+    let (b, exec) = backend(fake);
+
+    let outcome = b.revert("abc123", Some(1)).await.unwrap();
+    assert_eq!(outcome, SequenceOutcome::Completed);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn cherry_pick_of_a_merge_passes_the_mainline_parent() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["cherry-pick", "-m", "2", "def456"], ok(""));
+    let (b, exec) = backend(fake);
+
+    let outcome = b.cherry_pick("def456", Some(2)).await.unwrap();
     assert_eq!(outcome, SequenceOutcome::Completed);
     exec.assert_done();
 }
@@ -1398,7 +1423,7 @@ async fn cherry_pick_conflict_is_an_outcome_not_an_error() {
     );
     let (b, exec) = backend(fake);
 
-    let outcome = b.cherry_pick("def456").await.unwrap();
+    let outcome = b.cherry_pick("def456", None).await.unwrap();
     assert!(matches!(outcome, SequenceOutcome::Conflicts { .. }), "{outcome:?}");
     exec.assert_done();
 }

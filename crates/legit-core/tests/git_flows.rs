@@ -1078,7 +1078,7 @@ async fn revert_creates_a_revert_commit() {
     let repo = TestRepo::init().await;
     let (_, second) = two_commits(&repo).await;
 
-    let outcome = repo.backend.revert(&second).await.unwrap();
+    let outcome = repo.backend.revert(&second, None).await.unwrap();
     assert_eq!(outcome, SequenceOutcome::Completed);
 
     assert_eq!(repo.read("a.txt"), "one\n");
@@ -1093,7 +1093,7 @@ async fn cherry_pick_conflict_resolve_continue() {
     conflicting_branches(&repo).await;
     let feature_tip = repo.git(&["rev-parse", "feature"]).await.trim().to_string();
 
-    let outcome = repo.backend.cherry_pick(&feature_tip).await.unwrap();
+    let outcome = repo.backend.cherry_pick(&feature_tip, None).await.unwrap();
     assert!(matches!(outcome, SequenceOutcome::Conflicts { .. }), "{outcome:?}");
 
     // Real sequencer state drives the op detection.
@@ -1145,7 +1145,7 @@ async fn revert_conflict_abort_restores_state() {
     repo.write("a.txt", "v3\n");
     repo.commit_all("v3").await;
 
-    let outcome = repo.backend.revert(&middle).await.unwrap();
+    let outcome = repo.backend.revert(&middle, None).await.unwrap();
     assert!(matches!(outcome, SequenceOutcome::Conflicts { .. }), "{outcome:?}");
     match repo.backend.op_state().await.unwrap() {
         RepoOpState::Revert { sha } => assert!(middle.starts_with(&sha)),
@@ -2967,6 +2967,50 @@ async fn pull_fast_forwards_then_merges_divergence() {
         "expected a two-parent merge commit, got: {parents}"
     );
     assert!(repo.exists("b.txt") && repo.exists("c.txt"));
+}
+
+#[tokio::test]
+async fn merge_commit_revert_and_cherry_pick_with_mainline() {
+    // base -> feature adds f.txt -> merged into main (a real 2-parent merge).
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    let base = repo.head().await;
+    repo.git(&["switch", "-c", "feature"]).await;
+    repo.write("f.txt", "feature\n");
+    repo.commit_all("feature work").await;
+    repo.git(&["switch", "main"]).await;
+    repo.write("a.txt", "main v2\n");
+    repo.commit_all("main work").await;
+    repo.git(&["merge", "--no-ff", "--no-edit", "feature"]).await;
+    let merge_sha = repo.head().await;
+
+    // Without a mainline, git refuses a merge - stays an error, surfaced as-is.
+    let err = repo.backend.revert(&merge_sha, None).await;
+    assert!(
+        matches!(err, Err(GitError::CommandFailed { .. })),
+        "merge revert without -m must stay an error: {err:?}"
+    );
+
+    // Revert relative to parent 1 (main): the merged-in file goes away, the
+    // merge itself stays recorded in history.
+    let outcome = repo.backend.revert(&merge_sha, Some(1)).await.unwrap();
+    assert_eq!(outcome, SequenceOutcome::Completed);
+    assert!(!repo.exists("f.txt"), "revert -m 1 must remove the merged-in change");
+    assert_eq!(repo.read("a.txt"), "main v2\n", "mainline changes must survive");
+
+    // Cherry-pick the merge onto an unrelated branch with -m 1: the merged-in
+    // changes land as ONE commit.
+    repo.git(&["switch", "-c", "port", &base]).await;
+    let outcome = repo.backend.cherry_pick(&merge_sha, Some(1)).await.unwrap();
+    assert_eq!(outcome, SequenceOutcome::Completed);
+    assert!(repo.exists("f.txt"), "cherry-pick -m 1 must bring the merged-in change");
+    let parents = repo.git(&["rev-list", "--parents", "-1", "HEAD"]).await;
+    assert_eq!(
+        parents.split_whitespace().count(),
+        2,
+        "the pick lands as a single-parent commit: {parents}"
+    );
 }
 
 #[tokio::test]

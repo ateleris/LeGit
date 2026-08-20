@@ -576,13 +576,18 @@ pub trait GitBackend: Send + Sync {
 
     /// Revert a commit (`git revert --no-edit <sha>`). Conflicts pause the
     /// sequencer and are an outcome; conclude via `revert_continue` /
-    /// `revert_skip` / `revert_abort`. Reverting a merge commit needs `-m`
-    /// and is not supported yet — git's error is surfaced as-is.
-    async fn revert(&self, sha: &str) -> Result<SequenceOutcome, GitError>;
+    /// `revert_skip` / `revert_abort`. For a MERGE commit pass `mainline`
+    /// (1-based parent number → `-m N`): the diff is measured against that
+    /// parent. NOTE: reverting a merge undoes its changes but does NOT
+    /// un-merge history - re-merging the branch later brings nothing back;
+    /// the UI carries this caveat. Without `mainline` a merge surfaces
+    /// git's own "-m required" error unchanged.
+    async fn revert(&self, sha: &str, mainline: Option<u32>) -> Result<SequenceOutcome, GitError>;
 
-    /// Cherry-pick a commit (`git cherry-pick <sha>`). Conflict handling
-    /// mirrors `revert`.
-    async fn cherry_pick(&self, sha: &str) -> Result<SequenceOutcome, GitError>;
+    /// Cherry-pick a commit (`git cherry-pick <sha>`). Conflict handling and
+    /// the `mainline` semantics mirror `revert` (for a merge, `-m N` applies
+    /// the merged-in changes relative to parent N as one commit).
+    async fn cherry_pick(&self, sha: &str, mainline: Option<u32>) -> Result<SequenceOutcome, GitError>;
 
     /// Continue a paused cherry-pick after resolving conflicts. Runs with
     /// `GIT_EDITOR=true` to accept the prepared message unchanged.

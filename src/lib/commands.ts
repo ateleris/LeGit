@@ -696,11 +696,13 @@ export const repoConflictFileSides = (repoId: string, path: string) =>
 export const repoReset = (repoId: string, target: string, mode: ResetMode) =>
   invoke<null>("repo_reset", { repoId, target, mode });
 
-export const repoRevert = (repoId: string, sha: string) =>
-  invoke<SequenceOutcome>("repo_revert", { repoId, sha });
+/** `mainline` (1-based parent number) is required for merge commits (`-m N`). */
+export const repoRevert = (repoId: string, sha: string, mainline?: number) =>
+  invoke<SequenceOutcome>("repo_revert", { repoId, sha, mainline: mainline ?? null });
 
-export const repoCherryPick = (repoId: string, sha: string) =>
-  invoke<SequenceOutcome>("repo_cherry_pick", { repoId, sha });
+/** `mainline` (1-based parent number) is required for merge commits (`-m N`). */
+export const repoCherryPick = (repoId: string, sha: string, mainline?: number) =>
+  invoke<SequenceOutcome>("repo_cherry_pick", { repoId, sha, mainline: mainline ?? null });
 
 export const repoCherryPickContinue = (repoId: string) =>
   invoke<SequenceOutcome>("repo_cherry_pick_continue", { repoId });

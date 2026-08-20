@@ -80,6 +80,7 @@ import { StashMenuSection } from "./menu/StashMenuSection";
 import { ResetMenuItems } from "./menu/ResetMenuItems";
 import { UndoLastCommitMenuItem } from "./menu/UndoLastCommitMenuItem";
 import { undoLastCommitPlan } from "./undoLastCommit";
+import { mainlineChoices } from "./mainline";
 import { BranchMenuSection, RemoteBranchMenuSection } from "./menu/BranchMenuSection";
 import { TagMenuSection } from "./menu/TagMenuSection";
 import { branchesAt } from "./cells/refChips";
@@ -661,6 +662,14 @@ export function CommitsPanel() {
         : commits,
     [showWorkingDirRow, workingDirRow, commits],
   );
+
+  // Subject lookup for the merge-commit mainline picker: parents are almost
+  // always within the loaded window; an unloaded one degrades to sha-only.
+  const commitMessageById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of commits) m.set(c.id, c.message);
+    return m;
+  }, [commits]);
 
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -1502,6 +1511,11 @@ export function CommitsPanel() {
                     .map((d) => (d as { value: string }).value.replace(/^refs\/tags\//, ""));
                   const hasRefSections =
                     rowBranches.local.length > 0 || rowBranches.remote.length > 0 || rowTags.length > 0;
+                  // Merge commits need a mainline parent for cherry-pick /
+                  // revert (-m N); null = regular commit, run directly.
+                  const mainline = mainlineChoices(commit, (id) =>
+                    commitMessageById.get(id) ?? null,
+                  );
                   const undoPlan = undoLastCommitPlan({
                     isHeadRow: commit.id === headSha,
                     hasParent: (commit.parents?.length ?? 0) > 0,
@@ -1572,12 +1586,59 @@ export function CommitsPanel() {
                         {!opInProgress && (
                           <>
                             <Separator />
-                            <MenuItem onClick={() => { closeMenu(); handleCherryPick(commit.id); }}>
-                              Cherry-pick commit
-                            </MenuItem>
-                            <MenuItem onClick={() => { closeMenu(); handleRevert(commit.id); }}>
-                              Revert commit
-                            </MenuItem>
+                            {mainline ? (
+                              // A merge's "change" is ambiguous - ask which
+                              // parent to measure against instead of surfacing
+                              // git's raw "-m required" error.
+                              <>
+                                <Submenu label="Cherry-pick commit">
+                                  <SectionLabel>Apply changes relative to…</SectionLabel>
+                                  {mainline.map((c) => (
+                                    <MenuItem
+                                      key={c.mainline}
+                                      onClick={() => { closeMenu(); handleCherryPick(commit.id, c.mainline); }}
+                                    >
+                                      {c.label}
+                                    </MenuItem>
+                                  ))}
+                                </Submenu>
+                                <Submenu label="Revert commit">
+                                  <SectionLabel>Undo changes relative to…</SectionLabel>
+                                  {mainline.map((c) => (
+                                    <MenuItem
+                                      key={c.mainline}
+                                      onClick={() => { closeMenu(); handleRevert(commit.id, c.mainline); }}
+                                    >
+                                      {c.label}
+                                    </MenuItem>
+                                  ))}
+                                  {/* The classic merge-revert caveat: history
+                                      still records the merge. */}
+                                  <div
+                                    style={{
+                                      padding: "4px 14px 6px",
+                                      fontSize: "var(--fz-sm)",
+                                      color: "var(--subtle-fg)",
+                                      maxWidth: 280,
+                                      whiteSpace: "normal",
+                                      cursor: "default",
+                                    }}
+                                  >
+                                    History keeps the merge: re-merging the branch
+                                    later restores nothing.
+                                  </div>
+                                </Submenu>
+                              </>
+                            ) : (
+                              <>
+                                <MenuItem onClick={() => { closeMenu(); handleCherryPick(commit.id); }}>
+                                  Cherry-pick commit
+                                </MenuItem>
+                                <MenuItem onClick={() => { closeMenu(); handleRevert(commit.id); }}>
+                                  Revert commit
+                                </MenuItem>
+                              </>
+                            )}
                             <MenuItem
                               onClick={() => {
                                 closeMenu();

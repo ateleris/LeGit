@@ -2918,15 +2918,19 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         self.run_simple(&["reset", flag, target]).await
     }
 
-    async fn revert(&self, sha: &str) -> Result<SequenceOutcome, GitError> {
+    async fn revert(&self, sha: &str, mainline: Option<u32>) -> Result<SequenceOutcome, GitError> {
         // --no-edit: the runner hardens GIT_EDITOR=false, so a revert that
         // opened an editor for its message would fail outright.
-        let (code, stdout, stderr) = self.run_classified(&["revert", "--no-edit", sha]).await?;
+        let args = sequencer_args(&["revert", "--no-edit"], mainline, sha);
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, stdout, stderr) = self.run_classified(&refs).await?;
         classify_sequence_output(code, &stdout, &stderr)
     }
 
-    async fn cherry_pick(&self, sha: &str) -> Result<SequenceOutcome, GitError> {
-        let (code, stdout, stderr) = self.run_classified(&["cherry-pick", sha]).await?;
+    async fn cherry_pick(&self, sha: &str, mainline: Option<u32>) -> Result<SequenceOutcome, GitError> {
+        let args = sequencer_args(&["cherry-pick"], mainline, sha);
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, stdout, stderr) = self.run_classified(&refs).await?;
         classify_sequence_output(code, &stdout, &stderr)
     }
 
@@ -3866,6 +3870,18 @@ const MERGE_ABORT_ARGS: [&str; 2] = ["merge", "--abort"];
 /// it; a conflicted stash reapply after completion is its own outcome.
 fn rebase_args(onto: &str) -> Vec<String> {
     vec!["rebase".into(), "--autostash".into(), onto.into()]
+}
+
+/// cherry-pick / revert argument list: the base command, `-m <N>` when a
+/// mainline parent is given (merge commits), then the sha.
+fn sequencer_args(base: &[&str], mainline: Option<u32>, sha: &str) -> Vec<String> {
+    let mut args: Vec<String> = base.iter().map(|s| s.to_string()).collect();
+    if let Some(n) = mainline {
+        args.push("-m".into());
+        args.push(n.to_string());
+    }
+    args.push(sha.into());
+    args
 }
 
 const REBASE_CONTINUE_ARGS: [&str; 2] = ["rebase", "--continue"];
