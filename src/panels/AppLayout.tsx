@@ -18,6 +18,7 @@ import { LfsWarningBanner } from "./LfsWarningBanner";
 import { RepoDock } from "./RepoDock";
 import { RepoTabBar } from "./RepoTabBar";
 import { CredentialPromptHost } from "./CredentialPrompt";
+import { AskpassPromptHost } from "./AskpassPrompt";
 import { ConfirmDialogHost } from "./ConfirmDialogHost";
 
 const DEFAULT_SIZE_TOP = 240;
@@ -336,6 +337,7 @@ export function AppLayout() {
           </div>
         </div>
         <CredentialPromptHost />
+        <AskpassPromptHost />
         <ConfirmDialogHost />
       </div>
     );
@@ -367,6 +369,7 @@ export function AppLayout() {
         <RepoDock />
       </div>
       <CredentialPromptHost />
+      <AskpassPromptHost />
       <ConfirmDialogHost />
     </div>
   );

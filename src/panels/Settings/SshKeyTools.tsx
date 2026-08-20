@@ -4,8 +4,9 @@
 // ~/.ssh, which every repo uses automatically: no git config involved).
 //
 // Key type is per-platform: Ed25519 for GitHub/GitLab, RSA for Azure DevOps
-// (ADO accepts only RSA with rsa-sha2 signatures). Keys are generated without
-// a passphrase for now (no SSH_ASKPASS shim yet: see BACKLOG).
+// (ADO accepts only RSA with rsa-sha2 signatures). Keys are still generated
+// without a passphrase (the generation form doesn't offer one yet), but
+// passphrase-protected keys now WORK: the SSH_ASKPASS shim prompts in-app.
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { formatAppError } from "../../lib/types";
@@ -376,7 +377,8 @@ export function GenerateSshKeyForm({
         disabled={busy}
       />
       <FieldNote>
-        Created without a passphrase (passphrase prompting isn't supported yet).
+        Created without a passphrase. To add one later, run `ssh-keygen -p` -
+        LeGit prompts for protected keys when they are used.
       </FieldNote>
       <div style={{ display: "flex", gap: 6 }}>
         <Button variant="primary" disabled={busy || fileName.trim() === ""} onClick={generate}>

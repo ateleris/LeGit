@@ -56,6 +56,18 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
      keep it subtle, no big donation button above the fold. Fold into the
      same README pass as the screenshots.
 
+4. **Ref-chip overflow popover: wrong width when chips wrap** (2026-08-20,
+   screenshot on record). The Commits panel's "+N" ref-overflow popover
+   (RefsCell) sizes itself wider than its content when the chips wrap onto
+   multiple lines - the box keeps the pre-wrap line width, leaving a large
+   empty area right of the stacked chips. Classic CSS wrap behavior (a
+   wrapped box does not shrink-to-fit its longest line). Likely fix: lay the
+   overflow chips out as a column (one chip per row) with
+   `width: max-content` on the popover, or measure/cap the width to the
+   widest chip instead of letting flex-wrap decide. Promoted from "Known
+   bugs" 2026-08-20: a known, cheaply fixable visual bug in the flagship
+   panel should not ship in the first public release.
+
 Decided and recorded, no action:
 - **Git is not bundled** (trade study
   `design/2026-07-07-bundled-git-trade-study.md`; revisit trigger +
@@ -80,7 +92,8 @@ Decided and recorded, no action:
 
 ## Known bugs
 
-(none currently)
+(none currently - the ref-chip popover width bug was promoted to release
+blocker 4.)
 
 ## Git features (missing vs a normal client)
 
@@ -106,10 +119,12 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
     keychain entry (fix only if it hurts).
   - *(Separate product decision)* repo listing for the clone dialog,
     PR/issue surfaces.
-- **SSH passphrase prompting** (`SSH_ASKPASS` shim mode): the credential
-  helper covers HTTP(S) only; encrypted SSH keys without an agent still
-  fail non-interactively. Also what passphrase-protected generated keys
-  from the integrations item would need.
+- **SSH key generation: offer a passphrase** (the last remainder of the
+  SSH passphrase item; prompting itself shipped 2026-08-20 via the
+  `SSH_ASKPASS` shim on the credential broker - passphrase-protected keys
+  now prompt in-app, incl. host-key confirmations and the `ssh -T` probe).
+  Remaining: a passphrase field on the key-generation form
+  (`ssh-keygen -N <pass>`), now that such keys are usable.
 - **Keychain management UI**: list/forget credentials LeGit remembered
   (today: delete the "LeGit Git Credentials" entries in the OS keychain).
 - **Line-ending normalization: skip-unstaged refinement.** `--renormalize`

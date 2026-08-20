@@ -8,9 +8,10 @@
 //! - Key type is per-platform: Ed25519 for GitHub/GitLab, RSA for Azure
 //!   DevOps (ADO accepts only RSA with rsa-sha2 signatures).
 //!
-//! Keys are generated WITHOUT a passphrase for now: the runner has no
-//! `SSH_ASKPASS` shim yet (see BACKLOG), so a passphrase-protected key would
-//! fail non-interactively.
+//! Keys are still generated WITHOUT a passphrase: the `SSH_ASKPASS` shim
+//! (crate::credentials) now prompts in-app when an encrypted key is USED, so
+//! user-supplied passphrase-protected keys work - but the generation UI does
+//! not offer setting one yet (see BACKLOG "Platform integrations").
 
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
@@ -252,9 +253,10 @@ pub async fn generate_ssh_key(
 
 /// Probe SSH authentication against a host (`ssh -T git@<host>`), optionally
 /// pinned to one key (`-i` + `IdentitiesOnly`, matching what the profile's
-/// `core.sshCommand` does). `BatchMode` prevents any interactive prompt;
-/// unknown host keys are accepted on first contact (`accept-new`), matching
-/// what a first clone would do.
+/// `core.sshCommand` does). Passphrase prompts route to the in-app askpass
+/// dialog via the credential broker (BatchMode only as a fallback when no
+/// broker is running); unknown host keys are accepted on first contact
+/// (`accept-new`), matching what a first clone would do.
 #[tauri::command]
 #[specta::specta]
 pub async fn test_ssh_auth(
@@ -265,10 +267,24 @@ pub async fn test_ssh_auth(
         return Err(AppError::Io(format!("invalid SSH host {host:?}")));
     }
     let mut cmd = quiet_command("ssh");
-    cmd.arg("-T")
-        .arg("-o")
-        .arg("BatchMode=yes")
-        .arg("-o")
+    // With the askpass broker running, drop BatchMode and wire SSH_ASKPASS so
+    // an encrypted key prompts for its passphrase in-app (and give the human
+    // time to type it). Without a broker (should not happen in a running
+    // app), keep the old strictly non-interactive behavior.
+    let askpass_env = crate::credentials::askpass_child_env();
+    let timeout_secs: u64 = if askpass_env.is_some() { 320 } else { 30 };
+    cmd.arg("-T");
+    match askpass_env {
+        Some(env) => {
+            for (k, v) in env {
+                cmd.env(k, v);
+            }
+        }
+        None => {
+            cmd.arg("-o").arg("BatchMode=yes");
+        }
+    }
+    cmd.arg("-o")
         .arg("StrictHostKeyChecking=accept-new")
         .arg("-o")
         .arg("ConnectTimeout=10");
@@ -278,11 +294,11 @@ pub async fn test_ssh_auth(
     }
     cmd.arg(format!("git@{host}"));
 
-    let run = tokio::time::timeout(std::time::Duration::from_secs(30), cmd.output());
+    let run = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), cmd.output());
     let out = match run.await {
         Err(_) => {
             return Ok(SshTestOutcome::CannotConnect {
-                detail: "timed out after 30 seconds".to_string(),
+                detail: format!("timed out after {timeout_secs} seconds"),
             })
         }
         Ok(Err(e)) => {

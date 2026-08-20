@@ -195,6 +195,15 @@ export const credentialRespond = (
 export const credentialCancel = (requestId: string) =>
   invoke<boolean>("credential_cancel", { requestId });
 
+/** Complete a pending ssh askpass prompt: a passphrase, or the literal
+ * "yes"/"no" for a host-key confirmation. Never persisted anywhere. */
+export const askpassRespond = (requestId: string, answer: string) =>
+  invoke<boolean>("askpass_respond", { requestId, answer });
+
+/** Dismiss a pending askpass prompt (ssh aborts, the operation fails). */
+export const askpassCancel = (requestId: string) =>
+  invoke<boolean>("askpass_cancel", { requestId });
+
 // --- git setup ---
 
 export const gitStatusCheck = () => invoke<GitStatus>("git_status_check");

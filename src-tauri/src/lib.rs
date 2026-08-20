@@ -53,6 +53,8 @@ pub fn run() {
         commands::console_feed,
         commands::credential_respond,
         commands::credential_cancel,
+        commands::askpass_respond,
+        commands::askpass_cancel,
         commands::git_status_check,
         commands::set_git_path,
         commands::set_repo_git_path,

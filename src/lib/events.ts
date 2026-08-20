@@ -92,6 +92,51 @@ export async function onCredentialClosed(
   return unlisten;
 }
 
+/** Tauri event channel asking the UI to show an ssh askpass prompt (key
+ *  passphrase / host-key confirmation / other). Matches
+ *  `ASKPASS_REQUEST_EVENT` in `src-tauri/src/credentials.rs`. */
+export const ASKPASS_REQUEST_EVENT = "legit://askpass-request";
+
+/** Tauri event channel telling the UI a pending askpass prompt is moot.
+ *  Matches `ASKPASS_CLOSED_EVENT`. */
+export const ASKPASS_CLOSED_EVENT = "legit://askpass-closed";
+
+export interface AskpassRequestPayload {
+  request_id: string;
+  /** ssh's raw prompt text - shown verbatim for confirmations (the host-key
+   * fingerprint must reach the user unaltered). */
+  prompt: string;
+  kind: "passphrase" | "confirmation" | "other";
+  /** The key file, for passphrase prompts. */
+  key_path: string | null;
+  /** True on ssh's "Bad passphrase, try again" repeat. */
+  retry: boolean;
+  /** Directory the triggering operation ran in, for attribution. */
+  repo_dir: string | null;
+}
+
+/** Subscribe to askpass-prompt requests. Returns an unsubscribe function. */
+export async function onAskpassRequest(
+  handler: (payload: AskpassRequestPayload) => void
+): Promise<() => void> {
+  const unlisten = await listen<AskpassRequestPayload>(
+    ASKPASS_REQUEST_EVENT,
+    (event) => handler(event.payload)
+  );
+  return unlisten;
+}
+
+/** Subscribe to askpass-prompt dismissals. Returns an unsubscribe function. */
+export async function onAskpassClosed(
+  handler: (payload: { request_id: string }) => void
+): Promise<() => void> {
+  const unlisten = await listen<{ request_id: string }>(
+    ASKPASS_CLOSED_EVENT,
+    (event) => handler(event.payload)
+  );
+  return unlisten;
+}
+
 /** Tauri event channel for the git command log. Matches the event name emitted
  *  by the invocation observer in `src-tauri/src/lib.rs`. */
 export const GIT_INVOCATION_EVENT = "git_invocation";
