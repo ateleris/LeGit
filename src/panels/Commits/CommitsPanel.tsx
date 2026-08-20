@@ -78,6 +78,8 @@ import { PanelContextMenuProvider, type BaselineEntry } from "./menu/PanelContex
 import { MenuItem, SectionLabel, Separator, Submenu } from "./menu/primitives";
 import { StashMenuSection } from "./menu/StashMenuSection";
 import { ResetMenuItems } from "./menu/ResetMenuItems";
+import { UndoLastCommitMenuItem } from "./menu/UndoLastCommitMenuItem";
+import { undoLastCommitPlan } from "./undoLastCommit";
 import { BranchMenuSection, RemoteBranchMenuSection } from "./menu/BranchMenuSection";
 import { TagMenuSection } from "./menu/TagMenuSection";
 import { branchesAt } from "./cells/refChips";
@@ -456,6 +458,7 @@ export function CommitsPanel() {
     handleCherryPick,
     handleRevert,
     handleReset,
+    handleUndoLastCommit,
     handleRebaseOnto,
     handleBranchCheckout,
     handleBranchDelete,
@@ -1499,6 +1502,13 @@ export function CommitsPanel() {
                     .map((d) => (d as { value: string }).value.replace(/^refs\/tags\//, ""));
                   const hasRefSections =
                     rowBranches.local.length > 0 || rowBranches.remote.length > 0 || rowTags.length > 0;
+                  const undoPlan = undoLastCommitPlan({
+                    isHeadRow: commit.id === headSha,
+                    hasParent: (commit.parents?.length ?? 0) > 0,
+                    opInProgress,
+                    hasUpstream: !!currentBranch?.upstream,
+                    ahead: tracking?.ahead ?? null,
+                  });
                   openMenu(
                     e,
                     stashSelector ? (
@@ -1550,6 +1560,12 @@ export function CommitsPanel() {
                           <MenuItem onClick={() => { closeMenu(); handleRewordStart(commit); }}>
                             Reword message…
                           </MenuItem>
+                        )}
+                        {undoPlan !== "hidden" && (
+                          <UndoLastCommitMenuItem
+                            pushed={undoPlan === "warn_pushed"}
+                            onUndo={() => { closeMenu(); handleUndoLastCommit(commit.id); }}
+                          />
                         )}
                         {/* Sequencer ops are hidden while a merge/rebase/
                             cherry-pick/revert is already in progress. */}

@@ -135,6 +135,25 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
         }
       },
 
+      handleUndoLastCommit: async (headSha: string) => {
+        const repo = repoOf();
+        if (!repo) return;
+        // `reset --soft <tip>~1`: changes come back staged, the undone commit
+        // stays reachable via the reflog. Addressed relative to the row's SHA
+        // (not HEAD~1) so a stale row cannot reset past a commit that landed
+        // after the menu opened.
+        try {
+          await repoReset(repo.id, `${headSha}~1`, "soft");
+          invalidate(repo.id, [...OP_DOMAINS, "tracking"]);
+          notify.info(
+            `Undid commit ${headSha.slice(0, 8)} - its changes are staged again.`,
+          );
+        } catch (e) {
+          invalidate(repo.id, [...OP_DOMAINS, "tracking"]);
+          notifyOpError(e);
+        }
+      },
+
       handleRebaseOnto: async (onto: string) => {
         const repo = repoOf();
         if (!repo) return;

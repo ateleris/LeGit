@@ -64,6 +64,12 @@ Decided and recorded, no action:
   documented.
 - **Standalone reword-a-commit action** (outside the interactive-rebase
   panel): dropped 2026-07-05; the rebase panel's reword step covers it.
+- **git-flow helpers, archive export, git notes, sparse checkout**: decided
+  against 2026-08-20 (competitive feature review vs SourceTree / GitKraken /
+  Fork / Git Extensions / Sublime Merge / Tower). git-flow is ceremony in
+  decline and LeGit's branch tooling doesn't need it; the other three are
+  Git-Extensions-tier rarities the built-in Console covers when needed.
+  Revisit only on real user demand.
 - **LFS smudge-on-demand + "fetch LFS content" action**: dropped
   2026-08-17 - content is on disk / in `.git/lfs/objects`, and display
   value only materializes with rendered previews (now shipped for images).
@@ -122,6 +128,24 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   audio (MP3/WAV/OGG playable panes - the RIFF/WAV sniff case is already
   encoded), SVG (text to git, needs an extension-triggered path),
   zoom / 1:1 toggle, swipe/onion-skin comparison. Add on demand.
+- **Patches: create + apply** (from the 2026-08-20 competitive review;
+  SourceTree, Fork, and Git Extensions all have both). "Create patch" from a
+  commit (later: a range, once multi-select exists) via `format-patch`, and
+  "Apply patch file" via `git apply` / `git am` (am = keeps authorship +
+  message; offer both). The workflow for moving changes without a shared
+  remote. Standard vertical slice; file dialogs via the existing Tauri
+  dialog plumbing.
+- **Multi-commit selection in the Commits panel** (2026-08-20 review; every
+  surveyed competitor has a form of it). Ctrl/Shift row selection unlocking
+  the field-standard bulk actions: cherry-pick a set (sequencer handles
+  multi-commit continue/abort already), revert a set, compare two selected
+  commits (feed the Compare panel), create patch from range. Touches row
+  selection state + context-menu plumbing; the backends are largely present.
+- **Cherry-pick / revert of merge commits + `-x`** (2026-08-20 review; Git
+  Extensions has the full set). Today a merge commit surfaces git's raw
+  "-m required" error: detect >1 parent and offer a mainline picker
+  (parent 1/2 with subjects) mapping to `-m N`. Add an optional
+  "record origin (`-x`)" toggle on cherry-pick.
 
 ## Smaller follow-ups
 
@@ -151,6 +175,25 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   (`search_commits` Content/ContentRegex kinds, `search_paths`) is kept
   and tested; re-adding is a small UI task if "when did this string
   change?" archaeology is missed.
+- **Diff viewer: ignore-whitespace toggle** (2026-08-20 review; Fork,
+  Sublime Merge, Git Extensions, Tower have it). A toolbar toggle mapping to
+  `git diff -w` / `--ignore-space-change` on the diff fetch (both inline and
+  split - action parity), persisted like the syntax-highlighting toggle.
+  NOTE: hunk stage/discard operate on the UNfiltered diff; simplest correct
+  v1 disables hunk/line actions while the toggle is on (view-only), like the
+  full-file mode. Word-wrap + Ctrl+F stay folded into the keyboard-shortcuts
+  item.
+- **Commit `--no-verify` (bypass hooks)** (2026-08-20 review; SourceTree,
+  Fork, Git Extensions have it). Hooks run today because every op is a real
+  git invocation, so a stuck/broken hook blocks committing entirely with no
+  escape short of the Console. A small "bypass commit hooks" caret/checkbox
+  on the commit composer (per-invocation, never persisted - silently
+  skipping hooks by default is a footgun) mapping to `commit --no-verify`.
+- **Branch list: filter box** (2026-08-20 review; table stakes in every
+  surveyed tool). A small text filter above the Branches section narrowing
+  local + remote lists (substring on the short name, keep folder groups),
+  Esc clears. The grouped/folder view helps but doesn't replace typing
+  "fix/".
 - **"Open in editor" on more file rows.** Shipped for Files / Working
   Changes / Changed Files (shared `OpenInEditorMenuItem`); File History
   and Compare share `CopyPathMenuSection` and could get the same entry.
