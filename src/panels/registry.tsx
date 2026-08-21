@@ -46,27 +46,20 @@ export interface PanelDescriptor {
   summonOnly?: boolean;
 }
 
+// Declaration order IS the View menu order (settings first); every other
+// consumer looks panels up by id, so the arrays are safe to reorder.
 export const GLOBAL_PANELS: PanelDescriptor[] = [
+  { id: "global-settings", title: "Global Settings", scope: "global" },
   { id: "repositories", title: "Repositories", scope: "global" },
   { id: "theme-editor", title: "Theme Editor", scope: "global" },
-  { id: "global-settings", title: "Global Settings", scope: "global" },
 ];
 
+// Menu order: Repo Settings first, then the default layout's main views,
+// then the file/history tools, then tooling; summon-only panels (hidden
+// from the menu) trail at the end.
 export const REPO_PANELS: PanelDescriptor[] = [
-  { id: "console", title: "Git Console", scope: "repo" },
-  {
-    id: "git-log",
-    title: "Git Command Log",
-    scope: "repo",
-    defaultPlacement: { direction: "below", referencePanel: "log" },
-  },
   { id: "repo-settings", title: "Repo Settings", scope: "repo" },
-  {
-    id: "release-notes",
-    title: "Release Notes",
-    scope: "repo",
-    defaultPlacement: { direction: "right", referencePanel: "log" },
-  },
+  { id: "log", title: "Commits", scope: "repo" },
   {
     // Branches + Remotes + Stashes combined as a vertical accordion
     // (Paneview) — see Refs/RefsPanel. The Stashes pane's "View diff"
@@ -76,39 +69,12 @@ export const REPO_PANELS: PanelDescriptor[] = [
     scope: "repo",
     defaultPlacement: { direction: "left", referencePanel: "log" },
   },
-  { id: "log", title: "Commits", scope: "repo" },
   {
-    // Transient: summoned from a commit row's context menu, closes itself
-    // when the rebase ends (see InteractiveRebasePanel).
-    id: "interactive-rebase",
-    title: "Interactive Rebase",
+    id: "working-changes",
+    title: "Working Changes",
     scope: "repo",
-    defaultPlacement: { direction: "right", referencePanel: "log" },
-    summonOnly: true,
-  },
-  {
-    id: "compare",
-    title: "Compare",
-    scope: "repo",
-    defaultPlacement: { direction: "right", referencePanel: "log" },
-  },
-  {
-    id: "files",
-    title: "Files",
-    scope: "repo",
-    defaultPlacement: { direction: "left", referencePanel: "log" },
-  },
-  {
-    id: "blame",
-    title: "Blame",
-    scope: "repo",
-    defaultPlacement: { direction: "right", referencePanel: "log" },
-  },
-  {
-    id: "file-history",
-    title: "File History",
-    scope: "repo",
-    defaultPlacement: { direction: "right", referencePanel: "log" },
+    // Same slot as Changed Files — the two swap in/out of this spot.
+    defaultPlacement: { direction: "below", referencePanel: "commit-details" },
   },
   {
     id: "commit-details",
@@ -120,19 +86,6 @@ export const REPO_PANELS: PanelDescriptor[] = [
     id: "changed-files",
     title: "Changed Files",
     scope: "repo",
-    defaultPlacement: { direction: "below", referencePanel: "commit-details" },
-  },
-  {
-    id: "file-view",
-    title: "File View",
-    scope: "repo",
-    defaultPlacement: { direction: "right", referencePanel: "log" },
-  },
-  {
-    id: "working-changes",
-    title: "Working Changes",
-    scope: "repo",
-    // Same slot as Changed Files — the two swap in/out of this spot.
     defaultPlacement: { direction: "below", referencePanel: "commit-details" },
   },
   {
@@ -150,6 +103,58 @@ export const REPO_PANELS: PanelDescriptor[] = [
     // only matters when neither is open.
     defaultPlacement: { direction: "right", referencePanel: "changed-files" },
     swapsWith: "diff",
+  },
+  {
+    id: "compare",
+    title: "Compare",
+    scope: "repo",
+    defaultPlacement: { direction: "right", referencePanel: "log" },
+  },
+  {
+    id: "files",
+    title: "Files",
+    scope: "repo",
+    defaultPlacement: { direction: "left", referencePanel: "log" },
+  },
+  {
+    id: "file-view",
+    title: "File View",
+    scope: "repo",
+    defaultPlacement: { direction: "right", referencePanel: "log" },
+  },
+  {
+    id: "file-history",
+    title: "File History",
+    scope: "repo",
+    defaultPlacement: { direction: "right", referencePanel: "log" },
+  },
+  {
+    id: "blame",
+    title: "Blame",
+    scope: "repo",
+    defaultPlacement: { direction: "right", referencePanel: "log" },
+  },
+  { id: "console", title: "Git Console", scope: "repo" },
+  {
+    id: "git-log",
+    title: "Git Command Log",
+    scope: "repo",
+    defaultPlacement: { direction: "below", referencePanel: "log" },
+  },
+  {
+    id: "release-notes",
+    title: "Release Notes",
+    scope: "repo",
+    defaultPlacement: { direction: "right", referencePanel: "log" },
+  },
+  {
+    // Transient: summoned from a commit row's context menu, closes itself
+    // when the rebase ends (see InteractiveRebasePanel).
+    id: "interactive-rebase",
+    title: "Interactive Rebase",
+    scope: "repo",
+    defaultPlacement: { direction: "right", referencePanel: "log" },
+    summonOnly: true,
   },
 ];
 

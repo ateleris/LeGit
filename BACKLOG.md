@@ -87,6 +87,15 @@ Decided and recorded, no action:
   value only materializes with rendered previews (now shipped for images).
   Stub recovery stays `git lfs pull` in the Console.
 - **README screenshot branding spot check**: dropped 2026-08-18.
+- **Summon into the last-active group**: dropped 2026-08-21 after checking.
+  Placement memory persists in the layout envelope, so the default-placement
+  split only happens on a panel's first-ever open; and the active group at
+  summon time is usually the group the user just clicked in, so stacking
+  there would cover the panel driving the interaction (dockview's implicit
+  active-group add is already avoided in `openRepoPanel` because it can be
+  the hidden console group). If first-open splits ever hurt, the viable
+  variant is a descriptor-level `joinGroupOf` list generalizing the
+  Diff/File View/Blame collocation (summon.ts Case 2c), not the active group.
 
 ---
 
@@ -165,32 +174,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   `gitignore_line` (a filename containing them would become a glob).
 - **Git Log panel:** filter/search the log, copy a command, jump a toast to
   its specific log entry (today it just opens the panel).
-- **Open new panels into the last-active group instead of splitting the
-  layout** (2026-08-21). A first-time summon falls back to the descriptor's
-  `defaultPlacement` (`summon.ts` "Case 3"), i.e. a `direction` split off a
-  reference panel - which resizes whatever the user had arranged. Panels with
-  no `defaultPlacement` fall further back to a bare `addPanel`, whose position
-  dockview picks. Idea: add the new panel as a TAB in the group that was last
-  active (dockview exposes the active group / `api.activeGroup`), so the
-  arrangement is untouched and the panel appears where the user was looking.
-  Questions to settle: which panels should still split rather than stack (the
-  Diff panel next to the Commits panel is a deliberate side-by-side, and
-  `swapSummon` pairs already share one slot); whether a panel that would land
-  in a group it makes no sense in (e.g. next to the tiny op-state strip) needs
-  a guard; and whether the reference-panel placements in the registry stay as
-  a first-run default while only *later* opens follow the active group. Worth
-  prototyping both and looking at it before committing to one.
-- **View menu: revisit the order of the panel entries** (2026-08-21). The
-  menu renders `GLOBAL_PANELS` then `REPO_PANELS` in *registry declaration
-  order* (`ViewMenu.tsx` maps both arrays as-is), which is roughly the order
-  panels were added rather than anything a user would predict - the repo
-  section opens with Git Console and Git Command Log, two rarely-opened
-  panels. Decide on an intentional order (alphabetical? grouped by what the
-  panel is for - history / working tree / refs / tooling - with separators?
-  most-used first?) and either reorder the registry arrays or give the
-  descriptors an explicit sort/group field. `ALL_PANELS`' only other consumer
-  is a title lookup by id (order-independent), so reordering the arrays looks
-  safe - but grep again before shuffling.
 - **Temporarily maximize a panel to the whole window** (2026-08-21). A
   "focus mode" for one panel: expand it over the entire LeGit window
   (hiding the other groups) while working in it - e.g. resolving a merge in
