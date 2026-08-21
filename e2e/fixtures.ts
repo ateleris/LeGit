@@ -83,8 +83,25 @@ function seedAppData(repoPath: string): void {
  * session's layout.
  */
 function resetAppState(): void {
+  // The previous session's processes (webview, GPU) can outlive wdio's
+  // teardown and still be writing caches while we wipe - a file recreated
+  // mid-delete makes rmSync throw ENOTEMPTY (seen on CI 2026-08-21 with
+  // .cache/mesa_shader_cache). A thrown seed is worse than a slow one: the
+  // wdio shim only LOGS beforeSession errors and launches the app anyway,
+  // unseeded, so the spec fails on a missing repo tab. Retry the removal,
+  // and tolerate leftovers in .cache only - GPU/shader caches cannot leak
+  // app state, unlike .local (localStorage/layouts/settings) and .config.
   for (const d of [".local", ".cache", ".config"]) {
-    rmSync(path.join(E2E_HOME, d), { recursive: true, force: true });
+    try {
+      rmSync(path.join(E2E_HOME, d), {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 100,
+      });
+    } catch (e) {
+      if (d !== ".cache") throw e;
+    }
   }
 }
 
