@@ -20,6 +20,8 @@ jobs:
   verify-version:
     name: Verify tag matches source versions
     runs-on: ubuntu-22.04
+    outputs:
+      release_notes: ${{ steps.notes.outputs.body }}
     steps:
       - uses: actions/checkout@v7
       - name: Compare tag against Cargo.toml, tauri.conf.json, package.json
@@ -46,6 +48,35 @@ jobs:
               exit 1
             fi
           fi
+
+      # Release body = the tag's CHANGELOG.md section (guaranteed to exist by
+      # the check above for >= 1.0.0) + the static download/signing footer.
+      # Consumed by tauri-action's releaseBody in the build matrix below.
+      - name: Assemble release notes from CHANGELOG.md
+        id: notes
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          # Everything between the tag's "## [X.Y.Z]" heading and the next
+          # "## [" heading, minus leading blank lines (command substitution
+          # strips trailing ones).
+          NOTES=$(awk -v ver="$TAG" '
+            /^## \[/ { if (found) exit; if ($0 ~ ("^## \\[" ver "\\]")) { found=1; next } }
+            found { print }
+          ' CHANGELOG.md | sed -e '/./,$!d')
+          {
+            echo "body<<NOTES_EOF"
+            if [ -n "$NOTES" ]; then
+              printf '%s\n\n---\n\n' "$NOTES"
+            fi
+            cat <<'FOOTER'
+          Desktop Git GUI - download the installer for your OS below.
+
+          Builds are **not code-signed**: your OS may warn on first launch
+          (Windows SmartScreen → *More info → Run anyway*; macOS → right-click
+          → *Open*).
+          FOOTER
+            echo "NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
 
   release:
     name: Build ${{ matrix.label }}
@@ -115,12 +146,9 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "LeGit ${{ github.ref_name }}"
-          releaseBody: |
-            Desktop Git GUI — download the installer for your OS below.
-
-            Builds are **not code-signed**: your OS may warn on first launch
-            (Windows SmartScreen → *More info → Run anyway*; macOS → right-click
-            → *Open*).
+          # Assembled by verify-version: the tag's CHANGELOG.md section + the
+          # static download/signing footer.
+          releaseBody: ${{ needs.verify-version.outputs.release_notes }}
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

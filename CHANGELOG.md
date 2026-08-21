@@ -12,7 +12,10 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
-(nothing yet)
+### Changed
+
+- GitHub release notes now carry the version's changelog section instead of
+  a generic body (assembled automatically by the release workflow).
 
 ## [1.0.1] - 2026-08-21
 

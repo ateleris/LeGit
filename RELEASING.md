@@ -36,9 +36,11 @@ git push origin v0.9.0
 ```
 
 Then: repo → **Releases** → the drafted **LeGit v0.9.0** → review the notes and
-assets → **Publish**. While reviewing, replace the generic draft body with the
-version's `CHANGELOG.md` section so the release notes carry the changelog. Matrix: Windows (`.msi` + NSIS `.exe`), macOS
-Apple Silicon **and** Intel (`.dmg`), Linux (`.deb` + `.AppImage`).
+assets → **Publish**. The draft body is assembled automatically: the tag's
+`## [X.Y.Z]` section from `CHANGELOG.md` plus the static download/signing
+footer (`verify-version` job in `release.yml`). Matrix: Windows (`.msi` +
+NSIS `.exe`), macOS Apple Silicon **and** Intel (`.dmg`), Linux (`.deb` +
+`.AppImage`).
 
 Secrets: `GITHUB_TOKEN` (default) plus the **updater signing key** -
 `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (repo
