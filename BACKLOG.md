@@ -230,6 +230,11 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   local + remote lists (substring on the short name, keep folder groups),
   Esc clears. The grouped/folder view helps but doesn't replace typing
   "fix/".
+- **Issue / PR templates** - deferred 2026-08-21 ("we'll do them if
+  needed"): add GitHub issue forms + a PR template once real issue traffic
+  shows the need. The bug form should ask for version, OS, git version, and
+  the log file (Global Settings → About → "Open log folder", newest
+  `legit.log.*`, skim for repo paths first).
 - **E2E extensions.** Still open: clone-via-"+"-menu flow, and push/pull
   against a local bare-remote fixture (`buildRemoteFixture`). Keep it a
   small smoke suite; Linux-only remains fine.

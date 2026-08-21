@@ -30,20 +30,24 @@ pub fn log_dir() -> Option<&'static Path> {
 }
 
 /// Platform log directory, mirroring Tauri's `app_log_dir` convention for
-/// the production identifier. Resolved by hand because the subscriber must
-/// initialize BEFORE the Tauri app (and its path resolver) exists.
-fn resolve_log_dir() -> Option<PathBuf> {
+/// the given app identifier (`ch.ateleris.legit`, or `ch.ateleris.legit.dev`
+/// for `tauri:dev` runs - the dev identity keeps its own logs, like the rest
+/// of its app data). Resolved by hand because the subscriber must initialize
+/// BEFORE the Tauri app (and its path resolver) exists; the identifier comes
+/// from the compile-time `generate_context!()`, so it is the merged config's
+/// value.
+fn resolve_log_dir(identifier: &str) -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
-        dirs::home_dir().map(|h| h.join("Library/Logs/ch.ateleris.legit"))
+        dirs::home_dir().map(|h| h.join("Library/Logs").join(identifier))
     }
     #[cfg(target_os = "windows")]
     {
-        dirs::data_local_dir().map(|d| d.join("ch.ateleris.legit").join("logs"))
+        dirs::data_local_dir().map(|d| d.join(identifier).join("logs"))
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        dirs::data_dir().map(|d| d.join("ch.ateleris.legit").join("logs"))
+        dirs::data_dir().map(|d| d.join(identifier).join("logs"))
     }
 }
 
@@ -86,7 +90,7 @@ fn install_panic_hook() {
 /// (`tracing-appender` without `non_blocking`): log volume is low, and a
 /// buffered/async writer could lose the final - most important - lines of a
 /// crash.
-pub fn init_tracing() {
+pub fn init_tracing(identifier: &str) {
     // Dev builds keep verbose per-crate tracing on stderr (every git
     // invocation is traced); release binaries run with
     // `windows_subsystem = "windows"` (no console), so their stderr layer is
@@ -104,7 +108,7 @@ pub fn init_tracing() {
         .with_filter(stderr_filter);
     let registry = tracing_subscriber::registry().with(stderr_layer);
 
-    let dir = resolve_log_dir().filter(|d| std::fs::create_dir_all(d).is_ok());
+    let dir = resolve_log_dir(identifier).filter(|d| std::fs::create_dir_all(d).is_ok());
     let _ = LOG_DIR.set(dir.clone());
     if let Some(dir) = dir {
         prune_old_logs(&dir);

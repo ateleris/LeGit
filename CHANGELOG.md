@@ -13,3 +13,34 @@ lives in the git log and the GitHub release notes.
 ## [Unreleased]
 
 (nothing yet)
+
+## [1.0.0] - 2026-08-21
+
+First public release. LeGit is a free, cross-platform Git GUI (Tauri 2:
+Rust backend, React frontend) that wraps your installed `git` executable -
+every operation is an ordinary git invocation, so behaviour and config match
+the command line exactly.
+
+Highlights of what 1.0 ships:
+
+- **Commit graph** with lane locking, ref chips, type-to-jump, full-history
+  search (message / author / SHA / rev), configurable columns, and
+  content-fitted column widths.
+- **Working changes & staging**: hunk- and line-level stage/unstage/discard,
+  inline and split diff views (CodeMirror 6) with action parity and opt-in
+  syntax highlighting, commit composer with amend and split commit-&-push.
+- **Full daily-driver feature set**: branches/remotes/tags/stashes,
+  interactive rebase, merge with conflict editor, cherry-pick/revert with
+  mainline selection, submodules, file history, blame, compare, reflog,
+  LFS detection with image previews, line-ending guardrails.
+- **Panel system** (dockview): arrange, persist, and reset every panel;
+  first-run layout designed for the click-through workflow.
+- **Theme system**: every colour in the app resolves from a user-editable
+  theme token; bundled themes meet WCAG AA contrast floors; live theme
+  editor. The whole UI scales with one font-size setting.
+- **Auth via git profiles**: SSH keys and credential-helper managed HTTPS,
+  in-app passphrase/credential prompting; LeGit stores no secrets itself.
+- **Auto-update**: in-app "Check for updates" against GitHub Releases
+  (signed update artifacts).
+- **Crash logging**: rotating log files with panic backtraces and frontend
+  error capture ("Open log folder" in Global Settings → About).

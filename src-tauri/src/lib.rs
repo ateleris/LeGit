@@ -34,7 +34,11 @@ pub fn run() {
     // and exit - no tracing, no Tauri, no state.
     credentials::maybe_run_credential_helper();
 
-    logging::init_tracing();
+    // The context is compile-time (embeds the merged config, incl. the
+    // tauri.dev.conf.json identifier overlay for dev runs), so the log dir
+    // follows the app identity: prod and dev keep separate log folders.
+    let context = tauri::generate_context!();
+    logging::init_tracing(&context.config().identifier);
 
     let specta_builder = Builder::<tauri::Wry>::new().commands(collect_commands![
         logging::frontend_log,
@@ -381,7 +385,7 @@ pub fn run() {
             ));
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }
 
