@@ -44,6 +44,16 @@ async function clickDockTab(title: string): Promise<void> {
   throw new Error(`dock tab "${title}" did not activate after 4 clicks`);
 }
 
+/** Open a repo panel through the View menu. The first-run default layout
+ *  (2026-08-21) starts with the tooling panels closed - Repo Settings is no
+ *  longer an open dock tab, so the spec opens it the way a user would. */
+async function openViaViewMenu(panelId: string): Promise<void> {
+  await $('[data-testid="view-menu-button"]').waitForClickable();
+  await $('[data-testid="view-menu-button"]').click();
+  await $(`[data-testid="view-menu-${panelId}"]`).waitForClickable();
+  await $(`[data-testid="view-menu-${panelId}"]`).click();
+}
+
 /** Option labels of the repo profile dropdown, read atomically (no focus). */
 function repoDropdownOptions(): Promise<string[]> {
   return browser.execute(() =>
@@ -57,9 +67,10 @@ describe("profiles: cross-panel freshness + delete confirmation", () => {
   it("opens the repo and both settings panels", async () => {
     await $('[data-testid="repo-tab"]').waitForDisplayed({ timeout: 30_000 });
     await waitForTextContent('[data-testid="repo-tab"]', "smoke", "repo tab missing");
-    // Activate Repo Settings FIRST so it renders its dropdown, then leave
-    // it unfocused for the rest of the test.
-    await clickDockTab("Repo Settings");
+    // Open + activate Repo Settings FIRST so it renders its dropdown, then
+    // leave it unfocused for the rest of the test. Opened via the View menu:
+    // the first-run layout no longer has it as a dock tab.
+    await openViaViewMenu("repo-settings");
     await $('[data-testid="repo-profile-select"]').waitForDisplayed({ timeout: 15_000 });
     await clickDockTab("Global Settings");
     await $('[data-testid="profile-new"]').waitForDisplayed({ timeout: 15_000 });

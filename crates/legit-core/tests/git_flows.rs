@@ -4610,40 +4610,72 @@ async fn end_of_options_does_not_break_normal_refs() {
     repo.backend.cherry_pick(&pick, None).await.expect("cherry-pick");
 }
 
-/// The two commands that REJECT `--end-of-options`, pinned so a future
-/// "let's add the guard everywhere" pass cannot silently break them (it did,
-/// once: the submodule branch attach stopped checking out anything).
-/// `reset` wants it before non-option arguments and errors; `checkout` takes
-/// it as a PATHSPEC. Both therefore rely on the dash guard alone.
+/// Why `reset` and `checkout` rely on the dash guard alone, with NO
+/// `--end-of-options`: gits before 2.43.1 mishandle it - `reset` errors on
+/// it, and `checkout` reads it as a PATHSPEC (a "guard everywhere" pass once
+/// silently broke the submodule branch attach exactly this way). Git 2.43.1
+/// taught both commands to accept the flag, so the behavior is
+/// version-split; this pins whichever side the host git is on, keeping the
+/// rationale encoded: as long as pre-2.43.1 gits are supported, neither
+/// command may be given `--end-of-options`.
 #[tokio::test]
-async fn reset_and_checkout_reject_end_of_options() {
+async fn reset_and_checkout_end_of_options_depends_on_git_version() {
     let repo = TestRepo::init().await;
     repo.write("a.txt", "one\n");
     repo.commit_all("one").await;
     repo.git(&["branch", "feature"]).await;
     let runner = GitRunner::for_repo("git", &repo.path);
 
+    // "git version 2.43.0" (possibly with a platform suffix) -> (2, 43, 0).
+    let version = runner.run(&["--version"]).await.expect("spawn git");
+    let nums: Vec<u32> = version
+        .stdout
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|p| !p.is_empty())
+        .take(3)
+        .map(|p| p.parse().unwrap_or(0))
+        .collect();
+    let triple = (
+        nums.first().copied().unwrap_or(0),
+        nums.get(1).copied().unwrap_or(0),
+        nums.get(2).copied().unwrap_or(0),
+    );
+    let accepts = triple >= (2, 43, 1);
+
     let out = runner
         .run(&["reset", "--soft", "--end-of-options", "HEAD"])
         .await
         .expect("spawn git");
-    assert!(!out.success, "reset accepted --end-of-options: {out:?}");
-    assert!(
-        out.stderr.contains("--end-of-options"),
-        "unexpected reset failure: {}",
-        out.stderr
-    );
+    if accepts {
+        assert!(out.success, "reset rejected --end-of-options on git {triple:?}: {out:?}");
+    } else {
+        assert!(!out.success, "reset accepted --end-of-options: {out:?}");
+        assert!(
+            out.stderr.contains("--end-of-options"),
+            "unexpected reset failure: {}",
+            out.stderr
+        );
+    }
 
     let out = runner
         .run(&["checkout", "--end-of-options", "feature"])
         .await
         .expect("spawn git");
-    assert!(!out.success, "checkout accepted --end-of-options: {out:?}");
-    assert!(
-        out.stderr.contains("pathspec"),
-        "checkout must treat it as a pathspec: {}",
-        out.stderr
-    );
+    if accepts {
+        assert!(out.success, "checkout rejected --end-of-options on git {triple:?}: {out:?}");
+        assert_eq!(
+            repo.git(&["rev-parse", "--abbrev-ref", "HEAD"]).await.trim(),
+            "feature",
+            "checkout must have treated 'feature' as the branch"
+        );
+    } else {
+        assert!(!out.success, "checkout accepted --end-of-options: {out:?}");
+        assert!(
+            out.stderr.contains("pathspec"),
+            "checkout must treat it as a pathspec: {}",
+            out.stderr
+        );
+    }
 }
 
 /// The rename lane of `file_diff`: it passes `--find-renames` plus BOTH

@@ -4146,8 +4146,13 @@ fn classify_fast_forward(exit_code: i32, stdout: &str, stderr: &str) -> FastForw
 }
 
 /// Split `git rebase`'s exit codes the same way. On exit 0 the autostash may
-/// still have conflicted ("Applying autostash resulted in conflicts"); the
-/// rebase itself succeeded, so that is a distinct success-flavored outcome.
+/// still have conflicted; the rebase itself succeeded, so that is a distinct
+/// success-flavored outcome. Git reworded that message in 2.55 (sequencer.c):
+/// up to 2.54 it prints "Applying autostash resulted in conflicts.", from
+/// 2.55 "Your local changes are stashed, however applying them\nresulted in
+/// conflicts. ..." - both wordings must classify as the stash-conflict
+/// outcome (missing one silently reports Completed while the working tree
+/// holds conflict markers; caught by CI's newer git 2026-08-21).
 fn classify_rebase_output(
     exit_code: i32,
     stdout: &str,
@@ -4155,8 +4160,9 @@ fn classify_rebase_output(
 ) -> Result<RebaseOutcome, GitError> {
     let out_lc = stdout.to_lowercase();
     let err_lc = stderr.to_lowercase();
-    let stash_conflict = out_lc.contains("applying autostash resulted in conflicts")
-        || err_lc.contains("applying autostash resulted in conflicts");
+    let has = |needle: &str| out_lc.contains(needle) || err_lc.contains(needle);
+    let stash_conflict = has("applying autostash resulted in conflicts")
+        || has("your local changes are stashed, however applying them");
     if exit_code == 0 {
         if stash_conflict {
             return Ok(RebaseOutcome::CompletedWithStashConflicts {
@@ -5739,6 +5745,24 @@ mod tests {
                 0,
                 "Applying autostash resulted in conflicts.\nYour changes are safe in the stash.\n",
                 "Successfully rebased and updated refs/heads/feature.\n"
+            )
+            .unwrap(),
+            RebaseOutcome::CompletedWithStashConflicts { .. }
+        ));
+        // git >= 2.55 reworded the autostash-conflict message and prints it
+        // on stderr (sequencer.c). Regression: the old wording alone was
+        // matched, so new gits reported Completed with conflict markers in
+        // the tree (CI failure 2026-08-21).
+        assert!(matches!(
+            classify_rebase_output(
+                0,
+                "",
+                "Successfully rebased and updated refs/heads/feature.\n\
+                 Your local changes are stashed, however applying them\n\
+                 resulted in conflicts.  You can either resolve the conflicts\n\
+                 and then discard the stash with \"git stash drop\", or, if you\n\
+                 do not want to resolve them now, run \"git reset --hard\" and\n\
+                 apply the local changes later by running \"git stash pop\".\n"
             )
             .unwrap(),
             RebaseOutcome::CompletedWithStashConflicts { .. }
