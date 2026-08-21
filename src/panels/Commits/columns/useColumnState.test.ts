@@ -67,6 +67,39 @@ describe("columnGridTrack", () => {
     expect(columnGridTrack("refs", ctx)).toBe("150px"); // DEFAULT_WIDTHS fallback
     expect(columnGridTrack("date", { ...ctx, widths: { date: 88 } })).toBe("88px");
   });
+
+  // Content-width caps (2026-08-21): Author/Date/SHA never grow past their
+  // widest rendered value - the surplus goes to the Subject filler.
+  describe("content-width caps (maxWidths)", () => {
+    it("caps a stored width that exceeds the content width", () => {
+      expect(
+        columnGridTrack("author", { ...ctx, widths: { author: 300 }, maxWidths: { author: 96 } }),
+      ).toBe("96px");
+    });
+
+    it("never shrinks below a user-narrowed width - the cap only limits growth", () => {
+      expect(
+        columnGridTrack("author", { ...ctx, widths: { author: 60 }, maxWidths: { author: 96 } }),
+      ).toBe("60px");
+    });
+
+    it("caps the DEFAULT width too (no user resize yet)", () => {
+      // date default is 100; a short relative-date column caps below it.
+      expect(columnGridTrack("date", { ...ctx, maxWidths: { date: 72 } })).toBe("72px");
+    });
+
+    it("leaves uncapped columns and the subject filler untouched", () => {
+      const capped = { ...ctx, maxWidths: { author: 96 } };
+      expect(columnGridTrack("refs", capped)).toBe("150px");
+      expect(columnGridTrack("subject", capped)).toBe("minmax(120px, 1fr)");
+    });
+
+    it("a degenerate cap below MIN_COLUMN_WIDTH floors at the resize minimum", () => {
+      expect(
+        columnGridTrack("sha", { ...ctx, widths: { sha: 80 }, maxWidths: { sha: 10 } }),
+      ).toBe("40px");
+    });
+  });
 });
 
 // Regression (2026-08-18): rows and header were width-100%-of-viewport, so
@@ -89,5 +122,11 @@ describe("columnsMinWidth", () => {
 
   it("handles a single column without gaps", () => {
     expect(columnsMinWidth(["subject"], ctx, 8, 0)).toBe(120);
+  });
+
+  it("applies the content-width caps, staying consistent with the grid tracks", () => {
+    expect(
+      columnsMinWidth(["date"], { ...ctx, widths: { date: 300 }, maxWidths: { date: 72 } }, 8, 0),
+    ).toBe(72);
   });
 });

@@ -55,6 +55,14 @@ interface ColumnWidthCtx {
   signedColWidth: number;
   subjectMinWidth: number;
   widths: Partial<Record<ColumnId, number>>;
+  /**
+   * Content-derived width caps (Author / Date / SHA): a column never renders
+   * wider than its widest rendered value plus padding - the surplus goes to
+   * the elastic Subject filler. The cap only limits GROWTH: a stored width
+   * the user narrowed below it wins (min), and the stored value itself is
+   * never rewritten, so the cap can widen again when longer content loads.
+   */
+  maxWidths?: Partial<Record<ColumnId, number>>;
 }
 
 /** One column's minimum px width (subject: its minmax floor). */
@@ -62,7 +70,10 @@ function columnMinPx(id: ColumnId, ctx: ColumnWidthCtx): number {
   if (id === "graph") return ctx.graphColWidth;
   if (id === "signed") return ctx.signedColWidth;
   if (id === "subject") return ctx.subjectMinWidth;
-  return ctx.widths[id] ?? DEFAULT_WIDTHS[id] ?? 100;
+  const stored = ctx.widths[id] ?? DEFAULT_WIDTHS[id] ?? 100;
+  const cap = ctx.maxWidths?.[id];
+  if (cap === undefined) return stored;
+  return Math.min(stored, Math.max(cap, MIN_COLUMN_WIDTH));
 }
 
 export function columnGridTrack(id: ColumnId, ctx: ColumnWidthCtx): string {

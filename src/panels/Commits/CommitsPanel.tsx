@@ -16,6 +16,7 @@ import { useLaneLocks, useLaneLocksStore } from "../../store/laneLocks";
 import { usePanelFocusEffect, useRestoreVirtualizerScroll } from "../PanelApiContext";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
+import { TOOLBAR_FIELD_STYLE } from "../shared/fields";
 import { useDelayedFlag } from "../shared/useDelayedFlag";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { Button } from "../shared/buttons";
@@ -92,6 +93,7 @@ import {
   NON_RESIZABLE,
 } from "./columns/types";
 import type { ColumnId } from "./columns/types";
+import { computeContentMaxWidths } from "./columns/contentWidths";
 
 const COLUMN_LABELS: Record<ColumnId, string> = {
   refs: "Refs",
@@ -135,18 +137,6 @@ async function toggleAbdaesele(): Promise<void> {
   if (next !== title) await win.setTitle(next);
 }
 
-// Shared style for the filter input and its kind <select>, so the two render
-// at exactly the same height inside the sync toolbar.
-const SEARCH_FIELD_STYLE: React.CSSProperties = {
-  fontSize: "var(--fz-sm)",
-  height: "2em",
-  boxSizing: "border-box",
-  padding: "0 6px",
-  border: "1px solid var(--panel-border)",
-  borderRadius: 3,
-  background: "var(--input-bg)",
-  color: "var(--panel-fg)",
-};
 
 // Sentinel id for the synthetic "uncommitted changes" row prepended above HEAD.
 // Chosen to never collide with a real 40-hex commit id.
@@ -663,6 +653,32 @@ export function CommitsPanel() {
     [showWorkingDirRow, workingDirRow, commits],
   );
 
+  // Content-width caps for the Author / Date / SHA columns: a column never
+  // renders wider than its widest rendered value plus padding (the synthetic
+  // working-dir row renders empty cells, so `commits` is the full universe).
+  // Recomputed when the loaded window grows or the font/date settings change.
+  const contentMaxWidths = useMemo(() => {
+    // No caps before the first page loads: header-only caps would collapse
+    // the columns for a frame and make them jump when the rows arrive.
+    if (commits.length === 0) return {};
+    const authorTexts = new Set<string>();
+    const dateTexts = new Set<string>();
+    for (const c of commits) {
+      authorTexts.add(c.author.name);
+      dateTexts.add(
+        DATE_ABSOLUTE
+          ? formatAbsolute(c.timestamp, c.author.tz_offset_minutes, DATE_FORMAT, DATE_SHOW_TIME)
+          : formatRelative(c.timestamp),
+      );
+    }
+    return computeContentMaxWidths({
+      authorTexts,
+      dateTexts,
+      uiFontSize: TEXT_SIZE,
+      headerLabels: COLUMN_LABELS,
+    });
+  }, [commits, TEXT_SIZE, DATE_ABSOLUTE, DATE_FORMAT, DATE_SHOW_TIME]);
+
   // Subject lookup for the merge-commit mainline picker: parents are almost
   // always within the loaded window; an unloaded one degrades to sha-only.
   const commitMessageById = useMemo(() => {
@@ -1022,6 +1038,7 @@ export function CommitsPanel() {
       signedColWidth,
       subjectMinWidth,
       widths: colState.widths,
+      maxWidths: contentMaxWidths,
     });
 
   const GRID_COLUMNS = visibleColumns.map(colWidth).join(" ");
@@ -1032,7 +1049,7 @@ export function CommitsPanel() {
   // rows'/header's horizontal padding (border-box).
   const minRowWidth = columnsMinWidth(
     visibleColumns,
-    { graphColWidth, signedColWidth, subjectMinWidth, widths: colState.widths },
+    { graphColWidth, signedColWidth, subjectMinWidth, widths: colState.widths, maxWidths: contentMaxWidths },
     COLUMN_GAP,
     24,
   );
@@ -1251,7 +1268,7 @@ export function CommitsPanel() {
                 // Right padding keeps the text clear of the ✕; minWidth 0
                 // defeats the browser's intrinsic input minimum so the field
                 // can actually shrink with its wrapper.
-                style={{ ...SEARCH_FIELD_STYLE, flex: 1, minWidth: 0, paddingRight: "1.8em" }}
+                style={{ ...TOOLBAR_FIELD_STYLE, flex: 1, minWidth: 0, paddingRight: "1.8em" }}
               />
               {(searchDraft !== "" || search !== null) && (
                 <button
