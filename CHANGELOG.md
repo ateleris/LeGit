@@ -16,6 +16,11 @@ lives in the git log and the GitHub release notes.
 
 ## [1.0.1] - 2026-08-21
 
+### Changed
+
+- Crash log stack traces now show real component/function names instead of
+  minified ones.
+
 ### Fixed
 
 - Crash ("Something went wrong", React errors 300/310) when closing the last

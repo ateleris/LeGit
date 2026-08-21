@@ -22,6 +22,17 @@ export default defineConfig({
     // Vite 8 bundles with Rolldown and minifies with Oxc (esbuild is gone);
     // the default minifier is exactly that, so no explicit setting.
     outDir: "dist",
+    rollupOptions: {
+      output: {
+        // Keep function/class names through minification so React component
+        // stacks in the persistent crash log (crashLog.ts) show real
+        // component names ("at CommitsPanel") instead of mangled ones
+        // ("at up") - that log is often the only artifact from a user's
+        // machine. Costs a few percent bundle size; irrelevant for a
+        // disk-loaded Tauri app.
+        keepNames: true,
+      },
+    },
     // Tauri loads assets from disk — no network latency, so chunk size has no
     // performance impact. Raise the limit (default 1000) above the main
     // chunk's current ~1.4 MB so the irrelevant warning stays silent but a
