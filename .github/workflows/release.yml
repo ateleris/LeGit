@@ -21,7 +21,7 @@ jobs:
     name: Verify tag matches source versions
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Compare tag against Cargo.toml, tauri.conf.json, package.json
         run: |
           TAG="${GITHUB_REF_NAME#v}"
@@ -72,7 +72,7 @@ jobs:
             args: ""
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Tauri v2 Linux system libraries (mirrors .github/workflows/ci.yml).
       - name: Install Tauri system dependencies (Linux)
@@ -87,7 +87,7 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -104,7 +104,7 @@ jobs:
       # Runs the frontend build (beforeBuildCommand: `npm run build`), bundles
       # the app for this OS, then creates/updates the tag's GitHub Release and
       # uploads the installers.
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Updater artifact signing (bundle.createUpdaterArtifacts) - the

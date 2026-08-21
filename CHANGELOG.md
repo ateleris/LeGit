@@ -20,6 +20,10 @@ lives in the git log and the GitHub release notes.
 
 - Crash log stack traces now show real component/function names instead of
   minified ones.
+- New default commit-graph metrics: row height and lane width 22, dot radius
+  8, line width 2 (denser graph out of the box).
+- The global dock now defaults to the left of the repo area instead of above
+  it (existing installs keep their saved placement).
 
 ### Fixed
 

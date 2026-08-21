@@ -41,10 +41,10 @@ import type { RefsSortMode } from "../lib/refSort";
 
 /** Defaults + bounds for the Commits-panel graph metrics. Mirror the backend
  * clamps in `save_commits_graph_metrics`. */
-export const COMMITS_ROW_HEIGHT_DEFAULT = 40;
-export const COMMITS_LANE_WIDTH_DEFAULT = 40;
-export const COMMITS_DOT_RADIUS_DEFAULT = 5;
-export const COMMITS_LINE_WIDTH_DEFAULT = 1.5;
+export const COMMITS_ROW_HEIGHT_DEFAULT = 22;
+export const COMMITS_LANE_WIDTH_DEFAULT = 22;
+export const COMMITS_DOT_RADIUS_DEFAULT = 8;
+export const COMMITS_LINE_WIDTH_DEFAULT = 2;
 export const COMMITS_ROW_HEIGHT_MIN = 16;
 export const COMMITS_ROW_HEIGHT_MAX = 120;
 // Lane width has no fixed minimum — it shares the row height's font-derived

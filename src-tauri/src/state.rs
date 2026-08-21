@@ -53,8 +53,8 @@ pub fn repo_hash(canonical_path: &Path) -> String {
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Default, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum RegionPlacement {
-    #[default]
     Top,
+    #[default]
     Left,
 }
 
@@ -86,22 +86,22 @@ fn default_true() -> bool {
 
 /// Default line/row height for the Commits panel, in px.
 pub fn default_commits_row_height() -> f64 {
-    40.0
+    22.0
 }
 
 /// Default per-lane horizontal spacing for the Commits graph, in px.
 pub fn default_commits_lane_width() -> f64 {
-    40.0
+    22.0
 }
 
 /// Default commit-dot radius for the Commits graph, in px.
 pub fn default_commits_dot_radius() -> f64 {
-    5.0
+    8.0
 }
 
 /// Default stroke width for the Commits graph connector lines/arcs, in px.
 pub fn default_commits_line_width() -> f64 {
-    1.5
+    2.0
 }
 
 /// Default global UI font size (px) — the base all panels derive their text
@@ -362,7 +362,7 @@ impl Default for GlobalSettings {
             last_clone_parent_dir: None,
             active_open_repo: None,
             active_theme: None,
-            global_region_placement: RegionPlacement::Top,
+            global_region_placement: RegionPlacement::Left,
             global_region_size_top: None,
             global_region_size_left: None,
             global_dock_collapsed: false,

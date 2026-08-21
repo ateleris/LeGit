@@ -138,7 +138,7 @@ export function AppLayout() {
     prevActiveRepo.current = activeRepoId;
   }, [activeRepoId]);
 
-  const [placement, setPlacementState] = useState<RegionPlacement>("top");
+  const [placement, setPlacementState] = useState<RegionPlacement>("left");
   // Collapse state lives in a store (not component state) so actions outside
   // this component can expand the region - the View menu's summonGlobalPanel
   // must be able to uncollapse before opening a global panel.

@@ -301,7 +301,7 @@ const SETTINGS_GUTTER_COL = "1.9em"; // matches the link IconButton width
 const SETTINGS_GRID_COLS = `${SETTINGS_LABEL_COL} ${SETTINGS_GUTTER_COL} min-content max-content`;
 
 function GeneralSection() {
-  const placement = useSettingsStore((s) => s.settings?.global_region_placement ?? "top");
+  const placement = useSettingsStore((s) => s.settings?.global_region_placement ?? "left");
   const setRegionPlacement = useSettingsStore((s) => s.setRegionPlacement);
   const fontSize = useSettingsStore((s) => s.settings?.ui_font_size ?? UI_FONT_SIZE_DEFAULT);
   const setUiFontSize = useSettingsStore((s) => s.setUiFontSize);
