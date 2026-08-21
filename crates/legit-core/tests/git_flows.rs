@@ -1078,7 +1078,7 @@ async fn revert_creates_a_revert_commit() {
     let repo = TestRepo::init().await;
     let (_, second) = two_commits(&repo).await;
 
-    let outcome = repo.backend.revert(&second, None).await.unwrap();
+    let outcome = repo.backend.revert(&[second.clone()], None).await.unwrap();
     assert_eq!(outcome, SequenceOutcome::Completed);
 
     assert_eq!(repo.read("a.txt"), "one\n");
@@ -1088,12 +1088,70 @@ async fn revert_creates_a_revert_commit() {
 }
 
 #[tokio::test]
+async fn cherry_pick_of_two_commits_applies_both_in_one_sequence() {
+    // Bulk cherry-pick: two side-branch commits (separate files, no
+    // conflicts) picked oldest-first in ONE call land as two commits on
+    // main and leave no sequencer state behind.
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["switch", "-c", "feature"]).await;
+    repo.write("f1.txt", "one\n");
+    repo.commit_all("feat one").await;
+    let older = repo.head().await;
+    repo.write("f2.txt", "two\n");
+    repo.commit_all("feat two").await;
+    let newer = repo.head().await;
+    repo.git(&["switch", "main"]).await;
+
+    let outcome = repo
+        .backend
+        .cherry_pick(&[older.clone(), newer.clone()], None)
+        .await
+        .unwrap();
+    assert_eq!(outcome, SequenceOutcome::Completed);
+
+    assert_eq!(repo.read("f1.txt"), "one\n");
+    assert_eq!(repo.read("f2.txt"), "two\n");
+    let subjects = repo.git(&["log", "--format=%s", "-3"]).await;
+    assert_eq!(subjects.trim(), "feat two\nfeat one\nbase");
+    assert!(matches!(repo.backend.op_state().await.unwrap(), RepoOpState::None));
+}
+
+#[tokio::test]
+async fn revert_of_two_commits_unwinds_both_newest_first() {
+    // Bulk revert: newest-first order unwinds each commit on top of the
+    // previous revert; the file ends back at its initial content.
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("one").await;
+    repo.write("a.txt", "two\n");
+    repo.commit_all("two").await;
+    let second = repo.head().await;
+    repo.write("a.txt", "three\n");
+    repo.commit_all("three").await;
+    let third = repo.head().await;
+
+    let outcome = repo
+        .backend
+        .revert(&[third.clone(), second.clone()], None)
+        .await
+        .unwrap();
+    assert_eq!(outcome, SequenceOutcome::Completed);
+
+    assert_eq!(repo.read("a.txt"), "one\n");
+    let subjects = repo.git(&["log", "--format=%s", "-2"]).await;
+    assert!(subjects.starts_with("Revert"), "{subjects}");
+    assert!(matches!(repo.backend.op_state().await.unwrap(), RepoOpState::None));
+}
+
+#[tokio::test]
 async fn cherry_pick_conflict_resolve_continue() {
     let repo = TestRepo::init().await;
     conflicting_branches(&repo).await;
     let feature_tip = repo.git(&["rev-parse", "feature"]).await.trim().to_string();
 
-    let outcome = repo.backend.cherry_pick(&feature_tip, None).await.unwrap();
+    let outcome = repo.backend.cherry_pick(&[feature_tip.clone()], None).await.unwrap();
     assert!(matches!(outcome, SequenceOutcome::Conflicts { .. }), "{outcome:?}");
 
     // Real sequencer state drives the op detection.
@@ -1145,7 +1203,7 @@ async fn revert_conflict_abort_restores_state() {
     repo.write("a.txt", "v3\n");
     repo.commit_all("v3").await;
 
-    let outcome = repo.backend.revert(&middle, None).await.unwrap();
+    let outcome = repo.backend.revert(&[middle.clone()], None).await.unwrap();
     assert!(matches!(outcome, SequenceOutcome::Conflicts { .. }), "{outcome:?}");
     match repo.backend.op_state().await.unwrap() {
         RepoOpState::Revert { sha } => assert!(middle.starts_with(&sha)),
@@ -2986,7 +3044,7 @@ async fn merge_commit_revert_and_cherry_pick_with_mainline() {
     let merge_sha = repo.head().await;
 
     // Without a mainline, git refuses a merge - stays an error, surfaced as-is.
-    let err = repo.backend.revert(&merge_sha, None).await;
+    let err = repo.backend.revert(&[merge_sha.clone()], None).await;
     assert!(
         matches!(err, Err(GitError::CommandFailed { .. })),
         "merge revert without -m must stay an error: {err:?}"
@@ -2994,7 +3052,7 @@ async fn merge_commit_revert_and_cherry_pick_with_mainline() {
 
     // Revert relative to parent 1 (main): the merged-in file goes away, the
     // merge itself stays recorded in history.
-    let outcome = repo.backend.revert(&merge_sha, Some(1)).await.unwrap();
+    let outcome = repo.backend.revert(&[merge_sha.clone()], Some(1)).await.unwrap();
     assert_eq!(outcome, SequenceOutcome::Completed);
     assert!(!repo.exists("f.txt"), "revert -m 1 must remove the merged-in change");
     assert_eq!(repo.read("a.txt"), "main v2\n", "mainline changes must survive");
@@ -3002,7 +3060,7 @@ async fn merge_commit_revert_and_cherry_pick_with_mainline() {
     // Cherry-pick the merge onto an unrelated branch with -m 1: the merged-in
     // changes land as ONE commit.
     repo.git(&["switch", "-c", "port", &base]).await;
-    let outcome = repo.backend.cherry_pick(&merge_sha, Some(1)).await.unwrap();
+    let outcome = repo.backend.cherry_pick(&[merge_sha.clone()], Some(1)).await.unwrap();
     assert_eq!(outcome, SequenceOutcome::Completed);
     assert!(repo.exists("f.txt"), "cherry-pick -m 1 must bring the merged-in change");
     let parents = repo.git(&["rev-list", "--parents", "-1", "HEAD"]).await;
@@ -4592,7 +4650,7 @@ async fn end_of_options_does_not_break_normal_refs() {
 
     // cherry-pick and revert, reset, and set_upstream's unset path
     let tip = repo.head().await;
-    repo.backend.revert(&tip, Some(1)).await.expect("revert merge");
+    repo.backend.revert(&[tip.clone()], Some(1)).await.expect("revert merge");
     repo.backend.reset(&tip, ResetMode::Hard).await.expect("reset");
     // set_upstream, both argv shapes: `--set-upstream-to=<up>` then
     // `--unset-upstream`. Needs a remote-tracking ref to point at.
@@ -4607,7 +4665,7 @@ async fn end_of_options_does_not_break_normal_refs() {
     repo.backend.set_upstream("main", None).await.expect("unset upstream");
     repo.git(&["switch", "-c", "pick-target", &base]).await;
     let pick = repo.git(&["rev-parse", "feature"]).await.trim().to_string();
-    repo.backend.cherry_pick(&pick, None).await.expect("cherry-pick");
+    repo.backend.cherry_pick(&[pick.clone()], None).await.expect("cherry-pick");
 }
 
 /// Why `reset` and `checkout` rely on the dash guard alone, with NO

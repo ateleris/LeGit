@@ -64,6 +64,7 @@ import { computeEdgeSpans } from "./graph/spans";
 import { pickHeadCommitId } from "./headId";
 import { growJumpWindow, pendingJumpAction, shouldCenterScroll } from "./scrollToRow";
 import { mergeSearchResults, quickSearchMatch } from "./commitSearch";
+import { applyRowClickSelection, bulkActionPlan, type SelectionState } from "./multiSelect";
 import type { LaneEdge, LaneIndex, LaneResult, LockMap, RefsAtCommit } from "./graph/types";
 import {
   buildLockMap,
@@ -198,6 +199,14 @@ export function CommitsPanel() {
   const LANE_SPACING = Math.max(storedLaneWidth, metricsFloor);
 
   const [selectedId, setSelectedId] = useState<CommitId | null>(null);
+  // Multi-selection (Ctrl/Shift click; see multiSelect.ts for the rules).
+  // Contains the lead when set; single-select paths (summon, search,
+  // quick-jump) collapse it via selectSingle.
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<CommitId>>(new Set());
+  const selectSingle = useCallback((id: CommitId) => {
+    setSelectedId(id);
+    setSelectedIds(new Set([id]));
+  }, []);
   const [extraPages, setExtraPages] = useState(0);
   // A jump target (adoptSelection) not yet in the loaded window; the seek
   // effect below keeps growing the fetch window until it loads, then scrolls.
@@ -732,7 +741,7 @@ export function CommitsPanel() {
       return;
     }
     if (typeof payload !== "string") return;
-    setSelectedId(payload as CommitId);
+    selectSingle(payload as CommitId);
     const idx = rowsRef.current.findIndex((c) => c.id === payload);
     if (idx >= 0) {
       if (shouldCenterScroll(idx, virtualizerRef.current.range)) {
@@ -967,7 +976,7 @@ export function CommitsPanel() {
     const hit = searchHits[searchHit];
     if (!hit) return;
     lastHitJumpRef.current = key;
-    setSelectedId(hit);
+    selectSingle(hit);
     setPendingJump(hit);
   }, [search, searchFetching, searchHits, searchHit]);
 
@@ -985,9 +994,34 @@ export function CommitsPanel() {
     }
   }
 
+  // Latest-ref so handleRowClick stays referentially stable across selection
+  // changes (same pattern as rowsRef above).
+  const selectionRef = useRef<SelectionState>({ lead: null, ids: new Set() });
+  selectionRef.current = { lead: selectedId, ids: selectedIds };
+
+  // The working-dir row and stash rows never join a multi-selection: the
+  // bulk actions (cherry-pick/revert/compare) don't apply to them.
+  const isMultiSelectable = useCallback(
+    (id: CommitId) => id !== WORKING_DIR_ID && !stashSelectorById.has(id),
+    [stashSelectorById],
+  );
+
   const handleRowClick = useCallback(
-    (commit: Commit) => {
-      setSelectedId(commit.id);
+    (commit: Commit, e: React.MouseEvent) => {
+      const modifiers = { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey };
+      const next = applyRowClickSelection(
+        selectionRef.current,
+        rowsRef.current.map((r) => r.id),
+        commit.id,
+        modifiers,
+        isMultiSelectable,
+      );
+      if (next !== selectionRef.current) {
+        setSelectedId(next.lead);
+        setSelectedIds(next.ids);
+      }
+      // Modifier clicks build a bulk selection - they never summon panels.
+      if (modifiers.ctrl || modifiers.shift) return;
       const summon = useSummonStore.getState();
       if (commit.id === WORKING_DIR_ID) {
         // Working-dir row → show the staging/commit panel in the shared side
@@ -1001,7 +1035,7 @@ export function CommitsPanel() {
       // Show Changed Files in the shared slot (swapping out Working Changes).
       summon.swapSummon("changed-files", "working-changes", commit.id);
     },
-    []
+    [isMultiSelectable]
   );
 
   // Type-to-jump quick search state (used further below): declared BEFORE the
@@ -1104,7 +1138,7 @@ export function CommitsPanel() {
   const quickJump = (anchor: number, direction: 1 | -1, query: string) => {
     const idx = quickSearchMatch(rowsRef.current, query, anchor, direction);
     if (idx === null) return;
-    setSelectedId(rowsRef.current[idx].id);
+    selectSingle(rowsRef.current[idx].id);
     if (shouldCenterScroll(idx, virtualizerRef.current.range)) {
       virtualizerRef.current.scrollToIndex(idx, { align: "center" });
     }
@@ -1480,7 +1514,7 @@ export function CommitsPanel() {
           {visibleItems.map((vItem) => {
             const rowIndex = vItem.index;
             const commit = rows[rowIndex];
-            const isSelected = commit.id === selectedId;
+            const isSelected = commit.id === selectedId || selectedIds.has(commit.id);
             const isWorkingDir = commit.id === WORKING_DIR_ID;
             const commitLane = assignments.get(commit.id) ?? 0;
             const edges = edgesByCommit.get(commit.id) ?? [];
@@ -1507,8 +1541,75 @@ export function CommitsPanel() {
                 // Hover + selection backgrounds live in global.css (classes,
                 // because :hover can't be expressed in inline styles).
                 className={`legit-commit-row${isSelected ? " legit-commit-row--selected" : ""}`}
-                onClick={() => handleRowClick(commit)}
+                onClick={(e) => handleRowClick(commit, e)}
+                // Shift+click extends the selection - keep the browser from
+                // also sweeping a text selection across the rows.
+                onMouseDown={(e) => {
+                  if (e.shiftKey) e.preventDefault();
+                }}
                 onContextMenu={(e) => {
+                  // Right-click on a row inside a 2+ multi-selection: the
+                  // bulk menu for the whole set. Any other row falls through
+                  // to its normal single-row menu.
+                  if (selectedIds.size >= 2 && selectedIds.has(commit.id) && isMultiSelectable(commit.id)) {
+                    const plan = bulkActionPlan(
+                      selectedIds,
+                      rows.map((r) => ({ id: r.id, isMerge: (r.parents?.length ?? 0) > 1 })),
+                    );
+                    const comparePair = plan.compare;
+                    if (plan.count >= 2) {
+                      openMenu(
+                        e,
+                        <>
+                          <SectionLabel>{plan.count} commits selected</SectionLabel>
+                          {/* Sequencer ops hidden while one is in progress,
+                              like the single-row menu. */}
+                          {!opInProgress && (
+                            <>
+                              <MenuItem
+                                disabled={plan.containsMerge}
+                                onClick={() => { closeMenu(); handleCherryPick(plan.cherryPickShas); }}
+                              >
+                                Cherry-pick {plan.count} commits
+                              </MenuItem>
+                              <MenuItem
+                                disabled={plan.containsMerge}
+                                onClick={() => { closeMenu(); handleRevert(plan.revertShas); }}
+                              >
+                                Revert {plan.count} commits
+                              </MenuItem>
+                              {plan.containsMerge && (
+                                <div
+                                  style={{
+                                    padding: "4px 14px 6px",
+                                    fontSize: "var(--fz-sm)",
+                                    color: "var(--subtle-fg)",
+                                    maxWidth: 280,
+                                    whiteSpace: "normal",
+                                    cursor: "default",
+                                  }}
+                                >
+                                  The selection contains a merge commit - cherry-pick
+                                  or revert it on its own to choose a mainline parent.
+                                </div>
+                              )}
+                            </>
+                          )}
+                          {comparePair && (
+                            <MenuItem
+                              onClick={() => {
+                                closeMenu();
+                                useSummonStore.getState().summon("compare", comparePair);
+                              }}
+                            >
+                              Compare selected commits
+                            </MenuItem>
+                          )}
+                        </>,
+                      );
+                      return;
+                    }
+                  }
                   if (commit.id === WORKING_DIR_ID) {
                     openMenu(
                       e,
@@ -1623,7 +1724,7 @@ export function CommitsPanel() {
                                   {mainline.map((c) => (
                                     <MenuItem
                                       key={c.mainline}
-                                      onClick={() => { closeMenu(); handleCherryPick(commit.id, c.mainline); }}
+                                      onClick={() => { closeMenu(); handleCherryPick([commit.id], c.mainline); }}
                                     >
                                       {c.label}
                                     </MenuItem>
@@ -1634,7 +1735,7 @@ export function CommitsPanel() {
                                   {mainline.map((c) => (
                                     <MenuItem
                                       key={c.mainline}
-                                      onClick={() => { closeMenu(); handleRevert(commit.id, c.mainline); }}
+                                      onClick={() => { closeMenu(); handleRevert([commit.id], c.mainline); }}
                                     >
                                       {c.label}
                                     </MenuItem>
@@ -1658,10 +1759,10 @@ export function CommitsPanel() {
                               </>
                             ) : (
                               <>
-                                <MenuItem onClick={() => { closeMenu(); handleCherryPick(commit.id); }}>
+                                <MenuItem onClick={() => { closeMenu(); handleCherryPick([commit.id]); }}>
                                   Cherry-pick commit
                                 </MenuItem>
-                                <MenuItem onClick={() => { closeMenu(); handleRevert(commit.id); }}>
+                                <MenuItem onClick={() => { closeMenu(); handleRevert([commit.id]); }}>
                                   Revert commit
                                 </MenuItem>
                               </>

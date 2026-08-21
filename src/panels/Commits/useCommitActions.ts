@@ -96,27 +96,32 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
       },
 
       // `mainline` (1-based parent number) comes from the merge-commit
-      // parent picker; regular commits pass none.
-      handleCherryPick: async (sha: string, mainline?: number) => {
+      // parent picker; regular commits pass none. Multi-sha calls (bulk
+      // selection) pass oldest-first and never a mainline.
+      handleCherryPick: async (shas: string[], mainline?: number) => {
         const repo = repoOf();
-        if (!repo) return;
+        if (!repo || shas.length === 0) return;
+        const label = shas.length === 1 ? shas[0].slice(0, 8) : `${shas.length} commits`;
         try {
-          const outcome = await repoCherryPick(repo.id, sha, mainline);
+          const outcome = await repoCherryPick(repo.id, shas, mainline);
           invalidate(repo.id, OP_DOMAINS);
-          notifySequenceOutcome(outcome, "cherry-pick", sha.slice(0, 8));
+          notifySequenceOutcome(outcome, "cherry-pick", label);
         } catch (e) {
           invalidate(repo.id, OP_DOMAINS);
           notifyOpError(e);
         }
       },
 
-      handleRevert: async (sha: string, mainline?: number) => {
+      // Multi-sha calls pass newest-first (each revert unwinds on top of the
+      // previous one).
+      handleRevert: async (shas: string[], mainline?: number) => {
         const repo = repoOf();
-        if (!repo) return;
+        if (!repo || shas.length === 0) return;
+        const label = shas.length === 1 ? shas[0].slice(0, 8) : `${shas.length} commits`;
         try {
-          const outcome = await repoRevert(repo.id, sha, mainline);
+          const outcome = await repoRevert(repo.id, shas, mainline);
           invalidate(repo.id, OP_DOMAINS);
-          notifySequenceOutcome(outcome, "revert", sha.slice(0, 8));
+          notifySequenceOutcome(outcome, "revert", label);
         } catch (e) {
           invalidate(repo.id, OP_DOMAINS);
           notifyOpError(e);

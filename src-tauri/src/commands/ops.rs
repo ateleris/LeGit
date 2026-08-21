@@ -149,11 +149,11 @@ pub async fn repo_reset(
 pub async fn repo_revert(
     state: tauri::State<'_, AppState>,
     repo_id: String,
-    sha: String,
+    shas: Vec<String>,
     mainline: Option<u32>,
 ) -> Result<SequenceOutcome, AppError> {
     let session = state.get_session(&repo_id).await?;
-    session.backend.revert(&sha, mainline).await.map_err(AppError::Git)
+    session.backend.revert(&shas, mainline).await.map_err(AppError::Git)
 }
 
 #[tauri::command]
@@ -161,11 +161,11 @@ pub async fn repo_revert(
 pub async fn repo_cherry_pick(
     state: tauri::State<'_, AppState>,
     repo_id: String,
-    sha: String,
+    shas: Vec<String>,
     mainline: Option<u32>,
 ) -> Result<SequenceOutcome, AppError> {
     let session = state.get_session(&repo_id).await?;
-    session.backend.cherry_pick(&sha, mainline).await.map_err(AppError::Git)
+    session.backend.cherry_pick(&shas, mainline).await.map_err(AppError::Git)
 }
 
 #[tauri::command]

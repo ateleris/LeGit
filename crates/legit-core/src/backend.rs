@@ -574,20 +574,24 @@ pub trait GitBackend: Send + Sync {
     /// (discards uncommitted changes) — the UI confirms before calling.
     async fn reset(&self, target: &str, mode: ResetMode) -> Result<(), GitError>;
 
-    /// Revert a commit (`git revert --no-edit <sha>`). Conflicts pause the
-    /// sequencer and are an outcome; conclude via `revert_continue` /
-    /// `revert_skip` / `revert_abort`. For a MERGE commit pass `mainline`
+    /// Revert one or more commits (`git revert --no-edit <sha>…`) in ONE git
+    /// invocation, applied in the given order (callers pass newest-first so
+    /// each revert unwinds cleanly). Conflicts pause the sequencer and are an
+    /// outcome; conclude via `revert_continue` / `revert_skip` /
+    /// `revert_abort` - the sequencer owns the remaining commits, so those
+    /// flows work unchanged mid-set. For a MERGE commit pass `mainline`
     /// (1-based parent number → `-m N`): the diff is measured against that
-    /// parent. NOTE: reverting a merge undoes its changes but does NOT
+    /// parent (single-commit calls only; the UI keeps merges out of bulk
+    /// selections). NOTE: reverting a merge undoes its changes but does NOT
     /// un-merge history - re-merging the branch later brings nothing back;
     /// the UI carries this caveat. Without `mainline` a merge surfaces
     /// git's own "-m required" error unchanged.
-    async fn revert(&self, sha: &str, mainline: Option<u32>) -> Result<SequenceOutcome, GitError>;
+    async fn revert(&self, shas: &[String], mainline: Option<u32>) -> Result<SequenceOutcome, GitError>;
 
-    /// Cherry-pick a commit (`git cherry-pick <sha>`). Conflict handling and
-    /// the `mainline` semantics mirror `revert` (for a merge, `-m N` applies
-    /// the merged-in changes relative to parent N as one commit).
-    async fn cherry_pick(&self, sha: &str, mainline: Option<u32>) -> Result<SequenceOutcome, GitError>;
+    /// Cherry-pick one or more commits (`git cherry-pick <sha>…`) in ONE git
+    /// invocation, applied in the given order (callers pass oldest-first).
+    /// Conflict handling and the `mainline` semantics mirror `revert`.
+    async fn cherry_pick(&self, shas: &[String], mainline: Option<u32>) -> Result<SequenceOutcome, GitError>;
 
     /// Continue a paused cherry-pick after resolving conflicts. Runs with
     /// `GIT_EDITOR=true` to accept the prepared message unchanged.

@@ -14,6 +14,10 @@ lives in the git log and the GitHub release notes.
 
 ### Added
 
+- Multi-commit selection in the Commits panel: Ctrl+click toggles rows,
+  Shift+click selects a range. Right-clicking the selection offers bulk
+  cherry-pick (oldest first), bulk revert (newest first), and, for exactly
+  two commits, comparing them.
 - Temporarily maximize a panel: Ctrl+Shift+M or View menu expands the active
   panel's group over the whole dock area; the same action, Esc, or navigating
   to another panel restores the previous layout. Maximization is never saved

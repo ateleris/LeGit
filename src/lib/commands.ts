@@ -705,13 +705,17 @@ export const repoConflictFileSides = (repoId: string, path: string) =>
 export const repoReset = (repoId: string, target: string, mode: ResetMode) =>
   invoke<null>("repo_reset", { repoId, target, mode });
 
-/** `mainline` (1-based parent number) is required for merge commits (`-m N`). */
-export const repoRevert = (repoId: string, sha: string, mainline?: number) =>
-  invoke<SequenceOutcome>("repo_revert", { repoId, sha, mainline: mainline ?? null });
+/** One git invocation, applied in the given order (pass newest-first for a
+ *  clean unwind). `mainline` (1-based parent number) is required for merge
+ *  commits (`-m N`) - single-sha calls only. */
+export const repoRevert = (repoId: string, shas: string[], mainline?: number) =>
+  invoke<SequenceOutcome>("repo_revert", { repoId, shas, mainline: mainline ?? null });
 
-/** `mainline` (1-based parent number) is required for merge commits (`-m N`). */
-export const repoCherryPick = (repoId: string, sha: string, mainline?: number) =>
-  invoke<SequenceOutcome>("repo_cherry_pick", { repoId, sha, mainline: mainline ?? null });
+/** One git invocation, applied in the given order (pass oldest-first).
+ *  `mainline` (1-based parent number) is required for merge commits (`-m N`)
+ *  - single-sha calls only. */
+export const repoCherryPick = (repoId: string, shas: string[], mainline?: number) =>
+  invoke<SequenceOutcome>("repo_cherry_pick", { repoId, shas, mainline: mainline ?? null });
 
 export const repoCherryPickContinue = (repoId: string) =>
   invoke<SequenceOutcome>("repo_cherry_pick_continue", { repoId });

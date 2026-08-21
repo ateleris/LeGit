@@ -3010,17 +3010,17 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             .await
     }
 
-    async fn revert(&self, sha: &str, mainline: Option<u32>) -> Result<SequenceOutcome, GitError> {
+    async fn revert(&self, shas: &[String], mainline: Option<u32>) -> Result<SequenceOutcome, GitError> {
         // --no-edit: the runner hardens GIT_EDITOR=false, so a revert that
         // opened an editor for its message would fail outright.
-        let args = sequencer_args(&["revert", "--no-edit"], mainline, safe_ref("revision", sha)?);
+        let args = sequencer_args(&["revert", "--no-edit"], mainline, shas)?;
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let (code, stdout, stderr) = self.run_classified(&refs).await?;
         classify_sequence_output(code, &stdout, &stderr)
     }
 
-    async fn cherry_pick(&self, sha: &str, mainline: Option<u32>) -> Result<SequenceOutcome, GitError> {
-        let args = sequencer_args(&["cherry-pick"], mainline, safe_ref("revision", sha)?);
+    async fn cherry_pick(&self, shas: &[String], mainline: Option<u32>) -> Result<SequenceOutcome, GitError> {
+        let args = sequencer_args(&["cherry-pick"], mainline, shas)?;
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let (code, stdout, stderr) = self.run_classified(&refs).await?;
         classify_sequence_output(code, &stdout, &stderr)
@@ -4024,16 +4024,21 @@ fn rebase_args(onto: &str) -> Vec<String> {
 }
 
 /// cherry-pick / revert argument list: the base command, `-m <N>` when a
-/// mainline parent is given (merge commits), then the sha.
-fn sequencer_args(base: &[&str], mainline: Option<u32>, sha: &str) -> Vec<String> {
+/// mainline parent is given (merge commits), then the shas in the given
+/// order (git's sequencer applies them left to right). Each sha passes the
+/// `safe_ref` dash guard even behind `--end-of-options` - belt and braces,
+/// and a clearer message than git's.
+fn sequencer_args(base: &[&str], mainline: Option<u32>, shas: &[String]) -> Result<Vec<String>, GitError> {
     let mut args: Vec<String> = base.iter().map(|s| s.to_string()).collect();
     if let Some(n) = mainline {
         args.push("-m".into());
         args.push(n.to_string());
     }
     args.push("--end-of-options".into());
-    args.push(sha.into());
-    args
+    for sha in shas {
+        args.push(safe_ref_owned("revision", sha)?);
+    }
+    Ok(args)
 }
 
 const REBASE_CONTINUE_ARGS: [&str; 2] = ["rebase", "--continue"];

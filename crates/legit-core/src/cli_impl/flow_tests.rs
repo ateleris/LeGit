@@ -1380,7 +1380,7 @@ async fn revert_runs_no_edit_and_completes() {
     );
     let (b, exec) = backend(fake);
 
-    let outcome = b.revert("abc123", None).await.unwrap();
+    let outcome = b.revert(&["abc123".into()], None).await.unwrap();
     assert_eq!(outcome, SequenceOutcome::Completed);
     exec.assert_done();
 }
@@ -1394,7 +1394,7 @@ async fn revert_of_a_merge_passes_the_mainline_parent() {
     );
     let (b, exec) = backend(fake);
 
-    let outcome = b.revert("abc123", Some(1)).await.unwrap();
+    let outcome = b.revert(&["abc123".into()], Some(1)).await.unwrap();
     assert_eq!(outcome, SequenceOutcome::Completed);
     exec.assert_done();
 }
@@ -1405,7 +1405,43 @@ async fn cherry_pick_of_a_merge_passes_the_mainline_parent() {
     fake.expect(&["cherry-pick", "-m", "2", "--end-of-options", "def456"], ok(""));
     let (b, exec) = backend(fake);
 
-    let outcome = b.cherry_pick("def456", Some(2)).await.unwrap();
+    let outcome = b.cherry_pick(&["def456".into()], Some(2)).await.unwrap();
+    assert_eq!(outcome, SequenceOutcome::Completed);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn cherry_pick_of_multiple_commits_is_one_invocation_in_the_given_order() {
+    // Bulk cherry-pick must be ONE git invocation with the shas in the
+    // caller's order (oldest first): git's sequencer then owns mid-set
+    // conflicts, so continue/skip/abort apply unchanged. Per-sha invocations
+    // would fail after the first conflict.
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["cherry-pick", "--end-of-options", "aaa111", "bbb222", "ccc333"],
+        ok(""),
+    );
+    let (b, exec) = backend(fake);
+
+    let shas = vec!["aaa111".to_string(), "bbb222".to_string(), "ccc333".to_string()];
+    let outcome = b.cherry_pick(&shas, None).await.unwrap();
+    assert_eq!(outcome, SequenceOutcome::Completed);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn revert_of_multiple_commits_is_one_invocation_in_the_given_order() {
+    // Same single-invocation rule as bulk cherry-pick; callers order
+    // newest-first so each revert unwinds on top of the previous one.
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["revert", "--no-edit", "--end-of-options", "ccc333", "bbb222"],
+        ok(""),
+    );
+    let (b, exec) = backend(fake);
+
+    let shas = vec!["ccc333".to_string(), "bbb222".to_string()];
+    let outcome = b.revert(&shas, None).await.unwrap();
     assert_eq!(outcome, SequenceOutcome::Completed);
     exec.assert_done();
 }
@@ -1423,7 +1459,7 @@ async fn cherry_pick_conflict_is_an_outcome_not_an_error() {
     );
     let (b, exec) = backend(fake);
 
-    let outcome = b.cherry_pick("def456", None).await.unwrap();
+    let outcome = b.cherry_pick(&["def456".into()], None).await.unwrap();
     assert!(matches!(outcome, SequenceOutcome::Conflicts { .. }), "{outcome:?}");
     exec.assert_done();
 }
@@ -3259,8 +3295,8 @@ async fn option_like_refs_are_refused_before_git_runs() {
     assert_refused!(b.rename_branch(evil, "ok"), "rename_branch");
     assert_refused!(b.delete_tag(evil), "delete_tag");
     assert_refused!(b.reset(evil, ResetMode::Hard), "reset");
-    assert_refused!(b.cherry_pick(evil, None), "cherry_pick");
-    assert_refused!(b.revert(evil, None), "revert");
+    assert_refused!(b.cherry_pick(&[evil.to_string()], None), "cherry_pick");
+    assert_refused!(b.revert(&[evil.to_string()], None), "revert");
     assert_refused!(b.set_upstream(evil, None), "set_upstream");
     assert_refused!(b.rebase_interactive(evil, &[]), "rebase_interactive");
 
@@ -3304,8 +3340,8 @@ async fn ref_taking_commands_pass_end_of_options() {
     for args in [
         rebase_args("main"),
         merge_args("dev", MergeOptions { ff: FfMode::Auto, squash: false }),
-        sequencer_args(&["cherry-pick"], None, "abc123"),
-        sequencer_args(&["revert", "--no-edit"], Some(2), "abc123"),
+        sequencer_args(&["cherry-pick"], None, &["abc123".to_string()]).unwrap(),
+        sequencer_args(&["revert", "--no-edit"], Some(2), &["abc123".to_string()]).unwrap(),
     ] {
         let pos = args.iter().position(|a| a == "--end-of-options");
         let pos = pos.unwrap_or_else(|| panic!("no --end-of-options in {args:?}"));

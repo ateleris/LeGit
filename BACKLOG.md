@@ -123,17 +123,12 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   zoom / 1:1 toggle, swipe/onion-skin comparison. Add on demand.
 - **Patches: create + apply** (from the 2026-08-20 competitive review;
   SourceTree, Fork, and Git Extensions all have both). "Create patch" from a
-  commit (later: a range, once multi-select exists) via `format-patch`, and
+  commit or a selected range (multi-select shipped 2026-08-22) via
+  `format-patch`, and
   "Apply patch file" via `git apply` / `git am` (am = keeps authorship +
   message; offer both). The workflow for moving changes without a shared
   remote. Standard vertical slice; file dialogs via the existing Tauri
   dialog plumbing.
-- **Multi-commit selection in the Commits panel** (2026-08-20 review; every
-  surveyed competitor has a form of it). Ctrl/Shift row selection unlocking
-  the field-standard bulk actions: cherry-pick a set (sequencer handles
-  multi-commit continue/abort already), revert a set, compare two selected
-  commits (feed the Compare panel), create patch from range. Touches row
-  selection state + context-menu plumbing; the backends are largely present.
 
 ## Smaller follow-ups
 
