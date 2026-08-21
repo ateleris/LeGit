@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/ateleris/LeGit/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ateleris/LeGit/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/ateleris/LeGit)](https://github.com/ateleris/LeGit/releases/latest)
+[![License](https://img.shields.io/github/license/ateleris/LeGit)](LICENSE)
+[![Donate](https://img.shields.io/badge/Donate-%E2%9D%A4-db61a2)](https://donate.stripe.com/00w28s3mx89t6lM8tY4Ni00)
 
 ## What
 A fast desktop **Git GUI** — a [Tauri 2](https://v2.tauri.app) app with a Rust
@@ -80,3 +82,9 @@ npm run tauri:build    # produce an installer/bundle under src-tauri/target/rele
 <a href="https://github.com/beckicious">
   <img src="https://github.com/beckicious.png?size=100" width="100" alt="Simon Beck's avatar"/>
 </a>
+
+## Want to say thanks?
+LeGit is free and open source ([GPL-3.0-or-later](LICENSE)) and stays that
+way. If it saves you time and you feel like it, you can
+
+[![Donate](https://img.shields.io/badge/Donate_a_coffee-%E2%9D%A4-db61a2?style=for-the-badge)](https://donate.stripe.com/00w28s3mx89t6lM8tY4Ni00)

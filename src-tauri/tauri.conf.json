@@ -47,6 +47,7 @@
       }
     },
     "category": "DeveloperTool",
+    "licenseFile": "../LICENSE",
     "shortDescription": "A free, cross-platform Git GUI",
     "longDescription": "LeGit — community-driven Git GUI with first-class Linux support and colorblind-friendly theming.",
     "resources": { "../themes/*.legit-theme.json": "themes/" },
