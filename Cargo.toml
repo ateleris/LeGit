@@ -32,4 +32,8 @@ codegen-units = 1
 lto = true
 opt-level = "s"
 panic = "abort"
-strip = true
+# Keep the symbol table (strip only DWARF): the crash log's panic backtraces
+# get named frames on Linux/macOS instead of bare addresses. (Windows/MSVC
+# symbols live in the unshipped PDB either way - there the panic hook's
+# message + file:line is the reliable datum.)
+strip = "debuginfo"

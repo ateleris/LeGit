@@ -308,6 +308,17 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 
 ## Only if it hurts in practice
 
+- **Native crash dumps (minidump/crashpad).** The crash logging shipped
+  2026-08-21 (`src-tauri/src/logging.rs`: rotating file log, panic hook with
+  message + file:line + backtrace, frontend error forwarding, session
+  banner) covers Rust panics and JS errors - the bulk of real crashes. What
+  it cannot catch: a segfault inside the webview (WebView2 / WebKitGTK), GPU
+  process death, or an OOM kill - the process dies without reaching any
+  in-process hook. If such reports actually appear, the fix is a
+  minidump-writer (e.g. the `crash-handler`/`minidumper` crates) plus a
+  "found a crash dump from last run" prompt; not worth the machinery before
+  there is demand.
+
 - **Diff viewer: cross-hunk syntax highlighting.** Per-hunk Lezer parsing
   shipped 2026-07-05; constructs opened before the hunk's context window
   still mis-parse. Full fidelity means fetching both full blobs, parsing

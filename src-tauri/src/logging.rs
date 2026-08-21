@@ -121,6 +121,16 @@ pub fn init_tracing() {
         let _ = registry.try_init();
     }
     install_panic_hook();
+
+    // Session banner: every log file must identify the build that wrote it -
+    // the first thing a crash report needs.
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        os = std::env::consts::OS,
+        arch = std::env::consts::ARCH,
+        debug_build = cfg!(debug_assertions),
+        "LeGit starting"
+    );
 }
 
 /// Frontend error forwarding (window.onerror, unhandledrejection, React
