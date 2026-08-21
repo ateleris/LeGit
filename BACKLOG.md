@@ -146,24 +146,37 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   a toast or a subtle chip instead of requiring the manual button. Also
   worth considering then: a nicer changelog display (release notes from the
   GitHub release body) in the update prompt.
-- **Settings sync via a user-configured URL** (2026-08-21). Let the user
-  point LeGit at a location where its settings are stored, so one
-  configuration can be shared across installations and across users (a
-  team distributing a common setup). Today everything is local:
-  `<app-data>/global-settings.json`, `repos/<hash>/settings.json`, themes,
-  column preferences, and the dock layouts (localStorage). Open design
-  questions before building: what the "URL" is (an HTTP(S) endpoint LeGit
-  GETs/PUTs, a git repo it pulls, a WebDAV share, or just a file path on a
-  network drive - a plain file/dir path covers the team case with zero
-  server code and may be the right v1); which settings are shareable vs
-  machine-bound (editor command template, UI font size, and repo settings
-  keyed by local path hashes do not travel; themes and column prefs do);
-  read-only "inherit from URL, override locally" vs true two-way sync
-  (two-way needs conflict handling - last-write-wins with a timestamp is
-  probably enough); and auth for a remote endpoint (LeGit stores no
-  secrets, so anything beyond an unauthenticated GET needs the keychain
-  broker). A layered read path (defaults -> synced -> local overrides)
-  fits the existing `Option<T> + serde(default)` settings convention.
+- **Settings sync via a user-configured directory path** (2026-08-21,
+  scope sharpened 2026-08-21 after design review; demand-driven - do not
+  build before someone asks). A read-only "inherit from path" layer so one
+  configuration (prefs + themes) can be shared across installations or a
+  team. V1 design:
+  - One optional global setting `settings_sync_path` - a plain directory
+    (network share / Dropbox / a checked-out git repo). REJECTED for v1:
+    HTTP(S)/WebDAV endpoints (auth needs the keychain broker for little
+    gain over a synced folder) and two-way sync (conflict handling swamp;
+    last-write-wins would corrupt a team setup). Read at startup + a
+    manual "Reload synced settings" button; no file watching.
+  - The directory holds `legit-sync.json` (shareable prefs subset) and
+    optionally `themes/*.legit-theme.json`.
+  - Layered resolution: built-in default -> synced -> local, LOCAL WINS.
+    Requires moving the shareable prefs to `Option<T> +
+    #[serde(default)]` in the local file (None = inherit), the existing
+    RepoSettings convention; existing installs' concrete values then
+    parse as explicit local overrides - the correct migration for free.
+  - Shareable: theme choice + font size + graph metrics + date format +
+    pull strategy + confirm toggle + column prefs + region placement.
+    Never synced: open-repo state, last-dirs, `git_path_override`, git
+    profiles (identities + machine-bound key paths), repo settings
+    (local-path-hash keyed).
+  - Themes ARE included - the most shareable artifact (portable JSON,
+    stable TOKEN_CONTRACT, resolveTheme falls back over DEFAULT_THEME).
+    Implementation seam exists: a third `ThemeSource::Synced` next to
+    Builtin/User in `read_theme_dir`, read-only in the Theme Editor like
+    builtins (duplicate-to-edit) - sidesteps name-collision and
+    upstream-deletion semantics. `active_theme` syncs as a normal pref.
+  - Phase 2 candidates: dock layouts (needs them out of localStorage
+    into the exportable surface first), an export/import bundle file.
 
 - **Files panel:** untrack a folder (`rm_cached` needs `-r` for a
   directory); persist view mode / show-ignored (ephemeral component state
@@ -171,20 +184,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   `gitignore_line` (a filename containing them would become a glob).
 - **Git Log panel:** filter/search the log, copy a command, jump a toast to
   its specific log entry (today it just opens the panel).
-- **Temporarily maximize a panel to the whole window** (2026-08-21). A
-  "focus mode" for one panel: expand it over the entire LeGit window
-  (hiding the other groups) while working in it - e.g. resolving a merge in
-  the Merge panel or reading a large diff - then restore the previous layout
-  with one action. Check what dockview already gives us before building
-  anything: it has group maximization (`api.maximizeGroup` /
-  `hasMaximizedGroup` / `exitMaximizedGroup`) plus popout/full-width group
-  concepts, so this may be a thin wrapper over its API rather than a layout
-  of our own. Open questions: whether it maximizes the GROUP (tab strip
-  included) or the single panel; how it interacts with the persisted layout
-  (maximization must never be saved as the resting layout); the restore
-  path when the maximized panel is closed while maximized; a keyboard
-  shortcut plus a View-menu entry; and whether the repo/global dock strips
-  stay visible.
 - **Commits panel: incremental log appending** (decided 2026-07-30). Today
   every window growth (infinite scroll, and the jump-seek) refetches the
   WHOLE window from offset 0 and re-parses it - O(n^2) total work,

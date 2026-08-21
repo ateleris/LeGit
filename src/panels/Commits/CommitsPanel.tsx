@@ -1124,6 +1124,11 @@ export function CommitsPanel() {
       return;
     }
     if (e.key === "Escape") {
+      // Consumed only while the overlay is visibly up - dismissing it must
+      // not also trigger other Escape actions (e.g. exiting a maximized
+      // panel). Clearing the invisible leftover query is a free side effect
+      // that shouldn't swallow anyone's Esc.
+      if (quickOverlay !== null) e.stopPropagation();
       quickBufferRef.current = "";
       lastQuickQueryRef.current = "";
       if (quickTimerRef.current) clearTimeout(quickTimerRef.current);

@@ -131,6 +131,24 @@ describe("sanitizeDockviewLayout", () => {
     expect(out.panels.log.title).toBe("Commits");
   });
 
+  it("strips a maximizedNode marker so a restore never re-maximizes", () => {
+    // dockview serializes the RESTING layout plus a `maximizedNode` marker
+    // when a group is maximized, and fromJSON re-applies the marker. Focus
+    // mode is transient, so a persisted layout must restore un-maximized.
+    const layout = {
+      grid: {
+        root: { type: "branch", data: [leaf("1", ["log"]), leaf("2", ["diff"])], size: 200 },
+        maximizedNode: { location: [0] },
+      },
+      panels: { log: panel("log"), diff: panel("diff") },
+      activeGroup: "1",
+    };
+    const out = sanitizeDockviewLayout(layout, KNOWN) as { grid: Record<string, unknown> };
+    expect("maximizedNode" in out.grid).toBe(false);
+    // The rest of the grid survives untouched.
+    expect(out.grid.root).toEqual(layout.grid.root);
+  });
+
   it("returns null when nothing usable remains or the shape is foreign", () => {
     const layout = {
       grid: { root: leaf("1", ["search"]) },

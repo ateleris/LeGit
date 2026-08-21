@@ -4,6 +4,7 @@ import { useSettingsStore, UI_FONT_SIZE_DEFAULT } from "../store/settings";
 import { useRepoStore } from "../store/repos";
 import { useSummonStore } from "../store/summon";
 import { useGlobalRegionStore } from "../store/globalRegion";
+import { exitMaximizedPanel, isUnclaimedEscape, toggleMaximizeActivePanel } from "../store/dockview";
 import { useGitLogStore } from "../store/gitLog";
 import { useConsoleStore } from "../store/console";
 import { useRemoteProgressStore } from "../store/remoteProgress";
@@ -137,6 +138,23 @@ export function AppLayout() {
     }
     prevActiveRepo.current = activeRepoId;
   }, [activeRepoId]);
+
+  // Ctrl+Shift+M toggles focus mode: maximize the active panel's group over
+  // its whole dock region, press again (or navigate anywhere else) to restore.
+  // Escape also exits it, but only when nothing else claimed the keypress
+  // (see isUnclaimedEscape) and something is actually maximized.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === "m" && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        toggleMaximizeActivePanel();
+      } else if (isUnclaimedEscape(e) && exitMaximizedPanel()) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const [placement, setPlacementState] = useState<RegionPlacement>("left");
   // Collapse state lives in a store (not component state) so actions outside

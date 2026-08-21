@@ -12,6 +12,13 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- Temporarily maximize a panel: Ctrl+Shift+M or View menu expands the active
+  panel's group over the whole dock area; the same action, Esc, or navigating
+  to another panel restores the previous layout. Maximization is never saved
+  as the resting layout.
+
 ### Changed
 
 - GitHub release notes now carry the version's changelog section instead of

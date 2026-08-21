@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { CheckIcon } from "../icons";
-import { useDockviewStore } from "../store/dockview";
+import { hasMaximizedPanel, toggleMaximizeActivePanel, useDockviewStore } from "../store/dockview";
 import { notify } from "../store/notifications";
 import { GLOBAL_PANELS, REPO_PANELS } from "./registry";
 import { buildDefaultGlobalLayout, summonGlobalPanel } from "./GlobalDock";
@@ -116,6 +116,17 @@ export function ViewMenu() {
               setOpen(false);
             })
           )}
+          <Separator />
+          {/* Focus mode: maximize the active panel's group over its dock
+              region; exiting restores the previous arrangement. The label is
+              computed when the menu opens (a fresh render), so it always
+              reflects the current state. */}
+          <MenuItem testId="view-menu-maximize" onClick={() => { toggleMaximizeActivePanel(); setOpen(false); }}>
+            <span style={{ display: "flex", justifyContent: "space-between", gap: "2em" }}>
+              <span>{hasMaximizedPanel() ? "Exit maximized panel" : "Maximize panel"}</span>
+              <span style={{ color: "var(--subtle-fg)" }}>Ctrl+Shift+M</span>
+            </span>
+          </MenuItem>
           <Separator />
           <MenuItem onClick={saveAsDefault}>Save as default layout</MenuItem>
           <MenuItem onClick={resetLayouts}>Reset to default layout</MenuItem>

@@ -117,7 +117,12 @@ function LockMenu({
       if (target && !menuRef.current?.contains(target)) onClose();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        // Consumed: closing the popover must not leak to other Escape
+        // listeners (e.g. exiting a maximized panel).
+        e.stopPropagation();
+        onClose();
+      }
     };
     document.addEventListener("mousedown", onMouseDown, { capture: true, signal: controller.signal });
     document.addEventListener("keydown", onKey, { signal: controller.signal });

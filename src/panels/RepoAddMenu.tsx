@@ -63,7 +63,12 @@ export function RepoAddMenu() {
       if (ref.current && !ref.current.contains(e.target as Node)) close();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !cloneBusyRef.current) close();
+      if (e.key === "Escape" && !cloneBusyRef.current) {
+        // Consumed: closing the menu must not leak to other Escape listeners
+        // (e.g. exiting a maximized panel).
+        e.stopPropagation();
+        close();
+      }
     };
     document.addEventListener("mousedown", onDown, { capture: true, signal: controller.signal });
     document.addEventListener("keydown", onKey, { signal: controller.signal });

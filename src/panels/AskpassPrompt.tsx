@@ -91,7 +91,12 @@ function AskpassDialog({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") void cancel();
+      if (e.key === "Escape") {
+        // Consumed: cancelling the prompt must not leak to other Escape
+        // listeners (e.g. exiting a maximized panel).
+        e.stopPropagation();
+        void cancel();
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);

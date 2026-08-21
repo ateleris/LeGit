@@ -49,6 +49,101 @@ export function reapplyPanelConstraints() {
   }
 }
 
+/** Structural subset of `DockviewApi` used by the maximize toggle - kept
+ * minimal so the decision logic is unit-testable with fakes (maximize.test.ts). */
+export interface MaximizeTarget {
+  hasMaximizedGroup(): boolean;
+  exitMaximizedGroup(): void;
+  readonly activePanel:
+    | {
+        readonly api: { maximize(): void };
+        readonly group: { readonly api: { readonly isVisible: boolean } };
+      }
+    | undefined;
+}
+
+/**
+ * Toggle "focus mode" across the two docks: exit whichever dock holds a
+ * maximized group; otherwise maximize the primary dock's active panel group.
+ * Restoring is otherwise dockview's own behaviour - activating another group
+ * (any summon), moving/hiding views, or closing the maximized panel all exit
+ * maximize automatically.
+ *
+ * Guard: never maximize a hidden group (the console group starts collapsed
+ * via setVisible(false)) - dockview does not un-hide the maximized node
+ * itself, so the whole dock would go blank.
+ */
+export function toggleMaximize(
+  primary: MaximizeTarget | null,
+  other: MaximizeTarget | null,
+): "exited" | "maximized" | "noop" {
+  if (exitMaximized(primary, other)) return "exited";
+  const panel = primary?.activePanel;
+  if (!panel || !panel.group.api.isVisible) return "noop";
+  panel.api.maximize();
+  return "maximized";
+}
+
+/**
+ * Toggle-maximize the active panel of the focused dock (the global dock when
+ * DOM focus sits inside its region, else the repo dock). Wired to the
+ * Ctrl+Shift+M shortcut (AppLayout) and the View menu.
+ */
+export function toggleMaximizeActivePanel() {
+  const { globalApi, repoApi } = useDockviewStore.getState();
+  const focusInGlobal = !!document.activeElement?.closest(".legit-global-region");
+  return toggleMaximize(focusInGlobal ? globalApi : repoApi, focusInGlobal ? repoApi : globalApi);
+}
+
+/** Exit whichever dock holds a maximized group. Returns whether one exited. */
+export function exitMaximized(
+  a: Pick<MaximizeTarget, "hasMaximizedGroup" | "exitMaximizedGroup"> | null,
+  b: Pick<MaximizeTarget, "hasMaximizedGroup" | "exitMaximizedGroup"> | null,
+): boolean {
+  for (const dock of [a, b]) {
+    if (dock?.hasMaximizedGroup()) {
+      dock.exitMaximizedGroup();
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Exit focus mode in whichever dock is maximized (the Escape path). */
+export function exitMaximizedPanel(): boolean {
+  const { globalApi, repoApi } = useDockviewStore.getState();
+  return exitMaximized(repoApi, globalApi);
+}
+
+/**
+ * True when a window-level Escape keydown is "unclaimed" and may exit focus
+ * mode. Escape consumers keep it from ever qualifying in one of three ways:
+ * preventDefault (InlineRenameInput, RevPicker), stopPropagation on their
+ * document-level listeners (confirm dialog, askpass prompt, repo-add menu,
+ * lane-lock popover, the Commits quick-jump overlay) - the window listener
+ * never sees those - or by being an editable target (inline branch/stash
+ * editors, the commit search box), rejected here.
+ */
+export function isUnclaimedEscape(e: {
+  key: string;
+  defaultPrevented: boolean;
+  target: unknown;
+}): boolean {
+  if (e.key !== "Escape" || e.defaultPrevented) return false;
+  const el = e.target as { tagName?: unknown; isContentEditable?: unknown } | null;
+  if (el && typeof el.tagName === "string") {
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName)) return false;
+    if (el.isContentEditable === true) return false;
+  }
+  return true;
+}
+
+/** Whether either dock currently has a maximized group (View menu label). */
+export function hasMaximizedPanel(): boolean {
+  const { globalApi, repoApi } = useDockviewStore.getState();
+  return !!(repoApi?.hasMaximizedGroup() || globalApi?.hasMaximizedGroup());
+}
+
 interface DockviewStore {
   /** Global dock API (Repositories, Theme Editor, Global Settings). */
   globalApi: DockviewApi | null;

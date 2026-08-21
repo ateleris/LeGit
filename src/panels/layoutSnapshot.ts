@@ -140,9 +140,15 @@ export function sanitizeDockviewLayout(
   const root = sanitizeNode((layout.grid as { root?: Node }).root);
   if (!root) return null;
 
+  // A layout serialized while a group was maximized carries a `maximizedNode`
+  // marker that fromJSON re-applies. Maximization is a transient focus mode,
+  // never the resting layout, so it must not survive a restore.
+  const grid: Record<string, unknown> = { ...(layout.grid as object), root };
+  delete grid.maximizedNode;
+
   const result: Record<string, unknown> = {
     ...layout,
-    grid: { ...(layout.grid as object), root },
+    grid,
     panels: Object.fromEntries(Object.entries(panels).filter(([id]) => usedViews.has(id))),
   };
   if (typeof layout.activeGroup === "string" && !groupIds.has(layout.activeGroup)) {
