@@ -382,6 +382,27 @@ button.legit-region-divider__toggle:hover {
   background: var(--button-hover-bg);
   border-color: var(--panel-border);
 }
+/* One shared height for every control in the actions cluster: the bare text
+   triggers (overflow, View) and the .legit-tabs__icon buttons otherwise
+   differ (the icons have no vertical padding and a larger glyph font).
+   Font-derived (26px at the default 12px base). Direct children only - the
+   dropdown menus nest deeper and their item buttons keep their own metrics. */
+.legit-tabs__actions > button,
+.legit-tabs__actions > div > button {
+  height: calc(var(--ui-font-size) * 2 + 2px);
+  display: inline-flex;
+  align-items: center;
+}
+/* The menu triggers (overflow, +, View) sit inside position:relative wrapper
+   divs. Flex-center the button there too - as an inline-level box it would
+   baseline-align inside the wrapper's line box, sitting ~1px off compared to
+   the directly flex-centered icon buttons (and the offset varies with the
+   button's content: SVG icon vs text). The dropdowns are absolutely
+   positioned, so the flex display doesn't affect them. */
+.legit-tabs__actions > div {
+  display: flex;
+  align-items: center;
+}
 
 .legit-tab {
   display: flex;

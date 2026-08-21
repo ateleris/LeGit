@@ -6,6 +6,7 @@ import { useGitProfiles } from "../lib/useGitProfiles";
 import { useRepoStore } from "../store/repos";
 import { notify } from "../store/notifications";
 import { SectionLabel } from "./Commits/menu/primitives";
+import { AddRepoIcon } from "../icons";
 import { CloneForm, InitForm } from "./Repositories/forms";
 
 const RECENTS_SHOWN = 5;
@@ -98,7 +99,7 @@ export function RepoAddMenu() {
         aria-label="Add repository"
         title="Add repository (open / clone / init)"
       >
-        +
+        <AddRepoIcon />
       </button>
       {open && (
         <div

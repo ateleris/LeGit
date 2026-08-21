@@ -87,6 +87,8 @@ export const ExternalEditorIcon = withDefaults(SquarePen, "ExternalEditorIcon");
  *  folder instead) - the icon must not promise an editor. */
 export const FolderIcon = withDefaults(Folder, "FolderIcon");
 export const RemotePageIcon = withDefaults(Globe, "RemotePageIcon");
+/** Repo tab bar "add repository" trigger (open / clone / init). */
+export const AddRepoIcon = withDefaults(Plus, "AddRepoIcon");
 export const FetchIcon = withDefaults(RefreshCw, "FetchIcon");
 export const PullIcon = withDefaults(ArrowDownToLine, "PullIcon");
 export const PushIcon = withDefaults(ArrowUpToLine, "PushIcon");

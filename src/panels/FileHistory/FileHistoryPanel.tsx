@@ -22,6 +22,7 @@ import {
 } from "../Commits/menu/PanelContextMenu";
 import { MenuItem, SectionLabel, Separator } from "../Commits/menu/primitives";
 import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
+import { OpenInEditorMenuItem } from "../shared/OpenInEditorMenuItem";
 
 /** Page size for the history walk; a "Load more" footer fetches the next page. */
 const PAGE_SIZE = 200;
@@ -265,6 +266,10 @@ function HistoryRow({
           Diff in this commit
         </MenuItem>
         <CopyPathMenuSection path={entry.path} onClose={closeMenu} />
+        {/* Opens the current working-tree file (not the content at this
+            commit); uses the entry's path, which for pre-rename entries may
+            no longer exist - the launch failure surfaces as a toast. */}
+        <OpenInEditorMenuItem path={entry.path} onClose={closeMenu} />
         <Separator />
         <MenuItem
           onClick={() => {

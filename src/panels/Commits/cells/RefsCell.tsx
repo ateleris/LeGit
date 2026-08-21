@@ -631,6 +631,27 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
 const POPOVER_W = 280;
 const POPOVER_H_ESTIMATE = 120;
 
+/**
+ * Layout of the "+N" overflow popover. Exported for the regression test
+ * (2026-08-20 screenshot): as a flex-wrap ROW the popover kept its pre-wrap
+ * line width once chips wrapped (a wrapped box never shrinks back to its
+ * longest line), leaving a large empty area right of the chips. A COLUMN at
+ * `max-content` width shrink-fits the widest chip instead - one chip per
+ * row, width always content-tight. `maxWidth` still caps runaway ref names
+ * (the chips ellipsize against it via `maxWidth: 100%` + ChipLabel), and
+ * `maxHeight` + scroll keeps a commit with dozens of refs on screen.
+ */
+export const OVERFLOW_POPOVER_LAYOUT: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "flex-start",
+  gap: 4,
+  width: "max-content",
+  maxWidth: POPOVER_W,
+  maxHeight: "60vh",
+  overflowY: "auto",
+};
+
 /** Panel listing the ref chips that didn't fit on the row's single line. */
 function OverflowPopover({
   x,
@@ -679,17 +700,13 @@ function OverflowPopover({
         position: "fixed",
         left,
         top,
-        maxWidth: POPOVER_W,
+        ...OVERFLOW_POPOVER_LAYOUT,
         background: "var(--panel-bg, #1e1e1e)",
         border: "1px solid var(--panel-border, rgba(255,255,255,0.12))",
         borderRadius: 4,
         padding: 8,
         zIndex: 9999,
         boxShadow: "0 4px 12px var(--shadow-color)",
-        display: "flex",
-        flexWrap: "wrap",
-        gap: 4,
-        alignItems: "center",
       }}
     >
       {children}

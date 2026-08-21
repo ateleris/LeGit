@@ -56,18 +56,6 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
      keep it subtle, no big donation button above the fold. Fold into the
      same README pass as the screenshots.
 
-4. **Ref-chip overflow popover: wrong width when chips wrap** (2026-08-20,
-   screenshot on record). The Commits panel's "+N" ref-overflow popover
-   (RefsCell) sizes itself wider than its content when the chips wrap onto
-   multiple lines - the box keeps the pre-wrap line width, leaving a large
-   empty area right of the stacked chips. Classic CSS wrap behavior (a
-   wrapped box does not shrink-to-fit its longest line). Likely fix: lay the
-   overflow chips out as a column (one chip per row) with
-   `width: max-content` on the popover, or measure/cap the width to the
-   widest chip instead of letting flex-wrap decide. Promoted from "Known
-   bugs" 2026-08-20: a known, cheaply fixable visual bug in the flagship
-   panel should not ship in the first public release.
-
 Decided and recorded, no action:
 - **Git is not bundled** (trade study
   `design/2026-07-07-bundled-git-trade-study.md`; revisit trigger +
@@ -101,8 +89,7 @@ Decided and recorded, no action:
 
 ## Known bugs
 
-(none currently - the ref-chip popover width bug was promoted to release
-blocker 4.)
+(none currently)
 
 ## Git features (missing vs a normal client)
 
@@ -167,6 +154,25 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   selection state + context-menu plumbing; the backends are largely present.
 
 ## Smaller follow-ups
+
+- **Settings sync via a user-configured URL** (2026-08-21). Let the user
+  point LeGit at a location where its settings are stored, so one
+  configuration can be shared across installations and across users (a
+  team distributing a common setup). Today everything is local:
+  `<app-data>/global-settings.json`, `repos/<hash>/settings.json`, themes,
+  column preferences, and the dock layouts (localStorage). Open design
+  questions before building: what the "URL" is (an HTTP(S) endpoint LeGit
+  GETs/PUTs, a git repo it pulls, a WebDAV share, or just a file path on a
+  network drive - a plain file/dir path covers the team case with zero
+  server code and may be the right v1); which settings are shareable vs
+  machine-bound (editor command template, UI font size, and repo settings
+  keyed by local path hashes do not travel; themes and column prefs do);
+  read-only "inherit from URL, override locally" vs true two-way sync
+  (two-way needs conflict handling - last-write-wins with a timestamp is
+  probably enough); and auth for a remote endpoint (LeGit stores no
+  secrets, so anything beyond an unauthenticated GET needs the keychain
+  broker). A layered read path (defaults -> synced -> local overrides)
+  fits the existing `Option<T> + serde(default)` settings convention.
 
 - **Files panel:** untrack a folder (`rm_cached` needs `-r` for a
   directory); persist view mode / show-ignored (ephemeral component state
@@ -233,9 +239,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   local + remote lists (substring on the short name, keep folder groups),
   Esc clears. The grouped/folder view helps but doesn't replace typing
   "fix/".
-- **"Open in editor" on more file rows.** Shipped for Files / Working
-  Changes / Changed Files (shared `OpenInEditorMenuItem`); File History
-  and Compare share `CopyPathMenuSection` and could get the same entry.
 - **E2E extensions.** Still open: clone-via-"+"-menu flow, and push/pull
   against a local bare-remote fixture (`buildRemoteFixture`). Keep it a
   small smoke suite; Linux-only remains fine.

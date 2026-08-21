@@ -8,6 +8,7 @@ import { applyPanelConstraints, useDockviewStore } from "../store/dockview";
 import { useGlobalRegionStore } from "../store/globalRegion";
 import { GLOBAL_DOCKVIEW_COMPONENTS, GLOBAL_DOCKVIEW_TAB_COMPONENTS, GLOBAL_PANELS, PANEL_TITLES } from "./registry";
 import { applyBakedGlobalLayout, applyGlobalLayoutJson } from "./layoutSnapshot";
+import { DockWatermark } from "./shared/DockWatermark";
 
 const LAYOUT_KEY = "legit.global-dock-layout";
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -47,6 +48,7 @@ export function GlobalDock() {
       <DockviewReact
         components={GLOBAL_DOCKVIEW_COMPONENTS}
         tabComponents={GLOBAL_DOCKVIEW_TAB_COMPONENTS}
+        watermarkComponent={DockWatermark}
         onReady={onReady}
         className="dockview-theme-abyss"
       />

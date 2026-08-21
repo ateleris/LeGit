@@ -11,6 +11,7 @@ import { useSummonStore } from "../store/summon";
 import { validateTheme } from "../theme/validate";
 import { PANEL_TITLES, REPO_DOCKVIEW_COMPONENTS, REPO_DOCKVIEW_TAB_COMPONENTS, REPO_PANELS } from "./registry";
 import { applyBakedRepoLayout, applyRepoLayoutEnvelope, capturePlacements, parseRepoLayoutEnvelope } from "./layoutSnapshot";
+import { DockWatermark } from "./shared/DockWatermark";
 
 const LAYOUT_KEY = "legit.repo-dock-layout";
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -125,6 +126,7 @@ export function RepoDock() {
       <DockviewReact
         components={REPO_DOCKVIEW_COMPONENTS}
         tabComponents={REPO_DOCKVIEW_TAB_COMPONENTS}
+        watermarkComponent={DockWatermark}
         onReady={onReady}
         className="dockview-theme-abyss"
       />
