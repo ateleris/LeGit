@@ -137,6 +137,15 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 
 ## Smaller follow-ups
 
+- **Auto-update: on-startup check behind a setting** (the open remainder of
+  the in-app updater, which SHIPPED 2026-08-21: `tauri-plugin-updater` +
+  `tauri-plugin-process`, signing keys in repo secrets, `latest.json` via
+  `tauri-action`, "Check for updates" button in Global Settings → About -
+  see RELEASING.md). Wanted later: an optional periodic/startup check
+  (global setting, default off or on?) that surfaces "update available" as
+  a toast or a subtle chip instead of requiring the manual button. Also
+  worth considering then: a nicer changelog display (release notes from the
+  GitHub release body) in the update prompt.
 - **Settings sync via a user-configured URL** (2026-08-21). Let the user
   point LeGit at a location where its settings are stored, so one
   configuration can be shared across installations and across users (a

@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "./App";
 import { initWindowFocusTracking } from "./lib/windowFocus";
+import { installCrashLogging } from "./lib/crashLog";
 // Vendor styles first: global.css overrides dockview's theme variables at
 // equal specificity, so cascade order decides who wins (cssImportOrder.test.ts).
 import "dockview-react/dist/styles/dockview.css";
@@ -23,6 +24,10 @@ document.addEventListener("contextmenu", (e) => {
 // Focus comes from Tauri's window events (not the WebView's visibility, which
 // misses alt-tab); it gates watcher refetches and drives the focus catch-up.
 initWindowFocusTracking();
+
+// Uncaught errors + unhandled rejections forward into the backend's
+// persistent log file, so frontend breakage survives a crash report.
+installCrashLogging();
 
 const queryClient = new QueryClient({
   defaultOptions: {

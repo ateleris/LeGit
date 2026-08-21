@@ -1,4 +1,7 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { confirmDialog } from "../../store/confirm";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
 import { LinkIcon, UnlinkIcon, WarningIcon } from "../../icons";
@@ -14,7 +17,8 @@ import { formatAppError } from "../../lib/types";
 import type { ConfigScope, LineEndingsView, PushRecurseMode, RegionPlacement, SwitchDirtyBehavior } from "../../lib/types";
 import type { CommitDateFormat } from "../../lib/time";
 import { coerceRefsSortMode, type RefsSortMode } from "../../lib/refSort";
-import { globalLineEndingsView, globalWriteLineEndings, setLineEndingChipsInChanges, setWarnOnLineEndingCommit } from "../../lib/commands";
+import { globalLineEndingsView, globalWriteLineEndings, openLogDir, setLineEndingChipsInChanges, setWarnOnLineEndingCommit } from "../../lib/commands";
+import { notify } from "../../store/notifications";
 import { useGitStatusStore } from "../../store/git-status";
 import { GlobalProfilesSection } from "./GlobalProfilesSection";
 import { GlobalGitConfigSection } from "./GlobalGitConfigSection";
@@ -188,9 +192,102 @@ export function GlobalSettingsPanel() {
 
 function AboutSection() {
   const version = useAppVersion();
+  const { busy, run } = useDelayedBusy();
+  // Inline status next to the button (settings-form errors stay adjacent to
+  // their input; only genuinely async surprises go to toasts).
+  const [status, setStatus] = useState<{ error: boolean; text: string } | null>(null);
+
+  const checkForUpdates = () =>
+    void run(async () => {
+      setStatus(null);
+      try {
+        const update = await check();
+        if (!update) {
+          setStatus({ error: false, text: "You are on the latest version." });
+          return;
+        }
+        // Workflow prompt (decision after an async step): always shown,
+        // deliberately NOT gated by the destructive-confirmation setting.
+        const install = await confirmDialog({
+          title: "Update available",
+          message: `LeGit v${update.version} is available (you have v${version ?? "?"}). Download and install it now?`,
+          confirmLabel: "Download & install",
+          danger: false,
+        });
+        if (!install) {
+          setStatus({ error: false, text: `v${update.version} is available - not installed.` });
+          return;
+        }
+        let total = 0;
+        let received = 0;
+        await update.downloadAndInstall((e) => {
+          if (e.event === "Started") {
+            total = e.data.contentLength ?? 0;
+            setStatus({ error: false, text: "Downloading…" });
+          } else if (e.event === "Progress") {
+            received += e.data.chunkLength;
+            if (total > 0) {
+              setStatus({ error: false, text: `Downloading… ${Math.round((received / total) * 100)}%` });
+            }
+          } else if (e.event === "Finished") {
+            setStatus({ error: false, text: "Installing…" });
+          }
+        });
+        setStatus({ error: false, text: `v${update.version} installed - restart to apply.` });
+        const restart = await confirmDialog({
+          title: "Restart LeGit",
+          message: `LeGit v${update.version} is installed. Restart now to apply it?`,
+          confirmLabel: "Restart now",
+          cancelLabel: "Later",
+          danger: false,
+        });
+        if (restart) await relaunch();
+      } catch (e) {
+        // Typical here: no network, no published release yet, or a .deb
+        // install (the updater covers .msi/NSIS/.AppImage/.app only).
+        setStatus({ error: true, text: `Update check failed: ${formatAppError(e)}` });
+      }
+    });
+
   return (
     <Section title="About">
       <Row label="LeGit" value={version ? `v${version}` : "…"} />
+      <Row
+        label="Logs"
+        value={
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Button
+              onClick={() => openLogDir().catch((e) => notify.error(formatAppError(e)))}
+              title="Open the folder holding LeGit's log files (attach the newest one to a bug report)"
+            >
+              Open log folder
+            </Button>
+          </div>
+        }
+      />
+      <Row
+        label="Updates"
+        value={
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <Button onClick={checkForUpdates} disabled={busy}>
+              {busy ? "Checking…" : "Check for updates"}
+            </Button>
+            {status && (
+              <span
+                style={{
+                  fontSize: "var(--fz-sm)",
+                  color: status.error ? "var(--status-deleted)" : "var(--subtle-fg)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {status.text}
+              </span>
+            )}
+          </div>
+        }
+      />
     </Section>
   );
 }

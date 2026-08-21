@@ -50,7 +50,9 @@
     "licenseFile": "../LICENSE",
     "shortDescription": "A free, cross-platform Git GUI",
     "longDescription": "LeGit — community-driven Git GUI with first-class Linux support and colorblind-friendly theming.",
-    "resources": { "../themes/*.legit-theme.json": "themes/" },
+    "resources": {
+      "../themes/*.legit-theme.json": "themes/"
+    },
     "windows": {
       "wix": {
         "upgradeCode": "60af9dc1-85b5-5b4f-bdac-58610790074f"
@@ -58,6 +60,15 @@
       "nsis": {
         "installMode": "currentUser"
       }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM2MTk4MTRFQTFFQzM5RkIKUldUN09leWhUb0VaeHNob3pCZmZaNmNlaExTU1QvVWRqM0haM3JQdU9EelZJajJNV3R1V0hkR0kK",
+      "endpoints": [
+        "https://github.com/ateleris/LeGit/releases/latest/download/latest.json"
+      ]
     }
   }
 }

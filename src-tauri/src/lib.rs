@@ -8,6 +8,7 @@ mod commands;
 mod credentials;
 mod error;
 mod git_resolve;
+mod logging;
 mod state;
 mod watcher;
 
@@ -16,7 +17,6 @@ use std::path::PathBuf;
 use state::{GlobalSettings, AppState};
 use tauri::{Emitter, Manager};
 use tauri_specta::{collect_commands, Builder};
-use tracing_subscriber::EnvFilter;
 
 /// Event carrying one parsed `--progress` update for an in-flight remote op
 /// (fetch/pull/push/clone), keyed by the frontend-minted operation id.
@@ -34,9 +34,11 @@ pub fn run() {
     // and exit - no tracing, no Tauri, no state.
     credentials::maybe_run_credential_helper();
 
-    init_tracing();
+    logging::init_tracing();
 
     let specta_builder = Builder::<tauri::Wry>::new().commands(collect_commands![
+        logging::frontend_log,
+        logging::open_log_dir,
         commands::open_repo,
         commands::repo_init,
         commands::repo_clone,
@@ -278,6 +280,8 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(specta_builder.invoke_handler())
         .setup(move |app| {
             specta_builder.mount_events(app);
@@ -398,22 +402,3 @@ fn load_global_settings_sync(path: &std::path::Path) -> GlobalSettings {
     }
 }
 
-fn init_tracing() {
-    // Dev builds keep verbose per-crate tracing (every git invocation is
-    // traced); release builds default to plain `info`. Release binaries run
-    // with `windows_subsystem = "windows"` (no console), so stdout logging
-    // is discarded anyway - the quiet default avoids paying the formatting
-    // cost per event. `RUST_LOG` stays as the override for field debugging.
-    let default_filter = if cfg!(debug_assertions) {
-        "info,legit_core=debug,legit_app_lib=debug"
-    } else {
-        "info"
-    };
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(default_filter));
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(true)
-        .with_thread_ids(false)
-        .try_init();
-}

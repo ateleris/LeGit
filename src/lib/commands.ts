@@ -1038,6 +1038,15 @@ export const setLaneLock = (repoId: string, refName: string, laneIndex: number) 
 export const unsetLaneLock = (repoId: string, refName: string) =>
   invoke<LaneLock[]>("unset_lane_lock", { repoId, refName });
 
+// --- logging / crash capture ---
+
+/** Forward a frontend error into the backend's persistent log file. */
+export const frontendLog = (level: "error" | "warn" | "info", message: string) =>
+  invoke<null>("frontend_log", { level, message });
+
+/** Open the log directory in the OS file manager. */
+export const openLogDir = () => invoke<null>("open_log_dir");
+
 // --- column preferences ---
 
 export const saveColumnPreferences = (prefs: unknown) =>

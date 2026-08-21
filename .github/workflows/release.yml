@@ -37,6 +37,15 @@ jobs:
             echo "Version mismatch — bump the sources (see RELEASING.md), retag, and push again."
             exit 1
           fi
+          # Changelog rule (2026-08-21): every release from v1.0.0 on must
+          # have a "## [X.Y.Z]" section in CHANGELOG.md. Pre-1.0 tags skip
+          # the check.
+          if [ "$(printf '%s\n' '1.0.0' "$TAG" | sort -V | head -n1)" = "1.0.0" ]; then
+            if ! grep -qF "## [$TAG]" CHANGELOG.md; then
+              echo "::error file=CHANGELOG.md::no '## [$TAG]' section — every release from 1.0.0 on must ship a changelog entry (see RELEASING.md)"
+              exit 1
+            fi
+          fi
 
   release:
     name: Build ${{ matrix.label }}

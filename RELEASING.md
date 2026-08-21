@@ -8,12 +8,17 @@ LeGit uses Tauri's built-in bundler. Each platform must be built natively — cr
 2. Update `Cargo.toml` → `[workspace.package] version = "0.9.0"`
 3. Update `src-tauri/tauri.conf.json` → `"version": "0.9.0"`
 4. Update `package.json` → `"version": "0.9.0"`
-5. Smoke-test **upgrade over the previous version** on Windows: with the
+5. Update `CHANGELOG.md`: move the `[Unreleased]` items under a
+   `## [0.9.0] - YYYY-MM-DD` heading. **Mandatory for every release from
+   v1.0.0 on** — the `verify-version` job fails a `>= 1.0.0` tag whose
+   version has no `## [X.Y.Z]` section (exact bracketed form). Optional but
+   encouraged before 1.0.
+6. Smoke-test **upgrade over the previous version** on Windows: with the
    previous release installed, run the new NSIS `.exe` — it must replace the
    old install (one entry in Apps, new version, `themes/` intact). See
    "Windows upgrade behaviour" below for the cross-format caveats.
-6. Commit: `git commit -am "chore: bump version to 0.9.0"`
-7. Tag: `git tag v0.9.0`
+7. Commit: `git commit -am "chore: bump version to 0.9.0"`
+8. Tag: `git tag v0.9.0`
 
 The release workflow refuses to build if the tag disagrees with any of the
 three version files (`verify-version` job in `release.yml`) — a forgotten bump
@@ -31,9 +36,21 @@ git push origin v0.9.0
 ```
 
 Then: repo → **Releases** → the drafted **LeGit v0.9.0** → review the notes and
-assets → **Publish**. No secrets beyond the default `GITHUB_TOKEN` are needed
-(builds are unsigned). Matrix: Windows (`.msi` + NSIS `.exe`), macOS
+assets → **Publish**. While reviewing, replace the generic draft body with the
+version's `CHANGELOG.md` section so the release notes carry the changelog. Matrix: Windows (`.msi` + NSIS `.exe`), macOS
 Apple Silicon **and** Intel (`.dmg`), Linux (`.deb` + `.AppImage`).
+
+Secrets: `GITHUB_TOKEN` (default) plus the **updater signing key** -
+`TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (repo
+secrets, added 2026-08-21; the private key lives with Simon, the matching
+pubkey is in `tauri.conf.json`). With those set, `tauri-action` signs the
+update artifacts and attaches `latest.json` to the release - the in-app
+**Check for updates** (Global Settings → About) reads
+`releases/latest/download/latest.json`, so updates go live exactly when the
+draft is published. Auto-update covers `.msi`/NSIS, `.AppImage`, and the
+macOS `.app`; `.deb` installs update via the package file as before. This
+updater signature is Tauri's own integrity scheme - the builds remain
+OS-unsigned (SmartScreen/Gatekeeper unchanged).
 
 ## Building manually (fallback)
 

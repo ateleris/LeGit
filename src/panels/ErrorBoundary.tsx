@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { logRenderError } from "../lib/crashLog";
 
 interface Props {
   children: ReactNode;
@@ -20,6 +21,8 @@ export class ErrorBoundary extends Component<Props, State> {
 
   override componentDidCatch(error: Error, info: ErrorInfo) {
     console.error("LeGit render error:", error, info.componentStack);
+    // Also persist it: the console is gone after a crash/restart.
+    logRenderError(error, info.componentStack);
   }
 
   override render() {
