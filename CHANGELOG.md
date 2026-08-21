@@ -12,6 +12,10 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+(nothing yet)
+
+## [1.0.1] - 2026-08-21
+
 ### Fixed
 
 - Crash ("Something went wrong", React errors 300/310) when closing the last
