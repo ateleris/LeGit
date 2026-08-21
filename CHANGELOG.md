@@ -12,7 +12,10 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
-(nothing yet)
+### Fixed
+
+- Crash ("Something went wrong", React errors 300/310) when closing the last
+  repository or opening one afterwards while panels are open.
 
 ## [1.0.0] - 2026-08-21
 

@@ -1004,6 +1004,15 @@ export function CommitsPanel() {
     []
   );
 
+  // Type-to-jump quick search state (used further below): declared BEFORE the
+  // no-repo early return - the panel stays mounted when the last repo closes,
+  // so a hook below that return changes the hook count across the transition
+  // and crashes the tree (React errors 300/310; see CommitsPanel.test.tsx).
+  const quickBufferRef = useRef("");
+  const lastQuickQueryRef = useRef("");
+  const quickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [quickOverlay, setQuickOverlay] = useState<string | null>(null);
+
   if (!repo) {
     return (
       <div className="legit-panel">
@@ -1082,11 +1091,7 @@ export function CommitsPanel() {
   // label matches; Alt+Down/Up steps through matches (also after the typing
   // buffer expired - `lastQuickQuery` persists), Esc dismisses. Purely
   // client-side over the loaded rows; the toolbar filter covers full history.
-  const quickBufferRef = useRef("");
-  const lastQuickQueryRef = useRef("");
-  const quickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [quickOverlay, setQuickOverlay] = useState<string | null>(null);
-
+  // (State hooks live above the no-repo early return.)
   const showQuickOverlay = (text: string) => {
     setQuickOverlay(text);
     if (quickTimerRef.current) clearTimeout(quickTimerRef.current);

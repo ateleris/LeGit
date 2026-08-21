@@ -104,17 +104,20 @@ export function OpStateBanner({
     },
   });
 
-  if (opState.kind === "none") return null;
-  const kind = opState.kind;
-  const meta = OP_META[kind];
-
   // A genuinely new op state re-enables the banner (e.g. rebase continue
   // advancing to the next conflicted step). React-query structurally shares
   // unchanged data, so this fires only when the state actually changed.
+  // Hooks must stay ABOVE the "none" early return: a mounted banner
+  // re-rendering into "none" would otherwise drop a hook and crash the
+  // tree (React errors 300/310; see OpStateStrip.test.tsx).
   useEffect(() => {
     release();
     setConfirmingAbort(false);
   }, [opState, release]);
+
+  if (opState.kind === "none") return null;
+  const kind = opState.kind;
+  const meta = OP_META[kind];
 
   const target =
     opState.kind === "merge"

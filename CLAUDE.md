@@ -154,6 +154,13 @@ project memory for details.
 ## Conventions
 
 - **Never commit or push without the user's explicit command.**
+- **Every user-visible change gets a bullet in CHANGELOG.md's
+  `## [Unreleased]` section** (fixes, features, behaviour changes - not pure
+  refactors, tests, or docs), so a release can be cut at any time. Keep
+  entries tight: one bullet per change, one line if possible, phrased for
+  users ("Fixed crash when closing the last repo"), not implementation
+  detail. Group under the Keep-a-Changelog headings (Added / Changed /
+  Fixed) as the section grows.
 - **Every colour anywhere in the UI must resolve from a theme token — no
   exceptions.** The litmus test: a user theme must be able to turn the entire
   app fully white or fully black. Concretely:
