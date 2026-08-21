@@ -4443,3 +4443,237 @@ async fn clone_target_directory_assumptions() {
     );
     assert!(empty.join(".git").exists());
 }
+
+// ---------------------------------------------------------------------------
+// Option-like ref names (argument injection) - real git
+// ---------------------------------------------------------------------------
+
+/// Encodes the git behavior the `safe_ref` guard exists for, against the real
+/// binary, in three steps: such a ref CAN exist, it DOES reach the UI, and it
+/// must never reach a `rebase` argv.
+///
+/// `git rebase` has `--exec=<cmd>`, which runs `<cmd>` through a shell for
+/// every rebased commit. A refname may not contain a space, but `$IFS`
+/// supplies one, so `--exec=git$IFStag$IFSLEGIT_PWNED` is a complete payload
+/// in a legal refname. `git update-ref` accepts such a name (git's refname
+/// rules do not forbid a leading dash), `git clone` copies `refs/tags/*`
+/// verbatim, and a remote whose `HEAD` points at such a branch even makes
+/// clone create and check out a LOCAL branch with that name - so the value
+/// arrives with the repository, and "Rebase onto" in the ref's own context
+/// menu used to run it. Pre-fix, the rebase succeeded and created the
+/// `LEGIT_PWNED` tag.
+#[tokio::test]
+async fn option_like_ref_never_reaches_rebase_exec() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("one").await;
+    let payload = "--exec=git$IFStag$IFSLEGIT_PWNED";
+
+    // 1. Git itself accepts the refname: this is a real repository state, not
+    //    a hypothetical.
+    repo.git(&["update-ref", &format!("refs/tags/{payload}"), "HEAD"])
+        .await;
+    repo.write("a.txt", "two\n");
+    repo.commit_all("two").await;
+
+    // 2. It reaches the UI like any other tag, so the user can act on it.
+    let tags = repo.backend.tags().await.expect("tags");
+    assert!(
+        tags.iter().any(|t| t.name == payload),
+        "the option-like tag must be listed like any other: {tags:?}"
+    );
+
+    // 3. Acting on it is refused before git runs, and nothing executed.
+    let err = repo.backend.rebase(payload).await.expect_err("must refuse");
+    assert!(
+        matches!(err, GitError::UnsafeArgument(_)),
+        "expected UnsafeArgument, got {err:?}"
+    );
+    let pwned = repo.git(&["tag", "-l", "LEGIT_PWNED"]).await;
+    assert!(
+        pwned.trim().is_empty(),
+        "the payload RAN: `rebase --exec` executed and created a tag"
+    );
+
+    // The second layer, independent of the guard: even handed straight to
+    // git, `--end-of-options` makes the payload a (nonexistent) REVISION
+    // instead of an option. This is the assumption `rebase_args` encodes.
+    let runner = GitRunner::for_repo("git", &repo.path);
+    let out = runner
+        .run(&["rebase", "--autostash", "--end-of-options", payload])
+        .await
+        .expect("spawn git");
+    // git resolved it as the (existing) tag: a no-op rebase, not an option.
+    // `--exec` announces itself with an "Executing:" line, and it would have
+    // left the tag behind.
+    let combined = format!("{}{}", out.stdout, out.stderr);
+    assert!(
+        !combined.contains("Executing"),
+        "--end-of-options did not stop --exec: {combined}"
+    );
+    let pwned = repo.git(&["tag", "-l", "LEGIT_PWNED"]).await;
+    assert!(
+        pwned.trim().is_empty(),
+        "--end-of-options did not stop --exec: {combined}"
+    );
+}
+
+/// The flip side of the guard: `--end-of-options` must not break the ordinary
+/// path. Every ref-taking command whose argv now carries it still works on a
+/// normal ref (a typo here would break rebase/merge/switch for everyone).
+#[tokio::test]
+async fn end_of_options_does_not_break_normal_refs() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("one").await;
+    let base = repo.head().await;
+    repo.git(&["branch", "feature"]).await;
+    repo.write("a.txt", "two\n");
+    repo.commit_all("two").await;
+
+    // create_tag (lightweight + annotated), then delete_tag
+    repo.backend.create_tag("v1", Some(&base), None).await.expect("tag v1");
+    repo.backend
+        .create_tag("v2", None, Some("release two"))
+        .await
+        .expect("tag v2");
+    let tags = repo.backend.tags().await.expect("tags");
+    assert!(tags.iter().any(|t| t.name == "v1" && !t.annotated), "{tags:?}");
+    assert!(tags.iter().any(|t| t.name == "v2" && t.annotated), "{tags:?}");
+    repo.backend.delete_tag("v1").await.expect("delete tag");
+
+    // create_branch (with and without a start point), switch, rename, delete
+    repo.backend.create_branch("from-base", Some(&base)).await.expect("branch");
+    repo.backend.create_branch("plain", None).await.expect("branch");
+    repo.backend
+        .switch_branch("from-base", SwitchDirtyBehavior::TryDirectly)
+        .await
+        .expect("switch");
+    assert_eq!(repo.head().await, base);
+    repo.backend.rename_branch("plain", "renamed").await.expect("rename");
+    repo.backend.delete_branch("renamed", true).await.expect("delete");
+
+    // checkout_commit (detached), then back to a branch
+    repo.backend
+        .checkout_commit(&base, SwitchDirtyBehavior::TryDirectly)
+        .await
+        .expect("detach");
+    repo.backend
+        .switch_branch("main", SwitchDirtyBehavior::TryDirectly)
+        .await
+        .expect("switch back");
+
+    // merge and rebase across the two lines of history
+    repo.backend
+        .switch_branch("feature", SwitchDirtyBehavior::TryDirectly)
+        .await
+        .expect("switch feature");
+    repo.write("b.txt", "b\n");
+    repo.commit_all("feature work").await;
+    let outcome = repo.backend.rebase("main").await.expect("rebase");
+    assert!(
+        matches!(outcome, RebaseOutcome::Completed),
+        "rebase onto a normal ref must succeed: {outcome:?}"
+    );
+    repo.backend
+        .switch_branch("main", SwitchDirtyBehavior::TryDirectly)
+        .await
+        .expect("switch main");
+    let merged = repo
+        .backend
+        .merge("feature", MergeOptions { ff: legit_core::FfMode::Auto, squash: false })
+        .await
+        .expect("merge");
+    assert!(
+        matches!(merged, MergeOutcome::FastForwarded | MergeOutcome::Merged),
+        "merge of a normal ref must succeed: {merged:?}"
+    );
+    assert!(repo.exists("b.txt"));
+
+    // cherry-pick and revert, reset, and set_upstream's unset path
+    let tip = repo.head().await;
+    repo.backend.revert(&tip, Some(1)).await.expect("revert merge");
+    repo.backend.reset(&tip, ResetMode::Hard).await.expect("reset");
+    // set_upstream, both argv shapes: `--set-upstream-to=<up>` then
+    // `--unset-upstream`. Needs a remote-tracking ref to point at.
+    // `--set-upstream-to` only accepts a ref git considers a remote branch,
+    // which needs the remote (and its fetch refspec) configured.
+    repo.git(&["remote", "add", "origin", "."]).await;
+    repo.git(&["update-ref", "refs/remotes/origin/main", &tip]).await;
+    repo.backend
+        .set_upstream("main", Some("origin/main"))
+        .await
+        .expect("set upstream");
+    repo.backend.set_upstream("main", None).await.expect("unset upstream");
+    repo.git(&["switch", "-c", "pick-target", &base]).await;
+    let pick = repo.git(&["rev-parse", "feature"]).await.trim().to_string();
+    repo.backend.cherry_pick(&pick, None).await.expect("cherry-pick");
+}
+
+/// The two commands that REJECT `--end-of-options`, pinned so a future
+/// "let's add the guard everywhere" pass cannot silently break them (it did,
+/// once: the submodule branch attach stopped checking out anything).
+/// `reset` wants it before non-option arguments and errors; `checkout` takes
+/// it as a PATHSPEC. Both therefore rely on the dash guard alone.
+#[tokio::test]
+async fn reset_and_checkout_reject_end_of_options() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("one").await;
+    repo.git(&["branch", "feature"]).await;
+    let runner = GitRunner::for_repo("git", &repo.path);
+
+    let out = runner
+        .run(&["reset", "--soft", "--end-of-options", "HEAD"])
+        .await
+        .expect("spawn git");
+    assert!(!out.success, "reset accepted --end-of-options: {out:?}");
+    assert!(
+        out.stderr.contains("--end-of-options"),
+        "unexpected reset failure: {}",
+        out.stderr
+    );
+
+    let out = runner
+        .run(&["checkout", "--end-of-options", "feature"])
+        .await
+        .expect("spawn git");
+    assert!(!out.success, "checkout accepted --end-of-options: {out:?}");
+    assert!(
+        out.stderr.contains("pathspec"),
+        "checkout must treat it as a pathspec: {}",
+        out.stderr
+    );
+}
+
+/// The rename lane of `file_diff`: it passes `--find-renames` plus BOTH
+/// paths. That flag now goes in BEFORE the revs, because `--end-of-options`
+/// has to be the last option (after it, git reads `--find-renames` as a
+/// pathspec and the diff comes back empty). Pins the argv ORDER against real
+/// git, which the fake executor cannot judge.
+#[tokio::test]
+async fn file_diff_of_a_rename_still_finds_hunks() {
+    use legit_core::{DiffEntry, DiffSource};
+
+    let repo = TestRepo::init().await;
+    // Enough identical lines that git scores the rename above its threshold.
+    repo.write("old.txt", "a\nb\nc\nd\ne\nf\ng\nh\n");
+    repo.commit_all("add old").await;
+    repo.git(&["mv", "old.txt", "new.txt"]).await;
+    repo.write("new.txt", "a\nb\nC\nd\ne\nf\ng\nh\n");
+    repo.commit_all("rename + edit").await;
+
+    let source = DiffSource::Commit { commit_id: CommitId::new(&repo.head().await) };
+    let entry = repo
+        .backend
+        .file_diff(&source, Path::new("new.txt"), Some(Path::new("old.txt")), 3)
+        .await
+        .expect("file_diff");
+    match entry {
+        DiffEntry::Text(t) => assert!(
+            !t.hunks.is_empty(),
+            "a renamed-and-edited file must still produce hunks (argv order?)"
+        ),
+        other => panic!("expected a text diff, got {other:?}"),
+    }
+}

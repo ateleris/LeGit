@@ -165,6 +165,71 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   `gitignore_line` (a filename containing them would become a glob).
 - **Git Log panel:** filter/search the log, copy a command, jump a toast to
   its specific log entry (today it just opens the panel).
+- **Open new panels into the last-active group instead of splitting the
+  layout** (2026-08-21). A first-time summon falls back to the descriptor's
+  `defaultPlacement` (`summon.ts` "Case 3"), i.e. a `direction` split off a
+  reference panel - which resizes whatever the user had arranged. Panels with
+  no `defaultPlacement` fall further back to a bare `addPanel`, whose position
+  dockview picks. Idea: add the new panel as a TAB in the group that was last
+  active (dockview exposes the active group / `api.activeGroup`), so the
+  arrangement is untouched and the panel appears where the user was looking.
+  Questions to settle: which panels should still split rather than stack (the
+  Diff panel next to the Commits panel is a deliberate side-by-side, and
+  `swapSummon` pairs already share one slot); whether a panel that would land
+  in a group it makes no sense in (e.g. next to the tiny op-state strip) needs
+  a guard; and whether the reference-panel placements in the registry stay as
+  a first-run default while only *later* opens follow the active group. Worth
+  prototyping both and looking at it before committing to one.
+- **View menu: revisit the order of the panel entries** (2026-08-21). The
+  menu renders `GLOBAL_PANELS` then `REPO_PANELS` in *registry declaration
+  order* (`ViewMenu.tsx` maps both arrays as-is), which is roughly the order
+  panels were added rather than anything a user would predict - the repo
+  section opens with Git Console and Git Command Log, two rarely-opened
+  panels. Decide on an intentional order (alphabetical? grouped by what the
+  panel is for - history / working tree / refs / tooling - with separators?
+  most-used first?) and either reorder the registry arrays or give the
+  descriptors an explicit sort/group field. `ALL_PANELS`' only other consumer
+  is a title lookup by id (order-independent), so reordering the arrays looks
+  safe - but grep again before shuffling.
+  (2026-08-21). Both panels show the same thing - a list of changed files
+  you click to open a diff - but they share none of the implementation.
+  `ChangedFilesPanel` uses `shared/FileTree/FileTree`, `useFileRowMetrics`
+  and `shared/segmented`'s `segStyle`, and offers a Tree/Flat toggle;
+  `ComparePanel` uses none of them and re-declares its own copy of the
+  toggle style (the comment there even says "matches the Changed Files
+  Tree/List toggle" - a drift waiting to happen), with no tree view at all.
+  Wanted: Compare renders the same `FileTree` shell (rows, status icons,
+  row metrics, Tree/Flat toggle, keyboard/selection behaviour), so a change
+  to one lands in both. Watch out for the parts that genuinely differ:
+  Changed Files carries staging actions and its own context-menu entries
+  that Compare must not show, and a Compare row opens a two-rev diff rather
+  than a working-tree one - so the shared piece is the list shell with the
+  actions injected per panel.
+- **Temporarily maximize a panel to the whole window** (2026-08-21). A
+  "focus mode" for one panel: expand it over the entire LeGit window
+  (hiding the other groups) while working in it - e.g. resolving a merge in
+  the Merge panel or reading a large diff - then restore the previous layout
+  with one action. Check what dockview already gives us before building
+  anything: it has group maximization (`api.maximizeGroup` /
+  `hasMaximizedGroup` / `exitMaximizedGroup`) plus popout/full-width group
+  concepts, so this may be a thin wrapper over its API rather than a layout
+  of our own. Open questions: whether it maximizes the GROUP (tab strip
+  included) or the single panel; how it interacts with the persisted layout
+  (maximization must never be saved as the resting layout); the restore
+  path when the maximized panel is closed while maximized; a keyboard
+  shortcut plus a View-menu entry; and whether the repo/global dock strips
+  stay visible.
+- **Commits panel: cap the Author / Date / SHA columns at their content
+  width** (2026-08-21). Resizing the panel currently lets those three
+  columns keep growing past what their content needs, so a wide window
+  wastes horizontal space that the Subject column should get. Wanted: a
+  per-column max width derived from the widest rendered value (the SHA is
+  fixed-length, the date has a known format, the author is the variable
+  one), so a column never exceeds its content plus padding and the surplus
+  goes to Subject. Must stay font-size-scaled (measure in `em` /
+  `uiFontSize` units, no fixed px) and must not fight the user's manual
+  column resize - a column the user narrowed stays narrow; the cap only
+  limits growth.
 - **Commits panel: incremental log appending** (decided 2026-07-30). Today
   every window growth (infinite scroll, and the jump-seek) refetches the
   WHOLE window from offset 0 and re-parses it - O(n^2) total work,

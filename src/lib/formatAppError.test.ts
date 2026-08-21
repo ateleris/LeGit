@@ -25,6 +25,23 @@ describe("formatAppError", () => {
     expect(formatAppError(e)).toBe("local changes in f.txt");
   });
 
+  // `GitError::UnsafeArgument` (a ref name that looks like a git option, e.g.
+  // a cloned tag called `--exec=...`) carries the whole explanation as its
+  // string payload - the user must see that sentence, not the variant name.
+  it("shows the refusal message for an option-like ref", () => {
+    const e = {
+      kind: "Git",
+      details: {
+        kind: "UnsafeArgument",
+        details:
+          'Refusing to run git with an option-like branch: "--exec=cmd". ' +
+          "A name starting with '-' would be interpreted as a command-line option.",
+      },
+    };
+    expect(formatAppError(e)).toContain("Refusing to run git with an option-like branch");
+    expect(gitErrorKind(e)).toBe("UnsafeArgument");
+  });
+
   it("labels unit GitError variants readably", () => {
     expect(formatAppError({ kind: "Git", details: { kind: "RewordNotHead" } })).toBe(
       "Only the latest commit (HEAD) can be reworded.",

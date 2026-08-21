@@ -177,7 +177,7 @@ const STASH_PUSH_MSG: &str = "legit: auto-stash before switching to feature";
 #[tokio::test]
 async fn switch_try_directly_runs_only_the_switch() {
     let fake = FakeExecutor::default();
-    fake.expect(&["switch", "feature"], ok(""));
+    fake.expect(&["switch", "--end-of-options", "feature"], ok(""));
     let (b, exec) = backend(fake);
 
     let outcome = b
@@ -201,7 +201,7 @@ async fn switch_auto_stash_dirty_tree_pops_the_created_entry() {
         &["stash", "list", "--format=%H %s"],
         ok(&format!("aaa111 On main: {STASH_PUSH_MSG}\n")),
     );
-    fake.expect(&["switch", "feature"], ok("Switched to branch 'feature'"));
+    fake.expect(&["switch", "--end-of-options", "feature"], ok("Switched to branch 'feature'"));
     fake.expect(&["stash", "list", "--format=%H %gd"], ok("aaa111 stash@{0}\n"));
     fake.expect(&["stash", "pop", "stash@{0}"], ok("Dropped refs/stash@{0}"));
     let (b, exec) = backend(fake);
@@ -231,7 +231,7 @@ async fn switch_auto_stash_ignores_concurrently_created_foreign_stash() {
             "fff999 On main: WIP from another client\naaa111 On main: {STASH_PUSH_MSG}\n"
         )),
     );
-    fake.expect(&["switch", "feature"], ok(""));
+    fake.expect(&["switch", "--end-of-options", "feature"], ok(""));
     fake.expect(
         &["stash", "list", "--format=%H %gd"],
         ok("fff999 stash@{0}\naaa111 stash@{1}\n"),
@@ -265,7 +265,7 @@ async fn switch_auto_stash_clean_tree_never_touches_preexisting_stash() {
         &["stash", "list", "--format=%H %s"],
         ok("zzz999 On main: WIP on main\n"),
     );
-    fake.expect(&["switch", "feature"], ok(""));
+    fake.expect(&["switch", "--end-of-options", "feature"], ok(""));
     // Deliberately NO stash list / pop steps - popping here would eat the
     // user's own stash entry.
     let (b, exec) = backend(fake);
@@ -291,7 +291,7 @@ async fn switch_failure_rolls_the_auto_stash_back() {
         ok(&format!("aaa111 On main: {STASH_PUSH_MSG}\n")),
     );
     fake.expect(
-        &["switch", "feature"],
+        &["switch", "--end-of-options", "feature"],
         fail(128, "fatal: invalid reference: feature"),
     );
     // Rollback: restore the stashed changes onto the original branch.
@@ -321,7 +321,7 @@ async fn switch_failure_with_failed_rollback_reports_both() {
         ok(&format!("aaa111 On main: {STASH_PUSH_MSG}\n")),
     );
     fake.expect(
-        &["switch", "feature"],
+        &["switch", "--end-of-options", "feature"],
         fail(128, "fatal: invalid reference: feature"),
     );
     fake.expect(&["stash", "list", "--format=%H %gd"], ok("aaa111 stash@{0}\n"));
@@ -352,7 +352,7 @@ async fn switch_stash_and_keep_leaves_the_entry_parked() {
         &["stash", "list", "--format=%H %s"],
         ok(&format!("aaa111 On main: {STASH_PUSH_MSG}\n")),
     );
-    fake.expect(&["switch", "feature"], ok(""));
+    fake.expect(&["switch", "--end-of-options", "feature"], ok(""));
     // No pop: the WIP deliberately stays in the stash.
     let (b, exec) = backend(fake);
 
@@ -376,7 +376,7 @@ async fn switch_pop_conflict_is_an_outcome_not_an_error() {
         &["stash", "list", "--format=%H %s"],
         ok(&format!("aaa111 On main: {STASH_PUSH_MSG}\n")),
     );
-    fake.expect(&["switch", "feature"], ok(""));
+    fake.expect(&["switch", "--end-of-options", "feature"], ok(""));
     fake.expect(&["stash", "list", "--format=%H %gd"], ok("aaa111 stash@{0}\n"));
     fake.expect(
         &["stash", "pop", "stash@{0}"],
@@ -403,7 +403,7 @@ async fn checkout_remote_branch_switches_to_existing_local() {
         &["rev-parse", "-q", "--verify", "refs/heads/feature-x"],
         ok("abc123\n"),
     );
-    fake.expect(&["switch", "feature-x"], ok(""));
+    fake.expect(&["switch", "--end-of-options", "feature-x"], ok(""));
     let (b, exec) = backend(fake);
 
     let outcome = b
@@ -426,7 +426,7 @@ async fn checkout_remote_branch_tracks_when_no_local_exists() {
         &["rev-parse", "-q", "--verify", "refs/heads/feature-x"],
         fail(1, ""),
     );
-    fake.expect(&["switch", "--track", "origin/feature-x"], ok(""));
+    fake.expect(&["switch", "--track", "--end-of-options", "origin/feature-x"], ok(""));
     let (b, exec) = backend(fake);
 
     let outcome = b
@@ -444,7 +444,7 @@ async fn checkout_remote_branch_accepts_full_ref_form() {
         &["rev-parse", "-q", "--verify", "refs/heads/feat/nested"],
         fail(1, ""),
     );
-    fake.expect(&["switch", "--track", "origin/feat/nested"], ok(""));
+    fake.expect(&["switch", "--track", "--end-of-options", "origin/feat/nested"], ok(""));
     let (b, exec) = backend(fake);
 
     let outcome = b
@@ -472,9 +472,9 @@ async fn checkout_remote_branch_fast_forwards_existing_local() {
         &["rev-parse", "-q", "--verify", "refs/heads/feature-x"],
         ok("abc123\n"),
     );
-    fake.expect(&["switch", "feature-x"], ok(""));
+    fake.expect(&["switch", "--end-of-options", "feature-x"], ok(""));
     fake.expect(
-        &["merge", "--ff-only", "--no-edit", "origin/feature-x"],
+        &["merge", "--ff-only", "--no-edit", "--end-of-options", "origin/feature-x"],
         ok("Updating abc123..def456\nFast-forward\n a.txt | 1 +\n"),
     );
     let (b, exec) = backend(fake);
@@ -495,9 +495,9 @@ async fn checkout_remote_branch_ff_reports_up_to_date() {
         &["rev-parse", "-q", "--verify", "refs/heads/feature-x"],
         ok("abc123\n"),
     );
-    fake.expect(&["switch", "feature-x"], ok(""));
+    fake.expect(&["switch", "--end-of-options", "feature-x"], ok(""));
     fake.expect(
-        &["merge", "--ff-only", "--no-edit", "origin/feature-x"],
+        &["merge", "--ff-only", "--no-edit", "--end-of-options", "origin/feature-x"],
         ok("Already up to date.\n"),
     );
     let (b, exec) = backend(fake);
@@ -517,9 +517,9 @@ async fn checkout_remote_branch_ff_divergence_is_outcome_not_error() {
         &["rev-parse", "-q", "--verify", "refs/heads/feature-x"],
         ok("abc123\n"),
     );
-    fake.expect(&["switch", "feature-x"], ok(""));
+    fake.expect(&["switch", "--end-of-options", "feature-x"], ok(""));
     fake.expect(
-        &["merge", "--ff-only", "--no-edit", "origin/feature-x"],
+        &["merge", "--ff-only", "--no-edit", "--end-of-options", "origin/feature-x"],
         fail(128, "fatal: Not possible to fast-forward, aborting.\n"),
     );
     let (b, exec) = backend(fake);
@@ -540,9 +540,9 @@ async fn checkout_remote_branch_ff_other_failure_is_outcome_with_message() {
         &["rev-parse", "-q", "--verify", "refs/heads/feature-x"],
         ok("abc123\n"),
     );
-    fake.expect(&["switch", "feature-x"], ok(""));
+    fake.expect(&["switch", "--end-of-options", "feature-x"], ok(""));
     fake.expect(
-        &["merge", "--ff-only", "--no-edit", "origin/feature-x"],
+        &["merge", "--ff-only", "--no-edit", "--end-of-options", "origin/feature-x"],
         fail(
             1,
             "error: Your local changes to the following files would be overwritten by merge:\n\ta.txt\n",
@@ -573,7 +573,7 @@ async fn checkout_remote_branch_ff_skips_merge_for_new_tracking_branch() {
         &["rev-parse", "-q", "--verify", "refs/heads/feature-x"],
         fail(1, ""),
     );
-    fake.expect(&["switch", "--track", "origin/feature-x"], ok(""));
+    fake.expect(&["switch", "--track", "--end-of-options", "origin/feature-x"], ok(""));
     let (b, exec) = backend(fake);
 
     let outcome = b
@@ -860,7 +860,7 @@ async fn stash_branch_resolves_selector_then_branches() {
         &["stash", "list", "--format=%H %gd"],
         ok("other000 stash@{0}\nabc123 stash@{1}\n"),
     );
-    fake.expect(&["stash", "branch", "topic", "stash@{1}"], ok(""));
+    fake.expect(&["stash", "branch", "--end-of-options", "topic", "stash@{1}"], ok(""));
     let (b, exec) = backend(fake);
 
     b.stash_branch("abc123", "topic").await.unwrap();
@@ -874,7 +874,7 @@ async fn stash_branch_dirty_tree_is_would_overwrite() {
     let fake = FakeExecutor::default();
     fake.expect(&["stash", "list", "--format=%H %gd"], ok("abc123 stash@{0}\n"));
     fake.expect(
-        &["stash", "branch", "topic", "stash@{0}"],
+        &["stash", "branch", "--end-of-options", "topic", "stash@{0}"],
         fail(
             1,
             "error: Your local changes to the following files would be overwritten by checkout:\n\ta.txt",
@@ -914,8 +914,8 @@ async fn log_all_branches_and_remotes_walks_remote_refs_too() {
     // (log_lists_children_before_parents_on_equal_timestamps).
     fake.expect(
         &[
-            "log", fmt.as_str(), "--max-count=500", "--date-order",
-            "HEAD", "--branches", "--remotes", "--decorate=full",
+            "log", fmt.as_str(), "--max-count=500", "--date-order", "--decorate=full",
+            "HEAD", "--branches", "--remotes",
         ],
         ok(""),
     );
@@ -972,7 +972,7 @@ async fn log_never_scans_signatures() {
     let fmt = format!("--format={}", parsers::log::LOG_FORMAT);
     let fake = FakeExecutor::default();
     fake.expect(
-        &["log", fmt.as_str(), "--max-count=500", "--date-order", "--decorate=full"],
+        &["log", fmt.as_str(), "--max-count=500", "--date-order", "--decorate=full",],
         ok(&log_record(SIG_SHA_A, "some commit")),
     );
     let (b, exec) = backend(fake);
@@ -1164,11 +1164,11 @@ async fn diff_files_runs_diff_tree_over_the_given_revs() {
     // unlike commit_files.
     let fake = FakeExecutor::default();
     fake.expect(
-        &["diff-tree", "--no-commit-id", "-r", "-M", "-z", "--raw", "main", "feature"],
+        &["diff-tree", "--no-commit-id", "-r", "-M", "-z", "--raw", "--end-of-options", "main", "feature"],
         ok(":100644 100644 aaaaaaa bbbbbbb M\0a.txt\0:000000 100644 0000000 bbbbbbb A\0b.txt\0"),
     );
     fake.expect(
-        &["diff-tree", "--no-commit-id", "-r", "-M", "-z", "--numstat", "main", "feature"],
+        &["diff-tree", "--no-commit-id", "-r", "-M", "-z", "--numstat", "--end-of-options", "main", "feature"],
         ok("1\t1\ta.txt\02\t0\tb.txt\0"),
     );
     let (b, exec) = backend(fake);
@@ -1182,7 +1182,7 @@ async fn diff_files_runs_diff_tree_over_the_given_revs() {
 async fn file_diff_commit_range_passes_both_revs() {
     let fake = FakeExecutor::default();
     fake.expect(
-        &["-c", "diff.submodule=short", "diff", "--no-color", "--no-ext-diff", "-U3", "main", "feature", "--", "a.txt"],
+        &["-c", "diff.submodule=short", "diff", "--no-color", "--no-ext-diff", "-U3", "--end-of-options", "main", "feature", "--", "a.txt"],
         ok("diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-x\n+y\n"),
     );
     let (b, exec) = backend(fake);
@@ -1262,7 +1262,7 @@ async fn interactive_rebase_verifies_the_range_then_injects_the_todo() {
         ok("ccc333 bbb222\nbbb222 aaa111\naaa111 base123\n"),
     );
     fake.expect_env(
-        &["rebase", "-i", "--autostash", "base123"],
+        &["rebase", "-i", "--autostash", "--end-of-options", "base123"],
         &[
             (
                 "GIT_SEQUENCE_EDITOR",
@@ -1375,7 +1375,7 @@ async fn revert_runs_no_edit_and_completes() {
     // an editor for its message would fail outright.
     let fake = FakeExecutor::default();
     fake.expect(
-        &["revert", "--no-edit", "abc123"],
+        &["revert", "--no-edit", "--end-of-options", "abc123"],
         ok("[main 1a2b3c] Revert \"x\""),
     );
     let (b, exec) = backend(fake);
@@ -1389,7 +1389,7 @@ async fn revert_runs_no_edit_and_completes() {
 async fn revert_of_a_merge_passes_the_mainline_parent() {
     let fake = FakeExecutor::default();
     fake.expect(
-        &["revert", "--no-edit", "-m", "1", "abc123"],
+        &["revert", "--no-edit", "-m", "1", "--end-of-options", "abc123"],
         ok("[main 1a2b3c] Revert \"merge x\""),
     );
     let (b, exec) = backend(fake);
@@ -1402,7 +1402,7 @@ async fn revert_of_a_merge_passes_the_mainline_parent() {
 #[tokio::test]
 async fn cherry_pick_of_a_merge_passes_the_mainline_parent() {
     let fake = FakeExecutor::default();
-    fake.expect(&["cherry-pick", "-m", "2", "def456"], ok(""));
+    fake.expect(&["cherry-pick", "-m", "2", "--end-of-options", "def456"], ok(""));
     let (b, exec) = backend(fake);
 
     let outcome = b.cherry_pick("def456", Some(2)).await.unwrap();
@@ -1414,7 +1414,7 @@ async fn cherry_pick_of_a_merge_passes_the_mainline_parent() {
 async fn cherry_pick_conflict_is_an_outcome_not_an_error() {
     let fake = FakeExecutor::default();
     fake.expect(
-        &["cherry-pick", "def456"],
+        &["cherry-pick", "--end-of-options", "def456"],
         out(
             1,
             "Auto-merging a.txt\nCONFLICT (content): Merge conflict in a.txt",
@@ -1492,7 +1492,7 @@ async fn sequencer_empty_result_is_a_paused_outcome() {
 async fn set_upstream_uses_set_upstream_to() {
     let fake = FakeExecutor::default();
     fake.expect(
-        &["branch", "--set-upstream-to=origin/main", "main"],
+        &["branch", "--set-upstream-to=origin/main", "--end-of-options", "main"],
         ok("branch 'main' set up to track 'origin/main'."),
     );
     let (b, exec) = backend(fake);
@@ -1504,7 +1504,7 @@ async fn set_upstream_uses_set_upstream_to() {
 #[tokio::test]
 async fn clear_upstream_uses_unset_upstream() {
     let fake = FakeExecutor::default();
-    fake.expect(&["branch", "--unset-upstream", "main"], ok(""));
+    fake.expect(&["branch", "--unset-upstream", "--end-of-options", "main"], ok(""));
     let (b, exec) = backend(fake);
 
     b.set_upstream("main", None).await.unwrap();
@@ -1655,7 +1655,7 @@ async fn status_survives_a_failing_numstat() {
 #[tokio::test]
 async fn file_at_revision_returns_text_without_a_size_lookup() {
     let fake = FakeExecutor::default();
-    fake.expect(&["show", "abc123:src/main.rs"], ok("fn main() {}\n"));
+    fake.expect(&["show", "--end-of-options", "abc123:src/main.rs"], ok("fn main() {}\n"));
     let (b, exec) = backend(fake);
 
     let content = b
@@ -1671,7 +1671,7 @@ async fn file_at_revision_returns_text_without_a_size_lookup() {
 async fn file_at_revision_classifies_binary_and_reports_the_blob_size() {
     let fake = FakeExecutor::default();
     // NUL in the content marks it binary (git's own heuristic)...
-    fake.expect(&["show", "abc123:logo.png"], ok("\u{89}PNG\0\u{1a}junk"));
+    fake.expect(&["show", "--end-of-options", "abc123:logo.png"], ok("\u{89}PNG\0\u{1a}junk"));
     // ...which triggers exactly one exact-size lookup.
     fake.expect(&["cat-file", "-s", "abc123:logo.png"], ok("51234\n"));
     let (b, exec) = backend(fake);
@@ -2729,8 +2729,8 @@ async fn apply_stash_file_untracked_falls_back_to_the_third_parent() {
 #[tokio::test]
 async fn create_branch_with_and_without_start_point() {
     let fake = FakeExecutor::default();
-    fake.expect(&["branch", "feat"], ok(""));
-    fake.expect(&["branch", "hotfix", "v1.2"], ok(""));
+    fake.expect(&["branch", "--end-of-options", "feat"], ok(""));
+    fake.expect(&["branch", "--end-of-options", "hotfix", "v1.2"], ok(""));
     let (b, exec) = backend(fake);
 
     b.create_branch("feat", None).await.unwrap();
@@ -2743,8 +2743,8 @@ async fn delete_branch_safe_vs_force_flag() {
     // -d refuses unmerged branches; -D is the destructive override. The two
     // must never swap.
     let fake = FakeExecutor::default();
-    fake.expect(&["branch", "-d", "merged"], ok(""));
-    fake.expect(&["branch", "-D", "wip"], ok(""));
+    fake.expect(&["branch", "-d", "--end-of-options", "merged"], ok(""));
+    fake.expect(&["branch", "-D", "--end-of-options", "wip"], ok(""));
     let (b, exec) = backend(fake);
 
     b.delete_branch("merged", false).await.unwrap();
@@ -2756,7 +2756,7 @@ async fn delete_branch_safe_vs_force_flag() {
 async fn delete_branch_failure_surfaces_stderr() {
     let fake = FakeExecutor::default();
     fake.expect(
-        &["branch", "-d", "feat"],
+        &["branch", "-d", "--end-of-options", "feat"],
         fail(1, "error: the branch 'feat' is not fully merged"),
     );
     let (b, exec) = backend(fake);
@@ -2772,7 +2772,7 @@ async fn delete_branch_failure_surfaces_stderr() {
 #[tokio::test]
 async fn rename_branch_uses_move_not_copy() {
     let fake = FakeExecutor::default();
-    fake.expect(&["branch", "-m", "old", "new"], ok(""));
+    fake.expect(&["branch", "-m", "--end-of-options", "old", "new"], ok(""));
     let (b, exec) = backend(fake);
 
     b.rename_branch("old", "new").await.unwrap();
@@ -2782,7 +2782,7 @@ async fn rename_branch_uses_move_not_copy() {
 #[tokio::test]
 async fn checkout_commit_detaches_via_switch() {
     let fake = FakeExecutor::default();
-    fake.expect(&["switch", "--detach", "abc123"], ok(""));
+    fake.expect(&["switch", "--detach", "--end-of-options", "abc123"], ok(""));
     let (b, exec) = backend(fake);
 
     let outcome = b
@@ -2796,8 +2796,11 @@ async fn checkout_commit_detaches_via_switch() {
 #[tokio::test]
 async fn create_tag_lightweight_vs_annotated() {
     let fake = FakeExecutor::default();
-    fake.expect(&["tag", "v1", "abc123"], ok(""));
-    fake.expect(&["tag", "-a", "v2", "-m", "release two", "def456"], ok(""));
+    fake.expect(&["tag", "--end-of-options", "v1", "abc123"], ok(""));
+    fake.expect(
+        &["tag", "-a", "-m", "release two", "--end-of-options", "v2", "def456"],
+        ok(""),
+    );
     let (b, exec) = backend(fake);
 
     b.create_tag("v1", Some("abc123"), None).await.unwrap();
@@ -2808,7 +2811,7 @@ async fn create_tag_lightweight_vs_annotated() {
 #[tokio::test]
 async fn delete_tag_is_local_only() {
     let fake = FakeExecutor::default();
-    fake.expect(&["tag", "-d", "v1"], ok(""));
+    fake.expect(&["tag", "-d", "--end-of-options", "v1"], ok(""));
     let (b, exec) = backend(fake);
 
     b.delete_tag("v1").await.unwrap();
@@ -2903,7 +2906,7 @@ async fn merge_ff_auto_passes_no_edit_and_classifies_clean() {
     // a merge-commit merge.
     let fake = FakeExecutor::default();
     fake.expect(
-        &["merge", "--no-edit", "feature"],
+        &["merge", "--no-edit", "--end-of-options", "feature"],
         ok("Merge made by the 'ort' strategy."),
     );
     let (b, exec) = backend(fake);
@@ -3130,7 +3133,7 @@ async fn interactive_rebase_reword_creates_carrier_and_expands_todo() {
     );
     // 4. The rebase itself, todo carrying the fixup -C line.
     fake.expect_env(
-        &["rebase", "-i", "--autostash", "abc"],
+        &["rebase", "-i", "--autostash", "--end-of-options", "abc"],
         &[
             (
                 "GIT_SEQUENCE_EDITOR",
@@ -3178,7 +3181,7 @@ async fn interactive_rebase_creates_no_carrier_when_coverage_fails() {
 async fn rebase_range_info_reads_unpushed_and_ancestry() {
     let fake = FakeExecutor::default();
     fake.expect(&["rev-list", "abc..HEAD", "--not", "@{upstream}"], ok("1111\n2222\n"));
-    fake.expect(&["merge-base", "--is-ancestor", "abc", "HEAD"], ok(""));
+    fake.expect(&["merge-base", "--is-ancestor", "--end-of-options", "abc", "HEAD"], ok(""));
     let (b, exec) = backend(fake);
     let info = b.rebase_range_info("abc").await.expect("info");
     assert_eq!(info.unpushed, Some(vec!["1111".into(), "2222".into()]));
@@ -3195,10 +3198,120 @@ async fn rebase_range_info_handles_no_upstream_and_transplant() {
         fail(128, "fatal: no upstream configured for branch 'main'"),
     );
     // exit 1: base is NOT an ancestor - transplant.
-    fake.expect(&["merge-base", "--is-ancestor", "abc", "HEAD"], out(1, "", ""));
+    fake.expect(&["merge-base", "--is-ancestor", "--end-of-options", "abc", "HEAD"], out(1, "", ""));
     let (b, exec) = backend(fake);
     let info = b.rebase_range_info("abc").await.expect("info");
     assert_eq!(info.unpushed, None);
     assert!(info.transplant);
     exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
+// Option-like ref names (argument injection)
+// ---------------------------------------------------------------------------
+
+/// A ref name that begins with `-` must be refused BEFORE the first git
+/// invocation: the script below is empty, so any call at all fails the test.
+///
+/// Such a name is not user typo territory, it arrives with the repository:
+/// `git update-ref 'refs/tags/--exec=cmd'` succeeds, `git clone` copies that
+/// tag verbatim, and a remote whose `HEAD` points at `refs/heads/--exec=cmd`
+/// makes clone CREATE and check out a local branch with that name. Git parses
+/// a positional argument starting with `-` as an OPTION, and `git rebase
+/// --autostash --exec=<cmd>` runs `<cmd>` - so before this guard, one click
+/// on "Rebase onto" in the ref's own context menu was arbitrary command
+/// execution. Real-git counterpart:
+/// `tests/git_flows.rs::option_like_ref_never_reaches_rebase_exec`.
+#[tokio::test]
+async fn option_like_refs_are_refused_before_git_runs() {
+    let evil = "--exec=git$IFStag$IFSLEGIT_PWNED";
+    let fake = FakeExecutor::default();
+    let (b, exec) = backend(fake);
+
+    macro_rules! assert_refused {
+        ($call:expr, $what:literal) => {
+            match $call.await {
+                Err(GitError::UnsafeArgument(msg)) => {
+                    assert!(msg.contains(evil), "{}: message must name the value: {msg}", $what)
+                }
+                other => panic!("{} accepted an option-like ref: {other:?}", $what),
+            }
+        };
+    }
+
+    assert_refused!(b.rebase(evil), "rebase");
+    assert_refused!(
+        b.merge(evil, MergeOptions { ff: FfMode::Auto, squash: false }),
+        "merge"
+    );
+    assert_refused!(
+        b.switch_branch(evil, SwitchDirtyBehavior::TryDirectly),
+        "switch_branch"
+    );
+    assert_refused!(
+        b.checkout_commit(evil, SwitchDirtyBehavior::TryDirectly),
+        "checkout_commit"
+    );
+    assert_refused!(b.checkout_remote_branch(evil, SwitchDirtyBehavior::TryDirectly, false), "checkout_remote_branch");
+    assert_refused!(b.create_branch(evil, None), "create_branch");
+    assert_refused!(b.create_branch("ok", Some(evil)), "create_branch start point");
+    assert_refused!(b.delete_branch(evil, false), "delete_branch");
+    assert_refused!(b.rename_branch(evil, "ok"), "rename_branch");
+    assert_refused!(b.delete_tag(evil), "delete_tag");
+    assert_refused!(b.reset(evil, ResetMode::Hard), "reset");
+    assert_refused!(b.cherry_pick(evil, None), "cherry_pick");
+    assert_refused!(b.revert(evil, None), "revert");
+    assert_refused!(b.set_upstream(evil, None), "set_upstream");
+    assert_refused!(b.rebase_interactive(evil, &[]), "rebase_interactive");
+
+    // Read-only commands too: `git log`/`diff` accept `--output=<file>`, so an
+    // option-like rev there is an arbitrary FILE WRITE rather than a bad walk.
+    assert_refused!(b.merge_base(evil, "HEAD"), "merge_base");
+    assert_refused!(b.diff_files(evil, "HEAD"), "diff_files");
+    assert_refused!(b.list_files_at_revision(evil), "list_files_at_revision");
+    assert_refused!(
+        b.file_at_revision(evil, std::path::Path::new("a.txt")),
+        "file_at_revision"
+    );
+    assert_refused!(
+        b.blame(std::path::Path::new("a.txt"), Some(evil)),
+        "blame"
+    );
+    assert_refused!(
+        b.log(LogOptions {
+            max_count: Some(10),
+            skip: None,
+            revision_range: Some(evil.to_string()),
+            paths: Vec::new(),
+            refs: RefSelector::Head,
+            author: None,
+            include_stashes: false,
+        }),
+        "log revision_range"
+    );
+
+    // Nothing ran: the script was never touched.
+    exec.assert_done();
+}
+
+/// The second, independent layer: the argv builders pass `--end-of-options`,
+/// so even a name the guard somehow let through cannot be parsed as an
+/// option. `reset` and `checkout <rev> -- <path>` are the two commands that
+/// REJECT `--end-of-options`, which is exactly why the guard above exists as
+/// its own layer rather than as belt-and-braces.
+#[tokio::test]
+async fn ref_taking_commands_pass_end_of_options() {
+    for args in [
+        rebase_args("main"),
+        merge_args("dev", MergeOptions { ff: FfMode::Auto, squash: false }),
+        sequencer_args(&["cherry-pick"], None, "abc123"),
+        sequencer_args(&["revert", "--no-edit"], Some(2), "abc123"),
+    ] {
+        let pos = args.iter().position(|a| a == "--end-of-options");
+        let pos = pos.unwrap_or_else(|| panic!("no --end-of-options in {args:?}"));
+        assert_eq!(pos, args.len() - 2, "the guard must be the LAST option: {args:?}");
+    }
+    let tag = build_tag_args("v1", Some("abc123"), Some("release"));
+    let pos = tag.iter().position(|a| *a == "--end-of-options").expect("tag guard");
+    assert_eq!(tag[pos + 1], "v1", "the tag NAME must follow the guard: {tag:?}");
 }

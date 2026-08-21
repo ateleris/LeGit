@@ -35,6 +35,14 @@ pub enum GitError {
     #[error("clone cancelled")]
     CloneCancelled { cleanup_failed: Option<String> },
 
+    /// A ref / rev / remote name that would land in a POSITIONAL argv slot
+    /// while looking like a command-line option (it starts with `-`). Refused
+    /// before git runs: see `cli_impl::safe_ref` for why such a name can
+    /// reach us from a repository at all, and what it would do.
+    /// The payload is the user-facing sentence.
+    #[error("{0}")]
+    UnsafeArgument(String),
+
     #[error("failed to parse git output: {0}")]
     Parse(String),
 

@@ -153,25 +153,30 @@ impl<E: GitExecutor> GitCliBackend<E> {
             unified,
         ];
 
+        // For a rename/copy, pass BOTH paths with rename detection so git pairs
+        // them: a modified rename yields real content hunks, a pure rename yields
+        // an empty diff. Every option goes in BEFORE the revs below, because
+        // `--end-of-options` must be the last one - after it git reads a flag
+        // as a rev/pathspec.
+        let old_str = old_path.map(|p| p.to_string_lossy().into_owned());
+        if old_str.as_deref().is_some_and(|o| o != path_str) {
+            args.push("--find-renames".into());
+        }
         match source {
             DiffSource::WorkingUnstaged => {}
             DiffSource::WorkingStaged => args.push("--cached".into()),
             DiffSource::Commit { commit_id } => {
-                let from = self.first_parent(&runner, commit_id.as_str()).await?;
+                let sha = safe_ref("revision", commit_id.as_str())?;
+                let from = self.first_parent(&runner, sha).await?;
+                args.push("--end-of-options".into());
                 args.push(from);
-                args.push(commit_id.as_str().to_string());
+                args.push(sha.to_string());
             }
             DiffSource::CommitRange { from, to } => {
-                args.push(from.as_str().to_string());
-                args.push(to.as_str().to_string());
+                args.push("--end-of-options".into());
+                args.push(safe_ref("revision", from.as_str())?.to_string());
+                args.push(safe_ref("revision", to.as_str())?.to_string());
             }
-        }
-        // For a rename/copy, pass BOTH paths with rename detection so git pairs
-        // them: a modified rename yields real content hunks, a pure rename yields
-        // an empty diff.
-        let old_str = old_path.map(|p| p.to_string_lossy().into_owned());
-        if old_str.as_deref().is_some_and(|o| o != path_str) {
-            args.push("--find-renames".into());
         }
         args.push("--".into());
         if let Some(old) = &old_str {
@@ -344,8 +349,9 @@ impl<E: GitExecutor> GitCliBackend<E> {
         let mut args = vec!["diff-tree"];
         args.extend_from_slice(&parsers::commit_files::DIFF_TREE_FLAGS);
         args.push(kind);
-        args.push(from);
-        args.push(to);
+        args.push("--end-of-options");
+        args.push(safe_ref("revision", from)?);
+        args.push(safe_ref("revision", to)?);
         self.run_checked(&args).await
     }
 
@@ -555,7 +561,14 @@ impl<E: GitExecutor> GitCliBackend<E> {
         let Some(branch) = choose_attach_branch(configured, &matching) else {
             return;
         };
-        if let Err(e) = self.run_simple(&["-C", p, "checkout", &branch]).await {
+        let branch = match safe_ref("branch", &branch) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(path = p, error = %e, "refusing to attach branch");
+                return;
+            }
+        };
+        if let Err(e) = self.run_simple(&["-C", p, "checkout", branch]).await {
             tracing::warn!(
                 path = p, branch = %branch, error = %e,
                 "branch attach failed; the submodule stays detached"
@@ -1070,10 +1083,19 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             args.push(author);
         }
 
+        // Every OPTION goes in before the revisions: with `--end-of-options`
+        // below, anything after it is a revision, and git rejects a trailing
+        // `--decorate=full` outright ("must come before non-option
+        // arguments" - caught by tests/git_flows.rs, not by the fake).
+        args.push("--decorate=full");
+
         // An explicit revision range (e.g. `base..HEAD` for the interactive
         // rebase plan) wins over the ref selector.
         if let Some(range) = opts.revision_range.as_deref().filter(|r| !r.is_empty()) {
-            args.push(range);
+            // `git log --output=<file>` writes to a file, so an option-like
+            // range is a file write, not just a bad walk (see `safe_ref`).
+            args.push("--end-of-options");
+            args.push(safe_ref("revision range", range)?);
         } else {
             match opts.refs {
                 RefSelector::AllLocalBranches => {
@@ -1090,7 +1112,6 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
                 RefSelector::Head => {}
             }
         }
-        args.push("--decorate=full");
 
         let output = runner
             .run(&args)
@@ -1252,6 +1273,9 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
     async fn blame(&self, path: &Path, rev: Option<&str>) -> Result<Vec<BlameHunk>, GitError> {
         let runner = self.runner().await;
         let path_str = path.to_string_lossy();
+        // No `--end-of-options`: `git blame` rejects it outright (usage
+        // error), so the dash guard is the only layer here.
+        let rev = rev.map(|r| safe_ref("revision", r)).transpose()?;
         let mut args = vec!["blame", "--porcelain"];
         if let Some(rev) = rev {
             args.push(rev);
@@ -1268,7 +1292,15 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
     async fn merge_base(&self, a: &str, b: &str) -> Result<Option<String>, GitError> {
         let runner = self.runner().await;
         let output = runner
-            .run_expecting(&["merge-base", a, b], &[1])
+            .run_expecting(
+                &[
+                    "merge-base",
+                    "--end-of-options",
+                    safe_ref("revision", a)?,
+                    safe_ref("revision", b)?,
+                ],
+                &[1],
+            )
             .await?;
         // Exit 1 = no common ancestor (unrelated histories) - that is an
         // answer, not an error. Unknown revs etc. exit 128 and are errors.
@@ -1383,7 +1415,9 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let runner = self.runner().await;
         // Full ls-tree records (not --name-only): the object type is the only
         // way to tell a gitlink (`commit`) from a blob at a revision.
-        let output = runner.run(&["ls-tree", "-r", "-z", rev]).await?;
+        let output = runner
+            .run(&["ls-tree", "-r", "-z", "--end-of-options", safe_ref("revision", rev)?])
+            .await?;
         Self::ensure_success(&output)?;
         Ok(parse_ls_tree_files(&output.stdout))
     }
@@ -1635,9 +1669,9 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
 
     async fn file_at_revision(&self, rev: &str, path: &Path) -> Result<FileAtRevision, GitError> {
         let runner = self.runner().await;
-        let spec = format!("{rev}:{}", path.to_string_lossy());
+        let spec = format!("{}:{}", safe_ref("revision", rev)?, path.to_string_lossy());
         let output = runner
-            .run(&["show", &spec])
+            .run(&["show", "--end-of-options", &spec])
             .await?;
         if !output.success {
             return Err(GitError::CommandFailed {
@@ -1691,7 +1725,11 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         // A pathspec checkout touches index + worktree and never refuses on
         // local changes - the destructive-confirm gate lives in the UI.
         let source = self.resolve_file_content_source(rev, path).await?;
-        self.run_pathspec(&["checkout", &source, "--"], std::slice::from_ref(&path.to_path_buf()))
+        // No `--end-of-options`: `git checkout` takes it as a PATHSPEC, not
+        // as a guard (verified in tests/git_flows.rs), so the dash guard on
+        // the source rev is the only layer here.
+        let source = safe_ref("revision", &source)?;
+        self.run_pathspec(&["checkout", source, "--"], std::slice::from_ref(&path.to_path_buf()))
             .await
     }
 
@@ -2266,7 +2304,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
 
     async fn submodule_create_branch(&self, path: &Path, name: &str) -> Result<(), GitError> {
         let p = path.to_string_lossy().into_owned();
-        self.run_simple(&["-C", &p, "switch", "-c", name]).await
+        self.run_simple(&["-C", &p, "switch", "-c", safe_ref("branch name", name)?])
+            .await
     }
 
     async fn submodule_auto_update(
@@ -2404,19 +2443,23 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
     }
 
     async fn create_branch(&self, name: &str, start_point: Option<&str>) -> Result<(), GitError> {
-        let mut args = vec!["branch", name];
+        let mut args = vec!["branch", "--end-of-options", safe_ref("branch name", name)?];
         if let Some(sp) = start_point {
-            args.push(sp);
+            args.push(safe_ref("start point", sp)?);
         }
         self.run_simple(&args).await
     }
 
     async fn switch_branch(&self, name: &str, behavior: SwitchDirtyBehavior) -> Result<SwitchOutcome, GitError> {
-        self.run_with_auto_stash(behavior, &["switch", name]).await
+        let name = safe_ref("branch", name)?;
+        self.run_with_auto_stash(behavior, &["switch", "--end-of-options", name])
+            .await
     }
 
     async fn checkout_commit(&self, sha: &str, behavior: SwitchDirtyBehavior) -> Result<SwitchOutcome, GitError> {
-        self.run_with_auto_stash(behavior, &["switch", "--detach", sha]).await
+        let sha = safe_ref("revision", sha)?;
+        self.run_with_auto_stash(behavior, &["switch", "--detach", "--end-of-options", sha])
+            .await
     }
 
     async fn checkout_remote_branch(
@@ -2426,6 +2469,10 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         fast_forward: bool,
     ) -> Result<RemoteCheckoutOutcome, GitError> {
         let (short, local) = remote_ref_names(remote_ref);
+        // Both names come from the repository (a fetched remote ref), so both
+        // pass the dash guard before they reach an argv slot.
+        let short = safe_ref("remote branch", short)?;
+        let local = safe_ref("branch", local)?;
         // `switch --track` refuses when the local branch already exists — the
         // common case of checking out a remote ref that was checked out once
         // before. The user's intent is "get me on that branch", so check for
@@ -2439,9 +2486,9 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             .await?
             .success;
         let args: &[&str] = if local_exists {
-            &["switch", local]
+            &["switch", "--end-of-options", local]
         } else {
-            &["switch", "--track", short]
+            &["switch", "--track", "--end-of-options", short]
         };
         let switch = self.run_with_auto_stash(behavior, args).await?;
         let ff = if !fast_forward {
@@ -2456,7 +2503,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             // network I/O or auth prompts. Its failure modes are outcomes,
             // never errors: the switch above already succeeded.
             let out = self
-                .run_classified(&["merge", "--ff-only", "--no-edit", short])
+                .run_classified(&["merge", "--ff-only", "--no-edit", "--end-of-options", short])
                 .await?;
             classify_fast_forward(out.0, &out.1, &out.2)
         };
@@ -2469,7 +2516,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
 
     async fn delete_branch(&self, name: &str, force: bool) -> Result<(), GitError> {
         let flag = if force { "-D" } else { "-d" };
-        self.run_simple(&["branch", flag, name]).await
+        self.run_simple(&["branch", flag, "--end-of-options", safe_ref("branch", name)?])
+            .await
     }
 
     async fn delete_remote_branch(
@@ -2481,7 +2529,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let runner = self.runner().await;
         let args = vec![
             "push".to_string(),
-            remote.to_string(),
+            safe_ref_owned("remote", remote)?,
             "--delete".to_string(),
             format!("refs/heads/{name}"),
         ];
@@ -2489,7 +2537,14 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
     }
 
     async fn rename_branch(&self, old_name: &str, new_name: &str) -> Result<(), GitError> {
-        self.run_simple(&["branch", "-m", old_name, new_name]).await
+        self.run_simple(&[
+            "branch",
+            "-m",
+            "--end-of-options",
+            safe_ref("branch", old_name)?,
+            safe_ref("new branch name", new_name)?,
+        ])
+        .await
     }
 
     async fn tags(&self) -> Result<Vec<TagInfo>, GitError> {
@@ -2527,7 +2582,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
     }
 
     async fn delete_tag(&self, name: &str) -> Result<(), GitError> {
-        self.run_simple(&["tag", "-d", name]).await
+        self.run_simple(&["tag", "-d", "--end-of-options", safe_ref("tag", name)?])
+            .await
     }
 
     async fn push_tag(&self, remote: &str, name: &str, op_id: OperationId) -> Result<(), GitError> {
@@ -2535,7 +2591,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         // The full refspec avoids any ambiguity with a same-named branch.
         let args = vec![
             "push".to_string(),
-            remote.to_string(),
+            safe_ref_owned("remote", remote)?,
             format!("refs/tags/{name}"),
         ];
         self.run_remote(&runner, &args, op_id).await
@@ -2550,7 +2606,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let runner = self.runner().await;
         let args = vec![
             "push".to_string(),
-            remote.to_string(),
+            safe_ref_owned("remote", remote)?,
             "--delete".to_string(),
             format!("refs/tags/{name}"),
         ];
@@ -2560,7 +2616,10 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
     async fn remote_tags(&self, remote: &str, op_id: OperationId) -> Result<Vec<RemoteTag>, GitError> {
         let runner = self.runner().await;
         let output = runner
-            .run_with_op(&["ls-remote", "--tags", remote], op_id)
+            .run_with_op(
+                &["ls-remote", "--tags", "--end-of-options", safe_ref("remote", remote)?],
+                op_id,
+            )
             .await?;
         if !output.success {
             return Err(classify_remote_error(
@@ -2700,12 +2759,17 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
     }
 
     async fn set_upstream(&self, branch: &str, upstream: Option<&str>) -> Result<(), GitError> {
+        let branch = safe_ref("branch", branch)?;
         match upstream {
             Some(up) => {
                 let arg = format!("--set-upstream-to={up}");
-                self.run_simple(&["branch", &arg, branch]).await
+                self.run_simple(&["branch", &arg, "--end-of-options", branch])
+                    .await
             }
-            None => self.run_simple(&["branch", "--unset-upstream", branch]).await,
+            None => {
+                self.run_simple(&["branch", "--unset-upstream", "--end-of-options", branch])
+                    .await
+            }
         }
     }
 
@@ -2713,7 +2777,14 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let selector = self.resolve_stash_selector(stash_sha).await?;
         // `stash branch` is checkout -b at the stash base + apply + drop; its
         // failure mode is the checkout's, so classify like a switch.
-        self.run_switch(&["stash", "branch", branch_name, &selector]).await
+        self.run_switch(&[
+            "stash",
+            "branch",
+            "--end-of-options",
+            safe_ref("branch name", branch_name)?,
+            &selector,
+        ])
+        .await
     }
 
     async fn rename_stash(&self, stash_sha: &str, new_message: &str) -> Result<(), GitError> {
@@ -2727,7 +2798,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
     }
 
     async fn merge(&self, target: &str, opts: MergeOptions) -> Result<MergeOutcome, GitError> {
-        let args = merge_args(target, opts);
+        let args = merge_args(safe_ref("merge target", target)?, opts);
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let (code, stdout, stderr) = self.run_classified(&refs).await?;
         classify_merge_output(code, &stdout, &stderr, opts.squash)
@@ -2745,7 +2816,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
     }
 
     async fn rebase(&self, onto: &str) -> Result<RebaseOutcome, GitError> {
-        let args = rebase_args(onto);
+        let args = rebase_args(safe_ref("rebase target", onto)?);
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let (code, stdout, stderr) = self.run_classified(&refs).await?;
         classify_rebase_output(code, &stdout, &stderr)
@@ -2792,6 +2863,10 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         base: &str,
         plan: &[RebaseStep],
     ) -> Result<RebaseOutcome, GitError> {
+        // The dash guard runs FIRST, before the plan checks and before any
+        // git: an option-like base must never reach a `rebase` argv (see
+        // `safe_ref` - `--exec=<cmd>` runs <cmd>).
+        let base = safe_ref("revision", base)?;
         validate_rebase_plan(plan)?;
         // The injected todo REPLACES git's generated one, and git silently
         // drops any base..HEAD commit missing from the todo (the default
@@ -2854,7 +2929,16 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let editor = format!("printf '{todo}' >");
         let env = [("GIT_SEQUENCE_EDITOR", editor.as_str()), EDITOR_ACCEPT_ENV[0]];
         let (code, stdout, stderr) = self
-            .run_classified_env(&["rebase", "-i", "--autostash", base], &env)
+            .run_classified_env(
+                &[
+                    "rebase",
+                    "-i",
+                    "--autostash",
+                    "--end-of-options",
+                    base,
+                ],
+                &env,
+            )
             .await?;
         // Older git rejects the `fixup -C` todo line at parse time ("invalid
         // line ...: fixup -C <sha>"); name the floor so the error is
@@ -2876,6 +2960,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         // Range commits NOT reachable from the upstream. Exit 128 = HEAD has
         // no upstream: no pushed-warning is possible - an answer, not an
         // error.
+        let base = safe_ref("revision", base)?;
         let range = format!("{base}..HEAD");
         let up = runner
             .run_expecting(&["rev-list", &range, "--not", "@{upstream}"], &[128])
@@ -2894,7 +2979,10 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         // = it is not (the rebase RELOCATES the range onto the base). Any
         // other exit is a real failure.
         let anc = runner
-            .run_expecting(&["merge-base", "--is-ancestor", base, "HEAD"], &[1])
+            .run_expecting(
+                &["merge-base", "--is-ancestor", "--end-of-options", base, "HEAD"],
+                &[1],
+            )
             .await?;
         let transplant = match anc.exit_code {
             Some(0) => false,
@@ -2915,20 +3003,24 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             ResetMode::Mixed => "--mixed",
             ResetMode::Hard => "--hard",
         };
-        self.run_simple(&["reset", flag, target]).await
+        // No `--end-of-options`: `git reset` rejects it ("option
+        // '--end-of-options' must come before non-option arguments"), so the
+        // dash guard is the only layer for this command.
+        self.run_simple(&["reset", flag, safe_ref("revision", target)?])
+            .await
     }
 
     async fn revert(&self, sha: &str, mainline: Option<u32>) -> Result<SequenceOutcome, GitError> {
         // --no-edit: the runner hardens GIT_EDITOR=false, so a revert that
         // opened an editor for its message would fail outright.
-        let args = sequencer_args(&["revert", "--no-edit"], mainline, sha);
+        let args = sequencer_args(&["revert", "--no-edit"], mainline, safe_ref("revision", sha)?);
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let (code, stdout, stderr) = self.run_classified(&refs).await?;
         classify_sequence_output(code, &stdout, &stderr)
     }
 
     async fn cherry_pick(&self, sha: &str, mainline: Option<u32>) -> Result<SequenceOutcome, GitError> {
-        let args = sequencer_args(&["cherry-pick"], mainline, sha);
+        let args = sequencer_args(&["cherry-pick"], mainline, safe_ref("revision", sha)?);
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let (code, stdout, stderr) = self.run_classified(&refs).await?;
         classify_sequence_output(code, &stdout, &stderr)
@@ -3199,10 +3291,57 @@ fn build_commit_args(opts: &CommitOptions) -> Vec<String> {
     args
 }
 
+/// The guard every ref / rev / remote name passes before it enters a
+/// POSITIONAL argv slot. Refuses anything that starts with `-`.
+///
+/// Git accepts refnames beginning with a dash, and such a name reaches us
+/// from the repository itself, not from the user: `git update-ref
+/// 'refs/tags/--exec=cmd'` succeeds, `git clone` copies that tag verbatim,
+/// and a remote whose `HEAD` points at `refs/heads/--exec=cmd` makes clone
+/// CREATE and check out a local branch with that name. Git then parses a
+/// positional argument beginning with `-` as an OPTION, and several commands
+/// have options that run programs or write files - `git rebase --autostash
+/// --exec=<cmd>` executes `<cmd>` for every rebased commit. So a repo the
+/// user merely clones could turn one ordinary UI action (Rebase onto, from
+/// the ref's own context menu) into arbitrary command execution.
+///
+/// Refnames can hold no spaces, but `$IFS` supplies one, so a space-free
+/// payload is not a real constraint for an attacker.
+///
+/// This is one of TWO independent layers: the argv builders also pass
+/// `--end-of-options` wherever git supports it (`reset` and
+/// `checkout <rev> -- <path>` reject it, which is exactly why this layer
+/// exists). Pinned by `flow_tests.rs` (argv) and `tests/git_flows.rs`
+/// (real git, payload must not run).
+///
+/// `what` names the thing for the message ("branch", "tag", "revision", …).
+/// Only leading dashes are refused: everything else git rejects on its own
+/// with a better message than we could invent.
+fn safe_ref<'a>(what: &str, value: &'a str) -> Result<&'a str, GitError> {
+    if value.starts_with('-') {
+        return Err(GitError::UnsafeArgument(format!(
+            "Refusing to run git with an option-like {what}: {value:?}. \
+             A name starting with '-' would be interpreted as a command-line \
+             option, not as a {what} - a repository can carry such a name on \
+             purpose. Rename it (git branch -m / git tag) before using it here."
+        )));
+    }
+    Ok(value)
+}
+
+/// `safe_ref` for an owned value, for the argv builders that work in
+/// `String`s (`push`, `fetch`, …).
+fn safe_ref_owned(what: &str, value: &str) -> Result<String, GitError> {
+    safe_ref(what, value).map(str::to_string)
+}
+
 /// Build the argument vector for `git tag`. A non-blank message makes the tag
 /// annotated (`-a -m`); a blank/whitespace-only message is treated as absent
 /// so the UI's empty input never creates an annotated tag with an empty
 /// annotation. The target (when given) is always the trailing argument.
+///
+/// `--end-of-options` guards the positional name/target (see `safe_ref`);
+/// the `-m` message is an option VALUE, which git never re-parses as a flag.
 fn build_tag_args<'a>(
     name: &'a str,
     target: Option<&'a str>,
@@ -3211,12 +3350,13 @@ fn build_tag_args<'a>(
     let mut args = vec!["tag"];
     if let Some(msg) = message.filter(|m| !m.trim().is_empty()) {
         args.push("-a");
-        args.push(name);
+        // `-m <msg>` moves BEFORE the name: `--end-of-options` must be the
+        // last option, and everything after it is positional.
         args.push("-m");
         args.push(msg);
-    } else {
-        args.push(name);
     }
+    args.push("--end-of-options");
+    args.push(name);
     if let Some(t) = target {
         args.push(t);
     }
@@ -3849,6 +3989,9 @@ fn merge_args(target: &str, opts: MergeOptions) -> Vec<String> {
         }
         args.push("--no-edit".into());
     }
+    // Positional ref: `--end-of-options` keeps a dash-leading name from being
+    // parsed as a flag (see `safe_ref`).
+    args.push("--end-of-options".into());
     args.push(target.into());
     args
 }
@@ -3868,8 +4011,16 @@ const MERGE_ABORT_ARGS: [&str; 2] = ["merge", "--abort"];
 
 /// `git rebase` always runs with `--autostash` so a dirty tree does not block
 /// it; a conflicted stash reapply after completion is its own outcome.
+/// `--end-of-options` is load-bearing here, not cosmetic: `git rebase` has
+/// `--exec=<cmd>`, so a dash-leading `onto` is arbitrary command execution
+/// (see `safe_ref`).
 fn rebase_args(onto: &str) -> Vec<String> {
-    vec!["rebase".into(), "--autostash".into(), onto.into()]
+    vec![
+        "rebase".into(),
+        "--autostash".into(),
+        "--end-of-options".into(),
+        onto.into(),
+    ]
 }
 
 /// cherry-pick / revert argument list: the base command, `-m <N>` when a
@@ -3880,6 +4031,7 @@ fn sequencer_args(base: &[&str], mainline: Option<u32>, sha: &str) -> Vec<String
         args.push("-m".into());
         args.push(n.to_string());
     }
+    args.push("--end-of-options".into());
     args.push(sha.into());
     args
 }
@@ -4243,6 +4395,11 @@ fn append_error_note(e: GitError, note: &str) -> GitError {
 /// everything else → `CommandFailed`. Public so session-less callers (e.g. the
 /// `git clone` command) can classify failures the same way.
 pub fn classify_remote_error(exit_code: i32, stderr: &str) -> GitError {
+    // Remote errors are the ones that quote the URL back at us ("fatal:
+    // Authentication failed for 'https://user:token@host/r.git/'"), and this
+    // text is what the toast and the panels show - so it is redacted here,
+    // the single place remote failures become a `GitError`.
+    let stderr = &crate::runner::redact_url_credentials(stderr);
     let lc = stderr.to_lowercase();
     const AUTH: [&str; 6] = [
         "authentication failed",
@@ -5227,6 +5384,22 @@ mod tests {
         assert!(matches!(e, GitError::AuthFailed(_)));
     }
 
+    /// git quotes the failing URL back at us, credentials included, and that
+    /// text becomes the error the UI shows. The token must not survive the
+    /// classification.
+    #[test]
+    fn classify_auth_failure_redacts_the_url_credentials() {
+        let e = classify_remote_error(
+            128,
+            "fatal: Authentication failed for 'https://simon:ghp_SECRET@github.com/o/r.git/'",
+        );
+        let GitError::AuthFailed(msg) = e else {
+            panic!("expected AuthFailed, got {e:?}")
+        };
+        assert!(!msg.contains("ghp_SECRET"), "secret survived: {msg}");
+        assert!(msg.contains("simon:***@github.com"), "{msg}");
+    }
+
     #[test]
     fn classify_publickey_denied() {
         let e = classify_remote_error(128, "git@github.com: Permission denied (publickey).");
@@ -5301,21 +5474,27 @@ mod tests {
 
     #[test]
     fn tag_args_lightweight() {
-        assert_eq!(build_tag_args("v1", None, None), vec!["tag", "v1"]);
+        assert_eq!(
+            build_tag_args("v1", None, None),
+            vec!["tag", "--end-of-options", "v1"]
+        );
     }
 
     #[test]
     fn tag_args_blank_message_stays_lightweight() {
         // The UI sends the annotation input verbatim; whitespace-only must not
         // create an annotated tag with an empty message.
-        assert_eq!(build_tag_args("v1", None, Some("   ")), vec!["tag", "v1"]);
+        assert_eq!(
+            build_tag_args("v1", None, Some("   ")),
+            vec!["tag", "--end-of-options", "v1"]
+        );
     }
 
     #[test]
     fn tag_args_annotated_with_target() {
         assert_eq!(
             build_tag_args("v1", Some("abc123"), Some("release")),
-            vec!["tag", "-a", "v1", "-m", "release", "abc123"]
+            vec!["tag", "-a", "-m", "release", "--end-of-options", "v1", "abc123"]
         );
     }
 
@@ -5323,7 +5502,7 @@ mod tests {
     fn tag_args_lightweight_with_target() {
         assert_eq!(
             build_tag_args("v1", Some("abc123"), None),
-            vec!["tag", "v1", "abc123"]
+            vec!["tag", "--end-of-options", "v1", "abc123"]
         );
     }
 
@@ -5393,7 +5572,7 @@ mod tests {
     #[test]
     fn squash_merge_ignores_ff_and_skips_no_edit() {
         let args = merge_args("dev", MergeOptions { ff: FfMode::NoFf, squash: true });
-        assert_eq!(args, vec!["merge", "--squash", "dev"]);
+        assert_eq!(args, vec!["merge", "--squash", "--end-of-options", "dev"]);
     }
 
     #[test]
@@ -5409,7 +5588,10 @@ mod tests {
 
     #[test]
     fn rebase_always_autostashes() {
-        assert_eq!(rebase_args("main"), vec!["rebase", "--autostash", "main"]);
+        assert_eq!(
+            rebase_args("main"),
+            vec!["rebase", "--autostash", "--end-of-options", "main"]
+        );
     }
 
     // --- merge output classification (exit-1 ambiguity) ---

@@ -919,6 +919,59 @@ fn logged_ok(success: bool, exit_code: Option<i32>, ok_exit_codes: &[i32]) -> bo
     success || exit_code.is_some_and(|c| ok_exit_codes.contains(&c))
 }
 
+/// Replace the credentials in every `scheme://user:secret@host` URL inside
+/// `s` with `***`, leaving everything else untouched.
+///
+/// A remote URL can legitimately carry a token (`https://<PAT>@github.com/…`
+/// is what GitHub's own HTTPS instructions produce), and such a URL turns up
+/// both in argv (`clone`, `push`, `remote set-url`) and in git's own error
+/// text ("fatal: Authentication failed for 'https://user:pass@host/'"). The
+/// Git Log panel renders both verbatim, and bug reports carry screenshots of
+/// it, so the secret is stripped at this single chokepoint instead.
+///
+/// When the userinfo has no colon the WHOLE of it is replaced: a lone
+/// userinfo is just as often a token (`https://ghp_…@github.com`) as a user
+/// name, and the two cannot be told apart.
+pub fn redact_url_credentials(s: &str) -> std::borrow::Cow<'_, str> {
+    if !s.contains("://") {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    let mut out = String::new();
+    let mut rest = s;
+    let mut redacted = false;
+    while let Some(scheme_end) = rest.find("://") {
+        let after = scheme_end + 3;
+        // The authority ends at the path/query/fragment, or at whitespace or a
+        // quote when the URL is embedded in a sentence (git's stderr).
+        let auth_len = rest[after..]
+            .find(|c: char| c.is_whitespace() || matches!(c, '/' | '?' | '#' | '\'' | '"'))
+            .unwrap_or(rest.len() - after);
+        let authority = &rest[after..after + auth_len];
+        match authority.rfind('@') {
+            Some(at) => {
+                let userinfo = &authority[..at];
+                out.push_str(&rest[..after]);
+                match userinfo.find(':') {
+                    Some(colon) => {
+                        out.push_str(&userinfo[..colon]);
+                        out.push_str(":***");
+                    }
+                    None => out.push_str("***"),
+                }
+                out.push_str(&authority[at..]);
+                redacted = true;
+            }
+            None => out.push_str(&rest[..after + auth_len]),
+        }
+        rest = &rest[after + auth_len..];
+    }
+    if !redacted {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    out.push_str(rest);
+    std::borrow::Cow::Owned(out)
+}
+
 fn log_invocation(
     cwd: Option<&Path>,
     args: &[&str],
@@ -928,6 +981,13 @@ fn log_invocation(
     stderr: &str,
 ) {
     let duration_ms = started.elapsed().as_millis() as u64;
+    // Credentials never reach a log or the UI (see `redact_url_credentials`).
+    let args: Vec<String> = args
+        .iter()
+        .map(|a| redact_url_credentials(a).into_owned())
+        .collect();
+    let stderr = redact_url_credentials(stderr);
+    let stderr = stderr.as_ref();
     // Log at debug for both outcomes — the runner doesn't know whether a
     // non-zero exit code is expected (e.g. `git config --get` returning 1 for
     // "key not found"). Callers that consider a non-zero result an actual error
@@ -948,7 +1008,7 @@ fn log_invocation(
     }
     // Forward to the UI command log (if an observer is installed).
     report_invocation(GitInvocation {
-        args: args.iter().map(|s| (*s).to_string()).collect(),
+        args,
         cwd: cwd.map(|p| p.to_string_lossy().into_owned()),
         exit_code,
         success,
@@ -1421,5 +1481,72 @@ mod tests {
         assert!(!logged_ok(false, Some(1), &[]));
         // Killed by signal (no exit code) is never "expected".
         assert!(!logged_ok(false, None, &[1]));
+    }
+
+    // --- credential redaction in the command log ---
+
+    /// The Git Log panel renders every argv verbatim, and a remote URL can
+    /// carry a token (`https://<PAT>@github.com/…` is what GitHub's HTTPS
+    /// instructions produce). Nothing secret may survive this function.
+    #[test]
+    fn redaction_strips_url_credentials() {
+        let cases = [
+            (
+                "https://user:ghp_SECRET@github.com/o/r.git",
+                "https://user:***@github.com/o/r.git",
+            ),
+            // Token as the whole userinfo: indistinguishable from a user name,
+            // so all of it goes.
+            ("https://ghp_SECRET@github.com/o/r.git", "https://***@github.com/o/r.git"),
+            ("http://u:p@example.com:8080/x", "http://u:***@example.com:8080/x"),
+            // Embedded in git's own error text, quote-terminated.
+            (
+                "fatal: Authentication failed for 'https://u:p@host/r.git/'",
+                "fatal: Authentication failed for 'https://u:***@host/r.git/'",
+            ),
+            // Two URLs in one string.
+            (
+                "https://a:b@h1/x and https://c:d@h2/y",
+                "https://a:***@h1/x and https://c:***@h2/y",
+            ),
+            // Nothing to redact: returned untouched.
+            ("https://github.com/o/r.git", "https://github.com/o/r.git"),
+            ("git@github.com:o/r.git", "git@github.com:o/r.git"),
+            ("ssh://git@github.com/o/r.git", "ssh://***@github.com/o/r.git"),
+            ("--end-of-options", "--end-of-options"),
+            ("", ""),
+        ];
+        for (input, want) in cases {
+            assert_eq!(redact_url_credentials(input), want, "input: {input}");
+        }
+    }
+
+    /// A string with no credentials is passed through by reference (the hot
+    /// path: every argv of every invocation goes through here).
+    #[test]
+    fn redaction_borrows_when_nothing_to_do() {
+        assert!(matches!(
+            redact_url_credentials("status --porcelain=v2"),
+            std::borrow::Cow::Borrowed(_)
+        ));
+        assert!(matches!(
+            redact_url_credentials("https://github.com/o/r.git"),
+            std::borrow::Cow::Borrowed(_)
+        ));
+        assert!(matches!(
+            redact_url_credentials("https://u:p@h/x"),
+            std::borrow::Cow::Owned(_)
+        ));
+    }
+
+    /// Multi-byte content must not panic or corrupt (byte indices are taken
+    /// from ASCII delimiters, so they stay on char boundaries).
+    #[test]
+    fn redaction_handles_non_ascii() {
+        assert_eq!(
+            redact_url_credentials("https://üser:pä@例え.jp/リポ"),
+            "https://üser:***@例え.jp/リポ"
+        );
+        assert_eq!(redact_url_credentials("日本語 no url"), "日本語 no url");
     }
 }
