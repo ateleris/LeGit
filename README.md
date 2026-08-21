@@ -88,3 +88,5 @@ LeGit is free and open source ([GPL-3.0-or-later](LICENSE)) and stays that
 way. If it saves you time and you feel like it, you can
 
 [![Donate](https://img.shields.io/badge/Donate_a_coffee-%E2%9D%A4-db61a2?style=for-the-badge)](https://donate.stripe.com/00w28s3mx89t6lM8tY4Ni00)
+
+:) 
