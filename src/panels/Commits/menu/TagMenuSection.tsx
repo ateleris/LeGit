@@ -1,5 +1,6 @@
 import { useConfirmDestructive } from "../../../store/settings";
-import { useMenuConfirm, useMenuPicker } from "./PanelContextMenu";
+import { copyAndNotify } from "../../../lib/clipboard";
+import { useMenuConfirm, useMenuPicker, usePanelContextMenu } from "./PanelContextMenu";
 import { MenuItem, Separator, SectionLabel } from "./primitives";
 
 /**
@@ -41,6 +42,7 @@ export function TagMenuSection({
   const confirmDestructive = useConfirmDestructive();
   const menuConfirm = useMenuConfirm();
   const menuPicker = useMenuPicker();
+  const { closeMenu } = usePanelContextMenu();
   const multiRemote = remotes.length > 1;
 
   const requestDelete = () => {
@@ -62,6 +64,9 @@ export function TagMenuSection({
   return (
     <>
       <SectionLabel>{name}</SectionLabel>
+      <MenuItem onClick={() => { closeMenu(); void copyAndNotify(name, "Tag name"); }}>
+        Copy tag name
+      </MenuItem>
       <MenuItem
         onClick={() => onPush(remote!)}
         disabled={pushed || remote === null || !targetOnRemote}

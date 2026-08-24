@@ -26,6 +26,9 @@ lives in the git log and the GitHub release notes.
   check-only): an available update shows a toast, and clicking it opens the
   install prompt. Nothing downloads without confirmation.
 - The update prompt now shows the release's changelog.
+- Copy actions in the context menus: a commit's SHA and full message (and
+  the SHAs of a multi-selection) in the Commits panel, and branch/tag names
+  from ref chips and the Branches panel.
 
 ### Changed
 

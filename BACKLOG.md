@@ -240,11 +240,11 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   change - batch it with the next big backend feature. (The rest of the
   2026-07-11 frontend consolidation batch moved to the v1.1.0 release
   blockers 2026-08-24.)
-- **Structural splits, when next touched** (2026-08-06 review remainder):
-  `CommitsPanel.tsx` (~1700-line component; queries hook + row context
-  menu + RemoteSyncToolbar are natural splits), `WorkingChangesPanel.tsx`
-  (~1100-line function; CommitComposer + shared FileRowMenu),
-  `cli_impl/mod.rs` (~5000 lines; submodule + line-ending blocks).
+- **Structural splits, when next touched** (2026-08-06 review remainder;
+  CommitsPanel.tsx split done 2026-08-24 - queries hook, row context menu,
+  RemoteSyncToolbar): `WorkingChangesPanel.tsx` (~1100-line function;
+  CommitComposer + shared FileRowMenu), `cli_impl/mod.rs` (~5000 lines;
+  submodule + line-ending blocks).
 - **Internationalization: decide want/need (2026-08-04).** Open product
   question, not a commitment: is a non-English UI worth it for LeGit's
   audience? Inputs: git terminology stays English in most clients, and
@@ -261,25 +261,14 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   chunked sweep (~2-4 sessions) in the first quiet post-release window.
   `PANEL_TITLES` in `registry.tsx` shows the catalog shape and would be
   its first consumer. If "not needed": record that here and drop the item.
-- **Keyboard shortcuts system** (possible future idea, surveyed
-  2026-08-19; no commitment). Today the app has NO global shortcuts, no
-  native menu/accelerators, no command palette, no configurable keymap -
-  every key handler is local, focus-scoped, and hard-coded inline
-  (~25 sites). What exists: Enter-submit in forms, Enter/Esc inline
-  renames, Esc-dismiss in six overlays (two menus lack it), Commits
-  type-to-jump (+ Alt+arrows through matches), full arrow-nav in the
-  shared FileTree, Console history/Ctrl+C/pager keys, Ctrl+S in editable
-  CodeMirror panes. Notable gaps if picked up: no app-wide actions
-  (commit, fetch/pull/push, refresh, panel/repo-tab switch), Commits list
-  has no plain arrow row-navigation, Working Changes and Interactive
-  Rebase are mouse-only, no Ctrl+F in diff/merge/file view (CodeMirror
-  `searchKeymap` unregistered), most panels' rows are not focusable, no
-  focus trap in dialogs, zero keyboard tests. Approach when picked up:
-  a small central keymap registry (single arbitration point, e.g. for
-  the overloaded Escape; testable; user-remappable later) seeded with a
-  few high-value bindings (Ctrl+Enter commit, refresh, commits-list
-  arrows), NOT more inline handlers. Related deferred note: a shortcut
-  to open the commits context menu
+- **Keyboard shortcuts system** - full plan in
+  `design/2026-08-24-keyboard-shortcuts-system.md` (command registry +
+  keymap-as-data + one dispatcher with a context/dismissable stack + input
+  guard; seed bindings incl. Mod+Enter commit, fetch/pull/push, F5, tab
+  switching, Commits arrow-nav, and issue #21's Ctrl+A select-all in
+  Working Changes; generated help overlay; phases 2/3 = focus management,
+  then user keymap + palette). Phase 1 is roughly one focused session.
+  Related deferred note: a shortcut to open the commits context menu
   (`design/2026-06-16-commits-context-menu-design.md`).
 - **Commit graph: user-swappable shape tilesets** (designed 2026-08-19,
   stopped after approach approval; no spec yet). Let users restyle the

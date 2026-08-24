@@ -3,7 +3,19 @@ import { useSummonStore } from "../../../store/summon";
 import { useMenuConfirm, useMenuPicker, usePanelContextMenu } from "./PanelContextMenu";
 import { MenuItem, Separator, SectionLabel, Submenu } from "./primitives";
 import { resolveBranchPushPlan } from "../../../lib/pushPlan";
+import { copyAndNotify } from "../../../lib/clipboard";
 import type { MergeOptions } from "../../../lib/types";
+
+/** "Copy branch name": puts the short ref name on the clipboard. Self-closing
+ *  like FilterGraphItem, so every caller of the shared sections gets it. */
+function CopyNameItem({ refName }: { refName: string }) {
+  const { closeMenu } = usePanelContextMenu();
+  return (
+    <MenuItem onClick={() => { closeMenu(); void copyAndNotify(refName, "Branch name"); }}>
+      Copy branch name
+    </MenuItem>
+  );
+}
 
 /** Short display/command form of an upstream ref: `refs/remotes/origin/dev`
  *  and `origin/dev` both become `origin/dev`. */
@@ -143,6 +155,7 @@ export function BranchMenuSection({
         {isCurrent ? "Checkout branch (current)" : "Checkout branch"}
       </MenuItem>
       <FilterGraphItem refName={name} />
+      <CopyNameItem refName={name} />
       <MenuItem onClick={onRename}>Rename branch…</MenuItem>
       {/* Push: any local branch can be pushed, checked out or not. A tracked
           branch goes to its upstream's remote; an untracked one is published
@@ -240,6 +253,7 @@ export function RemoteBranchMenuSection({
       <SectionLabel>{remoteName}</SectionLabel>
       <MenuItem onClick={onCheckout}>Checkout branch</MenuItem>
       <FilterGraphItem refName={remoteName} />
+      <CopyNameItem refName={remoteName} />
       <MergeRebaseItems
         targetLabel={remoteName}
         currentBranch={currentBranch}

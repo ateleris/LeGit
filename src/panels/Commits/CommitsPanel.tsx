@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PanelError } from "../shared/PanelError";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useActiveRepo, useRepoStore } from "../../store/repos";
+import { useActiveRepo } from "../../store/repos";
 import {
   useSettingsStore,
   COMMITS_ROW_HEIGHT_DEFAULT,
@@ -18,43 +18,16 @@ import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { TOOLBAR_FIELD_STYLE } from "../shared/fields";
 import { useDelayedFlag } from "../shared/useDelayedFlag";
-import { ToolbarButton } from "../shared/ToolbarButton";
-import { Button } from "../shared/buttons";
-import { CaretDropdown } from "../shared/CaretDropdown";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
-import { keepPreviousDataForRepo } from "../../lib/repoScopedPlaceholder";
-import { autoUpdateSubmodules } from "../../lib/submodules";
-import {
-  consoleCancel,
-  repoBranches,
-  repoCreateBranch,
-  repoFetch,
-  repoListRemotes,
-  repoLog,
-  repoResolveCommit,
-  repoSearchCommits,
-  repoPull,
-  repoSignaturePresence,
-  repoStatus,
-  repoTrackingStatus,
-  repoStashBranch,
-  repoTags,
-  repoRemoteTags,
-} from "../../lib/commands";
-import { pushedTagNames, resolveTagRemote } from "../../lib/tags";
-import { openStashDiff } from "../Stashes/StashesPanel";
+import { repoCreateBranch, repoStashBranch } from "../../lib/commands";
 import { notifySwitchError } from "../../lib/switchFeedback";
 import { useOpState } from "../../lib/useOpState";
-import type { Branch, Commit, CommitId, FileStatus, MergeOptions, PullStrategy, PushOptions, Remote, RemoteTag, ResetMode, Signature, TagInfo, TrackingStatus } from "../../lib/types";
-import { useRemoteProgressStore } from "../../store/remoteProgress";
+import type { Branch, Commit, CommitId, Signature } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
-import { remoteOpErrorMessage } from "../../lib/pushFeedback";
-import { pushWithTagFollowUp } from "../../lib/autoPushTags";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { notify } from "../../store/notifications";
-import { BranchIcon, BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon, RemoteIcon, SignedIcon, StashIcon, TagIcon } from "../../icons";
+import { BranchIcon, RemoteIcon, SignedIcon, TagIcon } from "../../icons";
 import { useSignatureStore } from "../../store/signatures";
-import { useTagRemoteChoice } from "../../store/tagRemote";
 import { formatAbsolute, formatFull, formatRelative } from "../../lib/time";
 import { RefsCell } from "./cells/RefsCell";
 import { InlineRenameInput } from "./cells/InlineRenameInput";
@@ -64,27 +37,18 @@ import { computeLanes } from "./graph/lanes";
 import { computeEdgeSpans } from "./graph/spans";
 import { pickHeadCommitId } from "./headId";
 import { growJumpWindow, pendingJumpAction, shouldCenterScroll } from "./scrollToRow";
-import { mergeSearchResults, quickSearchMatch } from "./commitSearch";
+import { quickSearchMatch } from "./commitSearch";
 import { applyRowClickSelection, bulkActionPlan, type SelectionState } from "./multiSelect";
 import type { LaneEdge, LaneIndex, LaneResult, LockMap, RefsAtCommit } from "./graph/types";
-import {
-  buildLockMap,
-  buildRefsAt,
-  buildStashSelectorById,
-  buildUpstreamMap,
-} from "./commitRows";
+import { buildLockMap, buildRefsAt, buildStashSelectorById } from "./commitRows";
 import { BRANCH_DOMAINS, useCommitActions } from "./useCommitActions";
 import { useColumnState } from "./columns/useColumnState";
 import { ColumnHeader } from "./columns/ColumnHeader";
 import { LaneLockIndicator } from "./LaneLockIndicator";
 import { PanelContextMenuProvider, type BaselineEntry } from "./menu/PanelContextMenu";
-import { MenuItem, SectionLabel, Separator, Submenu } from "./menu/primitives";
-import { StashMenuSection } from "./menu/StashMenuSection";
-import { ResetMenuItems } from "./menu/ResetMenuItems";
-import { UndoLastCommitMenuItem } from "./menu/UndoLastCommitMenuItem";
-import { undoLastCommitPlan } from "./undoLastCommit";
-import { mainlineChoices } from "./mainline";
-import { BranchMenuSection, RemoteBranchMenuSection } from "./menu/BranchMenuSection";
+import { RemoteSyncToolbar } from "./RemoteSyncToolbar";
+import { BulkSelectionMenu, CommitRowMenu, WorkdirRowMenu } from "./menu/RowMenu";
+import { SEARCH_MAX_RESULTS, useCommitsQueries } from "./useCommitsQueries";
 import { TagMenuSection } from "./menu/TagMenuSection";
 import { branchesAt } from "./cells/refChips";
 import {
@@ -124,7 +88,6 @@ const PAGE_SIZE = 500;
 
 // Cap for the toolbar search: hits are cycled, and both underlying walks are
 // capped - a big cap costs only git time.
-const SEARCH_MAX_RESULTS = 1000;
 
 // Easter egg (inherited from the retired Search panel): searching for
 // "abdäsele" swaps the window title between "LeGit" and "LegIt" (dev builds:
@@ -303,155 +266,43 @@ export function CommitsPanel() {
   // from a hand-edited settings.json), the first one wins.
   const lockMap = useMemo((): LockMap => buildLockMap(rawLocks), [rawLocks]);
 
-  // Per-repo "show remote branches in the commit tree" (null = default ON).
-  // Part of the query key so flipping the setting refetches the walk.
-  const repoSettings = useRepoStore((s) => (repo ? s.repoSettings[repo.id] : undefined));
-  const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
-  useEffect(() => {
-    if (repo && !repoSettings) loadRepoSettings(repo.id);
-  }, [repo?.id, repoSettings, loadRepoSettings]);
-  const showRemoteBranches = repoSettings?.show_remote_branches ?? true;
-
-  const queryKey = [repo?.id, "log", totalToFetch, showRemoteBranches, branchFilter, authorFilter?.email];
-
-  const { data: commits = [], isFetching, isError, error } = useQuery<Commit[]>({
-    queryKey,
-    queryFn: () =>
-      repoLog(
-        repo!.id,
-        totalToFetch,
-        0,
-        branchFilter ?? undefined,
-        showRemoteBranches,
-        authorFilter?.email,
-        // Branch filter: still show stashes BASED ON commits in the walk
-        // (they hang off their base like in the full graph).
-        branchFilter !== null ? true : undefined,
-      ),
-    enabled: !!repo,
-    staleTime: 5_000,
-    // Keep the current (smaller) page rendered while the larger page fetches.
-    // Without this, the new totalToFetch query key has no cached data, the list
-    // collapses to zero height, and the scroll position jumps back to the top.
-    // Scoped to the repo: an unscoped keepPreviousData flashed the previously
-    // selected repo's graph after a repo switch while the new walk loaded.
-    placeholderData: keepPreviousDataForRepo<Commit[]>(repo?.id),
+  // Every react-query read plus its directly-derived memos live in the
+  // extracted hook (2026-08-24 structural split); the panel keeps only
+  // state-dependent wiring.
+  const signedColumnVisible = !colState.hidden.includes("signed");
+  const {
+    commits,
+    isFetching,
+    isError,
+    error,
+    searchHits,
+    searchFetching,
+    branches,
+    tracking,
+    status,
+    upstreamMap,
+    currentBranchName,
+    tagRemote,
+    remoteNames,
+    pushedTags,
+    tagTargetsOnRemote,
+    signedSet,
+  } = useCommitsQueries(repo, {
+    totalToFetch,
+    branchFilter,
+    authorFilter,
+    search,
+    signedColumnVisible,
   });
 
-  // Filter results: same walk universe and row shape as the graph (the
-  // backend searches HEAD + all local branches with the log format), capped
-  // like the Search panel. Under the "log" domain so the watcher refreshes
-  // the results after commits/amends like it does the graph.
-  const { data: searchHits = [], isFetching: searchFetching } = useQuery<CommitId[]>({
-    queryKey: [repo?.id, "log", "commits-search", search],
-    queryFn: async () => {
-      const { query } = search!;
-      // Message OR author: git ANDs --grep and --author in one invocation,
-      // so OR takes two walks merged client-side. The rev-parse probe runs
-      // alongside; failure just means the query isn't a rev.
-      const [resolved, byMessage, byAuthor] = await Promise.all([
-        repoResolveCommit(repo!.id, query).catch(() => null),
-        repoSearchCommits(repo!.id, query, "message", SEARCH_MAX_RESULTS),
-        repoSearchCommits(repo!.id, query, "author", SEARCH_MAX_RESULTS),
-      ]);
-      const ids = mergeSearchResults(byMessage, byAuthor)
-        .map((c) => c.id)
-        .filter((id) => id !== resolved);
-      return resolved ? [resolved, ...ids] : ids;
-    },
-    enabled: !!repo && search !== null,
-    staleTime: 30_000,
-    placeholderData: keepPreviousDataForRepo<CommitId[]>(repo?.id),
-  });
-
-  // Branch list (for upstream tracking). Drives chip fusion: a local branch
-  // and its configured upstream remote collapse into one chip when both sit on
-  // the same commit.
-  const { data: branches = [] } = useQuery<Branch[]>({
-    queryKey: [repo?.id, "branches"],
-    queryFn: () => repoBranches(repo!.id),
-    enabled: !!repo,
-    staleTime: 5_000,
-  });
-
-  // Ahead/behind vs upstream — used to gate "Reword message…" (the tip commit
-  // is only rewordable while it is local / not yet pushed). `null` when HEAD is
-  // detached or the branch has no upstream.
-  const { data: tracking } = useQuery<TrackingStatus | null>({
-    queryKey: [repo?.id, "tracking"],
-    queryFn: () => repoTrackingStatus(repo!.id),
-    enabled: !!repo,
-    staleTime: 5_000,
-  });
-
-  // Working-tree status — drives the synthetic "uncommitted changes" row.
-  const { data: status = [] } = useQuery<FileStatus[]>({
-    queryKey: [repo?.id, "status"],
-    queryFn: () => repoStatus(repo!.id),
-    enabled: !!repo,
-    staleTime: 5_000,
-  });
-
-  // Full local ref → full upstream ref (e.g. refs/heads/dev → refs/remotes/origin/dev).
-  const upstreamMap = useMemo(() => buildUpstreamMap(branches), [branches]);
-
-  // Merge/rebase entry points need the current branch NAME for labels and are
-  // hidden while an operation is already in progress. (Distinct from the
-  // `currentBranch` Branch object below, which drives reword gating.)
-  const currentBranchName = useMemo(
-    () => branches.find((b) => !b.is_remote && b.is_current)?.name ?? null,
-    [branches],
-  );
   const opState = useOpState(repo?.id);
   const opInProgress = !!opState && opState.kind !== "none";
-
-  // Tags: the local list (drives the row menus), the configured remotes (to
-  // pick the tag-push target). ls-remote (below) is a network call — long
-  // staleTime, no retry.
-  const { data: tags = [] } = useQuery<TagInfo[]>({
-    queryKey: [repo?.id, "tags"],
-    queryFn: () => repoTags(repo!.id),
-    enabled: !!repo,
-    staleTime: 5_000,
-  });
-  const { data: remotesList = [] } = useQuery<Remote[]>({
-    queryKey: [repo?.id, "remotes"],
-    queryFn: () => repoListRemotes(repo!.id),
-    enabled: !!repo,
-    staleTime: 5_000,
-  });
-  // Same per-repo choice + resolver as the Tags section, so the "pushed"
-  // indicators agree across panels and the remote-tags query is shared.
-  const tagRemoteChoice = useTagRemoteChoice(repo?.id);
-  const tagRemote = useMemo(
-    () => resolveTagRemote(tagRemoteChoice, remotesList),
-    [tagRemoteChoice, remotesList],
-  );
-  const remoteNames = useMemo(() => remotesList.map((r) => r.name), [remotesList]);
 
   // Verification verdicts for every commit inspected in Commit Details this
   // session (the list itself never verifies - it only knows presence). Each
   // recorded verdict upgrades that row's neutral "signed" chip permanently,
   // not just while the row is selected.
   const verifiedSignatures = useSignatureStore((s) => (repo ? s.byRepo[repo.id] : undefined));
-
-  // Signature PRESENCE for the Signed column - pay-per-view: queried only
-  // while the column is visible, as a second pass so the list itself renders
-  // without waiting (and without the extra subprocess when hidden). Presence
-  // is immutable per SHA, hence staleTime: Infinity and no watcher
-  // invalidation; new commits change the key, and the backend's per-SHA cache
-  // makes that refetch pay only for unseen SHAs. keepPreviousData stops the
-  // chips from blinking out while the refetch runs.
-  const signedColumnVisible = !colState.hidden.includes("signed");
-  const commitIds = useMemo(() => commits.map((c) => c.id), [commits]);
-  const { data: signedIds } = useQuery<CommitId[]>({
-    queryKey: [repo?.id, "sig-presence", commitIds],
-    queryFn: () => repoSignaturePresence(repo!.id, commitIds),
-    enabled: !!repo && signedColumnVisible && commitIds.length > 0,
-    staleTime: Infinity,
-    placeholderData: keepPreviousDataForRepo<CommitId[]>(repo?.id),
-  });
-  const signedSet = useMemo(() => new Set(signedIds ?? []), [signedIds]);
 
   // All mutating row/menu actions (merge, sequencer, branch/tag/stash ops,
   // checkouts) live in this hook; every returned callback is stable.
@@ -553,20 +404,6 @@ export function CommitsPanel() {
     [subjectEdit, actions],
   );
 
-  const { data: remoteTags = [] } = useQuery<RemoteTag[]>({
-    queryKey: [repo?.id, "remote-tags", tagRemote],
-    queryFn: () => repoRemoteTags(repo!.id, tagRemote!, crypto.randomUUID()),
-    enabled: !!repo && tagRemote !== null,
-    staleTime: 300_000,
-    retry: false,
-  });
-  const pushedTags = useMemo(() => pushedTagNames(tags, remoteTags), [tags, remoteTags]);
-  // Tags whose target commit is on the remote; pushing the others is disabled
-  // (it would upload commits no remote branch references).
-  const tagTargetsOnRemote = useMemo(
-    () => new Set(tags.filter((t) => t.target_on_remote).map((t) => t.name)),
-    [tags],
-  );
 
   // Create-new-tag flow: the input shows on the clicked row; the (lightweight)
   // tag is only created when a name is confirmed.
@@ -1559,296 +1396,74 @@ export function CommitsPanel() {
                       selectedIds,
                       rows.map((r) => ({ id: r.id, isMerge: (r.parents?.length ?? 0) > 1 })),
                     );
-                    const comparePair = plan.compare;
                     if (plan.count >= 2) {
                       openMenu(
                         e,
-                        <>
-                          <SectionLabel>{plan.count} commits selected</SectionLabel>
-                          {/* Sequencer ops hidden while one is in progress,
-                              like the single-row menu. */}
-                          {!opInProgress && (
-                            <>
-                              <MenuItem
-                                disabled={plan.containsMerge}
-                                onClick={() => { closeMenu(); handleCherryPick(plan.cherryPickShas); }}
-                              >
-                                Cherry-pick {plan.count} commits
-                              </MenuItem>
-                              <MenuItem
-                                disabled={plan.containsMerge}
-                                onClick={() => { closeMenu(); handleRevert(plan.revertShas); }}
-                              >
-                                Revert {plan.count} commits
-                              </MenuItem>
-                              {plan.containsMerge && (
-                                <div
-                                  style={{
-                                    padding: "4px 14px 6px",
-                                    fontSize: "var(--fz-sm)",
-                                    color: "var(--subtle-fg)",
-                                    maxWidth: 280,
-                                    whiteSpace: "normal",
-                                    cursor: "default",
-                                  }}
-                                >
-                                  The selection contains a merge commit - cherry-pick
-                                  or revert it on its own to choose a mainline parent.
-                                </div>
-                              )}
-                            </>
-                          )}
-                          {comparePair && (
-                            <MenuItem
-                              onClick={() => {
-                                closeMenu();
-                                useSummonStore.getState().summon("compare", comparePair);
-                              }}
-                            >
-                              Compare selected commits
-                            </MenuItem>
-                          )}
-                        </>,
+                        <BulkSelectionMenu
+                          plan={plan}
+                          opInProgress={opInProgress}
+                          handleCherryPick={handleCherryPick}
+                          handleRevert={handleRevert}
+                        />,
                       );
                       return;
                     }
                   }
                   if (commit.id === WORKING_DIR_ID) {
-                    openMenu(
-                      e,
-                      <>
-                        <SectionLabel>Uncommitted changes</SectionLabel>
-                        <MenuItem onClick={() => { closeMenu(); handleCreateStash(false); }}>
-                          Stash changes
-                        </MenuItem>
-                        <MenuItem onClick={() => { closeMenu(); handleCreateStash(true); }}>
-                          Stash changes (incl. untracked)
-                        </MenuItem>
-                      </>,
-                    );
+                    openMenu(e, <WorkdirRowMenu handleCreateStash={handleCreateStash} />);
                     return;
                   }
-                  const stashSelector = stashSelectorById.get(commit.id);
                   // Author-specific entries only when the click landed in the
                   // Author cell (keeps the row menu uncluttered).
                   const inAuthorCell =
                     (e.target as HTMLElement).closest('[data-col="author"]') !== null;
-                  // Branch sections for every branch decorating this row —
-                  // the same shared sections the ref chips use, so the
-                  // actions (and the delete Confirm step) stay in parity.
-                  const rowBranches = branchesAt(commit.decorations ?? []);
-                  const rowTags = (commit.decorations ?? [])
-                    .filter((d) => d.type === "tag")
-                    .map((d) => (d as { value: string }).value.replace(/^refs\/tags\//, ""));
-                  const hasRefSections =
-                    rowBranches.local.length > 0 || rowBranches.remote.length > 0 || rowTags.length > 0;
-                  // Merge commits need a mainline parent for cherry-pick /
-                  // revert (-m N); null = regular commit, run directly.
-                  const mainline = mainlineChoices(commit, (id) =>
-                    commitMessageById.get(id) ?? null,
-                  );
-                  const undoPlan = undoLastCommitPlan({
-                    isHeadRow: commit.id === headSha,
-                    hasParent: (commit.parents?.length ?? 0) > 0,
-                    opInProgress,
-                    hasUpstream: !!currentBranch?.upstream,
-                    ahead: tracking?.ahead ?? null,
-                  });
                   openMenu(
                     e,
-                    stashSelector ? (
-                      // Same shared section as the stash chip's menu — keeps
-                      // the two in parity, including the Drop confirm step.
-                      <StashMenuSection
-                        selector={stashSelector}
-                        onViewDiff={() => { closeMenu(); openStashDiff(commit.id); }}
-                        onApply={() => { closeMenu(); handleStashApply(commit.id); }}
-                        onPop={() => { closeMenu(); handleStashPop(commit.id); }}
-                        onBranch={() => { closeMenu(); handleStashBranchStart(commit.id); }}
-                        onRename={() => { closeMenu(); handleStashRename(commit.id); }}
-                        onDrop={() => { closeMenu(); handleStashDrop(commit.id); }}
-                      />
-                    ) : (
-                      <>
-                        <SectionLabel>{commit.id.slice(0, 8)}</SectionLabel>
-                        <MenuItem onClick={() => { closeMenu(); handleCommitCheckout(commit.id); }}>
-                          Checkout commit
-                        </MenuItem>
-                        <MenuItem onClick={() => { closeMenu(); handleCreateBranchStart(commit.id); }}>
-                          Create branch here…
-                        </MenuItem>
-                        <MenuItem onClick={() => { closeMenu(); handleCreateTagStart(commit.id); }}>
-                          Create tag here…
-                        </MenuItem>
-                        <MenuItem
-                          onClick={() => {
-                            closeMenu();
-                            useSummonStore.getState().summon("files", { rev: commit.id });
-                          }}
-                        >
-                          Browse files at this commit
-                        </MenuItem>
-                        {inAuthorCell && (
-                          <MenuItem
-                            onClick={() => {
-                              closeMenu();
-                              setAuthorFilter({ name: commit.author.name, email: commit.author.email });
-                              // A search's hits may not be by this author -
-                              // cycling would only toast. Same as branch filter.
-                              clearSearch();
-                            }}
-                          >
-                            Show only commits by '{commit.author.name}'
-                          </MenuItem>
-                        )}
-                        {commit.id === headSha && headIsRewordable && (
-                          <MenuItem onClick={() => { closeMenu(); handleRewordStart(commit); }}>
-                            Reword message…
-                          </MenuItem>
-                        )}
-                        {undoPlan !== "hidden" && (
-                          <UndoLastCommitMenuItem
-                            pushed={undoPlan === "warn_pushed"}
-                            onUndo={() => { closeMenu(); handleUndoLastCommit(commit.id); }}
-                          />
-                        )}
-                        {/* Sequencer ops are hidden while a merge/rebase/
-                            cherry-pick/revert is already in progress. */}
-                        {!opInProgress && (
-                          <>
-                            <Separator />
-                            {mainline ? (
-                              // A merge's "change" is ambiguous - ask which
-                              // parent to measure against instead of surfacing
-                              // git's raw "-m required" error.
-                              <>
-                                <Submenu label="Cherry-pick commit">
-                                  <SectionLabel>Apply changes relative to…</SectionLabel>
-                                  {mainline.map((c) => (
-                                    <MenuItem
-                                      key={c.mainline}
-                                      onClick={() => { closeMenu(); handleCherryPick([commit.id], c.mainline); }}
-                                    >
-                                      {c.label}
-                                    </MenuItem>
-                                  ))}
-                                </Submenu>
-                                <Submenu label="Revert commit">
-                                  <SectionLabel>Undo changes relative to…</SectionLabel>
-                                  {mainline.map((c) => (
-                                    <MenuItem
-                                      key={c.mainline}
-                                      onClick={() => { closeMenu(); handleRevert([commit.id], c.mainline); }}
-                                    >
-                                      {c.label}
-                                    </MenuItem>
-                                  ))}
-                                  {/* The classic merge-revert caveat: history
-                                      still records the merge. */}
-                                  <div
-                                    style={{
-                                      padding: "4px 14px 6px",
-                                      fontSize: "var(--fz-sm)",
-                                      color: "var(--subtle-fg)",
-                                      maxWidth: 280,
-                                      whiteSpace: "normal",
-                                      cursor: "default",
-                                    }}
-                                  >
-                                    History keeps the merge: re-merging the branch
-                                    later restores nothing.
-                                  </div>
-                                </Submenu>
-                              </>
-                            ) : (
-                              <>
-                                <MenuItem onClick={() => { closeMenu(); handleCherryPick([commit.id]); }}>
-                                  Cherry-pick commit
-                                </MenuItem>
-                                <MenuItem onClick={() => { closeMenu(); handleRevert([commit.id]); }}>
-                                  Revert commit
-                                </MenuItem>
-                              </>
-                            )}
-                            <MenuItem
-                              onClick={() => {
-                                closeMenu();
-                                useSummonStore.getState().summon("interactive-rebase", commit.id);
-                              }}
-                            >
-                              Interactive rebase from here…
-                            </MenuItem>
-                            <MenuItem
-                              onClick={() => {
-                                closeMenu();
-                                useSummonStore.getState().summon("compare", { from: commit.id, to: "HEAD" });
-                              }}
-                            >
-                              Compare with HEAD
-                            </MenuItem>
-                            <ResetMenuItems
-                              branch={currentBranchName}
-                              onReset={(mode) => { closeMenu(); handleReset(commit.id, mode); }}
-                            />
-                          </>
-                        )}
-                        {/* One submenu entry per decorating ref: keeps the row
-                            menu O(refs) long while the flyouts reuse the same
-                            shared sections as the ref chips (action parity,
-                            incl. the delete Confirm takeover). */}
-                        {hasRefSections && <Separator />}
-                        {rowBranches.local.map((b) => (
-                          <Submenu
-                            key={`local-${b.name}`}
-                            label={<><BranchIcon /> {b.isCurrent ? `${b.name} (current)` : b.name}</>}
-                          >
-                            <BranchMenuSection
-                              name={b.name}
-                              isCurrent={b.isCurrent}
-                              currentBranch={currentBranchName}
-                              opInProgress={opInProgress}
-                              upstream={branches.find((x) => !x.is_remote && x.name === b.name)?.upstream ?? null}
-                              upstreamCandidates={upstreamCandidatesFor(b.name)}
-                              remotes={remoteNames}
-                              onCheckout={() => { closeMenu(); handleBranchCheckout(b.name); }}
-                              onRename={() => { closeMenu(); handleBranchRename(b.name); }}
-                              onPush={(remote, setUpstream) => { closeMenu(); handleBranchPush(b.name, remote, setUpstream); }}
-                              onSetUpstream={(up) => { closeMenu(); handleSetUpstream(b.name, up); }}
-                              onDelete={(force) => { closeMenu(); handleBranchDelete(b.name, force); }}
-                              onMerge={(options) => { closeMenu(); handleMerge(b.name, options); }}
-                              onRebaseOnto={() => { closeMenu(); handleRebaseOnto(b.name); }}
-                            />
-                          </Submenu>
-                        ))}
-                        {rowBranches.remote.map((name) => (
-                          <Submenu key={`remote-${name}`} label={<><RemoteIcon /> {name}</>}>
-                            <RemoteBranchMenuSection
-                              remoteName={name}
-                              currentBranch={currentBranchName}
-                              opInProgress={opInProgress}
-                              onCheckout={() => { closeMenu(); handleRemoteCheckout(name); }}
-                              onMerge={(options) => { closeMenu(); handleMerge(name, options); }}
-                              onRebaseOnto={() => { closeMenu(); handleRebaseOnto(name); }}
-                              onDeleteRemote={() => { closeMenu(); void handleRemoteBranchDelete(name); }}
-                            />
-                          </Submenu>
-                        ))}
-                        {rowTags.map((name) => (
-                          <Submenu key={`tag-${name}`} label={<><TagIcon /> {name}</>}>
-                            <TagMenuSection
-                              name={name}
-                              pushed={pushedTags.has(name)}
-                              targetOnRemote={tagTargetsOnRemote.has(name)}
-                              remote={tagRemote}
-                              remotes={remoteNames}
-                              onPush={(remote) => { closeMenu(); handleTagPush(name, remote); }}
-                              onDelete={() => { closeMenu(); handleTagDelete(name); }}
-                              onDeleteRemote={(remote) => { closeMenu(); handleTagDeleteRemote(name, remote); }}
-                            />
-                          </Submenu>
-                        ))}
-                      </>
-                    ),
+                    <CommitRowMenu
+                      commit={commit}
+                      stashSelector={stashSelectorById.get(commit.id)}
+                      inAuthorCell={inAuthorCell}
+                      opInProgress={opInProgress}
+                      headSha={headSha}
+                      headIsRewordable={headIsRewordable}
+                      hasUpstream={!!currentBranch?.upstream}
+                      trackingAhead={tracking?.ahead ?? null}
+                      currentBranchName={currentBranchName}
+                      branches={branches}
+                      remoteNames={remoteNames}
+                      pushedTags={pushedTags}
+                      tagTargetsOnRemote={tagTargetsOnRemote}
+                      tagRemote={tagRemote}
+                      commitMessageById={commitMessageById}
+                      upstreamCandidatesFor={upstreamCandidatesFor}
+                      setAuthorFilter={setAuthorFilter}
+                      clearSearch={clearSearch}
+                      handleRewordStart={handleRewordStart}
+                      handleUndoLastCommit={handleUndoLastCommit}
+                      handleCommitCheckout={handleCommitCheckout}
+                      handleCreateBranchStart={handleCreateBranchStart}
+                      handleCreateTagStart={handleCreateTagStart}
+                      handleCherryPick={handleCherryPick}
+                      handleRevert={handleRevert}
+                      handleReset={handleReset}
+                      handleMerge={handleMerge}
+                      handleRebaseOnto={handleRebaseOnto}
+                      handleBranchCheckout={handleBranchCheckout}
+                      handleBranchRename={handleBranchRename}
+                      handleBranchPush={handleBranchPush}
+                      handleSetUpstream={handleSetUpstream}
+                      handleBranchDelete={handleBranchDelete}
+                      handleRemoteCheckout={handleRemoteCheckout}
+                      handleRemoteBranchDelete={handleRemoteBranchDelete}
+                      handleTagPush={handleTagPush}
+                      handleTagDelete={handleTagDelete}
+                      handleTagDeleteRemote={handleTagDeleteRemote}
+                      handleStashApply={handleStashApply}
+                      handleStashPop={handleStashPop}
+                      handleStashBranchStart={handleStashBranchStart}
+                      handleStashRename={handleStashRename}
+                      handleStashDrop={handleStashDrop}
+                    />,
                   );
                 }}
                 style={{
@@ -2177,460 +1792,6 @@ function FilterChip({
         ✕
       </button>
     </span>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Remote sync toolbar
-// ---------------------------------------------------------------------------
-
-type SyncOp = "fetch" | "pull" | "push";
-
-/**
- * Fetch / Pull / Push controls plus an ahead/behind indicator for the current
- * branch. Auth is driven entirely by the repo's local git config (the active
- * git profile's SSH command + credential helper) — these calls add nothing
- * auth-specific; failures are classified by the backend and surfaced as toasts.
- *
- * Long-running ops are cancellable: the frontend mints the `op_id`, passes it
- * into the sync command, and cancels via `consoleCancel` (the same shared
- * GitRunner). A user-cancelled op suppresses its error toast.
- */
-const PULL_STRATEGY_LABELS: Record<PullStrategy, string> = {
-  Default: "Repo default",
-  Rebase: "Rebase",
-  Merge: "Merge",
-  FfOnly: "Fast-forward only",
-};
-
-/** Stash-button modes: whether `git stash push` includes untracked files.
- *  Ordered for the caret menu; keys mirror `stash_include_untracked`. */
-const STASH_MODES: { includeUntracked: boolean; label: string }[] = [
-  { includeUntracked: false, label: "Tracked changes only" },
-  { includeUntracked: true, label: "Include untracked files" },
-];
-
-function RemoteSyncToolbar({
-  repoId,
-  branches,
-  onCreateBranch,
-  onStash,
-  hasUncommittedChanges,
-  trailing,
-}: {
-  repoId: string;
-  branches: Branch[];
-  /** Opens the create-new-branch input on the HEAD row (see CommitsPanel). */
-  onCreateBranch: () => void;
-  /** Stashes the working tree (same action as the uncommitted-changes row's menu). */
-  onStash: (includeUntracked: boolean) => void;
-  /** Whether the working tree has anything to stash (drives the disabled state). */
-  hasUncommittedChanges: boolean;
-  /** Extra controls rendered right of the git buttons (the search/filter bar). */
-  trailing?: React.ReactNode;
-}) {
-  const queryClient = useQueryClient();
-
-  const { data: tracking } = useQuery<TrackingStatus | null>({
-    queryKey: [repoId, "tracking"],
-    queryFn: () => repoTrackingStatus(repoId),
-    enabled: !!repoId,
-    staleTime: 5_000,
-  });
-
-  // Configured remotes (not just fetched ones) — so Publish works the moment a
-  // remote is added, before any fetch creates remote-tracking branches.
-  const { data: remotes = [] } = useQuery<Remote[]>({
-    queryKey: [repoId, "remotes"],
-    queryFn: () => repoListRemotes(repoId),
-    enabled: !!repoId,
-    staleTime: 5_000,
-  });
-
-  const [busyOp, setBusyOp] = useState<SyncOp | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [pullMenuOpen, setPullMenuOpen] = useState(false);
-  const [stashMenuOpen, setStashMenuOpen] = useState(false);
-  const opIdRef = useRef<string | null>(null);
-  const cancelRequestedRef = useRef(false);
-
-  // Persisted pull integration strategy ("Default" = the repo's pull.rebase
-  // config decides). Picking one in the caret menu changes the default for
-  // every future pull, not just the next one.
-  const pullStrategy = useSettingsStore((s) => s.settings?.pull_strategy ?? "Default");
-  const pushRecurseSubmodules = useSettingsStore(
-    (st) => st.settings?.push_recurse_submodules ?? null,
-  );
-  const setPullStrategy = useSettingsStore((s) => s.setPullStrategy);
-
-  // Persisted default for the Stash button (pull-strategy style): whether
-  // stashing includes untracked files. Picking a mode in the caret menu
-  // changes the default for every future stash, not just the next one.
-  const stashIncludeUntracked = useSettingsStore(
-    (s) => s.settings?.stash_include_untracked ?? false,
-  );
-  const setStashIncludeUntracked = useSettingsStore((s) => s.setStashIncludeUntracked);
-
-  // Latest --progress update for the in-flight op (cleared when it settles).
-  const progress = useRemoteProgressStore((s) =>
-    opIdRef.current ? s.byOp[opIdRef.current] : undefined,
-  );
-
-  // The checked-out local branch (none when detached / unborn).
-  const currentBranch = useMemo(
-    () => branches.find((b) => b.is_current && !b.is_remote) ?? null,
-    [branches],
-  );
-  const hasUpstream = !!currentBranch?.upstream;
-
-  // The remote to push/publish to: the upstream's remote when set, else a
-  // configured remote (prefer "origin", else the first). Null only when the repo
-  // has no remotes configured at all.
-  const remoteName = useMemo((): string | null => {
-    const up = currentBranch?.upstream; // e.g. "refs/remotes/origin/main"
-    if (up) {
-      const parts = up.split("/");
-      if (parts[0] === "refs" && parts[1] === "remotes" && parts.length >= 4) return parts[2];
-    }
-    if (remotes.length === 0) return null;
-    const names = remotes.map((r) => r.name);
-    return names.includes("origin") ? "origin" : names[0];
-  }, [remotes, currentBranch]);
-
-  const runSync = useCallback(
-    async (kind: SyncOp, fn: (opId: string) => Promise<unknown>, successMsg: string) => {
-      const opId = crypto.randomUUID();
-      opIdRef.current = opId;
-      cancelRequestedRef.current = false;
-      setBusyOp(kind);
-      try {
-        await fn(opId);
-        notify.success(successMsg);
-        // "tags" because push/pull/fetch move remote-tracking refs, which the
-        // tag list's per-tag `target_on_remote` flag is computed against.
-        invalidateRepoDomains(queryClient, repoId, ["log", "branches", "status", "tracking", "tags"]);
-      } catch (e) {
-        if (cancelRequestedRef.current) {
-          // User cancelled — the failure is expected, no toast.
-        } else {
-          // Classified wording shared with the branch menus' push action.
-          notify.error(remoteOpErrorMessage(e));
-        }
-      } finally {
-        useRemoteProgressStore.getState().clear(opId);
-        setBusyOp(null);
-        opIdRef.current = null;
-      }
-    },
-    [queryClient, repoId],
-  );
-
-  const cancelSync = useCallback(() => {
-    if (opIdRef.current) {
-      cancelRequestedRef.current = true;
-      void consoleCancel(repoId, opIdRef.current);
-    }
-  }, [repoId]);
-
-  const doFetch = () =>
-    runSync("fetch", (opId) => repoFetch(repoId, { all: true, prune: true, remote: null }, opId), "Fetched");
-
-  const doPull = () =>
-    runSync(
-      "pull",
-      (opId) =>
-        repoPull(repoId, { strategy: pullStrategy }, opId).then((r) => {
-          // A pull can move submodule pointers exactly like a switch does.
-          void autoUpdateSubmodules(queryClient, repoId);
-          return r;
-        }),
-      "Pulled",
-    );
-
-  const doPush = (forceWithLease: boolean, remoteOverride?: string) => {
-    setMenuOpen(false);
-    const remote = remoteOverride ?? remoteName;
-    if (!currentBranch || !remote) return;
-    const opts: PushOptions = {
-      remote,
-      branch: currentBranch.name,
-      set_upstream: !hasUpstream,
-      force_with_lease: forceWithLease,
-      recurse_submodules: pushRecurseSubmodules,
-    };
-    return runSync(
-      "push",
-      // Auto-push-tags follow-up rides inside the op (gated on the setting);
-      // its failures toast separately and never fail the push.
-      (opId) => pushWithTagFollowUp(queryClient, repoId, opts, opId),
-      hasUpstream ? `Pushed to ${remote}` : "Published branch",
-    );
-  };
-
-  const busy = busyOp !== null;
-  const pushLabel = hasUpstream ? "Push" : "Publish";
-
-  return (
-    <div
-      className="legit-panel__toolbar"
-      // Wraps when the panel is narrow: the search controls (trailing) move
-      // to their own line instead of crushing the git buttons. Vertical
-      // padding stays the class default (6px): with the 2em controls that
-      // lands exactly on the toolbar min-height, so the spacing around the
-      // controls is identical whether or not the row wraps.
-      style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}
-    >
-      {/* While an op runs, ITS button becomes the Cancel button (spinner +
-          "Cancel", still enabled) — the cancel affordance sits exactly where
-          the user just clicked. The other buttons disable as before. */}
-      <ToolbarButton
-        title={busyOp === "fetch" ? "Cancel fetch" : "Fetch all remotes (prune)"}
-        disabled={busyOp === "fetch" ? false : busy || !remoteName}
-        loading={busyOp === "fetch"}
-        icon={<FetchIcon />}
-        label={busyOp === "fetch" ? "Cancel" : "Fetch"}
-        onClick={busyOp === "fetch" ? cancelSync : doFetch}
-      />
-      {/* Pull with a caret menu picking the integration strategy. */}
-      <div style={{ position: "relative", display: "flex" }}>
-        <ToolbarButton
-          title={
-            busyOp === "pull"
-              ? "Cancel pull"
-              : hasUpstream
-                ? `Pull from ${tracking?.upstream ?? "upstream"}` +
-                  (pullStrategy !== "Default" ? ` (${PULL_STRATEGY_LABELS[pullStrategy]})` : "")
-                : "No upstream for the current branch"
-          }
-          disabled={busyOp === "pull" ? false : busy || !hasUpstream}
-          loading={busyOp === "pull"}
-          icon={<PullIcon />}
-          label={busyOp === "pull" ? "Cancel" : "Pull"}
-          onClick={busyOp === "pull" ? cancelSync : doPull}
-          rounded="left"
-        />
-        <Button
-          variant="ghost"
-          rounded="right"
-          title="Pull strategy"
-          disabled={busy || !hasUpstream}
-          onClick={() => setPullMenuOpen((o) => !o)}
-          style={{ padding: "2px 4px", marginLeft: -1 }}
-        >
-          <ChevronDownIcon />
-        </Button>
-        {pullMenuOpen && (
-          <CaretDropdown onClose={() => setPullMenuOpen(false)}>
-            {(Object.keys(PULL_STRATEGY_LABELS) as PullStrategy[]).map((s) => (
-              <MenuItem
-                key={s}
-                onClick={() => {
-                  void setPullStrategy(s);
-                  setPullMenuOpen(false);
-                }}
-              >
-                <span style={{ fontWeight: s === pullStrategy ? 600 : 400 }}>
-                  {s === pullStrategy ? "✓ " : " "}
-                  {PULL_STRATEGY_LABELS[s]}
-                </span>
-              </MenuItem>
-            ))}
-          </CaretDropdown>
-        )}
-      </div>
-
-      {/* Push / Publish with a caret menu for force-push (with lease). */}
-      <div style={{ position: "relative", display: "flex" }}>
-        <ToolbarButton
-          title={
-            busyOp === "push"
-              ? "Cancel push"
-              : !currentBranch
-              ? "Detached HEAD — no branch to push"
-              : !remoteName
-              ? "No remote configured"
-              : hasUpstream
-              ? `Push to ${remoteName}`
-              : `Publish branch to ${remoteName} (sets upstream)`
-          }
-          disabled={busyOp === "push" ? false : busy || !currentBranch || !remoteName}
-          loading={busyOp === "push"}
-          icon={<PushIcon />}
-          label={busyOp === "push" ? "Cancel" : pushLabel}
-          onClick={busyOp === "push" ? cancelSync : () => doPush(false)}
-          rounded="left"
-        />
-        <Button
-          variant="ghost"
-          rounded="right"
-          title="More push options"
-          disabled={busy || !currentBranch || !remoteName}
-          onClick={() => setMenuOpen((o) => !o)}
-          style={{ padding: "2px 4px", marginLeft: -1 }}
-        >
-          <ChevronDownIcon />
-        </Button>
-        {menuOpen && (
-          <CaretDropdown onClose={() => setMenuOpen(false)}>
-            <MenuItem onClick={() => doPush(true)}>Force-push (with lease)</MenuItem>
-            {/* With several remotes, offer a one-off push to each other one
-                (the button itself targets the upstream's / default remote). */}
-            {remotes.length > 1 && (
-              <>
-                <Separator />
-                {remotes
-                  .filter((r) => r.name !== remoteName)
-                  .map((r) => (
-                    <MenuItem key={r.name} onClick={() => doPush(false, r.name)}>
-                      Push to {r.name}
-                    </MenuItem>
-                  ))}
-              </>
-            )}
-          </CaretDropdown>
-        )}
-      </div>
-
-      {/* Create a new branch at HEAD — opens an inline name input on the
-          HEAD row's ref chips (local op; independent of the sync busy state). */}
-      <ToolbarButton
-        title="Create a new branch at HEAD"
-        disabled={false}
-        loading={false}
-        icon={<BranchPlusIcon />}
-        label="Branch"
-        // Explicitly argument-free: the DOM click event must not leak into
-        // the handler's optional startPoint parameter.
-        onClick={() => onCreateBranch()}
-      />
-
-      {/* Stash the working tree - same action as the uncommitted-changes
-          row's context menu. The caret picks the persisted default mode
-          (tracked only / incl. untracked), pull-strategy style: selecting a
-          mode configures the button, it does not stash. Local op; independent
-          of the sync busy state. */}
-      <div style={{ position: "relative", display: "flex" }}>
-        <ToolbarButton
-          title={
-            hasUncommittedChanges
-              ? "Stash uncommitted changes" +
-                (stashIncludeUntracked ? " (incl. untracked)" : "")
-              : "No uncommitted changes to stash"
-          }
-          disabled={!hasUncommittedChanges}
-          loading={false}
-          icon={<StashIcon />}
-          label="Stash"
-          onClick={() => onStash(stashIncludeUntracked)}
-          rounded="left"
-        />
-        <Button
-          variant="ghost"
-          rounded="right"
-          title="Stash mode"
-          disabled={!hasUncommittedChanges}
-          onClick={() => setStashMenuOpen((o) => !o)}
-          style={{ padding: "2px 4px", marginLeft: -1 }}
-        >
-          <ChevronDownIcon />
-        </Button>
-        {stashMenuOpen && (
-          <CaretDropdown onClose={() => setStashMenuOpen(false)}>
-            {STASH_MODES.map((mode) => (
-              <MenuItem
-                key={mode.label}
-                onClick={() => {
-                  void setStashIncludeUntracked(mode.includeUntracked);
-                  setStashMenuOpen(false);
-                }}
-              >
-                <span
-                  style={{
-                    fontWeight:
-                      mode.includeUntracked === stashIncludeUntracked ? 600 : 400,
-                  }}
-                >
-                  {mode.includeUntracked === stashIncludeUntracked ? "✓ " : " "}
-                  {mode.label}
-                </span>
-              </MenuItem>
-            ))}
-          </CaretDropdown>
-        )}
-      </div>
-
-      {/* Ahead/behind indicator for the current branch, right of the buttons. */}
-      {tracking && (
-        <span
-          title={`${tracking.ahead} ahead, ${tracking.behind} behind ${tracking.upstream}`}
-          style={{
-            fontSize: "var(--fz-sm)",
-            color: "var(--subtle-fg)",
-            fontFamily: "monospace",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          {tracking.ahead === 0 && tracking.behind === 0 ? (
-            <span>in sync</span>
-          ) : (
-            <>
-              <span>↑{tracking.ahead}</span>
-              <span>↓{tracking.behind}</span>
-            </>
-          )}
-        </span>
-      )}
-
-      {/* Live transfer progress for the in-flight op (fed by the
-          legit://remote-progress event; cleared when the op settles). */}
-      {busy && progress && (
-        <span
-          title={`${progress.phase}${progress.percent != null ? ` ${progress.percent}%` : ""}`}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            fontSize: "var(--fz-sm)",
-            color: "var(--subtle-fg)",
-            minWidth: 0,
-          }}
-        >
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {progress.phase}
-            {progress.percent != null ? ` ${progress.percent}%` : "…"}
-          </span>
-          {progress.percent != null && (
-            <span
-              aria-hidden
-              style={{
-                width: "6em",
-                height: "0.4em",
-                borderRadius: 2,
-                background: "var(--panel-border)",
-                overflow: "hidden",
-                display: "inline-block",
-                flexShrink: 0,
-              }}
-            >
-              <span
-                style={{
-                  display: "block",
-                  height: "100%",
-                  width: `${progress.percent}%`,
-                  background: "var(--progress-bar-bg)",
-                }}
-              />
-            </span>
-          )}
-        </span>
-      )}
-
-      {/* Search controls (owned by CommitsPanel): float right of the flexible
-          gap after the buttons + indicators, capped in width. */}
-      {trailing}
-    </div>
   );
 }
 
