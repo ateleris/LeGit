@@ -13,7 +13,19 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
 
 ---
 
-## Release blockers (v0.9.x -> first public release)
+## Release blockers
+
+### v1.1.0
+
+- **Frontend consolidation batch** (parked 2026-07-11, promoted to blocker
+  2026-08-24; details in `design/2026-07-11-hardening-review.md` §D):
+  shared `Popover`/`useDismissable` for the hand-rolled dropdowns, shared
+  composite file-row menu section, `STALE` query-time constants, fixed-px
+  padding sweep, theme.css value-equality test, `GlobalSettingsPanel`
+  split. (The seventh review item, GitBackend naming normalization, stays
+  a non-blocker - batch it with the next big backend feature.)
+
+### v0.9.x -> first public release
 
 (none - the blocker list emptied 2026-08-21: license landed, funding links
 landed, first-run experience shipped. What remains before flipping the repo
@@ -223,12 +235,11 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 - **E2E extensions.** Still open: clone-via-"+"-menu flow, and push/pull
   against a local bare-remote fixture (`buildRemoteFixture`). Keep it a
   small smoke suite; Linux-only remains fine.
-- **Frontend consolidation (parked, from the 2026-07-11 hardening
-  review):** shared Popover/useDismissable for the hand-rolled dropdowns,
-  shared composite file-row menu section, STALE query-time constants,
-  fixed-px padding sweep, theme.css value-equality test,
-  GlobalSettingsPanel split, GitBackend naming normalization (batch with
-  the next backend feature).
+- **GitBackend naming normalization** (`&str` vs `&CommitId` params,
+  inconsistent `list_` prefixes): wide mechanical churn with no behavior
+  change - batch it with the next big backend feature. (The rest of the
+  2026-07-11 frontend consolidation batch moved to the v1.1.0 release
+  blockers 2026-08-24.)
 - **Structural splits, when next touched** (2026-08-06 review remainder):
   `CommitsPanel.tsx` (~1700-line component; queries hook + row context
   menu + RemoteSyncToolbar are natural splits), `WorkingChangesPanel.tsx`
