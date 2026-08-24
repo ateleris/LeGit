@@ -1921,7 +1921,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "legit-app"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "base64 0.22.1",
  "dirs",
@@ -1958,7 +1958,7 @@ dependencies = [
 
 [[package]]
 name = "legit-core"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1975,7 +1975,7 @@ dependencies = [
 
 [[package]]
 name = "legit-providers"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "reqwest 0.12.28",
  "serde",

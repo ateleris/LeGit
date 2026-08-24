@@ -12,6 +12,8 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-08-24
+
 ### Added
 
 - Multi-commit selection in the Commits panel: Ctrl+click toggles rows,
