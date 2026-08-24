@@ -9,10 +9,7 @@
 A fast desktop **Git GUI** — a [Tauri 2](https://v2.tauri.app) app with a Rust
 backend and a React + TypeScript frontend.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hero_dark.png">
-  <img src="docs/screenshots/hero_light.png" alt="LeGit main window: branches, commit graph, changed files, and diff viewer">
-</picture>
+<img src="docs/screenshots/social_preview.png" alt="LeGit — the fast, themeable desktop Git GUI: dockable panels, full commit graph, line-level staging, runs your own git">
 
 > [!IMPORTANT]
 > **Vibecode disclaimer:** LeGit is built almost entirely through
