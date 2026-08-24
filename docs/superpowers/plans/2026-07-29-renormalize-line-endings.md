@@ -42,7 +42,7 @@ Spec: `docs/superpowers/specs/2026-07-29-renormalize-line-endings-design.md`.
 - Busy indicators delayed ~150 ms with a `useRef` re-entry guard.
 - Rust verification from WSL: `cargo test -p legit-core` and
   `cargo test -p legit-app`. Frontend: `npx tsc --noEmit`; vitest via
-  `powershell.exe -Command "cd C:\NOT_WORK\LeGit; npm test"`.
+  `powershell.exe -Command "cd <repo>; npm test"`.
 - Both git invocations pass `-c core.quotepath=false`.
 
 ---
@@ -795,7 +795,7 @@ render:
 - [ ] **Step 4: Verify**
 
 Run: `npx tsc --noEmit` (WSL) - expected: clean.
-Run: `powershell.exe -Command "cd C:\NOT_WORK\LeGit; npm test"` - expected:
+Run: `powershell.exe -Command "cd <repo>; npm test"` - expected:
 all vitest suites pass (theme contract + no-literal-colors included).
 Run: `cargo test -p legit-core && cargo test -p legit-app` - expected: green.
 

@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - No commits. No em-dashes in output. Colors only via `var(--token)` / `legit-subtle` (no new tokens needed). Text sizes via `--fz-*`.
-- Vitest runs via `powershell.exe -NoProfile -Command "cd C:\NOT_WORK\LeGit; npx vitest run <file>"`; `npx tsc --noEmit` from WSL.
+- Vitest runs via `powershell.exe -NoProfile -Command "cd <repo>; npx vitest run <file>"`; `npx tsc --noEmit` from WSL.
 
 ### Task 1: `parseLfsPointer` + `lfsPointerDiffSides` (TDD)
 

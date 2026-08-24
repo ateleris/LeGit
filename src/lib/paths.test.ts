@@ -17,8 +17,8 @@ describe("toAbsolutePath", () => {
   });
 
   test("joins a POSIX root using forward slashes", () => {
-    expect(toAbsolutePath("/home/simon/repo", "src/lib/a.ts")).toBe(
-      "/home/simon/repo/src/lib/a.ts",
+    expect(toAbsolutePath("/home/u/repo", "src/lib/a.ts")).toBe(
+      "/home/u/repo/src/lib/a.ts",
     );
   });
 

@@ -84,7 +84,7 @@ Next steps (plan Tasks 1.4 - 4):
 
 ## Test repo
 
-`C:\NOT_WORK\LeGit-Test-LFS` (created this session; separate from
+`<lfs-test-repo>` (created this session; separate from
 LeGit-Test, which was not touched): committed real LFS pointers
 (`logo.png` via root `.gitattributes`, `assets/data.bin` via nested
 `assets/.gitattributes`), plain controls (`notes.txt`, `assets/info.txt`).

@@ -205,8 +205,8 @@ no-literal-colors suites enforce this.
 
 ## Manual test notes (for the implementation plan)
 
-`C:\NOT_WORK\LeGit-Test-LFS` already holds a committed LFS image
-(`logo.png`) and `C:\NOT_WORK\LeGit-Test` real histories: verify
+`<lfs-test-repo>` already holds a committed LFS image
+(`logo.png`) and `<test-repo>` real histories: verify
 add/modify/delete image diffs across all four `DiffSource` kinds, the
 File View pane at a rev and in the worktree, an LFS image with the object
 present vs removed from `.git/lfs/objects`, a >20 MB image (cap message),

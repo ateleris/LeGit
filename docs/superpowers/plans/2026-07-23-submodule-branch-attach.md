@@ -13,7 +13,7 @@
 - **NEVER commit or push.** Leave all changes unstaged for Simon to review. This overrides the usual per-task commit steps: there are none in this plan.
 - **No em-dashes (—) anywhere**: prose, comments, UI copy, docs. Use a hyphen, colon, or parentheses.
 - Every new user-visible colour must come from a theme token; this plan adds none (reuse existing settings-panel markup patterns only).
-- Rust verification runs from WSL: `cargo test -p legit-core`, `cargo check --workspace`. Frontend type-check: `npx tsc --noEmit` from `/mnt/c/NOT_WORK/LeGit`. Do not run `npm install` from WSL.
+- Rust verification runs from WSL: `cargo test -p legit-core`, `cargo check --workspace`. Frontend type-check: `npx tsc --noEmit` from `<repo>`. Do not run `npm install` from WSL.
 - specta regenerates `src/lib/bindings.ts` only when the app runs; the frontend uses hand-written wrappers (`src/lib/commands.ts`) and hand-mirrored types (`src/lib/types.ts`). Add new commands/fields in both places by hand.
 - Attach failures are logged with `tracing::warn!` and never turn a successful update into an error.
 
@@ -872,9 +872,9 @@ Render it in the panel body directly after `<PushGuardSection />`:
 
 - [ ] **Step 5: Type-check and test**
 
-Run from `/mnt/c/NOT_WORK/LeGit`: `npx tsc --noEmit`
+Run from `<repo>`: `npx tsc --noEmit`
 Expected: no errors
-Run the frontend test suite via PowerShell interop (per project verification setup): `powershell.exe -Command "cd C:\NOT_WORK\LeGit; npm test -- --run"`
+Run the frontend test suite via PowerShell interop (per project verification setup): `powershell.exe -Command "cd <repo>; npm test -- --run"`
 Expected: all pass (no new frontend tests are required; the theme-contract and no-literal-colors suites must stay green)
 
 ---
@@ -888,7 +888,7 @@ Expected: all pass
 
 - [ ] **Step 2: Frontend suite**
 
-Run: `npx tsc --noEmit` and `powershell.exe -Command "cd C:\NOT_WORK\LeGit; npm test -- --run"`
+Run: `npx tsc --noEmit` and `powershell.exe -Command "cd <repo>; npm test -- --run"`
 Expected: all pass
 
 - [ ] **Step 3: Update the design doc status**

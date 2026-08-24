@@ -830,17 +830,17 @@ mod tests {
     #[test]
     fn askpass_classifies_passphrase_prompts_and_extracts_the_key_path() {
         assert_eq!(
-            classify_askpass_prompt("Enter passphrase for key '/home/simon/.ssh/id_ed25519': "),
+            classify_askpass_prompt("Enter passphrase for key '/home/u/.ssh/id_ed25519': "),
             AskpassKind::Passphrase {
-                key_path: "/home/simon/.ssh/id_ed25519".into(),
+                key_path: "/home/u/.ssh/id_ed25519".into(),
                 retry: false,
             }
         );
         // Some ssh builds omit the word "key".
         assert_eq!(
-            classify_askpass_prompt("Enter passphrase for 'C:/Users/simon/.ssh/id_rsa': "),
+            classify_askpass_prompt("Enter passphrase for 'C:/Users/u/.ssh/id_rsa': "),
             AskpassKind::Passphrase {
-                key_path: "C:/Users/simon/.ssh/id_rsa".into(),
+                key_path: "C:/Users/u/.ssh/id_rsa".into(),
                 retry: false,
             }
         );

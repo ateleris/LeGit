@@ -17,7 +17,7 @@
 - PREREQUISITE: the profile-flow-cleanup plan (`docs/superpowers/plans/2026-07-21-profile-flow-cleanup.md`) is executed first. This plan consumes `useGitProfiles`/`invalidateGitProfiles` from `src/lib/useGitProfiles.ts` and assumes `repos_using_profile` is already registered in `collect_commands![]`.
 - Every colour from theme tokens (`var(--token)`); this plan reuses existing tokens only (`--fz-sm`, `--fz-md`, `--subtle-fg`, `--success-fg`, `--panel-border`, `--button-hover-bg`, `--error-fg`).
 - New IPC commands go in BOTH places: `collect_commands![]` in `src-tauri/src/lib.rs` AND hand-written wrappers in `src/lib/commands.ts`, with types hand-mirrored in `src/lib/types.ts` (never edit `bindings.ts` by hand).
-- Run vitest from WSL via PowerShell interop: `powershell.exe -NoProfile -Command "Set-Location C:\NOT_WORK\LeGit; npx vitest run <file>"`. `cargo test` and `npx tsc --noEmit` run directly in WSL.
+- Run vitest from WSL via PowerShell interop: `powershell.exe -NoProfile -Command "Set-Location <repo>; npx vitest run <file>"`. `cargo test` and `npx tsc --noEmit` run directly in WSL.
 - Rust code in this plan uses `->` in prose comments, never an em-dash.
 
 ---
@@ -589,7 +589,7 @@ describe("profileValues", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `powershell.exe -NoProfile -Command "Set-Location C:\NOT_WORK\LeGit; npx vitest run src/panels/Settings/identityMode.test.ts"`
+Run: `powershell.exe -NoProfile -Command "Set-Location <repo>; npx vitest run src/panels/Settings/identityMode.test.ts"`
 Expected: FAIL (cannot resolve `./identityMode`)
 
 - [ ] **Step 3: Update the type mirror and implement the helpers**
@@ -669,7 +669,7 @@ Change the save-as-profile gate from `m.kind === "unmanaged"` to `m.kind === "cu
 
 - [ ] **Step 5: Run test + type-check to verify they pass**
 
-Run: `powershell.exe -NoProfile -Command "Set-Location C:\NOT_WORK\LeGit; npx vitest run src/panels/Settings/identityMode.test.ts"`
+Run: `powershell.exe -NoProfile -Command "Set-Location <repo>; npx vitest run src/panels/Settings/identityMode.test.ts"`
 Expected: PASS (2 tests)
 
 Run: `npx tsc --noEmit`
@@ -1411,7 +1411,7 @@ Replace lines 162-164 (`<RepoProfileSection .../>`, `<LineEndingsRepoSection ...
 - [ ] **Step 2: Delete the replaced component**
 
 ```bash
-rm /mnt/c/NOT_WORK/LeGit/src/panels/Settings/RepoProfileSection.tsx
+rm <repo>/src/panels/Settings/RepoProfileSection.tsx
 ```
 
 - [ ] **Step 3: Strip `SigningSettings.tsx` to its shared primitives**
@@ -1440,7 +1440,7 @@ In `src/panels/Settings/GlobalProfilesSection.tsx`, in the delete-confirmation s
 Run: `npx tsc --noEmit`
 Expected: no errors
 
-Run: `powershell.exe -NoProfile -Command "Set-Location C:\NOT_WORK\LeGit; npx vitest run"`
+Run: `powershell.exe -NoProfile -Command "Set-Location <repo>; npx vitest run"`
 Expected: all PASS (includes theme contract + no-literal-colors suites)
 
 ---
@@ -1459,12 +1459,12 @@ Expected: all PASS, build clean
 Run: `npx tsc --noEmit`
 Expected: no errors
 
-Run: `powershell.exe -NoProfile -Command "Set-Location C:\NOT_WORK\LeGit; npx vitest run"`
+Run: `powershell.exe -NoProfile -Command "Set-Location <repo>; npx vitest run"`
 Expected: all PASS
 
 - [ ] **Step 3: Manual smoke (user runs the app from PowerShell)**
 
-Using the test repo `C:\NOT_WORK\LeGit-Test` (inspect its state first; do not reset it):
+Using the test repo `<test-repo>` (inspect its state first; do not reset it):
 
 1. Repo Settings shows ONE "Identity, signing & credentials (this repo)" section; the standalone repo signing section is gone.
 2. Source dropdown: Use global config / each profile / Custom (this repo). The detected mode is selected.

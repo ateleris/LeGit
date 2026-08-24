@@ -257,8 +257,8 @@ mod tests {
     fn explorer_path_converts_forward_slashes() {
         // `git rev-parse --show-toplevel` output on Windows (session paths).
         assert_eq!(
-            explorer_path(std::path::Path::new("C:/NOT_WORK/LeGit")),
-            r"C:\NOT_WORK\LeGit"
+            explorer_path(std::path::Path::new("C:/Dev/LeGit")),
+            r"C:\Dev\LeGit"
         );
     }
 

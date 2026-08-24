@@ -307,5 +307,5 @@ New prop `onMovePath: (to: string) => void;` (doc: `/** Move the submodule to a 
 ### Task 4: Final verification
 
 - [ ] `cargo test -p legit-core && cargo check --workspace`
-- [ ] `npx tsc --noEmit` + `powershell.exe -Command "cd C:\NOT_WORK\LeGit; npm test -- --run"`
+- [ ] `npx tsc --noEmit` + `powershell.exe -Command "cd <repo>; npm test -- --run"`
 - [ ] Flip the spec status to implemented; report (no commits).

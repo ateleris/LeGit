@@ -16,7 +16,7 @@
 - NO em-dashes in any produced text or code comments; use hyphens or colons.
 - All colors via theme tokens (`var(--token)`); new tokens in the contractual 4 places + both bundled themes.
 - All dimensions scale with `--ui-font-size` (em / `--fz-*`); fixed px only for hairlines.
-- cargo/tsc from WSL; vitest via `powershell.exe -NoProfile -Command "Set-Location C:\NOT_WORK\LeGit; npx vitest run <path>"`.
+- cargo/tsc from WSL; vitest via `powershell.exe -NoProfile -Command "Set-Location <repo>; npx vitest run <path>"`.
 - New commands: register in `src-tauri/src/lib.rs` `collect_commands!`, hand-written wrapper in `src/lib/commands.ts`, hand-mirrored type in `src/lib/types.ts`.
 - `MAX_PREVIEW_BYTES = 20 * 1024 * 1024` (20 MB per side).
 
@@ -903,9 +903,9 @@ Add the `ImagePane` / `useFilePreview` imports. Note: hooks must run uncondition
 - [ ] `npx tsc --noEmit` clean; full `npx vitest run` via PowerShell green (incl. theme contract + noLiteralColors + the new diffSides/previewSurface tests).
 - [ ] BACKLOG.md: replace the "Diff viewer: rich preview for displayable binary files" item body with a SHIPPED note (spec path, what shipped: images in Diff + File View incl. local LFS objects, 20 MB cap) keeping the open remainder: audio panes, SVG, zoom/1:1, swipe/onion-skin - add on demand.
 - [ ] Report manual test steps for Simon (app must run interactively):
-  1. `C:\NOT_WORK\LeGit-Test`: add a PNG, see it in the unstaged diff as a single "New (added)" pane with checkerboard + caption; stage it (working_staged shows it too); commit and modify it: old/new panes side by side; delete it: "Old (deleted)".
+  1. `<test-repo>`: add a PNG, see it in the unstaged diff as a single "New (added)" pane with checkerboard + caption; stage it (working_staged shows it too); commit and modify it: old/new panes side by side; delete it: "Old (deleted)".
   2. Compare view (commit_range) and a commit diff show read-only panes; a ROOT commit that adds an image shows "added" (old side Missing).
   3. File View: open the PNG at a revision and from the Files panel (worktree); both render the pane; a non-image binary (e.g. .zip) keeps the text placeholder with its size.
-  4. `C:\NOT_WORK\LeGit-Test-LFS`: `logo.png` diff/File View renders the image from local LFS storage; move its object out of `.git/lfs/objects` and re-check: pointer notice / "not present locally" caption returns.
+  4. `<lfs-test-repo>`: `logo.png` diff/File View renders the image from local LFS storage; move its object out of `.git/lfs/objects` and re-check: pointer notice / "not present locally" caption returns.
   5. A >20 MB image shows the cap message with its real size.
   6. Theme check: switch Light/Dark; checkerboard follows the theme (no literal colors anywhere).

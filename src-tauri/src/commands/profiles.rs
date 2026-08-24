@@ -795,13 +795,13 @@ mod tests {
 
     #[test]
     fn ssh_command_round_trip_windows_backslashes() {
-        let p = r"C:\Users\simon\.ssh\id_ed25519";
+        let p = r"C:\Users\u\.ssh\id_ed25519";
         let cmd = synth_ssh_command(p);
         // Backslashes normalized to forward slashes.
-        assert!(cmd.contains("C:/Users/simon/.ssh/id_ed25519"));
+        assert!(cmd.contains("C:/Users/u/.ssh/id_ed25519"));
         assert_eq!(
             parse_ssh_key_from_command(&cmd).as_deref(),
-            Some("C:/Users/simon/.ssh/id_ed25519")
+            Some("C:/Users/u/.ssh/id_ed25519")
         );
     }
 

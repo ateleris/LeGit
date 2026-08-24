@@ -14,7 +14,7 @@
 - No em-dashes in any generated text, code comments, or docs. Use hyphens or restructure.
 - Every colour must come from a theme token (`var(--token)`); this plan only reuses existing tokens (`--fz-sm`, `--button-hover-bg`, danger button class), no new tokens needed.
 - New IPC commands must be added in BOTH places: `collect_commands![]` in `src-tauri/src/lib.rs` AND a hand-written wrapper in `src/lib/commands.ts` (`src/lib/bindings.ts` regenerates only when the app runs; do not edit it by hand).
-- Run vitest from WSL via PowerShell interop: `powershell.exe -NoProfile -Command "Set-Location C:\NOT_WORK\LeGit; npx vitest run <file>"`. `cargo test` and `npx tsc --noEmit` run directly in WSL.
+- Run vitest from WSL via PowerShell interop: `powershell.exe -NoProfile -Command "Set-Location <repo>; npx vitest run <file>"`. `cargo test` and `npx tsc --noEmit` run directly in WSL.
 - Destructive-action confirmations are gated by the global setting via `useConfirmDestructive()`; never hardcode a confirm step (project convention).
 
 ## Decisions (context for reviewers)
@@ -66,7 +66,7 @@ describe("invalidateGitProfiles", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `powershell.exe -NoProfile -Command "Set-Location C:\NOT_WORK\LeGit; npx vitest run src/lib/useGitProfiles.test.ts"`
+Run: `powershell.exe -NoProfile -Command "Set-Location <repo>; npx vitest run src/lib/useGitProfiles.test.ts"`
 Expected: FAIL (cannot resolve `./useGitProfiles`)
 
 - [ ] **Step 3: Write the implementation**
@@ -103,7 +103,7 @@ export function invalidateGitProfiles(qc: QueryClient) {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `powershell.exe -NoProfile -Command "Set-Location C:\NOT_WORK\LeGit; npx vitest run src/lib/useGitProfiles.test.ts"`
+Run: `powershell.exe -NoProfile -Command "Set-Location <repo>; npx vitest run src/lib/useGitProfiles.test.ts"`
 Expected: PASS (2 tests)
 
 ---
@@ -356,7 +356,7 @@ Replace the mount effect:
 Run: `npx tsc --noEmit`
 Expected: no errors
 
-Run: `powershell.exe -NoProfile -Command "Set-Location C:\NOT_WORK\LeGit; npx vitest run"`
+Run: `powershell.exe -NoProfile -Command "Set-Location <repo>; npx vitest run"`
 Expected: all suites PASS (this catches the theme/contract suites too)
 
 ---
@@ -686,12 +686,12 @@ describe("profiles: cross-panel freshness + delete confirmation", () => {
 
 - [ ] **Step 3: Verify the spec compiles and (if the harness is available) run it**
 
-Run: `cd /mnt/c/NOT_WORK/LeGit/e2e && npx tsc --noEmit`
+Run: `cd <repo>/e2e && npx tsc --noEmit`
 Expected: no errors
 
 The suite needs a Linux debug binary + tauri-driver + WebKitWebDriver
 (normally CI). If available locally, run:
-`cd /mnt/c/NOT_WORK/LeGit/e2e && npm test`
+`cd <repo>/e2e && npm test`
 Expected: profiles.spec.ts PASS. If the harness is not available locally,
 state that explicitly and leave the spec to CI - do not claim it ran.
 
@@ -711,7 +711,7 @@ Expected: all PASS
 Run: `npx tsc --noEmit`
 Expected: no errors
 
-Run: `powershell.exe -NoProfile -Command "Set-Location C:\NOT_WORK\LeGit; npx vitest run"`
+Run: `powershell.exe -NoProfile -Command "Set-Location <repo>; npx vitest run"`
 Expected: all PASS (includes the theme contract and no-literal-colors suites)
 
 - [ ] **Step 3: Manual smoke test (user runs the app from PowerShell)**
@@ -719,7 +719,7 @@ Expected: all PASS (includes the theme contract and no-literal-colors suites)
 Checklist for the interactive check, with Global Settings and Repo Settings open side by side:
 
 1. Create a profile in Global Settings: it appears in Repo Settings' "Use profile" dropdown without refocusing the panel.
-2. Apply that profile to the test repo (`C:\NOT_WORK\LeGit-Test`), then delete it in Global Settings with "Destructive action confirmation" ON: the inline confirm appears, names `LeGit-Test` as a user, and after Delete the Repo Settings badge flips to Unmanaged without refocusing.
+2. Apply that profile to the test repo (`<test-repo>`), then delete it in Global Settings with "Destructive action confirmation" ON: the inline confirm appears, names `LeGit-Test` as a user, and after Delete the Repo Settings badge flips to Unmanaged without refocusing.
 3. Toggle "Destructive action confirmation" OFF: the Delete button loses its ellipsis and deletes immediately with no confirm.
 4. In Repo Settings, "Save as profile" on an unmanaged repo: the new profile appears in Global Settings' list without refocusing.
 5. Open the "+" add-repo menu: the clone form's profile dropdown lists the current profiles.

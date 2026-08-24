@@ -2015,7 +2015,7 @@ Expected: clean.
 vitest cannot run from WSL (project memory: Linux binaries break the run). Ask the user to run from PowerShell:
 
 - `npm test` - expect the two new suites (`lineEndingStatus`, `lineEndingWarning`) plus the theme contract and no-literal-colors suites green (no new tokens were added, so those must be untouched).
-- `npm run tauri dev` and smoke against `C:\NOT_WORK\LeGit-Test` (ask before mutating its state; set up scratch files rather than resetting anything):
+- `npm run tauri dev` and smoke against `<test-repo>` (ask before mutating its state; set up scratch files rather than resetting anything):
   1. Change a file's endings LF->CRLF (e.g. in an editor): the Unstaged row shows an `LF→CRLF` chip; clicking it offers "Revert line endings to LF" (confirm per the destructive setting); reverting clears the chip and the row's diff.
   2. Stage a flipped file: the Staged row shows a passive chip; Commit shows the inline "files change line endings" warning; Cancel keeps the draft; Commit anyway commits.
   3. Open the flipped file's diff: the header chip agrees with the row chip (same arrow), and on a repo with `core.autocrlf=true` a modified file shows a plain `CRLF` chip with NO arrow and no revert offer.

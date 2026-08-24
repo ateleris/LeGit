@@ -17,7 +17,7 @@
 - New theme tokens go in **4 places**: `src/theme/tokens.ts`, `src/theme/defaults.ts`, `src/styles/theme.css`, and BOTH `themes/Light.legit-theme.json` + `themes/Dark.legit-theme.json` (contract tests enforce this).
 - No literal colours anywhere in UI code; only `var(--token)` (enforced by `src/theme/noLiteralColors.test.ts`).
 - All dimensions scale with `--ui-font-size` / `em` / `--fz-*`; the plan's JSX mirrors `OpStateStrip.tsx`'s existing spacing.
-- Rust tests run from WSL: `cargo test -p legit-core`. Vitest runs from WSL via PowerShell interop: `powershell.exe -NoProfile -Command "cd C:\NOT_WORK\LeGit; npx vitest run <file>"`. Never `npm install` from WSL.
+- Rust tests run from WSL: `cargo test -p legit-core`. Vitest runs from WSL via PowerShell interop: `powershell.exe -NoProfile -Command "cd <repo>; npx vitest run <file>"`. Never `npm install` from WSL.
 - Backend commands need BOTH the `#[tauri::command] #[specta::specta]` registration in `src-tauri/src/lib.rs` AND hand-written wrappers/types in `src/lib/commands.ts` / `src/lib/types.ts`.
 
 ---
@@ -584,7 +584,7 @@ describe("lfsWarningMessage", () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `powershell.exe -NoProfile -Command "cd C:\NOT_WORK\LeGit; npx vitest run src/lib/lfsWarning.test.ts"`
+Run: `powershell.exe -NoProfile -Command "cd <repo>; npx vitest run src/lib/lfsWarning.test.ts"`
 Expected: FAIL (module `./lfsWarning` not found).
 
 - [ ] **Step 3: Implement**
@@ -658,7 +658,7 @@ export function lfsWarningMessage(kind: LfsWarningKind): string {
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `powershell.exe -NoProfile -Command "cd C:\NOT_WORK\LeGit; npx vitest run src/lib/lfsWarning.test.ts"`
+Run: `powershell.exe -NoProfile -Command "cd <repo>; npx vitest run src/lib/lfsWarning.test.ts"`
 Expected: PASS.
 
 - [ ] **Step 5: Do NOT commit.**
@@ -706,7 +706,7 @@ Expected: PASS.
 
 - [ ] **Step 5: Run the contract suite to verify completeness**
 
-Run: `powershell.exe -NoProfile -Command "cd C:\NOT_WORK\LeGit; npx vitest run src/theme/contract.test.ts"`
+Run: `powershell.exe -NoProfile -Command "cd <repo>; npx vitest run src/theme/contract.test.ts"`
 Expected: PASS (it fails if any of the 4 places is missing a token).
 
 - [ ] **Step 6: Do NOT commit.**
@@ -1008,7 +1008,7 @@ and update the `useCallback` dependency array to `[kindByPath, submodulePaths, l
 
 - [ ] **Step 4: Verify compile + full frontend suite**
 
-Run: `npx tsc --noEmit`, then `powershell.exe -NoProfile -Command "cd C:\NOT_WORK\LeGit; npm test"`
+Run: `npx tsc --noEmit`, then `powershell.exe -NoProfile -Command "cd <repo>; npm test"`
 Expected: both clean (noLiteralColors + contract suites included).
 
 - [ ] **Step 5: Do NOT commit.**
@@ -1026,7 +1026,7 @@ Expected: both clean (noLiteralColors + contract suites included).
 - `cargo test -p legit-core` (unit + flow + real-git)
 - `cargo check --workspace`
 - `npx tsc --noEmit`
-- `powershell.exe -NoProfile -Command "cd C:\NOT_WORK\LeGit; npm test"`
+- `powershell.exe -NoProfile -Command "cd <repo>; npm test"`
 
 Expected: all green. Report any failure verbatim; do not claim success without output.
 

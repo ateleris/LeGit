@@ -22,6 +22,9 @@ dist-ssr
 # bindings stabilize).
 src/lib/bindings.ts
 
+# Machine-local Claude instructions
+CLAUDE.local.md
+
 # Editor / OS
 .vscode/*
 !.vscode/extensions.json

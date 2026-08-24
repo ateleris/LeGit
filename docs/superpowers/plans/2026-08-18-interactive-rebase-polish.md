@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - NO git commits/pushes; NO em-dashes anywhere; colors only via `var(--token)` (no new tokens needed); sizes via `--fz-*`/em.
-- cargo/tsc from WSL; vitest via `powershell.exe -NoProfile -Command "Set-Location C:\NOT_WORK\LeGit; npx vitest run <path>"`.
+- cargo/tsc from WSL; vitest via `powershell.exe -NoProfile -Command "Set-Location <repo>; npx vitest run <path>"`.
 - The injected todo stays HEX-ONLY (single-quoted printf); message text must never enter it.
 - git floor for rewords: `fixup -C` needs git >= 2.32; reword-free plans keep working on older git.
 - New commands: register in `src-tauri/src/lib.rs` `collect_commands!`; wrapper in `src/lib/commands.ts`; hand-mirrored types in `src/lib/types.ts`.

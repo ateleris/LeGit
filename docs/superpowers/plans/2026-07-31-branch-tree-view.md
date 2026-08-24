@@ -15,7 +15,7 @@
 - Never commit or push; leave changes for the user's review.
 - No em-dashes anywhere; use "-" or restructure.
 - No literal colors / fixed-px sizing: theme tokens and em/`--fz-*` only. The current-branch dot on folders uses `var(--ref-branch-current-fg, rgb(130, 220, 130))` (same token+fallback as the chip and the row dot).
-- Rust verification: `cargo check -p legit-app`. Frontend: `npx tsc --noEmit` (WSL) and vitest via `powershell.exe -Command "cd C:\NOT_WORK\LeGit; npx vitest run ..."`.
+- Rust verification: `cargo check -p legit-app`. Frontend: `npx tsc --noEmit` (WSL) and vitest via `powershell.exe -Command "cd <repo>; npx vitest run ..."`.
 - Do NOT hand-edit `src/lib/bindings.ts` (regenerated when the app runs).
 - Flat mode must render exactly today's lists (sort mode `refs_sort_mode` applies). Tree mode uses `flatten`'s ordering (folders first, alphabetical) - the sort mode does not apply there.
 
@@ -207,7 +207,7 @@ describe("folderHoldsCurrent", () => {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `powershell.exe -Command "cd C:\NOT_WORK\LeGit; npx vitest run src/panels/Branches/branchTree.test.ts 2>&1 | Select-Object -Last 8"`
+Run: `powershell.exe -Command "cd <repo>; npx vitest run src/panels/Branches/branchTree.test.ts 2>&1 | Select-Object -Last 8"`
 Expected: FAIL - module `./branchTree` not found.
 
 - [ ] **Step 3: Implement**
@@ -250,7 +250,7 @@ export function folderHoldsCurrent(
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `powershell.exe -Command "cd C:\NOT_WORK\LeGit; npx vitest run src/panels/Branches/branchTree.test.ts 2>&1 | Select-Object -Last 5"`
+Run: `powershell.exe -Command "cd <repo>; npx vitest run src/panels/Branches/branchTree.test.ts 2>&1 | Select-Object -Last 5"`
 Expected: PASS (all tests).
 
 ---
@@ -466,7 +466,7 @@ Inside each remote group's `!collapsed && ...` body, the same split keyed per re
 
 - [ ] **Step 7: Type-check and test**
 
-Run: `npx tsc --noEmit 2>&1 | tail -3` then `powershell.exe -Command "cd C:\NOT_WORK\LeGit; npx vitest run 2>&1 | Select-Object -Last 5"`
+Run: `npx tsc --noEmit 2>&1 | tail -3` then `powershell.exe -Command "cd <repo>; npx vitest run 2>&1 | Select-Object -Last 5"`
 Expected: clean / all pass.
 
 ---

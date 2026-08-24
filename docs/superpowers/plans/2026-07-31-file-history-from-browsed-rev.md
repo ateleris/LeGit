@@ -439,7 +439,7 @@ Context menu (line 330):
 Run: `npx tsc --noEmit 2>&1 | tail -5`
 Expected: clean.
 
-Run (WSL, PowerShell interop - do not hand this to the user): `powershell.exe -Command "cd C:\NOT_WORK\LeGit; npx vitest run 2>&1 | Select-Object -Last 15"`
+Run (WSL, PowerShell interop - do not hand this to the user): `powershell.exe -Command "cd <repo>; npx vitest run 2>&1 | Select-Object -Last 15"`
 Expected: all suites pass (theme contract and no-literal-colors suites in particular - the new toolbar note uses existing classes only).
 
 ---
