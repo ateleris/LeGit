@@ -27,12 +27,25 @@ describe("smoke: stage and commit", () => {
   });
 
   it("stages the modified file", async () => {
-    const row = $('[data-testid="wc-unstaged"] [data-testid="file-row"][data-path="notes.txt"]');
+    const rowSel = '[data-testid="wc-unstaged"] [data-testid="file-row"][data-path="notes.txt"]';
+    const row = $(rowSel);
     await row.waitForDisplayed();
-    // The Stage icon-button mounts only while the row is hovered.
-    await row.moveTo();
+    // The Stage icon-button mounts only while the row is hovered - and hover
+    // must NOT be established via moveTo(): WebKitWebDriver parks the virtual
+    // pointer (a sweep to the top-left corner) a few hundred ms after every
+    // action sequence, firing mouseleave and unmounting the button BETWEEN
+    // wdio commands. Whether the click won that race depended on runner
+    // speed (flaked on CI 2026-08-24). Instead, drive the row's onMouseEnter
+    // in-page right before the click; the click itself re-hovers the row
+    // atomically inside one command.
+    const hoverRow = (sel: string) =>
+      browser.execute((s: string) => {
+        document.querySelector(s)!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      }, sel);
+    await hoverRow(rowSel);
     const stageBtn = $('[data-testid="wc-unstaged"] button[title="Stage"]');
     await stageBtn.waitForClickable();
+    await hoverRow(rowSel); // re-arm in case the park raced the wait above
     await stageBtn.click();
     await $('[data-testid="wc-staged"] [data-testid="file-row"][data-path="notes.txt"]')
       .waitForDisplayed({ timeout: 10_000 });

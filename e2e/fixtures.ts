@@ -69,10 +69,22 @@ export function buildConflictFixture(): string {
 
 function seedAppData(repoPath: string): void {
   mkdirSync(APP_DATA_DIR, { recursive: true });
-  // GlobalSettings is #[serde(default)]; only the repo-restore fields matter.
+  // GlobalSettings is #[serde(default)]; only the repo-restore fields matter,
+  // plus every default that would let the app act on its own during a test:
+  // the startup update check (default ON) hits the network and pops an
+  // update-available toast whenever a newer release than the built version
+  // exists - a toast over the panel steals hover/clicks mid-spec.
   writeFileSync(
     path.join(APP_DATA_DIR, "global-settings.json"),
-    JSON.stringify({ currently_open: [repoPath], active_open_repo: repoPath }, null, 2),
+    JSON.stringify(
+      {
+        currently_open: [repoPath],
+        active_open_repo: repoPath,
+        check_updates_on_startup: false,
+      },
+      null,
+      2,
+    ),
   );
 }
 
