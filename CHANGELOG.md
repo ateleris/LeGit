@@ -31,6 +31,8 @@ lives in the git log and the GitHub release notes.
 
 - GitHub release notes now carry the version's changelog section instead of
   a generic body (assembled automatically by the release workflow).
+- Error toasts now disappear on their own after 30 seconds instead of
+  staying until dismissed (the details remain in the Git Command Log).
 
 ### Fixed
 

@@ -222,8 +222,8 @@ project memory for details.
     with a title + named target. Focus starts on Cancel, Esc/backdrop
     cancels. Workflow prompts (decisions after an async step, e.g. the
     submodule gitdir-deletion offer) use the same host and are always shown.
-  - **Action errors surface as toasts** (`notify.error`; errors persist
-    until dismissed, clicking opens the Git Command Log). Exception: errors
+  - **Action errors surface as toasts** (`notify.error`; errors auto-dismiss
+    after 30s - vs 4s for success/info - clicking opens the Git Command Log). Exception: errors
     adjacent to the input that caused them (settings forms, the commit
     composer's warnings) stay next to that input, and a panel whose DATA
     query failed may render that as its content state.

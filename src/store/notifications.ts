@@ -31,9 +31,10 @@ interface NotificationsStore {
   clear: () => void;
 }
 
-/** Central transient notifications (toasts). Errors persist until dismissed;
- *  the toast overlay auto-dismisses success/info (unless `sticky`). The full
- *  detail (e.g. the failing git command + stderr) lives in the Git Log panel. */
+/** Central transient notifications (toasts). The overlay auto-dismisses
+ *  everything but `sticky` toasts - errors on a long timeout, success/info
+ *  on a short one. The full detail (e.g. the failing git command + stderr)
+ *  lives in the Git Log panel. */
 export const useNotificationsStore = create<NotificationsStore>((set) => ({
   toasts: [],
   push: (kind, message, opts) => {
