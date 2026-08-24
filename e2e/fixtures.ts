@@ -33,9 +33,17 @@ function initRepo(dir: string): void {
   git(dir, "config", "core.autocrlf", "false");
 }
 
+/**
+ * The smoke fixture's repo path (also where smoke.spec writes scratch files).
+ * NOTE: this fixture seeds every non-conflict spec (seedForSpec), so state
+ * added here leaks into branch/discard/stash/profiles - keep it minimal and
+ * let specs create their own scratch state instead.
+ */
+export const SMOKE_REPO_DIR = path.join(FIXTURES_DIR, "smoke");
+
 /** Two commits on main + one unstaged modification to a tracked file. */
 export function buildSmokeFixture(): string {
-  const dir = path.join(FIXTURES_DIR, "smoke");
+  const dir = SMOKE_REPO_DIR;
   initRepo(dir);
   writeFileSync(path.join(dir, "notes.txt"), "first line\n");
   git(dir, "add", ".");

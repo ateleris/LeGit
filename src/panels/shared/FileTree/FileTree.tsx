@@ -478,13 +478,18 @@ function FileRowView({
       </span>
 
       {viewMode === "flat" ? (
-        // Always show the full filename; truncate the directory prefix from its
-        // end so the row reads "start/of/path…filename" when space is tight.
+        // Prefer showing the full filename: the directory prefix shrinks away
+        // first (the huge flex-shrink factor means the name only starts to
+        // shrink once the prefix is gone), so the row reads
+        // "start/of/path…filename" when space is tight. A filename that still
+        // doesn't fit on its own ellipsizes instead of overlapping the +/-
+        // stats.
         <span style={{ display: "flex", flex: 1, minWidth: 0, alignItems: "center", whiteSpace: "nowrap" }}>
           {dir && (
             <span
               className="legit-subtle"
               style={{
+                flexShrink: 9999,
                 minWidth: 0,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -494,7 +499,7 @@ function FileRowView({
               {dir}
             </span>
           )}
-          <span style={{ flexShrink: 0 }}>{name}</span>
+          <span data-testid="file-row-name" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{name}</span>
           {badge && <RowBadge>{badge}</RowBadge>}
         </span>
       ) : (
@@ -512,6 +517,7 @@ function FileRowView({
       )}
 
       <span
+        data-testid="file-row-stats"
         style={{
           marginLeft: "auto",
           flexShrink: 0,

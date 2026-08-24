@@ -12,6 +12,11 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Long filenames in the file lists (Working Changes, Changed Files) now
+  truncate with an ellipsis instead of overlapping the +/- change counts.
+
 ## [1.0.2] - 2026-08-24
 
 ### Added
