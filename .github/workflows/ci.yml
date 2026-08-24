@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
 
+# Least privilege for the default GITHUB_TOKEN: every job only checks out the
+# repo (artifact upload uses the runtime token, not this one).
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

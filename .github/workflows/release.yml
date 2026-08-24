@@ -9,9 +9,11 @@ on:
     tags:
       - "v*"
 
-# tauri-action creates the Release and uploads assets via GITHUB_TOKEN.
+# Least privilege for the default GITHUB_TOKEN: read-only by default; only
+# the build job gets `contents: write` (tauri-action creates the Release and
+# uploads assets with it).
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   # Fail fast (before any platform build starts or a draft release is
@@ -81,6 +83,9 @@ jobs:
   release:
     name: Build ${{ matrix.label }}
     needs: verify-version
+    # tauri-action creates the draft Release and uploads the installers.
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
