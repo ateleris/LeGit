@@ -12,6 +12,8 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-08-24
+
 ### Fixed
 
 - Long filenames in the file lists (Working Changes, Changed Files) now
