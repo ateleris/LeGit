@@ -133,6 +133,24 @@ function ConfirmDialog({ request }: { request: PendingConfirm }) {
             {request.detail}
           </div>
         )}
+        {request.notes && (
+          <div
+            style={{
+              maxHeight: "12em",
+              overflowY: "auto",
+              whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere",
+              fontSize: "var(--fz-sm)",
+              color: "var(--subtle-fg)",
+              background: "var(--input-bg)",
+              border: "1px solid var(--panel-border)",
+              borderRadius: 4,
+              padding: "0.5em 0.6em",
+            }}
+          >
+            {request.notes}
+          </div>
+        )}
         {request.warning && (
           <strong className="legit-error" style={{ fontSize: "var(--fz-md)" }}>
             {request.warning}

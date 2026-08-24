@@ -14,6 +14,7 @@ import {
   setSubmoduleAttachBranch,
   setAutoFetchEnabled,
   setAutoFetchIntervalMinutes,
+  setCheckUpdatesOnStartup,
   setExternalEditorCommand,
   setCommitAvatars,
   setAutoPushTags,
@@ -117,6 +118,7 @@ interface SettingsStore {
   setSubmoduleAttachBranch: (enabled: boolean) => Promise<void>;
   setAutoFetchEnabled: (enabled: boolean) => Promise<void>;
   setAutoFetchIntervalMinutes: (minutes: number) => Promise<void>;
+  setCheckUpdatesOnStartup: (enabled: boolean) => Promise<void>;
   setExternalEditorCommand: (command: string | null) => Promise<void>;
   setCommitAvatars: (enabled: boolean) => Promise<void>;
   setAutoPushTags: (enabled: boolean) => Promise<void>;
@@ -244,6 +246,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     await setAutoFetchEnabled(enabled);
     const s = get().settings;
     if (s) set({ settings: { ...s, auto_fetch_enabled: enabled } });
+  },
+
+  async setCheckUpdatesOnStartup(enabled) {
+    await setCheckUpdatesOnStartup(enabled);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, check_updates_on_startup: enabled } });
   },
 
   async setAutoFetchIntervalMinutes(minutes) {

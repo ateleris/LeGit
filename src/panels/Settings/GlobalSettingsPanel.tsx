@@ -1,7 +1,5 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { check } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
-import { confirmDialog } from "../../store/confirm";
+import { checkForUpdate, promptAndInstall } from "../../lib/updateFlow";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
 import { LinkIcon, UnlinkIcon, WarningIcon } from "../../icons";
@@ -197,51 +195,30 @@ function AboutSection() {
   // their input; only genuinely async surprises go to toasts).
   const [status, setStatus] = useState<{ error: boolean; text: string } | null>(null);
 
+  const startupCheck = useSettingsStore((s) => s.settings?.check_updates_on_startup ?? true);
+  const setCheckUpdatesOnStartup = useSettingsStore((s) => s.setCheckUpdatesOnStartup);
+
   const checkForUpdates = () =>
     void run(async () => {
       setStatus(null);
       try {
-        const update = await check();
+        const update = await checkForUpdate();
         if (!update) {
           setStatus({ error: false, text: "You are on the latest version." });
           return;
         }
-        // Workflow prompt (decision after an async step): always shown,
-        // deliberately NOT gated by the destructive-confirmation setting.
-        const install = await confirmDialog({
-          title: "Update available",
-          message: `LeGit v${update.version} is available (you have v${version ?? "?"}). Download and install it now?`,
-          confirmLabel: "Download & install",
-          danger: false,
+        // Prompt + download + install + restart offer live in the shared
+        // flow (also driven by the startup update toast).
+        const outcome = await promptAndInstall(update, version, (text) =>
+          setStatus({ error: false, text }),
+        );
+        setStatus({
+          error: false,
+          text:
+            outcome === "declined"
+              ? `v${update.version} is available - not installed.`
+              : `v${update.version} installed - restart to apply.`,
         });
-        if (!install) {
-          setStatus({ error: false, text: `v${update.version} is available - not installed.` });
-          return;
-        }
-        let total = 0;
-        let received = 0;
-        await update.downloadAndInstall((e) => {
-          if (e.event === "Started") {
-            total = e.data.contentLength ?? 0;
-            setStatus({ error: false, text: "Downloading…" });
-          } else if (e.event === "Progress") {
-            received += e.data.chunkLength;
-            if (total > 0) {
-              setStatus({ error: false, text: `Downloading… ${Math.round((received / total) * 100)}%` });
-            }
-          } else if (e.event === "Finished") {
-            setStatus({ error: false, text: "Installing…" });
-          }
-        });
-        setStatus({ error: false, text: `v${update.version} installed - restart to apply.` });
-        const restart = await confirmDialog({
-          title: "Restart LeGit",
-          message: `LeGit v${update.version} is installed. Restart now to apply it?`,
-          confirmLabel: "Restart now",
-          cancelLabel: "Later",
-          danger: false,
-        });
-        if (restart) await relaunch();
       } catch (e) {
         // Typical here: no network, no published release yet, or a .deb
         // install (the updater covers .msi/NSIS/.AppImage/.app only).
@@ -288,6 +265,21 @@ function AboutSection() {
           </div>
         }
       />
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <input
+          type="checkbox"
+          id="global-check-updates-on-startup"
+          checked={startupCheck}
+          onChange={() => void setCheckUpdatesOnStartup(!startupCheck)}
+        />
+        <label
+          htmlFor="global-check-updates-on-startup"
+          style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}
+          title="Check-only: an available update shows a toast; nothing downloads without your OK"
+        >
+          Check for updates when LeGit starts
+        </label>
+      </div>
     </Section>
   );
 }

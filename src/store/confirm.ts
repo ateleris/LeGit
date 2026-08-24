@@ -21,6 +21,9 @@ export interface ConfirmRequest {
   message: string;
   /** Monospace-rendered target (path, branch name, …), on its own line. */
   detail?: string;
+  /** Longer preformatted text (e.g. release notes) rendered as a scrollable
+   *  block between message and buttons. */
+  notes?: string;
   /** Emphasised data-loss warning line, when one applies. */
   warning?: string;
   confirmLabel: string;

@@ -22,20 +22,22 @@ export function Toasts() {
 
 function Toast({ toast, onDismiss }: { toast: Notification; onDismiss: () => void }) {
   useEffect(() => {
-    if (toast.kind === "error") return; // errors stay until dismissed
+    // Errors and sticky toasts stay until dismissed.
+    if (toast.kind === "error" || toast.sticky) return;
     const h = setTimeout(onDismiss, AUTO_DISMISS_MS);
     return () => clearTimeout(h);
-  }, [toast.kind, onDismiss]);
+  }, [toast.kind, toast.sticky, onDismiss]);
 
   return (
     <div className={`legit-toast legit-toast--${toast.kind}`} role="status">
       <button
         className="legit-toast__body"
         onClick={() => {
-          useSummonStore.getState().summon("git-log");
+          if (toast.action) toast.action();
+          else useSummonStore.getState().summon("git-log");
           onDismiss();
         }}
-        title="Open the Git Command Log for details"
+        title={toast.action ? undefined : "Open the Git Command Log for details"}
       >
         <span className="legit-toast__msg">{toast.message}</span>
       </button>

@@ -22,6 +22,10 @@ lives in the git log and the GitHub release notes.
   panel's group over the whole dock area; the same action, Esc, or navigating
   to another panel restores the previous layout. Maximization is never saved
   as the resting layout.
+- Automatic update check on startup (Global Settings, on by default;
+  check-only): an available update shows a toast, and clicking it opens the
+  install prompt. Nothing downloads without confirmation.
+- The update prompt now shows the release's changelog.
 
 ### Changed
 

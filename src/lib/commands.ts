@@ -271,6 +271,9 @@ export const repoOpenRemotePage = (repoId: string) =>
 export const setAutoFetchEnabled = (enabled: boolean) =>
   invoke<null>("set_auto_fetch_enabled", { enabled });
 
+export const setCheckUpdatesOnStartup = (enabled: boolean) =>
+  invoke<null>("set_check_updates_on_startup", { enabled });
+
 export const setAutoFetchIntervalMinutes = (minutes: number) =>
   invoke<null>("set_auto_fetch_interval_minutes", { minutes });
 

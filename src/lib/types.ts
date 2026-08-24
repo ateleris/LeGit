@@ -61,6 +61,9 @@ export interface GlobalSettings {
   auto_fetch_enabled?: boolean;
   /** Minutes between background auto-fetches (default 15, minimum 1). */
   auto_fetch_interval_minutes?: number;
+  /** Check for app updates once at startup (default true). Check-only: an
+   * update surfaces as a toast, nothing downloads without consent. */
+  check_updates_on_startup?: boolean;
   /** Command template for "open in external editor" (e.g. `code "$ROOT"`).
    * $ROOT = repo root, $FILE = file path for the open-file action; each is
    * appended when absent. null/blank = use the OS file manager instead. */

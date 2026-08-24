@@ -270,6 +270,18 @@ pub async fn set_auto_fetch_enabled(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn set_check_updates_on_startup(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state.mutate_global(|s| {
+        s.check_updates_on_startup = enabled;
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn set_auto_fetch_interval_minutes(
     state: tauri::State<'_, AppState>,
     minutes: u32,

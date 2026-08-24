@@ -12,6 +12,7 @@ import { saveRegionState } from "../lib/commands";
 import { onConsoleOutput, onGitInvocation, onRemoteProgress } from "../lib/events";
 import { useRepoChangeListener } from "../lib/useRepoChangeListener";
 import { useAutoFetch } from "../lib/useAutoFetch";
+import { useStartupUpdateCheck } from "../lib/useStartupUpdateCheck";
 import type { RegionPlacement } from "../lib/types";
 import { GlobalDock } from "./GlobalDock";
 import { OpStateStrip } from "./OpStateStrip";
@@ -67,6 +68,9 @@ export function AppLayout() {
 
   // Periodic background auto-fetch of the active repo (opt-in setting).
   useAutoFetch();
+
+  // One quiet update check shortly after launch (setting, default on).
+  useStartupUpdateCheck();
 
   // Feed the Git Log panel with every git invocation the backend reports.
   useEffect(() => {

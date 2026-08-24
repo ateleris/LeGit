@@ -262,6 +262,10 @@ pub struct GlobalSettings {
     /// Minutes between background auto-fetches (UI enforces a minimum of 1).
     #[serde(default = "default_auto_fetch_interval")]
     pub auto_fetch_interval_minutes: u32,
+    /// Check for app updates once at startup (quiet: only an update-available
+    /// toast; never downloads without consent). ON by default - check-only.
+    #[serde(default = "default_true")]
+    pub check_updates_on_startup: bool,
     /// Command template for "open in external editor" (e.g. `code "$ROOT"`);
     /// `$ROOT` is the repo root, appended when absent. `None`/blank = no
     /// editor configured — the action opens the folder in the OS file manager.
@@ -382,6 +386,7 @@ impl Default for GlobalSettings {
             checkout_new_branch: true,
             auto_fetch_enabled: false,
             auto_fetch_interval_minutes: default_auto_fetch_interval(),
+            check_updates_on_startup: true,
             external_editor_command: None,
             switch_dirty_behavior: None,
             checkout_remote_fast_forward: true,
