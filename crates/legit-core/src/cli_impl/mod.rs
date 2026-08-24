@@ -1097,6 +1097,13 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             args.push("--end-of-options");
             args.push(safe_ref("revision range", range)?);
         } else {
+            // An unborn HEAD (fresh `git init`, no commits yet) makes the
+            // explicit HEAD rev a fatal "ambiguous argument 'HEAD'";
+            // --ignore-missing drops the unresolvable rev so a fresh repo
+            // yields an empty log instead of an error (pinned in
+            // tests/git_flows.rs). Deliberately NOT applied to the explicit
+            // revision_range above - a bad range must still surface.
+            args.push("--ignore-missing");
             match opts.refs {
                 RefSelector::AllLocalBranches => {
                     // Always include HEAD so a detached HEAD commit appears even
@@ -1109,7 +1116,10 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
                     args.push("--branches");
                     args.push("--remotes");
                 }
-                RefSelector::Head => {}
+                // Explicit HEAD (identical to bare `git log` once HEAD is
+                // born) so --ignore-missing can drop it on an unborn HEAD;
+                // the bare default would fail the walk instead.
+                RefSelector::Head => args.push("HEAD"),
             }
         }
 
@@ -1345,6 +1355,9 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             }
         }
         // Same ref universe as the graph: HEAD + all local branches.
+        // --ignore-missing tolerates an unborn HEAD (fresh repo, no
+        // commits): the search returns empty instead of a fatal.
+        args.push("--ignore-missing");
         args.push("HEAD");
         args.push("--branches");
         args.push("--decorate=full");

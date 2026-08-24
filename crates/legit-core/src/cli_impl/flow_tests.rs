@@ -915,7 +915,7 @@ async fn log_all_branches_and_remotes_walks_remote_refs_too() {
     fake.expect(
         &[
             "log", fmt.as_str(), "--max-count=500", "--date-order", "--decorate=full",
-            "HEAD", "--branches", "--remotes",
+            "--ignore-missing", "HEAD", "--branches", "--remotes",
         ],
         ok(""),
     );
@@ -972,7 +972,8 @@ async fn log_never_scans_signatures() {
     let fmt = format!("--format={}", parsers::log::LOG_FORMAT);
     let fake = FakeExecutor::default();
     fake.expect(
-        &["log", fmt.as_str(), "--max-count=500", "--date-order", "--decorate=full",],
+        &["log", fmt.as_str(), "--max-count=500", "--date-order", "--decorate=full",
+          "--ignore-missing", "HEAD"],
         ok(&log_record(SIG_SHA_A, "some commit")),
     );
     let (b, exec) = backend(fake);
@@ -1054,7 +1055,7 @@ async fn search_commits_builds_the_right_log_args_per_kind() {
         fake.expect(
             &[
                 "log", fmt.as_str(), "--max-count=50", "--regexp-ignore-case", flag.as_str(),
-                "HEAD", "--branches", "--decorate=full",
+                "--ignore-missing", "HEAD", "--branches", "--decorate=full",
             ],
             ok(""),
         );
@@ -1067,7 +1068,7 @@ async fn search_commits_builds_the_right_log_args_per_kind() {
     // Content search is git's pickaxe: -S <literal>, no regex flag.
     let fake = FakeExecutor::default();
     fake.expect(
-        &["log", fmt.as_str(), "--max-count=50", "-S", "needle", "HEAD", "--branches", "--decorate=full"],
+        &["log", fmt.as_str(), "--max-count=50", "-S", "needle", "--ignore-missing", "HEAD", "--branches", "--decorate=full"],
         ok(""),
     );
     let (b, exec) = backend(fake);

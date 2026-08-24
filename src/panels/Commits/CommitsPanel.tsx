@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PanelError } from "../shared/PanelError";
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
 import {
@@ -22,6 +22,7 @@ import { ToolbarButton } from "../shared/ToolbarButton";
 import { Button } from "../shared/buttons";
 import { CaretDropdown } from "../shared/CaretDropdown";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
+import { keepPreviousDataForRepo } from "../../lib/repoScopedPlaceholder";
 import { autoUpdateSubmodules } from "../../lib/submodules";
 import {
   consoleCancel,
@@ -332,7 +333,9 @@ export function CommitsPanel() {
     // Keep the current (smaller) page rendered while the larger page fetches.
     // Without this, the new totalToFetch query key has no cached data, the list
     // collapses to zero height, and the scroll position jumps back to the top.
-    placeholderData: keepPreviousData,
+    // Scoped to the repo: an unscoped keepPreviousData flashed the previously
+    // selected repo's graph after a repo switch while the new walk loaded.
+    placeholderData: keepPreviousDataForRepo<Commit[]>(repo?.id),
   });
 
   // Filter results: same walk universe and row shape as the graph (the
@@ -358,7 +361,7 @@ export function CommitsPanel() {
     },
     enabled: !!repo && search !== null,
     staleTime: 30_000,
-    placeholderData: keepPreviousData,
+    placeholderData: keepPreviousDataForRepo<CommitId[]>(repo?.id),
   });
 
   // Branch list (for upstream tracking). Drives chip fusion: a local branch
@@ -446,7 +449,7 @@ export function CommitsPanel() {
     queryFn: () => repoSignaturePresence(repo!.id, commitIds),
     enabled: !!repo && signedColumnVisible && commitIds.length > 0,
     staleTime: Infinity,
-    placeholderData: keepPreviousData,
+    placeholderData: keepPreviousDataForRepo<CommitId[]>(repo?.id),
   });
   const signedSet = useMemo(() => new Set(signedIds ?? []), [signedIds]);
 

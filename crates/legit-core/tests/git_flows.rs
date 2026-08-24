@@ -3947,6 +3947,35 @@ async fn log_walks_remote_only_commits_with_the_remotes_selector() {
     );
 }
 
+/// A freshly initialized repo has an unborn HEAD: `git log HEAD --branches`
+/// exits 128 with "ambiguous argument 'HEAD'". The branch selectors add HEAD
+/// explicitly (to keep detached-HEAD commits visible), so the walk must
+/// tolerate the unresolvable HEAD (`--ignore-missing`) and return an empty
+/// log instead of erroring (regression: fatal surfaced right after repo
+/// init). Commit search shares the same ref universe.
+#[tokio::test]
+async fn log_and_search_return_empty_on_fresh_repo_with_unborn_head() {
+    use legit_core::CommitSearchKind;
+
+    let repo = TestRepo::init().await;
+
+    for refs in [RefSelector::AllLocalBranches, RefSelector::AllBranchesAndRemotes] {
+        let commits = repo
+            .backend
+            .log(LogOptions { refs, ..Default::default() })
+            .await
+            .expect("log on a fresh repo must not error");
+        assert!(commits.is_empty(), "{commits:?}");
+    }
+
+    let found = repo
+        .backend
+        .search_commits("anything", CommitSearchKind::Message, 50)
+        .await
+        .expect("commit search on a fresh repo must not error");
+    assert!(found.is_empty(), "{found:?}");
+}
+
 // ---------------------------------------------------------------------------
 // log: signature-presence enrichment (real cat-file --batch framing)
 // ---------------------------------------------------------------------------

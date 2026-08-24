@@ -28,6 +28,15 @@ lives in the git log and the GitHub release notes.
 - GitHub release notes now carry the version's changelog section instead of
   a generic body (assembled automatically by the release workflow).
 
+### Fixed
+
+- Error ("fatal: ambiguous argument 'HEAD'") when initializing or opening a
+  repository that has no commits yet; the commit graph now shows empty
+  instead.
+- The commit graph briefly showed the previously selected repository's
+  commits after switching repos (or on window focus) while the new
+  repository's history was still loading.
+
 ## [1.0.1] - 2026-08-21
 
 ### Changed
