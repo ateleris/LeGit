@@ -97,6 +97,15 @@ export const openRepo = (path: string) =>
 
 /** Installed WSL distributions (empty on non-Windows builds). */
 export const wslListDistros = () => invoke<WslDistro[]>("wsl_list_distros");
+/** The persisted per-distro git override (cheap; no distro start). */
+export const wslHostGitOverride = (distro: string) =>
+  invoke<string | null>("wsl_host_git_override", { distro });
+/** Probe a WSL host's effective git binary (connects — and starts — the distro). */
+export const wslHostGitStatus = (distro: string) =>
+  invoke<GitStatus>("wsl_host_git_status", { distro });
+/** Set (`null` clears) the per-distro git binary override. */
+export const setWslHostGitPath = (distro: string, path: string | null) =>
+  invoke<GitStatus>("set_wsl_host_git_path", { distro, path });
 
 /** The `--open <locator>` a fresh launch carried, if any (consumed once). */
 export const takePendingOpen = () => invoke<string | null>("take_pending_open");

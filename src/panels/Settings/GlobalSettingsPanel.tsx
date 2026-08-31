@@ -12,10 +12,10 @@ import { useAppVersion } from "../../lib/appVersion";
 /** localStorage key for the line-height ↔ lane-width link toggle (default on). */
 const LANE_LINK_KEY = "legit.commits-lane-link";
 import { formatAppError } from "../../lib/types";
-import type { ConfigScope, LineEndingsView, PushRecurseMode, RegionPlacement, SwitchDirtyBehavior } from "../../lib/types";
+import type { ConfigScope, GitStatus, LineEndingsView, PushRecurseMode, RegionPlacement, SwitchDirtyBehavior, WslDistro } from "../../lib/types";
 import type { CommitDateFormat } from "../../lib/time";
 import { coerceRefsSortMode, type RefsSortMode } from "../../lib/refSort";
-import { globalLineEndingsView, globalWriteLineEndings, openLogDir, setLineEndingChipsInChanges, setWarnOnLineEndingCommit } from "../../lib/commands";
+import { globalLineEndingsView, globalWriteLineEndings, openLogDir, setLineEndingChipsInChanges, setWarnOnLineEndingCommit, setWslHostGitPath, wslHostGitOverride, wslHostGitStatus, wslListDistros } from "../../lib/commands";
 import { notify } from "../../store/notifications";
 import { useGitStatusStore } from "../../store/git-status";
 import { GlobalProfilesSection } from "./GlobalProfilesSection";
@@ -174,6 +174,7 @@ export function GlobalSettingsPanel() {
               <span className="legit-subtle">Probing git…</span>
             )}
           </Section>
+          <WslGitSection />
           <ConnectedAccountsSection />
           <GlobalGitConfigSection />
           <LineEndingsGlobalSection />
@@ -185,6 +186,137 @@ export function GlobalSettingsPanel() {
         </SettingsGroup>
       </div>
     </div>
+  );
+}
+
+/** Per-distro git binary for WSL repos (mirrors the global git executable
+ * section, but the path names a binary INSIDE the distro). Hidden when no
+ * WSL distros exist. Probing connects to — and may start — the distro, so it
+ * only runs on explicit user action, never on mount. */
+function WslGitSection() {
+  const [distros, setDistros] = useState<WslDistro[]>([]);
+  const [distro, setDistro] = useState("");
+  const [draft, setDraft] = useState("");
+  const [status, setStatus] = useState<GitStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const { busy, run } = useDelayedBusy();
+
+  useEffect(() => {
+    let cancelled = false;
+    wslListDistros()
+      .then((list) => {
+        if (cancelled) return;
+        setDistros(list);
+        const preferred = list.find((d) => d.is_default) ?? list[0];
+        if (preferred) setDistro(preferred.name);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Prefill the persisted override when the distro changes (cheap, no probe).
+  useEffect(() => {
+    if (!distro) return;
+    setStatus(null);
+    setError(null);
+    wslHostGitOverride(distro)
+      .then((ov) => setDraft(ov ?? ""))
+      .catch(() => setDraft(""));
+  }, [distro]);
+
+  if (distros.length === 0) return null;
+
+  const check = () =>
+    void run(async () => {
+      setError(null);
+      try {
+        setStatus(await wslHostGitStatus(distro));
+      } catch (e) {
+        setError(formatAppError(e));
+      }
+    });
+
+  const apply = (path: string | null) =>
+    void run(async () => {
+      setError(null);
+      try {
+        const s = await setWslHostGitPath(distro, path);
+        setStatus(s);
+        setDraft(s.user_override ?? "");
+      } catch (e) {
+        setError(formatAppError(e));
+      }
+    });
+
+  return (
+    <Section title="Git executable in WSL (per distro)">
+      <Row
+        label="Distribution"
+        value={
+          <select value={distro} onChange={(e) => setDistro(e.target.value)}>
+            {distros.map((d) => (
+              <option key={d.name} value={d.name}>
+                {d.name}
+                {d.is_default ? " (default)" : ""}
+                {d.running ? "" : " — stopped"}
+              </option>
+            ))}
+          </select>
+        }
+      />
+      {status && (
+        <>
+          <Row label="Resolved binary" value={<code>{status.resolved_path}</code>} />
+          <Row
+            label="Version"
+            value={
+              status.version ? (
+                <code>{status.version.raw}</code>
+              ) : (
+                <span className="legit-error">{status.error ?? "(unknown)"}</span>
+              )
+            }
+          />
+          <Row
+            label="Meets minimum"
+            value={
+              status.meets_minimum ? (
+                <span className="legit-success">yes</span>
+              ) : (
+                <span className="legit-error">no</span>
+              )
+            }
+          />
+        </>
+      )}
+      <FieldNote>
+        writes to: hosts settings · checking connects to the distro (starts it if stopped)
+      </FieldNote>
+      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+        <input
+          style={{ flex: 1, fontFamily: "monospace" }}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="git from the distro's PATH — or e.g. /usr/local/bin/git"
+        />
+        <Button
+          variant="primary"
+          disabled={busy || !distro}
+          onClick={() => apply(draft.trim() === "" ? null : draft.trim())}
+        >
+          Apply
+        </Button>
+        <button onClick={() => apply(null)} disabled={busy || !distro}>
+          Reset
+        </button>
+        <button onClick={check} disabled={busy || !distro}>
+          {busy ? "Checking…" : "Check"}
+        </button>
+      </div>
+      {error && <pre className="legit-error">{error}</pre>}
+    </Section>
   );
 }
 

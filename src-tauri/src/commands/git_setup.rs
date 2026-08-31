@@ -49,17 +49,23 @@ pub async fn set_git_path(
         .mutate_global(|settings| settings.git_path_override = path.clone())
         .await?;
 
-    // Hot-swap the runner of every open session so the change takes effect
-    // immediately - this is what the `RwLock<Arc<GitRunner>>` indirection in
-    // `RepoSession` exists for. Sessions with a per-repo override keep their
-    // own binary (`resolve_repo_git_path` prefers the override when valid).
+    // Hot-swap the runner of every open LOCAL session so the change takes
+    // effect immediately - this is what the `RwLock<Arc<GitRunner>>`
+    // indirection in `RepoSession` exists for. Sessions with a per-repo
+    // override keep their own binary (`resolve_repo_git_path` prefers the
+    // override when valid). Remote sessions are skipped: their git binary
+    // lives on the remote host (host override or the agent's PATH `git`) and
+    // must never be replaced by an app-machine path.
     // Snapshot the sessions first: the per-session awaits below must not run
     // under the `repos` guard (holding an AppState lock across awaits blocks
     // close/open for the whole loop).
     let sessions: Vec<_> = state.repos.read().await.values().cloned().collect();
     for session in sessions {
         let repo_settings = session.settings.read().await.clone();
-        let effective = resolve_repo_git_path(&repo_settings, &resolved);
+        let Some(effective) = local_hot_swap_git(&session.locator, &repo_settings, &resolved)
+        else {
+            continue;
+        };
         *session.runner.write().await = session.host.executor_for(
             &legit_core::HostPath::from_path(&effective),
             Some(&legit_core::HostPath::from_path(&session.path)),
@@ -126,6 +132,21 @@ pub async fn set_repo_git_path(
     Ok(summary)
 }
 
+/// The binary a session should be hot-swapped to after a GLOBAL git path
+/// change — `None` for remote sessions, whose git is resolved on their host.
+fn local_hot_swap_git(
+    locator: &crate::remote::RepoLocator,
+    repo_settings: &crate::state::RepoSettings,
+    resolved_global: &std::path::Path,
+) -> Option<PathBuf> {
+    match locator {
+        crate::remote::RepoLocator::Local { .. } => {
+            Some(resolve_repo_git_path(repo_settings, resolved_global))
+        }
+        crate::remote::RepoLocator::Wsl { .. } => None,
+    }
+}
+
 async fn probe(
     git_path: &std::path::Path,
     user_override: Option<String>,
@@ -148,5 +169,29 @@ async fn probe(
             user_override,
             error: Some(e.to_string()),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::remote::RepoLocator;
+    use crate::state::RepoSettings;
+
+    // Regression: a global git path change must never clobber a REMOTE
+    // session's runner with an app-machine binary path.
+    #[test]
+    fn global_git_swap_skips_remote_sessions() {
+        let settings = RepoSettings::default();
+        let global = std::path::Path::new("C:/Program Files/Git/cmd/git.exe");
+
+        let local = RepoLocator::local("/x/repo");
+        assert_eq!(
+            local_hot_swap_git(&local, &settings, global),
+            Some(global.to_path_buf())
+        );
+
+        let remote = RepoLocator::parse("wsl://Ubuntu/home/u/repo");
+        assert_eq!(local_hot_swap_git(&remote, &settings, global), None);
     }
 }

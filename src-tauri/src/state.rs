@@ -635,6 +635,10 @@ pub struct AppState {
     pub transient_ops: Mutex<HashMap<OperationId, Arc<TransientOp>>>,
     /// Live WSL agent connections, one per distro (see `remote::connection`).
     pub wsl_hosts: crate::remote::connection::WslHosts,
+    /// On-disk root for per-host settings: `hosts/wsl-<distro>.json`.
+    pub hosts_data_dir: PathBuf,
+    /// Cached per-host settings, keyed by distro (lazily loaded).
+    pub host_settings: RwLock<HashMap<String, HostSettings>>,
 }
 
 /// An in-flight session-less git operation (see `AppState::transient_ops`).
@@ -658,6 +662,11 @@ impl AppState {
     ) -> Self {
         let mut hosts: HashMap<HostId, Arc<dyn Host>> = HashMap::new();
         hosts.insert(HostId::Local, Arc::new(LocalHost));
+        // Sibling of `repos/` under the app-data dir.
+        let hosts_data_dir = repos_data_dir
+            .parent()
+            .map(|p| p.join("hosts"))
+            .unwrap_or_else(|| repos_data_dir.join("hosts"));
         Self {
             repos: RwLock::new(HashMap::new()),
             hosts: Mutex::new(hosts),
@@ -670,6 +679,8 @@ impl AppState {
             builtin_themes_dir,
             transient_ops: Mutex::new(HashMap::new()),
             wsl_hosts: crate::remote::connection::WslHosts::default(),
+            hosts_data_dir,
+            host_settings: RwLock::new(HashMap::new()),
         }
     }
 
@@ -742,6 +753,76 @@ impl AppState {
         let repo_dir = self.repos_data_dir.join(&hash);
         let settings_path = repo_dir.join("settings.json");
         (repo_dir, settings_path)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-host settings (remote hosts; `<app-data>/hosts/wsl-<distro>.json`)
+// ---------------------------------------------------------------------------
+
+/// Host-scoped app settings (one file per remote host). Fields follow the
+/// `Option<T>` + `#[serde(default)]` convention: `None` = use the default.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Type)]
+pub struct HostSettings {
+    /// Git binary override ON THAT HOST (a path/name the host resolves);
+    /// `None` = the agent's login-shell PATH `git`.
+    #[serde(default)]
+    pub git_path_override: Option<String>,
+}
+
+impl AppState {
+    fn host_settings_path(&self, distro: &str) -> PathBuf {
+        // Distro names come from wsl.exe registration; keep the file name
+        // safe on Windows regardless.
+        let safe: String = distro
+            .chars()
+            .map(|c| if c.is_alphanumeric() || "-_.".contains(c) { c } else { '_' })
+            .collect();
+        self.hosts_data_dir.join(format!("wsl-{safe}.json"))
+    }
+
+    /// Load-or-cache the settings for a WSL host.
+    pub async fn host_settings(&self, distro: &str) -> HostSettings {
+        if let Some(s) = self.host_settings.read().await.get(distro) {
+            return s.clone();
+        }
+        let loaded = match std::fs::read(self.host_settings_path(distro)) {
+            Ok(bytes) => serde_json::from_slice::<HostSettings>(&bytes).unwrap_or_else(|e| {
+                tracing::warn!(distro, err = %e, "host settings file is malformed — using defaults");
+                HostSettings::default()
+            }),
+            Err(_) => HostSettings::default(),
+        };
+        self.host_settings
+            .write()
+            .await
+            .entry(distro.to_string())
+            .or_insert_with(|| loaded.clone());
+        loaded
+    }
+
+    /// Persist new settings for a WSL host (cache + disk).
+    pub async fn set_host_settings(
+        &self,
+        distro: &str,
+        settings: HostSettings,
+    ) -> Result<(), AppError> {
+        self.host_settings
+            .write()
+            .await
+            .insert(distro.to_string(), settings.clone());
+        tokio::fs::create_dir_all(&self.hosts_data_dir).await?;
+        let json = serde_json::to_string_pretty(&settings)?;
+        tokio::fs::write(self.host_settings_path(distro), json).await?;
+        Ok(())
+    }
+
+    /// The effective git override for a WSL host (`None` = PATH `git`).
+    pub async fn host_git_override(&self, distro: &str) -> Option<String> {
+        self.host_settings(distro)
+            .await
+            .git_path_override
+            .filter(|s| !s.trim().is_empty())
     }
 }
 

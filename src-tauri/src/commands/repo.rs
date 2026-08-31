@@ -58,6 +58,12 @@ pub async fn open_session(
     host: Arc<dyn Host>,
     locator: RepoLocator,
 ) -> RepoSummary {
+    // Host-level git override for remote locators — an async lookup, so it
+    // must happen before the `repos` guard below (no await under the guard).
+    let host_git = match &locator {
+        RepoLocator::Wsl { distro, .. } => state.host_git_override(distro).await,
+        RepoLocator::Local { .. } => None,
+    };
     // Reuse-or-insert under ONE `repos` write guard: two concurrent opens of
     // the same directory (double-click, open racing restore) must never both
     // miss the lookup and create twin sessions + watchers. No await happens
@@ -70,7 +76,8 @@ pub async fn open_session(
         }
         let (_, settings_path) = state.repo_data_paths_locator(&locator);
         let repo_settings = load_repo_settings_sync(&settings_path);
-        let resolved_git = resolve_git_for(&locator, &repo_settings, &global_git_path);
+        let resolved_git =
+            resolve_git_for(&locator, &repo_settings, &global_git_path, host_git.as_deref());
 
         let runner = runner_for_locator(&host, &resolved_git, &locator);
         let session = Arc::new(RepoSession::new(
@@ -92,12 +99,14 @@ pub async fn open_session(
 /// The git binary a session on `locator`'s host should use: local repos go
 /// through the local override→global hierarchy (with existence check);
 /// remote repos use the repo override VERBATIM when set (it names a path on
-/// the remote host — no local existence check applies), else PATH `git` as
-/// resolved by the agent's login-shell environment.
+/// the remote host — no local existence check applies), else the HOST
+/// override (per-distro setting), else PATH `git` as resolved by the agent's
+/// login-shell environment.
 fn resolve_git_for(
     locator: &RepoLocator,
     repo_settings: &RepoSettings,
     global_git_path: &Path,
+    host_git: Option<&str>,
 ) -> HostPath {
     match locator {
         RepoLocator::Local { .. } => {
@@ -105,7 +114,7 @@ fn resolve_git_for(
         }
         RepoLocator::Wsl { .. } => match &repo_settings.git_path_override {
             Some(ov) if !ov.trim().is_empty() => HostPath(ov.clone()),
-            _ => HostPath("git".into()),
+            _ => HostPath(host_git.unwrap_or("git").to_string()),
         },
     }
 }
@@ -230,9 +239,13 @@ pub(crate) async fn probe_and_open(
                 },
                 _ => path,
             };
-            // Remote git comes from the agent's PATH; the probe doubles as
-            // the "git exists on this host" check.
-            let exec = host.executor_for(&HostPath("git".into()), Some(&path));
+            // Remote git comes from the host override, else the agent's
+            // PATH; the probe doubles as the "git exists on this host" check.
+            let host_git = state
+                .host_git_override(&distro)
+                .await
+                .unwrap_or_else(|| "git".into());
+            let exec = host.executor_for(&HostPath(host_git), Some(&path));
             let out = exec
                 .run(&["rev-parse", "--show-toplevel"])
                 .await
@@ -772,6 +785,58 @@ pub struct RestoreResult {
     pub active_id: Option<String>,
 }
 
+/// One persisted `currently_open` entry after the restore probe phase.
+#[derive(Debug, Clone, PartialEq)]
+enum ProbedEntry {
+    /// Probed fine — open a session at this resolved toplevel.
+    Open(RepoLocator),
+    /// The entry's host is unavailable right now (WSL distro gone/asleep):
+    /// keep the persisted string untouched so the tab returns next launch.
+    Keep(String),
+}
+
+/// Compute the post-restore `currently_open` list and the persisted active
+/// locator. Pure so the bookkeeping rules are pinned by unit tests:
+/// - opened repos persist their session LOCATOR, never the bare host path
+///   (a bare path would not match `RepoSummary.locator` on the next launch);
+/// - `Keep` entries stay in the list, in their original position;
+/// - an `Open` entry whose session failed to open (host lost mid-restore) is
+///   kept as well rather than silently dropped;
+/// - the active pointer prefers the opened active session's locator, else a
+///   still-listed (kept) entry it already pointed at, else the list head.
+fn restore_bookkeeping(
+    entries: &[ProbedEntry],
+    opened: &[(String, String)], // (locator string, session id) per opened repo
+    persisted_active: Option<&str>,
+) -> (Vec<String>, Option<String>, Option<String>) {
+    let mut list: Vec<String> = Vec::new();
+    for entry in entries {
+        let s = match entry {
+            ProbedEntry::Open(locator) => locator.to_persist_string(),
+            ProbedEntry::Keep(raw) => raw.clone(),
+        };
+        if !list.contains(&s) {
+            list.push(s);
+        }
+    }
+    let active_id = persisted_active.and_then(|active| {
+        opened
+            .iter()
+            .find(|(locator, _)| locator == active)
+            .map(|(_, id)| id.clone())
+    });
+    let active_locator = match (&active_id, persisted_active) {
+        (Some(id), _) => opened
+            .iter()
+            .find(|(_, oid)| oid == id)
+            .map(|(locator, _)| locator.clone()),
+        (None, Some(active)) if list.iter().any(|s| s == active) => Some(active.to_string()),
+        _ => None,
+    };
+    let active_locator = active_locator.or_else(|| list.first().cloned());
+    (list, active_locator, active_id)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn restore_open_repos(
@@ -788,8 +853,6 @@ pub async fn restore_open_repos(
     let git_path = state.git_path.read().await.clone();
 
     let mut summaries: Vec<RepoSummary> = Vec::new();
-    let mut still_valid: Vec<String> = Vec::new();
-    let mut active_id: Option<String> = None;
 
     // Probe phase: all persisted paths concurrently. This is the startup hot
     // path (the frontend holds the splash until restore completes): each repo
@@ -821,7 +884,7 @@ pub async fn restore_open_repos(
                             tracing::info!(path = %raw, stderr = %out.stderr.trim(), "restore: not a repo");
                             return None;
                         }
-                        Some(RepoLocator::local(out.stdout.trim()))
+                        Some(ProbedEntry::Open(RepoLocator::local(out.stdout.trim())))
                     }
                     RepoLocator::Wsl { distro, path } => {
                         // Connecting is serialized per distro inside
@@ -835,18 +898,28 @@ pub async fn restore_open_repos(
                             Ok(h) => h,
                             Err(e) => {
                                 tracing::warn!(distro, err = %e, "restore: wsl host unavailable — keeping the entry for next launch");
-                                return None;
+                                return Some(ProbedEntry::Keep(raw));
                             }
                         };
-                        let exec = host.executor_for(&HostPath("git".into()), Some(&path));
+                        let host_git = state
+                            .host_git_override(&distro)
+                            .await
+                            .unwrap_or_else(|| "git".into());
+                        let exec = host.executor_for(&HostPath(host_git), Some(&path));
                         match exec.run(&["rev-parse", "--show-toplevel"]).await {
-                            Ok(out) if out.success => Some(RepoLocator::Wsl {
+                            Ok(out) if out.success => Some(ProbedEntry::Open(RepoLocator::Wsl {
                                 distro,
                                 path: HostPath(out.stdout.trim().to_string()),
-                            }),
-                            other => {
-                                tracing::info!(path = %raw, ?other, "restore: remote path is not a repo");
+                            })),
+                            Ok(out) => {
+                                tracing::info!(path = %raw, stderr = %out.stderr.trim(), "restore: remote path is not a repo");
                                 None
+                            }
+                            Err(e) => {
+                                // The connection died between handshake and
+                                // probe: unavailable, not "gone" — keep it.
+                                tracing::warn!(path = %raw, err = %e, "restore: remote probe failed — keeping the entry for next launch");
+                                Some(ProbedEntry::Keep(raw))
                             }
                         }
                     }
@@ -858,24 +931,34 @@ pub async fn restore_open_repos(
     // Await in submission order (keeps the user-controlled tab order) and
     // dedup by resolved toplevel BEFORE opening anything: two persisted paths
     // inside the same repo must not race to create two sessions for it.
+    let mut entries: Vec<ProbedEntry> = Vec::new();
     let mut toplevels: Vec<RepoLocator> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for handle in probe_handles {
-        if let Ok(Some(locator)) = handle.await {
-            // Key the dedup on filesystem identity, not spelling (see
-            // `same_dir`): persisted entries can carry different forms of
-            // the same directory. Remote toplevels are already resolved by
-            // rev-parse on their host.
-            let key = match &locator {
-                RepoLocator::Local { path } => std::fs::canonicalize(path)
-                    .unwrap_or_else(|_| path.clone())
-                    .to_string_lossy()
-                    .into_owned(),
-                remote => remote.to_persist_string(),
-            };
-            if seen.insert(key) {
-                toplevels.push(locator);
+        match handle.await {
+            Ok(Some(ProbedEntry::Open(locator))) => {
+                // Key the dedup on filesystem identity, not spelling (see
+                // `same_dir`): persisted entries can carry different forms of
+                // the same directory. Remote toplevels are already resolved by
+                // rev-parse on their host.
+                let key = match &locator {
+                    RepoLocator::Local { path } => std::fs::canonicalize(path)
+                        .unwrap_or_else(|_| path.clone())
+                        .to_string_lossy()
+                        .into_owned(),
+                    remote => remote.to_persist_string(),
+                };
+                if seen.insert(key) {
+                    toplevels.push(locator.clone());
+                    entries.push(ProbedEntry::Open(locator));
+                }
             }
+            Ok(Some(keep @ ProbedEntry::Keep(_))) => {
+                if !entries.contains(&keep) {
+                    entries.push(keep);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -913,13 +996,15 @@ pub async fn restore_open_repos(
 
     for handle in open_handles {
         let Ok(Some(summary)) = handle.await else { continue };
-        still_valid.push(summary.locator.clone());
-        if persisted_active.as_deref() == Some(summary.locator.as_str()) {
-            active_id = Some(summary.id.clone());
-        }
         summaries.push(summary);
     }
 
+    let opened: Vec<(String, String)> = summaries
+        .iter()
+        .map(|s| (s.locator.clone(), s.id.clone()))
+        .collect();
+    let (merged_list, active_locator, mut active_id) =
+        restore_bookkeeping(&entries, &opened, persisted_active.as_deref());
     if active_id.is_none() {
         active_id = summaries.first().map(|s| s.id.clone());
     }
@@ -930,7 +1015,7 @@ pub async fn restore_open_repos(
             .mutate_global(|settings| {
                 // Merge instead of overwrite: keep any paths that were opened while
                 // restore was running (they weren't in our snapshot), in their order.
-                let mut merged = still_valid;
+                let mut merged = merged_list;
                 for p in &settings.currently_open {
                     if !snapshot.contains(p) && !merged.contains(p) {
                         merged.push(p.clone());
@@ -939,10 +1024,7 @@ pub async fn restore_open_repos(
                 settings.currently_open = merged;
                 // Keep active consistent with the list: clear it when nothing
                 // restored, rather than leaving a pointer at a repo that is gone.
-                settings.active_open_repo = active_id
-                    .as_ref()
-                    .and_then(|id| summaries.iter().find(|s| &s.id == id))
-                    .map(|s| s.path.clone())
+                settings.active_open_repo = active_locator
                     .or_else(|| settings.currently_open.first().cloned());
             })
             .await,
@@ -1093,6 +1175,54 @@ mod tests {
                 "{input}"
             );
         }
+    }
+
+    use super::{restore_bookkeeping, ProbedEntry, RepoLocator};
+
+    // Regression: the persisted active pointer must be the session LOCATOR —
+    // persisting the bare host path meant a WSL active tab never matched
+    // `RepoSummary.locator` on the next launch.
+    #[test]
+    fn restore_persists_active_as_locator_not_bare_path() {
+        let wsl = RepoLocator::parse("wsl://Ubuntu/home/u/repo");
+        let entries = vec![ProbedEntry::Open(wsl.clone())];
+        let opened = vec![("wsl://Ubuntu/home/u/repo".to_string(), "id-1".to_string())];
+        let (list, active_locator, active_id) =
+            restore_bookkeeping(&entries, &opened, Some("wsl://Ubuntu/home/u/repo"));
+        assert_eq!(list, vec!["wsl://Ubuntu/home/u/repo"]);
+        assert_eq!(active_id.as_deref(), Some("id-1"));
+        assert_eq!(active_locator.as_deref(), Some("wsl://Ubuntu/home/u/repo"));
+    }
+
+    // Regression: a WSL entry whose distro is unavailable is KEPT in
+    // `currently_open` (in place) instead of being dropped, and an active
+    // pointer at it survives for the next launch.
+    #[test]
+    fn restore_keeps_unavailable_wsl_entries_and_their_active_pointer() {
+        let local = RepoLocator::local("/x/repo");
+        let entries = vec![
+            ProbedEntry::Open(local.clone()),
+            ProbedEntry::Keep("wsl://Ubuntu/home/u/repo".to_string()),
+        ];
+        let opened = vec![("/x/repo".to_string(), "id-local".to_string())];
+        let (list, active_locator, active_id) =
+            restore_bookkeeping(&entries, &opened, Some("wsl://Ubuntu/home/u/repo"));
+        assert_eq!(list, vec!["/x/repo", "wsl://Ubuntu/home/u/repo"]);
+        // No session opened for the kept entry, but the persisted active
+        // pointer stays on it rather than being rewritten.
+        assert_eq!(active_id, None);
+        assert_eq!(active_locator.as_deref(), Some("wsl://Ubuntu/home/u/repo"));
+    }
+
+    #[test]
+    fn restore_falls_back_to_list_head_when_active_is_gone() {
+        let entries = vec![ProbedEntry::Open(RepoLocator::local("/x/repo"))];
+        let opened = vec![("/x/repo".to_string(), "id-1".to_string())];
+        let (list, active_locator, active_id) =
+            restore_bookkeeping(&entries, &opened, Some("/gone/elsewhere"));
+        assert_eq!(list, vec!["/x/repo"]);
+        assert_eq!(active_id, None);
+        assert_eq!(active_locator.as_deref(), Some("/x/repo"));
     }
 
     #[test]
