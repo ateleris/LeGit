@@ -38,7 +38,15 @@ Key mechanisms, each with its reason:
   proxies). The app discards banner noise until the agent's READY line.
 - **Deploy** pipes the binary over wsl.exe stdin into a version-keyed path
   (`~/.local/share/legit/agent/<version>/`) with an atomic rename — never the
-  9P share. Exact version match at handshake; mismatch → redeploy.
+  9P share. Exact version match at handshake; mismatch → redeploy. Bundling
+  gotcha (bit us 2026-08-31): in Tauri's `bundle.resources` MAP, a trailing
+  `/` on the target only means "directory" for GLOB sources; for a
+  single-file source the target is the full target FILE path, so
+  `"agent/legit-agent-x86_64": "agent/"` shipped a file literally named
+  `agent` (and the two arches clobbered each other) → "bundled agent binary
+  missing" at runtime. `tauri.windows.conf.json` must map each binary to its
+  full `agent/legit-agent-<arch>` target; verify by listing the NSIS
+  installer (`7z l LeGit_*-setup.exe`) for `agent/legit-agent-x86_64`.
 - **Backpressure.** The console's pager semantics survive the wire via
   per-stream credit windows: the agent sends at most `window` unacked events,
   then stops draining its bounded channel → git blocks, exactly like a local
