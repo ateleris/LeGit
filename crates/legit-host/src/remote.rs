@@ -1,9 +1,9 @@
 //! The app-side client of a `legit-agent`: connection machinery plus the
 //! `RemoteExecutor` / `RemoteFs` / remote `Host` implementations.
 //!
-//! An [`AgentTransport`] supplies byte pipes to a (re)spawnable agent —
-//! wsl.exe stdio in production, a direct child process in tests, ssh later.
-//! One connection serves a whole host; repos multiplex over it by request id.
+//! [`AgentPipes`] supply the byte pipes to a running agent — wsl.exe stdio in
+//! production, a direct child process in tests, ssh later. One connection
+//! serves a whole host; repos multiplex over it by request id.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -30,14 +30,6 @@ use crate::{Host, HostError, HostId, WatchHandle};
 pub struct AgentPipes {
     pub reader: Box<dyn AsyncRead + Send + Unpin>,
     pub writer: Box<dyn AsyncWrite + Send + Unpin>,
-}
-
-/// Provides pipes to an agent and can re-establish them (reconnect). The WSL
-/// implementation spawns `wsl.exe -d <distro> … legit-agent --stdio` (and
-/// deploys the agent first if needed); tests spawn the binary directly.
-#[async_trait]
-pub trait AgentTransport: Send + Sync + 'static {
-    async fn connect(&self) -> Result<AgentPipes, HostError>;
 }
 
 /// Sinks for agent-pushed information, provided by the app layer.

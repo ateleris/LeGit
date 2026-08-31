@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 pub mod remote;
 pub use remote::{
-    AgentConnection, AgentPipes, AgentTransport, HostConn, HostConnectOpts, HostSinks,
+    AgentConnection, AgentPipes, HostConn, HostConnectOpts, HostSinks,
     RemoteExecutor, RemoteFs, RemoteHost,
 };
 

@@ -193,22 +193,35 @@ async fn serve() {
     });
 
     // Observers are process-wide OnceLocks — the agent IS the per-host
-    // process, so installing them here scopes them to this host.
-    let inv_tx = out_tx.clone();
+    // process, so installing them here scopes them to this host. They are
+    // sync callbacks, so they cannot await on the bounded stdout channel; a
+    // `try_send` there silently dropped invocation-log/progress notes under
+    // load. Instead they push into an unbounded side channel that a small
+    // forwarder task drains into the writer, preserving note order.
+    let (note_tx, mut note_rx) = mpsc::unbounded_channel::<String>();
+    let inv_tx = note_tx.clone();
     set_invocation_observer(Arc::new(move |inv| {
-        let _ = inv_tx.try_send(encode_frame(&Frame::Note {
+        let _ = inv_tx.send(encode_frame(&Frame::Note {
             note: Note::GitInvocation { inv },
         }));
     }));
-    let prog_tx = out_tx.clone();
+    let prog_tx = note_tx;
     set_progress_observer(Arc::new(move |op_id, progress| {
-        let _ = prog_tx.try_send(encode_frame(&Frame::Note {
+        let _ = prog_tx.send(encode_frame(&Frame::Note {
             note: Note::GitProgress {
                 op_id: op_id.clone(),
                 progress,
             },
         }));
     }));
+    let note_out = out_tx.clone();
+    tokio::spawn(async move {
+        while let Some(line) = note_rx.recv().await {
+            if note_out.send(line).await.is_err() {
+                break;
+            }
+        }
+    });
 
     let agent = Arc::new(Agent {
         out: out_tx.clone(),
@@ -450,14 +463,19 @@ async fn dispatch_post_handshake(
             Ok(to_value(&()))
         }
         Method::HostSpawn { program, args, cwd } => {
-            let mut cmd = std::process::Command::new(&program);
+            let mut cmd = tokio::process::Command::new(&program);
             cmd.args(&args);
             if let Some(cwd) = cwd {
                 cmd.current_dir(cwd.as_local());
             }
-            cmd.spawn()
-                .map(|_| ())
+            let mut child = cmd
+                .spawn()
                 .map_err(|e| WireError::new(WireErrorKind::Spawn, e.to_string()))?;
+            // Reap the child when it exits — a fire-and-forget spawn (editor,
+            // helper) must not sit as a zombie until the agent itself exits.
+            tokio::spawn(async move {
+                let _ = child.wait().await;
+            });
             Ok(to_value(&()))
         }
         Method::GitProbe { git_path } => {
