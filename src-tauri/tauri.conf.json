@@ -58,7 +58,8 @@
         "upgradeCode": "60af9dc1-85b5-5b4f-bdac-58610790074f"
       },
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "installerHooks": "./windows/hooks.nsh"
       }
     },
     "createUpdaterArtifacts": true
