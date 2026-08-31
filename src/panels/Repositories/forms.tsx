@@ -3,10 +3,9 @@
 
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
-import { cancelClone, wslListDistros } from "../../lib/commands";
+import { cancelClone } from "../../lib/commands";
 import type { CloneOptions, InitOptions } from "../../lib/commands";
-import { formatWslLocator } from "../../lib/locator";
-import type { GitProfile, WslDistro } from "../../lib/types";
+import type { GitProfile } from "../../lib/types";
 import { cloneCancelCleanupFailure, formatAppError, gitErrorKind } from "../../lib/types";
 import { useRemoteProgressStore } from "../../store/remoteProgress";
 import { useSettingsStore } from "../../store/settings";
@@ -251,91 +250,6 @@ export function InitForm({
       <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
         <Button variant="primary" disabled={busy || !dir.trim()} onClick={submit}>
           {busy ? "Initializing…" : "Init"}
-        </Button>
-        <button onClick={onCancel}>Close</button>
-      </div>
-    </FormCard>
-  );
-}
-
-/** Open a repository inside a WSL distribution: pick the distro, type/paste
- * its path (`~/...` expands on the distro). Selecting a distro is when the
- * agent connects + deploys, so a "git not found in <distro>" error surfaces
- * here, inline, not after submit. */
-export function WslOpenForm({
-  onOpen,
-  onCancel,
-  onError,
-}: {
-  onOpen: (locator: string) => Promise<void>;
-  onCancel: () => void;
-  onError: (msg: string | null) => void;
-}) {
-  const [distros, setDistros] = useState<WslDistro[] | null>(null);
-  const [distro, setDistro] = useState("");
-  const [path, setPath] = useState("");
-  // Connecting can include a cold distro start + first-run agent deploy —
-  // genuinely slow; the open itself is delayed-busy like Init.
-  const { busy, run } = useDelayedBusy();
-
-  useEffect(() => {
-    let cancelled = false;
-    wslListDistros()
-      .then((list) => {
-        if (cancelled) return;
-        setDistros(list);
-        const preferred = list.find((d) => d.is_default) ?? list[0];
-        if (preferred) setDistro(preferred.name);
-      })
-      .catch((e) => onError(formatAppError(e)));
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const submit = () => {
-    const trimmed = path.trim();
-    if (!distro || !trimmed) return;
-    return run(async () => {
-      onError(null);
-      try {
-        await onOpen(formatWslLocator(distro, trimmed));
-      } catch (e) {
-        onError(formatAppError(e));
-      }
-    });
-  };
-
-  return (
-    <FormCard title="Open repository in WSL">
-      <Field label="Distribution">
-        <select value={distro} onChange={(e) => setDistro(e.target.value)} style={{ width: "100%" }}>
-          {distros === null && <option value="">Loading…</option>}
-          {distros?.length === 0 && <option value="">No WSL distributions found</option>}
-          {distros?.map((d) => (
-            <option key={d.name} value={d.name}>
-              {d.name}
-              {d.is_default ? " (default)" : ""}
-              {d.running ? "" : " — will start"}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <Field label="Repository path (inside the distro)">
-        <input
-          style={{ width: "100%", fontFamily: "monospace" }}
-          value={path}
-          onChange={(e) => setPath(e.target.value)}
-          placeholder="~/projects/my-repo"
-          onKeyDown={(e) => {
-            if (e.key === "Enter") void submit();
-          }}
-        />
-      </Field>
-      <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-        <Button variant="primary" disabled={busy || !distro || !path.trim()} onClick={submit}>
-          {busy ? "Connecting…" : "Open"}
         </Button>
         <button onClick={onCancel}>Close</button>
       </div>

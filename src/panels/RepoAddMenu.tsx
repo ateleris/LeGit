@@ -1,28 +1,19 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
-import { recentRepos, wslListDistros } from "../lib/commands";
-import { hostLabel, parseLocator } from "../lib/locator";
+import { recentRepos } from "../lib/commands";
+import { parseLocator } from "../lib/locator";
 import { formatAppError } from "../lib/types";
 import { useGitProfiles } from "../lib/useGitProfiles";
 import { useRepoStore } from "../store/repos";
 import { notify } from "../store/notifications";
 import { SectionLabel } from "./Commits/menu/primitives";
 import { AddRepoIcon } from "../icons";
-import { CloneForm, InitForm, WslOpenForm } from "./Repositories/forms";
+import { CloneForm, InitForm } from "./Repositories/forms";
+import { HostBadge } from "./shared/HostBadge";
 
 const RECENTS_SHOWN = 5;
 
-type Mode = "menu" | "clone" | "init" | "wsl";
-
-/** Whether this machine has WSL distros, fetched once per app run (the check
- * spawns wsl.exe; the answer doesn't change while the app runs). */
-let wslAvailable: Promise<boolean> | null = null;
-function hasWsl(): Promise<boolean> {
-  wslAvailable ??= wslListDistros()
-    .then((list) => list.length > 0)
-    .catch(() => false);
-  return wslAvailable;
-}
+type Mode = "menu" | "clone" | "init";
 
 /**
  * The tab strip's "+" button: an add-repository menu (Open… / Clone… / Init…
@@ -41,7 +32,6 @@ export function RepoAddMenu() {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<Mode>("menu");
   const [recents, setRecents] = useState<string[]>([]);
-  const [wsl, setWsl] = useState(false);
   const { data: profiles = [], refetch: refetchProfiles } = useGitProfiles();
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -56,7 +46,6 @@ export function RepoAddMenu() {
   useEffect(() => {
     if (!open) return;
     recentRepos().then(setRecents).catch(console.warn);
-    hasWsl().then(setWsl).catch(console.warn);
     void refetchProfiles();
   }, [open, openRepoIds, refetchProfiles]);
 
@@ -147,7 +136,6 @@ export function RepoAddMenu() {
           {mode === "menu" && (
             <>
               <MenuRow label="Open repository…" onClick={doOpenDialog} />
-              {wsl && <MenuRow label="Open in WSL…" onClick={() => setMode("wsl")} />}
               <MenuRow label="Clone repository…" onClick={() => setMode("clone")} />
               <MenuRow label="Initialize repository…" onClick={() => setMode("init")} />
               {recents.length > 0 && (
@@ -155,12 +143,11 @@ export function RepoAddMenu() {
                   <SectionLabel>Recent</SectionLabel>
                   {recents.slice(0, RECENTS_SHOWN).map((p) => {
                     const parsed = parseLocator(p);
-                    const chip = hostLabel(parsed.host);
                     return (
                       <MenuRow
                         key={p}
                         label={parsed.path}
-                        chip={chip ?? undefined}
+                        distro={parsed.host?.distro}
                         title={p}
                         subtle
                         onClick={() => doOpenRecent(p)}
@@ -182,17 +169,6 @@ export function RepoAddMenu() {
               }}
               onClone={async (url, parentDir, name, profileId, opId, options) => {
                 await cloneRepo(url, parentDir, name, profileId, opId, options);
-                close();
-              }}
-            />
-          )}
-
-          {mode === "wsl" && (
-            <WslOpenForm
-              onCancel={() => setMode("menu")}
-              onError={setError}
-              onOpen={async (locator) => {
-                await openRepo(locator);
                 close();
               }}
             />
@@ -223,14 +199,14 @@ function MenuRow({
   onClick,
   title,
   subtle,
-  chip,
+  distro,
 }: {
   label: string;
   onClick: () => void;
   title?: string;
   subtle?: boolean;
-  /** Small host badge before the label (e.g. the WSL distro of a recent). */
-  chip?: string;
+  /** Small host badge before the label (the WSL distro of a recent). */
+  distro?: string;
 }) {
   const [hover, setHover] = useState(false);
   return (
@@ -253,19 +229,7 @@ function MenuRow({
         fontSize: subtle ? "var(--fz-sm)" : undefined,
       }}
     >
-      {chip && (
-        <span
-          style={{
-            flex: "none",
-            fontSize: "var(--fz-xs)",
-            border: "1px solid var(--panel-border)",
-            borderRadius: 3,
-            padding: "0 3px",
-          }}
-        >
-          {chip}
-        </span>
-      )}
+      {distro && <HostBadge distro={distro} />}
       <span
         style={{
           overflow: "hidden",

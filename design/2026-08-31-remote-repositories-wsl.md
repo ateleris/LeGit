@@ -73,29 +73,40 @@ Key mechanisms, each with its reason:
   `tauri-plugin-single-instance` (registered first) forwards it to the
   running app, and a fresh launch stashes it until after restore
   (`take_pending_open`).
-- **UX**: "Open in WSL…" in the add-repo menu and Repositories panel (distro
-  picker via `wsl -l -q` — UTF-16LE decoded — + registry default; `~/...`
-  expands against the agent's home). Recents/tabs show a distro chip. Reveal
-  in Explorer uses `\\wsl.localhost\<distro>\...`; open-in-editor spawns the
-  template inside the distro (`code .` → VS Code Remote via interop).
+- **UX**: the regular "Open repository…" covers WSL — `RepoLocator::parse`
+  recognizes `\\wsl.localhost\<distro>\…` / `\\wsl$\…` UNC paths (Explorer's
+  Linux node) and rewrites them to `wsl://` locators, so there is no
+  separate "Open in WSL…" entry point. Recents/tabs show a compact host
+  icon (`HostBadge`) with the distro on hover. Per-distro git binary:
+  Settings → Git → "Git executable in WSL" (`hosts/wsl-<distro>.json`,
+  probed through the agent, hot-swaps open sessions). Reveal in Explorer
+  uses `\\wsl.localhost\<distro>\...`; open-in-editor spawns the template
+  inside the distro (`code .` → VS Code Remote via interop). Uninstall: an
+  NSIS pre-uninstall hook (`src-tauri/windows/hooks.nsh`, skipped in update
+  mode) removes `~/.local/share/legit` + the launcher symlink from every
+  distro.
 
 ## Deliberate v1 limits (BACKLOG has the details)
 
 SSH hosts (protocol is transport-agnostic; needs an SshTransport + locator
-scheme); remote clone/init; per-host + remote per-repo git binary overrides
-(remote uses PATH `git`); a dedicated AgentGone error variant (surfaces as an
-Io message today); binary sidecar frames (handshake reserves `encodings`).
+scheme); remote clone/init; remote per-repo git binary overrides (per-HOST
+overrides exist; the per-repo one is still refused for remote sessions); a
+dedicated AgentGone error variant (surfaces as an Io message today); binary
+sidecar frames (handshake reserves `encodings`).
 
 ## Manual test checklist (Windows + real WSL)
 
 Fixture: a repo on the ext4 side (`~/...` in the distro) — that is the
 feature's point. `/mnt/c` repos (e.g. LeGit-Test) are a secondary sanity case.
 
-1. First connect: Open in WSL… on a stopped distro → picker shows "will
-   start"; deploy + cold start stays under ~15s with a busy state; repo opens
-   with a distro chip on its tab.
+1. First connect: "Open repository…" → browse to the Linux node
+   (`\\wsl.localhost\<distro>\…`) of a stopped distro; deploy + cold start
+   stays under ~15s with a busy state; repo opens with a WSL icon on its tab
+   (distro name on hover).
 2. Upgrade: bump the app version, reconnect → silent redeploy (new
-   `agent/<version>/` dir), old version dirs eventually pruned (best-effort).
+   `agent/<version>/` dir) and the old version dirs are pruned right after
+   (best-effort `prune_stale_agents`). With `LEGIT_AGENT_BIN` set, every
+   connect redeploys (a rebuilt dev agent must never run stale).
 3. Watcher: edit/commit in a WSL terminal → panels refresh live.
 4. `wsl --shutdown` mid-session → sticky "Connection to <distro> lost" toast;
    tabs stay; within ~15s the distro restarts, "Reconnected" toast, data

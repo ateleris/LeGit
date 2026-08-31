@@ -27,8 +27,12 @@ impl RepoLocator {
         RepoLocator::Local { path: path.into() }
     }
 
-    /// Parse a persisted/typed locator string. Anything without a known
-    /// scheme is a local path — including Windows drive/UNC paths.
+    /// Parse a persisted/typed locator string. A `\\wsl.localhost\` /
+    /// `\\wsl$\` UNC path (what the native folder picker returns for the
+    /// Explorer "Linux" node) is recognized as a WSL locator, so "Open
+    /// repository…" works for WSL repos without a separate entry point.
+    /// Anything else without a known scheme is a local path — including
+    /// other Windows drive/UNC paths.
     pub fn parse(s: &str) -> RepoLocator {
         if let Some(rest) = s.strip_prefix(WSL_SCHEME) {
             if let Some(slash) = rest.find('/') {
@@ -40,6 +44,9 @@ impl RepoLocator {
                     };
                 }
             }
+        }
+        if let Some(loc) = parse_wsl_unc(s) {
+            return loc;
         }
         RepoLocator::Local { path: PathBuf::from(s) }
     }
@@ -68,6 +75,29 @@ impl RepoLocator {
             }),
         }
     }
+}
+
+/// Recognize a WSL share UNC path (`\\wsl.localhost\<distro>\<path>` or the
+/// legacy `\\wsl$\<distro>\<path>`; server and either separator style are
+/// accepted, the server name case-insensitively). Returns `None` for every
+/// other string — plain UNC paths (`\\server\share`) must stay local.
+fn parse_wsl_unc(s: &str) -> Option<RepoLocator> {
+    let rest = s.strip_prefix(r"\\").or_else(|| s.strip_prefix("//"))?;
+    let (server, rest) = rest.split_once(['\\', '/'])?;
+    if !server.eq_ignore_ascii_case("wsl.localhost") && !server.eq_ignore_ascii_case("wsl$") {
+        return None;
+    }
+    let (distro, path) = match rest.split_once(['\\', '/']) {
+        Some((d, p)) => (d, p),
+        None => (rest, ""),
+    };
+    if distro.is_empty() {
+        return None;
+    }
+    Some(RepoLocator::Wsl {
+        distro: distro.to_string(),
+        path: HostPath(format!("/{}", path.replace('\\', "/"))),
+    })
 }
 
 /// The host part of a locator, as it crosses IPC in `RepoSummary`
@@ -112,6 +142,50 @@ mod tests {
         for s in ["wsl://", "wsl://Ubuntu", "wsl:///home/x"] {
             assert!(matches!(RepoLocator::parse(s), RepoLocator::Local { .. }), "{s}");
         }
+    }
+
+    #[test]
+    fn wsl_unc_paths_parse_as_wsl_locators() {
+        // What the native folder picker returns for the Explorer "Linux" node.
+        for s in [
+            r"\\wsl.localhost\Ubuntu\home\orell\github\dive",
+            r"\\wsl$\Ubuntu\home\orell\github\dive",
+            r"\\WSL.LOCALHOST\Ubuntu\home\orell\github\dive",
+            "//wsl.localhost/Ubuntu/home/orell/github/dive",
+        ] {
+            assert_eq!(
+                RepoLocator::parse(s),
+                RepoLocator::Wsl {
+                    distro: "Ubuntu".into(),
+                    path: HostPath("/home/orell/github/dive".into()),
+                },
+                "{s}"
+            );
+        }
+        // Normalizes to the wsl:// persist form (the UNC spelling is an
+        // input convenience, never a stored identity).
+        assert_eq!(
+            RepoLocator::parse(r"\\wsl.localhost\Ubuntu\home\u\r").to_persist_string(),
+            "wsl://Ubuntu/home/u/r"
+        );
+    }
+
+    #[test]
+    fn wsl_unc_share_root_and_distro_root_do_not_panic() {
+        // Distro root (no path) maps to "/" — open_repo then reports
+        // NotARepo cleanly.
+        assert_eq!(
+            RepoLocator::parse(r"\\wsl.localhost\Ubuntu"),
+            RepoLocator::Wsl {
+                distro: "Ubuntu".into(),
+                path: HostPath("/".into()),
+            }
+        );
+        // The bare share root stays local (nothing to address).
+        assert!(matches!(
+            RepoLocator::parse(r"\\wsl.localhost"),
+            RepoLocator::Local { .. }
+        ));
     }
 
     #[test]

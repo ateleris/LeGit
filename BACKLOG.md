@@ -156,12 +156,11 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
     `repo_clone` still resolve their paths locally. Route them through a
     host + locator like `probe_and_open` (clone needs the transient-op
     cancel path, which is already `Arc<dyn GitExecutor>`).
-  - **Per-host git overrides.** Remote repos use PATH `git` from the
-    agent's login-shell env; the per-repo override is refused for remote
-    sessions (`set_repo_git_path`). Plan: `<app-data>/hosts/wsl-<distro>.json`
-    (Option-fields convention) + a "Remote hosts" settings section; the
-    remote per-repo override then stops being refused (its picker must not
-    browse the app machine).
+  - **Remote per-repo git overrides.** Per-HOST overrides landed
+    (`hosts/wsl-<distro>.json`, Settings → Git → "Git executable in WSL"),
+    but the per-repo override is still refused for remote sessions
+    (`set_repo_git_path`). To lift it: probe the candidate through the
+    session's host and make the picker not browse the app machine.
   - **Dedicated AgentGone error variant.** A dead connection surfaces as a
     RunnerError::Io/FsError message ("agent connection lost") — correct but
     unclassified; a `GitError` variant would let panels render "host

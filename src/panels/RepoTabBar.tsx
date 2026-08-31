@@ -9,6 +9,7 @@ import { ExternalEditorIcon, FolderIcon, RemotePageIcon, SuperprojectIcon } from
 import { ViewMenu } from "./ViewMenu";
 import { RepoOverflowMenu } from "./RepoOverflowMenu";
 import { RepoAddMenu } from "./RepoAddMenu";
+import { HostBadge } from "./shared/HostBadge";
 
 const DRAG_THRESHOLD = 4; // px before a press becomes a drag
 
@@ -244,22 +245,7 @@ export function RepoTabBar() {
               }}
               title={repo.path}
             >
-              {repo.host && (
-                <span
-                  className="legit-subtle"
-                  title={`WSL: ${repo.host.distro}`}
-                  style={{
-                    flex: "none",
-                    fontSize: "var(--fz-xs)",
-                    border: "1px solid var(--panel-border)",
-                    borderRadius: 3,
-                    padding: "0 3px",
-                    marginRight: 4,
-                  }}
-                >
-                  {repo.host.distro}
-                </span>
-              )}
+              {repo.host && <HostBadge distro={repo.host.distro} />}
               <span className="legit-tab__name">{repo.name}</span>
               <button
                 className="legit-tab__close"

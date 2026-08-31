@@ -1,14 +1,16 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
-import { recentRepos, wslListDistros } from "../../lib/commands";
+import { recentRepos } from "../../lib/commands";
+import { parseLocator } from "../../lib/locator";
 import { formatAppError } from "../../lib/types";
 import { useGitProfiles } from "../../lib/useGitProfiles";
 import { useRepoStore } from "../../store/repos";
 import { notify } from "../../store/notifications";
 import { Button } from "../shared/buttons";
-import { CloneForm, InitForm, WslOpenForm } from "./forms";
+import { HostBadge } from "../shared/HostBadge";
+import { CloneForm, InitForm } from "./forms";
 
-type Mode = "none" | "clone" | "init" | "wsl";
+type Mode = "none" | "clone" | "init";
 
 /** Repositories panel — open / clone / init / close / switch. */
 export function RepositoriesPanel() {
@@ -23,7 +25,6 @@ export function RepositoriesPanel() {
   const initialized = useRepoStore((s) => s.initialized);
 
   const [recents, setRecents] = useState<string[]>([]);
-  const [wsl, setWsl] = useState(false);
   const { data: profiles = [] } = useGitProfiles();
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("none");
@@ -31,9 +32,6 @@ export function RepositoriesPanel() {
   useEffect(() => {
     if (!initialized) refresh();
     recentRepos().then(setRecents).catch(console.warn);
-    wslListDistros()
-      .then((list) => setWsl(list.length > 0))
-      .catch(() => setWsl(false));
   }, [initialized, refresh]);
 
   const refreshRecents = () => recentRepos().then(setRecents).catch(console.warn);
@@ -57,11 +55,6 @@ export function RepositoriesPanel() {
     <div className="legit-panel">
       <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <Button variant="primary" onClick={doDialog}>Open repository…</Button>
-        {wsl && (
-          <button onClick={() => { setError(null); setMode(mode === "wsl" ? "none" : "wsl"); }} aria-pressed={mode === "wsl"}>
-            Open in WSL…
-          </button>
-        )}
         <button onClick={() => { setError(null); setMode(mode === "clone" ? "none" : "clone"); }} aria-pressed={mode === "clone"}>
           Clone…
         </button>
@@ -75,18 +68,6 @@ export function RepositoriesPanel() {
       <div className="legit-panel__body">
         {error && <div className="legit-error" style={{ marginBottom: 8 }}>{error}</div>}
 
-        {mode === "wsl" && (
-          <div style={{ marginBottom: 14 }}>
-            <WslOpenForm
-              onCancel={() => setMode("none")}
-              onError={setError}
-              onOpen={async (locator) => {
-                await doOpen(locator);
-                setMode("none");
-              }}
-            />
-          </div>
-        )}
         {mode === "clone" && (
           <div style={{ marginBottom: 14 }}>
           <CloneForm
@@ -139,12 +120,16 @@ export function RepositoriesPanel() {
         </Section>
         <Section title="Recent">
           {recents.length === 0 && <div className="legit-subtle">No recent repositories yet.</div>}
-          {recents.map((p) => (
-            <div key={p} style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0" }}>
-              <button onClick={() => doOpen(p)} style={{ minWidth: 80 }}>Open</button>
-              <span style={{ flex: 1 }}>{p}</span>
-            </div>
-          ))}
+          {recents.map((p) => {
+            const parsed = parseLocator(p);
+            return (
+              <div key={p} style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0" }} title={p}>
+                <button onClick={() => doOpen(p)} style={{ minWidth: 80 }}>Open</button>
+                {parsed.host && <HostBadge distro={parsed.host.distro} />}
+                <span style={{ flex: 1 }}>{parsed.path}</span>
+              </div>
+            );
+          })}
         </Section>
       </div>
     </div>
