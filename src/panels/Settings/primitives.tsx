@@ -91,24 +91,100 @@ export function SettingsGroup({
 /**
  * One setting: a name (+ an optional "Git config" pill when it writes git
  * config rather than LeGit's own instant-apply settings) over its control(s).
+ *
+ * Pass `id` to make the section collapsible (collapsed by default unless
+ * `defaultOpen`): niche settings stay out of the way for users who don't need
+ * them. The state is remembered per `id` in localStorage, like `SettingsGroup`.
+ * Children are only rendered while open, so a collapsed section's effects
+ * (e.g. probes) never run.
  */
 export function Section({
   title,
   scope,
+  id,
+  caption,
+  defaultOpen = false,
   children,
 }: {
   title: string;
   /** "git" marks a setting that writes git config (shown with a pill). */
   scope?: "git";
+  /** Set to make the section collapsible; also the localStorage key. */
+  id?: string;
+  /** Short hint shown next to the title of a collapsible section. */
+  caption?: string;
+  /** Initial state when the user hasn't toggled this section yet. */
+  defaultOpen?: boolean;
   children: ReactNode;
 }) {
+  const key = `legit.settings-section.${id}`;
+  const [open, setOpen] = useState(() => {
+    if (!id) return true;
+    try {
+      const stored = localStorage.getItem(key);
+      if (stored === "collapsed") return false;
+      if (stored === "expanded") return true;
+      return defaultOpen;
+    } catch {
+      return defaultOpen;
+    }
+  });
+  const toggle = () =>
+    setOpen((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(key, next ? "expanded" : "collapsed");
+      } catch {
+        /* private mode / quota — the toggle still works for the session */
+      }
+      return next;
+    });
+
+  const heading = (
+    <>
+      <span style={{ fontSize: "var(--fz-lg)", fontWeight: 550 }}>{title}</span>
+      {scope === "git" && <GitConfigPill />}
+      {caption && (
+        <span style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)" }}>{caption}</span>
+      )}
+    </>
+  );
+
   return (
     <div style={{ marginBottom: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-        <span style={{ fontSize: "var(--fz-lg)", fontWeight: 550 }}>{title}</span>
-        {scope === "git" && <GitConfigPill />}
-      </div>
-      {children}
+      {id ? (
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={open}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            width: "100%",
+            background: "transparent",
+            border: "none",
+            padding: "0 0 6px",
+            cursor: "pointer",
+            color: "inherit",
+            textAlign: "left",
+          }}
+        >
+          <ChevronDownIcon
+            size="1em"
+            style={{
+              flexShrink: 0,
+              color: "var(--subtle-fg)",
+              transform: open ? "none" : "rotate(-90deg)",
+              transition: "transform 0.12s",
+            }}
+          />
+          {heading}
+        </button>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>{heading}</div>
+      )}
+      {open && children}
     </div>
   );
 }

@@ -191,24 +191,17 @@ export function GlobalSettingsPanel() {
 
 /** Per-distro git binary for WSL repos (mirrors the global git executable
  * section, but the path names a binary INSIDE the distro). Hidden when no
- * WSL distros exist. Probing connects to — and may start — the distro, so it
- * only runs on explicit user action, never on mount. */
+ * WSL distros exist, and collapsed by default — most users never touch WSL,
+ * so the section stays out of their way. Listing distros is cheap; the probe
+ * lives in the body, which only mounts while the section is expanded. */
 function WslGitSection() {
   const [distros, setDistros] = useState<WslDistro[]>([]);
-  const [distro, setDistro] = useState("");
-  const [draft, setDraft] = useState("");
-  const [status, setStatus] = useState<GitStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const { busy, run } = useDelayedBusy();
 
   useEffect(() => {
     let cancelled = false;
     wslListDistros()
       .then((list) => {
-        if (cancelled) return;
-        setDistros(list);
-        const preferred = list.find((d) => d.is_default) ?? list[0];
-        if (preferred) setDistro(preferred.name);
+        if (!cancelled) setDistros(list);
       })
       .catch(() => {});
     return () => {
@@ -216,27 +209,73 @@ function WslGitSection() {
     };
   }, []);
 
-  // Prefill the persisted override when the distro changes (cheap, no probe).
+  if (distros.length === 0) return null;
+
+  return (
+    <Section
+      id="wsl-git"
+      title="Git executable in WSL (per distro)"
+      caption="for repos opened inside a WSL distribution"
+    >
+      <WslGitBody distros={distros} />
+    </Section>
+  );
+}
+
+/** Body of the WSL git section. Probing connects to — and may start — the
+ * distro, so it runs automatically only for a distro that is already running;
+ * a stopped one waits for an explicit Check. */
+function WslGitBody({ distros }: { distros: WslDistro[] }) {
+  const [distro, setDistro] = useState(
+    () => (distros.find((d) => d.is_default) ?? distros[0]).name,
+  );
+  const [draft, setDraft] = useState("");
+  const [status, setStatus] = useState<GitStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const { busy, run } = useDelayedBusy();
+  // Distros we connected to ourselves: the list's `running` flag is a snapshot
+  // from mount, so without this a distro we just started reads as stopped.
+  const [started, setStarted] = useState<string[]>([]);
+  const running =
+    (distros.find((d) => d.name === distro)?.running ?? false) || started.includes(distro);
+  // A probe that resolves after the user picked another distro must not paint
+  // its result into the new selection.
+  const selectedRef = useRef(distro);
+  selectedRef.current = distro;
+
+  const probe = useCallback(
+    (target: string) =>
+      run(async () => {
+        setError(null);
+        try {
+          const s = await wslHostGitStatus(target);
+          setStarted((prev) => (prev.includes(target) ? prev : [...prev, target]));
+          if (selectedRef.current === target) setStatus(s);
+        } catch (e) {
+          if (selectedRef.current === target) setError(formatAppError(e));
+        }
+      }),
+    [run],
+  );
+
+  // Switching distro: prefill its persisted override (cheap, no probe), then
+  // show its git version right away when the distro is already running.
   useEffect(() => {
-    if (!distro) return;
+    let cancelled = false;
     setStatus(null);
     setError(null);
     wslHostGitOverride(distro)
-      .then((ov) => setDraft(ov ?? ""))
-      .catch(() => setDraft(""));
-  }, [distro]);
-
-  if (distros.length === 0) return null;
-
-  const check = () =>
-    void run(async () => {
-      setError(null);
-      try {
-        setStatus(await wslHostGitStatus(distro));
-      } catch (e) {
-        setError(formatAppError(e));
-      }
-    });
+      .then((ov) => {
+        if (!cancelled) setDraft(ov ?? "");
+      })
+      .catch(() => {
+        if (!cancelled) setDraft("");
+      });
+    if (running) void probe(distro);
+    return () => {
+      cancelled = true;
+    };
+  }, [distro, running, probe]);
 
   const apply = (path: string | null) =>
     void run(async () => {
@@ -251,7 +290,7 @@ function WslGitSection() {
     });
 
   return (
-    <Section title="Git executable in WSL (per distro)">
+    <>
       <Row
         label="Distribution"
         value={
@@ -266,9 +305,9 @@ function WslGitSection() {
           </select>
         }
       />
-      {status && (
+      {status ? (
         <>
-          <Row label="Resolved binary" value={<code>{status.resolved_path}</code>} />
+          <Row label="Resolved path" value={<code>{status.resolved_path}</code>} />
           <Row
             label="Version"
             value={
@@ -277,6 +316,15 @@ function WslGitSection() {
               ) : (
                 <span className="legit-error">{status.error ?? "(unknown)"}</span>
               )
+            }
+          />
+          <Row
+            label="Minimum required"
+            value={
+              <code>
+                {status.minimum_required[0]}.{status.minimum_required[1]}.
+                {status.minimum_required[2]}
+              </code>
             }
           />
           <Row
@@ -290,6 +338,19 @@ function WslGitSection() {
             }
           />
         </>
+      ) : (
+        <Row
+          label="Version"
+          value={
+            <span className="legit-subtle">
+              {busy
+                ? "Probing git…"
+                : running
+                  ? "not checked yet — press Check"
+                  : "not checked — the distro is stopped"}
+            </span>
+          }
+        />
       )}
       <FieldNote>
         writes to: hosts settings · checking connects to the distro (starts it if stopped)
@@ -303,20 +364,20 @@ function WslGitSection() {
         />
         <Button
           variant="primary"
-          disabled={busy || !distro}
+          disabled={busy}
           onClick={() => apply(draft.trim() === "" ? null : draft.trim())}
         >
           Apply
         </Button>
-        <button onClick={() => apply(null)} disabled={busy || !distro}>
+        <button onClick={() => apply(null)} disabled={busy}>
           Reset
         </button>
-        <button onClick={check} disabled={busy || !distro}>
+        <button onClick={() => void probe(distro)} disabled={busy}>
           {busy ? "Checking…" : "Check"}
         </button>
       </div>
       {error && <pre className="legit-error">{error}</pre>}
-    </Section>
+    </>
   );
 }
 
