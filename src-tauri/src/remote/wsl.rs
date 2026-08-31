@@ -73,6 +73,38 @@ pub fn deploy_command(app_version: &str) -> String {
     format!("mkdir -p {dir} && cat > {path}.tmp.$$ && chmod +x {path}.tmp.$$ && mv -f {path}.tmp.$$ {path}")
 }
 
+/// The shell command that removes agent installs of OTHER versions (each
+/// upgrade leaves the previous version-keyed dir behind). Tightly scoped:
+/// only immediate subdirectories of the agent dir, never `bin/` or
+/// `host-exe`, and never the version being kept.
+pub fn prune_command(keep_version: &str) -> String {
+    format!(
+        "[ -d $HOME/.local/share/legit/agent ] && \
+         find $HOME/.local/share/legit/agent -mindepth 1 -maxdepth 1 -type d \
+         ! -name '{keep_version}' -exec rm -rf {{}} + || true"
+    )
+}
+
+/// Remove stale (other-version) agent installs from `distro`. Best-effort:
+/// callers log a failure, never fail the connection on it.
+pub async fn prune_stale_agents(distro: &str, keep_version: &str) -> Result<(), AppError> {
+    let out = wsl_command(Some(distro))
+        .args(["--exec", "/bin/sh", "-c", &prune_command(keep_version)])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| AppError::Io(format!("wsl.exe: {e}")))?;
+    if !out.status.success() {
+        return Err(AppError::Io(format!(
+            "agent prune in '{distro}' failed: {}",
+            decode_wsl_output(&out.stderr).trim()
+        )));
+    }
+    Ok(())
+}
+
 /// Convert a Windows path to its WSL-visible `/mnt/<drive>/...` form (for the
 /// `legit .` launcher's host-exe file). Returns `None` for non-drive paths
 /// (UNC etc.).
@@ -379,6 +411,19 @@ mod tests {
         let chmod = cmd.find("chmod +x").unwrap();
         let mv = cmd.find("mv -f").unwrap();
         assert!(chmod < mv);
+    }
+
+    #[test]
+    fn prune_command_is_scoped_to_other_agent_versions() {
+        let cmd = prune_command("1.2.3");
+        // Never the version being kept.
+        assert!(cmd.contains("! -name '1.2.3'"));
+        // Only immediate children of the agent dir — never bin/ or host-exe.
+        assert!(cmd.contains("$HOME/.local/share/legit/agent"));
+        assert!(cmd.contains("-mindepth 1"));
+        assert!(cmd.contains("-maxdepth 1"));
+        assert!(cmd.contains("-type d"));
+        assert!(!cmd.contains("legit/bin"));
     }
 
     #[test]

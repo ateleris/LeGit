@@ -106,11 +106,20 @@ async fn connect_locked(
     entries: &mut HashMap<String, WslEntry>,
 ) -> Result<Arc<RemoteHost>, AppError> {
     // Deploy when the version-keyed path is absent (first run or upgrade).
-    if !super::wsl::agent_installed(distro, APP_VERSION).await? {
+    // Under the `LEGIT_AGENT_BIN` dev override ALWAYS deploy: a rebuilt dev
+    // agent keeps the same version key, so the presence check would keep
+    // running the stale binary forever.
+    let dev_override = std::env::var_os("LEGIT_AGENT_BIN").is_some();
+    if dev_override || !super::wsl::agent_installed(distro, APP_VERSION).await? {
         let arch = super::wsl::distro_arch(distro).await?;
         let bytes = agent_binary(app, &arch).await?;
         super::wsl::deploy_agent(distro, APP_VERSION, &bytes).await?;
-        tracing::info!(distro, version = APP_VERSION, "agent deployed");
+        tracing::info!(distro, version = APP_VERSION, dev_override, "agent deployed");
+        // Old version-keyed installs are useless after an upgrade — prune
+        // them (best-effort; scoped to the agent dir).
+        if let Err(e) = super::wsl::prune_stale_agents(distro, APP_VERSION).await {
+            tracing::warn!(distro, err = %e, "stale agent prune failed");
+        }
     }
 
     // Refresh the `legit .` launcher + host-exe pointer on every connect
