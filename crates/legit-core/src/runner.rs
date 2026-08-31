@@ -86,6 +86,12 @@ pub struct GitInvocation {
     pub success: bool,
     pub duration_ms: u64,
     pub stderr: String,
+    /// Which host ran this (`None` = the app machine). Runners never set it —
+    /// the forwarding layer stamps it (a remote host's connection sink tags
+    /// its label), so the Git Log panel can tell same-pathed repos on
+    /// different hosts apart.
+    #[serde(default)]
+    pub host: Option<String>,
 }
 
 type InvocationObserver = std::sync::Arc<dyn Fn(GitInvocation) + Send + Sync>;
@@ -1014,6 +1020,7 @@ fn log_invocation(
         success,
         duration_ms,
         stderr: stderr.to_string(),
+        host: None,
     });
 }
 

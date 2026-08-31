@@ -13,7 +13,7 @@ use crate::commands::config_util::{
 };
 use crate::error::AppError;
 use crate::state::AppState;
-use legit_core::GitRunner;
+use legit_core::{GitExecutor, GitRunner};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -39,7 +39,7 @@ pub struct SigningView {
 /// Global-settings variant: global + system scope only. The unbound runner's
 /// cwd may lie inside some repo, and an all-scopes read would leak that
 /// repo's local config into the view (see `read_config_global_scopes`).
-async fn read_signing_view_global(runner: &GitRunner) -> SigningView {
+async fn read_signing_view_global(runner: &dyn GitExecutor) -> SigningView {
     SigningView {
         gpgsign: read_config_global_scopes(runner, KEY_GPGSIGN).await.into(),
         format: read_config_global_scopes(runner, KEY_FORMAT).await.into(),

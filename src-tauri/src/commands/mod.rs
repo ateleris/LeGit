@@ -26,6 +26,7 @@ pub mod stashes;
 pub mod submodules;
 pub mod tags;
 pub mod working;
+pub mod wsl;
 
 pub use accounts::*;
 pub use branches::*;
@@ -54,3 +55,4 @@ pub use stashes::*;
 pub use submodules::*;
 pub use tags::*;
 pub use working::*;
+pub use wsl::*;

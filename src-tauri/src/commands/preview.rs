@@ -132,16 +132,21 @@ fn classify_bytes(bytes: Vec<u8>) -> FilePreview {
     }
 }
 
-/// Preview the pointer's object from local LFS storage; never fetches.
-async fn resolve_lfs(git_dir: &Path, pointer: LfsPointer) -> FilePreview {
-    let obj = lfs_object_path(git_dir, &pointer.oid);
-    match tokio::fs::metadata(&obj).await {
-        Ok(md) if md.len() > MAX_PREVIEW_BYTES => FilePreview::TooLarge { size: md.len() },
-        Ok(_) => match tokio::fs::read(&obj).await {
+/// Preview the pointer's object from the repo host's LFS storage; never
+/// fetches.
+async fn resolve_lfs(
+    fs: &dyn legit_core::RepoFs,
+    git_dir: &Path,
+    pointer: LfsPointer,
+) -> FilePreview {
+    let obj = legit_core::HostPath::from_path(&lfs_object_path(git_dir, &pointer.oid));
+    match fs.stat(&obj).await {
+        Ok(Some(st)) if st.len > MAX_PREVIEW_BYTES => FilePreview::TooLarge { size: st.len },
+        Ok(Some(_)) => match fs.read(&obj, Some(MAX_PREVIEW_BYTES)).await {
             Ok(bytes) => classify_bytes(bytes),
             Err(_) => FilePreview::LfsMissing { oid: pointer.oid, size: pointer.size },
         },
-        Err(_) => FilePreview::LfsMissing { oid: pointer.oid, size: pointer.size },
+        _ => FilePreview::LfsMissing { oid: pointer.oid, size: pointer.size },
     }
 }
 
@@ -157,15 +162,18 @@ pub async fn repo_file_preview(
     path: String,
 ) -> Result<FilePreview, AppError> {
     let session = state.get_session(&repo_id).await?;
+    let fs = session.host.fs();
     let bytes: Vec<u8> = match &rev {
         None => {
-            let abs = resolve_repo_relative(&session.path, &path)?;
-            match tokio::fs::metadata(&abs).await {
-                Err(_) => return Ok(FilePreview::Absent),
-                Ok(md) if md.len() > MAX_PREVIEW_BYTES => {
-                    return Ok(FilePreview::TooLarge { size: md.len() })
+            let abs = resolve_repo_relative(fs.as_ref(), &session.path, &path).await?;
+            let hp = legit_core::HostPath::from_path(&abs);
+            match fs.stat(&hp).await {
+                Ok(None) | Err(_) => return Ok(FilePreview::Absent),
+                Ok(Some(st)) if st.len > MAX_PREVIEW_BYTES => {
+                    return Ok(FilePreview::TooLarge { size: st.len })
                 }
-                Ok(_) => tokio::fs::read(&abs)
+                Ok(Some(_)) => fs
+                    .read(&hp, Some(MAX_PREVIEW_BYTES))
                     .await
                     .map_err(|e| AppError::Io(format!("read {}: {e}", abs.display())))?,
             }
@@ -193,7 +201,7 @@ pub async fn repo_file_preview(
         let out = runner.run(&["rev-parse", "--git-dir"]).await?;
         if out.success {
             let git_dir = session.path.join(out.stdout.trim());
-            return Ok(resolve_lfs(&git_dir, pointer).await);
+            return Ok(resolve_lfs(fs.as_ref(), &git_dir, pointer).await);
         }
         return Ok(FilePreview::LfsMissing { oid: pointer.oid, size: pointer.size });
     }
@@ -279,7 +287,9 @@ mod tests {
         let git_dir = dir.path();
         let p = parse_lfs_pointer(POINTER.as_bytes()).unwrap();
         // Missing object: pointer info surfaces.
-        match resolve_lfs(git_dir, parse_lfs_pointer(POINTER.as_bytes()).unwrap()).await {
+        match resolve_lfs(&legit_core::LocalFs, git_dir, parse_lfs_pointer(POINTER.as_bytes()).unwrap())
+            .await
+        {
             FilePreview::LfsMissing { oid, size } => {
                 assert_eq!(oid, p.oid);
                 assert_eq!(size, 12345);
@@ -290,7 +300,7 @@ mod tests {
         let obj = lfs_object_path(git_dir, &p.oid);
         std::fs::create_dir_all(obj.parent().unwrap()).unwrap();
         std::fs::write(&obj, b"\x89PNG\r\n\x1a\nDATA").unwrap();
-        match resolve_lfs(git_dir, p).await {
+        match resolve_lfs(&legit_core::LocalFs, git_dir, p).await {
             FilePreview::Image { format: ImageFormat::Png, .. } => {}
             other => panic!("expected Image, got {other:?}"),
         }

@@ -15,13 +15,17 @@ export function GitLogPanel() {
   const repo = useActiveRepo();
   const endRef = useRef<HTMLDivElement | null>(null);
 
-  // Only the active repo's entries: an invocation's `cwd` is its repo's path;
-  // a watcher batch carries the repo id directly.
+  // Only the active repo's entries: an invocation is matched by (host, cwd) —
+  // the same path can exist locally AND in a WSL distro, so the host label
+  // must agree too; a watcher batch carries the repo id directly.
   const entries = useMemo(
     () =>
       repo
         ? allEntries.filter((e) =>
-            e.kind === "command" ? e.cwd === repo.path : e.repo_id === repo.id
+            e.kind === "command"
+              ? e.cwd === repo.path &&
+                (e.host ?? null) === (repo.host?.distro ?? null)
+              : e.repo_id === repo.id
           )
         : [],
     [allEntries, repo]

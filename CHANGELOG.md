@@ -12,6 +12,20 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Remote repositories (WSL).** LeGit on Windows can now open repositories
+  that live inside a WSL distribution — "Open in WSL…" in the add-repo menu
+  and Repositories panel (pick the distro, type/paste a path; `~/...` works).
+  A small `legit-agent` is installed into the distro automatically and runs
+  git, file access, and the live filesystem watcher natively (no more
+  "dubious ownership" or slow `\\wsl.localhost\` access). Remote repos mix
+  with local ones in tabs/recents (distro chip), survive `wsl --shutdown`
+  with auto-reconnect, share the in-app credential/SSH prompts and keychain,
+  and reveal/open-in-editor do the right host-aware thing (`code .` opens VS
+  Code Remote). A `legit` command is installed in the distro so `legit .`
+  opens the current repo in the app, like `code .`.
+
 ## [1.0.3] - 2026-08-24
 
 ### Fixed

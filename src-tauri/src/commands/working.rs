@@ -4,6 +4,7 @@
 use crate::error::AppError;
 use crate::state::AppState;
 use legit_core::types::{CommitId, CommitOptions};
+use legit_core::{FsError, HostPath, RepoFs};
 use std::path::{Component, Path, PathBuf};
 
 fn to_paths(paths: Vec<String>) -> Vec<PathBuf> {
@@ -144,7 +145,48 @@ pub async fn repo_reword_commit(
 /// exist yet (a save creating the file): its parent is verified instead, and
 /// the plain-component check already guarantees the final name itself cannot
 /// traverse.
-pub(crate) fn resolve_repo_relative(root: &Path, rel: &str) -> Result<PathBuf, AppError> {
+pub(crate) async fn resolve_repo_relative(
+    fs: &dyn RepoFs,
+    root: &Path,
+    rel: &str,
+) -> Result<PathBuf, AppError> {
+    // The pre-check is pure and stays synchronous; only canonicalization
+    // touches the (possibly remote) filesystem, via the host's RepoFs.
+    validate_repo_relative_shape(rel)?;
+    let root_hp = HostPath::from_path(root);
+    let canonical_root = fs
+        .canonicalize(&root_hp)
+        .await
+        .map_err(|e| AppError::Io(format!("resolve {}: {e}", root.display())))?;
+    let joined = root_hp.join(rel);
+    let canonical = match fs.canonicalize(&joined).await {
+        Ok(c) => c,
+        Err(FsError::NotFound { .. }) => {
+            let parent = joined
+                .parent()
+                .ok_or_else(|| AppError::ParseArgs(format!("invalid repo-relative path: {rel}")))?;
+            let canonical_parent = fs
+                .canonicalize(&parent)
+                .await
+                .map_err(|e| AppError::Io(format!("resolve {parent}: {e}")))?;
+            let name = joined
+                .file_name()
+                .expect("plain final component");
+            HostPath::from_path(&canonical_parent.as_local().join(name))
+        }
+        Err(e) => return Err(AppError::Io(format!("resolve {joined}: {e}"))),
+    };
+    if !canonical.as_local().starts_with(canonical_root.as_local()) {
+        return Err(AppError::ParseArgs(format!(
+            "path escapes the repository: {rel}"
+        )));
+    }
+    Ok(canonical.as_local())
+}
+
+/// The pure half of [`resolve_repo_relative`]: reject absolute paths and any
+/// non-plain component (`..`, `.`, prefixes) before touching a filesystem.
+fn validate_repo_relative_shape(rel: &str) -> Result<(), AppError> {
     let rel_path = Path::new(rel);
     let plain = !rel_path.as_os_str().is_empty()
         && rel_path
@@ -155,27 +197,7 @@ pub(crate) fn resolve_repo_relative(root: &Path, rel: &str) -> Result<PathBuf, A
             "invalid repo-relative path: {rel}"
         )));
     }
-    let joined = root.join(rel_path);
-    let canonical_root = std::fs::canonicalize(root)
-        .map_err(|e| AppError::Io(format!("resolve {}: {e}", root.display())))?;
-    let canonical = match std::fs::canonicalize(&joined) {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let parent = joined
-                .parent()
-                .ok_or_else(|| AppError::ParseArgs(format!("invalid repo-relative path: {rel}")))?;
-            let canonical_parent = std::fs::canonicalize(parent)
-                .map_err(|e| AppError::Io(format!("resolve {}: {e}", parent.display())))?;
-            canonical_parent.join(joined.file_name().expect("plain final component"))
-        }
-        Err(e) => return Err(AppError::Io(format!("resolve {}: {e}", joined.display()))),
-    };
-    if !canonical.starts_with(&canonical_root) {
-        return Err(AppError::ParseArgs(format!(
-            "path escapes the repository: {rel}"
-        )));
-    }
-    Ok(canonical)
+    Ok(())
 }
 
 /// Read a working-tree file as UTF-8 text (the editable diff's save baseline).
@@ -187,8 +209,10 @@ pub async fn repo_read_worktree_file(
     path: String,
 ) -> Result<String, AppError> {
     let session = state.get_session(&repo_id).await?;
-    let abs = resolve_repo_relative(&session.path, &path)?;
-    let bytes = tokio::fs::read(&abs)
+    let fs = session.host.fs();
+    let abs = resolve_repo_relative(fs.as_ref(), &session.path, &path).await?;
+    let bytes = fs
+        .read(&HostPath::from_path(&abs), None)
         .await
         .map_err(|e| AppError::Io(format!("read {}: {e}", abs.display())))?;
     String::from_utf8(bytes).map_err(|_| AppError::Io(format!("{path} is not UTF-8 text")))
@@ -205,8 +229,9 @@ pub async fn repo_write_worktree_file(
     content: String,
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
-    let abs = resolve_repo_relative(&session.path, &path)?;
-    tokio::fs::write(&abs, content.as_bytes())
+    let fs = session.host.fs();
+    let abs = resolve_repo_relative(fs.as_ref(), &session.path, &path).await?;
+    fs.write(&HostPath::from_path(&abs), content.as_bytes())
         .await
         .map_err(|e| AppError::Io(format!("write {}: {e}", abs.display())))
 }
@@ -214,30 +239,35 @@ pub async fn repo_write_worktree_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use legit_core::LocalFs;
 
-    #[test]
-    fn resolve_repo_relative_joins_inside_root() {
+    async fn resolve(root: &Path, rel: &str) -> Result<PathBuf, AppError> {
+        resolve_repo_relative(&LocalFs, root, rel).await
+    }
+
+    #[tokio::test]
+    async fn resolve_repo_relative_joins_inside_root() {
         let repo = tempfile::tempdir().unwrap();
         std::fs::create_dir(repo.path().join("src")).unwrap();
         std::fs::write(repo.path().join("src/main.rs"), "fn main() {}").unwrap();
-        let p = resolve_repo_relative(repo.path(), "src/main.rs").unwrap();
+        let p = resolve(repo.path(), "src/main.rs").await.unwrap();
         assert!(p.ends_with("src/main.rs") || p.ends_with("src\\main.rs"));
         assert!(p.starts_with(std::fs::canonicalize(repo.path()).unwrap()));
     }
 
-    #[test]
-    fn resolve_repo_relative_rejects_absolute_paths() {
+    #[tokio::test]
+    async fn resolve_repo_relative_rejects_absolute_paths() {
         let root = Path::new("/repo");
-        assert!(resolve_repo_relative(root, "/etc/passwd").is_err());
+        assert!(resolve(root, "/etc/passwd").await.is_err());
     }
 
-    #[test]
-    fn resolve_repo_relative_rejects_traversal() {
+    #[tokio::test]
+    async fn resolve_repo_relative_rejects_traversal() {
         let root = Path::new("/repo");
-        assert!(resolve_repo_relative(root, "../outside.txt").is_err());
-        assert!(resolve_repo_relative(root, "src/../../outside.txt").is_err());
-        assert!(resolve_repo_relative(root, "./x/./y").is_err());
-        assert!(resolve_repo_relative(root, "").is_err());
+        assert!(resolve(root, "../outside.txt").await.is_err());
+        assert!(resolve(root, "src/../../outside.txt").await.is_err());
+        assert!(resolve(root, "./x/./y").await.is_err());
+        assert!(resolve(root, "").await.is_err());
     }
 
     /// A tracked symlink pointing outside the repo must not be followable:
@@ -246,8 +276,8 @@ mod tests {
     /// path component is plain. The component check alone cannot see this -
     /// only canonicalize-and-verify can.
     #[cfg(unix)]
-    #[test]
-    fn resolve_repo_relative_rejects_symlink_escape() {
+    #[tokio::test]
+    async fn resolve_repo_relative_rejects_symlink_escape() {
         let repo = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         std::fs::write(outside.path().join("secret.txt"), "s").unwrap();
@@ -259,31 +289,31 @@ mod tests {
         .unwrap();
 
         // Directory symlink traversal.
-        assert!(resolve_repo_relative(repo.path(), "link/secret.txt").is_err());
+        assert!(resolve(repo.path(), "link/secret.txt").await.is_err());
         // File symlink as the final component (fs::write would follow it).
-        assert!(resolve_repo_relative(repo.path(), "flink.txt").is_err());
+        assert!(resolve(repo.path(), "flink.txt").await.is_err());
         // Writing a NEW file through an escaping directory symlink.
-        assert!(resolve_repo_relative(repo.path(), "link/new.txt").is_err());
+        assert!(resolve(repo.path(), "link/new.txt").await.is_err());
     }
 
     /// In-repo symlinks that stay inside the repo remain usable.
     #[cfg(unix)]
-    #[test]
-    fn resolve_repo_relative_allows_inside_symlink() {
+    #[tokio::test]
+    async fn resolve_repo_relative_allows_inside_symlink() {
         let repo = tempfile::tempdir().unwrap();
         std::fs::write(repo.path().join("real.txt"), "r").unwrap();
         std::os::unix::fs::symlink(repo.path().join("real.txt"), repo.path().join("alias.txt"))
             .unwrap();
-        assert!(resolve_repo_relative(repo.path(), "alias.txt").is_ok());
+        assert!(resolve(repo.path(), "alias.txt").await.is_ok());
     }
 
     /// The final component may not exist yet (saving creates it); the parent
     /// is verified instead.
-    #[test]
-    fn resolve_repo_relative_allows_new_file_in_existing_dir() {
+    #[tokio::test]
+    async fn resolve_repo_relative_allows_new_file_in_existing_dir() {
         let repo = tempfile::tempdir().unwrap();
         std::fs::create_dir(repo.path().join("src")).unwrap();
-        let p = resolve_repo_relative(repo.path(), "src/new.rs").unwrap();
+        let p = resolve(repo.path(), "src/new.rs").await.unwrap();
         assert!(p.ends_with("src/new.rs") || p.ends_with("src\\new.rs"));
     }
 }

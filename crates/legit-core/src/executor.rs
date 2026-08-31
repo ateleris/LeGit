@@ -11,15 +11,17 @@
 //!
 //! The trait deliberately mirrors the subset of `GitRunner`'s API the
 //! backend uses: one-shot runs, cancellable runs, and stdin-fed runs.
-//! Free-form output streaming stays on `GitRunner` itself - the Console
-//! drives it directly, not through `GitBackend`. The one structured
-//! exception is `run_with_op_progress`: to the backend it behaves exactly
-//! like `run_with_op` (full output at the end), progress reporting being a
-//! side channel through the runner's process-wide observer - so the default
-//! implementation just delegates and scripted fakes need no changes.
+//! It also carries the Console's needs — `stream` and `cancel` — so a
+//! session can hold `Arc<dyn GitExecutor>` and be backed by something other
+//! than a local process (a remote agent). Both have defaults that are
+//! correct for scripted fakes. `run_with_op_progress` behaves exactly like
+//! `run_with_op` for the caller (full output at the end), progress reporting
+//! being a side channel through the runner's process-wide observer - so the
+//! default implementation just delegates and scripted fakes need no changes.
 
-use crate::runner::{GitRunner, OperationId, RunOutput, RunOutputBytes, RunnerError};
+use crate::runner::{GitRunner, OperationId, RunOutput, RunOutputBytes, RunnerError, RunnerEvent};
 use async_trait::async_trait;
+use tokio::sync::mpsc;
 
 #[async_trait]
 pub trait GitExecutor: Send + Sync + 'static {
@@ -97,6 +99,55 @@ pub trait GitExecutor: Send + Sync + 'static {
     ) -> Result<RunOutput, RunnerError> {
         self.run_with_op(args, op_id).await
     }
+
+    /// Line-streamed run (the Console's path). The BOUNDED `events_tx` is the
+    /// backpressure contract: when the receiver stops draining, the producer
+    /// must eventually block so git itself blocks (pager semantics). The
+    /// default degrades to `run_with_op` and replays the collected output as
+    /// events — sequence-correct for scripted fakes; `GitRunner` overrides it
+    /// with true incremental streaming.
+    async fn stream(
+        &self,
+        args: &[&str],
+        op_id: OperationId,
+        events_tx: mpsc::Sender<RunnerEvent>,
+    ) -> Result<i32, RunnerError> {
+        let out = self.run_with_op(args, op_id).await?;
+        for line in out.stdout.lines() {
+            if events_tx
+                .send(RunnerEvent::Stdout { line: line.to_string() })
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+        for line in out.stderr.lines() {
+            if events_tx
+                .send(RunnerEvent::Stderr { line: line.to_string() })
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+        let _ = events_tx
+            .send(RunnerEvent::Finished {
+                exit_code: out.exit_code,
+                success: out.success,
+                duration_ms: out.duration_ms,
+            })
+            .await;
+        Ok(out.exit_code.unwrap_or(-1))
+    }
+
+    /// Cancel an in-flight operation by id. Returns `true` if the id was
+    /// found. The default (not found) is correct for scripted fakes, whose
+    /// runs complete synchronously.
+    fn cancel(&self, op_id: &OperationId) -> bool {
+        let _ = op_id;
+        false
+    }
 }
 
 #[async_trait]
@@ -151,5 +202,98 @@ impl GitExecutor for GitRunner {
         op_id: OperationId,
     ) -> Result<RunOutput, RunnerError> {
         GitRunner::run_with_op_progress(self, args, op_id).await
+    }
+
+    async fn stream(
+        &self,
+        args: &[&str],
+        op_id: OperationId,
+        events_tx: mpsc::Sender<RunnerEvent>,
+    ) -> Result<i32, RunnerError> {
+        GitRunner::stream(self, args, op_id, events_tx).await
+    }
+
+    fn cancel(&self, op_id: &OperationId) -> bool {
+        GitRunner::cancel(self, op_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Minimal executor relying on every defaulted method — pins the default
+    /// `stream` contract: stdout lines, then stderr lines, then exactly one
+    /// Finished carrying the run's exit metadata.
+    struct CannedExecutor(RunOutput);
+
+    #[async_trait]
+    impl GitExecutor for CannedExecutor {
+        async fn run(&self, _args: &[&str]) -> Result<RunOutput, RunnerError> {
+            Ok(self.0.clone())
+        }
+        async fn run_with_op(
+            &self,
+            _args: &[&str],
+            _op_id: OperationId,
+        ) -> Result<RunOutput, RunnerError> {
+            Ok(self.0.clone())
+        }
+        async fn run_with_stdin(
+            &self,
+            _args: &[&str],
+            _stdin_data: &str,
+        ) -> Result<RunOutput, RunnerError> {
+            Ok(self.0.clone())
+        }
+        async fn run_with_env(
+            &self,
+            _args: &[&str],
+            _extra_env: &[(&str, &str)],
+        ) -> Result<RunOutput, RunnerError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn default_stream_replays_output_then_finished_once() {
+        let exec = CannedExecutor(RunOutput {
+            stdout: "a\nb\n".into(),
+            stderr: "warn\n".into(),
+            exit_code: Some(3),
+            success: false,
+            duration_ms: 7,
+        });
+        let (tx, mut rx) = mpsc::channel(16);
+        let exit = exec
+            .stream(&["status"], OperationId::new(), tx)
+            .await
+            .expect("stream ok");
+        assert_eq!(exit, 3);
+
+        let mut events = Vec::new();
+        while let Some(ev) = rx.recv().await {
+            events.push(ev);
+        }
+        assert_eq!(events.len(), 4);
+        assert!(matches!(&events[0], RunnerEvent::Stdout { line } if line == "a"));
+        assert!(matches!(&events[1], RunnerEvent::Stdout { line } if line == "b"));
+        assert!(matches!(&events[2], RunnerEvent::Stderr { line } if line == "warn"));
+        assert!(matches!(
+            &events[3],
+            RunnerEvent::Finished { exit_code: Some(3), success: false, duration_ms: 7 }
+        ));
+    }
+
+    #[tokio::test]
+    async fn default_cancel_reports_not_found() {
+        let exec = CannedExecutor(RunOutput {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: Some(0),
+            success: true,
+            duration_ms: 0,
+        });
+        assert!(!exec.cancel(&OperationId::new()));
     }
 }

@@ -85,12 +85,21 @@ import type {
   ConflictFileSides,
   ConflictEntry,
   ConflictSide,
+  WslDistro,
 } from "./types";
 
 // --- repo ---
 
+/** `path` is a repo LOCATOR string: a bare path for local repos,
+ * `wsl://<distro>/<path>` for WSL repos (see lib/locator.ts). */
 export const openRepo = (path: string) =>
   invoke<RepoSummary>("open_repo", { path });
+
+/** Installed WSL distributions (empty on non-Windows builds). */
+export const wslListDistros = () => invoke<WslDistro[]>("wsl_list_distros");
+
+/** The `--open <locator>` a fresh launch carried, if any (consumed once). */
+export const takePendingOpen = () => invoke<string | null>("take_pending_open");
 
 export const closeRepo = (repoId: string) =>
   invoke<null>("close_repo", { repoId });

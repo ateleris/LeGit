@@ -7,7 +7,7 @@
 //! System scope is read-only.
 
 use crate::error::AppError;
-use legit_core::{GitError, GitRunner};
+use legit_core::{GitError, GitExecutor};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -71,7 +71,7 @@ fn resolve_precedence(ordered: &[&ConfigValue]) -> ConfigValue {
         .unwrap_or_else(ConfigValue::unset)
 }
 
-pub async fn read_config_all_scopes(runner: &GitRunner, key: &str) -> ConfigAtAllScopes {
+pub async fn read_config_all_scopes(runner: &dyn GitExecutor, key: &str) -> ConfigAtAllScopes {
     let local = read_config_scope(runner, key, &["--local"]).await;
     let global = read_config_scope(runner, key, &["--global"]).await;
     let system = read_config_scope(runner, key, &["--system"]).await;
@@ -90,7 +90,7 @@ pub async fn read_config_all_scopes(runner: &GitRunner, key: &str) -> ConfigAtAl
 /// (`tauri dev` runs inside the LeGit source repo), a `--local` read would
 /// succeed against that unrelated repo and leak its config into the
 /// "global" view ("resolved: … (from local)" in Global Settings).
-pub async fn read_config_global_scopes(runner: &GitRunner, key: &str) -> ConfigAtAllScopes {
+pub async fn read_config_global_scopes(runner: &dyn GitExecutor, key: &str) -> ConfigAtAllScopes {
     let global = read_config_scope(runner, key, &["--global"]).await;
     let system = read_config_scope(runner, key, &["--system"]).await;
 
@@ -98,7 +98,7 @@ pub async fn read_config_global_scopes(runner: &GitRunner, key: &str) -> ConfigA
     ConfigAtAllScopes { local: ConfigValue::unset(), global, system, resolved }
 }
 
-pub async fn read_config_scope(runner: &GitRunner, key: &str, flags: &[&str]) -> ConfigValue {
+pub async fn read_config_scope(runner: &dyn GitExecutor, key: &str, flags: &[&str]) -> ConfigValue {
     let mut args = vec!["config"];
     args.extend_from_slice(flags);
     args.extend_from_slice(&["--get", key]);
@@ -122,7 +122,7 @@ pub async fn read_config_scope(runner: &GitRunner, key: &str, flags: &[&str]) ->
 }
 
 pub async fn write_config_local(
-    runner: &GitRunner,
+    runner: &dyn GitExecutor,
     key: &str,
     value: Option<&str>,
 ) -> Result<(), AppError> {
@@ -141,7 +141,7 @@ pub async fn write_config_local(
 }
 
 pub async fn write_config_global(
-    runner: &GitRunner,
+    runner: &dyn GitExecutor,
     key: &str,
     value: Option<&str>,
 ) -> Result<(), AppError> {

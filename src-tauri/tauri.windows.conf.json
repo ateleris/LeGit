@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "agent/legit-agent-x86_64": "agent/",
+      "agent/legit-agent-aarch64": "agent/"
+    }
+  }
+}

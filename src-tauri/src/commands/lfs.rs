@@ -153,9 +153,7 @@ fn remove_lfs_pattern(existing: &str, pattern: &str) -> Result<Option<String>, S
 /// none), nested files from the same tracked-attribute-files grep the LFS
 /// status probe uses (exit 1 = no hits).
 async fn patterns_view(session: &crate::state::RepoSession) -> LfsPatternsView {
-    let root_text = tokio::fs::read_to_string(session.path.join(".gitattributes"))
-        .await
-        .unwrap_or_default();
+    let root_text = read_gitattributes(session).await;
     let runner = session.runner.read().await.clone();
     let nested_files = match runner
         .run_expecting(
@@ -214,10 +212,9 @@ pub async fn repo_lfs_track(
     let session = state.get_session(&repo_id).await?;
     let pattern = pattern.trim();
     validate_pattern(pattern)?;
-    let path = session.path.join(".gitattributes");
-    let existing = tokio::fs::read_to_string(&path).await.unwrap_or_default();
+    let existing = read_gitattributes(&session).await;
     if let Some(updated) = add_lfs_pattern(&existing, pattern) {
-        tokio::fs::write(&path, updated).await?;
+        write_gitattributes(&session, &updated).await?;
     }
     Ok(patterns_view(&session).await)
 }
@@ -232,14 +229,36 @@ pub async fn repo_lfs_untrack(
     pattern: String,
 ) -> Result<LfsPatternsView, AppError> {
     let session = state.get_session(&repo_id).await?;
-    let path = session.path.join(".gitattributes");
-    let existing = tokio::fs::read_to_string(&path).await.unwrap_or_default();
+    let existing = read_gitattributes(&session).await;
     match remove_lfs_pattern(&existing, pattern.trim()) {
         Err(msg) => return Err(AppError::ParseArgs(msg)),
-        Ok(Some(updated)) => tokio::fs::write(&path, updated).await?,
+        Ok(Some(updated)) => write_gitattributes(&session, &updated).await?,
         Ok(None) => {}
     }
     Ok(patterns_view(&session).await)
+}
+
+/// Root `.gitattributes` text via the repo host's fs (missing = empty, like
+/// the read_to_string().unwrap_or_default() it replaces).
+async fn read_gitattributes(session: &crate::state::RepoSession) -> String {
+    let hp = legit_core::HostPath::from_path(&session.path.join(".gitattributes"));
+    match session.host.fs().read(&hp, None).await {
+        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        Err(_) => String::new(),
+    }
+}
+
+async fn write_gitattributes(
+    session: &crate::state::RepoSession,
+    content: &str,
+) -> Result<(), AppError> {
+    let hp = legit_core::HostPath::from_path(&session.path.join(".gitattributes"));
+    session
+        .host
+        .fs()
+        .write(&hp, content.as_bytes())
+        .await
+        .map_err(|e| AppError::Io(format!("write {hp}: {e}")))
 }
 
 #[cfg(test)]

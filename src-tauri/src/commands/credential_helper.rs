@@ -12,7 +12,7 @@
 
 use crate::error::AppError;
 use crate::state::AppState;
-use legit_core::{GitError, GitRunner};
+use legit_core::{GitError, GitExecutor, GitRunner};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -40,7 +40,7 @@ fn last_non_empty(stdout: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-pub(crate) async fn read_helper_at(runner: &GitRunner, flag: &str) -> Option<String> {
+pub(crate) async fn read_helper_at(runner: &dyn GitExecutor, flag: &str) -> Option<String> {
     // exit 1 = no helper at this scope: expected, not a failure (Git Log).
     let out = runner.run_expecting(&["config", flag, "--get-all", KEY], &[1]).await.ok()?;
     if !out.success {
@@ -49,7 +49,7 @@ pub(crate) async fn read_helper_at(runner: &GitRunner, flag: &str) -> Option<Str
     last_non_empty(&out.stdout)
 }
 
-async fn build_view(runner: &GitRunner) -> CredentialHelperView {
+async fn build_view(runner: &dyn GitExecutor) -> CredentialHelperView {
     CredentialHelperView {
         helper_global: read_helper_at(runner, "--global").await,
         helper_system: read_helper_at(runner, "--system").await,

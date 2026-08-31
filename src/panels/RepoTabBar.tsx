@@ -244,6 +244,22 @@ export function RepoTabBar() {
               }}
               title={repo.path}
             >
+              {repo.host && (
+                <span
+                  className="legit-subtle"
+                  title={`WSL: ${repo.host.distro}`}
+                  style={{
+                    flex: "none",
+                    fontSize: "var(--fz-xs)",
+                    border: "1px solid var(--panel-border)",
+                    borderRadius: 3,
+                    padding: "0 3px",
+                    marginRight: 4,
+                  }}
+                >
+                  {repo.host.distro}
+                </span>
+              )}
               <span className="legit-tab__name">{repo.name}</span>
               <button
                 className="legit-tab__close"

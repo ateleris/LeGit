@@ -291,7 +291,7 @@ export function ChangedFilesPanel() {
                   // Select the pointer this commit recorded in the opened
                   // submodule (a stash entry is a commit too, so it works
                   // for both).
-                  void openSubmoduleRepo(repo!.id, repo!.path, file.path, {
+                  void openSubmoduleRepo(repo!.id, repo!.locator ?? repo!.path, file.path, {
                     kind: "commit",
                     commit_id: selectedId,
                   }).catch((err: unknown) => notify.error(formatAppError(err)));

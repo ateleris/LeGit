@@ -3,9 +3,10 @@
 //! See DESIGN-v0.2.md §B and §D.
 
 use crate::error::AppError;
-use crate::watcher::RepoWatcher;
+use crate::remote::{HostRef, RepoLocator};
+use legit_host::{Host, HostId, LocalHost, WatchHandle};
 use legit_core::{
-    GitBackend, GitCliBackend, GitRunner, OperationId, PullStrategy, SwitchDirtyBehavior,
+    GitBackend, GitCliBackend, GitExecutor, OperationId, PullStrategy, SwitchDirtyBehavior,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -28,16 +29,30 @@ pub type RepoId = String;
 /// filesystems), first 8 bytes as 16 lowercase hex chars. Short enough to be
 /// readable; collision-safe for any realistic number of repos.
 pub fn repo_hash(canonical_path: &Path) -> String {
-    let path_str = {
-        let s = canonical_path.to_string_lossy();
-        if cfg!(any(target_os = "windows", target_os = "macos")) {
-            s.to_lowercase()
-        } else {
-            s.into_owned()
+    repo_hash_locator(&RepoLocator::Local {
+        path: canonical_path.to_path_buf(),
+    })
+}
+
+/// Locator-aware form of [`repo_hash`]. Local repos hash byte-identically to
+/// what older versions wrote (case-folding keyed on the APP OS, matching the
+/// historical behavior), so existing `repos/<hash>/` dirs keep resolving.
+/// Remote paths hash case-SENSITIVELY — their filesystems are, and the app
+/// OS's case rules must not corrupt their identity.
+pub fn repo_hash_locator(locator: &RepoLocator) -> String {
+    let input = match locator {
+        RepoLocator::Local { path } => {
+            let s = path.to_string_lossy();
+            if cfg!(any(target_os = "windows", target_os = "macos")) {
+                s.to_lowercase()
+            } else {
+                s.into_owned()
+            }
         }
+        remote => remote.to_persist_string(),
     };
     let mut h = Sha256::new();
-    h.update(path_str.as_bytes());
+    h.update(input.as_bytes());
     let b = h.finalize();
     format!(
         "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
@@ -506,11 +521,18 @@ pub struct RepoSettings {
 pub struct RepoSession {
     pub id: RepoId,
     pub path: PathBuf,
+    /// Where this repo lives. Today always `Local` (derived from `path`);
+    /// remote sessions get theirs threaded through the open flow.
+    pub locator: RepoLocator,
+    /// The host this repo lives on — every repo-side action (git spawn, FS,
+    /// watch, helper process) goes through it.
+    pub host: Arc<dyn Host>,
     /// The active runner. Wrapped in an `Arc<RwLock<…>>` so the same lock is
-    /// shared with `GitCliBackend`. Swapping the inner `Arc<GitRunner>` (e.g.
-    /// on per-repo git-path override) is visible to both the session and the
-    /// backend without rebuilding either (DESIGN-v0.3.md §C.5/F.3).
-    pub runner: Arc<RwLock<Arc<GitRunner>>>,
+    /// shared with `GitCliBackend`. Swapping the inner `Arc<dyn GitExecutor>`
+    /// (e.g. on per-repo git-path override) is visible to both the session and
+    /// the backend without rebuilding either (DESIGN-v0.3.md §C.5/F.3).
+    /// Dyn so a session can be backed by a remote host's executor.
+    pub runner: Arc<RwLock<Arc<dyn GitExecutor>>>,
     pub backend: Arc<dyn GitBackend>,
     /// Repo-scoped settings loaded on open; persisted eagerly on each change
     /// (close does not flush).
@@ -525,15 +547,22 @@ pub struct RepoSession {
 
 impl RepoSession {
     pub fn new(
-        path: PathBuf,
-        runner: Arc<GitRunner>,
+        locator: RepoLocator,
+        host: Arc<dyn Host>,
+        runner: Arc<dyn GitExecutor>,
         settings: RepoSettings,
         settings_path: PathBuf,
     ) -> Self {
         let runner_lock = Arc::new(RwLock::new(runner));
-        let backend = Arc::new(GitCliBackend::new(runner_lock.clone()));
+        let backend = Arc::new(GitCliBackend::new(runner_lock.clone(), host.fs()));
+        // For remote repos this PathBuf holds the HOST's path string — it is
+        // display/join material only; filesystem access goes through the
+        // host's RepoFs.
+        let path = PathBuf::from(locator.display_path());
         Self {
             id: Uuid::new_v4().to_string(),
+            locator,
+            host,
             path,
             runner: runner_lock,
             backend,
@@ -546,13 +575,15 @@ impl RepoSession {
     pub fn summary(&self) -> RepoSummary {
         RepoSummary {
             id: self.id.clone(),
-            path: self.path.to_string_lossy().to_string(),
+            path: self.locator.display_path(),
             name: self
                 .path
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("repo")
                 .to_string(),
+            host: self.locator.host_ref(),
+            locator: self.locator.to_persist_string(),
         }
     }
 }
@@ -560,8 +591,17 @@ impl RepoSession {
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct RepoSummary {
     pub id: RepoId,
+    /// The repo root as the repo's HOST sees it (display + copy affordances).
     pub path: String,
     pub name: String,
+    /// `None` = local repo. See `remote::HostRef`.
+    #[serde(default)]
+    pub host: Option<HostRef>,
+    /// The persistable locator string (bare path for local repos,
+    /// `wsl://<distro>/<path>` for remote) — what recents/currently-open
+    /// bookkeeping stores and `open_repo` accepts.
+    #[serde(default)]
+    pub locator: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -570,10 +610,14 @@ pub struct RepoSummary {
 
 pub struct AppState {
     pub repos: RwLock<HashMap<RepoId, Arc<RepoSession>>>,
+    /// Known hosts, keyed by identity. `HostId::Local` is always present;
+    /// remote hosts register on connect.
+    pub hosts: Mutex<HashMap<HostId, Arc<dyn Host>>>,
     /// Live filesystem watchers, one per open repo (keyed by `RepoId`). Dropping
-    /// an entry stops its watch thread. `std::sync::Mutex` (not async) so close
-    /// and teardown stay trivial. See `crate::watcher`.
-    pub watchers: Mutex<HashMap<RepoId, RepoWatcher>>,
+    /// an entry stops its watch (and, for remote repos, unregisters it on the
+    /// agent). `std::sync::Mutex` (not async) so close and teardown stay
+    /// trivial. See `crate::watcher`.
+    pub watchers: Mutex<HashMap<RepoId, WatchHandle>>,
     pub global_settings: Arc<RwLock<GlobalSettings>>,
     /// Resolved git binary path the runner uses *right now*.
     pub git_path: RwLock<PathBuf>,
@@ -589,11 +633,13 @@ pub struct AppState {
     /// `OperationId`, so a separate cancel command can reach the runner. Entries
     /// are inserted for the op's duration and removed when it finishes.
     pub transient_ops: Mutex<HashMap<OperationId, Arc<TransientOp>>>,
+    /// Live WSL agent connections, one per distro (see `remote::connection`).
+    pub wsl_hosts: crate::remote::connection::WslHosts,
 }
 
 /// An in-flight session-less git operation (see `AppState::transient_ops`).
 pub struct TransientOp {
-    pub runner: Arc<GitRunner>,
+    pub runner: Arc<dyn GitExecutor>,
     /// Set by the cancel command BEFORE the kill is delivered, so when the
     /// kill unblocks the operation's own future it can already tell a
     /// user cancellation apart from a real failure (the killed process's
@@ -610,8 +656,11 @@ impl AppState {
         user_themes_dir: PathBuf,
         builtin_themes_dir: PathBuf,
     ) -> Self {
+        let mut hosts: HashMap<HostId, Arc<dyn Host>> = HashMap::new();
+        hosts.insert(HostId::Local, Arc::new(LocalHost));
         Self {
             repos: RwLock::new(HashMap::new()),
+            hosts: Mutex::new(hosts),
             watchers: Mutex::new(HashMap::new()),
             global_settings: Arc::new(RwLock::new(global_settings)),
             git_path: RwLock::new(git_path),
@@ -620,6 +669,7 @@ impl AppState {
             user_themes_dir,
             builtin_themes_dir,
             transient_ops: Mutex::new(HashMap::new()),
+            wsl_hosts: crate::remote::connection::WslHosts::default(),
         }
     }
 
@@ -646,12 +696,22 @@ impl AppState {
         self.persist_global_settings().await
     }
 
+    /// The app machine's host (always registered).
+    pub fn local_host(&self) -> Arc<dyn Host> {
+        self.hosts
+            .lock()
+            .expect("hosts map poisoned")
+            .get(&HostId::Local)
+            .expect("local host always present")
+            .clone()
+    }
+
     /// Persist `session`'s current repo settings - the single call point for
     /// the `repo_data_paths` + `persist_repo_settings` pair, so the four
     /// arguments cannot drift apart between commands.
     pub async fn persist_session_settings(&self, session: &RepoSession) -> Result<(), AppError> {
         let settings = session.settings.read().await.clone();
-        let (repo_dir, _) = self.repo_data_paths(&session.path);
+        let (repo_dir, _) = self.repo_data_paths_locator(&session.locator);
         persist_repo_settings(&settings, &repo_dir, &session.settings_path, &session.path).await
     }
 
@@ -670,6 +730,15 @@ impl AppState {
     /// `path.txt` lazily when `write = true`.
     pub fn repo_data_paths(&self, canonical_path: &Path) -> (PathBuf, PathBuf) {
         let hash = repo_hash(canonical_path);
+        let repo_dir = self.repos_data_dir.join(&hash);
+        let settings_path = repo_dir.join("settings.json");
+        (repo_dir, settings_path)
+    }
+
+    /// Locator-aware form of [`AppState::repo_data_paths`] (remote repos hash
+    /// by their full locator, see `repo_hash_locator`).
+    pub fn repo_data_paths_locator(&self, locator: &RepoLocator) -> (PathBuf, PathBuf) {
+        let hash = repo_hash_locator(locator);
         let repo_dir = self.repos_data_dir.join(&hash);
         let settings_path = repo_dir.join("settings.json");
         (repo_dir, settings_path)
@@ -720,6 +789,37 @@ pub async fn persist_repo_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Pins repo-identity backward compatibility across the RepoLocator
+    // generalization: a local repo's hash must stay byte-identical to what
+    // pre-locator versions computed, or every existing repos/<hash>/
+    // settings.json silently detaches from its repo. The constant is
+    // sha256("/tmp/legit-fixed-example")[0..8] — an all-lowercase path so the
+    // expectation holds on case-folding (win/mac) and case-preserving (linux)
+    // builds alike.
+    #[test]
+    fn local_repo_hash_is_pinned() {
+        assert_eq!(
+            repo_hash(Path::new("/tmp/legit-fixed-example")),
+            "25bd95ddb634925e"
+        );
+        assert_eq!(
+            repo_hash_locator(&RepoLocator::local("/tmp/legit-fixed-example")),
+            "25bd95ddb634925e"
+        );
+    }
+
+    // Remote paths live on case-sensitive filesystems: the app OS's case
+    // folding must never apply to them, or two distinct WSL repos could
+    // collide (and a repo's identity would differ between app OSes).
+    #[test]
+    fn wsl_repo_hash_is_case_sensitive_on_every_platform() {
+        let upper = repo_hash_locator(&RepoLocator::parse("wsl://Ubuntu/Home/User/Proj"));
+        let lower = repo_hash_locator(&RepoLocator::parse("wsl://ubuntu/home/user/proj"));
+        assert_eq!(upper, "1aaf3aacdde618f6");
+        assert_eq!(lower, "ed404be154960be5");
+        assert_ne!(upper, lower);
+    }
 
     // Settings files written before a field existed must keep parsing: every
     // additive GlobalSettings field is `Option`/`#[serde(default)]` by

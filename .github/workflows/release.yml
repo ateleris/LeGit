@@ -80,9 +80,43 @@ jobs:
             echo "NOTES_EOF"
           } >> "$GITHUB_OUTPUT"
 
+  # The Linux legit-agent binaries the WINDOWS bundle ships (deployed into a
+  # WSL distro on first connect). Static musl so one binary runs on any
+  # distro (glibc-any, Alpine included); both x86_64 and aarch64 (ARM64 WSL).
+  build-agent:
+    name: Build legit-agent (musl)
+    needs: verify-version
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - name: Install musl + aarch64 cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools gcc-aarch64-linux-gnu
+      - name: Build agents
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          cargo build -p legit-agent --release --target x86_64-unknown-linux-musl
+          cargo build -p legit-agent --release --target aarch64-unknown-linux-musl
+          mkdir -p agent-dist
+          cp target/x86_64-unknown-linux-musl/release/legit-agent agent-dist/legit-agent-x86_64
+          cp target/aarch64-unknown-linux-musl/release/legit-agent agent-dist/legit-agent-aarch64
+      - name: Selftest (x86_64 runs on the runner)
+        run: ./agent-dist/legit-agent-x86_64 --selftest
+      - uses: actions/upload-artifact@v4
+        with:
+          name: legit-agent
+          path: agent-dist/
+          if-no-files-found: error
+
   release:
     name: Build ${{ matrix.label }}
-    needs: verify-version
+    needs: [verify-version, build-agent]
     # tauri-action creates the draft Release and uploads the installers.
     permissions:
       contents: write
@@ -109,6 +143,15 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
+
+      # The Windows bundle ships the Linux agent binaries as resources
+      # (src-tauri/tauri.windows.conf.json) for WSL remote repositories.
+      - name: Stage legit-agent binaries (Windows)
+        if: matrix.platform == 'windows-latest'
+        uses: actions/download-artifact@v4
+        with:
+          name: legit-agent
+          path: src-tauri/agent/
 
       # Tauri v2 Linux system libraries (mirrors .github/workflows/ci.yml).
       - name: Install Tauri system dependencies (Linux)

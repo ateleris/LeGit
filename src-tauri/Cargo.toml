@@ -22,6 +22,9 @@ tauri-plugin-fs = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+# `legit .` launcher support: a second invocation (LeGit.exe --open <locator>)
+# forwards its argv to the running instance instead of starting another app.
+tauri-plugin-single-instance = "2"
 tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
 
 legit-core = { workspace = true }
@@ -47,9 +50,9 @@ which = "8"
 sha2 = "0.10"
 # OS keychain for the in-app git credential prompt ("remember" checkbox).
 keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native"] }
-notify = { workspace = true }
-notify-debouncer-full = { workspace = true }
-ignore = { workspace = true }
+legit-watch = { workspace = true }
+legit-host = { workspace = true }
+legit-proto = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
@@ -59,3 +62,8 @@ tokio = { workspace = true, features = ["test-util"] }
 [features]
 # Used by tauri-build to emit cfg flags.
 custom-protocol = ["tauri/custom-protocol"]
+
+[target.'cfg(windows)'.dependencies]
+# Default-WSL-distro lookup (HKCU\...\Lxss) — locale-proof, unlike parsing
+# `wsl -l -v` output.
+winreg = "0.55"

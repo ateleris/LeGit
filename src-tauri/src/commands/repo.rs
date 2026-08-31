@@ -3,11 +3,13 @@
 //! See DESIGN-v0.2.md §D.3.
 
 use crate::error::AppError;
+use crate::remote::RepoLocator;
 use crate::state::{
     load_repo_settings_sync, AppState, LaneLock, RepoSession, RepoSettings,
     RepoSummary, TransientOp,
 };
-use legit_core::{classify_remote_error, GitError, GitRunner, OperationId};
+use legit_core::{classify_remote_error, GitError, HostPath, OperationId};
+use legit_host::Host;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::Manager as _;
@@ -45,14 +47,16 @@ fn warn_if_bookkeeping_persist_failed(what: &str, result: Result<(), AppError>) 
     }
 }
 
-/// Open (or reuse) a session for `toplevel`, loading its `RepoSettings`
-/// and resolving the git binary through the scope hierarchy. Starts a
-/// filesystem watcher for the new session when watching is enabled.
+/// Open (or reuse) a session for the repo at `locator` (its resolved
+/// TOPLEVEL, from `rev-parse --show-toplevel` on its host), loading its
+/// `RepoSettings` and resolving the git binary through the scope hierarchy.
+/// Starts a filesystem watcher (on the repo's host) when watching is enabled.
 pub async fn open_session(
     state: &AppState,
     app: &tauri::AppHandle,
     global_git_path: PathBuf,
-    toplevel: PathBuf,
+    host: Arc<dyn Host>,
+    locator: RepoLocator,
 ) -> RepoSummary {
     // Reuse-or-insert under ONE `repos` write guard: two concurrent opens of
     // the same directory (double-click, open racing restore) must never both
@@ -60,16 +64,22 @@ pub async fn open_session(
     // while the guard is held; the watcher starts outside it (it runs git).
     let session = {
         let mut repos = state.repos.write().await;
-        if let Some(existing) = repos.values().find(|s| same_dir(&s.path, &toplevel)) {
-            tracing::info!(path = %toplevel.display(), id = %existing.id, "open: reusing existing session");
+        if let Some(existing) = repos.values().find(|s| sessions_match(s, &locator)) {
+            tracing::info!(locator = %locator.to_persist_string(), id = %existing.id, "open: reusing existing session");
             return existing.summary();
         }
-        let (_, settings_path) = state.repo_data_paths(&toplevel);
+        let (_, settings_path) = state.repo_data_paths_locator(&locator);
         let repo_settings = load_repo_settings_sync(&settings_path);
-        let resolved_git = resolve_repo_git_path(&repo_settings, &global_git_path);
+        let resolved_git = resolve_git_for(&locator, &repo_settings, &global_git_path);
 
-        let runner = Arc::new(GitRunner::for_repo(resolved_git, &toplevel));
-        let session = Arc::new(RepoSession::new(toplevel, runner, repo_settings, settings_path));
+        let runner = runner_for_locator(&host, &resolved_git, &locator);
+        let session = Arc::new(RepoSession::new(
+            locator,
+            host,
+            runner,
+            repo_settings,
+            settings_path,
+        ));
         repos.insert(session.id.clone(), session.clone());
         session
     };
@@ -77,6 +87,58 @@ pub async fn open_session(
     let summary = session.summary();
     start_repo_watcher(state, app, &session).await;
     summary
+}
+
+/// The git binary a session on `locator`'s host should use: local repos go
+/// through the local override→global hierarchy (with existence check);
+/// remote repos use the repo override VERBATIM when set (it names a path on
+/// the remote host — no local existence check applies), else PATH `git` as
+/// resolved by the agent's login-shell environment.
+fn resolve_git_for(
+    locator: &RepoLocator,
+    repo_settings: &RepoSettings,
+    global_git_path: &Path,
+) -> HostPath {
+    match locator {
+        RepoLocator::Local { .. } => {
+            HostPath::from_path(&resolve_repo_git_path(repo_settings, global_git_path))
+        }
+        RepoLocator::Wsl { .. } => match &repo_settings.git_path_override {
+            Some(ov) if !ov.trim().is_empty() => HostPath(ov.clone()),
+            _ => HostPath("git".into()),
+        },
+    }
+}
+
+fn runner_for_locator(
+    host: &Arc<dyn Host>,
+    git: &HostPath,
+    locator: &RepoLocator,
+) -> Arc<dyn legit_core::GitExecutor> {
+    host.executor_for(git, Some(&HostPath(locator.display_path())))
+}
+
+/// `~`-expansion for a typed remote path against the host's home dir.
+/// Accepts `~`, `~/x`, and the locator-prefixed `/~`, `/~/x` forms (the
+/// `wsl://` scheme keeps its path component '/'-leading); anything else is
+/// `None` (no expansion).
+fn expand_tilde(path: &str, home: &str) -> Option<String> {
+    let stripped = path.strip_prefix('/').unwrap_or(path);
+    let rest = stripped.strip_prefix('~')?;
+    if rest.is_empty() {
+        return Some(home.to_string());
+    }
+    rest.starts_with('/').then(|| format!("{home}{rest}"))
+}
+
+/// Session-dedup predicate: same host identity AND same directory. Local
+/// paths compare by filesystem identity (`same_dir`); remote toplevels come
+/// from `rev-parse --show-toplevel` on the host and compare literally.
+fn sessions_match(existing: &RepoSession, locator: &RepoLocator) -> bool {
+    match (&existing.locator, locator) {
+        (RepoLocator::Local { path: a }, RepoLocator::Local { path: b }) => same_dir(a, b),
+        (a, b) => a == b,
+    }
 }
 
 /// Start (and register) a filesystem watcher for `session`, unless watching is
@@ -92,12 +154,16 @@ async fn start_repo_watcher(state: &AppState, app: &tauri::AppHandle, session: &
         Ok(out) if out.success => PathBuf::from(out.stdout.trim()),
         _ => session.path.join(".git"),
     };
-    match crate::watcher::RepoWatcher::start(
-        app.clone(),
-        session.id.clone(),
-        session.path.clone(),
-        git_dir,
-    ) {
+    let sink = crate::watcher::emit_sink(app.clone(), session.id.clone());
+    match session
+        .host
+        .watch(
+            &HostPath::from_path(&session.path),
+            &HostPath::from_path(&git_dir),
+            sink,
+        )
+        .await
+    {
         Ok(w) => {
             state.watchers.lock().unwrap().insert(session.id.clone(), w);
         }
@@ -127,34 +193,73 @@ fn same_dir(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// Probe `probe_path` for its repo top-level, reuse-or-open a session for it, and
-/// update the recent/open/active bookkeeping. Shared by `open_repo`, `repo_init`,
-/// and `repo_clone`.
-async fn register_open_repo(
+/// Probe `probe` for its repo top-level (on its host), reuse-or-open a
+/// session for it, and update the recent/open/active bookkeeping. Shared by
+/// `open_repo`, `repo_init`, `repo_clone`, and the restore flow.
+pub(crate) async fn probe_and_open(
     state: &AppState,
     app: &tauri::AppHandle,
     git_path: PathBuf,
-    probe_path: PathBuf,
+    probe: RepoLocator,
 ) -> Result<RepoSummary, AppError> {
-    let probe_runner = GitRunner::for_repo(git_path.clone(), &probe_path);
-    let out = probe_runner
-        .run(&["rev-parse", "--show-toplevel"])
-        .await
-        .map_err(AppError::from)?;
-    if !out.success {
-        return Err(AppError::NotARepo(out.stderr.trim().to_string()));
-    }
-    let toplevel = PathBuf::from(out.stdout.trim());
+    let (host, toplevel_locator): (Arc<dyn Host>, RepoLocator) = match probe {
+        RepoLocator::Local { path } => {
+            let host = state.local_host();
+            let exec = host.executor_for(
+                &HostPath::from_path(&git_path),
+                Some(&HostPath::from_path(&path)),
+            );
+            let out = exec
+                .run(&["rev-parse", "--show-toplevel"])
+                .await
+                .map_err(AppError::from)?;
+            if !out.success {
+                return Err(AppError::NotARepo(out.stderr.trim().to_string()));
+            }
+            (host, RepoLocator::local(out.stdout.trim()))
+        }
+        RepoLocator::Wsl { distro, path } => {
+            let host = crate::remote::connection::ensure_wsl_host(app, state, &distro).await?;
+            // Expand a typed `~/...` against the agent's home directory. The
+            // locator scheme prefixes '/' to keep the path component
+            // non-empty, so a typed `~/x` arrives here as `/~/x`.
+            let path = match host.conn().get().info().map(|i| i.home.clone()) {
+                Some(home) if !home.is_empty() => match expand_tilde(&path.0, &home) {
+                    Some(expanded) => HostPath(expanded),
+                    None => path,
+                },
+                _ => path,
+            };
+            // Remote git comes from the agent's PATH; the probe doubles as
+            // the "git exists on this host" check.
+            let exec = host.executor_for(&HostPath("git".into()), Some(&path));
+            let out = exec
+                .run(&["rev-parse", "--show-toplevel"])
+                .await
+                .map_err(|e| AppError::NotARepo(format!("git failed in '{distro}': {e}")))?;
+            if !out.success {
+                return Err(AppError::NotARepo(out.stderr.trim().to_string()));
+            }
+            let host: Arc<dyn Host> = host;
+            (
+                host,
+                RepoLocator::Wsl {
+                    distro,
+                    path: HostPath(out.stdout.trim().to_string()),
+                },
+            )
+        }
+    };
 
     // open_session reuses an existing session for this directory (identity
     // comparison, atomically with the insert) or creates one.
-    let summary = open_session(state, app, git_path, toplevel).await;
+    let summary = open_session(state, app, git_path, host, toplevel_locator).await;
 
     warn_if_bookkeeping_persist_failed(
         "record opened repo",
         state
             .mutate_global(|settings| {
-                let p = summary.path.clone();
+                let p = summary.locator.clone();
                 settings.last_open_repos.retain(|other| other != &p);
                 settings.last_open_repos.insert(0, p.clone());
                 settings.last_open_repos.truncate(20);
@@ -176,15 +281,19 @@ pub async fn open_repo(
     app: tauri::AppHandle,
     path: String,
 ) -> Result<RepoSummary, AppError> {
-    let path = PathBuf::from(path);
-    if !path.exists() {
-        return Err(AppError::NotARepo(format!(
-            "path does not exist: {}",
-            path.display()
-        )));
+    // The argument is a repo LOCATOR string: a bare path for local repos,
+    // `wsl://<distro>/<path>` for remote ones (remote::locator).
+    let locator = RepoLocator::parse(&path);
+    if let RepoLocator::Local { path } = &locator {
+        if !path.exists() {
+            return Err(AppError::NotARepo(format!(
+                "path does not exist: {}",
+                path.display()
+            )));
+        }
     }
     let git_path = state.git_path.read().await.clone();
-    register_open_repo(&state, &app, git_path, path).await
+    probe_and_open(&state, &app, git_path, locator).await
 }
 
 /// Build the `git init` argument list. Pure so the option handling is
@@ -225,7 +334,10 @@ pub async fn repo_init(
         )));
     }
     let git_path = state.git_path.read().await.clone();
-    let runner = GitRunner::for_repo(git_path.clone(), &dir);
+    let runner = state.local_host().executor_for(
+        &HostPath::from_path(&git_path),
+        Some(&HostPath::from_path(&dir)),
+    );
     let args = build_init_args(bare, initial_branch.as_deref());
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let out = runner.run(&arg_refs).await.map_err(AppError::from)?;
@@ -238,7 +350,7 @@ pub async fn repo_init(
     if bare {
         return Ok(None);
     }
-    let summary = register_open_repo(&state, &app, git_path, dir).await?;
+    let summary = probe_and_open(&state, &app, git_path, RepoLocator::local(dir)).await?;
     if let Some(pid) = profile_id {
         let session = state.get_session(&summary.id).await?;
         crate::commands::profiles::apply_profile_core(&state, &session, &pid).await?;
@@ -458,7 +570,10 @@ pub async fn repo_clone(
 
     // Run on a transient runner registered for the op so cancel_clone can reach it.
     let oid = OperationId(op_id);
-    let runner = Arc::new(GitRunner::for_repo(git_path.clone(), &parent));
+    let runner = state.local_host().executor_for(
+        &HostPath::from_path(&git_path),
+        Some(&HostPath::from_path(&parent)),
+    );
     let op = Arc::new(TransientOp {
         runner: runner.clone(),
         cancelled: std::sync::atomic::AtomicBool::new(false),
@@ -489,7 +604,7 @@ pub async fn repo_clone(
         )));
     }
 
-    let summary = register_open_repo(&state, &app, git_path, parent.join(&name)).await?;
+    let summary = probe_and_open(&state, &app, git_path, RepoLocator::local(parent.join(&name))).await?;
     // Remember where this clone went: the next clone dialog prefills its
     // folder field with it (session bookkeeping - never fails the clone).
     warn_if_bookkeeping_persist_failed(
@@ -532,28 +647,42 @@ pub async fn close_repo(
     state: tauri::State<'_, AppState>,
     repo_id: String,
 ) -> Result<(), AppError> {
-    let path = state
+    let locator = state
         .repos
         .write()
         .await
         .remove(&repo_id)
-        .map(|s| s.path.to_string_lossy().to_string());
+        .map(|s| s.locator.clone());
 
     // Stop and drop the repo's watcher (no-op if watching was disabled).
     state.watchers.lock().unwrap().remove(&repo_id);
 
-    if let Some(path) = path {
+    if let Some(locator) = locator {
+        let key = locator.to_persist_string();
         warn_if_bookkeeping_persist_failed(
             "record closed repo",
             state
                 .mutate_global(|settings| {
-                    settings.currently_open.retain(|p| p != &path);
-                    if settings.active_open_repo.as_deref() == Some(path.as_str()) {
+                    settings.currently_open.retain(|p| p != &key);
+                    if settings.active_open_repo.as_deref() == Some(key.as_str()) {
                         settings.active_open_repo = settings.currently_open.last().cloned();
                     }
                 })
                 .await,
         );
+        // Last tab of a WSL distro closed: release its agent so the WSL VM
+        // can idle out.
+        if let RepoLocator::Wsl { distro, .. } = locator {
+            let still_used = state
+                .repos
+                .read()
+                .await
+                .values()
+                .any(|s| matches!(&s.locator, RepoLocator::Wsl { distro: d, .. } if *d == distro));
+            if !still_used {
+                crate::remote::connection::release_wsl_host(&state, &distro).await;
+            }
+        }
     }
     Ok(())
 }
@@ -570,7 +699,7 @@ pub async fn set_active_repo(
             .read()
             .await
             .get(&id)
-            .map(|s| s.path.to_string_lossy().to_string())
+            .map(|s| s.locator.to_persist_string())
     } else {
         None
     };
@@ -666,26 +795,62 @@ pub async fn restore_open_repos(
     // path (the frontend holds the splash until restore completes): each repo
     // costs at least one process spawn, which dominates on Windows, so with
     // many repos sequential probing is the visible splash time.
+    let local_host = state.local_host();
     let probe_handles: Vec<_> = paths
         .into_iter()
         .map(|raw| {
             let git_path = git_path.clone();
+            let host = local_host.clone();
+            let app = app.clone();
             tokio::spawn(async move {
-                let path = PathBuf::from(&raw);
-                if !path.exists() {
-                    tracing::info!(path = %raw, "restore: skipping missing path");
-                    return None;
+                match RepoLocator::parse(&raw) {
+                    RepoLocator::Local { path } => {
+                        if !path.exists() {
+                            tracing::info!(path = %raw, "restore: skipping missing path");
+                            return None;
+                        }
+                        let probe = host.executor_for(
+                            &HostPath::from_path(&git_path),
+                            Some(&HostPath::from_path(&path)),
+                        );
+                        let Ok(out) = probe.run(&["rev-parse", "--show-toplevel"]).await else {
+                            tracing::warn!(path = %raw, "restore: rev-parse spawn failed");
+                            return None;
+                        };
+                        if !out.success {
+                            tracing::info!(path = %raw, stderr = %out.stderr.trim(), "restore: not a repo");
+                            return None;
+                        }
+                        Some(RepoLocator::local(out.stdout.trim()))
+                    }
+                    RepoLocator::Wsl { distro, path } => {
+                        // Connecting is serialized per distro inside
+                        // ensure_wsl_host; concurrent probes are fine.
+                        let state = app.state::<AppState>();
+                        let host = match crate::remote::connection::ensure_wsl_host(
+                            &app, &state, &distro,
+                        )
+                        .await
+                        {
+                            Ok(h) => h,
+                            Err(e) => {
+                                tracing::warn!(distro, err = %e, "restore: wsl host unavailable — keeping the entry for next launch");
+                                return None;
+                            }
+                        };
+                        let exec = host.executor_for(&HostPath("git".into()), Some(&path));
+                        match exec.run(&["rev-parse", "--show-toplevel"]).await {
+                            Ok(out) if out.success => Some(RepoLocator::Wsl {
+                                distro,
+                                path: HostPath(out.stdout.trim().to_string()),
+                            }),
+                            other => {
+                                tracing::info!(path = %raw, ?other, "restore: remote path is not a repo");
+                                None
+                            }
+                        }
+                    }
                 }
-                let probe = GitRunner::for_repo(git_path, &path);
-                let Ok(out) = probe.run(&["rev-parse", "--show-toplevel"]).await else {
-                    tracing::warn!(path = %raw, "restore: rev-parse spawn failed");
-                    return None;
-                };
-                if !out.success {
-                    tracing::info!(path = %raw, stderr = %out.stderr.trim(), "restore: not a repo");
-                    return None;
-                }
-                Some(PathBuf::from(out.stdout.trim()))
             })
         })
         .collect();
@@ -693,16 +858,23 @@ pub async fn restore_open_repos(
     // Await in submission order (keeps the user-controlled tab order) and
     // dedup by resolved toplevel BEFORE opening anything: two persisted paths
     // inside the same repo must not race to create two sessions for it.
-    let mut toplevels: Vec<PathBuf> = Vec::new();
+    let mut toplevels: Vec<RepoLocator> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for handle in probe_handles {
-        if let Ok(Some(toplevel)) = handle.await {
+        if let Ok(Some(locator)) = handle.await {
             // Key the dedup on filesystem identity, not spelling (see
             // `same_dir`): persisted entries can carry different forms of
-            // the same directory.
-            let key = std::fs::canonicalize(&toplevel).unwrap_or_else(|_| toplevel.clone());
+            // the same directory. Remote toplevels are already resolved by
+            // rev-parse on their host.
+            let key = match &locator {
+                RepoLocator::Local { path } => std::fs::canonicalize(path)
+                    .unwrap_or_else(|_| path.clone())
+                    .to_string_lossy()
+                    .into_owned(),
+                remote => remote.to_persist_string(),
+            };
             if seen.insert(key) {
-                toplevels.push(toplevel);
+                toplevels.push(locator);
             }
         }
     }
@@ -713,22 +885,36 @@ pub async fn restore_open_repos(
     // are unique, so no two tasks open the same repo.
     let open_handles: Vec<_> = toplevels
         .into_iter()
-        .map(|toplevel| {
+        .map(|locator| {
             let app = app.clone();
             let git_path = git_path.clone();
             tokio::spawn(async move {
                 let state = app.state::<AppState>();
+                let host: Arc<dyn Host> = match &locator {
+                    RepoLocator::Local { .. } => state.local_host(),
+                    RepoLocator::Wsl { distro, .. } => {
+                        match crate::remote::connection::ensure_wsl_host(&app, &state, distro)
+                            .await
+                        {
+                            Ok(h) => h,
+                            Err(e) => {
+                                tracing::warn!(err = %e, "restore: wsl host lost between probe and open");
+                                return None;
+                            }
+                        }
+                    }
+                };
                 // open_session reuses-or-creates atomically, so a restore
                 // racing a manual open of the same repo cannot double-open.
-                open_session(&state, &app, git_path, toplevel).await
+                Some(open_session(&state, &app, git_path, host, locator).await)
             })
         })
         .collect();
 
     for handle in open_handles {
-        let Ok(summary) = handle.await else { continue };
-        still_valid.push(summary.path.clone());
-        if persisted_active.as_deref() == Some(summary.path.as_str()) {
+        let Ok(Some(summary)) = handle.await else { continue };
+        still_valid.push(summary.locator.clone());
+        if persisted_active.as_deref() == Some(summary.locator.as_str()) {
             active_id = Some(summary.id.clone());
         }
         summaries.push(summary);
@@ -888,6 +1074,27 @@ pub async fn unset_lane_lock(
 
 #[cfg(test)]
 mod tests {
+    // The WSL open form's typed paths: `~` forms expand against the agent's
+    // home; the `wsl://` locator scheme delivers them '/'-prefixed.
+    #[test]
+    fn tilde_expansion_covers_typed_and_locator_prefixed_forms() {
+        let home = "/home/orell";
+        for (input, expected) in [
+            ("~", Some("/home/orell")),
+            ("~/repo", Some("/home/orell/repo")),
+            ("/~", Some("/home/orell")),
+            ("/~/repo", Some("/home/orell/repo")),
+            ("/home/other/repo", None),
+            ("~oops", None),
+        ] {
+            assert_eq!(
+                super::expand_tilde(input, home).as_deref(),
+                expected,
+                "{input}"
+            );
+        }
+    }
+
     #[test]
     fn same_dir_matches_different_spellings_of_one_directory() {
         let dir = tempfile::tempdir().expect("tempdir");

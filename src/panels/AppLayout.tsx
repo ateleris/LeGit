@@ -11,6 +11,7 @@ import { useRemoteProgressStore } from "../store/remoteProgress";
 import { saveRegionState } from "../lib/commands";
 import { onConsoleOutput, onGitInvocation, onRemoteProgress } from "../lib/events";
 import { useRepoChangeListener } from "../lib/useRepoChangeListener";
+import { useRemoteHostEvents } from "../lib/useRemoteHostEvents";
 import { useAutoFetch } from "../lib/useAutoFetch";
 import { useStartupUpdateCheck } from "../lib/useStartupUpdateCheck";
 import type { RegionPlacement } from "../lib/types";
@@ -65,6 +66,7 @@ export function AppLayout() {
 
   // Live refresh from the backend filesystem watcher (primary refresh path).
   useRepoChangeListener();
+  useRemoteHostEvents();
 
   // Periodic background auto-fetch of the active repo (opt-in setting).
   useAutoFetch();

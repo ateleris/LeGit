@@ -1,0 +1,20 @@
+[package]
+name = "legit-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LeGit remote agent: runs next to the repository (WSL distro, later SSH host), executing git, repo-side file access, and the filesystem watcher over the stdio protocol."
+
+[dependencies]
+legit-core = { workspace = true }
+legit-watch = { workspace = true }
+legit-proto = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+legit-host = { workspace = true }
+tempfile = "3"

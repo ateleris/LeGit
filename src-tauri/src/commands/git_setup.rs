@@ -60,8 +60,10 @@ pub async fn set_git_path(
     for session in sessions {
         let repo_settings = session.settings.read().await.clone();
         let effective = resolve_repo_git_path(&repo_settings, &resolved);
-        *session.runner.write().await =
-            std::sync::Arc::new(GitRunner::for_repo(effective, &session.path));
+        *session.runner.write().await = session.host.executor_for(
+            &legit_core::HostPath::from_path(&effective),
+            Some(&legit_core::HostPath::from_path(&session.path)),
+        );
     }
 
     probe(&resolved, path).await
@@ -80,6 +82,13 @@ pub async fn set_repo_git_path(
     path: Option<String>,
 ) -> Result<RepoSummary, AppError> {
     let session = state.get_session(&repo_id).await?;
+    // Per-repo git overrides for REMOTE repos are deferred (the picker would
+    // browse the wrong machine; a per-host settings surface is planned).
+    if !matches!(session.locator, crate::remote::RepoLocator::Local { .. }) {
+        return Err(AppError::Io(
+            "setting a per-repo git binary is not supported for remote repositories yet".into(),
+        ));
+    }
     let repo_path = session.path.clone();
 
     // Resolve and probe the candidate binary before touching anything.
@@ -106,7 +115,14 @@ pub async fn set_repo_git_path(
     // them; open_session starts a new watcher for it.
     state.repos.write().await.remove(&repo_id);
     state.watchers.lock().unwrap().remove(&repo_id);
-    let summary = open_session(&state, &app, global_git_path, repo_path).await;
+    let summary = open_session(
+        &state,
+        &app,
+        global_git_path,
+        state.local_host(),
+        crate::remote::RepoLocator::local(repo_path),
+    )
+    .await;
     Ok(summary)
 }
 

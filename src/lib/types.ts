@@ -10,10 +10,32 @@ import type { CommitDateFormat } from "./time";
 
 export type RepoId = string;
 
+/** The host part of a repo locator (`src-tauri/src/remote/locator.rs`);
+ * absent/null = local repo. */
+export type HostRef = { kind: "wsl"; distro: string };
+
 export interface RepoSummary {
   id: RepoId;
+  /** Repo root as the repo's HOST sees it (a WSL path for remote repos). */
   path: string;
   name: string;
+  host?: HostRef | null;
+  /** Persistable locator string (bare path locally, `wsl://<distro>/<path>`
+   * remotely) — what recents store and `openRepo` accepts. */
+  locator?: string;
+}
+
+/** One WSL distribution (backend `remote::wsl::WslDistro`). */
+export interface WslDistro {
+  name: string;
+  running: boolean;
+  is_default: boolean;
+}
+
+/** Payload of the `legit://remote-host-status` event. */
+export interface RemoteHostStatusPayload {
+  distro: string;
+  status: "connecting" | "connected" | "disconnected";
 }
 
 export type RegionPlacement = "top" | "left";
@@ -209,6 +231,8 @@ export interface GitInvocation {
   success: boolean;
   duration_ms: number;
   stderr: string;
+  /** Which host ran this (absent/null = the app machine). */
+  host?: string | null;
 }
 
 export interface GitVersion {

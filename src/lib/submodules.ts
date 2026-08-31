@@ -1,3 +1,4 @@
+import { joinLocator } from "./locator";
 import type { QueryClient } from "@tanstack/react-query";
 import type { DiffEntry, DiffSource, SubmoduleAutoUpdateResult, SubmoduleInfo } from "./types";
 import { repoDiff, repoSubmoduleAutoUpdate } from "./commands";
@@ -57,7 +58,10 @@ export function submoduleSelectTarget(diff: DiffEntry): string | null {
  * locally, so an unfetched target degrades to a plain open. */
 export async function openSubmoduleRepo(
   repoId: string,
-  repoPath: string,
+  /** The parent repo's LOCATOR string (RepoSummary.locator; falls back to
+   * path for pre-locator callers) so a submodule of a WSL repo opens on the
+   * same host. */
+  repoLocator: string,
   path: string,
   source: DiffSource | null,
 ) {
@@ -69,7 +73,7 @@ export async function openSubmoduleRepo(
       target = null;
     }
   }
-  await useRepoStore.getState().openRepo(`${repoPath}/${path}`);
+  await useRepoStore.getState().openRepo(joinLocator(repoLocator, path));
   if (target) {
     // openRepo has already switched the active repo, so these reach the
     // submodule's panels; the log defers to its seek when the commit is

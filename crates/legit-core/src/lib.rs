@@ -8,6 +8,7 @@ pub mod backend;
 pub mod cli_impl;
 pub mod error;
 pub mod executor;
+pub mod fs;
 pub mod progress;
 pub mod runner;
 pub mod types;
@@ -21,10 +22,12 @@ pub use cli_impl::{
     AutocrlfSetting, EolTextAttr, GitCliBackend,
 };
 pub use executor::GitExecutor;
+pub use fs::{FsDirEntry, FsError, FsProbe, FsStat, HostPath, LocalFs, RepoFs};
 pub use error::{GitError, ParseError};
 pub use progress::RemoteProgress;
 pub use runner::{
-    GitRunner, GitVersion, OperationId, RunOutput, RunOutputBytes, RunnerError, RunnerEvent,
+    set_global_base_env, set_invocation_observer, set_progress_observer, GitInvocation, GitRunner,
+    GitVersion, OperationId, RunOutput, RunOutputBytes, RunnerError, RunnerEvent,
     MIN_SUPPORTED_GIT_VERSION,
 };
 pub use types::*;
