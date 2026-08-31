@@ -108,7 +108,7 @@ jobs:
           cp target/aarch64-unknown-linux-musl/release/legit-agent agent-dist/legit-agent-aarch64
       - name: Selftest (x86_64 runs on the runner)
         run: ./agent-dist/legit-agent-x86_64 --selftest
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: legit-agent
           path: agent-dist/
@@ -148,7 +148,7 @@ jobs:
       # (src-tauri/tauri.windows.conf.json) for WSL remote repositories.
       - name: Stage legit-agent binaries (Windows)
         if: matrix.platform == 'windows-latest'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: legit-agent
           path: src-tauri/agent/
