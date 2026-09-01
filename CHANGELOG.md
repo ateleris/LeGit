@@ -12,6 +12,14 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Changed
+
+- Deleting a branch that git refuses as "not fully merged" now explains why
+  and offers a force delete in place: after a merge it names the branch that
+  already contains the work, after a squash/rebase PR merge it reports the
+  changes as merged despite differing commit IDs, and only genuinely
+  unmerged work gets a data-loss warning.
+
 ## [1.0.3] - 2026-08-24
 
 ### Fixed

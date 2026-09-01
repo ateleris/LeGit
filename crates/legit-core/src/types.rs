@@ -464,6 +464,21 @@ pub struct Branch {
     pub created_at: i64,
 }
 
+/// Post-refusal analysis for a "not fully merged" branch delete: the signals
+/// that let the UI say whether force-deleting is actually safe.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct BranchMergeAnalysis {
+    /// Refs (short names) that already contain the branch tip - a true merge
+    /// landed and only the checked-out base is stale. The branch itself, its
+    /// remote counterparts, and `*/HEAD` symrefs are excluded.
+    pub merged_into: Vec<String>,
+    /// Baseline ref (e.g. `origin/main`) whose history holds a patch-id
+    /// equivalent of every commit unique to the branch - the signature of a
+    /// squash/rebase merge. `None` when no baseline was found or commits
+    /// remain unmatched.
+    pub equivalent_in: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SwitchOutcome {

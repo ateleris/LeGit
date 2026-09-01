@@ -25,6 +25,12 @@ pub enum GitError {
     #[error("switching would overwrite local changes: {0}")]
     WouldOverwriteLocalChanges(String),
 
+    /// `git branch -d` refused because the branch is not fully merged (its
+    /// tip is not reachable from the upstream / HEAD). The UI reacts with a
+    /// guided force-delete offer instead of a raw error.
+    #[error("branch not fully merged: {stderr}")]
+    BranchNotFullyMerged { branch: String, stderr: String },
+
     #[error("git command failed (exit {exit_code}): {stderr}")]
     CommandFailed { exit_code: i32, stderr: String },
 

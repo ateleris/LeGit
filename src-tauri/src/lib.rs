@@ -151,6 +151,7 @@ pub fn run() {
         commands::repo_set_upstream,
         commands::repo_switch_branch,
         commands::repo_delete_branch,
+        commands::repo_branch_merge_analysis,
         commands::repo_delete_remote_branch,
         commands::repo_rename_branch,
         commands::repo_checkout_remote_branch,

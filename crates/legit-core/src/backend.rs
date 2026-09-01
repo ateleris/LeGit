@@ -9,7 +9,7 @@
 use crate::error::GitError;
 use crate::runner::OperationId;
 use crate::types::{
-    BlameHunk, BlobBytes, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
+    BlameHunk, BlobBytes, Branch, BranchMergeAnalysis, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
     FetchOptions, FileAtRevision, FileHistoryEntry, FileStatus, GitmodulesFinding, HunkOp,
     LfsStatus, LogOptions,
@@ -395,6 +395,11 @@ pub trait GitBackend: Send + Sync {
 
     /// Delete a local branch. `force = true` maps to `-D`; `false` uses `-d`.
     async fn delete_branch(&self, name: &str, force: bool) -> Result<(), GitError>;
+
+    /// After a `BranchNotFullyMerged` refusal: gather the signals that say
+    /// whether force-deleting `name` is actually safe (see
+    /// `BranchMergeAnalysis`).
+    async fn branch_merge_analysis(&self, name: &str) -> Result<BranchMergeAnalysis, GitError>;
 
     /// Delete a branch on `remote` (`git push <remote> --delete
     /// refs/heads/<name>`; the explicit refs/heads/ can never take a

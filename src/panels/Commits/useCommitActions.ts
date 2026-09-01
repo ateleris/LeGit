@@ -37,6 +37,7 @@ import {
 } from "../../lib/commands";
 import type { Commit, CommitId, MergeOptions, RepoSummary, ResetMode } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
+import { deleteBranchGuided } from "../../lib/branchDelete";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { autoUpdateSubmodules } from "../../lib/submodules";
 import { notify } from "../../store/notifications";
@@ -228,11 +229,15 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
         }
       },
 
+      // Safe deletes go through the guided flow: a "not fully merged"
+      // refusal raises the central dialog with a case-specific force-delete
+      // offer.
       handleBranchDelete: async (name: string, force: boolean) => {
         const repo = repoOf();
         if (!repo) return;
         try {
-          await repoDeleteBranch(repo.id, name, force);
+          if (force) await repoDeleteBranch(repo.id, name, true);
+          else await deleteBranchGuided(repo.id, name);
           invalidate(repo.id, BRANCH_DOMAINS);
         } catch (e) {
           notify.error(formatAppError(e));

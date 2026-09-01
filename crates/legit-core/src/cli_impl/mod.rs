@@ -13,28 +13,19 @@ use crate::error::GitError;
 use crate::executor::GitExecutor;
 use crate::runner::{GitRunner, OperationId};
 use crate::types::{
-    BlameHunk, BlobBytes, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
+    BlameHunk, BlobBytes, Branch, BranchMergeAnalysis, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
     FastForwardResult, FetchOptions, FfMode, FileAtRevision, FileHistoryEntry, FileState, FileStatus,
     GitmodulesFinding,
-    HunkOp, LfsStatus, LineEndingKind, LineEndingStatusEntry, LineEndingTransition, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullStrategy, PushOptions, PushRecurseMode,
+    HunkOp, LfsStatus, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullStrategy, PushOptions, PushRecurseMode,
     RebaseAction, RebaseOutcome, RebaseRangeInfo, RebaseStep, RefDecoration, RefSelector,
     ReflogEntry, Remote,
     RemoteCheckoutOutcome, RemoteTag,
     RenormalizeOutcome, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode, SequenceOutcome, SignMode, StashApplyOutcome, StashEntry,
-    StashOutcome, SubmoduleAutoUpdateResult, SubmoduleAutoUpdateStatus, SubmoduleGitdirInfo,
+    StashOutcome, SubmoduleAutoUpdateResult, SubmoduleGitdirInfo,
     SubmoduleInfo, SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy,
     SwitchDirtyBehavior, SwitchOutcome, TagInfo, TrackingStatus,
 };
-
-/// Target of a per-submodule move (see `update_one_submodule`).
-#[derive(Debug, Clone, Copy)]
-enum SubmoduleMove {
-    /// Check out the SHA recorded in the superproject index.
-    Recorded,
-    /// Fetch and integrate the tracked remote branch (`update --remote`).
-    Remote(SubmoduleUpdateStrategy),
-}
 
 /// Git's well-known empty-tree object id, used as the "before" side when
 /// diffing a root commit (which has no parent).
@@ -61,6 +52,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub mod parsers;
+mod line_endings;
+pub use line_endings::*;
+mod submodules;
 
 #[cfg(test)]
 mod flow_tests;
@@ -480,315 +474,6 @@ impl<E: GitExecutor> GitCliBackend<E> {
             });
         }
         Ok(parsers::resolve::parse_leftover_markers(&stdout))
-    }
-
-    /// Move ONE submodule: to the recorded SHA (`submodule update`) or to its
-    /// tracked remote branch (`submodule update --remote` + strategy, which
-    /// fetches - run as a cancellable remote op).
-    async fn move_submodule(
-        &self,
-        p: &str,
-        mv: SubmoduleMove,
-        op_id: Option<&OperationId>,
-    ) -> Result<(), GitError> {
-        match mv {
-            SubmoduleMove::Recorded => {
-                self.run_simple(&["submodule", "update", "--", p]).await
-            }
-            SubmoduleMove::Remote(strategy) => {
-                let flag = match strategy {
-                    SubmoduleUpdateStrategy::Checkout => "--checkout",
-                    SubmoduleUpdateStrategy::Rebase => "--rebase",
-                    SubmoduleUpdateStrategy::Merge => "--merge",
-                };
-                let args: Vec<String> = vec![
-                    "submodule".into(),
-                    "update".into(),
-                    "--remote".into(),
-                    flag.into(),
-                    "--".into(),
-                    p.to_string(),
-                ];
-                let runner = self.runner().await;
-                let op = op_id.cloned().unwrap_or_else(|| OperationId(String::new()));
-                self.run_remote(&runner, &args, op).await
-            }
-        }
-    }
-
-    /// Best-effort: attach submodule `p`'s detached HEAD to a branch whose
-    /// tip is exactly the current commit (configured branch first, else a
-    /// unique local match - `choose_attach_branch`). The checkout is a
-    /// content no-op (tip == HEAD), so this can never touch the worktree.
-    /// Never fails the surrounding update: the update is already complete
-    /// and a failed attach only leaves the correct detached state, so every
-    /// error path is a warn + return.
-    async fn attach_submodule_branch(&self, p: &str, configured: Option<&str>) {
-        let runner = self.runner().await;
-        // Attached already (e.g. `--remote --merge` on a branch): done.
-        // Detached HEAD makes symbolic-ref exit 1 - expected, not a failure.
-        match runner
-            .run_expecting(&["-C", p, "symbolic-ref", "-q", "--short", "HEAD"], &[1])
-            .await
-        {
-            Ok(o) if !o.success => {}
-            Ok(_) => return,
-            Err(e) => {
-                tracing::warn!(path = p, error = %e, "branch-attach detach probe failed");
-                return;
-            }
-        }
-        let matching: Vec<String> = match runner
-            .run(&["-C", p, "for-each-ref", "refs/heads", "--points-at", "HEAD", "--format=%(refname:short)"])
-            .await
-        {
-            Ok(o) if o.success => o
-                .stdout
-                .lines()
-                .map(|l| l.trim().to_string())
-                .filter(|l| !l.is_empty())
-                .collect(),
-            Ok(o) => {
-                tracing::warn!(path = p, stderr = %o.stderr, "branch-attach for-each-ref failed");
-                return;
-            }
-            Err(e) => {
-                tracing::warn!(path = p, error = %e, "branch-attach for-each-ref failed");
-                return;
-            }
-        };
-        drop(runner);
-        let Some(branch) = choose_attach_branch(configured, &matching) else {
-            return;
-        };
-        let branch = match safe_ref("branch", &branch) {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::warn!(path = p, error = %e, "refusing to attach branch");
-                return;
-            }
-        };
-        if let Err(e) = self.run_simple(&["-C", p, "checkout", branch]).await {
-            tracing::warn!(
-                path = p, branch = %branch, error = %e,
-                "branch attach failed; the submodule stays detached"
-            );
-        }
-    }
-
-    /// Update ONE submodule (to `mv`'s target), handling dirtiness per
-    /// `behavior`. `old` is the pre-move HEAD, the rollback anchor. Never
-    /// returns Err: every failure becomes a status so the caller's batch
-    /// continues (per-submodule atomicity). Shared by the post-switch/pull
-    /// auto-update (Recorded) and "Pull latest" (Remote).
-    async fn update_one_submodule(
-        &self,
-        s: &SubmoduleInfo,
-        old: &str,
-        behavior: SwitchDirtyBehavior,
-        mv: SubmoduleMove,
-        op_id: Option<&OperationId>,
-    ) -> SubmoduleAutoUpdateStatus {
-        let p = s.path.to_string_lossy().into_owned();
-        let skip = |msg: String| SubmoduleAutoUpdateStatus::Skipped { message: msg };
-
-        if s.state.conflicted {
-            return skip("the submodule is in a merge conflict".into());
-        }
-        let dirty = s.state.dirty_tracked || s.state.dirty_untracked;
-
-        // Clean: just move (`submodule update` fetches on demand, unlike a
-        // raw checkout).
-        if !dirty {
-            return match self.move_submodule(&p, mv, op_id).await {
-                Ok(()) => SubmoduleAutoUpdateStatus::Updated,
-                Err(e) => skip(e.to_string()),
-            };
-        }
-
-        match behavior {
-            // Let git decide: the move's internal checkout carries a
-            // non-conflicting dirty tree over and refuses a conflicting one
-            // (the submodule stays untouched).
-            SwitchDirtyBehavior::TryDirectly => {
-                match self.move_submodule(&p, mv, op_id).await {
-                    Ok(()) => SubmoduleAutoUpdateStatus::ChangesCarried,
-                    Err(e) => skip(format!("local changes could not be carried over: {e}")),
-                }
-            }
-            SwitchDirtyBehavior::AutoStash | SwitchDirtyBehavior::StashAndKeep => {
-                // Stash inside the submodule, verified by a marker-matched
-                // stash-list diff (never by exit code: `stash push` exits 0
-                // on a clean tree; never by the tip alone: a concurrently
-                // created entry must not be adopted and later popped).
-                const SUB_MARKER: &str = "legit: auto-stash before submodule update";
-                // A failed list read must be LOUD, never treated as an empty
-                // list: an empty "before" could adopt a leftover marker entry
-                // from an earlier crash, and an empty "after" would take the
-                // clean-tree branch below - the submodule would move, report a
-                // plain Updated, and the user's changes would sit silently in
-                // the submodule's stash (best-effort failure must never be
-                // silent; house rule).
-                let sub_list =
-                    |o: Result<crate::runner::RunOutput, crate::runner::RunnerError>| -> Result<String, String> {
-                        match o {
-                            Ok(out) if out.success => Ok(out.stdout),
-                            Ok(out) => {
-                                let msg = out.stderr.trim().to_string();
-                                Err(if msg.is_empty() {
-                                    format!("git stash list exited with {:?}", out.exit_code)
-                                } else {
-                                    msg
-                                })
-                            }
-                            Err(e) => Err(e.to_string()),
-                        }
-                    };
-                let runner = self.runner().await;
-                let before = match sub_list(
-                    runner
-                        .run(&["-C", &p, "stash", "list", "--format=%H %s"])
-                        .await,
-                ) {
-                    Ok(list) => list,
-                    // Nothing has been touched yet: abort this submodule's
-                    // update instead of risking adopting (and later popping)
-                    // a stash entry we did not create.
-                    Err(e) => {
-                        return skip(format!(
-                            "could not read the submodule's stash list before auto-stashing ({e}); the submodule was left untouched"
-                        ));
-                    }
-                };
-                drop(runner);
-                if let Err(e) = self
-                    .run_simple(&[
-                        "-C",
-                        &p,
-                        "stash",
-                        "push",
-                        "--include-untracked",
-                        "-m",
-                        SUB_MARKER,
-                    ])
-                    .await
-                {
-                    return skip(format!("could not stash local changes: {e}"));
-                }
-                let runner = self.runner().await;
-                let after = match sub_list(
-                    runner
-                        .run(&["-C", &p, "stash", "list", "--format=%H %s"])
-                        .await,
-                ) {
-                    Ok(list) => list,
-                    // The stash push already ran: the changes MAY be parked in
-                    // the submodule's stash, but without the list we cannot
-                    // verify it (nor pop by SHA). Stop here - do NOT move the
-                    // submodule - and say so prominently.
-                    Err(e) => {
-                        return SubmoduleAutoUpdateStatus::ChangesInStash {
-                            message: format!(
-                                "your local changes may have been auto-stashed, but reading the submodule's stash list to verify failed ({e}); the submodule was left at its previous commit - check `git stash list` inside the submodule"
-                            ),
-                        };
-                    }
-                };
-                drop(runner);
-                let Some(stash_sha) = find_created_stash(&before, &after, SUB_MARKER) else {
-                    // Race: tree turned out clean - just move.
-                    return match self.move_submodule(&p, mv, op_id).await {
-                        Ok(()) => SubmoduleAutoUpdateStatus::Updated,
-                        Err(e) => skip(e.to_string()),
-                    };
-                };
-
-                // Move to the target (tree is clean now).
-                if let Err(e) = self.move_submodule(&p, mv, op_id).await {
-                    // Restore: pop the stash we just made, back on `old`.
-                    return match self.pop_submodule_stash(&p, &stash_sha).await {
-                        Ok(()) => skip(format!("update failed; local changes restored: {e}")),
-                        Err(pop_e) => SubmoduleAutoUpdateStatus::ChangesInStash {
-                            message: format!(
-                                "update failed ({e}) AND restoring failed ({pop_e}) - your changes are in the submodule's stash"
-                            ),
-                        },
-                    };
-                }
-
-                if matches!(behavior, SwitchDirtyBehavior::StashAndKeep) {
-                    return SubmoduleAutoUpdateStatus::ChangesStashed;
-                }
-
-                // AutoStash: pop onto the NEW commit.
-                match self.pop_submodule_stash(&p, &stash_sha).await {
-                    Ok(()) => SubmoduleAutoUpdateStatus::ChangesCarried,
-                    Err(pop_err) => {
-                        // Conflicted/failed pop: ROLL BACK. `reset --hard`
-                        // discards the marker-ridden application and clears
-                        // unmerged index entries - the stash itself survived
-                        // (git keeps it when a pop conflicts).
-                        if let Err(e) = self.run_simple(&["-C", &p, "reset", "--hard", old]).await {
-                            return SubmoduleAutoUpdateStatus::ChangesInStash {
-                                message: format!(
-                                    "pop conflicted ({pop_err}) AND rollback failed ({e}) - your changes are in the submodule's stash"
-                                ),
-                            };
-                        }
-                        match self.pop_submodule_stash(&p, &stash_sha).await {
-                            Ok(()) => SubmoduleAutoUpdateStatus::RolledBack {
-                                message: format!(
-                                    "local changes conflict with the new submodule commit; the submodule was left at its previous commit with your changes intact ({pop_err})"
-                                ),
-                            },
-                            Err(e) => SubmoduleAutoUpdateStatus::ChangesInStash {
-                                message: format!(
-                                    "pop conflicted ({pop_err}) AND reapplying on the original commit failed ({e}) - your changes are in the submodule's stash"
-                                ),
-                            },
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Pop the given stash SHA inside submodule `p`, resolving the SHA to its
-    /// CURRENT selector first (positional selectors shift; house rule).
-    async fn pop_submodule_stash(&self, p: &str, stash_sha: &str) -> Result<(), GitError> {
-        let runner = self.runner().await;
-        let list = runner
-            .run(&["-C", p, "stash", "list", "--format=%H %gd"])
-            .await?;
-        Self::ensure_success(&list)?;
-        let Some(selector) = find_stash_selector(&list.stdout, stash_sha) else {
-            return Err(GitError::Internal(format!(
-                "auto-stash {stash_sha} vanished from the submodule stash list"
-            )));
-        };
-        drop(runner);
-        self.run_simple(&["-C", p, "stash", "pop", &selector]).await
-    }
-
-    /// Resolve `.git/modules/<name>` for this repo, validated against path
-    /// traversal; `None` when the directory does not exist.
-    async fn submodule_gitdir_path(&self, name: &str) -> Result<Option<PathBuf>, GitError> {
-        // Reject anything that could escape `<git_dir>/modules/`.
-        let name_path = Path::new(name);
-        if name_path.is_absolute()
-            || name_path
-                .components()
-                .any(|c| !matches!(c, std::path::Component::Normal(_)))
-        {
-            return Err(GitError::Internal(format!("invalid submodule name '{name}'")));
-        }
-        let runner = self.runner().await;
-        let out = runner
-            .run(&["rev-parse", "--absolute-git-dir"])
-            .await?;
-        Self::ensure_success(&out)?;
-        let gitdir = PathBuf::from(out.stdout.trim()).join("modules").join(name_path);
-        Ok(gitdir.is_dir().then_some(gitdir))
     }
 
     /// Run a `git stash apply`/`pop`, mapping a merge conflict (non-zero exit
@@ -1796,86 +1481,11 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         parsers::file_history::parse_file_history(&output.stdout, &path_str).map_err(GitError::from)
     }
 
+    // Submodule methods delegate to the same-named inherent methods in
+    // submodules.rs; inherent methods win resolution, so this is delegation,
+    // not recursion.
     async fn submodules(&self) -> Result<Vec<SubmoduleInfo>, GitError> {
-        use parsers::submodules as sub;
-        let runner = self.runner().await;
-
-        let ls = runner
-            .run(&sub::LS_FILES_STAGE_ARGS)
-            .await?;
-        Self::ensure_success(&ls)?;
-        let gitlinks = sub::parse_gitlinks(&ls.stdout);
-
-        // No gitlinks -> no rows, guaranteed: `assemble_submodules` iterates
-        // gitlinks only (config-only entries never surface). Skip the three
-        // follow-up reads entirely - in a repo without submodules the two
-        // config `--get-regexp` calls exit 1 ("no matches"), which painted
-        // the Git Log panel red on every derived refetch, and all three are
-        // wasted spawns for a known-empty answer.
-        if gitlinks.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Both config reads exit 1 for "no matches / no file" - that is a
-        // normal state (e.g. declared-but-uninitialized submodules), never an
-        // error, so it must not log as a failed call either.
-        let gitmodules = match runner.run_expecting(&sub::GITMODULES_CONFIG_ARGS, &[1]).await {
-            Ok(o) if o.success => sub::parse_submodule_config(&o.stdout),
-            _ => Default::default(),
-        };
-        let local = match runner.run_expecting(&sub::LOCAL_SUBMODULE_CONFIG_ARGS, &[1]).await {
-            Ok(o) if o.success => sub::parse_submodule_config(&o.stdout),
-            _ => Default::default(),
-        };
-
-        // Dirt flags ride along the one superproject status call - never a
-        // per-submodule status walk (spec: perf discipline).
-        let dirt = match runner.run(&parsers::status::STATUS_ARGS).await {
-            Ok(o) if o.success => sub::parse_status_submodule_flags(&o.stdout),
-            _ => Default::default(),
-        };
-
-        // One probe per gitlink: HEAD sha (failure = unpopulated), then the
-        // branch only for populated ones. `--show-prefix` guards against git
-        // walking UP from an empty/unpopulated submodule dir into the
-        // superproject (verified by `submodule_ops_roundtrip_deinit_init_update`
-        // in git_flows.rs): a genuine submodule root reports an empty prefix.
-        let mut probes = std::collections::HashMap::new();
-        for (path, _) in &gitlinks {
-            let p = path.to_string_lossy().into_owned();
-            let head = match runner
-                .run(&["-C", &p, "rev-parse", "--show-prefix", "HEAD"])
-                .await
-            {
-                Ok(o) if o.success => {
-                    let mut lines = o.stdout.lines();
-                    let prefix = lines.next().unwrap_or("").trim().to_string();
-                    let sha = lines.next().unwrap_or("").trim().to_string();
-                    if !prefix.is_empty() || sha.is_empty() {
-                        continue; // escaped to the superproject: unpopulated
-                    }
-                    sha
-                }
-                _ => continue,
-            };
-            let head_branch = match runner
-                .run(&["-C", &p, "rev-parse", "--abbrev-ref", "HEAD"])
-                .await
-            {
-                Ok(o) if o.success => {
-                    let b = o.stdout.trim();
-                    // `abbrev-ref HEAD` prints literally `HEAD` when detached.
-                    if b == "HEAD" { None } else { Some(b.to_string()) }
-                }
-                _ => None,
-            };
-            probes.insert(
-                path.clone(),
-                sub::SubmoduleProbe { checked_out_sha: CommitId::new(head), head_branch },
-            );
-        }
-
-        Ok(sub::assemble_submodules(&gitlinks, &gitmodules, &local, &dirt, &probes))
+        self.submodules().await
     }
 
     async fn submodule_log(
@@ -1884,27 +1494,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         from: Option<&CommitId>,
         to: &CommitId,
     ) -> Result<SubmoduleLog, GitError> {
-        use parsers::submodules as sub;
-        let runner = self.runner().await;
-        let p = path.to_string_lossy().into_owned();
-
-        // Unfetched pointer target is an expected state, not an error.
-        let probe = format!("{}^{{commit}}", to.as_str());
-        match runner.run_expecting(&["-C", &p, "cat-file", "-e", &probe], &[1]).await {
-            Ok(o) if o.success => {}
-            Ok(_) => return Ok(SubmoduleLog::TargetMissing),
-            Err(e) => return Err(GitError::Internal(e.to_string())),
-        }
-
-        let range = match from {
-            Some(f) => format!("{}..{}", f.as_str(), to.as_str()),
-            None => to.as_str().to_string(),
-        };
-        let out = runner
-            .run(&["-C", &p, "log", sub::SUBMODULE_LOG_FORMAT, sub::SUBMODULE_LOG_MAX, &range])
-            .await?;
-        Self::ensure_success(&out)?;
-        Ok(SubmoduleLog::Commits { commits: sub::parse_submodule_log(&out.stdout) })
+        self.submodule_log(path, from, to).await
     }
 
     async fn submodule_update(
@@ -1912,87 +1502,20 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         opts: SubmoduleUpdateOptions,
         op_id: OperationId,
     ) -> Result<(), GitError> {
-        let runner = self.runner().await;
-        let mut args: Vec<String> = vec!["submodule".into(), "update".into()];
-        if opts.init {
-            args.push("--init".into());
-        }
-        if opts.recursive {
-            args.push("--recursive".into());
-        }
-        if !opts.paths.is_empty() {
-            args.push("--".into());
-            for p in &opts.paths {
-                args.push(p.to_string_lossy().into_owned());
-            }
-        }
-        // May clone/fetch missing commits: run as a remote op (progress,
-        // cancel, auth-aware error classification).
-        self.run_remote(&runner, &args, op_id).await?;
-        drop(runner);
-
-        if opts.attach_branch {
-            // Best-effort attach pass over the updated (top-level) submodules;
-            // an enumeration failure must not turn the successful update into
-            // an error. `head_branch.is_some()` skips already-attached ones
-            // (the helper's own probe re-checks; it has callers without this
-            // pre-filter).
-            match self.submodules().await {
-                Ok(subs) => {
-                    for s in subs {
-                        if !s.state.populated || !s.state.initialized {
-                            continue;
-                        }
-                        if !opts.paths.is_empty() && !opts.paths.contains(&s.path) {
-                            continue;
-                        }
-                        if s.head_branch.is_some() {
-                            continue;
-                        }
-                        let p = s.path.to_string_lossy().into_owned();
-                        self.attach_submodule_branch(&p, s.branch.as_deref()).await;
-                    }
-                }
-                Err(e) => tracing::warn!(error = %e, "branch-attach enumeration failed"),
-            }
-        }
-        Ok(())
+        self.submodule_update(opts, op_id).await
     }
 
     async fn submodule_sync(&self, paths: &[PathBuf], recursive: bool) -> Result<(), GitError> {
-        let base: &[&str] = if recursive {
-            &["submodule", "sync", "--recursive"]
-        } else {
-            &["submodule", "sync"]
-        };
-        if paths.is_empty() {
-            return self.run_simple(base).await;
-        }
-        let mut with_sep: Vec<&str> = base.to_vec();
-        with_sep.push("--");
-        self.run_pathspec(&with_sep, paths).await
+        self.submodule_sync(paths, recursive).await
     }
 
     async fn submodule_fetch(&self, path: &Path, op_id: OperationId) -> Result<(), GitError> {
-        let runner = self.runner().await;
-        let args: Vec<String> = vec![
-            "-C".into(),
-            path.to_string_lossy().into_owned(),
-            "fetch".into(),
-        ];
-        self.run_remote(&runner, &args, op_id).await
+        self.submodule_fetch(path, op_id).await
     }
 
     async fn superproject_path(&self) -> Result<Option<PathBuf>, GitError> {
-        let runner = self.runner().await;
-        let out = runner
-            .run(&["rev-parse", "--show-superproject-working-tree"])
-            .await?;
-        Self::ensure_success(&out)?;
-        let path = out.stdout.trim();
-        Ok(if path.is_empty() { None } else { Some(PathBuf::from(path)) })
+        self.superproject_path().await
     }
-
     async fn lfs_status(&self) -> Result<LfsStatus, GitError> {
         let runner = self.runner().await;
         // `:(glob)**/.gitattributes` matches the root file and nested ones
@@ -2065,39 +1588,15 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         branch: Option<&str>,
         op_id: OperationId,
     ) -> Result<(), GitError> {
-        let runner = self.runner().await;
-        let mut args: Vec<String> = vec!["submodule".into(), "add".into()];
-        if let Some(b) = branch {
-            args.push("-b".into());
-            args.push(b.to_string());
-        }
-        args.push("--".into());
-        args.push(url.to_string());
-        args.push(path.to_string_lossy().into_owned());
-        // Clones the repository: run as a remote op (progress, cancel, auth).
-        self.run_remote(&runner, &args, op_id).await
+        self.submodule_add(url, path, branch, op_id).await
     }
 
     async fn submodule_set_url(&self, path: &Path, url: &str) -> Result<(), GitError> {
-        let p = path.to_string_lossy().into_owned();
-        self.run_simple(&["submodule", "set-url", "--", &p, url]).await?;
-        // set-url edits .gitmodules only; sync propagates to .git/config and
-        // the submodule's origin (spec: set-url auto-syncs).
-        self.run_simple(&["submodule", "sync", "--", &p]).await
+        self.submodule_set_url(path, url).await
     }
 
     async fn submodule_set_branch(&self, path: &Path, branch: Option<&str>) -> Result<(), GitError> {
-        let p = path.to_string_lossy().into_owned();
-        match branch {
-            Some(b) => {
-                self.run_simple(&["submodule", "set-branch", "--branch", b, "--", &p])
-                    .await
-            }
-            None => {
-                self.run_simple(&["submodule", "set-branch", "--default", "--", &p])
-                    .await
-            }
-        }
+        self.submodule_set_branch(path, branch).await
     }
 
     async fn submodule_update_remote(
@@ -2108,217 +1607,35 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         attach_branch: bool,
         op_id: OperationId,
     ) -> Result<Vec<SubmoduleAutoUpdateResult>, GitError> {
-        // Per-submodule composed flow (shared with the post-switch/pull
-        // auto-update): dirty submodules follow the global switch strategy
-        // instead of letting git's checkout refusal surface as a raw error,
-        // and a conflicted carry-over rolls back with the changes intact.
-        let subs = self.submodules().await?;
-        let mut results = Vec::new();
-        let mut to_stage: Vec<PathBuf> = Vec::new();
-        for s in subs {
-            if !s.state.populated || !s.state.initialized {
-                continue;
-            }
-            if !paths.is_empty() && !paths.contains(&s.path) {
-                continue;
-            }
-            let Some(old) = s.checked_out_sha.clone() else { continue };
-            let status = self
-                .update_one_submodule(
-                    &s,
-                    old.as_str(),
-                    behavior,
-                    SubmoduleMove::Remote(strategy),
-                    Some(&op_id),
-                )
-                .await;
-            // `--remote` moves worktrees but not the index: stage the pointer
-            // of every submodule that actually moved, so the operation reads
-            // as one atomic "pull latest and record it" (spec sub-project 4).
-            let moved = matches!(
-                status,
-                SubmoduleAutoUpdateStatus::Updated
-                    | SubmoduleAutoUpdateStatus::ChangesCarried
-                    | SubmoduleAutoUpdateStatus::ChangesStashed
-            );
-            if moved {
-                if attach_branch {
-                    let p = s.path.to_string_lossy().into_owned();
-                    self.attach_submodule_branch(&p, s.branch.as_deref()).await;
-                }
-                to_stage.push(s.path.clone());
-            }
-            results.push(SubmoduleAutoUpdateResult { path: s.path, status });
-        }
-        if !to_stage.is_empty() {
-            self.run_pathspec(&["add", "--"], &to_stage).await?;
-        }
-        Ok(results)
+        self.submodule_update_remote(paths, strategy, behavior, attach_branch, op_id)
+            .await
     }
 
     async fn gitmodules_consistency(&self) -> Result<Vec<GitmodulesFinding>, GitError> {
-        let runner = self.runner().await;
-        // Gate: one cheap staged diff. Failure (e.g. unborn HEAD on some git
-        // versions) falls through to the full check - the gate is an
-        // optimization and must neither error out nor silently skip.
-        let gate = runner.run(&parsers::submodules::STAGED_RAW_DIFF_ARGS).await?;
-        if gate.success
-            && !parsers::submodules::staged_touches_submodule_config(&gate.stdout)
-        {
-            return Ok(Vec::new());
-        }
-        // The STAGED blob (`:.gitmodules`), not the worktree file: the check
-        // is about what the commit will record. Non-zero exit = no staged
-        // .gitmodules / no sections - an empty entry set, not an error.
-        let cfg = runner
-            .run(&parsers::submodules::STAGED_GITMODULES_CONFIG_ARGS)
-            .await?;
-        let entries = if cfg.success {
-            parsers::submodules::parse_submodule_config(&cfg.stdout)
-        } else {
-            std::collections::HashMap::new()
-        };
-        let ls = runner.run(&parsers::submodules::LS_FILES_STAGE_ARGS).await?;
-        Self::ensure_success(&ls)?;
-        let gitlinks = parsers::submodules::parse_gitlinks(&ls.stdout);
-        Ok(parsers::submodules::check_gitmodules_consistency(&entries, &gitlinks))
+        self.gitmodules_consistency().await
     }
 
     async fn submodule_remove(&self, path: &Path) -> Result<(), GitError> {
-        // Refuse dirty/conflicted BEFORE any mutation: `git rm -f` would
-        // happily discard uncommitted submodule work.
-        let runner = self.runner().await;
-        let status = runner
-            .run(&parsers::status::STATUS_ARGS)
-            .await?;
-        Self::ensure_success(&status)?;
-        let dirt = parsers::submodules::parse_status_submodule_flags(&status.stdout);
-        if let Some(d) = dirt.get(path) {
-            if d.dirty_tracked || d.dirty_untracked || d.conflicted {
-                return Err(GitError::WouldOverwriteLocalChanges(format!(
-                    "submodule '{}' has uncommitted changes - commit or discard them inside the submodule first",
-                    path.display()
-                )));
-            }
-        }
-        drop(runner);
-
-        let p = path.to_string_lossy().into_owned();
-        // Embedded `.git` directories move into `.git/modules/<name>` so the
-        // history survives `rm` (magit runs this too; no-op when absorbed).
-        self.run_simple(&["submodule", "absorbgitdirs", "--", &p]).await?;
-        self.run_simple(&["submodule", "deinit", "-f", "--", &p]).await?;
-        // Removes worktree + index gitlink and STAGES the .gitmodules edit.
-        self.run_simple(&["rm", "-f", "--", &p]).await
+        self.submodule_remove(path).await
     }
 
     async fn submodule_move(&self, from: &Path, to: &Path) -> Result<(), GitError> {
-        // Reject anything that could escape the worktree (same rule as
-        // `submodule_gitdir_path`): relative, normal components only.
-        for p in [from, to] {
-            if p.as_os_str().is_empty()
-                || p.is_absolute()
-                || p.components().any(|c| !matches!(c, std::path::Component::Normal(_)))
-            {
-                return Err(GitError::Internal(format!(
-                    "invalid submodule path '{}'",
-                    p.display()
-                )));
-            }
-        }
-        let runner = self.runner().await;
-        let out = runner.run(&["rev-parse", "--show-toplevel"]).await?;
-        Self::ensure_success(&out)?;
-        drop(runner);
-        let root = PathBuf::from(out.stdout.trim());
-        let abs_to = root.join(to);
-        if abs_to.exists() {
-            return Err(GitError::Internal(format!(
-                "target path '{}' already exists",
-                to.display()
-            )));
-        }
-        // `git mv` refuses "destination directory does not exist": create the
-        // missing parents, remembering the topmost one we created so a failed
-        // move can clean up after itself.
-        let mut created: Option<PathBuf> = None;
-        if let Some(parent) = abs_to.parent() {
-            if !parent.exists() {
-                let mut probe = parent.to_path_buf();
-                while let Some(up) = probe.parent() {
-                    if up.exists() {
-                        break;
-                    }
-                    probe = up.to_path_buf();
-                }
-                std::fs::create_dir_all(parent).map_err(|e| {
-                    GitError::Internal(format!(
-                        "could not create '{}': {e}",
-                        parent.display()
-                    ))
-                })?;
-                created = Some(probe);
-            }
-        }
-        let f = from.to_string_lossy().into_owned();
-        let t = to.to_string_lossy().into_owned();
-        match self.run_simple(&["mv", "--", &f, &t]).await {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                // Best-effort: remove the empty directories we just created;
-                // a failed cleanup must not be silent (house rule).
-                if let Some(dir) = created {
-                    if let Err(rm) = std::fs::remove_dir_all(&dir) {
-                        return Err(append_error_note(
-                            e,
-                            &format!(
-                                "note: cleanup of created directory '{}' also failed: {rm}",
-                                dir.display()
-                            ),
-                        ));
-                    }
-                }
-                Err(e)
-            }
-        }
+        self.submodule_move(from, to).await
     }
 
     async fn submodule_gitdir_info(
         &self,
         name: &str,
     ) -> Result<Option<SubmoduleGitdirInfo>, GitError> {
-        let Some(gitdir) = self.submodule_gitdir_path(name).await? else {
-            return Ok(None);
-        };
-        // Any commit on a local branch that no remote ref reaches would be
-        // destroyed by deleting the gitdir - surface that before the confirm.
-        let runner = self.runner().await;
-        let gd = gitdir.to_string_lossy().into_owned();
-        let unpushed = match runner
-            .run(&["--git-dir", &gd, "log", "--branches", "--not", "--remotes", "--oneline", "-n", "1"])
-            .await
-        {
-            Ok(o) if o.success => !o.stdout.trim().is_empty(),
-            // A broken/bare-ish leftover gitdir: treat as "unknown, warn".
-            _ => true,
-        };
-        Ok(Some(SubmoduleGitdirInfo { path: gitdir, unpushed }))
+        self.submodule_gitdir_info(name).await
     }
 
     async fn submodule_delete_gitdir(&self, name: &str) -> Result<(), GitError> {
-        let Some(gitdir) = self.submodule_gitdir_path(name).await? else {
-            return Err(GitError::Internal(format!(
-                "no retained gitdir for submodule '{name}'"
-            )));
-        };
-        std::fs::remove_dir_all(&gitdir)
-            .map_err(|e| GitError::Internal(format!("could not delete {}: {e}", gitdir.display())))
+        self.submodule_delete_gitdir(name).await
     }
 
     async fn submodule_create_branch(&self, path: &Path, name: &str) -> Result<(), GitError> {
-        let p = path.to_string_lossy().into_owned();
-        self.run_simple(&["-C", &p, "switch", "-c", safe_ref("branch name", name)?])
-            .await
+        self.submodule_create_branch(path, name).await
     }
 
     async fn submodule_auto_update(
@@ -2326,36 +1643,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         behavior: SwitchDirtyBehavior,
         attach_branch: bool,
     ) -> Result<Vec<SubmoduleAutoUpdateResult>, GitError> {
-        let subs = self.submodules().await?;
-        let mut results = Vec::new();
-        for s in subs {
-            if !s.state.populated || !s.state.pointer_moved {
-                continue;
-            }
-            let (Some(recorded), Some(old)) = (s.recorded_sha.clone(), s.checked_out_sha.clone())
-            else {
-                continue;
-            };
-            let _ = recorded; // target derives from the index inside the move
-            let status = self
-                .update_one_submodule(&s, old.as_str(), behavior, SubmoduleMove::Recorded, None)
-                .await;
-            if attach_branch
-                && matches!(
-                    status,
-                    SubmoduleAutoUpdateStatus::Updated
-                        | SubmoduleAutoUpdateStatus::ChangesCarried
-                        | SubmoduleAutoUpdateStatus::ChangesStashed
-                )
-            {
-                let p = s.path.to_string_lossy().into_owned();
-                self.attach_submodule_branch(&p, s.branch.as_deref()).await;
-            }
-            results.push(SubmoduleAutoUpdateResult { path: s.path, status });
-        }
-        Ok(results)
+        self.submodule_auto_update(behavior, attach_branch).await
     }
-
     async fn fetch(&self, opts: FetchOptions, op_id: OperationId) -> Result<(), GitError> {
         let runner = self.runner().await;
         let args = build_fetch_args(&opts);
@@ -2529,8 +1818,92 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
 
     async fn delete_branch(&self, name: &str, force: bool) -> Result<(), GitError> {
         let flag = if force { "-D" } else { "-d" };
-        self.run_simple(&["branch", flag, "--end-of-options", safe_ref("branch", name)?])
-            .await
+        let runner = self.runner().await;
+        let out = runner
+            .run(&["branch", flag, "--end-of-options", safe_ref("branch", name)?])
+            .await?;
+        if out.success {
+            return Ok(());
+        }
+        Err(classify_branch_delete_error(
+            out.exit_code.unwrap_or(-1),
+            &out.stderr,
+            name,
+        ))
+    }
+
+    async fn branch_merge_analysis(&self, name: &str) -> Result<BranchMergeAnalysis, GitError> {
+        let runner = self.runner().await;
+        let head_ref = format!("refs/heads/{name}");
+        let tip = {
+            let out = runner.run(&["rev-parse", "--verify", &head_ref]).await?;
+            Self::ensure_success(&out)?;
+            out.stdout.trim().to_string()
+        };
+        let merged_into = {
+            let out = runner
+                .run(&[
+                    "for-each-ref",
+                    "--contains",
+                    &tip,
+                    "--format=%(refname:short)",
+                    "refs/heads",
+                    "refs/remotes",
+                ])
+                .await?;
+            Self::ensure_success(&out)?;
+            filter_containing_refs(&out.stdout, name)
+        };
+
+        // Baseline for the patch-id check: the preferred remote's default
+        // branch. The HEAD symref exists only in clones (exit 1/128 when
+        // unset), so probe <remote>/main, then <remote>/master as fallbacks.
+        let remotes_out = runner.run(&["remote"]).await?;
+        Self::ensure_success(&remotes_out)?;
+        let remotes: Vec<&str> = remotes_out
+            .stdout
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+        let remote = remotes
+            .iter()
+            .find(|r| **r == "origin")
+            .or_else(|| remotes.first());
+        let mut baseline: Option<String> = None;
+        if let Some(remote) = remote {
+            let symref = format!("refs/remotes/{remote}/HEAD");
+            let out = runner
+                .run_expecting(&["symbolic-ref", "--short", &symref], &[1, 128])
+                .await?;
+            if out.success {
+                let short = out.stdout.trim();
+                if !short.is_empty() {
+                    baseline = Some(short.to_string());
+                }
+            } else {
+                for candidate in ["main", "master"] {
+                    let full = format!("refs/remotes/{remote}/{candidate}");
+                    let probe = runner
+                        .run_expecting(&["rev-parse", "--verify", "--quiet", &full], &[1])
+                        .await?;
+                    if probe.success {
+                        baseline = Some(format!("{remote}/{candidate}"));
+                        break;
+                    }
+                }
+            }
+        }
+
+        let mut equivalent_in = None;
+        if let Some(b) = baseline {
+            let out = runner.run(&["cherry", &b, &head_ref]).await?;
+            Self::ensure_success(&out)?;
+            if cherry_all_equivalent(&out.stdout) {
+                equivalent_in = Some(b);
+            }
+        }
+        Ok(BranchMergeAnalysis { merged_into, equivalent_in })
     }
 
     async fn delete_remote_branch(
@@ -3523,353 +2896,6 @@ fn parse_ls_tree_files(stdout: &str) -> Vec<RepoFileEntry> {
     entries
 }
 
-/// Whether a file's bytes hold MIXED (CRLF + bare-LF) line endings:
-/// `Some(true)` mixed, `Some(false)` uniform (incl. no newlines at all),
-/// `None` binary (NUL in the leading `BINARY_SNIFF_WINDOW` bytes - git's
-/// heuristic, shared with `classify_line_endings` so both classify a blob
-/// identically). The LF of a CRLF pair never counts as a bare LF, and
-/// old-Mac lone CRs count as neither. Pure sibling of
-/// `classify_line_endings`; backs the mixed-endings warning.
-pub fn mixed_endings_in_bytes(bytes: &[u8]) -> Option<bool> {
-    let probe = &bytes[..bytes.len().min(BINARY_SNIFF_WINDOW)];
-    if probe.contains(&0u8) {
-        return None;
-    }
-    let mut has_crlf = false;
-    let mut has_lf_only = false;
-    let mut i = 0usize;
-    while i < bytes.len() {
-        if bytes[i] == b'\r' && i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
-            has_crlf = true;
-            i += 2;
-        } else if bytes[i] == b'\n' {
-            has_lf_only = true;
-            i += 1;
-        } else {
-            i += 1;
-        }
-        if has_crlf && has_lf_only {
-            return Some(true);
-        }
-    }
-    Some(false)
-}
-
-/// Classify the line-ending style of some text (the Diff/File View/Blame
-/// indicator). Binary is detected by a NUL byte in the leading window (git's
-/// heuristic). Pure so it's unit-tested. Backs `repo_line_ending_kind`.
-pub fn classify_line_endings(text: &str) -> LineEndingKind {
-    let bytes = text.as_bytes();
-    if bytes.iter().take(BINARY_SNIFF_WINDOW).any(|&b| b == 0) {
-        return LineEndingKind::Binary;
-    }
-    let (mut crlf, mut lf, mut cr) = (false, false, false);
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\r' if i + 1 < bytes.len() && bytes[i + 1] == b'\n' => {
-                crlf = true;
-                i += 2;
-            }
-            b'\r' => {
-                cr = true;
-                i += 1;
-            }
-            b'\n' => {
-                lf = true;
-                i += 1;
-            }
-            _ => i += 1,
-        }
-    }
-    match (crlf, lf, cr) {
-        (false, false, false) => LineEndingKind::None,
-        (true, false, false) => LineEndingKind::Crlf,
-        (false, true, false) => LineEndingKind::Lf,
-        (false, false, true) => LineEndingKind::Cr,
-        _ => LineEndingKind::Mixed,
-    }
-}
-
-/// The `text` attribute's effective value for a path (`git check-attr`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EolTextAttr {
-    /// `text` - normalization always on.
-    Set,
-    /// `-text` / `binary` - normalization off.
-    Unset,
-    /// `text=auto` - normalize when the content looks like text.
-    Auto,
-    /// No `text` attribute - `core.autocrlf` decides.
-    Unspecified,
-}
-
-/// Resolved `core.autocrlf`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AutocrlfSetting {
-    True,
-    Input,
-    False,
-}
-
-/// Parse `git config --get core.autocrlf` output. Anything unrecognized
-/// (including unset - git exits 1 with empty stdout) is False, git's default.
-pub fn parse_autocrlf(stdout: &str) -> AutocrlfSetting {
-    match stdout.trim().to_ascii_lowercase().as_str() {
-        "true" => AutocrlfSetting::True,
-        "input" => AutocrlfSetting::Input,
-        _ => AutocrlfSetting::False,
-    }
-}
-
-/// Whether `git add` would normalize CRLF to LF for this path (the clean
-/// filter), per gitattributes(5). `content_kind` is the working file's raw
-/// classification (binary content is never converted). `index_kind` is the
-/// blob currently in the index, if any: in the AUTO modes (`text=auto`, or
-/// no attr + autocrlf true/input) git leaves files whose indexed blob
-/// already contains CRLF untouched ("files that contain CRLF in the
-/// repository will not be touched"); an explicit `text` or `eol` attribute
-/// normalizes unconditionally. These rules are assumptions about git's
-/// convert.c and are validated against the real binary in git_flows.rs.
-pub fn checkin_normalizes(
-    text: EolTextAttr,
-    eol_attr_set: bool,
-    autocrlf: AutocrlfSetting,
-    content_kind: LineEndingKind,
-    index_kind: Option<LineEndingKind>,
-) -> bool {
-    if content_kind == LineEndingKind::Binary {
-        return false;
-    }
-    let index_has_crlf = matches!(
-        index_kind,
-        Some(LineEndingKind::Crlf) | Some(LineEndingKind::Mixed)
-    );
-    match text {
-        EolTextAttr::Unset => false,
-        EolTextAttr::Set => true,
-        EolTextAttr::Auto => !index_has_crlf,
-        EolTextAttr::Unspecified => {
-            if eol_attr_set {
-                // An `eol=` attribute alone implies `text`.
-                true
-            } else {
-                matches!(autocrlf, AutocrlfSetting::True | AutocrlfSetting::Input)
-                    && !index_has_crlf
-            }
-        }
-    }
-}
-
-/// `classify_line_endings` as `git add` would see the content after CRLF->LF
-/// normalization: CRLF counts as LF; bare LF and lone CR are unchanged. The
-/// check-in kind of a working file is this when `checkin_normalizes` says
-/// yes, the raw classification otherwise.
-pub fn classify_line_endings_normalized(text: &str) -> LineEndingKind {
-    let bytes = text.as_bytes();
-    if bytes.iter().take(BINARY_SNIFF_WINDOW).any(|&b| b == 0) {
-        return LineEndingKind::Binary;
-    }
-    let (mut lf, mut cr) = (false, false);
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\r' if i + 1 < bytes.len() && bytes[i + 1] == b'\n' => {
-                lf = true;
-                i += 2;
-            }
-            b'\r' => {
-                cr = true;
-                i += 1;
-            }
-            b'\n' => {
-                lf = true;
-                i += 1;
-            }
-            _ => i += 1,
-        }
-    }
-    match (lf, cr) {
-        (false, false) => LineEndingKind::None,
-        (true, false) => LineEndingKind::Lf,
-        (false, true) => LineEndingKind::Cr,
-        (true, true) => LineEndingKind::Mixed,
-    }
-}
-
-/// Parse `git cat-file --batch` output into one entry per requested object,
-/// in request order: `Some(bytes)` for a found object, `None` for one git
-/// could not resolve ("<input> missing" and similar). Byte-exact: the
-/// framing declares byte counts, which is why this parses RAW stdout
-/// (`run_with_stdin_bytes`) - the runner's lossy UTF-8 String would shift
-/// them. Returns `None` on a framing violation (fail closed).
-pub fn parse_cat_file_batch(out: &[u8]) -> Option<Vec<Option<Vec<u8>>>> {
-    let mut entries = Vec::new();
-    let mut i = 0usize;
-    while i < out.len() {
-        let nl = out[i..].iter().position(|&b| b == b'\n')? + i;
-        let header = std::str::from_utf8(&out[i..nl]).ok()?;
-        i = nl + 1;
-        // A found object's header is "<oid> <type> <size>"; anything whose
-        // last token isn't a number ("<input> missing", "... ambiguous") is
-        // an unresolvable request.
-        let Some(size) = header.rsplit(' ').next().and_then(|t| t.parse::<usize>().ok())
-        else {
-            entries.push(None);
-            continue;
-        };
-        if i + size > out.len() {
-            return None;
-        }
-        entries.push(Some(out[i..i + size].to_vec()));
-        i += size;
-        // LF terminator after the contents.
-        if out.get(i) == Some(&b'\n') {
-            i += 1;
-        }
-    }
-    Some(entries)
-}
-
-/// Parse `git check-attr -z --stdin text eol` output (path NUL attr NUL
-/// value NUL triples) into per-path line-ending attributes: the `text`
-/// attribute plus whether an `eol=` attribute applies. Output shape is
-/// validated against the real binary in git_flows.rs.
-pub fn parse_check_attr_z(stdout: &str) -> HashMap<String, (EolTextAttr, bool)> {
-    let mut map: HashMap<String, (EolTextAttr, bool)> = HashMap::new();
-    let mut it = stdout.split('\0');
-    while let (Some(path), Some(attr), Some(value)) = (it.next(), it.next(), it.next()) {
-        if path.is_empty() {
-            break;
-        }
-        let entry = map
-            .entry(path.to_string())
-            .or_insert((EolTextAttr::Unspecified, false));
-        match attr {
-            "text" => {
-                entry.0 = match value {
-                    "set" => EolTextAttr::Set,
-                    "unset" => EolTextAttr::Unset,
-                    "auto" => EolTextAttr::Auto,
-                    _ => EolTextAttr::Unspecified,
-                };
-            }
-            "eol" => entry.1 = value != "unspecified" && value != "unset",
-            _ => {}
-        }
-    }
-    map
-}
-
-/// Parse `git check-attr -z --stdin filter` output (path NUL attr NUL value
-/// NUL triples) into the set of paths whose `filter` attribute resolves to
-/// `lfs`. Output shape validated against the real binary in git_flows.rs.
-pub fn parse_check_attr_filter_lfs(stdout: &str) -> HashSet<String> {
-    let mut set = HashSet::new();
-    let mut it = stdout.split('\0');
-    while let (Some(path), Some(attr), Some(value)) = (it.next(), it.next(), it.next()) {
-        if path.is_empty() {
-            break;
-        }
-        if attr == "filter" && value == "lfs" {
-            set.insert(path.to_string());
-        }
-    }
-    set
-}
-
-/// Kinds that can appear in a transition chip: an actual line-ending style.
-fn transitionable(kind: LineEndingKind) -> bool {
-    matches!(
-        kind,
-        LineEndingKind::Lf | LineEndingKind::Crlf | LineEndingKind::Cr | LineEndingKind::Mixed
-    )
-}
-
-fn transition_between(
-    from: Option<LineEndingKind>,
-    to: Option<LineEndingKind>,
-) -> Option<LineEndingTransition> {
-    let (from, to) = (from?, to?);
-    (transitionable(from) && transitionable(to) && from != to)
-        .then_some(LineEndingTransition { from, to })
-}
-
-/// Assemble one changed file's line-ending summary from its (optional)
-/// sides. Pure: the `repo_line_ending_status` command only does IO around
-/// this. `working`/`index`/`head` are the raw bytes of each side, `None`
-/// when that side is missing, unreadable, oversized, or binary-skipped.
-pub fn derive_line_ending_entry(
-    path: &str,
-    working: Option<&[u8]>,
-    index: Option<&[u8]>,
-    head: Option<&[u8]>,
-    text_attr: EolTextAttr,
-    eol_attr_set: bool,
-    autocrlf: AutocrlfSetting,
-) -> LineEndingStatusEntry {
-    let classify = |b: &[u8]| classify_line_endings(&String::from_utf8_lossy(b));
-    let index_kind = index.map(classify);
-    let head_kind = head.map(classify);
-    let working_raw = working.map(classify);
-
-    // What `git add` would store for the working file (the policy-aware side).
-    let checkin = working.map(|b| {
-        let text = String::from_utf8_lossy(b);
-        let raw = classify_line_endings(&text);
-        if checkin_normalizes(text_attr, eol_attr_set, autocrlf, raw, index_kind) {
-            classify_line_endings_normalized(&text)
-        } else {
-            raw
-        }
-    });
-
-    LineEndingStatusEntry {
-        path: path.to_string(),
-        unstaged: transition_between(index_kind, checkin),
-        staged: transition_between(head_kind, index_kind),
-        mixed: working.and_then(mixed_endings_in_bytes).unwrap_or(false),
-        working_raw,
-    }
-}
-
-/// Rewrite every line ending (CRLF, bare LF, or lone CR) in `bytes` to
-/// `target`, leaving all other bytes untouched. No EOL is added or removed,
-/// so a missing trailing newline stays missing. Returns `None` for binary
-/// content (NUL in the leading window, git's heuristic) and for targets that
-/// aren't a concrete kind (only Lf/Crlf/Cr can be converted to). Pure so the
-/// "only EOLs change" contract is unit-tested; backs `repo_revert_line_endings`.
-pub fn convert_line_endings(bytes: &[u8], target: LineEndingKind) -> Option<Vec<u8>> {
-    let eol: &[u8] = match target {
-        LineEndingKind::Lf => b"\n",
-        LineEndingKind::Crlf => b"\r\n",
-        LineEndingKind::Cr => b"\r",
-        _ => return None,
-    };
-    if bytes.iter().take(BINARY_SNIFF_WINDOW).any(|&b| b == 0) {
-        return None;
-    }
-    let mut out = Vec::with_capacity(bytes.len() + bytes.len() / 8);
-    let mut i = 0usize;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\r' if i + 1 < bytes.len() && bytes[i + 1] == b'\n' => {
-                out.extend_from_slice(eol);
-                i += 2;
-            }
-            b'\r' | b'\n' => {
-                out.extend_from_slice(eol);
-                i += 1;
-            }
-            b => {
-                out.push(b);
-                i += 1;
-            }
-        }
-    }
-    Some(out)
-}
-
 /// Case-insensitive substring filter over `git ls-files -z` output, capped at
 /// `max` entries. Pure so the matching rule is unit-tested.
 fn filter_paths(ls_files_stdout: &str, query: &str, max: usize) -> Vec<PathBuf> {
@@ -3917,23 +2943,6 @@ fn find_created_stash(before_list: &str, after_list: &str, marker: &str) -> Opti
         }
     }
     None
-}
-
-/// Pick the branch to attach a submodule's detached HEAD to, given the
-/// configured `.gitmodules` branch (if any) and the local branches whose
-/// tips equal the checked-out commit (`for-each-ref --points-at HEAD`).
-/// The configured branch wins when it matches; otherwise only an
-/// unambiguous single candidate attaches - 2+ candidates stay detached.
-fn choose_attach_branch(configured: Option<&str>, matching: &[String]) -> Option<String> {
-    if let Some(c) = configured {
-        if matching.iter().any(|b| b == c) {
-            return Some(c.to_string());
-        }
-    }
-    match matching {
-        [only] => Some(only.clone()),
-        _ => None,
-    }
 }
 
 fn stash_created(tip_before: Option<&str>, tip_after: Option<&str>) -> Option<String> {
@@ -3985,6 +2994,54 @@ fn classify_switch_error(exit_code: i32, stderr: &str) -> GitError {
         exit_code,
         stderr: stderr.trim().to_string(),
     }
+}
+
+/// Map a failed non-force `git branch -d` to a specific `GitError`: the
+/// "not fully merged" refusal → `BranchNotFullyMerged` (so the UI can offer
+/// a guided force delete), everything else → `CommandFailed`.
+fn classify_branch_delete_error(exit_code: i32, stderr: &str, branch: &str) -> GitError {
+    if stderr.to_lowercase().contains("not fully merged") {
+        return GitError::BranchNotFullyMerged {
+            branch: branch.to_string(),
+            stderr: stderr.trim().to_string(),
+        };
+    }
+    GitError::CommandFailed {
+        exit_code,
+        stderr: stderr.trim().to_string(),
+    }
+}
+
+/// Filter `for-each-ref --contains <tip> --format=%(refname:short)` output
+/// down to the refs that make a branch "already merged": the branch itself,
+/// its remote counterparts (`<remote>/<branch>`), and symbolic `*/HEAD`
+/// entries are excluded — they contain the tip trivially.
+fn filter_containing_refs(stdout: &str, branch: &str) -> Vec<String> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .filter(|r| {
+            !r.is_empty()
+                && *r != branch
+                && !r.ends_with(&format!("/{branch}"))
+                && !r.ends_with("/HEAD")
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+/// Whether `git cherry <baseline> <branch>` output says every commit unique
+/// to the branch has a patch-id equivalent in the baseline (all lines `-`,
+/// at least one line): the squash/rebase-merge signature.
+fn cherry_all_equivalent(stdout: &str) -> bool {
+    let mut any = false;
+    for line in stdout.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        if !line.starts_with('-') {
+            return false;
+        }
+        any = true;
+    }
+    any
 }
 
 /// `git merge` argument list. Non-squash merges pass `--no-edit` explicitly:
@@ -4553,42 +3610,6 @@ mod tests {
         assert_eq!(find_created_stash("", &after, MARKER), Some("bbb".into()));
     }
 
-    // --- submodule branch attach: which branch (if any) to check out ---------
-    // Configured branch wins when its tip is at the commit; otherwise only an
-    // unambiguous single candidate attaches (2+ stay detached).
-
-    #[test]
-    fn choose_attach_branch_configured_match_wins() {
-        let matching = vec!["dev".to_string(), "main".to_string()];
-        assert_eq!(
-            choose_attach_branch(Some("main"), &matching),
-            Some("main".to_string())
-        );
-    }
-
-    #[test]
-    fn choose_attach_branch_unique_match_attaches() {
-        let matching = vec!["feature".to_string()];
-        assert_eq!(choose_attach_branch(None, &matching), Some("feature".to_string()));
-        // Configured branch NOT at this commit: the unique rule still applies.
-        assert_eq!(
-            choose_attach_branch(Some("main"), &matching),
-            Some("feature".to_string())
-        );
-    }
-
-    #[test]
-    fn choose_attach_branch_ambiguous_stays_detached() {
-        let matching = vec!["a".to_string(), "b".to_string()];
-        assert_eq!(choose_attach_branch(None, &matching), None);
-    }
-
-    #[test]
-    fn choose_attach_branch_no_candidates_stays_detached() {
-        assert_eq!(choose_attach_branch(Some("main"), &[]), None);
-        assert_eq!(choose_attach_branch(None, &[]), None);
-    }
-
     // --- sequencer (cherry-pick / revert) output classification --------------
     // The exit-1 ambiguity: a paused sequencer (conflicts) is an OUTCOME, a
     // bad revision or dirty tree is an error. Same treatment as the tested
@@ -4800,270 +3821,6 @@ mod tests {
             "error: Your local changes to the following files would be overwritten by merge:\n\tconflicts.md\nPlease commit your changes or stash them before you merge.\n"
         ));
         assert!(!stash_apply_left_conflicts("", "fatal: ambiguous argument 'stash@{9}'\n"));
-    }
-
-    // --- mixed line-ending detection ------------------------------------------
-
-    #[test]
-    fn mixed_endings_pure_and_mixed() {
-        assert_eq!(mixed_endings_in_bytes(b"a\r\nb\r\n"), Some(false));
-        assert_eq!(mixed_endings_in_bytes(b"a\nb\n"), Some(false));
-        assert_eq!(mixed_endings_in_bytes(b"a\r\nb\n"), Some(true));
-        assert_eq!(mixed_endings_in_bytes(b""), Some(false));
-        assert_eq!(mixed_endings_in_bytes(b"no newline at all"), Some(false));
-    }
-
-    #[test]
-    fn mixed_endings_lone_cr_is_not_lf() {
-        // Old-Mac CR endings are neither CRLF nor LF: a CR+LF file mix still
-        // reports mixed, but CR alone does not create a false LF sighting.
-        assert_eq!(mixed_endings_in_bytes(b"a\rb\r"), Some(false));
-        assert_eq!(mixed_endings_in_bytes(b"a\r\nb\rc\r\n"), Some(false));
-    }
-
-    #[test]
-    fn mixed_endings_binary_is_none() {
-        assert_eq!(mixed_endings_in_bytes(b"ab\0cd\r\nx\n"), None);
-    }
-
-    #[test]
-    fn mixed_endings_sniff_window_matches_classify_line_endings() {
-        // Regression: the NUL probe once stopped at 512 bytes while
-        // classify_line_endings used BINARY_SNIFF_WINDOW (8000, git's
-        // buffer_is_binary) - a NUL between the two made the siblings
-        // disagree. Both must classify identically across the boundary.
-
-        // NUL inside the window but past the old 512-byte probe: binary.
-        let mut inside = vec![b'a'; 600];
-        inside[599] = 0;
-        inside.extend_from_slice(b"\r\nx\n");
-        assert_eq!(mixed_endings_in_bytes(&inside), None);
-        let inside_text = String::from_utf8(inside).unwrap();
-        assert_eq!(classify_line_endings(&inside_text), LineEndingKind::Binary);
-
-        // NUL at the last in-window byte: still binary.
-        let mut edge = vec![b'a'; BINARY_SNIFF_WINDOW];
-        edge[BINARY_SNIFF_WINDOW - 1] = 0;
-        edge.extend_from_slice(b"\r\nx\n");
-        assert_eq!(mixed_endings_in_bytes(&edge), None);
-        let edge_text = String::from_utf8(edge).unwrap();
-        assert_eq!(classify_line_endings(&edge_text), LineEndingKind::Binary);
-
-        // NUL just past the window: text for both (git's heuristic ignores
-        // it), so the mixed endings still register.
-        let mut outside = vec![b'a'; BINARY_SNIFF_WINDOW];
-        outside.extend_from_slice(b"\0\r\nx\n");
-        assert_eq!(mixed_endings_in_bytes(&outside), Some(true));
-        let outside_text = String::from_utf8(outside).unwrap();
-        assert_eq!(classify_line_endings(&outside_text), LineEndingKind::Mixed);
-    }
-
-    #[test]
-    fn mixed_endings_crlf_never_counts_as_lf() {
-        // The LF in a CRLF pair must not read as a bare LF.
-        assert_eq!(mixed_endings_in_bytes(b"\r\n\r\n\r\n"), Some(false));
-    }
-
-    // --- line-ending classification -----------------------------------------
-
-    #[test]
-    fn classify_line_endings_pure_kinds() {
-        assert_eq!(classify_line_endings("a\nb\nc\n"), LineEndingKind::Lf);
-        assert_eq!(classify_line_endings("a\r\nb\r\n"), LineEndingKind::Crlf);
-        assert_eq!(classify_line_endings("a\rb\r"), LineEndingKind::Cr);
-    }
-
-    #[test]
-    fn classify_line_endings_mixed_and_edge_cases() {
-        assert_eq!(classify_line_endings("a\r\nb\nc\n"), LineEndingKind::Mixed);
-        assert_eq!(classify_line_endings("lone line, no break"), LineEndingKind::None);
-        assert_eq!(classify_line_endings(""), LineEndingKind::None);
-        // A lone CR mixed with CRLF is still mixed.
-        assert_eq!(classify_line_endings("a\r\nb\rc"), LineEndingKind::Mixed);
-    }
-
-    #[test]
-    fn classify_line_endings_binary_wins() {
-        assert_eq!(classify_line_endings("a\0b\r\n"), LineEndingKind::Binary);
-    }
-
-    // --- check-in normalization ----------------------------------------------
-
-    #[test]
-    fn parse_autocrlf_values() {
-        assert_eq!(parse_autocrlf("true\n"), AutocrlfSetting::True);
-        assert_eq!(parse_autocrlf("input"), AutocrlfSetting::Input);
-        assert_eq!(parse_autocrlf("false\n"), AutocrlfSetting::False);
-        assert_eq!(parse_autocrlf(""), AutocrlfSetting::False);
-        assert_eq!(parse_autocrlf("TRUE"), AutocrlfSetting::True);
-    }
-
-    #[test]
-    fn checkin_normalizes_matrix() {
-        use AutocrlfSetting as A;
-        use EolTextAttr as T;
-        use LineEndingKind as K;
-        // Explicit text attr: always normalizes, even when the index has CRLF.
-        assert!(checkin_normalizes(T::Set, false, A::False, K::Crlf, Some(K::Crlf)));
-        // -text / binary attr: never.
-        assert!(!checkin_normalizes(T::Unset, false, A::True, K::Crlf, None));
-        // Binary content: never, regardless of attrs.
-        assert!(!checkin_normalizes(T::Set, false, A::True, K::Binary, None));
-        // text=auto: yes, unless the indexed blob already contains CRLF.
-        assert!(checkin_normalizes(T::Auto, false, A::False, K::Crlf, Some(K::Lf)));
-        assert!(checkin_normalizes(T::Auto, false, A::False, K::Crlf, None));
-        assert!(!checkin_normalizes(T::Auto, false, A::False, K::Crlf, Some(K::Crlf)));
-        assert!(!checkin_normalizes(T::Auto, false, A::False, K::Crlf, Some(K::Mixed)));
-        // No attr: core.autocrlf decides, with the same index-CRLF exemption.
-        assert!(checkin_normalizes(T::Unspecified, false, A::True, K::Crlf, Some(K::Lf)));
-        assert!(checkin_normalizes(T::Unspecified, false, A::Input, K::Crlf, None));
-        assert!(!checkin_normalizes(T::Unspecified, false, A::False, K::Crlf, None));
-        assert!(!checkin_normalizes(T::Unspecified, false, A::True, K::Crlf, Some(K::Crlf)));
-        // An eol= attribute alone implies text: always normalizes.
-        assert!(checkin_normalizes(T::Unspecified, true, A::False, K::Crlf, Some(K::Crlf)));
-    }
-
-    #[test]
-    fn classify_normalized_treats_crlf_as_lf() {
-        use LineEndingKind as K;
-        assert_eq!(classify_line_endings_normalized("a\r\nb\r\n"), K::Lf);
-        assert_eq!(classify_line_endings_normalized("a\r\nb\n"), K::Lf);
-        assert_eq!(classify_line_endings_normalized("a\nb\n"), K::Lf);
-        // Lone CR is never converted by git.
-        assert_eq!(classify_line_endings_normalized("a\rb\r"), K::Cr);
-        assert_eq!(classify_line_endings_normalized("a\r\nb\r"), K::Mixed);
-        assert_eq!(classify_line_endings_normalized("no newline"), K::None);
-        assert_eq!(classify_line_endings_normalized("bin\0ary\r\n"), K::Binary);
-    }
-
-    #[test]
-    fn parse_cat_file_batch_found_missing_and_binary() {
-        // Two found objects (one containing NUL bytes and a newline) + one missing.
-        let mut out: Vec<u8> = Vec::new();
-        out.extend_from_slice(b"1111111111111111111111111111111111111111 blob 5\nab\ncd");
-        out.push(b'\n');
-        out.extend_from_slice(b":gone.txt missing\n");
-        out.extend_from_slice(b"2222222222222222222222222222222222222222 blob 3\na\0b");
-        out.push(b'\n');
-        let parsed = parse_cat_file_batch(&out).expect("framing ok");
-        assert_eq!(parsed.len(), 3);
-        assert_eq!(parsed[0].as_deref(), Some(b"ab\ncd".as_slice()));
-        assert_eq!(parsed[1], None);
-        assert_eq!(parsed[2].as_deref(), Some(b"a\0b".as_slice()));
-    }
-
-    #[test]
-    fn parse_cat_file_batch_rejects_truncated_output() {
-        let out = b"1111111111111111111111111111111111111111 blob 99\nshort\n";
-        assert_eq!(parse_cat_file_batch(out), None);
-    }
-
-    #[test]
-    fn parse_check_attr_z_shapes() {
-        use EolTextAttr as T;
-        // path NUL attr NUL value NUL triples, one per (path, attr).
-        let stdout = "a.txt\0text\0set\0a.txt\0eol\0unspecified\0\
-                      b.bin\0text\0unset\0b.bin\0eol\0unspecified\0\
-                      c.txt\0text\0auto\0c.txt\0eol\0lf\0\
-                      d.txt\0text\0unspecified\0d.txt\0eol\0unspecified\0";
-        let map = parse_check_attr_z(stdout);
-        assert_eq!(map["a.txt"], (T::Set, false));
-        assert_eq!(map["b.bin"], (T::Unset, false));
-        assert_eq!(map["c.txt"], (T::Auto, true));
-        assert_eq!(map["d.txt"], (T::Unspecified, false));
-    }
-
-    #[test]
-    fn parse_check_attr_filter_lfs_shapes() {
-        // path NUL attr NUL value NUL triples, exactly like check-attr -z.
-        let stdout = "a.png\0filter\0lfs\0b.txt\0filter\0unspecified\0c.bin\0filter\0lfs\0";
-        let set = parse_check_attr_filter_lfs(stdout);
-        assert!(set.contains("a.png"));
-        assert!(set.contains("c.bin"));
-        assert!(!set.contains("b.txt"));
-        assert_eq!(set.len(), 2);
-        // Empty output (no paths sent / all unspecified) parses to empty.
-        assert!(parse_check_attr_filter_lfs("").is_empty());
-    }
-
-    #[test]
-    fn derive_line_ending_entry_transitions() {
-        use AutocrlfSetting as A;
-        use EolTextAttr as T;
-        use LineEndingKind as K;
-        let d = |working: Option<&[u8]>, index: Option<&[u8]>, head: Option<&[u8]>, a: A| {
-            derive_line_ending_entry("f.txt", working, index, head, T::Unspecified, false, a)
-        };
-        // Plain flip, no policy: index LF, working CRLF -> unstaged LF->CRLF.
-        let e = d(Some(b"a\r\nb\r\n"), Some(b"a\nb\n"), Some(b"a\nb\n"), A::False);
-        assert_eq!(e.unstaged, Some(LineEndingTransition { from: K::Lf, to: K::Crlf }));
-        assert_eq!(e.staged, None);
-        assert_eq!(e.working_raw, Some(K::Crlf));
-        assert!(!e.mixed);
-        // Same bytes under autocrlf=true: the CRLF is policy, no transition.
-        let e = d(Some(b"a\r\nb\r\n"), Some(b"a\nb\n"), Some(b"a\nb\n"), A::True);
-        assert_eq!(e.unstaged, None);
-        assert_eq!(e.working_raw, Some(K::Crlf)); // label still shows disk truth
-        // Staged flip: HEAD LF vs index CRLF -> staged LF->CRLF.
-        let e = d(Some(b"a\r\n"), Some(b"a\r\n"), Some(b"a\n"), A::False);
-        assert_eq!(e.staged, Some(LineEndingTransition { from: K::Lf, to: K::Crlf }));
-        // Newly mixed staged counts as a transition.
-        let e = d(None, Some(b"a\r\nb\n"), Some(b"a\nb\n"), A::False);
-        assert_eq!(e.staged, Some(LineEndingTransition { from: K::Lf, to: K::Mixed }));
-        // Mixed working file flags `mixed`.
-        let e = d(Some(b"a\r\nb\n"), Some(b"a\r\nb\n"), None, A::False);
-        assert!(e.mixed);
-        // Untracked (no index/HEAD): no transitions, raw label only.
-        let e = d(Some(b"a\r\n"), None, None, A::False);
-        assert_eq!(e.unstaged, None);
-        assert_eq!(e.staged, None);
-        assert_eq!(e.working_raw, Some(K::Crlf));
-        // A side with no line breaks never forms a transition.
-        let e = d(Some(b"one line"), Some(b"a\n"), None, A::False);
-        assert_eq!(e.unstaged, None);
-    }
-
-    // --- line-ending conversion ----------------------------------------------
-
-    #[test]
-    fn convert_line_endings_lf_to_crlf_and_back() {
-        assert_eq!(convert_line_endings(b"a\nb\nc\n", LineEndingKind::Crlf).unwrap(), b"a\r\nb\r\nc\r\n");
-        assert_eq!(convert_line_endings(b"a\r\nb\r\nc\r\n", LineEndingKind::Lf).unwrap(), b"a\nb\nc\n");
-    }
-
-    #[test]
-    fn convert_line_endings_mixed_input_becomes_uniform() {
-        // CRLF + bare LF + lone CR all become the target.
-        assert_eq!(convert_line_endings(b"a\r\nb\nc\rd\n", LineEndingKind::Lf).unwrap(), b"a\nb\nc\nd\n");
-        assert_eq!(
-            convert_line_endings(b"a\r\nb\nc\rd\n", LineEndingKind::Crlf).unwrap(),
-            b"a\r\nb\r\nc\r\nd\r\n"
-        );
-    }
-
-    #[test]
-    fn convert_line_endings_preserves_missing_trailing_newline() {
-        // No EOL is added or removed; only existing EOLs change kind.
-        assert_eq!(convert_line_endings(b"a\r\nb", LineEndingKind::Lf).unwrap(), b"a\nb");
-        assert_eq!(convert_line_endings(b"", LineEndingKind::Lf).unwrap(), b"");
-        assert_eq!(convert_line_endings(b"no breaks", LineEndingKind::Crlf).unwrap(), b"no breaks");
-    }
-
-    #[test]
-    fn convert_line_endings_to_cr_and_noop() {
-        assert_eq!(convert_line_endings(b"a\nb\r\n", LineEndingKind::Cr).unwrap(), b"a\rb\r");
-        // Already uniform at the target: content is unchanged.
-        assert_eq!(convert_line_endings(b"a\nb\n", LineEndingKind::Lf).unwrap(), b"a\nb\n");
-    }
-
-    #[test]
-    fn convert_line_endings_refuses_binary_and_bad_targets() {
-        // NUL in the sniff window: binary, refuse.
-        assert_eq!(convert_line_endings(b"a\0b\r\n", LineEndingKind::Lf), None);
-        // Only Lf/Crlf/Cr are meaningful conversion targets.
-        assert_eq!(convert_line_endings(b"a\nb\n", LineEndingKind::Mixed), None);
-        assert_eq!(convert_line_endings(b"a\nb\n", LineEndingKind::None), None);
-        assert_eq!(convert_line_endings(b"a\nb\n", LineEndingKind::Binary), None);
     }
 
     // --- repo-wide file classification (Files tree) -------------------------
@@ -5325,6 +4082,48 @@ mod tests {
             classify_switch_error(128, stderr),
             GitError::CommandFailed { exit_code: 128, .. }
         ));
+    }
+
+    #[test]
+    fn branch_delete_not_fully_merged_is_classified() {
+        let stderr = "error: The branch 'feature' is not fully merged.\nhint: If you are sure you want to delete it, run 'git branch -D feature'.\n";
+        match classify_branch_delete_error(1, stderr, "feature") {
+            GitError::BranchNotFullyMerged { branch, stderr: s } => {
+                assert_eq!(branch, "feature");
+                assert!(s.contains("not fully merged"));
+            }
+            other => panic!("expected BranchNotFullyMerged, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn branch_delete_other_failure_is_command_failed() {
+        let stderr = "error: branch 'nope' not found.";
+        assert!(matches!(
+            classify_branch_delete_error(1, stderr, "nope"),
+            GitError::CommandFailed { exit_code: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn containing_refs_exclude_self_remote_counterparts_and_head() {
+        let stdout = "feature\nmain\norigin/feature\norigin/HEAD\norigin/main\n";
+        assert_eq!(
+            filter_containing_refs(stdout, "feature"),
+            vec!["main".to_string(), "origin/main".to_string()]
+        );
+    }
+
+    #[test]
+    fn containing_refs_empty_when_only_self_contains() {
+        assert!(filter_containing_refs("feature\norigin/feature\n", "feature").is_empty());
+    }
+
+    #[test]
+    fn cherry_all_equivalent_requires_nonempty_all_minus() {
+        assert!(cherry_all_equivalent("- 7a5e5f\n- 9b2c1d\n"));
+        assert!(!cherry_all_equivalent("+ 7a5e5f\n- 9b2c1d\n"));
+        assert!(!cherry_all_equivalent(""));
     }
 
     #[test]

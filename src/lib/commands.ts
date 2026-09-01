@@ -8,6 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { CommitDateFormat } from "./time";
 import type {
   Branch,
+  BranchMergeAnalysis,
   Commit,
   CommitDetails,
   CommitId,
@@ -808,6 +809,9 @@ export const repoSwitchBranch = (repoId: string, name: string) =>
 
 export const repoDeleteBranch = (repoId: string, name: string, force: boolean) =>
   invoke<void>("repo_delete_branch", { repoId, name, force });
+
+export const repoBranchMergeAnalysis = (repoId: string, name: string) =>
+  invoke<BranchMergeAnalysis>("repo_branch_merge_analysis", { repoId, name });
 
 export const repoDeleteRemoteBranch = (repoId: string, remote: string, name: string, opId: string) =>
   invoke<void>("repo_delete_remote_branch", { repoId, remote, name, opId });

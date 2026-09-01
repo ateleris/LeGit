@@ -144,6 +144,46 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 
 ## Smaller follow-ups
 
+- **LFS: actionable error when objects are missing on the remote**
+  (2026-09-01). Repro: user B commits/pushes LFS pointers but the LFS
+  objects never reach the server (forgot `git lfs push` / hook missing);
+  user A pulls or checks out and git's smudge-filter error ("Object does
+  not exist on the server", 404 noise) surfaces raw - it names neither the
+  cause nor the fix. Approach: classify the LFS smudge/download failure in
+  the error-classification seam (GitError variant + `formatAppError` text)
+  and surface "LFS objects referenced by this commit are missing on the
+  remote - whoever pushed the commit needs to upload them (git lfs push)",
+  ideally naming the offending file(s) parsed from stderr.
+
+- **Remote repositories: v1 deferrals** (2026-08-31, with the WSL feature —
+  architecture in `design/2026-08-31-remote-repositories-wsl.md`):
+  - **SSH hosts.** The protocol/transport is already agnostic (an
+    `AgentTransport` supplies byte pipes; the agent is a static musl
+    binary). Needs: an `SshTransport` (spawn `ssh.exe <host> <agent>
+    --stdio`), deploy over ssh/scp, an `ssh://user@host/path` locator
+    variant + `HostId::Ssh`, and host management UX. No protocol changes
+    expected.
+  - **Remote clone/init.** v1 only OPENS existing WSL repos; `repo_init` /
+    `repo_clone` still resolve their paths locally. Route them through a
+    host + locator like `probe_and_open` (clone needs the transient-op
+    cancel path, which is already `Arc<dyn GitExecutor>`).
+  - **Per-host git overrides.** Remote repos use PATH `git` from the
+    agent's login-shell env; the per-repo override is refused for remote
+    sessions (`set_repo_git_path`). Plan: `<app-data>/hosts/wsl-<distro>.json`
+    (Option-fields convention) + a "Remote hosts" settings section; the
+    remote per-repo override then stops being refused (its picker must not
+    browse the app machine).
+  - **Dedicated AgentGone error variant.** A dead connection surfaces as a
+    RunnerError::Io/FsError message ("agent connection lost") — correct but
+    unclassified; a `GitError` variant would let panels render "host
+    disconnected, reconnecting…" instead of a generic failure.
+  - **Binary sidecar frames.** Blob reads/`cat-file --batch` stdout cross
+    as base64 (capped, fine in practice); the handshake reserves
+    `encodings` for a `json1+bin` upgrade if profiling ever cares.
+  - **Agent-side askpass prompt polish.** SSH askpass relays through the
+    same broker as local (passphrase cache included); confirmations show
+    ssh's raw prompt text — fine, but the dialog could name the distro.
+
 - **Settings sync via a user-configured directory path** (2026-08-21,
   scope sharpened 2026-08-21 after design review; demand-driven - do not
   build before someone asks). A read-only "inherit from path" layer so one

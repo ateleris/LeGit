@@ -2806,6 +2806,103 @@ async fn push_flips_the_tag_lists_target_on_remote_flag() {
     );
 }
 
+// Pins the real `git branch -d` refusal (exit code + "not fully merged"
+// stderr) that `classify_branch_delete_error` matches on.
+#[tokio::test]
+async fn branch_delete_unmerged_refusal_classifies() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["switch", "-c", "feature"]).await;
+    repo.write("f.txt", "work\n");
+    repo.commit_all("feature work").await;
+    repo.git(&["switch", "main"]).await;
+
+    let err = repo
+        .backend
+        .delete_branch("feature", false)
+        .await
+        .expect_err("unmerged safe delete must be refused");
+    match err {
+        GitError::BranchNotFullyMerged { branch, stderr } => {
+            assert_eq!(branch, "feature");
+            assert!(
+                stderr.to_lowercase().contains("not fully merged"),
+                "unexpected stderr: {stderr}"
+            );
+        }
+        other => panic!("expected BranchNotFullyMerged, got {other:?}"),
+    }
+}
+
+// A true (`--no-ff`) merge whose result the checked-out branch does not yet
+// contain: `-d` is still refused, but the analysis names the merged-into ref.
+#[tokio::test]
+async fn branch_merge_analysis_reports_a_true_merge() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    let base = repo.head().await;
+    repo.git(&["switch", "-c", "feature"]).await;
+    repo.write("f.txt", "work\n");
+    repo.commit_all("feature work").await;
+    repo.git(&["switch", "main"]).await;
+    repo.git(&["merge", "--no-ff", "--no-edit", "feature"]).await;
+    repo.git(&["switch", "-c", "other", &base]).await;
+
+    let err = repo.backend.delete_branch("feature", false).await.expect_err("refused");
+    assert!(matches!(err, GitError::BranchNotFullyMerged { .. }), "{err:?}");
+
+    let a = repo.backend.branch_merge_analysis("feature").await.unwrap();
+    assert_eq!(a.merged_into, vec!["main".to_string()]);
+    assert_eq!(a.equivalent_in, None, "no remote, so no baseline");
+}
+
+// The PR squash-merge shape: the branch's changes landed on the remote
+// default branch under a different SHA, so no ref contains the tip - only
+// the patch-id check can say the work is merged.
+#[tokio::test]
+async fn branch_merge_analysis_detects_a_squash_merge_on_the_remote() {
+    let (_keep, _remote_path, url) = bare_remote().await;
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["remote", "add", "origin", &url]).await;
+    repo.git(&["push", "-u", "origin", "main"]).await;
+
+    repo.git(&["switch", "-c", "feature"]).await;
+    repo.write("f.txt", "work\n");
+    repo.commit_all("feature work").await;
+    repo.git(&["switch", "main"]).await;
+    repo.git(&["merge", "--squash", "feature"]).await;
+    repo.git(&["commit", "-m", "feature (#1)"]).await;
+    repo.git(&["push", "origin", "main"]).await;
+
+    let err = repo.backend.delete_branch("feature", false).await.expect_err("refused");
+    assert!(matches!(err, GitError::BranchNotFullyMerged { .. }), "{err:?}");
+
+    let a = repo.backend.branch_merge_analysis("feature").await.unwrap();
+    assert!(a.merged_into.is_empty(), "{a:?}");
+    assert_eq!(a.equivalent_in.as_deref(), Some("origin/main"));
+}
+
+// Genuinely unmerged work must trip neither signal - the UI's data-loss
+// warning depends on both staying empty.
+#[tokio::test]
+async fn branch_merge_analysis_reports_nothing_for_unmerged_work() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["switch", "-c", "feature"]).await;
+    repo.write("f.txt", "work\n");
+    repo.commit_all("feature work").await;
+    repo.git(&["switch", "main"]).await;
+
+    let a = repo.backend.branch_merge_analysis("feature").await.unwrap();
+    assert!(a.merged_into.is_empty(), "{a:?}");
+    assert_eq!(a.equivalent_in, None);
+}
+
 #[tokio::test]
 async fn delete_remote_branch_removes_it_from_the_remote_only() {
     let (_keep, remote_path, url) = bare_remote().await;
@@ -3461,7 +3558,7 @@ async fn delete_branch_safe_refuses_unmerged_force_deletes() {
 
     let err = repo.backend.delete_branch("wip", false).await.unwrap_err();
     assert!(
-        matches!(&err, GitError::CommandFailed { stderr, .. } if stderr.contains("not fully merged")),
+        matches!(&err, GitError::BranchNotFullyMerged { branch, .. } if branch == "wip"),
         "safe delete must refuse an unmerged branch, got {err:?}"
     );
     // The branch survived the refused delete.

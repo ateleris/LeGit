@@ -802,6 +802,17 @@ export interface Branch {
   created_at: number;
 }
 
+/** Post-refusal analysis for a "not fully merged" branch delete. */
+export interface BranchMergeAnalysis {
+  /** Refs (short names) that already contain the branch tip - a true merge
+   * landed and only the checked-out base is stale. The branch itself, its
+   * remote counterparts, and remote HEAD symrefs are excluded. */
+  merged_into: string[];
+  /** Baseline ref (e.g. "origin/main") holding a patch-id equivalent of
+   * every commit unique to the branch (squash/rebase merge), if found. */
+  equivalent_in: string | null;
+}
+
 export type SwitchOutcome =
   | { kind: "clean" }
   /** `stash_and_keep`: the uncommitted changes were deliberately left parked

@@ -10,7 +10,7 @@
 use super::*;
 use crate::executor::GitExecutor;
 use crate::runner::{RunOutput, RunnerError};
-use crate::types::{BlobBytes, KeyId};
+use crate::types::{BlobBytes, KeyId, SubmoduleAutoUpdateStatus};
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
@@ -2790,7 +2790,7 @@ async fn delete_branch_safe_vs_force_flag() {
 }
 
 #[tokio::test]
-async fn delete_branch_failure_surfaces_stderr() {
+async fn delete_branch_unmerged_refusal_is_classified() {
     let fake = FakeExecutor::default();
     fake.expect(
         &["branch", "-d", "--end-of-options", "feat"],
@@ -2800,9 +2800,72 @@ async fn delete_branch_failure_surfaces_stderr() {
 
     let err = b.delete_branch("feat", false).await.unwrap_err();
     assert!(
-        matches!(&err, GitError::CommandFailed { stderr, .. } if stderr.contains("not fully merged")),
+        matches!(&err, GitError::BranchNotFullyMerged { branch, stderr }
+            if branch == "feat" && stderr.contains("not fully merged")),
         "{err:?}"
     );
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn branch_merge_analysis_runs_contains_and_cherry_against_the_remote_default() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "--verify", "refs/heads/feat"], ok("abc123\n"));
+    fake.expect(
+        &["for-each-ref", "--contains", "abc123", "--format=%(refname:short)", "refs/heads", "refs/remotes"],
+        ok("feat\norigin/feat\norigin/HEAD\norigin/main\n"),
+    );
+    fake.expect(&["remote"], ok("origin\n"));
+    fake.expect(&["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], ok("origin/main\n"));
+    fake.expect(&["cherry", "origin/main", "refs/heads/feat"], ok("- 7a5e5f\n- 9b2c1d\n"));
+    let (b, exec) = backend(fake);
+
+    let a = b.branch_merge_analysis("feat").await.unwrap();
+    assert_eq!(a.merged_into, vec!["origin/main".to_string()]);
+    assert_eq!(a.equivalent_in.as_deref(), Some("origin/main"));
+    exec.assert_done();
+}
+
+// An unset `refs/remotes/<remote>/HEAD` symref (only clones set it) falls
+// back to probing <remote>/main, then <remote>/master.
+#[tokio::test]
+async fn branch_merge_analysis_falls_back_to_main_when_head_symref_is_unset() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "--verify", "refs/heads/feat"], ok("abc123\n"));
+    fake.expect(
+        &["for-each-ref", "--contains", "abc123", "--format=%(refname:short)", "refs/heads", "refs/remotes"],
+        ok("feat\n"),
+    );
+    fake.expect(&["remote"], ok("origin\n"));
+    fake.expect(
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        fail(128, "fatal: ref refs/remotes/origin/HEAD is not a symbolic ref"),
+    );
+    fake.expect(&["rev-parse", "--verify", "--quiet", "refs/remotes/origin/main"], ok("def456\n"));
+    fake.expect(&["cherry", "origin/main", "refs/heads/feat"], ok("+ 7a5e5f\n"));
+    let (b, exec) = backend(fake);
+
+    let a = b.branch_merge_analysis("feat").await.unwrap();
+    assert!(a.merged_into.is_empty(), "{a:?}");
+    assert_eq!(a.equivalent_in, None, "a `+` line means unmatched commits");
+    exec.assert_done();
+}
+
+// No remotes: no baseline exists, so the cherry check must NOT run.
+#[tokio::test]
+async fn branch_merge_analysis_without_remotes_skips_the_cherry_check() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "--verify", "refs/heads/feat"], ok("abc123\n"));
+    fake.expect(
+        &["for-each-ref", "--contains", "abc123", "--format=%(refname:short)", "refs/heads", "refs/remotes"],
+        ok("feat\nmain\n"),
+    );
+    fake.expect(&["remote"], ok(""));
+    let (b, exec) = backend(fake);
+
+    let a = b.branch_merge_analysis("feat").await.unwrap();
+    assert_eq!(a.merged_into, vec!["main".to_string()]);
+    assert_eq!(a.equivalent_in, None);
     exec.assert_done();
 }
 

@@ -17,6 +17,7 @@ import {
   repoRebase,
   repoSetUpstream,
 } from "../../lib/commands";
+import { deleteBranchGuided } from "../../lib/branchDelete";
 import { groupRemoteBranches, shortRemoteBranchName, splitRemoteRef } from "../../lib/branchGroups";
 import { ChevronDownIcon, ChevronRightIcon } from "../../icons";
 import { Button } from "../shared/buttons";
@@ -240,7 +241,7 @@ export function BranchesSection() {
     if (confirmDestructive) {
       const ok = await confirmDialog({
         title: "Delete branch",
-        message: "Deletes the local branch (safe delete: git refuses if it is not fully merged).",
+        message: "Deletes the local branch (safe delete: a not fully merged branch prompts with guidance first).",
         detail: b.name,
         confirmLabel: "Delete branch",
       });
@@ -249,8 +250,13 @@ export function BranchesSection() {
     void doDelete(b.name, false);
   };
 
+  // Safe deletes go through the guided flow: a "not fully merged" refusal
+  // raises the central dialog with a case-specific force-delete offer.
   const doDelete = async (name: string, force: boolean) => {
-    if (await runMut(() => repoDeleteBranch(repo!.id, name, force))) setEdit(null);
+    const action = force
+      ? () => repoDeleteBranch(repo!.id, name, true)
+      : () => deleteBranchGuided(repo!.id, name);
+    if (await runMut(action)) setEdit(null);
   };
 
   const doCheckout = async (name: string) => {
