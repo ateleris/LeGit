@@ -16,6 +16,7 @@ use tauri::{Emitter, Manager as _};
 use tokio::sync::oneshot;
 
 use crate::error::AppError;
+use crate::remote::RepoLocator;
 use crate::state::AppState;
 
 /// Event carrying host connectivity changes to the frontend.
@@ -278,8 +279,22 @@ fn build_sinks(app: tauri::AppHandle, distro: String) -> HostSinks {
     }
 }
 
+/// Whether auto-reconnect should keep trying: only while at least one open
+/// repo session lives on that distro. A host connected for SETTINGS only
+/// (the `Git (WSL)` group probes a distro without any repo open on it) is
+/// never released — `release_wsl_host` runs from `close_repo` alone — so
+/// without this check the loop would restart the distro every 15s forever
+/// after a `wsl --shutdown`, silently keeping a WSL VM alive the user
+/// deliberately stopped. Settings-only hosts instead show "disconnected" and
+/// wait for the user's explicit Reconnect. Pure; unit-tested.
+pub(crate) fn should_keep_reconnecting(distro: &str, sessions: &[RepoLocator]) -> bool {
+    sessions
+        .iter()
+        .any(|l| matches!(l, RepoLocator::Wsl { distro: d, .. } if d == distro))
+}
+
 /// Try to bring a dead host back: 1s, 2s, 5s, then every 15s — for as long as
-/// the host is still registered (its last repo tab hasn't been closed).
+/// the host is still registered AND repos are open on it.
 /// `wsl --shutdown` mid-session ends here: the next attempt restarts the
 /// distro, respawns the agent, reattaches sessions, and re-registers watches.
 async fn reconnect_with_backoff(app: tauri::AppHandle, distro: String) {
@@ -301,6 +316,18 @@ async fn reconnect_with_backoff(app: tauri::AppHandle, distro: String) {
         {
             return;
         }
+        // Stop for a settings-only host: nothing depends on it being live.
+        let locators: Vec<RepoLocator> = state
+            .repos
+            .read()
+            .await
+            .values()
+            .map(|s| s.locator.clone())
+            .collect();
+        if !should_keep_reconnecting(&distro, &locators) {
+            tracing::debug!(distro, "no repos open on this distro - not reconnecting");
+            return;
+        }
         match ensure_wsl_host(&app, &state, &distro).await {
             Ok(host) if host.is_alive() => {
                 tracing::info!(distro, "wsl host reconnected");
@@ -314,5 +341,42 @@ async fn reconnect_with_backoff(app: tauri::AppHandle, distro: String) {
                 tracing::debug!(distro, err = %e, attempt, "wsl reconnect attempt failed");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use legit_core::HostPath;
+    use std::path::PathBuf;
+
+    fn wsl(distro: &str) -> RepoLocator {
+        RepoLocator::Wsl {
+            distro: distro.into(),
+            path: HostPath("/home/u/repo".into()),
+        }
+    }
+
+    #[test]
+    fn reconnects_while_a_repo_lives_on_the_distro() {
+        assert!(should_keep_reconnecting("Ubuntu", &[wsl("Ubuntu")]));
+        assert!(should_keep_reconnecting(
+            "Ubuntu",
+            &[wsl("Debian"), wsl("Ubuntu")]
+        ));
+    }
+
+    // A settings-only connection (the Git (WSL) group probed a distro with no
+    // repo open on it) must NOT keep restarting the distro.
+    #[test]
+    fn settings_only_host_is_not_reconnected() {
+        assert!(!should_keep_reconnecting("Ubuntu", &[]));
+        assert!(!should_keep_reconnecting("Ubuntu", &[wsl("Debian")]));
+        assert!(!should_keep_reconnecting(
+            "Ubuntu",
+            &[RepoLocator::Local {
+                path: PathBuf::from("/home/u/local")
+            }]
+        ));
     }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatWslLocator, hostLabel, parseLocator } from "./locator";
+import { formatWslLocator, hostLabel, parseLocator, supportsRepoGitOverride } from "./locator";
 
 describe("parseLocator", () => {
   it("treats bare paths as local, byte-identical", () => {
@@ -29,5 +29,18 @@ describe("hostLabel", () => {
     expect(hostLabel({ kind: "wsl", distro: "Ubuntu" })).toBe("Ubuntu");
     expect(hostLabel(null)).toBeNull();
     expect(hostLabel(undefined)).toBeNull();
+  });
+});
+
+describe("supportsRepoGitOverride", () => {
+  it("allows a per-repo override for local repos only", () => {
+    expect(supportsRepoGitOverride(null)).toBe(true);
+    expect(supportsRepoGitOverride(undefined)).toBe(true);
+  });
+
+  // The backend rejects it (`set_repo_git_path`), and a Windows file dialog
+  // cannot pick a binary inside a distro — so the UI must not offer it.
+  it("refuses it for a WSL repo", () => {
+    expect(supportsRepoGitOverride({ kind: "wsl", distro: "Ubuntu" })).toBe(false);
   });
 });

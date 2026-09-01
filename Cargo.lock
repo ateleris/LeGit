@@ -2147,6 +2147,7 @@ dependencies = [
 name = "legit-app"
 version = "1.0.3"
 dependencies = [
+ "async-trait",
  "base64 0.22.1",
  "dirs",
  "keyring",

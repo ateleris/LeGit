@@ -107,6 +107,58 @@ export const wslHostGitStatus = (distro: string) =>
 export const setWslHostGitPath = (distro: string, path: string | null) =>
   invoke<GitStatus>("set_wsl_host_git_path", { distro, path });
 
+// Git configuration INSIDE a WSL distribution — the `Git (WSL)` settings
+// group. A deliberately separate command surface from the `global_*` ones (see
+// src-tauri/src/commands/settings_host.rs): there is no argument by which one
+// of these could write the app machine's config. Every call CONNECTS to the
+// distro, starting it if stopped, so they only run on explicit user action.
+
+export const wslIdentityView = (distro: string) =>
+  invoke<IdentityView>("wsl_identity_view", { distro });
+
+export const wslWriteIdentity = (
+  distro: string,
+  name: string | null,
+  email: string | null
+) => invoke<IdentityView>("wsl_write_identity", { distro, name, email });
+
+export const wslSigningConfig = (distro: string) =>
+  invoke<SigningView>("wsl_signing_config", { distro });
+
+export const wslWriteSigning = (
+  distro: string,
+  gpgsign: string | null,
+  format: string | null,
+  signingKey: string | null,
+  allowedSigners: string | null
+) =>
+  invoke<SigningView>("wsl_write_signing", {
+    distro,
+    gpgsign,
+    format,
+    signingKey,
+    allowedSigners,
+  });
+
+export const wslCredentialHelperView = (distro: string) =>
+  invoke<CredentialHelperView>("wsl_credential_helper_view", { distro });
+
+export const wslWriteCredentialHelper = (distro: string, helper: string | null) =>
+  invoke<CredentialHelperView>("wsl_write_credential_helper", { distro, helper });
+
+/** Helpers installed INSIDE the distro (never Windows' manager/wincred). */
+export const wslAvailableCredentialHelpers = (distro: string) =>
+  invoke<AvailableHelper[]>("wsl_available_credential_helpers", { distro });
+
+export const wslLineEndingsView = (distro: string) =>
+  invoke<LineEndingsView>("wsl_line_endings_view", { distro });
+
+export const wslWriteLineEndings = (
+  distro: string,
+  autocrlf: string | null,
+  eol: string | null
+) => invoke<LineEndingsView>("wsl_write_line_endings", { distro, autocrlf, eol });
+
 /** The `--open <locator>` a fresh launch carried, if any (consumed once). */
 export const takePendingOpen = () => invoke<string | null>("take_pending_open");
 

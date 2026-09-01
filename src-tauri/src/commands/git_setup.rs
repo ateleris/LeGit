@@ -89,7 +89,11 @@ pub async fn set_repo_git_path(
 ) -> Result<RepoSummary, AppError> {
     let session = state.get_session(&repo_id).await?;
     // Per-repo git overrides for REMOTE repos are deferred (the picker would
-    // browse the wrong machine; a per-host settings surface is planned).
+    // browse the wrong machine). The per-host surface exists now — Settings ->
+    // Git (WSL), `set_wsl_host_git_path` — and Repo Settings hides the field
+    // for remote repos (`supportsRepoGitOverride` in src/lib/locator.ts), so
+    // this is unreachable from the UI. It stays as the backend invariant: a
+    // Windows path must never become a WSL session's git binary.
     if !matches!(session.locator, crate::remote::RepoLocator::Local { .. }) {
         return Err(AppError::Io(
             "setting a per-repo git binary is not supported for remote repositories yet".into(),

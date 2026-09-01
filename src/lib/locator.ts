@@ -44,3 +44,15 @@ export function joinLocator(parentLocator: string, rel: string): string {
 export function hostLabel(host: HostRef | null | undefined): string | null {
   return host ? host.distro : null;
 }
+
+/**
+ * Whether a repo may carry a per-repo git-binary override.
+ *
+ * Only local repos can: for a remote one the picker would browse the wrong
+ * machine, and the backend refuses it outright (`set_repo_git_path`). The
+ * distribution's binary is configured once for all its repos in
+ * Settings -> Git (WSL).
+ */
+export function supportsRepoGitOverride(host: HostRef | null | undefined): boolean {
+  return !host;
+}

@@ -58,6 +58,8 @@ legit-proto = { workspace = true }
 tempfile = "3"
 # test-util: paused-time (`start_paused`) for the console pump's paging tests.
 tokio = { workspace = true, features = ["test-util"] }
+# Scripted `GitExecutor` fakes (config-scope argv contracts).
+async-trait = { workspace = true }
 
 [features]
 # Used by tauri-build to emit cfg flags.

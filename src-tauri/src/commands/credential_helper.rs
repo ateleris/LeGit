@@ -10,9 +10,10 @@
 //! (design/2026-07-13-global-default-profile.md). `core.sshCommand` remains
 //! repo-only via profiles.
 
+use crate::commands::settings_host::{settings_executor, settings_fs, SettingsHost};
 use crate::error::AppError;
 use crate::state::AppState;
-use legit_core::{GitError, GitExecutor, GitRunner};
+use legit_core::{GitError, GitExecutor, HostPath, RepoFs};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -49,38 +50,23 @@ pub(crate) async fn read_helper_at(runner: &dyn GitExecutor, flag: &str) -> Opti
     last_non_empty(&out.stdout)
 }
 
-async fn build_view(runner: &dyn GitExecutor) -> CredentialHelperView {
+pub(crate) async fn build_view(runner: &dyn GitExecutor) -> CredentialHelperView {
     CredentialHelperView {
         helper_global: read_helper_at(runner, "--global").await,
         helper_system: read_helper_at(runner, "--system").await,
     }
 }
 
-/// Read the global/system credential helpers (no repo required).
-#[tauri::command]
-#[specta::specta]
-pub async fn global_credential_helper_view(
-    state: tauri::State<'_, AppState>,
+/// Write the host's global `credential.helper` as a single plain value
+/// (`None` unsets). Reset-then-add because a plain set fails when multiple
+/// entries exist; the exit-code assumptions (`--unset-all` exits 5 when
+/// nothing is set or the file is missing, single value round-trips via
+/// `--get-all`) are validated against the real binary in
+/// legit-core/tests/git_flows.rs.
+pub(crate) async fn write_credential_helper_global(
+    runner: &dyn GitExecutor,
+    helper: Option<&str>,
 ) -> Result<CredentialHelperView, AppError> {
-    let git_path = state.git_path.read().await.clone();
-    let runner = GitRunner::unbound(&git_path);
-    Ok(build_view(&runner).await)
-}
-
-/// Write the global `credential.helper` as a single plain value (`None`
-/// unsets). Reset-then-add because a plain set fails when multiple entries
-/// exist; the exit-code assumptions (`--unset-all` exits 5 when nothing is
-/// set or the file is missing, single value round-trips via `--get-all`) are
-/// validated against the real binary in legit-core/tests/git_flows.rs.
-#[tauri::command]
-#[specta::specta]
-pub async fn global_write_credential_helper(
-    state: tauri::State<'_, AppState>,
-    helper: Option<String>,
-) -> Result<CredentialHelperView, AppError> {
-    let git_path = state.git_path.read().await.clone();
-    let runner = GitRunner::unbound(&git_path);
-
     let unset = runner.run_expecting(&["config", "--global", "--unset-all", KEY], &[5]).await?;
     if !unset.success && unset.exit_code != Some(5) {
         return Err(AppError::Git(GitError::CommandFailed {
@@ -88,7 +74,7 @@ pub async fn global_write_credential_helper(
             stderr: unset.stderr.trim().to_string(),
         }));
     }
-    if let Some(v) = helper.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+    if let Some(v) = helper.map(str::trim).filter(|v| !v.is_empty()) {
         let out = runner.run(&["config", "--global", "--add", KEY, v]).await?;
         if !out.success {
             return Err(AppError::Git(GitError::CommandFailed {
@@ -97,7 +83,30 @@ pub async fn global_write_credential_helper(
             }));
         }
     }
-    Ok(build_view(&runner).await)
+    Ok(build_view(runner).await)
+}
+
+/// Read the app machine's global/system credential helpers (no repo required).
+#[tauri::command]
+#[specta::specta]
+pub async fn global_credential_helper_view(
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<CredentialHelperView, AppError> {
+    let runner = settings_executor(&app, &state, &SettingsHost::Local).await?;
+    Ok(build_view(runner.as_ref()).await)
+}
+
+/// Write the app machine's global `credential.helper`.
+#[tauri::command]
+#[specta::specta]
+pub async fn global_write_credential_helper(
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+    helper: Option<String>,
+) -> Result<CredentialHelperView, AppError> {
+    let runner = settings_executor(&app, &state, &SettingsHost::Local).await?;
+    write_credential_helper_global(runner.as_ref(), helper.as_deref()).await
 }
 
 // ---------------------------------------------------------------------------
@@ -165,17 +174,29 @@ fn helper_scan_dirs(exec_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     dirs
 }
 
-/// Enumerate the credential helpers installed on this machine: everything in
-/// git's exec-path plus known external helpers on PATH. Sorted most- to
-/// least-recommended (`helper_rank`).
-#[tauri::command]
-#[specta::specta]
-pub async fn list_available_credential_helpers(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<AvailableHelper>, AppError> {
-    let git_path = state.git_path.read().await.clone();
-    let runner = GitRunner::unbound(&git_path);
+/// Directories to probe for `PATH_CANDIDATES` on a REMOTE host. The app
+/// process's `PATH` describes the app machine, so it says nothing about a
+/// distro; these are the standard locations a Linux distribution installs
+/// git credential helpers into. (On Debian/Ubuntu `libsecret` lives in git's
+/// exec-path, which the exec-path scan already covers - this is the belt to
+/// that braces.) Pure; unit-tested.
+fn remote_helper_dirs() -> Vec<String> {
+    vec![
+        "/usr/bin".to_string(),
+        "/usr/local/bin".to_string(),
+        "/usr/lib/git-core".to_string(),
+    ]
+}
 
+/// Enumerate the credential helpers installed on `host`: everything in git's
+/// exec-path (read through the host's filesystem, so a WSL distro reports its
+/// own helpers rather than Windows') plus known external helpers. Sorted
+/// most- to least-recommended (`helper_rank`).
+async fn list_helpers_on(
+    runner: &dyn GitExecutor,
+    fs: &dyn RepoFs,
+    local: bool,
+) -> Vec<AvailableHelper> {
     // name -> path; first find wins (exec-path beats PATH duplicates).
     let mut found: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
 
@@ -185,39 +206,41 @@ pub async fn list_available_credential_helpers(
         if out.success {
             let exec_dir = std::path::PathBuf::from(out.stdout.trim());
             for dir in helper_scan_dirs(&exec_dir) {
-                let Ok(mut entries) = tokio::fs::read_dir(&dir).await else { continue };
-                while let Ok(Some(entry)) = entries.next_entry().await {
-                    let file_name = entry.file_name();
-                    let Some(fname) = file_name.to_str() else { continue };
-                    if let Some(name) = helper_name_from_filename(fname) {
+                let Ok(entries) = fs.read_dir(&HostPath::from_path(&dir)).await else { continue };
+                for entry in entries {
+                    if let Some(name) = helper_name_from_filename(&entry.name) {
                         found
                             .entry(name)
-                            .or_insert_with(|| entry.path().to_string_lossy().into_owned());
+                            .or_insert_with(|| format!("{}/{}", dir.display(), entry.name));
                     }
                 }
             }
         }
     }
 
-    // 2. Known external helpers on PATH (e.g. Git Credential Manager).
-    if let Some(path_var) = std::env::var_os("PATH") {
-        for candidate in PATH_CANDIDATES {
-            if found.contains_key(candidate) {
-                continue;
-            }
-            for dir in std::env::split_paths(&path_var) {
-                for fname in [
-                    format!("git-credential-{candidate}"),
-                    format!("git-credential-{candidate}.exe"),
-                ] {
-                    let p = dir.join(&fname);
-                    if p.is_file() {
-                        found.insert(candidate.to_string(), p.to_string_lossy().into_owned());
-                        break;
-                    }
-                }
-                if found.contains_key(candidate) {
-                    break;
+    // 2. Known external helpers (e.g. Git Credential Manager). The app
+    //    process's PATH only describes the app machine, so a remote host gets
+    //    the standard-directory probe instead.
+    let dirs: Vec<std::path::PathBuf> = if local {
+        std::env::var_os("PATH")
+            .map(|p| std::env::split_paths(&p).collect())
+            .unwrap_or_default()
+    } else {
+        remote_helper_dirs().into_iter().map(Into::into).collect()
+    };
+    for candidate in PATH_CANDIDATES {
+        if found.contains_key(candidate) {
+            continue;
+        }
+        'dirs: for dir in &dirs {
+            for fname in [
+                format!("git-credential-{candidate}"),
+                format!("git-credential-{candidate}.exe"),
+            ] {
+                let p = dir.join(&fname);
+                if matches!(fs.stat(&HostPath::from_path(&p)).await, Ok(Some(st)) if !st.is_dir) {
+                    found.insert(candidate.to_string(), p.to_string_lossy().into_owned());
+                    break 'dirs;
                 }
             }
         }
@@ -228,7 +251,31 @@ pub async fn list_available_credential_helpers(
         .map(|(name, path)| AvailableHelper { name, path })
         .collect();
     helpers.sort_by(|a, b| helper_rank(&a.name).cmp(&helper_rank(&b.name)).then(a.name.cmp(&b.name)));
-    Ok(helpers)
+    helpers
+}
+
+/// The credential helpers installed on the app machine.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_available_credential_helpers(
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Vec<AvailableHelper>, AppError> {
+    let host = SettingsHost::Local;
+    let runner = settings_executor(&app, &state, &host).await?;
+    let fs = settings_fs(&app, &state, &host).await?;
+    Ok(list_helpers_on(runner.as_ref(), fs.as_ref(), true).await)
+}
+
+/// The credential helpers installed INSIDE a WSL distribution.
+pub(crate) async fn list_helpers_for_host(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    host: &SettingsHost,
+) -> Result<Vec<AvailableHelper>, AppError> {
+    let runner = settings_executor(app, state, host).await?;
+    let fs = settings_fs(app, state, host).await?;
+    Ok(list_helpers_on(runner.as_ref(), fs.as_ref(), matches!(host, SettingsHost::Local)).await)
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +286,17 @@ pub async fn list_available_credential_helpers(
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    // The remote probe must never lean on the app process's PATH (that is
+    // Windows'); it names distro-standard directories with absolute POSIX
+    // paths.
+    #[test]
+    fn remote_helper_dirs_are_absolute_posix() {
+        let dirs = remote_helper_dirs();
+        assert!(!dirs.is_empty());
+        assert!(dirs.iter().all(|d| d.starts_with('/')));
+        assert!(dirs.iter().any(|d| d == "/usr/lib/git-core"));
+    }
 
     #[test]
     fn helper_name_from_filename_strips_prefix_and_exe() {

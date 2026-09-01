@@ -59,11 +59,35 @@ Key mechanisms, each with its reason:
   `cred.request` on the control channel → the app's existing broker (session
   cache / OS keychain / UI prompt). Helper hangup (killed git) cancels the
   prompt. WSL2→Windows localhost TCP was rejected (NAT mode breaks it).
+- **Global-settings commands and hosts** (2026-09-01). `git config` at
+  GLOBAL scope is per-machine, so Global Settings has two disjoint command
+  surfaces: `global_*` for the app machine and `wsl_*`
+  (`commands/wsl_config.rs`) for a distro. Both resolve their executor
+  through `settings_executor` (`commands/settings_host.rs`) — the ONE place
+  a `SettingsHost` becomes a `Host` + unbound `executor_for`. Parallel
+  commands, not an optional `host` argument: an argument defaulting to the
+  app machine is fail-OPEN (a forgotten parameter silently writes the wrong
+  machine's `~/.gitconfig`), whereas the `wsl_*` commands never construct
+  `SettingsHost::Local` nor read `state.git_path` and so have no local
+  branch to fall into. All view/write logic stays shared and
+  executor-generic. Two invariants ride along, both pinned in
+  `config_util`'s tests: reads use `--global`/`--system` only and writes
+  always carry `--global`, because an unbound executor inherits its
+  process's cwd — and the agent's is the distro-side translation of the
+  app's, which may lie inside a repo under `/mnt/c`. Credential-helper
+  DETECTION is host-scoped the same way (git's exec-path listed through the
+  host's `RepoFs`), so a distro never offers Windows' `manager`/`wincred`.
+  Accounts and identity profiles stay app-global: they are keychain / LeGit
+  data the agent's credential relay already serves to WSL repos.
 - **Reconnect.** Agent death (stdio EOF; `wsl --shutdown`) marks the host
   down, fails in-flight calls with AgentGone, toasts once per distro, and
-  retries 1s/2s/5s/then 15s while the distro still has open tabs. Reconnect
-  swaps the connection INTO the existing `RemoteHost` (same sessions, same
-  repo ids), re-registers watches, and emits a full-domain invalidation.
+  retries 1s/2s/5s/then 15s while the distro still has OPEN REPO SESSIONS
+  (`should_keep_reconnecting`) — a host connected for Settings only is
+  never released (`release_wsl_host` runs from `close_repo`), so without
+  that check the loop would restart a deliberately stopped distro forever.
+  Reconnect swaps the connection INTO the existing `RemoteHost` (same
+  sessions, same repo ids), re-registers watches, and emits a full-domain
+  invalidation.
   Closing a distro's last tab releases its agent (stdin EOF) so the WSL VM
   can idle out.
 - **`legit .` launcher**: a POSIX script installed on every connect
@@ -77,10 +101,15 @@ Key mechanisms, each with its reason:
   recognizes `\\wsl.localhost\<distro>\…` / `\\wsl$\…` UNC paths (Explorer's
   Linux node) and rewrites them to `wsl://` locators, so there is no
   separate "Open in WSL…" entry point. Recents/tabs show a compact host
-  icon (`HostBadge`) with the distro on hover. Per-distro git binary:
-  Settings → Git → "Git executable in WSL" (`hosts/wsl-<distro>.json`,
-  probed through the agent, hot-swaps open sessions). Reveal in Explorer
-  uses `\\wsl.localhost\<distro>\...`; open-in-editor spawns the template
+  icon (`HostBadge`) with the distro on hover. Per-distro git CONFIG:
+  its own top-level settings group, Settings → Git (WSL) — git binary
+  (`hosts/wsl-<distro>.json`, probed through the agent, hot-swaps open
+  sessions) plus identity / signing / credential helper / line endings
+  written to the DISTRO's global git config through the agent's unbound
+  executor. One distro selector for the whole group; nothing connects until
+  the user asks (a distro that is already running connects on expand).
+  Reveal in Explorer uses `\\wsl.localhost\<distro>\...`; open-in-editor
+  spawns the template
   inside the distro (`code .` → VS Code Remote via interop). Uninstall: an
   NSIS pre-uninstall hook (`src-tauri/windows/hooks.nsh`, skipped in update
   mode) removes `~/.local/share/legit` + the launcher symlink from every
@@ -90,7 +119,9 @@ Key mechanisms, each with its reason:
 
 SSH hosts (protocol is transport-agnostic; needs an SshTransport + locator
 scheme); remote clone/init; remote per-repo git binary overrides (per-HOST
-overrides exist; the per-repo one is still refused for remote sessions); a
+overrides exist; the per-repo one is still refused for remote sessions, and
+Repo Settings hides the field for them); distro-side SSH keys (the WSL
+identity form omits the `~/.ssh` tools, which are app-machine-only); a
 dedicated AgentGone error variant (surfaces as an Io message today); binary
 sidecar frames (handshake reserves `encodings`).
 
@@ -131,7 +162,20 @@ feature's point. `/mnt/c` repos (e.g. LeGit-Test) are a secondary sanity case.
     restores both kinds in order (WSL restore tolerates a slow distro start).
 12. Recents: mixed local + WSL entries, WSL rows chipped, both reopen.
 13. Alpine (musl-only) smoke: connect + open a repo.
-14. Per-repo git override on a WSL repo → clear "not supported yet" error.
+14. Repo Settings → Git on a WSL repo: no `Browse…`, no Windows path — the
+    distribution's git is shown and the button opens Settings → Git (WSL).
+15. Settings → Git (WSL) (2026-09-01): the group is absent with no distros;
+    expanding it starts nothing for a stopped distro (`wsl -l -q --running`
+    before/after); Connect starts it once and every section loads. Save
+    `user.name` in the WSL form → `wsl -d <D> -- git config --global --get
+    user.name` shows it and the Windows `git config --global --get user.name`
+    is UNCHANGED (and the reverse for the Git group). Toggling
+    `commit.gpgsign` in one form leaves the other's radios alone. Switching
+    distro discards drafts. With both forms dirty, closing the panel asks to
+    confirm. `wsl --shutdown` with no repo open on that distro → "connection
+    lost", Save disabled, and `wsl -l -q --running` STAYS empty (no 15s
+    restart loop). The credential-helper picker lists the distro's helpers,
+    not Windows' `manager`/`wincred`.
 
 ## Automated coverage (runs on Linux/WSL dev machines and CI)
 

@@ -165,6 +165,110 @@ pub async fn write_config_global(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use legit_core::{OperationId, RunOutput, RunnerError};
+    use std::sync::{Arc, Mutex};
+
+    /// Records every argv it is handed and answers "key unset" (exit 1) /
+    /// "ok" (exit 0). Scripted fake rather than `legit-core`'s `FakeExecutor`,
+    /// which is `#[cfg(test)]`-private to that crate.
+    #[derive(Default)]
+    struct RecordingExecutor {
+        calls: Arc<Mutex<Vec<Vec<String>>>>,
+        /// Exit code to answer with (1 = the "unset" answer of `config --get`).
+        exit: i32,
+    }
+
+    impl RecordingExecutor {
+        fn new(exit: i32) -> Self {
+            Self {
+                calls: Arc::new(Mutex::new(Vec::new())),
+                exit,
+            }
+        }
+        fn record(&self, args: &[&str]) -> RunOutput {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(args.iter().map(|s| s.to_string()).collect());
+            RunOutput {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: Some(self.exit),
+                success: self.exit == 0,
+                duration_ms: 0,
+            }
+        }
+        fn calls(&self) -> Vec<Vec<String>> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl GitExecutor for RecordingExecutor {
+        async fn run(&self, args: &[&str]) -> Result<RunOutput, RunnerError> {
+            Ok(self.record(args))
+        }
+        async fn run_with_op(
+            &self,
+            args: &[&str],
+            _op_id: OperationId,
+        ) -> Result<RunOutput, RunnerError> {
+            Ok(self.record(args))
+        }
+        async fn run_with_stdin(
+            &self,
+            args: &[&str],
+            _stdin_data: &str,
+        ) -> Result<RunOutput, RunnerError> {
+            Ok(self.record(args))
+        }
+        async fn run_with_env(
+            &self,
+            args: &[&str],
+            _extra_env: &[(&str, &str)],
+        ) -> Result<RunOutput, RunnerError> {
+            Ok(self.record(args))
+        }
+    }
+
+    // The global-settings views must read ONLY `--global` and `--system`.
+    // With a REMOTE host this is not merely tidy: the agent's unbound runner
+    // inherits the distro-side translation of the app's working directory,
+    // which can lie inside a repo under /mnt/c - a `--local` read would then
+    // report that unrelated repo's config as the distro's global config.
+    #[tokio::test]
+    async fn global_scope_read_never_consults_local() {
+        let exec = RecordingExecutor::new(1);
+        read_config_global_scopes(&exec, "user.name").await;
+        assert_eq!(
+            exec.calls(),
+            vec![
+                vec!["config", "--global", "--get", "user.name"],
+                vec!["config", "--system", "--get", "user.name"],
+            ]
+        );
+    }
+
+    // Writes must ALWAYS carry `--global`. An unscoped `git config <k> <v>`
+    // writes to whatever repo the process's cwd happens to sit in - which,
+    // for the agent, is the same /mnt/c hazard as above, except it would
+    // silently modify a stranger's `.git/config`.
+    #[tokio::test]
+    async fn global_write_is_always_scoped() {
+        let exec = RecordingExecutor::new(0);
+        write_config_global(&exec, "user.email", Some("a@b.c"))
+            .await
+            .unwrap();
+        write_config_global(&exec, "user.email", None).await.unwrap();
+        assert_eq!(
+            exec.calls(),
+            vec![
+                vec!["config", "--global", "user.email", "a@b.c"],
+                vec!["config", "--global", "--unset", "user.email"],
+            ]
+        );
+    }
 
     fn set(v: &str, scope: ConfigScope) -> ConfigValue {
         ConfigValue::from_git(Some(v.to_string()), scope)

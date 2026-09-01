@@ -22,13 +22,23 @@ lives in the git log and the GitHub release notes.
   again when the app is uninstalled) and runs git, file access, and the live
   filesystem watcher natively (no more "dubious ownership" or slow
   `\\wsl.localhost\` access). The git binary used inside each distro is
-  configurable (Settings → Git → "Git executable in WSL"). Remote repos mix
-  with local ones in tabs/recents (a compact WSL indicator shows the distro
+  configurable (Settings → Git (WSL)). Remote repos mix with local ones in
+  tabs/recents (a compact WSL indicator shows the distro
   on hover), survive `wsl --shutdown` with auto-reconnect, share the in-app
   credential/SSH prompts and keychain, and reveal/open-in-editor do the
   right host-aware thing (`code .` opens VS Code Remote). A `legit` command
   is installed in the distro so `legit .` opens the current repo in the app,
   like `code .`.
+- **Git settings for WSL distributions.** Settings now has a separate
+  "Git (WSL)" section that configures each WSL distribution's own Git setup —
+  git binary, identity, commit signing, credential helper and line endings —
+  written to that distribution's global Git config, never the Windows one.
+  Pick the distribution once at the top of the section; nothing is read or
+  written until you connect (a distribution that is already running loads
+  straight away). The credential-helper list now shows the helpers actually
+  installed inside the distribution instead of Windows'. Connected accounts
+  and identity profiles stay under "Git" — they are LeGit's own and already
+  apply to WSL repositories.
 
 ### Fixed
 
@@ -41,6 +51,18 @@ lives in the git log and the GitHub release notes.
   them made it walk shared trees (package stores, caches) repeatedly, which
   could exhaust the operating system's watch limit and leave a repo with no
   live updates at all.
+- Repo Settings no longer offers a per-repository Git executable override for
+  repositories inside WSL. It showed the Windows git as the default and opened
+  a Windows file picker for a path that has to exist inside the distribution,
+  while the override was rejected anyway; it now shows the distribution's git
+  and links to Settings → Git (WSL).
+- Unsaved changes in one Settings form no longer suppress the
+  "unsaved changes" confirmation when another form on the same panel is clean,
+  so closing the tab can no longer discard edits silently.
+- A WSL distribution that LeGit connected to only for Settings is no longer
+  restarted every 15 seconds in the background after `wsl --shutdown`.
+  Auto-reconnect now applies to distributions with open repositories; a
+  Settings-only connection reports the loss and waits for Reconnect.
 
 ## [1.0.3] - 2026-08-24
 

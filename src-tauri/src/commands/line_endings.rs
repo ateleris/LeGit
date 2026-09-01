@@ -10,13 +10,14 @@ use crate::commands::config_util::{
     read_config_all_scopes, read_config_global_scopes, write_config_global, write_config_local,
     ConfigValue,
 };
+use crate::commands::settings_host::{settings_executor, SettingsHost};
 use crate::commands::working::resolve_repo_relative;
 use crate::error::AppError;
 use crate::state::AppState;
 use legit_core::types::{FileState, LineEndingKind, LineEndingStatusEntry, RenormalizeOutcome};
 use legit_core::{
     classify_line_endings, convert_line_endings, derive_line_ending_entry, parse_autocrlf,
-    parse_cat_file_batch, parse_check_attr_z, AutocrlfSetting, EolTextAttr, GitExecutor, GitRunner,
+    parse_cat_file_batch, parse_check_attr_z, AutocrlfSetting, EolTextAttr, GitExecutor,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -88,7 +89,7 @@ async fn build_repo_view(
 /// runner's cwd may lie inside some repo, and an all-scopes read would leak
 /// that repo's local config into the resolved value
 /// (see `read_config_global_scopes`).
-async fn build_global_view(runner: &dyn GitExecutor) -> LineEndingsView {
+pub(crate) async fn build_global_line_endings_view(runner: &dyn GitExecutor) -> LineEndingsView {
     let autocrlf = read_config_global_scopes(runner, "core.autocrlf").await;
     let eol = read_config_global_scopes(runner, "core.eol").await;
 
@@ -122,16 +123,16 @@ pub async fn repo_line_endings_view(
     Ok(build_repo_view(session.host.fs().as_ref(), &session.path, runner.as_ref()).await)
 }
 
-/// Read line-ending information at global scope (no repo required).
-/// `.gitattributes` doesn't apply at global scope.
+/// Read the app machine's line-ending config at global scope (no repo
+/// required). `.gitattributes` doesn't apply at global scope.
 #[tauri::command]
 #[specta::specta]
 pub async fn global_line_endings_view(
     state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> Result<LineEndingsView, AppError> {
-    let git_path = state.git_path.read().await.clone();
-    let runner = GitRunner::unbound(&git_path);
-    Ok(build_global_view(&runner).await)
+    let runner = settings_executor(&app, &state, &SettingsHost::Local).await?;
+    Ok(build_global_line_endings_view(runner.as_ref()).await)
 }
 
 /// Write `core.autocrlf` and `core.eol` to the repo's `.git/config`.
@@ -151,20 +152,29 @@ pub async fn repo_write_line_endings(
     Ok(build_repo_view(session.host.fs().as_ref(), &session.path, runner.as_ref()).await)
 }
 
-/// Write `core.autocrlf` and `core.eol` to `~/.gitconfig`.
+/// Write `core.autocrlf` and `core.eol` to the host's global git config.
 /// `None` means unset. Returns the refreshed global view.
+pub(crate) async fn write_line_endings_global(
+    runner: &dyn GitExecutor,
+    autocrlf: Option<&str>,
+    eol: Option<&str>,
+) -> Result<LineEndingsView, AppError> {
+    write_config_global(runner, "core.autocrlf", autocrlf).await?;
+    write_config_global(runner, "core.eol", eol).await?;
+    Ok(build_global_line_endings_view(runner).await)
+}
+
+/// Write `core.autocrlf` and `core.eol` to the app machine's `~/.gitconfig`.
 #[tauri::command]
 #[specta::specta]
 pub async fn global_write_line_endings(
     state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
     autocrlf: Option<String>,
     eol: Option<String>,
 ) -> Result<LineEndingsView, AppError> {
-    let git_path = state.git_path.read().await.clone();
-    let runner = GitRunner::unbound(&git_path);
-    write_config_global(&runner, "core.autocrlf", autocrlf.as_deref()).await?;
-    write_config_global(&runner, "core.eol", eol.as_deref()).await?;
-    Ok(build_global_view(&runner).await)
+    let runner = settings_executor(&app, &state, &SettingsHost::Local).await?;
+    write_line_endings_global(runner.as_ref(), autocrlf.as_deref(), eol.as_deref()).await
 }
 
 // ---------------------------------------------------------------------------

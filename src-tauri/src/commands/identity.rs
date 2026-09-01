@@ -8,9 +8,10 @@
 //! this identity by applying a profile, and reset to it by clearing one.
 
 use crate::commands::config_util::{read_config_global_scopes, write_config_global, ConfigValue};
+use crate::commands::settings_host::{settings_executor, SettingsHost};
 use crate::error::AppError;
 use crate::state::AppState;
-use legit_core::{GitExecutor, GitRunner};
+use legit_core::GitExecutor;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -30,7 +31,7 @@ pub struct IdentityView {
     pub email_resolved: ConfigValue,
 }
 
-async fn build_global_view(runner: &dyn GitExecutor) -> IdentityView {
+pub(crate) async fn build_global_view(runner: &dyn GitExecutor) -> IdentityView {
     // Global + system only: the unbound runner's cwd may lie inside some
     // repo, so an all-scopes read would leak that repo's local config here
     // (see `read_config_global_scopes`).
@@ -46,31 +47,40 @@ async fn build_global_view(runner: &dyn GitExecutor) -> IdentityView {
     }
 }
 
-/// Read the global identity (no repo required).
+/// Write `user.name` / `user.email` to the host's global git config. `None`
+/// means unset. Returns the refreshed view. (Exit-code assumptions of the
+/// global write path are validated against the real binary in
+/// legit-core/tests/git_flows.rs.)
+pub(crate) async fn write_identity_global(
+    runner: &dyn GitExecutor,
+    name: Option<&str>,
+    email: Option<&str>,
+) -> Result<IdentityView, AppError> {
+    write_config_global(runner, KEY_USER_NAME, name).await?;
+    write_config_global(runner, KEY_USER_EMAIL, email).await?;
+    Ok(build_global_view(runner).await)
+}
+
+/// Read the app machine's global identity (no repo required).
 #[tauri::command]
 #[specta::specta]
 pub async fn global_identity_view(
     state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> Result<IdentityView, AppError> {
-    let git_path = state.git_path.read().await.clone();
-    let runner = GitRunner::unbound(&git_path);
-    Ok(build_global_view(&runner).await)
+    let runner = settings_executor(&app, &state, &SettingsHost::Local).await?;
+    Ok(build_global_view(runner.as_ref()).await)
 }
 
-/// Write `user.name` / `user.email` to `~/.gitconfig`. `None` means unset.
-/// Returns the refreshed view. (Exit-code assumptions of the global write
-/// path are validated against the real binary in
-/// legit-core/tests/git_flows.rs.)
+/// Write `user.name` / `user.email` to the app machine's `~/.gitconfig`.
 #[tauri::command]
 #[specta::specta]
 pub async fn global_write_identity(
     state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
     name: Option<String>,
     email: Option<String>,
 ) -> Result<IdentityView, AppError> {
-    let git_path = state.git_path.read().await.clone();
-    let runner = GitRunner::unbound(&git_path);
-    write_config_global(&runner, KEY_USER_NAME, name.as_deref()).await?;
-    write_config_global(&runner, KEY_USER_EMAIL, email.as_deref()).await?;
-    Ok(build_global_view(&runner).await)
+    let runner = settings_executor(&app, &state, &SettingsHost::Local).await?;
+    write_identity_global(runner.as_ref(), name.as_deref(), email.as_deref()).await
 }

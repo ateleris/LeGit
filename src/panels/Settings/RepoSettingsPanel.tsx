@@ -4,10 +4,12 @@ import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
 import { formatAppError } from "../../lib/types";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ConfigScope, LineEndingsView, GitAttrRule, LfsPatternsView, LfsStatus, RepoSettings } from "../../lib/types";
-import { setRepoGitPath, repoLfsPatterns, repoLfsStatus, repoLfsTrack, repoLfsUntrack, repoLineEndingsView, repoWriteLineEndings, updateRepoSettings } from "../../lib/commands";
+import { setRepoGitPath, repoLfsPatterns, repoLfsStatus, repoLfsTrack, repoLfsUntrack, repoLineEndingsView, repoWriteLineEndings, updateRepoSettings, wslHostGitOverride } from "../../lib/commands";
 import { useGitStatusStore } from "../../store/git-status";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
+import { supportsRepoGitOverride } from "../../lib/locator";
+import { summonGlobalPanel } from "../GlobalDock";
 import { RepoIdentitySection } from "./RepoIdentitySection";
 import { NormalizeLineEndingsBlock } from "./NormalizeLineEndingsBlock";
 import { Section, Row, FieldNote, SettingsGroup, GitConfigPill } from "./primitives";
@@ -120,46 +122,50 @@ export function RepoSettingsPanel() {
         </SettingsGroup>
 
         <SettingsGroup id="repo-git" title="Git" caption="Integration & configuration">
-          <Section title="Git executable (override for this repo)">
-            <Row
-              label="Global default"
-              value={<code>{globalStatus?.resolved_path ?? "…"}</code>}
-            />
-            {repoSettings?.git_path_override && (
+          {activeRepo.host && !supportsRepoGitOverride(activeRepo.host) ? (
+            <RemoteRepoGitSection distro={activeRepo.host.distro} />
+          ) : (
+            <Section title="Git executable (override for this repo)">
               <Row
-                label="Current override"
-                value={<code>{repoSettings.git_path_override}</code>}
+                label="Global default"
+                value={<code>{globalStatus?.resolved_path ?? "…"}</code>}
               />
-            )}
-            <FieldNote>writes to: repos/&lt;hash&gt;/settings.json (this repo only)</FieldNote>
-            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-              <input
-                style={{ flex: 1 }}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                placeholder="Leave blank to inherit global default"
-              />
-              <button onClick={browseFor}>Browse…</button>
-              <Button
-                variant="primary"
-                disabled={applying}
-                onClick={() => apply(draft.trim() === "" ? null : draft)}
-              >
-                {draft.trim() === "" ? "Inherit" : "Apply override"}
-              </Button>
               {repoSettings?.git_path_override && (
-                <button onClick={() => apply(null)} disabled={applying}>
-                  Clear override
-                </button>
+                <Row
+                  label="Current override"
+                  value={<code>{repoSettings.git_path_override}</code>}
+                />
               )}
-            </div>
-            {error && <pre className="legit-error" style={{ marginTop: 6 }}>{error}</pre>}
-            {successMsg && (
-              <div className="legit-success" style={{ marginTop: 6, fontSize: "var(--fz-md)" }}>
-                {successMsg}
+              <FieldNote>writes to: repos/&lt;hash&gt;/settings.json (this repo only)</FieldNote>
+              <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                <input
+                  style={{ flex: 1 }}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  placeholder="Leave blank to inherit global default"
+                />
+                <button onClick={browseFor}>Browse…</button>
+                <Button
+                  variant="primary"
+                  disabled={applying}
+                  onClick={() => apply(draft.trim() === "" ? null : draft)}
+                >
+                  {draft.trim() === "" ? "Inherit" : "Apply override"}
+                </Button>
+                {repoSettings?.git_path_override && (
+                  <button onClick={() => apply(null)} disabled={applying}>
+                    Clear override
+                  </button>
+                )}
               </div>
-            )}
-          </Section>
+              {error && <pre className="legit-error" style={{ marginTop: 6 }}>{error}</pre>}
+              {successMsg && (
+                <div className="legit-success" style={{ marginTop: 6, fontSize: "var(--fz-md)" }}>
+                  {successMsg}
+                </div>
+              )}
+            </Section>
+          )}
 
           <RepoIdentitySection repoId={activeRepo.id} repoName={activeRepo.name} />
           <LineEndingsRepoSection repoId={activeRepo.id} />
@@ -167,6 +173,61 @@ export function RepoSettingsPanel() {
         </SettingsGroup>
       </div>
     </div>
+  );
+}
+
+/**
+ * A repo inside WSL has no per-repo git override: the backend refuses one
+ * (`set_repo_git_path`), and the app machine's file dialog cannot pick a
+ * binary inside the distribution. Showing the local machine's git as the
+ * "global default" here was actively misleading — that binary never runs for
+ * this repo. `supportsRepoGitOverride` is the shared, tested predicate.
+ */
+function RemoteRepoGitSection({ distro }: { distro: string }) {
+  const [override, setOverride] = useState<string | null>(null);
+
+  // The persisted per-distro override: cheap, and deliberately no connect.
+  useEffect(() => {
+    let cancelled = false;
+    wslHostGitOverride(distro)
+      .then((ov) => {
+        if (!cancelled) setOverride(ov);
+      })
+      .catch(() => {
+        if (!cancelled) setOverride(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [distro]);
+
+  return (
+    <Section title="Git executable (per distribution)">
+      <Row label="Distribution" value={<code>{distro}</code>} />
+      <Row
+        label={`Git in ${distro}`}
+        value={
+          override ? (
+            <code>{override}</code>
+          ) : (
+            <span className="legit-subtle">
+              <code>git</code> from the distribution&apos;s PATH
+            </span>
+          )
+        }
+      />
+      <FieldNote>
+        writes to: hosts/wsl-&lt;distro&gt;.json (all repositories in this distribution)
+      </FieldNote>
+      <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ fontSize: "var(--fz-md)", color: "var(--subtle-fg)" }}>
+          Per-repository overrides aren&apos;t available for repositories inside WSL yet.
+        </span>
+        <Button onClick={() => summonGlobalPanel("global-settings")}>
+          Open Settings → Git (WSL)
+        </Button>
+      </div>
+    </Section>
   );
 }
 
@@ -676,7 +737,7 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
     draftEol !== (view.eol_local.value ?? null)
   );
 
-  usePanelDirty(dirty);
+  usePanelDirty(dirty, "repo-line-endings");
 
   if (loading) {
     return (

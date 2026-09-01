@@ -24,6 +24,13 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
   padding sweep, theme.css value-equality test, `GlobalSettingsPanel`
   split. (The seventh review item, GitBackend naming normalization, stays
   a non-blocker - batch it with the next big backend feature.)
+  The Git slice of the `GlobalSettingsPanel` split landed 2026-09-01 with
+  the Git (WSL) group: the git-executable, line-endings and WSL sections
+  moved to their own files, and the duplicated `RadioGroup` / `ConfigRow` /
+  `ResolvedBadge` were deduped to `SigningSettings.tsx` with the
+  line-ending value tables in `lineEndingOptions.ts`. `RepoSettingsPanel`
+  still carries its own copies of those three helpers - the rest of the
+  split.
 
 ### v0.9.x -> first public release
 
@@ -183,10 +190,30 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
     host + locator like `probe_and_open` (clone needs the transient-op
     cancel path, which is already `Arc<dyn GitExecutor>`).
   - **Remote per-repo git overrides.** Per-HOST overrides landed
-    (`hosts/wsl-<distro>.json`, Settings → Git → "Git executable in WSL"),
-    but the per-repo override is still refused for remote sessions
-    (`set_repo_git_path`). To lift it: probe the candidate through the
-    session's host and make the picker not browse the app machine.
+    (`hosts/wsl-<distro>.json`, Settings → Git (WSL)), but the per-repo
+    override is still refused for remote sessions (`set_repo_git_path`).
+    Repo Settings now hides the field for WSL repos instead of showing a
+    Windows file picker (2026-09-01, `supportsRepoGitOverride`). To lift it:
+    probe the candidate through the session's host and make the picker not
+    browse the app machine.
+  - **Distro-side SSH keys.** LeGit's `~/.ssh` tools (list / generate /
+    upload) are app-machine-only: `commands/ssh_keys.rs` uses `std::fs` and
+    a local `ssh-keygen`. The WSL identity form therefore omits the
+    "Default SSH keys" field entirely (2026-09-01, with the Git (WSL)
+    settings group), so a WSL repo on an SSH remote needs its key managed
+    inside the distro by hand. To lift: route those commands through a
+    host's `fs()` / `spawn_detached` (as the config commands now do via
+    `settings_host.rs`), add a `distro` parameter mirroring
+    `commands/wsl_config.rs`, and decide where an uploaded key's private
+    half lives (the distro's `~/.ssh`, not the app machine's). The agent
+    already relays askpass, so a distro key's passphrase prompt works.
+  - **Batched global-config reads for remote hosts.** Loading a distro's
+    identity + signing + helper + line-endings view issues ~18 separate
+    `git config --get` spawns inside the distro (one per key per scope).
+    Correct, and it mirrors the local path exactly, but each is a process
+    over the NDJSON pipe. Replace with one `config --global --list -z` plus
+    one `--system --list -z` and a pure parser in
+    `legit-core/cli_impl/parsers/`, with keyed lookups on top.
   - **Dedicated AgentGone error variant.** A dead connection surfaces as a
     RunnerError::Io/FsError message ("agent connection lost") — correct but
     unclassified; a `GitError` variant would let panels render "host

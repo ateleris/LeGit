@@ -7,6 +7,10 @@
 // what is actually installed, greys out known-but-missing helpers, and keeps
 // a "Custom…" escape hatch for values with arguments (e.g.
 // `cache --timeout=3600`) or unusual helpers.
+//
+// Detection is HOST-scoped: `listHelpers` decides which machine is inspected,
+// so the WSL form offers the distro's own helpers instead of Windows'
+// `manager` / `wincred` (which a git inside the distro could never run).
 
 import { useEffect, useState } from "react";
 import { formatAppError } from "../../lib/types";
@@ -34,6 +38,8 @@ export function CredentialHelperField({
   onChange,
   disabled,
   systemHelper,
+  listHelpers = listAvailableCredentialHelpers,
+  where = "on this machine",
 }: {
   /** Raw config value ("" = unset). */
   value: string;
@@ -45,6 +51,10 @@ export function CredentialHelperField({
    * profile editor (a repo override is always intentional).
    */
   systemHelper?: string | null;
+  /** Which machine to enumerate helpers on (default: the app machine). */
+  listHelpers?: () => Promise<AvailableHelper[]>;
+  /** Sentence fragment for the guidance copy: "on this machine" / "in Ubuntu". */
+  where?: string;
 }) {
   const [available, setAvailable] = useState<AvailableHelper[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -53,13 +63,13 @@ export function CredentialHelperField({
   const [customMode, setCustomMode] = useState(false);
 
   useEffect(() => {
-    listAvailableCredentialHelpers()
+    listHelpers()
       .then(setAvailable)
       .catch((e) => {
         setAvailable([]);
         setError(formatAppError(e));
       });
-  }, []);
+  }, [listHelpers]);
 
   // Until detection finishes, show the raw value read-only to avoid a
   // mis-classified flash.
@@ -132,8 +142,7 @@ export function CredentialHelperField({
       {selectValue === NONE && !systemHelper && systemHelper !== undefined && recommended && (
         <FieldNote>
           No helper is configured at any scope, so git will prompt for HTTPS
-          credentials every time. Recommended on this machine:{" "}
-          <code>{recommended}</code>.
+          credentials every time. Recommended {where}: <code>{recommended}</code>.
         </FieldNote>
       )}
 
