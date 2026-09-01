@@ -4,6 +4,7 @@ import { recentRepos } from "../../lib/commands";
 import { parseLocator } from "../../lib/locator";
 import { formatAppError } from "../../lib/types";
 import { useGitProfiles } from "../../lib/useGitProfiles";
+import { useCloneStore } from "../../store/clone";
 import { useRepoStore } from "../../store/repos";
 import { notify } from "../../store/notifications";
 import { Button } from "../shared/buttons";
@@ -18,7 +19,10 @@ export function RepositoriesPanel() {
   const activeRepoId = useRepoStore((s) => s.activeRepoId);
   const openRepo = useRepoStore((s) => s.openRepo);
   const initRepo = useRepoStore((s) => s.initRepo);
-  const cloneRepo = useRepoStore((s) => s.cloneRepo);
+  const startClone = useCloneStore((s) => s.start);
+  // A clone outlives this panel now, so its completion (not the submit) is
+  // what makes the recents list stale.
+  const clonesCompleted = useCloneStore((s) => s.completedCount);
   const closeRepo = useRepoStore((s) => s.closeRepo);
   const setActive = useRepoStore((s) => s.setActive);
   const refresh = useRepoStore((s) => s.refresh);
@@ -32,7 +36,7 @@ export function RepositoriesPanel() {
   useEffect(() => {
     if (!initialized) refresh();
     recentRepos().then(setRecents).catch(console.warn);
-  }, [initialized, refresh]);
+  }, [initialized, refresh, clonesCompleted]);
 
   const refreshRecents = () => recentRepos().then(setRecents).catch(console.warn);
 
@@ -74,10 +78,9 @@ export function RepositoriesPanel() {
             profiles={profiles}
             onCancel={() => setMode("none")}
             onError={setError}
-            onClone={async (url, parentDir, name, profileId, opId, options) => {
-              await cloneRepo(url, parentDir, name, profileId, opId, options);
+            onClone={(url, parentDir, name, profileId, options) => {
+              startClone({ url, parentDir, name, profileId, options });
               setMode("none");
-              refreshRecents();
             }}
           />
           </div>

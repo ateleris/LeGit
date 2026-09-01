@@ -2,12 +2,10 @@
 // strip's "+" menu (one implementation — the two surfaces must not drift).
 
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { useEffect, useRef, useState } from "react";
-import { cancelClone } from "../../lib/commands";
+import { useState } from "react";
 import type { CloneOptions, InitOptions } from "../../lib/commands";
 import type { GitProfile } from "../../lib/types";
-import { cloneCancelCleanupFailure, formatAppError, gitErrorKind } from "../../lib/types";
-import { useRemoteProgressStore } from "../../store/remoteProgress";
+import { formatAppError } from "../../lib/types";
 import { useSettingsStore } from "../../store/settings";
 import { Button } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
@@ -19,12 +17,17 @@ export function deriveName(url: string): string {
   return seg.replace(/\.git$/i, "");
 }
 
+/**
+ * The clone form owns NO part of the running clone: `onClone` hands the
+ * request to `useCloneStore`, which keeps the op id alive in app chrome (the
+ * clone strip) with the progress meter and the cancel button. That is what
+ * makes dismissing this form safe — it used to orphan the clone.
+ */
 export function CloneForm({
   profiles,
   onClone,
   onCancel,
   onError,
-  onBusyChange,
 }: {
   profiles: GitProfile[];
   onClone: (
@@ -32,15 +35,10 @@ export function CloneForm({
     parentDir: string,
     name: string,
     profileId: string | null,
-    opId: string,
     options: CloneOptions,
-  ) => Promise<void>;
+  ) => void;
   onCancel: () => void;
   onError: (msg: string | null) => void;
-  /** Reports the in-flight state so a floating host (the "+" popover) can pin
-   * itself open while a clone runs — a dismissed popover would orphan the
-   * progress meter and the cancel button. */
-  onBusyChange?: (busy: boolean) => void;
 }) {
   const [url, setUrl] = useState("");
   // Prefilled with the previous clone's parent - most users keep one source
@@ -54,64 +52,21 @@ export function CloneForm({
   const [depth, setDepth] = useState("");
   const [branch, setBranch] = useState("");
   const [recurseSubmodules, setRecurseSubmodules] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const opIdRef = useRef<string | null>(null);
-  const cancelRequestedRef = useRef(false);
-
-  const setBusyBoth = (b: boolean) => {
-    setBusy(b);
-    onBusyChange?.(b);
-  };
-
-  // Live clone transfer progress (legit://remote-progress, keyed by our opId).
-  const progress = useRemoteProgressStore((s) =>
-    opIdRef.current ? s.byOp[opIdRef.current] : undefined,
-  );
 
   const browse = async () => {
     const sel = await openDialog({ directory: true, multiple: false });
     if (typeof sel === "string") setParentDir(sel);
   };
 
-  const submit = async () => {
+  const submit = () => {
     if (!url.trim() || !parentDir.trim() || !name.trim()) return;
-    const opId = crypto.randomUUID();
-    opIdRef.current = opId;
-    cancelRequestedRef.current = false;
-    setBusyBoth(true);
     onError(null);
     const parsedDepth = Number.parseInt(depth, 10);
-    try {
-      await onClone(url.trim(), parentDir.trim(), name.trim(), profileId || null, opId, {
-        depth: Number.isFinite(parsedDepth) && parsedDepth > 0 ? parsedDepth : null,
-        branch: branch.trim() || null,
-        recurseSubmodules,
-      });
-    } catch (e) {
-      if (gitErrorKind(e) === "CloneCancelled") {
-        // Expected outcome of the Cancel button: stay silent - unless the
-        // backend could not remove the partial clone's files.
-        const note = cloneCancelCleanupFailure(e);
-        if (note) onError(note);
-      } else if (!cancelRequestedRef.current) {
-        onError(
-          gitErrorKind(e) === "AuthFailed"
-            ? "Authentication failed. Pick a profile with the right credentials, or fix your global git credentials."
-            : formatAppError(e),
-        );
-      }
-    } finally {
-      useRemoteProgressStore.getState().clear(opId);
-      setBusyBoth(false);
-      opIdRef.current = null;
-    }
-  };
-
-  const cancel = () => {
-    if (opIdRef.current) {
-      cancelRequestedRef.current = true;
-      void cancelClone(opIdRef.current);
-    }
+    onClone(url.trim(), parentDir.trim(), name.trim(), profileId || null, {
+      depth: Number.isFinite(parsedDepth) && parsedDepth > 0 ? parsedDepth : null,
+      branch: branch.trim() || null,
+      recurseSubmodules,
+    });
   };
 
   return (
@@ -164,24 +119,10 @@ export function CloneForm({
         Clone submodules
       </label>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
-        <Button variant="primary" disabled={busy || !url.trim() || !parentDir.trim() || !name.trim()} onClick={submit}>
-          {busy ? "Cloning…" : "Clone"}
+        <Button variant="primary" disabled={!url.trim() || !parentDir.trim() || !name.trim()} onClick={submit}>
+          Clone
         </Button>
-        {busy ? (
-          <button onClick={cancel}>Cancel clone</button>
-        ) : (
-          <button onClick={onCancel}>Close</button>
-        )}
-        {busy && <span className="legit-spinner" aria-hidden="true" />}
-        {busy && progress && (
-          <span
-            className="legit-subtle"
-            style={{ fontSize: "var(--fz-sm)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-          >
-            {progress.phase}
-            {progress.percent != null ? ` ${progress.percent}%` : "…"}
-          </span>
-        )}
+        <button onClick={onCancel}>Close</button>
       </div>
     </FormCard>
   );
