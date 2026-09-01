@@ -92,7 +92,20 @@ pub async fn open_session(
     };
     tracing::info!(path = %session.path.display(), id = %session.id, "open: new session");
     let summary = session.summary();
-    start_repo_watcher(state, app, &session).await;
+    // Starting the watcher must never gate opening the repo. `notify`'s
+    // recursive registration walks the ENTIRE worktree up front (on Linux one
+    // inotify watch per directory), so a pathological tree - a home directory
+    // opened as a repo - held the startup splash for 30s+ before failing with
+    // "OS file watch limit reached", once per restored repo. In the background
+    // the repo is fully usable meanwhile: data is fetched on demand, it just
+    // isn't auto-refreshed until the watch is live (which `start_repo_watcher`
+    // then announces with a catch-up refresh).
+    let watcher_app = app.clone();
+    let watcher_session = session.clone();
+    tokio::spawn(async move {
+        let state = watcher_app.state::<AppState>();
+        start_repo_watcher(&state, &watcher_app, &watcher_session).await;
+    });
     summary
 }
 
@@ -174,7 +187,22 @@ async fn start_repo_watcher(state: &AppState, app: &tauri::AppHandle, session: &
         .await
     {
         Ok(w) => {
-            state.watchers.lock().unwrap().insert(session.id.clone(), w);
+            // The repo can be closed while its watch is still starting. Hold
+            // the `repos` read guard across the insert: `close_repo` needs the
+            // write guard to drop the session, so it cannot slip between the
+            // check and the insert and leave a watch parked for a dead repo.
+            {
+                let repos = state.repos.read().await;
+                if !repos.contains_key(&session.id) {
+                    tracing::info!(repo_id = %session.id, "repo closed while its watcher was starting - dropping the watch");
+                    return;
+                }
+                state.watchers.lock().unwrap().insert(session.id.clone(), w);
+            }
+            // A watch only reports events from its registration onward, and the
+            // repo has been on screen since before that: anything that changed
+            // in between would never arrive. Refresh once, now.
+            crate::watcher::emit_all_domains_changed(app, &session.id, "<watch-started>");
         }
         Err(e) => {
             tracing::warn!(repo_id = %session.id, err = %e, "failed to start repo watcher");

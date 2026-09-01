@@ -30,6 +30,18 @@ lives in the git log and the GitHub release notes.
   is installed in the distro so `legit .` opens the current repo in the app,
   like `code .`.
 
+### Fixed
+
+- Repositories with very large working trees (e.g. a home directory opened as
+  a repo) no longer hold up startup: the filesystem watcher now attaches in
+  the background instead of blocking the "restoring repositories…" splash,
+  and the repo refreshes once it is live. Previously six restored repos could
+  take a minute to appear.
+- The filesystem watcher no longer follows symlinked directories. Following
+  them made it walk shared trees (package stores, caches) repeatedly, which
+  could exhaust the operating system's watch limit and leave a repo with no
+  live updates at all.
+
 ## [1.0.3] - 2026-08-24
 
 ### Fixed

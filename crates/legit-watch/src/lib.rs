@@ -18,6 +18,12 @@
 //!   events post-hoc via a root-`.gitignore` matcher. Pruning them from the
 //!   watch set is a future optimization — the global disable toggle is the
 //!   escape hatch for pathological repos (e.g. huge `node_modules` on a slow FS).
+//! - Registering the watch therefore costs O(whole tree): notify walks the
+//!   worktree up front, one inotify watch per directory on Linux. A home
+//!   directory opened as a repo needs ~540k of them and takes tens of seconds,
+//!   which is why the app starts the watch in the BACKGROUND and refreshes the
+//!   repo once it is live (`start_repo_watcher`) instead of blocking on it.
+//!   Symlinked directories are excluded from that walk (see `WatcherCore::start`).
 //! - Only the repo-root `.gitignore` feeds the matcher (not nested/global ones);
 //!   it only suppresses redundant refreshes, so `git status` stays authoritative.
 //! - Self-induced events (LeGit's own git ops) also trip the watcher; the
@@ -41,8 +47,8 @@ use std::time::{Duration, SystemTime};
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use notify::event::{AccessKind, AccessMode, ModifyKind};
-use notify::{EventKind, RecommendedWatcher, RecursiveMode};
-use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, RecommendedCache};
+use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode};
+use notify_debouncer_full::{new_debouncer_opt, DebounceEventResult, Debouncer, RecommendedCache};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -136,7 +142,7 @@ impl WatcherCore {
         // `path_contribution`), so it is bounded by roughly the ref count.
         let mut seen: HashMap<PathBuf, Option<Fingerprint>> = HashMap::new();
 
-        let mut debouncer = new_debouncer(
+        let mut debouncer = new_debouncer_opt::<_, RecommendedWatcher, RecommendedCache>(
             DEBOUNCE,
             None,
             move |result: DebounceEventResult| {
@@ -192,10 +198,22 @@ impl WatcherCore {
                     trigger_count,
                 });
             },
+            RecommendedCache::new(),
+            // Never follow symlinked directories. git does not look through a
+            // symlink either (it stores the link itself as a blob), so the
+            // target's contents can never be a change to THIS repo - while
+            // following them makes the recursive walk visit shared trees over
+            // and over (pnpm/bun stores, `~/.cache`) and, on Linux, spend one
+            // inotify watch per visit. A home directory opened as a repo went
+            // from 541k directories to >740k that way and blew the per-user
+            // inotify cap (`OS file watch limit reached`) after ~30s.
+            Config::default().with_follow_symlinks(false),
         )?;
 
         // Working tree (recursive). `Debouncer::watch` also registers the path
-        // as a cache root so renames are tracked across the tree.
+        // as a cache root so renames are tracked across the tree - on Windows
+        // that walk stats every entry to build the file-id map; on Linux
+        // `RecommendedCache` is `NoCache` and the walk costs nothing.
         debouncer.watch(&worktree, RecursiveMode::Recursive)?;
 
         // Watch the git dir separately only when it isn't already under the
@@ -852,5 +870,50 @@ mod tests {
             display_path(&wt.join("src/main.rs"), wt, gd),
             Path::new("src").join("main.rs").to_string_lossy()
         );
+    }
+
+    // --- watch registration (real filesystem) -----------------------------
+
+    // Regression: `notify` follows symlinked directories by default, so the
+    // recursive registration walked (and, on Linux, spent an inotify watch
+    // per directory of) every tree a symlink pointed at - a home directory
+    // opened as a repo grew from 541k directories to >740k and hit the
+    // per-user inotify cap after ~30s. git never looks through a symlink
+    // either, so the target's contents cannot be a change to this repo.
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_directories_are_not_watched() {
+        use std::sync::mpsc;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let worktree = tmp.path().join("repo");
+        let git_dir = worktree.join(".git");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&git_dir).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, worktree.join("linked")).unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        let _core = WatcherCore::start(
+            worktree.clone(),
+            git_dir,
+            Box::new(move |batch| {
+                let _ = tx.send(batch);
+            }),
+        )
+        .unwrap();
+
+        std::fs::write(outside.join("through-the-link.txt"), "x").unwrap();
+        assert!(
+            rx.recv_timeout(Duration::from_millis(1500)).is_err(),
+            "a write inside a symlinked directory must not report a change"
+        );
+
+        // Control: the worktree itself is still watched.
+        std::fs::write(worktree.join("real.txt"), "x").unwrap();
+        let batch = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("a write in the worktree must report a change");
+        assert!(batch.domains.contains(&ChangeDomain::Status));
     }
 }

@@ -144,6 +144,32 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 
 ## Smaller follow-ups
 
+- **Watcher: prune the watch set + make a failed watch visible** (2026-09-01,
+  split off from the startup-time fix — evidence and numbers in
+  `design/2026-09-01-watcher-startup-cost.md`):
+  - **Gitignored directories are still watched.** `notify` registers the
+    worktree recursively (one inotify watch per directory on Linux), so
+    `node_modules`, `target`, and `.cache` all get watches and only their
+    EVENTS are filtered afterwards. A home directory opened as a repo needs
+    ~540k watches (~15-20s and hundreds of MB of kernel memory) where the
+    non-ignored set is a few hundred. Approach: drive the walk with the
+    `ignore` crate (already a dependency) and register each non-ignored
+    directory NonRecursive; the catch is new directories, which then need a
+    watch added from the event handler — the debouncer is owned by
+    `WatcherCore`, so that wants a small owner thread fed by a channel
+    rather than a shared `Mutex<Debouncer>`. Measure against the global
+    watcher toggle, which stays the escape hatch.
+  - **A watch that fails is invisible.** `start_repo_watcher` logs a warning
+    and moves on, so the repo silently loses live updates (it happened for
+    real: "OS file watch limit reached"). Since the watch now starts in the
+    background there is not even a delay to notice. Wants a persistent
+    surface, not a toast — a "live updates off" badge on the repo tab next
+    to `HostBadge`, tooltip carrying the reason. Note the plumbing choice:
+    a Tauri event can be emitted before the frontend mounts its listener, so
+    the state belongs in `AppState` (next to `watchers`) and should be
+    readable by a command / carried on `RepoSummary`, with the event only as
+    the live update.
+
 - **Remote repositories: v1 deferrals** (2026-08-31, with the WSL feature —
   architecture in `design/2026-08-31-remote-repositories-wsl.md`):
   - **SSH hosts.** The protocol/transport is already agnostic (an

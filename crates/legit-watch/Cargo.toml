@@ -12,3 +12,6 @@ tracing = { workspace = true }
 notify = { workspace = true }
 notify-debouncer-full = { workspace = true }
 ignore = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
