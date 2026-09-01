@@ -184,7 +184,7 @@ async fn switch_try_directly_runs_only_the_switch() {
         .switch_branch("feature", SwitchDirtyBehavior::TryDirectly)
         .await
         .unwrap();
-    assert_eq!(outcome, SwitchOutcome::Clean);
+    assert_eq!(outcome.outcome, SwitchOutcome::Clean);
     exec.assert_done();
 }
 
@@ -210,7 +210,7 @@ async fn switch_auto_stash_dirty_tree_pops_the_created_entry() {
         .switch_branch("feature", SwitchDirtyBehavior::AutoStash)
         .await
         .unwrap();
-    assert_eq!(outcome, SwitchOutcome::Clean);
+    assert_eq!(outcome.outcome, SwitchOutcome::Clean);
     exec.assert_done();
 }
 
@@ -243,7 +243,7 @@ async fn switch_auto_stash_ignores_concurrently_created_foreign_stash() {
         .switch_branch("feature", SwitchDirtyBehavior::AutoStash)
         .await
         .unwrap();
-    assert_eq!(outcome, SwitchOutcome::Clean);
+    assert_eq!(outcome.outcome, SwitchOutcome::Clean);
     exec.assert_done();
 }
 
@@ -274,7 +274,7 @@ async fn switch_auto_stash_clean_tree_never_touches_preexisting_stash() {
         .switch_branch("feature", SwitchDirtyBehavior::AutoStash)
         .await
         .unwrap();
-    assert_eq!(outcome, SwitchOutcome::Clean);
+    assert_eq!(outcome.outcome, SwitchOutcome::Clean);
     exec.assert_done();
 }
 
@@ -360,7 +360,7 @@ async fn switch_stash_and_keep_leaves_the_entry_parked() {
         .switch_branch("feature", SwitchDirtyBehavior::StashAndKeep)
         .await
         .unwrap();
-    assert_eq!(outcome, SwitchOutcome::ChangesStashed);
+    assert_eq!(outcome.outcome, SwitchOutcome::ChangesStashed);
     exec.assert_done();
 }
 
@@ -388,7 +388,7 @@ async fn switch_pop_conflict_is_an_outcome_not_an_error() {
         .switch_branch("feature", SwitchDirtyBehavior::AutoStash)
         .await
         .unwrap();
-    assert!(matches!(outcome, SwitchOutcome::StashPopConflicts { .. }), "{outcome:?}");
+    assert!(matches!(outcome.outcome, SwitchOutcome::StashPopConflicts { .. }), "{outcome:?}");
     exec.assert_done();
 }
 
@@ -2484,6 +2484,88 @@ async fn submodule_update_remote_attach_skips_attached_and_survives_checkout_fai
     exec.assert_done();
 }
 
+// A submodule move can exit 0 while LFS downloads inside it failed
+// (lfs.skipdownloaderrors / non-required filter): the per-submodule result
+// must carry the stubs, never a silent Updated.
+#[tokio::test]
+async fn submodule_update_remote_exit_zero_with_lfs_errors_reports_stubs() {
+    let sha_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["ls-files", "--stage", "-z"],
+        ok(&format!("160000 {sha_a} 0\tlib\0")),
+    );
+    fake.expect(
+        &["config", "-f", ".gitmodules", "-z", "--get-regexp", "^submodule\\."],
+        ok("submodule.lib.path\nlib\0submodule.lib.url\nu\0"),
+    );
+    fake.expect(
+        &["config", "-z", "--get-regexp", "^submodule\\."],
+        ok("submodule.lib.url\nu\0"),
+    );
+    fake.expect(&["status", "--porcelain=v2", "-z", "--untracked-files=all"], ok(""));
+    fake.expect(&["-C", "lib", "rev-parse", "--show-prefix", "HEAD"], ok(&format!("\n{sha_a}\n")));
+    fake.expect(&["-C", "lib", "rev-parse", "--abbrev-ref", "HEAD"], ok("main\n"));
+    fake.expect(
+        &["submodule", "update", "--remote", "--checkout", "--", "lib"],
+        out(
+            0,
+            "",
+            "Error downloading object: assets/big.bin (8f786a0): Smudge error: [404] Object does not exist on the server\n",
+        ),
+    );
+    fake.expect(&["add", "--", "lib"], ok(""));
+    let (b, exec) = backend(fake);
+
+    let results = b
+        .submodule_update_remote(
+            &[],
+            SubmoduleUpdateStrategy::Checkout,
+            SwitchDirtyBehavior::TryDirectly,
+            false,
+            OperationId("a".into()),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(results[0].status, SubmoduleAutoUpdateStatus::Updated), "{results:?}");
+    let stubs = results[0].lfs_stubs.as_ref().expect("stubs reported");
+    assert_eq!(stubs.files, vec!["assets/big.bin".to_string()]);
+    assert!(stubs.missing_on_remote);
+    exec.assert_done();
+}
+
+// Same for the bulk `submodule update` (init/recursive).
+#[tokio::test]
+async fn submodule_update_exit_zero_with_lfs_errors_reports_stubs() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["submodule", "update", "--init"],
+        out(
+            0,
+            "",
+            "Error downloading object: lib/big.bin (8f786a0): Smudge error: [404] Object does not exist on the server\n",
+        ),
+    );
+    let (b, exec) = backend(fake);
+
+    let stubs = b
+        .submodule_update(
+            SubmoduleUpdateOptions {
+                init: true,
+                recursive: false,
+                paths: vec![],
+                attach_branch: false,
+            },
+            OperationId("a".into()),
+        )
+        .await
+        .unwrap()
+        .expect("stubs reported");
+    assert_eq!(stubs.files, vec!["lib/big.bin".to_string()]);
+    assert!(stubs.missing_on_remote);
+    exec.assert_done();
+}
+
 #[tokio::test]
 async fn submodule_create_branch_switches_with_c() {
     let fake = FakeExecutor::default();
@@ -2889,7 +2971,7 @@ async fn checkout_commit_detaches_via_switch() {
         .checkout_commit("abc123", SwitchDirtyBehavior::TryDirectly)
         .await
         .unwrap();
-    assert_eq!(outcome, SwitchOutcome::Clean);
+    assert_eq!(outcome.outcome, SwitchOutcome::Clean);
     exec.assert_done();
 }
 
@@ -2997,6 +3079,74 @@ async fn pull_default_lets_repo_config_decide() {
     b.pull(PullOptions { strategy: PullStrategy::Default }, OperationId("op".into()))
         .await
         .unwrap();
+    exec.assert_done();
+}
+
+// Like the pull case below: a switch can exit 0 while LFS downloads failed,
+// leaving pointer stubs - the result must carry that, never a silent Clean.
+#[tokio::test]
+async fn switch_exit_zero_with_lfs_errors_reports_stub_files() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["switch", "--end-of-options", "feature"],
+        out(
+            0,
+            "",
+            "Error downloading object: feat.bin (d686331): Smudge error: [404] Object does not exist on the server\n",
+        ),
+    );
+    let (b, exec) = backend(fake);
+
+    let r = b
+        .switch_branch("feature", SwitchDirtyBehavior::TryDirectly)
+        .await
+        .unwrap();
+    assert_eq!(r.outcome, SwitchOutcome::Clean);
+    let stubs = r.lfs_stubs.expect("stubs reported");
+    assert_eq!(stubs.files, vec!["feat.bin".to_string()]);
+    assert!(stubs.missing_on_remote);
+    exec.assert_done();
+}
+
+// git exits 0 under lfs.skipdownloaderrors (or a non-required filter) while
+// leaving pointer stubs: the outcome must carry that, never a silent Ok.
+#[tokio::test]
+async fn pull_exit_zero_with_lfs_errors_reports_stub_files() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["-c", "gc.auto=0", "-c", "maintenance.auto=false", "pull", "--progress"],
+        out(
+            0,
+            "",
+            "Downloading big.bin (2.0 KB)\nError downloading object: big.bin (8f786a0): Smudge error: [404] Object does not exist on the server\n",
+        ),
+    );
+    let (b, exec) = backend(fake);
+
+    let outcome = b
+        .pull(PullOptions { strategy: PullStrategy::Default }, OperationId("op".into()))
+        .await
+        .unwrap();
+    let stubs = outcome.lfs_stubs.expect("stubs reported");
+    assert_eq!(stubs.files, vec!["big.bin".to_string()]);
+    assert!(stubs.missing_on_remote);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn pull_clean_success_reports_no_stub_files() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["-c", "gc.auto=0", "-c", "maintenance.auto=false", "pull", "--progress"],
+        ok("Already up to date.\n"),
+    );
+    let (b, exec) = backend(fake);
+
+    let outcome = b
+        .pull(PullOptions { strategy: PullStrategy::Default }, OperationId("op".into()))
+        .await
+        .unwrap();
+    assert!(outcome.lfs_stubs.is_none());
     exec.assert_done();
 }
 

@@ -4,10 +4,10 @@
 
 use crate::error::AppError;
 use crate::state::{
-    load_repo_settings_sync, AppState, LaneLock, RepoSession, RepoSettings,
+    load_repo_settings_sync, AppState, CloneOutcome, LaneLock, RepoSession, RepoSettings,
     RepoSummary, TransientOp,
 };
-use legit_core::{classify_remote_error, GitError, GitRunner, OperationId};
+use legit_core::{classify_remote_error, lfs_stubs_from_stderr, GitError, GitRunner, OperationId};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::Manager as _;
@@ -418,7 +418,7 @@ pub async fn repo_clone(
     depth: Option<u32>,
     branch: Option<String>,
     recurse_submodules: bool,
-) -> Result<RepoSummary, AppError> {
+) -> Result<CloneOutcome, AppError> {
     let parent = PathBuf::from(&parent_dir);
     if !parent.exists() {
         return Err(AppError::NotARepo(format!(
@@ -502,7 +502,10 @@ pub async fn repo_clone(
         let session = state.get_session(&summary.id).await?;
         crate::commands::profiles::apply_profile_core(&state, &session, &pid).await?;
     }
-    Ok(summary)
+    // git can exit 0 while LFS downloads failed (lfs.skipdownloaderrors,
+    // non-required filter), leaving pointer stubs in the fresh clone - the
+    // user must learn the files hold no real content.
+    Ok(CloneOutcome { summary, lfs_stubs: lfs_stubs_from_stderr(&out.stderr) })
 }
 
 /// Cancel an in-flight `repo_clone` by its `op_id`. Returns whether the op was found.

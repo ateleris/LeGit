@@ -7,13 +7,16 @@ use crate::error::GitError;
 use crate::executor::GitExecutor;
 use crate::runner::OperationId;
 use crate::types::{
-    CommitId, GitmodulesFinding, SubmoduleAutoUpdateResult, SubmoduleAutoUpdateStatus,
+    CommitId, GitmodulesFinding, LfsStubs, SubmoduleAutoUpdateResult, SubmoduleAutoUpdateStatus,
     SubmoduleGitdirInfo, SubmoduleInfo, SubmoduleLog, SubmoduleUpdateOptions,
     SubmoduleUpdateStrategy, SwitchDirtyBehavior,
 };
 use std::path::{Path, PathBuf};
 
-use super::{append_error_note, find_created_stash, find_stash_selector, parsers, safe_ref, GitCliBackend};
+use super::{
+    append_error_note, find_created_stash, find_stash_selector, lfs_stubs_from_stderr, parsers,
+    safe_ref, GitCliBackend,
+};
 
 /// Target of a per-submodule move (see `update_one_submodule`).
 #[derive(Debug, Clone, Copy)]
@@ -27,16 +30,20 @@ enum SubmoduleMove {
 impl<E: GitExecutor> GitCliBackend<E> {
     /// Move ONE submodule: to the recorded SHA (`submodule update`) or to its
     /// tracked remote branch (`submodule update --remote` + strategy, which
-    /// fetches - run as a cancellable remote op).
+    /// fetches - run as a cancellable remote op). A success reports any LFS
+    /// pointer stubs the checkout left behind inside the submodule.
     async fn move_submodule(
         &self,
         p: &str,
         mv: SubmoduleMove,
         op_id: Option<&OperationId>,
-    ) -> Result<(), GitError> {
+    ) -> Result<Option<LfsStubs>, GitError> {
         match mv {
             SubmoduleMove::Recorded => {
-                self.run_simple(&["submodule", "update", "--", p]).await
+                let runner = self.runner().await;
+                let out = runner.run(&["submodule", "update", "--", p]).await?;
+                Self::ensure_success(&out)?;
+                Ok(lfs_stubs_from_stderr(&out.stderr))
             }
             SubmoduleMove::Remote(strategy) => {
                 let flag = match strategy {
@@ -54,7 +61,8 @@ impl<E: GitExecutor> GitCliBackend<E> {
                 ];
                 let runner = self.runner().await;
                 let op = op_id.cloned().unwrap_or_else(|| OperationId(String::new()));
-                self.run_remote(&runner, &args, op).await
+                let out = self.run_remote_output(&runner, &args, op).await?;
+                Ok(lfs_stubs_from_stderr(&out.stderr))
             }
         }
     }
@@ -123,7 +131,9 @@ impl<E: GitExecutor> GitCliBackend<E> {
     /// `behavior`. `old` is the pre-move HEAD, the rollback anchor. Never
     /// returns Err: every failure becomes a status so the caller's batch
     /// continues (per-submodule atomicity). Shared by the post-switch/pull
-    /// auto-update (Recorded) and "Pull latest" (Remote).
+    /// auto-update (Recorded) and "Pull latest" (Remote). Alongside the
+    /// status: any LFS pointer stubs a successful move left inside the
+    /// submodule (only while it actually sits at the new commit).
     async fn update_one_submodule(
         &self,
         s: &SubmoduleInfo,
@@ -131,9 +141,9 @@ impl<E: GitExecutor> GitCliBackend<E> {
         behavior: SwitchDirtyBehavior,
         mv: SubmoduleMove,
         op_id: Option<&OperationId>,
-    ) -> SubmoduleAutoUpdateStatus {
+    ) -> (SubmoduleAutoUpdateStatus, Option<LfsStubs>) {
         let p = s.path.to_string_lossy().into_owned();
-        let skip = |msg: String| SubmoduleAutoUpdateStatus::Skipped { message: msg };
+        let skip = |msg: String| (SubmoduleAutoUpdateStatus::Skipped { message: msg }, None);
 
         if s.state.conflicted {
             return skip("the submodule is in a merge conflict".into());
@@ -144,7 +154,7 @@ impl<E: GitExecutor> GitCliBackend<E> {
         // raw checkout).
         if !dirty {
             return match self.move_submodule(&p, mv, op_id).await {
-                Ok(()) => SubmoduleAutoUpdateStatus::Updated,
+                Ok(stubs) => (SubmoduleAutoUpdateStatus::Updated, stubs),
                 Err(e) => skip(e.to_string()),
             };
         }
@@ -155,7 +165,7 @@ impl<E: GitExecutor> GitCliBackend<E> {
             // (the submodule stays untouched).
             SwitchDirtyBehavior::TryDirectly => {
                 match self.move_submodule(&p, mv, op_id).await {
-                    Ok(()) => SubmoduleAutoUpdateStatus::ChangesCarried,
+                    Ok(stubs) => (SubmoduleAutoUpdateStatus::ChangesCarried, stubs),
                     Err(e) => skip(format!("local changes could not be carried over: {e}")),
                 }
             }
@@ -230,65 +240,83 @@ impl<E: GitExecutor> GitCliBackend<E> {
                     // verify it (nor pop by SHA). Stop here - do NOT move the
                     // submodule - and say so prominently.
                     Err(e) => {
-                        return SubmoduleAutoUpdateStatus::ChangesInStash {
-                            message: format!(
-                                "your local changes may have been auto-stashed, but reading the submodule's stash list to verify failed ({e}); the submodule was left at its previous commit - check `git stash list` inside the submodule"
-                            ),
-                        };
+                        return (
+                            SubmoduleAutoUpdateStatus::ChangesInStash {
+                                message: format!(
+                                    "your local changes may have been auto-stashed, but reading the submodule's stash list to verify failed ({e}); the submodule was left at its previous commit - check `git stash list` inside the submodule"
+                                ),
+                            },
+                            None,
+                        );
                     }
                 };
                 drop(runner);
                 let Some(stash_sha) = find_created_stash(&before, &after, SUB_MARKER) else {
                     // Race: tree turned out clean - just move.
                     return match self.move_submodule(&p, mv, op_id).await {
-                        Ok(()) => SubmoduleAutoUpdateStatus::Updated,
+                        Ok(stubs) => (SubmoduleAutoUpdateStatus::Updated, stubs),
                         Err(e) => skip(e.to_string()),
                     };
                 };
 
                 // Move to the target (tree is clean now).
-                if let Err(e) = self.move_submodule(&p, mv, op_id).await {
-                    // Restore: pop the stash we just made, back on `old`.
-                    return match self.pop_submodule_stash(&p, &stash_sha).await {
-                        Ok(()) => skip(format!("update failed; local changes restored: {e}")),
-                        Err(pop_e) => SubmoduleAutoUpdateStatus::ChangesInStash {
-                            message: format!(
-                                "update failed ({e}) AND restoring failed ({pop_e}) - your changes are in the submodule's stash"
+                let move_stubs = match self.move_submodule(&p, mv, op_id).await {
+                    Ok(stubs) => stubs,
+                    Err(e) => {
+                        // Restore: pop the stash we just made, back on `old`.
+                        return match self.pop_submodule_stash(&p, &stash_sha).await {
+                            Ok(()) => skip(format!("update failed; local changes restored: {e}")),
+                            Err(pop_e) => (
+                                SubmoduleAutoUpdateStatus::ChangesInStash {
+                                    message: format!(
+                                        "update failed ({e}) AND restoring failed ({pop_e}) - your changes are in the submodule's stash"
+                                    ),
+                                },
+                                None,
                             ),
-                        },
-                    };
-                }
+                        };
+                    }
+                };
 
                 if matches!(behavior, SwitchDirtyBehavior::StashAndKeep) {
-                    return SubmoduleAutoUpdateStatus::ChangesStashed;
+                    return (SubmoduleAutoUpdateStatus::ChangesStashed, move_stubs);
                 }
 
                 // AutoStash: pop onto the NEW commit.
                 match self.pop_submodule_stash(&p, &stash_sha).await {
-                    Ok(()) => SubmoduleAutoUpdateStatus::ChangesCarried,
+                    Ok(()) => (SubmoduleAutoUpdateStatus::ChangesCarried, move_stubs),
                     Err(pop_err) => {
                         // Conflicted/failed pop: ROLL BACK. `reset --hard`
                         // discards the marker-ridden application and clears
                         // unmerged index entries - the stash itself survived
                         // (git keeps it when a pop conflicts).
                         if let Err(e) = self.run_simple(&["-C", &p, "reset", "--hard", old]).await {
-                            return SubmoduleAutoUpdateStatus::ChangesInStash {
-                                message: format!(
-                                    "pop conflicted ({pop_err}) AND rollback failed ({e}) - your changes are in the submodule's stash"
-                                ),
-                            };
+                            return (
+                                SubmoduleAutoUpdateStatus::ChangesInStash {
+                                    message: format!(
+                                        "pop conflicted ({pop_err}) AND rollback failed ({e}) - your changes are in the submodule's stash"
+                                    ),
+                                },
+                                move_stubs,
+                            );
                         }
                         match self.pop_submodule_stash(&p, &stash_sha).await {
-                            Ok(()) => SubmoduleAutoUpdateStatus::RolledBack {
-                                message: format!(
-                                    "local changes conflict with the new submodule commit; the submodule was left at its previous commit with your changes intact ({pop_err})"
-                                ),
-                            },
-                            Err(e) => SubmoduleAutoUpdateStatus::ChangesInStash {
-                                message: format!(
-                                    "pop conflicted ({pop_err}) AND reapplying on the original commit failed ({e}) - your changes are in the submodule's stash"
-                                ),
-                            },
+                            Ok(()) => (
+                                SubmoduleAutoUpdateStatus::RolledBack {
+                                    message: format!(
+                                        "local changes conflict with the new submodule commit; the submodule was left at its previous commit with your changes intact ({pop_err})"
+                                    ),
+                                },
+                                None,
+                            ),
+                            Err(e) => (
+                                SubmoduleAutoUpdateStatus::ChangesInStash {
+                                    message: format!(
+                                        "pop conflicted ({pop_err}) AND reapplying on the original commit failed ({e}) - your changes are in the submodule's stash"
+                                    ),
+                                },
+                                None,
+                            ),
                         }
                     }
                 }
@@ -449,7 +477,7 @@ impl<E: GitExecutor> GitCliBackend<E> {
         &self,
         opts: SubmoduleUpdateOptions,
         op_id: OperationId,
-    ) -> Result<(), GitError> {
+    ) -> Result<Option<LfsStubs>, GitError> {
         let runner = self.runner().await;
         let mut args: Vec<String> = vec!["submodule".into(), "update".into()];
         if opts.init {
@@ -466,7 +494,8 @@ impl<E: GitExecutor> GitCliBackend<E> {
         }
         // May clone/fetch missing commits: run as a remote op (progress,
         // cancel, auth-aware error classification).
-        self.run_remote(&runner, &args, op_id).await?;
+        let out = self.run_remote_output(&runner, &args, op_id).await?;
+        let lfs_stubs = lfs_stubs_from_stderr(&out.stderr);
         drop(runner);
 
         if opts.attach_branch {
@@ -494,7 +523,7 @@ impl<E: GitExecutor> GitCliBackend<E> {
                 Err(e) => tracing::warn!(error = %e, "branch-attach enumeration failed"),
             }
         }
-        Ok(())
+        Ok(lfs_stubs)
     }
 
     pub(super) async fn submodule_sync(&self, paths: &[PathBuf], recursive: bool) -> Result<(), GitError> {
@@ -596,7 +625,7 @@ impl<E: GitExecutor> GitCliBackend<E> {
                 continue;
             }
             let Some(old) = s.checked_out_sha.clone() else { continue };
-            let status = self
+            let (status, lfs_stubs) = self
                 .update_one_submodule(
                     &s,
                     old.as_str(),
@@ -621,7 +650,7 @@ impl<E: GitExecutor> GitCliBackend<E> {
                 }
                 to_stage.push(s.path.clone());
             }
-            results.push(SubmoduleAutoUpdateResult { path: s.path, status });
+            results.push(SubmoduleAutoUpdateResult { path: s.path, status, lfs_stubs });
         }
         if !to_stage.is_empty() {
             self.run_pathspec(&["add", "--"], &to_stage).await?;
@@ -810,7 +839,7 @@ impl<E: GitExecutor> GitCliBackend<E> {
                 continue;
             };
             let _ = recorded; // target derives from the index inside the move
-            let status = self
+            let (status, lfs_stubs) = self
                 .update_one_submodule(&s, old.as_str(), behavior, SubmoduleMove::Recorded, None)
                 .await;
             if attach_branch
@@ -824,7 +853,7 @@ impl<E: GitExecutor> GitCliBackend<E> {
                 let p = s.path.to_string_lossy().into_owned();
                 self.attach_submodule_branch(&p, s.branch.as_deref()).await;
             }
-            results.push(SubmoduleAutoUpdateResult { path: s.path, status });
+            results.push(SubmoduleAutoUpdateResult { path: s.path, status, lfs_stubs });
         }
         Ok(results)
     }

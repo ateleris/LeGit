@@ -1,4 +1,6 @@
 import { formatAppError, gitErrorKind } from "./types";
+import { lfsDownloadErrorMessage } from "./lfsFeedback";
+import type { LfsFailureContext } from "./lfsFeedback";
 
 /**
  * Display text for a failed remote operation (push/pull/fetch): the classified
@@ -6,7 +8,9 @@ import { formatAppError, gitErrorKind } from "./types";
  * Shared by the Commits panel's sync toolbar and the branch context menus so
  * the guidance cannot drift between the two push paths.
  */
-export function remoteOpErrorMessage(e: unknown): string {
+export function remoteOpErrorMessage(e: unknown, context: LfsFailureContext = "generic"): string {
+  const lfs = lfsDownloadErrorMessage(e, context);
+  if (lfs) return lfs;
   switch (gitErrorKind(e)) {
     case "AuthFailed":
       return (

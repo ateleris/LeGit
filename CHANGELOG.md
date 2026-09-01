@@ -14,6 +14,13 @@ lives in the git log and the GitHub release notes.
 
 ### Changed
 
+- Failed git-lfs downloads (e.g. objects never uploaded to the server) now
+  surface an actionable message naming the affected files and the fix
+  (`git lfs push` by whoever pushed them) instead of raw LFS noise - and
+  any pull, branch switch, checkout, clone, or submodule update that
+  "succeeds" while leaving LFS pointer stubs on disk now warns that those
+  files hold no real content instead of reporting plain success.
+
 - Deleting a branch that git refuses as "not fully merged" now explains why
   and offers a force delete in place: after a merge it names the branch that
   already contains the work, after a squash/rebase PR merge it reports the

@@ -25,60 +25,6 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
   split. (The seventh review item, GitBackend naming normalization, stays
   a non-blocker - batch it with the next big backend feature.)
 
-### v0.9.x -> first public release
-
-(none - the blocker list emptied 2026-08-21: license landed, funding links
-landed, first-run experience shipped. What remains before flipping the repo
-public is a final read-through of the README and a smoke pass of the app.)
-
-Decided and recorded, no action:
-- **Release / distribution model: OPEN SOURCE + donations** - confirmed by
-  Simon 2026-08-21 (option (a) of the 2026-08-19 trade-off: best
-  adoption/trust for a git client and the strongest Ateleris marketing;
-  donations are a tip jar, not a plan). Rejected: closed-source free
-  download, fair source (FSL), free-personal + paid-commercial, open core.
-- **License: GPL-3.0-or-later** - chosen by Simon 2026-08-21 (copyleft: no
-  proprietary forks; "or later" per FSF convention). LICENSE file landed
-  (verbatim gnu.org text), workspace Cargo.toml `license` set (all three
-  crates inherit), package.json `license` field added, tauri.conf.json
-  `bundle.licenseFile` points at ../LICENSE so installers embed the text
-  (bundle license id itself defaults to the Cargo.toml value). Note the
-  consequence recorded 2026-08-19: relicensing later needs a CLA once
-  outside contributions land.
-- **Funding links: Stripe donate link** - landed 2026-08-21.
-  `.github/FUNDING.yml` uses a `custom:` entry with Simon's Stripe payment
-  link (Sponsor button, zero platform signup); the README got a Donate
-  badge in the header row plus a short "Want to say thanks?" section at the
-  end. GitHub Sponsors / Ko-fi can be appended to FUNDING.yml later as
-  one-liners if ever wanted.
-- **Git is not bundled** (trade study
-  `design/2026-07-07-bundled-git-trade-study.md`; revisit trigger +
-  download-on-demand fallback design are in the study).
-- **Code signing stays deferred**, SmartScreen/Gatekeeper warnings
-  documented.
-- **Standalone reword-a-commit action** (outside the interactive-rebase
-  panel): dropped 2026-07-05; the rebase panel's reword step covers it.
-- **git-flow helpers, archive export, git notes, sparse checkout**: decided
-  against 2026-08-20 (competitive feature review vs SourceTree / GitKraken /
-  Fork / Git Extensions / Sublime Merge / Tower). git-flow is ceremony in
-  decline and LeGit's branch tooling doesn't need it; the other three are
-  Git-Extensions-tier rarities the built-in Console covers when needed.
-  Revisit only on real user demand.
-- **LFS smudge-on-demand + "fetch LFS content" action**: dropped
-  2026-08-17 - content is on disk / in `.git/lfs/objects`, and display
-  value only materializes with rendered previews (now shipped for images).
-  Stub recovery stays `git lfs pull` in the Console.
-- **README screenshot branding spot check**: dropped 2026-08-18.
-- **Summon into the last-active group**: dropped 2026-08-21 after checking.
-  Placement memory persists in the layout envelope, so the default-placement
-  split only happens on a panel's first-ever open; and the active group at
-  summon time is usually the group the user just clicked in, so stacking
-  there would cover the panel driving the interaction (dockview's implicit
-  active-group add is already avoided in `openRepoPanel` because it can be
-  the hidden console group). If first-open splits ever hurt, the viable
-  variant is a descriptor-level `joinGroupOf` list generalizing the
-  Diff/File View/Blame collocation (summon.ts Case 2c), not the active group.
-
 ---
 
 ## Known bugs
@@ -143,17 +89,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   dialog plumbing.
 
 ## Smaller follow-ups
-
-- **LFS: actionable error when objects are missing on the remote**
-  (2026-09-01). Repro: user B commits/pushes LFS pointers but the LFS
-  objects never reach the server (forgot `git lfs push` / hook missing);
-  user A pulls or checks out and git's smudge-filter error ("Object does
-  not exist on the server", 404 noise) surfaces raw - it names neither the
-  cause nor the fix. Approach: classify the LFS smudge/download failure in
-  the error-classification seam (GitError variant + `formatAppError` text)
-  and surface "LFS objects referenced by this commit are missing on the
-  remote - whoever pushed the commit needs to upload them (git lfs push)",
-  ideally naming the offending file(s) parsed from stderr.
 
 - **Remote repositories: v1 deferrals** (2026-08-31, with the WSL feature —
   architecture in `design/2026-08-31-remote-repositories-wsl.md`):
@@ -272,6 +207,13 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   shows the need. The bug form should ask for version, OS, git version, and
   the log file (Global Settings → About → "Open log folder", newest
   `legit.log.*`, skim for repo paths first).
+- **Dev/PR builds: append the commit hash to the version** (2026-09-01).
+  Dev builds and the PR-build workflow's installer artifacts report the
+  plain manifest version, so two artifacts from different commits are
+  indistinguishable (About dialog, bug reports). Append the short hash
+  (e.g. `1.0.3+abc1234`) for non-release builds: inject at build time
+  (env var read in `build.rs` / the PR workflow passing the hash into the
+  bundle version or About string); release builds keep the clean version.
 - **E2E extensions.** Still open: clone-via-"+"-menu flow, and push/pull
   against a local bare-remote fixture (`buildRemoteFixture`). Keep it a
   small smoke suite; Linux-only remains fine.
@@ -337,6 +279,15 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   (skipped: fails on servers without reachable-sha1 fetch support).
 
 ## Only if it hurts in practice
+
+- **LFS stub reporting for stash/discard/restore paths** (the last
+  remainder of the LFS missing-objects feedback; everything else shipped
+  2026-09-01: classification + per-flow wording, exit-0 stub detection for
+  pull / switch / checkout / clone / submodule updates via `LfsStubs` on
+  each outcome, friendly `formatAppError` case via the import-free
+  `lfsMessages.ts`). Stash apply/pop, discard, and restore-file-at-revision
+  also run checkouts that can smudge; wire the same `lfs_stubs_from_stderr`
+  pattern through their outcomes.
 
 - **Native crash dumps (minidump/crashpad).** The crash logging shipped
   2026-08-21 (`src-tauri/src/logging.rs`: rotating file log, panic hook with

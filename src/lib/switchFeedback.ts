@@ -3,6 +3,7 @@
 
 import type { RemoteCheckoutOutcome, SwitchOutcome } from "./types";
 import { formatAppError, gitErrorKind } from "./types";
+import { lfsDownloadErrorMessage } from "./lfsFeedback";
 import { notify } from "../store/notifications";
 
 /**
@@ -73,6 +74,8 @@ export function notifyRemoteCheckoutOutcome(
  * message; everything else shows git's own message.
  */
 export function formatSwitchError(e: unknown): string {
+  const lfs = lfsDownloadErrorMessage(e, "switch");
+  if (lfs) return lfs;
   if (gitErrorKind(e) === "WouldOverwriteLocalChanges") {
     return (
       "Switching would overwrite uncommitted changes. Commit or stash them " +

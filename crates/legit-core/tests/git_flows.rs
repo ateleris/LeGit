@@ -556,7 +556,7 @@ async fn switch_auto_stash_carries_changes_to_the_target_branch() {
         .switch_branch("feature", SwitchDirtyBehavior::AutoStash)
         .await
         .unwrap();
-    assert_eq!(outcome, SwitchOutcome::Clean);
+    assert_eq!(outcome.outcome, SwitchOutcome::Clean);
     // The dirty edit travelled along; the transient stash entry is gone.
     assert_eq!(repo.read("a.txt"), "wip\n");
     assert!(repo.backend.stashes().await.unwrap().is_empty());
@@ -576,7 +576,7 @@ async fn switch_stash_and_keep_parks_the_changes() {
         .switch_branch("feature", SwitchDirtyBehavior::StashAndKeep)
         .await
         .unwrap();
-    assert_eq!(outcome, SwitchOutcome::ChangesStashed);
+    assert_eq!(outcome.outcome, SwitchOutcome::ChangesStashed);
     // Target branch starts clean; the WIP is retrievable from the stash.
     assert_eq!(repo.read("a.txt"), "base\n");
     assert_eq!(repo.backend.stashes().await.unwrap().len(), 1);
@@ -2835,6 +2835,101 @@ async fn branch_delete_unmerged_refusal_classifies() {
     }
 }
 
+// Validates the LFS missing-object assumptions against the real binaries
+// (git + git-lfs, file:// standalone transfer): a default-config pull fails
+// loudly with the stderr shapes `parse_lfs_download_failure` matches, and
+// under `lfs.skipdownloaderrors` the same pull exits 0 leaving pointer stubs
+// the `PullOutcome` must report. Skipped where git-lfs is not installed
+// (e.g. plain WSL); CI runners ship it.
+#[tokio::test]
+async fn pull_with_missing_lfs_objects_classifies_and_reports_stubs() {
+    let author = TestRepo::init().await;
+    let probe = GitRunner::for_repo("git", &author.path)
+        .run(&["lfs", "version"])
+        .await
+        .expect("spawn git");
+    if !probe.success {
+        eprintln!("git-lfs not available; skipping LFS flow test");
+        return;
+    }
+
+    let (_keep, remote_path, url) = bare_remote().await;
+    author.git(&["lfs", "install", "--local"]).await;
+    author.write("base.txt", "base\n");
+    author.commit_all("base").await;
+    author.git(&["remote", "add", "origin", &url]).await;
+    author.git(&["push", "-u", "origin", "main"]).await;
+    author.git(&["lfs", "track", "*.bin"]).await;
+    author.write("big.bin", "lfs payload\n");
+    author.commit_all("lfs file").await;
+    author.git(&["push", "origin", "main"]).await;
+    author.git(&["switch", "-c", "feature"]).await;
+    author.write("feat.bin", "other lfs payload\n");
+    author.commit_all("feature lfs file").await;
+    author.git(&["push", "origin", "feature"]).await;
+    author.git(&["switch", "main"]).await;
+
+    // The uploads never reached the server, as far as the reader knows.
+    std::fs::remove_dir_all(remote_path.join("lfs")).expect("delete remote lfs objects");
+
+    // Reader at the base commit; the pull brings the LFS commit in.
+    let reader = TestRepo::init().await;
+    reader.git(&["lfs", "install", "--local"]).await;
+    reader.git(&["remote", "add", "origin", &url]).await;
+    reader.git(&["fetch", "origin"]).await;
+    reader.git(&["reset", "--hard", "origin/main~1"]).await;
+    reader.git(&["branch", "--set-upstream-to=origin/main", "main"]).await;
+
+    let err = reader
+        .backend
+        .pull(
+            PullOptions { strategy: PullStrategy::Default },
+            OperationId("lfs-pull".into()),
+        )
+        .await
+        .expect_err("default-config pull must fail loudly");
+    match err {
+        GitError::LfsDownloadFailed { files, missing_on_remote, .. } => {
+            assert_eq!(files, vec!["big.bin".to_string()]);
+            assert!(missing_on_remote);
+        }
+        other => panic!("expected LfsDownloadFailed, got {other:?}"),
+    }
+
+    // The failed checkout leaves untracked leftovers; clear them, then the
+    // tolerant config makes the same pull "succeed" with pointer stubs.
+    reader.git(&["clean", "-fd"]).await;
+    reader.git(&["config", "lfs.skipdownloaderrors", "true"]).await;
+    let outcome = reader
+        .backend
+        .pull(
+            PullOptions { strategy: PullStrategy::Default },
+            OperationId("lfs-pull-2".into()),
+        )
+        .await
+        .expect("skipdownloaderrors pull exits 0");
+    let stubs = outcome.lfs_stubs.expect("stubs reported");
+    assert_eq!(stubs.files, vec!["big.bin".to_string()]);
+    assert!(stubs.missing_on_remote);
+    assert!(
+        reader.read("big.bin").starts_with("version https://git-lfs.github.com/spec/v1"),
+        "the file on disk must be a pointer stub"
+    );
+
+    // A switch under the same tolerant config also exits 0 with stubs: the
+    // SwitchResult must carry them.
+    reader.git(&["branch", "feature", "origin/feature"]).await;
+    let switch = reader
+        .backend
+        .switch_branch("feature", SwitchDirtyBehavior::TryDirectly)
+        .await
+        .expect("skipdownloaderrors switch exits 0");
+    assert_eq!(switch.outcome, SwitchOutcome::Clean);
+    let stubs = switch.lfs_stubs.expect("switch stubs reported");
+    assert_eq!(stubs.files, vec!["feat.bin".to_string()]);
+    assert!(stubs.missing_on_remote);
+}
+
 // A true (`--no-ff`) merge whose result the checked-out branch does not yet
 // contain: `-d` is still refused, but the analysis names the merged-into ref.
 #[tokio::test]
@@ -3594,7 +3689,7 @@ async fn checkout_commit_detaches_head() {
         .checkout_commit(&first, SwitchDirtyBehavior::TryDirectly)
         .await
         .unwrap();
-    assert_eq!(outcome, SwitchOutcome::Clean);
+    assert_eq!(outcome.outcome, SwitchOutcome::Clean);
     // HEAD is detached at the first commit.
     let head = repo.git(&["rev-parse", "HEAD"]).await.trim().to_string();
     assert_eq!(head, first);

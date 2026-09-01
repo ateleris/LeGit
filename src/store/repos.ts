@@ -13,6 +13,7 @@ import {
 } from "../lib/commands";
 import { consoleCancel } from "../lib/commands";
 import type { CloneOptions, InitOptions } from "../lib/commands";
+import { notifyLfsStubs } from "../lib/lfsFeedback";
 import type { RepoId, RepoSettings, RepoSummary } from "../lib/types";
 import { pickNextActive, pushActivation } from "./repoActivation";
 import { useConsoleStore } from "./console";
@@ -168,7 +169,10 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
   },
 
   async cloneRepo(url, parentDir, name, profileId, opId, options) {
-    const summary = await repoCloneCmd(url, parentDir, name, profileId, opId, options);
+    const outcome = await repoCloneCmd(url, parentDir, name, profileId, opId, options);
+    // git can exit 0 while LFS downloads failed, leaving pointer stubs in
+    // the fresh clone - the user must learn the files hold no real content.
+    notifyLfsStubs(outcome.lfs_stubs, "clone");
     // The backend persisted parentDir as `last_clone_parent_dir` (clone-form
     // prefill); patch the cached settings so a second clone this session
     // prefills the fresh value without a settings refetch.
@@ -176,8 +180,8 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
       s.settings ? { settings: { ...s.settings, last_clone_parent_dir: parentDir } } : s,
     );
     await get().refresh();
-    get().setActive(summary.id);
-    return summary;
+    get().setActive(outcome.summary.id);
+    return outcome.summary;
   },
 
   async closeRepo(id: RepoId) {

@@ -9,6 +9,7 @@ import { notify } from "../../store/notifications";
 import { confirmDialog } from "../../store/confirm";
 import { useConfirmDestructive } from "../../store/settings";
 import { notifySwitchOutcome, formatSwitchError } from "../../lib/switchFeedback";
+import { notifyLfsStubs } from "../../lib/lfsFeedback";
 import type { ReflogEntry } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { formatRelative } from "../../lib/time";
@@ -64,9 +65,10 @@ export function ReflogSection() {
 
   const doCheckout = (e: ReflogEntry) =>
     runSwitch(async () => {
-      const outcome = await repoCheckoutCommit(repo!.id, e.sha);
+      const result = await repoCheckoutCommit(repo!.id, e.sha);
       invalidate();
-      notifySwitchOutcome(outcome, e.sha.slice(0, 8));
+      notifySwitchOutcome(result.outcome, e.sha.slice(0, 8));
+      notifyLfsStubs(result.lfs_stubs, "checkout");
       void autoUpdateSubmodules(queryClient, repo!.id);
     });
 

@@ -18,6 +18,7 @@ import {
   repoSetUpstream,
 } from "../../lib/commands";
 import { deleteBranchGuided } from "../../lib/branchDelete";
+import { notifyLfsStubs } from "../../lib/lfsFeedback";
 import { groupRemoteBranches, shortRemoteBranchName, splitRemoteRef } from "../../lib/branchGroups";
 import { ChevronDownIcon, ChevronRightIcon } from "../../icons";
 import { Button } from "../shared/buttons";
@@ -261,8 +262,9 @@ export function BranchesSection() {
 
   const doCheckout = async (name: string) => {
     await runSwitch(async () => {
-      const outcome = await repoSwitchBranch(repo!.id, name);
-      notifySwitchOutcome(outcome, name);
+      const result = await repoSwitchBranch(repo!.id, name);
+      notifySwitchOutcome(result.outcome, name);
+      notifyLfsStubs(result.lfs_stubs, "switch");
       void autoUpdateSubmodules(queryClient, repo!.id);
     });
   };
@@ -271,6 +273,7 @@ export function BranchesSection() {
     await runSwitch(async () => {
       const outcome = await repoCheckoutRemoteBranch(repo!.id, fullRef);
       notifyRemoteCheckoutOutcome(outcome, fullRef.replace(/^refs\/remotes\//, ""));
+      notifyLfsStubs(outcome.lfs_stubs, "checkout");
       void autoUpdateSubmodules(queryClient, repo!.id);
     });
   }, [repo, runSwitch, queryClient]);

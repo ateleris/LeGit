@@ -17,14 +17,14 @@ use crate::types::{
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
     FastForwardResult, FetchOptions, FfMode, FileAtRevision, FileHistoryEntry, FileState, FileStatus,
     GitmodulesFinding,
-    HunkOp, LfsStatus, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullStrategy, PushOptions, PushRecurseMode,
+    HunkOp, LfsStatus, LfsStubs, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullOutcome, PullStrategy, PushOptions, PushRecurseMode,
     RebaseAction, RebaseOutcome, RebaseRangeInfo, RebaseStep, RefDecoration, RefSelector,
     ReflogEntry, Remote,
     RemoteCheckoutOutcome, RemoteTag,
     RenormalizeOutcome, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode, SequenceOutcome, SignMode, StashApplyOutcome, StashEntry,
     StashOutcome, SubmoduleAutoUpdateResult, SubmoduleGitdirInfo,
     SubmoduleInfo, SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy,
-    SwitchDirtyBehavior, SwitchOutcome, TagInfo, TrackingStatus,
+    SwitchDirtyBehavior, SwitchOutcome, SwitchResult, TagInfo, TrackingStatus,
 };
 
 /// Git's well-known empty-tree object id, used as the "before" side when
@@ -392,6 +392,18 @@ impl<E: GitExecutor> GitCliBackend<E> {
         args: &[String],
         op_id: OperationId,
     ) -> Result<(), GitError> {
+        self.run_remote_output(runner, args, op_id).await.map(|_| ())
+    }
+
+    /// `run_remote` keeping the successful output: for flows that must
+    /// inspect an exit-0 stderr (a pull can "succeed" while LFS downloads
+    /// failed).
+    async fn run_remote_output(
+        &self,
+        runner: &E,
+        args: &[String],
+        op_id: OperationId,
+    ) -> Result<crate::runner::RunOutput, GitError> {
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let output = runner
             .run_with_op_progress(&arg_refs, op_id)
@@ -402,7 +414,7 @@ impl<E: GitExecutor> GitCliBackend<E> {
                 &output.stderr,
             ));
         }
-        Ok(())
+        Ok(output)
     }
 
     /// Run args and return (exit_code, stdout, stderr) with 0 for success:
@@ -597,7 +609,11 @@ impl<E: GitExecutor> GitCliBackend<E> {
     /// Run a `git switch`/`checkout` invocation, classifying the well-known
     /// "your local changes would be overwritten" failure into
     /// `WouldOverwriteLocalChanges` so the UI can respond specifically.
-    async fn run_switch(&self, args: &[&str]) -> Result<(), GitError> {
+    /// Run a switch/checkout command; a failure classifies, a success
+    /// reports any LFS pointer stubs the checkout left behind (git can exit
+    /// 0 with failed LFS downloads under `lfs.skipdownloaderrors` / a
+    /// non-required filter).
+    async fn run_switch(&self, args: &[&str]) -> Result<Option<LfsStubs>, GitError> {
         let runner = self.runner().await;
         let output = runner
             .run(args)
@@ -608,7 +624,7 @@ impl<E: GitExecutor> GitCliBackend<E> {
                 &output.stderr,
             ));
         }
-        Ok(())
+        Ok(lfs_stubs_from_stderr(&output.stderr))
     }
 
     /// Shared auto-stash logic used by `switch_branch`, `checkout_commit` and
@@ -628,10 +644,10 @@ impl<E: GitExecutor> GitCliBackend<E> {
         &self,
         behavior: SwitchDirtyBehavior,
         switch_args: &[&str],
-    ) -> Result<SwitchOutcome, GitError> {
+    ) -> Result<SwitchResult, GitError> {
         if behavior == SwitchDirtyBehavior::TryDirectly {
-            self.run_switch(switch_args).await?;
-            return Ok(SwitchOutcome::Clean);
+            let lfs_stubs = self.run_switch(switch_args).await?;
+            return Ok(SwitchResult { outcome: SwitchOutcome::Clean, lfs_stubs });
         }
 
         let target = switch_args.last().copied().unwrap_or("?");
@@ -643,55 +659,60 @@ impl<E: GitExecutor> GitCliBackend<E> {
         // The SHA of the entry *we* created; `None` when the tree was clean.
         let created = find_created_stash(&list_before, &list_after, &msg);
 
-        if let Err(switch_err) = self.run_switch(switch_args).await {
-            // Roll back: restore the auto-stash onto the original branch. It
-            // was created from exactly this state, so it applies cleanly in
-            // practice — but a failure here must not be silent: the user's
-            // changes would sit invisibly in the stash while the tree looks
-            // clean, with only the switch failure reported.
-            if let Some(sha) = &created {
-                match self.pop_stash_sha(sha).await {
-                    Ok(StashApplyOutcome::Clean) => {}
-                    Ok(StashApplyOutcome::Conflicts { .. }) => {
-                        return Err(append_error_note(
-                            switch_err,
-                            "Additionally, restoring your auto-stashed changes produced \
-                             conflicts — resolve them in the working tree (the stash entry \
-                             was kept).",
-                        ));
-                    }
-                    Err(pop_err) => {
-                        return Err(append_error_note(
-                            switch_err,
-                            &format!(
-                                "Additionally, your uncommitted changes were auto-stashed and \
-                                 could not be restored automatically ({pop_err}) — they are \
-                                 preserved in the stash."
-                            ),
-                        ));
+        let lfs_stubs = match self.run_switch(switch_args).await {
+            Ok(stubs) => stubs,
+            Err(switch_err) => {
+                // Roll back: restore the auto-stash onto the original branch.
+                // It was created from exactly this state, so it applies
+                // cleanly in practice — but a failure here must not be
+                // silent: the user's changes would sit invisibly in the stash
+                // while the tree looks clean, with only the switch failure
+                // reported.
+                if let Some(sha) = &created {
+                    match self.pop_stash_sha(sha).await {
+                        Ok(StashApplyOutcome::Clean) => {}
+                        Ok(StashApplyOutcome::Conflicts { .. }) => {
+                            return Err(append_error_note(
+                                switch_err,
+                                "Additionally, restoring your auto-stashed changes produced \
+                                 conflicts — resolve them in the working tree (the stash entry \
+                                 was kept).",
+                            ));
+                        }
+                        Err(pop_err) => {
+                            return Err(append_error_note(
+                                switch_err,
+                                &format!(
+                                    "Additionally, your uncommitted changes were auto-stashed and \
+                                     could not be restored automatically ({pop_err}) — they are \
+                                     preserved in the stash."
+                                ),
+                            ));
+                        }
                     }
                 }
+                return Err(switch_err);
             }
-            return Err(switch_err);
-        }
+        };
+        let done = |outcome: SwitchOutcome| SwitchResult { outcome, lfs_stubs: lfs_stubs.clone() };
 
         let Some(sha) = created else {
             // Clean tree — nothing was stashed, nothing to restore.
-            return Ok(SwitchOutcome::Clean);
+            return Ok(done(SwitchOutcome::Clean));
         };
         if behavior == SwitchDirtyBehavior::StashAndKeep {
             // Deliberately leave the entry parked: the target branch starts
             // clean and the WIP is retrievable from the stash list.
-            return Ok(SwitchOutcome::ChangesStashed);
+            return Ok(done(SwitchOutcome::ChangesStashed));
         }
         match self.pop_stash_sha(&sha).await {
-            Ok(StashApplyOutcome::Clean) => Ok(SwitchOutcome::Clean),
+            Ok(StashApplyOutcome::Clean) => Ok(done(SwitchOutcome::Clean)),
             Ok(StashApplyOutcome::Conflicts { message }) => {
-                Ok(SwitchOutcome::StashPopConflicts { message })
+                Ok(done(SwitchOutcome::StashPopConflicts { message }))
             }
-            Err(e) => Ok(SwitchOutcome::StashPopFailed {
+            Err(e) => Ok(done(SwitchOutcome::StashPopFailed {
                 message: e.to_string(),
-            }),
+            })),
         }
     }
 }
@@ -1501,7 +1522,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         &self,
         opts: SubmoduleUpdateOptions,
         op_id: OperationId,
-    ) -> Result<(), GitError> {
+    ) -> Result<Option<LfsStubs>, GitError> {
         self.submodule_update(opts, op_id).await
     }
 
@@ -1651,10 +1672,11 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         self.run_remote(&runner, &args, op_id).await
     }
 
-    async fn pull(&self, opts: PullOptions, op_id: OperationId) -> Result<(), GitError> {
+    async fn pull(&self, opts: PullOptions, op_id: OperationId) -> Result<PullOutcome, GitError> {
         let runner = self.runner().await;
         let args = build_pull_args(&opts);
-        self.run_remote(&runner, &args, op_id).await
+        let out = self.run_remote_output(&runner, &args, op_id).await?;
+        Ok(PullOutcome { lfs_stubs: lfs_stubs_from_stderr(&out.stderr) })
     }
 
     async fn push(&self, opts: PushOptions, op_id: OperationId) -> Result<(), GitError> {
@@ -1752,13 +1774,13 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         self.run_simple(&args).await
     }
 
-    async fn switch_branch(&self, name: &str, behavior: SwitchDirtyBehavior) -> Result<SwitchOutcome, GitError> {
+    async fn switch_branch(&self, name: &str, behavior: SwitchDirtyBehavior) -> Result<SwitchResult, GitError> {
         let name = safe_ref("branch", name)?;
         self.run_with_auto_stash(behavior, &["switch", "--end-of-options", name])
             .await
     }
 
-    async fn checkout_commit(&self, sha: &str, behavior: SwitchDirtyBehavior) -> Result<SwitchOutcome, GitError> {
+    async fn checkout_commit(&self, sha: &str, behavior: SwitchDirtyBehavior) -> Result<SwitchResult, GitError> {
         let sha = safe_ref("revision", sha)?;
         self.run_with_auto_stash(behavior, &["switch", "--detach", "--end-of-options", sha])
             .await
@@ -1792,7 +1814,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         } else {
             &["switch", "--track", "--end-of-options", short]
         };
-        let switch = self.run_with_auto_stash(behavior, args).await?;
+        let switch_result = self.run_with_auto_stash(behavior, args).await?;
         let ff = if !fast_forward {
             FastForwardResult::NotAttempted
         } else if !local_exists {
@@ -1811,8 +1833,9 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         };
         Ok(RemoteCheckoutOutcome {
             local_branch: local.to_string(),
-            switch,
+            switch: switch_result.outcome,
             fast_forward: ff,
+            lfs_stubs: switch_result.lfs_stubs,
         })
     }
 
@@ -2171,6 +2194,7 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             &selector,
         ])
         .await
+        .map(|_| ())
     }
 
     async fn rename_stash(&self, stash_sha: &str, new_message: &str) -> Result<(), GitError> {
@@ -2981,6 +3005,13 @@ fn remote_ref_names(remote_ref: &str) -> (&str, &str) {
 /// `WouldOverwriteLocalChanges`, an unknown ref → `RefNotFound`, everything
 /// else → `CommandFailed`.
 fn classify_switch_error(exit_code: i32, stderr: &str) -> GitError {
+    if let Some(f) = parse_lfs_download_failure(stderr) {
+        return GitError::LfsDownloadFailed {
+            files: f.files,
+            missing_on_remote: f.missing_on_remote,
+            stderr: stderr.trim().to_string(),
+        };
+    }
     let lc = stderr.to_lowercase();
     if lc.contains("would be overwritten by")
         || lc.contains("commit your changes or stash them")
@@ -3475,6 +3506,62 @@ fn append_error_note(e: GitError, note: &str) -> GitError {
 /// problems → `AuthFailed`, non-fast-forward/rejected pushes → `PushRejected`,
 /// everything else → `CommandFailed`. Public so session-less callers (e.g. the
 /// `git clone` command) can classify failures the same way.
+/// What a git-lfs download failure in some operation's stderr amounts to.
+/// Produced by `parse_lfs_download_failure`; pure data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LfsDownloadFailure {
+    /// Worktree paths whose LFS content could not be downloaded.
+    pub files: Vec<String>,
+    /// The cause is "object absent on the server" (missing upload), not a
+    /// network/auth problem.
+    pub missing_on_remote: bool,
+}
+
+/// Detect a git-lfs smudge/download failure in an operation's stderr and
+/// extract the affected paths. Matches the two stable line shapes git-lfs
+/// emits (validated against the real binary):
+/// `Error downloading object: <path> (<short-oid>): ...` (also present when
+/// the operation still exits 0, e.g. under `lfs.skipdownloaderrors`) and
+/// `fatal: <path>: smudge filter lfs failed` (the loud, non-zero case).
+/// Returns `None` when the stderr shows no LFS involvement.
+pub(crate) fn parse_lfs_download_failure(stderr: &str) -> Option<LfsDownloadFailure> {
+    let mut files: Vec<String> = Vec::new();
+    let mut push = |f: &str| {
+        let f = f.trim();
+        if !f.is_empty() && !files.iter().any(|k| k == f) {
+            files.push(f.to_string());
+        }
+    };
+    let mut involved = false;
+    for line in stderr.lines().map(str::trim) {
+        if let Some(rest) = line.strip_prefix("Error downloading object: ") {
+            involved = true;
+            push(rest.split(" (").next().unwrap_or(""));
+        } else if let Some(prefix) = line.strip_suffix(": smudge filter lfs failed") {
+            involved = true;
+            push(prefix.strip_prefix("fatal: ").unwrap_or(prefix));
+        }
+    }
+    if !involved {
+        return None;
+    }
+    let lc = stderr.to_lowercase();
+    let missing_on_remote = lc.contains("remote missing object")
+        || lc.contains("does not exist on the server")
+        || lc.contains("[404]");
+    Some(LfsDownloadFailure { files, missing_on_remote })
+}
+
+/// The `LfsStubs` an exit-0 operation left behind, from its stderr; `None`
+/// when the stderr shows no LFS involvement. Public for the command layer's
+/// own git invocations (clone runs outside `GitBackend`).
+pub fn lfs_stubs_from_stderr(stderr: &str) -> Option<LfsStubs> {
+    parse_lfs_download_failure(stderr).map(|f| LfsStubs {
+        files: f.files,
+        missing_on_remote: f.missing_on_remote,
+    })
+}
+
 pub fn classify_remote_error(exit_code: i32, stderr: &str) -> GitError {
     // Remote errors are the ones that quote the URL back at us ("fatal:
     // Authentication failed for 'https://user:token@host/r.git/'"), and this
@@ -3492,6 +3579,16 @@ pub fn classify_remote_error(exit_code: i32, stderr: &str) -> GitError {
     ];
     if AUTH.iter().any(|p| lc.contains(p)) {
         return GitError::AuthFailed(stderr.trim().to_string());
+    }
+    // An LFS smudge/download failure inside the operation (pull's merge
+    // phase, clone's checkout, submodule update). After AUTH: a broken
+    // credential setup stays an auth problem even when LFS reports it.
+    if let Some(f) = parse_lfs_download_failure(stderr) {
+        return GitError::LfsDownloadFailed {
+            files: f.files,
+            missing_on_remote: f.missing_on_remote,
+            stderr: stderr.trim().to_string(),
+        };
     }
     // A checkout/merge inside the operation refusing to overwrite local
     // changes (e.g. `submodule update --remote` on a dirty submodule, or a
@@ -4124,6 +4221,83 @@ mod tests {
         assert!(cherry_all_equivalent("- 7a5e5f\n- 9b2c1d\n"));
         assert!(!cherry_all_equivalent("+ 7a5e5f\n- 9b2c1d\n"));
         assert!(!cherry_all_equivalent(""));
+    }
+
+    // --- LFS download-failure detection ---------------------------------
+    // Stderr shapes captured from real git-lfs 3.7.1 (file:// standalone
+    // transfer); the [404] variant mirrors the HTTPS wording.
+
+    const LFS_LOUD_PULL_STDERR: &str = "\
+ * branch            main       -> FETCH_HEAD
+Downloading big.bin (2.0 KB)
+Error downloading object: big.bin (8f786a0): Smudge error: Error downloading big.bin (8f786a0717ae6c4d70b78d003300b3d340fe84fb131c5be1ef028d0fdcbe7f6d): error transferring \"8f786a0717ae6c4d70b78d003300b3d340fe84fb131c5be1ef028d0fdcbe7f6d\": [0] remote missing object 8f786a0717ae6c4d70b78d003300b3d340fe84fb131c5be1ef028d0fdcbe7f6d
+
+Errors logged to 'C:\\repo\\.git\\lfs\\logs\\20260901T161311.log'.
+Use `git lfs logs last` to view the log.
+error: external filter 'git-lfs filter-process' failed
+fatal: big.bin: smudge filter lfs failed
+";
+
+    #[test]
+    fn lfs_failure_parses_files_and_missing_cause() {
+        let f = parse_lfs_download_failure(LFS_LOUD_PULL_STDERR).unwrap();
+        assert_eq!(f.files, vec!["big.bin".to_string()]);
+        assert!(f.missing_on_remote);
+    }
+
+    #[test]
+    fn lfs_failure_exit_zero_shape_has_no_fatal_line() {
+        // Under lfs.skipdownloaderrors the operation exits 0 and only the
+        // "Error downloading object" lines appear.
+        let stderr = "Downloading big.bin (2.0 KB)\n\
+Error downloading object: big.bin (8f786a0): Smudge error: [404] Object does not exist on the server: https://host/info/lfs\n\
+Errors logged to '/r/.git/lfs/logs/x.log'.\n";
+        let f = parse_lfs_download_failure(stderr).unwrap();
+        assert_eq!(f.files, vec!["big.bin".to_string()]);
+        assert!(f.missing_on_remote);
+    }
+
+    #[test]
+    fn lfs_failure_dedupes_files_and_flags_non_missing_causes() {
+        let stderr = "\
+Error downloading object: a.bin (1111111): Smudge error: [401] Authentication required\n\
+Error downloading object: b.bin (2222222): Smudge error: connection refused\n\
+fatal: a.bin: smudge filter lfs failed\n";
+        let f = parse_lfs_download_failure(stderr).unwrap();
+        assert_eq!(f.files, vec!["a.bin".to_string(), "b.bin".to_string()]);
+        assert!(!f.missing_on_remote);
+    }
+
+    #[test]
+    fn lfs_failure_none_for_unrelated_stderr() {
+        assert_eq!(parse_lfs_download_failure("fatal: repository not found\n"), None);
+        assert_eq!(parse_lfs_download_failure(""), None);
+    }
+
+    #[test]
+    fn remote_error_lfs_failure_is_classified() {
+        match classify_remote_error(128, LFS_LOUD_PULL_STDERR) {
+            GitError::LfsDownloadFailed { files, missing_on_remote, .. } => {
+                assert_eq!(files, vec!["big.bin".to_string()]);
+                assert!(missing_on_remote);
+            }
+            other => panic!("expected LfsDownloadFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn switch_error_lfs_failure_is_classified() {
+        let stderr = "\
+Error downloading object: feat.bin (d686331): Smudge error: [404] Object does not exist on the server\n\
+error: external filter 'git-lfs filter-process' failed\n\
+fatal: feat.bin: smudge filter lfs failed\n";
+        match classify_switch_error(128, stderr) {
+            GitError::LfsDownloadFailed { files, missing_on_remote, .. } => {
+                assert_eq!(files, vec!["feat.bin".to_string()]);
+                assert!(missing_on_remote);
+            }
+            other => panic!("expected LfsDownloadFailed, got {other:?}"),
+        }
     }
 
     #[test]

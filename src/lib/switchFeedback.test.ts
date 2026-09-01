@@ -61,7 +61,7 @@ describe("notifyRemoteCheckoutOutcome", () => {
   const outcome = (
     sw: SwitchOutcome,
     ff: RemoteCheckoutOutcome["fast_forward"],
-  ): RemoteCheckoutOutcome => ({ local_branch: "topic", switch: sw, fast_forward: ff });
+  ): RemoteCheckoutOutcome => ({ local_branch: "topic", switch: sw, fast_forward: ff, lfs_stubs: null });
 
   test("clean switch + fast-forward says both, in one toast", () => {
     notifyRemoteCheckoutOutcome(

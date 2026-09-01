@@ -7,6 +7,7 @@ import { cancelClone } from "../../lib/commands";
 import type { CloneOptions, InitOptions } from "../../lib/commands";
 import type { GitProfile } from "../../lib/types";
 import { cloneCancelCleanupFailure, formatAppError, gitErrorKind } from "../../lib/types";
+import { lfsDownloadErrorMessage } from "../../lib/lfsFeedback";
 import { useRemoteProgressStore } from "../../store/remoteProgress";
 import { useSettingsStore } from "../../store/settings";
 import { Button } from "../shared/buttons";
@@ -97,7 +98,7 @@ export function CloneForm({
         onError(
           gitErrorKind(e) === "AuthFailed"
             ? "Authentication failed. Pick a profile with the right credentials, or fix your global git credentials."
-            : formatAppError(e),
+            : lfsDownloadErrorMessage(e, "clone") ?? formatAppError(e),
         );
       }
     } finally {
