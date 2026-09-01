@@ -4,6 +4,7 @@ import { recentRepos } from "../lib/commands";
 import { parseLocator } from "../lib/locator";
 import { formatAppError } from "../lib/types";
 import { useGitProfiles } from "../lib/useGitProfiles";
+import { useCloneStore } from "../store/clone";
 import { useRepoStore } from "../store/repos";
 import { notify } from "../store/notifications";
 import { SectionLabel } from "./Commits/menu/primitives";
@@ -20,13 +21,13 @@ type Mode = "menu" | "clone" | "init";
  * plus the most recent repos), so cloning or initializing never requires the
  * Repositories panel. The forms are the shared ones from `Repositories/forms`.
  *
- * While a clone is running the popover pins itself open — outside clicks and
- * Escape are ignored — because dismissing it would orphan the progress meter
- * and the cancel button. Only "Cancel clone" (or completion) releases it.
+ * Submitting a clone closes the popover at once: the clone lives in
+ * `useCloneStore` and is shown (and cancelled) from the app-chrome clone
+ * strip, so nothing here has to be pinned open to keep it reachable.
  */
 export function RepoAddMenu() {
   const openRepo = useRepoStore((s) => s.openRepo);
-  const cloneRepo = useRepoStore((s) => s.cloneRepo);
+  const startClone = useCloneStore((s) => s.start);
   const initRepo = useRepoStore((s) => s.initRepo);
 
   const [open, setOpen] = useState(false);
@@ -35,9 +36,6 @@ export function RepoAddMenu() {
   const { data: profiles = [], refetch: refetchProfiles } = useGitProfiles();
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
-  // Pin while a clone is in flight; a ref so the document listener sees the
-  // current value without re-registering.
-  const cloneBusyRef = useRef(false);
 
   const openRepoIds = useRepoStore((s) => s.openRepos.map((r) => r.id).join("\0"));
 
@@ -56,16 +54,15 @@ export function RepoAddMenu() {
   };
 
   // Dismiss on outside mousedown + Escape (capture phase, like every other
-  // menu) — unless a clone is running.
+  // menu).
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
     const onDown = (e: MouseEvent) => {
-      if (cloneBusyRef.current) return;
       if (ref.current && !ref.current.contains(e.target as Node)) close();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !cloneBusyRef.current) {
+      if (e.key === "Escape") {
         // Consumed: closing the menu must not leak to other Escape listeners
         // (e.g. exiting a maximized panel).
         e.stopPropagation();
@@ -164,11 +161,8 @@ export function RepoAddMenu() {
               profiles={profiles}
               onCancel={() => setMode("menu")}
               onError={setError}
-              onBusyChange={(busy) => {
-                cloneBusyRef.current = busy;
-              }}
-              onClone={async (url, parentDir, name, profileId, opId, options) => {
-                await cloneRepo(url, parentDir, name, profileId, opId, options);
+              onClone={(url, parentDir, name, profileId, options) => {
+                startClone({ url, parentDir, name, profileId, options });
                 close();
               }}
             />

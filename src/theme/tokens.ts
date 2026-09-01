@@ -117,8 +117,8 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "app.fg", group: "App", documentation: "Top-level default text." },
   { name: "accent", group: "App", documentation: "General accent: focus rings, active markers, highlighted icons." },
   { name: "accent.fg", group: "App", documentation: "Text/icons drawn on accent-coloured surfaces." },
-  { name: "banner.op.bg", group: "App", documentation: "Background of the merge/rebase-in-progress banner (app chrome, below the repo tabs)." },
-  { name: "banner.op.fg", group: "App", documentation: "Text of the merge/rebase-in-progress banner, including its buttons' text and border." },
+  { name: "banner.op.bg", group: "App", documentation: "Background of the operation-in-progress banners (merge/rebase state, running clones) in app chrome below the repo tabs." },
+  { name: "banner.op.fg", group: "App", documentation: "Text of the operation-in-progress banners, including their buttons' text and border." },
   { name: "banner.warning.bg", group: "App", documentation: "Background of app-chrome warning banners (e.g. the missing-git-lfs warning below the repo tabs)." },
   { name: "banner.warning.fg", group: "App", documentation: "Text of app-chrome warning banners, including their buttons' text and border." },
 

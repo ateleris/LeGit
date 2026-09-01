@@ -32,6 +32,12 @@ lives in the git log and the GitHub release notes.
 
 ### Fixed
 
+- A running clone is no longer lost when its dialog is dismissed. Clone
+  progress and a Cancel button now live in a strip below the repo tabs, so
+  closing the "+" menu or the Repositories panel mid-clone keeps the clone
+  visible and cancellable. The clone's outcome is reported as a toast
+  (previously a clone that failed after the dialog closed failed silently),
+  and the "+" menu no longer pins itself open while cloning.
 - Repositories with very large working trees (e.g. a home directory opened as
   a repo) no longer hold up startup: the filesystem watcher now attaches in
   the background instead of blocking the "restoring repositories…" splash,
