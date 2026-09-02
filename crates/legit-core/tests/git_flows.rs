@@ -2542,6 +2542,31 @@ async fn submodule_remove_keeps_gitdir_and_delete_is_separate() {
     assert!(matches!(err, legit_core::GitError::Internal(_)), "{err:?}");
 }
 
+/// `.git/modules/<name>` replaced by a symlink: the gitdir helpers must
+/// refuse it rather than report or delete whatever it points at.
+#[cfg(unix)]
+#[tokio::test]
+async fn submodule_gitdir_symlink_is_refused() {
+    let (sup, _lib) = repo_with_submodule().await;
+    sup.backend.submodule_remove(Path::new("lib")).await.unwrap();
+    let modules_lib = sup.path.join(".git").join("modules").join("lib");
+    assert!(modules_lib.is_dir(), "retained gitdir expected at {}", modules_lib.display());
+
+    std::fs::remove_dir_all(&modules_lib).unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("precious.txt"), "keep\n").unwrap();
+    std::os::unix::fs::symlink(outside.path(), &modules_lib).unwrap();
+
+    let err = sup.backend.submodule_gitdir_info("lib").await.unwrap_err();
+    assert!(matches!(err, legit_core::GitError::Internal(_)), "{err:?}");
+    let err = sup.backend.submodule_delete_gitdir("lib").await.unwrap_err();
+    assert!(matches!(err, legit_core::GitError::Internal(_)), "{err:?}");
+    assert!(
+        outside.path().join("precious.txt").exists(),
+        "the symlink target must be untouched"
+    );
+}
+
 /// Fixture: superproject records a NEW submodule commit (touching lib.txt)
 /// while the submodule is checked out at the OLD one. Returns (sup, old, new).
 async fn submodule_pointer_ahead() -> (TestRepo, String, String) {

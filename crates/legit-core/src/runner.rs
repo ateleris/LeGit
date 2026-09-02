@@ -217,7 +217,12 @@ impl GitRunner {
     }
 
     /// Run a one-shot `git` invocation and collect the full output.
-    #[instrument(level = "info", skip(self), fields(cwd = ?self.cwd, args = ?args))]
+    ///
+    /// The span records NO argv: the fmt layer prints span fields as a prefix
+    /// on every event inside the span, so a raw argv here would put a
+    /// URL-embedded token in the log file next to the redacted copy
+    /// `log_invocation` emits (`redact_url_credentials`).
+    #[instrument(level = "info", skip_all, fields(cwd = ?self.cwd))]
     pub async fn run(&self, args: &[&str]) -> Result<RunOutput, RunnerError> {
         self.run_inner(args, &[], OperationId::new(), &[]).await
     }

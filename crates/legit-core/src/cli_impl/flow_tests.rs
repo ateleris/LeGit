@@ -3540,6 +3540,39 @@ async fn option_like_refs_are_refused_before_git_runs() {
         "log revision_range"
     );
 
+    // Remote NAMES sit in positional slots too: `git fetch --upload-pack=<cmd>`
+    // and `git push --receive-pack=<cmd>` run <cmd> locally for path/ssh
+    // transports, and a name reaches these slots from the repo's own config.
+    assert_refused!(
+        b.fetch(
+            FetchOptions { all: false, prune: false, remote: Some(evil.to_string()) },
+            OperationId::new()
+        ),
+        "fetch"
+    );
+    assert_refused!(
+        b.push(
+            PushOptions {
+                remote: evil.to_string(),
+                branch: "main".to_string(),
+                set_upstream: false,
+                force_with_lease: false,
+                recurse_submodules: None,
+            },
+            OperationId::new()
+        ),
+        "push"
+    );
+    assert_refused!(b.prune_remote(evil, OperationId::new()), "prune_remote");
+    assert_refused!(b.add_remote(evil, "https://example.com/r.git"), "add_remote");
+    assert_refused!(b.remove_remote(evil), "remove_remote");
+    assert_refused!(b.rename_remote(evil, "ok"), "rename_remote old name");
+    assert_refused!(b.rename_remote("ok", evil), "rename_remote new name");
+    assert_refused!(
+        b.set_remote_url(evil, "https://example.com/r.git", false),
+        "set_remote_url"
+    );
+
     // Nothing ran: the script was never touched.
     exec.assert_done();
 }

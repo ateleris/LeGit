@@ -34,6 +34,32 @@ lives in the git log and the GitHub release notes.
   changes as merged despite differing commit IDs, and only genuinely
   unmerged work gets a data-loss warning.
 
+- "Test SSH connection" now shows an unknown server's host key fingerprint
+  for confirmation instead of trusting it silently, matching what a fetch or
+  push over SSH already does.
+
+### Fixed
+
+- A credential the server rejects no longer deletes a different stored
+  credential for the same host from the OS keychain.
+
+### Security
+
+- A token embedded in a remote URL (`https://<token>@github.com/...`) is no
+  longer written to the log file when adding or editing a remote; only the
+  redacted form is logged. Existing log files may still contain one - the
+  log folder is reachable from Global Settings, About.
+
+- Imported themes are checked more strictly: a palette entry must be a single
+  colour, so a theme can no longer smuggle other CSS (such as a remote
+  `url(...)` that would phone home) into the UI.
+
+- Remote names that look like command-line options are now refused, as branch
+  and tag names already were.
+
+- The app ships with a Content Security Policy, and deleting a submodule's
+  retained git directory refuses to follow a symlink out of the repository.
+
 ## [1.0.3] - 2026-08-24
 
 ### Fixed

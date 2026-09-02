@@ -1667,8 +1667,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         self.submodule_auto_update(behavior, attach_branch).await
     }
     async fn fetch(&self, opts: FetchOptions, op_id: OperationId) -> Result<(), GitError> {
+        let args = build_fetch_args(&opts)?;
         let runner = self.runner().await;
-        let args = build_fetch_args(&opts);
         self.run_remote(&runner, &args, op_id).await
     }
 
@@ -1680,8 +1680,8 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
     }
 
     async fn push(&self, opts: PushOptions, op_id: OperationId) -> Result<(), GitError> {
+        let args = build_push_args(&opts)?;
         let runner = self.runner().await;
-        let args = build_push_args(&opts);
         self.run_remote(&runner, &args, op_id).await
     }
 
@@ -1744,25 +1744,36 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
     }
 
     async fn add_remote(&self, name: &str, url: &str) -> Result<(), GitError> {
-        self.run_simple(&["remote", "add", name, url]).await
+        self.run_simple(&["remote", "add", safe_ref("remote", name)?, url]).await
     }
 
     async fn remove_remote(&self, name: &str) -> Result<(), GitError> {
-        self.run_simple(&["remote", "remove", name]).await
+        self.run_simple(&["remote", "remove", safe_ref("remote", name)?]).await
     }
 
     async fn rename_remote(&self, old: &str, new: &str) -> Result<(), GitError> {
-        self.run_simple(&["remote", "rename", old, new]).await
+        self.run_simple(&[
+            "remote",
+            "rename",
+            safe_ref("remote", old)?,
+            safe_ref("remote", new)?,
+        ])
+        .await
     }
 
     async fn set_remote_url(&self, name: &str, url: &str, push: bool) -> Result<(), GitError> {
+        let name = safe_ref("remote", name)?;
         self.run_simple(&build_set_url_args(name, url, push)).await
     }
 
     async fn prune_remote(&self, name: &str, op_id: OperationId) -> Result<(), GitError> {
         // Network op (contacts the remote) → cancellable + remote-error mapping.
+        let args = vec![
+            "remote".to_string(),
+            "prune".to_string(),
+            safe_ref_owned("remote", name)?,
+        ];
         let runner = self.runner().await;
-        let args = vec!["remote".to_string(), "prune".to_string(), name.to_string()];
         self.run_remote(&runner, &args, op_id).await
     }
 
@@ -2785,7 +2796,7 @@ const NO_AUTO_MAINTENANCE: [&str; 4] = ["-c", "gc.auto=0", "-c", "maintenance.au
 /// remote; an empty remote name means "default remote" (no positional arg).
 /// `--progress` forces the transfer meter onto our (non-TTY) pipe;
 /// `run_with_op_progress` parses and strips it.
-fn build_fetch_args(opts: &FetchOptions) -> Vec<String> {
+fn build_fetch_args(opts: &FetchOptions) -> Result<Vec<String>, GitError> {
     let mut args: Vec<String> = NO_AUTO_MAINTENANCE.iter().map(|s| s.to_string()).collect();
     args.push("fetch".into());
     args.push("--progress".into());
@@ -2795,9 +2806,10 @@ fn build_fetch_args(opts: &FetchOptions) -> Vec<String> {
     if opts.all {
         args.push("--all".into());
     } else if let Some(remote) = opts.remote.as_deref().filter(|r| !r.is_empty()) {
-        args.push(remote.to_string());
+        // `git fetch --upload-pack=<cmd>` runs <cmd> for path/ssh transports.
+        args.push(safe_ref_owned("remote", remote)?);
     }
-    args
+    Ok(args)
 }
 
 /// Build the argument vector for `git pull`. `Default` passes no integration
@@ -2822,7 +2834,7 @@ fn build_pull_args(opts: &PullOptions) -> Vec<String> {
 /// context menu pushes branches that are not checked out, where that clash is
 /// easy to hit. `--set-upstream` still applies (the refspec source resolves
 /// to the local branch).
-fn build_push_args(opts: &PushOptions) -> Vec<String> {
+fn build_push_args(opts: &PushOptions) -> Result<Vec<String>, GitError> {
     let mut args: Vec<String> = vec!["push".into(), "--progress".into()];
     if let Some(mode) = opts.recurse_submodules {
         args.push(match mode {
@@ -2836,9 +2848,11 @@ fn build_push_args(opts: &PushOptions) -> Vec<String> {
     if opts.set_upstream {
         args.push("--set-upstream".into());
     }
-    args.push(opts.remote.clone());
+    // `git push --receive-pack=<cmd>` is the push-side counterpart of
+    // `fetch --upload-pack` (see `safe_ref`).
+    args.push(safe_ref_owned("remote", &opts.remote)?);
     args.push(format!("refs/heads/{}", opts.branch));
-    args
+    Ok(args)
 }
 
 /// Build the argument vector for `git remote set-url`, adding `--push` to target
@@ -4330,11 +4344,12 @@ fatal: feat.bin: smudge filter lfs failed\n";
     fn push_args_carry_recurse_submodules_mode() {
         let mut opts = push_opts(false, false);
         opts.recurse_submodules = Some(PushRecurseMode::Check);
-        assert!(build_push_args(&opts).contains(&"--recurse-submodules=check".to_string()));
+        assert!(build_push_args(&opts).unwrap().contains(&"--recurse-submodules=check".to_string()));
         opts.recurse_submodules = Some(PushRecurseMode::OnDemand);
-        assert!(build_push_args(&opts).contains(&"--recurse-submodules=on-demand".to_string()));
+        assert!(build_push_args(&opts).unwrap().contains(&"--recurse-submodules=on-demand".to_string()));
         opts.recurse_submodules = None;
         assert!(!build_push_args(&opts)
+            .unwrap()
             .iter()
             .any(|a| a.starts_with("--recurse-submodules")));
     }
@@ -4354,7 +4369,7 @@ fatal: feat.bin: smudge filter lfs failed\n";
     #[test]
     fn push_args_plain() {
         assert_eq!(
-            build_push_args(&push_opts(false, false)),
+            build_push_args(&push_opts(false, false)).unwrap(),
             vec!["push", "--progress", "origin", "refs/heads/main"]
         );
     }
@@ -4362,7 +4377,7 @@ fatal: feat.bin: smudge filter lfs failed\n";
     #[test]
     fn push_args_set_upstream() {
         assert_eq!(
-            build_push_args(&push_opts(true, false)),
+            build_push_args(&push_opts(true, false)).unwrap(),
             vec!["push", "--progress", "--set-upstream", "origin", "refs/heads/main"]
         );
     }
@@ -4370,7 +4385,7 @@ fatal: feat.bin: smudge filter lfs failed\n";
     #[test]
     fn push_args_force_with_lease_then_upstream() {
         assert_eq!(
-            build_push_args(&push_opts(true, true)),
+            build_push_args(&push_opts(true, true)).unwrap(),
             vec!["push", "--progress", "--force-with-lease", "--set-upstream", "origin", "refs/heads/main"]
         );
     }
@@ -4514,7 +4529,7 @@ fatal: feat.bin: smudge filter lfs failed\n";
     #[test]
     fn fetch_args_variants() {
         assert_eq!(
-            build_fetch_args(&FetchOptions { all: false, prune: false, remote: None }),
+            build_fetch_args(&FetchOptions { all: false, prune: false, remote: None }).unwrap(),
             with_no_maint(&["fetch", "--progress"])
         );
         assert_eq!(
@@ -4522,7 +4537,8 @@ fatal: feat.bin: smudge filter lfs failed\n";
                 all: false,
                 prune: true,
                 remote: Some("origin".into())
-            }),
+            })
+            .unwrap(),
             with_no_maint(&["fetch", "--progress", "--prune", "origin"])
         );
         // --all wins over a named remote; empty remote name means default.
@@ -4531,11 +4547,12 @@ fatal: feat.bin: smudge filter lfs failed\n";
                 all: true,
                 prune: false,
                 remote: Some("origin".into())
-            }),
+            })
+            .unwrap(),
             with_no_maint(&["fetch", "--progress", "--all"])
         );
         assert_eq!(
-            build_fetch_args(&FetchOptions { all: false, prune: false, remote: Some("".into()) }),
+            build_fetch_args(&FetchOptions { all: false, prune: false, remote: Some("".into()) }).unwrap(),
             with_no_maint(&["fetch", "--progress"])
         );
     }

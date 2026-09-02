@@ -358,8 +358,32 @@ impl<E: GitExecutor> GitCliBackend<E> {
             .run(&["rev-parse", "--absolute-git-dir"])
             .await?;
         Self::ensure_success(&out)?;
-        let gitdir = PathBuf::from(out.stdout.trim()).join("modules").join(name_path);
-        Ok(gitdir.is_dir().then_some(gitdir))
+        let modules = PathBuf::from(out.stdout.trim()).join("modules");
+        let gitdir = modules.join(name_path);
+        // `is_dir` follows symlinks, and this path is deleted wholesale: resolve
+        // it and require that it still sits under `modules/`, so a link planted
+        // in the git dir cannot redirect the deletion outside it.
+        match std::fs::symlink_metadata(&gitdir) {
+            Ok(meta) if meta.is_dir() => {}
+            Ok(meta) if meta.is_symlink() => {
+                return Err(GitError::Internal(format!(
+                    "the gitdir of submodule '{name}' is a symlink - refusing to report or delete it"
+                )))
+            }
+            _ => return Ok(None),
+        }
+        let (Ok(real), Ok(real_modules)) = (gitdir.canonicalize(), modules.canonicalize()) else {
+            return Err(GitError::Internal(format!(
+                "could not resolve the gitdir of submodule '{name}'"
+            )));
+        };
+        if !real.starts_with(&real_modules) {
+            return Err(GitError::Internal(format!(
+                "the gitdir of submodule '{name}' resolves outside {}",
+                real_modules.display()
+            )));
+        }
+        Ok(Some(gitdir))
     }
 
     pub(super) async fn submodules(&self) -> Result<Vec<SubmoduleInfo>, GitError> {

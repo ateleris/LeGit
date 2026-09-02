@@ -686,13 +686,31 @@ fn handle_store(broker: &Broker, fields: &HashMap<String, String>) {
     }
 }
 
+/// Does git's `erase` name the credential we hold? git erases the credential
+/// it REJECTED, which may have come from an earlier helper in the chain, so a
+/// differing username/password must leave ours alone (git-credential-store
+/// applies the same rule). Fields git omits are not constraints.
+fn erase_applies(stored: &StoredCred, fields: &HashMap<String, String>) -> bool {
+    fields.get("username").is_none_or(|u| *u == stored.username)
+        && fields.get("password").is_none_or(|p| *p == stored.password)
+}
+
 /// `erase`: git rejected the credentials. Drop them everywhere so the next
 /// attempt prompts fresh instead of replaying a bad secret.
 fn handle_erase(broker: &Broker, fields: &HashMap<String, String>) {
     let Some(key) = cred_key(fields) else { return };
-    lock(&broker.session_cache).remove(&key);
+    let mut cache = lock(&broker.session_cache);
+    if cache.get(&key).is_some_and(|c| !erase_applies(c, fields)) {
+        return;
+    }
+    cache.remove(&key);
+    drop(cache);
     lock(&broker.remember_intents).remove(&key);
+    let fields = fields.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        if keyring_load(&key).is_some_and(|stored| !erase_applies(&stored, &fields)) {
+            return;
+        }
         let _ = keyring::Entry::new(KEYRING_SERVICE, &key).and_then(|e| e.delete_credential());
     });
 }
@@ -815,6 +833,24 @@ mod tests {
     fn parses_values_containing_equals() {
         let fields = parse_credential_input("password=a=b=c\n");
         assert_eq!(fields.get("password").unwrap(), "a=b=c");
+    }
+
+    // git sends `erase` for the credential it REJECTED, which may have come
+    // from an earlier helper in the chain (a stale store entry). Like
+    // credential-store, only an entry matching every supplied field is
+    // dropped, so a rejected stale token cannot evict LeGit's own entry.
+    #[test]
+    fn erase_only_drops_the_credential_git_actually_rejected() {
+        let stored = StoredCred { username: "simon".into(), password: "ghp_new".into() };
+        let fields = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        };
+        assert!(erase_applies(&stored, &fields(&[("username", "simon"), ("password", "ghp_new")])));
+        assert!(erase_applies(&stored, &fields(&[("username", "simon")])));
+        assert!(erase_applies(&stored, &fields(&[])));
+        assert!(!erase_applies(&stored, &fields(&[("username", "simon"), ("password", "ghp_stale")])));
+        assert!(!erase_applies(&stored, &fields(&[("username", "other"), ("password", "ghp_new")])));
+        assert!(!erase_applies(&stored, &fields(&[("username", "other")])));
     }
 
     #[test]

@@ -217,9 +217,10 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   blockers 2026-08-24.)
 - **Structural splits, when next touched** (2026-08-06 review remainder;
   CommitsPanel.tsx split done 2026-08-24 - queries hook, row context menu,
-  RemoteSyncToolbar): `WorkingChangesPanel.tsx` (~1100-line function;
-  CommitComposer + shared FileRowMenu), `cli_impl/mod.rs` (~5000 lines;
-  submodule + line-ending blocks).
+  RemoteSyncToolbar; `cli_impl/mod.rs` submodule + line-ending blocks
+  extracted 2026-09-01 into `submodules.rs` / `line_endings.rs`):
+  `WorkingChangesPanel.tsx` (~1100-line function; CommitComposer + shared
+  FileRowMenu).
 - **Internationalization: decide want/need (2026-08-04).** Open product
   question, not a commitment: is a non-English UI worth it for LeGit's
   audience? Inputs: git terminology stays English in most clients, and

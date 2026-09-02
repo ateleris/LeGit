@@ -19,7 +19,10 @@ export interface ValidationResult {
 }
 
 const COLOR_HEX = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
-const FUNCTIONAL_COLOR = /^(rgb|rgba|hsl|hsla|oklch)\s*\(.*\)\s*$/i;
+// The whole value must be ONE colour: palette entries land verbatim in CSS
+// custom properties, so a nested `(` would admit `url(...)` and trailing text
+// a second declaration. Mirrors `is_valid_color` in persistence.rs.
+const FUNCTIONAL_COLOR = /^(rgb|rgba|hsl|hsla|oklch)\([0-9a-z.%,/+\- ]+\)$/i;
 
 export function isValidColor(color: unknown): boolean {
   if (typeof color !== "string") return false;
