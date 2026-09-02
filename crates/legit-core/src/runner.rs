@@ -278,7 +278,7 @@ impl GitRunner {
         let mut cmd = self.build_command_with_env(args, extra_env);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-        let mut child = self.spawn_child(&mut cmd)?;
+        let (mut child, tree) = self.spawn_child(&mut cmd)?;
 
         let (kill_tx, kill_rx) = oneshot::channel();
         self.try_insert_running(op_id.clone(), kill_tx)?;
@@ -292,7 +292,7 @@ impl GitRunner {
         let exit_code = tokio::select! {
             _ = kill_rx => {
                 warn!(op_id = %op_id, "git invocation cancelled — killing child");
-                let status = terminate_tree(&mut child).await.map_err(RunnerError::Io)?;
+                let status = terminate_tree(&mut child, &tree).await.map_err(RunnerError::Io)?;
                 self.remove_running(&op_id);
                 // Do NOT wait for pipe EOF here: a descendant that survived
                 // the kill (Git for Windows' `cmd\git.exe` shim wraps the
@@ -361,7 +361,7 @@ impl GitRunner {
         let mut cmd = self.build_command(args);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-        let mut child = self.spawn_child(&mut cmd)?;
+        let (mut child, tree) = self.spawn_child(&mut cmd)?;
 
         let (kill_tx, kill_rx) = oneshot::channel();
         self.try_insert_running(op_id.clone(), kill_tx)?;
@@ -397,7 +397,7 @@ impl GitRunner {
         let exit_code = tokio::select! {
             _ = kill_rx => {
                 warn!(op_id = %op_id, "git invocation cancelled — killing child");
-                let status = terminate_tree(&mut child).await.map_err(RunnerError::Io)?;
+                let status = terminate_tree(&mut child, &tree).await.map_err(RunnerError::Io)?;
                 self.remove_running(&op_id);
                 // Do NOT wait for pipe EOF here: a descendant that survived
                 // the kill (Git for Windows' `cmd\git.exe` shim wraps the
@@ -457,7 +457,7 @@ impl GitRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let mut child = self.spawn_child(&mut cmd)?;
+        let (mut child, tree) = self.spawn_child(&mut cmd)?;
 
         let mut stdin = child.stdin.take().expect("stdin piped");
         let stdout = child.stdout.take().expect("stdout piped");
@@ -503,7 +503,7 @@ impl GitRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let mut child = self.spawn_child(&mut cmd)?;
+        let (mut child, tree) = self.spawn_child(&mut cmd)?;
 
         let mut stdin = child.stdin.take().expect("stdin piped");
         let stdout = child.stdout.take().expect("stdout piped");
@@ -559,7 +559,7 @@ impl GitRunner {
         let mut cmd = self.build_command(args);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-        let mut child = self.spawn_child(&mut cmd)?;
+        let (mut child, tree) = self.spawn_child(&mut cmd)?;
 
         let (kill_tx, kill_rx) = oneshot::channel();
         self.try_insert_running(op_id.clone(), kill_tx)?;
@@ -590,7 +590,7 @@ impl GitRunner {
         let status = tokio::select! {
             _ = kill_rx => {
                 warn!(op_id = %op_id, "streaming git invocation cancelled — killing child");
-                let status = terminate_tree(&mut child).await.map_err(RunnerError::Io)?;
+                let status = terminate_tree(&mut child, &tree).await.map_err(RunnerError::Io)?;
                 // The kill hits only the direct child, but git spawns its
                 // own children that inherit the pipes (Git for Windows'
                 // `cmd\git.exe` shim wraps the real git; git forks helpers
@@ -756,7 +756,10 @@ impl GitRunner {
     /// object; the Unix side is configured pre-spawn in
     /// `build_command_with_env`). Every spawn in the runner must go through
     /// here.
-    fn spawn_child(&self, cmd: &mut Command) -> Result<tokio::process::Child, RunnerError> {
+    fn spawn_child(
+        &self,
+        cmd: &mut Command,
+    ) -> Result<(tokio::process::Child, ProcTree), RunnerError> {
         let child = cmd.spawn().map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 RunnerError::GitNotFound(self.git_path.clone())
@@ -766,7 +769,84 @@ impl GitRunner {
         })?;
         #[cfg(windows)]
         app_job::assign(&child);
-        Ok(child)
+        let tree = ProcTree::new(&child);
+        Ok((child, tree))
+    }
+}
+
+/// Handle on a spawned git's whole process tree, for `terminate_tree`.
+///
+/// Unix needs nothing: the child leads its own process group (see
+/// `build_command_with_env`) and a group signal reaches every descendant.
+/// Windows has no group signal, so each invocation gets its own job object
+/// (nested inside the app-lifetime `app_job`); git's helpers inherit the
+/// membership, and `TerminateJobObject` kills the entire tree in one call.
+/// Without this only the direct child died and an orphaned `index-pack`
+/// kept the partial clone's pack file open until its next (throttled)
+/// progress write hit the broken pipe - long enough for the cancelled
+/// clone's cleanup to fail with "being used by another process".
+///
+/// The job has NO kill-on-close limit: dropping the handle after a normal
+/// completion must not kill daemons git deliberately leaves behind
+/// (fsmonitor--daemon); those are reaped by `app_job` at app exit.
+struct ProcTree {
+    #[cfg(windows)]
+    job: Option<usize>,
+}
+
+#[cfg(not(windows))]
+impl ProcTree {
+    fn new(_child: &tokio::process::Child) -> Self {
+        Self {}
+    }
+}
+
+#[cfg(windows)]
+impl ProcTree {
+    fn new(child: &tokio::process::Child) -> Self {
+        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows_sys::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW};
+        let Some(raw) = child.raw_handle() else {
+            return Self { job: None };
+        };
+        let job = unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                return Self { job: None };
+            }
+            if AssignProcessToJobObject(job, raw as HANDLE) == 0 {
+                CloseHandle(job);
+                return Self { job: None };
+            }
+            job
+        };
+        Self {
+            job: Some(job as usize),
+        }
+    }
+
+    /// Kill every process in the job. Best-effort: with no job (creation or
+    /// assignment failed at spawn) the caller still kills the direct child.
+    fn terminate(&self) {
+        use windows_sys::Win32::Foundation::HANDLE;
+        use windows_sys::Win32::System::JobObjects::TerminateJobObject;
+        if let Some(job) = self.job {
+            unsafe {
+                TerminateJobObject(job as HANDLE, 1);
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ProcTree {
+    fn drop(&mut self) {
+        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+        if let Some(job) = self.job {
+            unsafe {
+                CloseHandle(job as HANDLE);
+            }
+        }
     }
 }
 
@@ -782,17 +862,20 @@ impl GitRunner {
 /// clone removes its partial target, lockfiles get released) before any hard
 /// kill. The group is swept with SIGKILL afterwards for stragglers.
 ///
-/// Windows: there is no group signal here; only the direct child is killed,
-/// survivors die on broken pipe once the reader tasks are aborted, and the
-/// app-lifetime job object (`app_job`) reaps any straggler at exit.
+/// Windows: there is no group signal here; the invocation's job object
+/// (`ProcTree`) terminates the whole tree at once, then the direct child is
+/// killed and reaped. Any straggler that escaped the job dies on broken
+/// pipe once the reader tasks are aborted; `app_job` reaps the rest at exit.
 /// How long a SIGTERMed git gets to run its cleanup handlers before the hard
 /// SIGKILL. Long enough for normal junk removal and lock release, short
 /// enough that a cancel of a signal-ignoring process still feels immediate.
 #[cfg(unix)]
 const TERM_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
+#[cfg_attr(not(windows), allow(unused_variables))]
 async fn terminate_tree(
     child: &mut tokio::process::Child,
+    tree: &ProcTree,
 ) -> std::io::Result<std::process::ExitStatus> {
     #[cfg(unix)]
     if let Some(pid) = child.id() {
@@ -819,6 +902,8 @@ async fn terminate_tree(
         }
         return Ok(status);
     }
+    #[cfg(windows)]
+    tree.terminate();
     let _ = child.start_kill();
     child.wait().await
 }
@@ -1376,6 +1461,60 @@ mod tests {
                 "helper process {helper_pid} survived the cancel"
             );
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }
+
+    /// Windows counterpart of the tree-kill test: the cancelled invocation's
+    /// job object must take its descendants with it. Modeled with a
+    /// PowerShell child that starts a long-running grandchild and records
+    /// its pid; after the cancel that pid must be gone from the task list.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn cancel_kills_the_whole_process_tree_windows() {
+        let dir = tempfile::tempdir().unwrap();
+        let runner = GitRunner::for_repo("powershell", dir.path());
+        let op = OperationId::new();
+        let op_for_cancel = op.clone();
+
+        let script = "$p = Start-Process ping -ArgumentList '-n','60','127.0.0.1' \
+            -WindowStyle Hidden -PassThru; \
+            Set-Content -Path helper.pid -Value $p.Id; \
+            Set-Content -Path started -Value 1; Start-Sleep 60";
+        let runner_for_run = runner.clone();
+        let run = tokio::spawn(async move {
+            runner_for_run
+                .run_with_op(&["-NoProfile", "-Command", script], op)
+                .await
+        });
+
+        wait_for_marker(&dir.path().join("started")).await;
+        let helper_pid: u32 = std::fs::read_to_string(dir.path().join("helper.pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+
+        assert!(runner.cancel(&op_for_cancel));
+        tokio::time::timeout(std::time::Duration::from_secs(4), run)
+            .await
+            .expect("cancelled run did not return")
+            .unwrap()
+            .unwrap();
+
+        let alive = |pid: u32| {
+            let out = std::process::Command::new("tasklist")
+                .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).contains(&format!("\"{pid}\""))
+        };
+        let deadline = Instant::now() + std::time::Duration::from_secs(2);
+        while alive(helper_pid) {
+            assert!(
+                Instant::now() < deadline,
+                "helper process {helper_pid} survived the cancel"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
     }
 

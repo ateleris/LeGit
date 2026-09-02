@@ -42,6 +42,12 @@ lives in the git log and the GitHub release notes.
 
 ### Fixed
 
+- Cancelling a clone on Windows sometimes failed with "The partial clone
+  could not be removed … being used by another process": only git's top
+  process was killed and an orphaned helper kept the pack file open. A cancel
+  now terminates the whole git process tree.
+- The "Cloning" tab's spinner no longer wobbles after clicking cancel (the
+  row squeezed it into an ellipse).
 - "New repository" and "Clone repository" now work for folders inside a WSL
   distribution. Picking a `\\wsl.localhost\…` folder (or typing a `wsl://`
   path) ran Windows git over the share, which failed with "dubious ownership"

@@ -454,6 +454,9 @@ button.legit-tab__close:hover {
 /* "Cloning" tabs (a running clone, see CloneTab.tsx): the spinner scales with
    the tab text instead of the global spinner's fixed 14px. */
 .legit-tab--cloning .legit-spinner {
+  /* Never let the flex row squeeze it: a shrunk spinner is an ellipse that
+     wobbles as it rotates (visible once "cancelling…" widens the row). */
+  flex: none;
   width: 1em;
   height: 1em;
   border-color: currentColor;
