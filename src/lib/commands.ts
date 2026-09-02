@@ -1062,6 +1062,8 @@ export const frontendLog = (level: "error" | "warn" | "info", message: string) =
 /** Open the log directory in the OS file manager. */
 export const openLogDir = () => invoke<null>("open_log_dir");
 
+export const appBuildHash = () => invoke<string | null>("app_build_hash");
+
 // --- column preferences ---
 
 export const saveColumnPreferences = (prefs: unknown) =>

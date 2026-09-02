@@ -129,12 +129,29 @@ pub fn init_tracing(identifier: &str) {
     // Session banner: every log file must identify the build that wrote it -
     // the first thing a crash report needs.
     tracing::info!(
-        version = env!("CARGO_PKG_VERSION"),
+        version = %full_version(),
         os = std::env::consts::OS,
         arch = std::env::consts::ARCH,
         debug_build = cfg!(debug_assertions),
         "LeGit starting"
     );
+}
+
+/// `1.0.3+abc1234` for builds with a baked commit hash (dev/PR builds, see
+/// build.rs), the clean version for releases.
+fn full_version() -> String {
+    match option_env!("LEGIT_BUILD_HASH") {
+        Some(hash) => format!("{}+{hash}", env!("CARGO_PKG_VERSION")),
+        None => env!("CARGO_PKG_VERSION").to_string(),
+    }
+}
+
+/// Short commit hash baked into non-release builds; `None` for releases and
+/// builds without git. Shown next to the version in About.
+#[tauri::command]
+#[specta::specta]
+pub fn app_build_hash() -> Option<String> {
+    option_env!("LEGIT_BUILD_HASH").map(str::to_string)
 }
 
 /// Frontend error forwarding (window.onerror, unhandledrejection, React

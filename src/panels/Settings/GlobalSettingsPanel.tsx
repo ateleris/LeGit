@@ -7,7 +7,7 @@ import { Button, IconButton } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
 import { useRowDragReorder } from "../shared/useRowDragReorder";
 import { useDelayedFlag } from "../shared/useDelayedFlag";
-import { useAppVersion } from "../../lib/appVersion";
+import { useAppVersion, useAppVersionDisplay } from "../../lib/appVersion";
 
 /** localStorage key for the line-height ↔ lane-width link toggle (default on). */
 const LANE_LINK_KEY = "legit.commits-lane-link";
@@ -190,6 +190,7 @@ export function GlobalSettingsPanel() {
 
 function AboutSection() {
   const version = useAppVersion();
+  const displayVersion = useAppVersionDisplay();
   const { busy, run } = useDelayedBusy();
   // Inline status next to the button (settings-form errors stay adjacent to
   // their input; only genuinely async surprises go to toasts).
@@ -228,7 +229,7 @@ function AboutSection() {
 
   return (
     <Section title="About">
-      <Row label="LeGit" value={version ? `v${version}` : "…"} />
+      <Row label="LeGit" value={displayVersion ? `v${displayVersion}` : "…"} />
       <Row
         label="Logs"
         value={

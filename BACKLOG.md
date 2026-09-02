@@ -207,13 +207,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   shows the need. The bug form should ask for version, OS, git version, and
   the log file (Global Settings → About → "Open log folder", newest
   `legit.log.*`, skim for repo paths first).
-- **Dev/PR builds: append the commit hash to the version** (2026-09-01).
-  Dev builds and the PR-build workflow's installer artifacts report the
-  plain manifest version, so two artifacts from different commits are
-  indistinguishable (About dialog, bug reports). Append the short hash
-  (e.g. `1.0.3+abc1234`) for non-release builds: inject at build time
-  (env var read in `build.rs` / the PR workflow passing the hash into the
-  bundle version or About string); release builds keep the clean version.
 - **E2E extensions.** Still open: clone-via-"+"-menu flow, and push/pull
   against a local bare-remote fixture (`buildRemoteFixture`). Keep it a
   small smoke suite; Linux-only remains fine.

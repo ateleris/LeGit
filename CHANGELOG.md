@@ -12,6 +12,13 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- Dev and PR builds show the commit they were built from next to the version
+  (`1.0.3+abc1234`) in About and the log file's session banner, so artifacts
+  and bug reports identify their exact build - with a `.wip` suffix when the
+  build carried uncommitted changes. Releases keep the clean version.
+
 ### Changed
 
 - Failed git-lfs downloads (e.g. objects never uploaded to the server) now
