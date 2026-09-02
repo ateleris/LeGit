@@ -42,6 +42,12 @@ lives in the git log and the GitHub release notes.
 
 ### Fixed
 
+- "New repository" and "Clone repository" now work for folders inside a WSL
+  distribution. Picking a `\\wsl.localhost\…` folder (or typing a `wsl://`
+  path) ran Windows git over the share, which failed with "dubious ownership"
+  after `init` had already created the repository; both now run the
+  distribution's own git inside WSL, and a cancelled WSL clone is cleaned up
+  there too.
 - A running clone is no longer lost when its dialog is dismissed. Clone
   progress and a Cancel button now live in a strip below the repo tabs, so
   closing the "+" menu or the Repositories panel mid-clone keeps the clone

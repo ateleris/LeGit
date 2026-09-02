@@ -67,6 +67,18 @@ impl RepoLocator {
         }
     }
 
+    /// The locator of `name` inside this directory (a clone's destination
+    /// under its parent dir). Local joins natively; remote paths are posix.
+    pub fn join(&self, name: &str) -> RepoLocator {
+        match self {
+            RepoLocator::Local { path } => RepoLocator::Local { path: path.join(name) },
+            RepoLocator::Wsl { distro, path } => RepoLocator::Wsl {
+                distro: distro.clone(),
+                path: path.join(name),
+            },
+        }
+    }
+
     pub fn host_ref(&self) -> Option<HostRef> {
         match self {
             RepoLocator::Local { .. } => None,
@@ -133,6 +145,18 @@ mod tests {
         );
         assert_eq!(loc.to_persist_string(), "wsl://Ubuntu/home/orell/github/LeGit");
         assert_eq!(loc.display_path(), "/home/orell/github/LeGit");
+    }
+
+    #[test]
+    fn join_appends_a_child_on_either_host() {
+        assert_eq!(
+            RepoLocator::parse("wsl://Ubuntu/home/u").join("proj").to_persist_string(),
+            "wsl://Ubuntu/home/u/proj"
+        );
+        assert_eq!(
+            RepoLocator::parse("/x").join("proj"),
+            RepoLocator::local(std::path::Path::new("/x").join("proj"))
+        );
     }
 
     #[test]

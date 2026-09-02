@@ -8,7 +8,7 @@ use crate::state::{
     load_repo_settings_sync, AppState, LaneLock, RepoSession, RepoSettings,
     RepoSummary, TransientOp,
 };
-use legit_core::{classify_remote_error, GitError, HostPath, OperationId};
+use legit_core::{classify_remote_error, FsError, GitError, HostPath, OperationId, RepoFs};
 use legit_host::Host;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -153,6 +153,88 @@ fn expand_tilde(path: &str, home: &str) -> Option<String> {
     rest.starts_with('/').then(|| format!("{home}{rest}"))
 }
 
+/// Expand a typed `~/...` remote path against the agent's home directory
+/// (`None`/empty home = no expansion). The locator scheme prefixes '/' to
+/// keep the path component non-empty, so a typed `~/x` arrives as `/~/x`.
+fn expand_remote_home(path: HostPath, home: Option<&str>) -> HostPath {
+    match home.filter(|h| !h.is_empty()) {
+        Some(home) => expand_tilde(&path.0, home).map(HostPath).unwrap_or(path),
+        None => path,
+    }
+}
+
+/// Where a NEW repository goes (init's directory, clone's parent dir): the
+/// destination as its host sees it, and the git binary to run there.
+struct NewRepoTarget {
+    locator: RepoLocator,
+    git: HostPath,
+    dir: HostPath,
+}
+
+/// Pure core of `resolve_new_repo_target`. `host_git` is the distro's git
+/// override and `home` the agent's home directory (for `~` expansion); both
+/// are ignored for local destinations. Host-free so the routing decision is
+/// unit-testable: a WSL destination (typed `wsl://…` or the
+/// `\\wsl.localhost\…` UNC the folder picker returns) runs the DISTRO's git
+/// on a posix path — never Windows git over the share, which fails with
+/// "dubious ownership" and, worse, half-succeeds (init over the share
+/// created the repo, then the probe rejected it).
+fn new_repo_target(
+    locator: RepoLocator,
+    global_git: &Path,
+    host_git: Option<&str>,
+    home: Option<&str>,
+) -> NewRepoTarget {
+    match locator {
+        RepoLocator::Local { path } => NewRepoTarget {
+            git: HostPath::from_path(global_git),
+            dir: HostPath::from_path(&path),
+            locator: RepoLocator::Local { path },
+        },
+        RepoLocator::Wsl { distro, path } => {
+            let dir = expand_remote_home(path, home);
+            NewRepoTarget {
+                git: HostPath(host_git.unwrap_or("git").to_string()),
+                dir: dir.clone(),
+                locator: RepoLocator::Wsl { distro, path: dir },
+            }
+        }
+    }
+}
+
+/// Resolve a create-type command's destination string (a locator, like
+/// `open_repo`'s argument) to its host plus the target on that host. Mirrors
+/// `probe_and_open`'s host routing so init/clone land where open would look.
+async fn resolve_new_repo_target(
+    state: &AppState,
+    app: &tauri::AppHandle,
+    path: &str,
+    global_git: &Path,
+) -> Result<(Arc<dyn Host>, NewRepoTarget), AppError> {
+    let locator = RepoLocator::parse(path);
+    let (host, host_git, home): (Arc<dyn Host>, Option<String>, Option<String>) = match &locator {
+        RepoLocator::Local { .. } => (state.local_host(), None, None),
+        RepoLocator::Wsl { distro, .. } => {
+            let host = crate::remote::connection::ensure_wsl_host(app, state, distro).await?;
+            let home = host.conn().get().info().map(|i| i.home.clone());
+            let host_git = state.host_git_override(distro).await;
+            (host, host_git, home)
+        }
+    };
+    let target = new_repo_target(locator, global_git, host_git.as_deref(), home.as_deref());
+    Ok((host, target))
+}
+
+/// `dir` must be an existing directory on `host`; the failure text names it
+/// as the user typed/picked it.
+async fn require_existing_dir(host: &dyn Host, dir: &HostPath, what: &str) -> Result<(), AppError> {
+    match host.fs().stat(dir).await {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(AppError::NotARepo(format!("{what} does not exist: {dir}"))),
+        Err(e) => Err(AppError::NotARepo(format!("{what} is not accessible: {e}"))),
+    }
+}
+
 /// Session-dedup predicate: same host identity AND same directory. Local
 /// paths compare by filesystem identity (`same_dir`); remote toplevels come
 /// from `rev-parse --show-toplevel` on the host and compare literally.
@@ -257,16 +339,8 @@ pub(crate) async fn probe_and_open(
         }
         RepoLocator::Wsl { distro, path } => {
             let host = crate::remote::connection::ensure_wsl_host(app, state, &distro).await?;
-            // Expand a typed `~/...` against the agent's home directory. The
-            // locator scheme prefixes '/' to keep the path component
-            // non-empty, so a typed `~/x` arrives here as `/~/x`.
-            let path = match host.conn().get().info().map(|i| i.home.clone()) {
-                Some(home) if !home.is_empty() => match expand_tilde(&path.0, &home) {
-                    Some(expanded) => HostPath(expanded),
-                    None => path,
-                },
-                _ => path,
-            };
+            let home = host.conn().get().info().map(|i| i.home.clone());
+            let path = expand_remote_home(path, home.as_deref());
             // Remote git comes from the host override, else the agent's
             // PATH; the probe doubles as the "git exists on this host" check.
             let host_git = state
@@ -352,7 +426,9 @@ fn build_init_args(bare: bool, initial_branch: Option<&str>) -> Vec<String> {
 }
 
 /// Initialize a new repository in `path` (`git init`), open it, and optionally
-/// apply (and select) a profile. `path` must be an existing directory.
+/// apply (and select) a profile. `path` is a repo LOCATOR (bare path,
+/// `wsl://…`, or a `\\wsl.localhost\…` UNC path) naming an existing
+/// directory; a WSL destination is initialized inside the distro.
 ///
 /// A `--bare` repository has no worktree, so it cannot become a session:
 /// it is created but not opened, and the result is `None` (profiles are
@@ -367,18 +443,10 @@ pub async fn repo_init(
     bare: bool,
     initial_branch: Option<String>,
 ) -> Result<Option<RepoSummary>, AppError> {
-    let dir = PathBuf::from(&path);
-    if !dir.exists() {
-        return Err(AppError::NotARepo(format!(
-            "path does not exist: {}",
-            dir.display()
-        )));
-    }
     let git_path = state.git_path.read().await.clone();
-    let runner = state.local_host().executor_for(
-        &HostPath::from_path(&git_path),
-        Some(&HostPath::from_path(&dir)),
-    );
+    let (host, target) = resolve_new_repo_target(&state, &app, &path, &git_path).await?;
+    require_existing_dir(host.as_ref(), &target.dir, "path").await?;
+    let runner = host.executor_for(&target.git, Some(&target.dir));
     let args = build_init_args(bare, initial_branch.as_deref());
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let out = runner.run(&arg_refs).await.map_err(AppError::from)?;
@@ -391,7 +459,7 @@ pub async fn repo_init(
     if bare {
         return Ok(None);
     }
-    let summary = probe_and_open(&state, &app, git_path, RepoLocator::local(dir)).await?;
+    let summary = probe_and_open(&state, &app, git_path, target.locator).await?;
     if let Some(pid) = profile_id {
         let session = state.get_session(&summary.id).await?;
         crate::commands::profiles::apply_profile_core(&state, &session, &pid).await?;
@@ -430,14 +498,15 @@ fn build_clone_args(
 
 /// What a cancelled clone may delete. Decided BEFORE git runs, so the answer
 /// cannot be confused by whatever the killed clone left behind - a kill gives
-/// git no chance to clean up after itself.
+/// git no chance to clean up after itself. All filesystem access goes
+/// through the repo host's `RepoFs` (the target may live inside a distro).
 #[derive(Debug)]
 enum CloneCleanup {
     /// The target did not exist: the clone created it, remove it whole.
-    RemoveDir(PathBuf),
+    RemoveDir(HostPath),
     /// The target existed but was empty: remove what the clone put inside,
     /// keep the user's directory itself.
-    RemoveContents(PathBuf),
+    RemoveContents(HostPath),
     /// The target existed with content: git refuses such a destination, so
     /// nothing inside is ours - a cancel racing that early failure must not
     /// touch the user's files.
@@ -445,39 +514,34 @@ enum CloneCleanup {
 }
 
 impl CloneCleanup {
-    fn plan(target: &Path) -> Self {
-        if !target.exists() {
-            return Self::RemoveDir(target.to_path_buf());
-        }
-        match std::fs::read_dir(target) {
-            Ok(mut entries) => {
-                if entries.next().is_none() {
-                    Self::RemoveContents(target.to_path_buf())
-                } else {
-                    Self::Nothing
-                }
-            }
+    async fn plan(fs: &dyn RepoFs, target: &HostPath) -> Self {
+        match fs.stat(target).await {
+            Ok(None) => return Self::RemoveDir(target.clone()),
+            Ok(Some(_)) => {}
             // Unreadable target: treat as occupied - deleting blind is worse
             // than leaving debris.
-            Err(_) => Self::Nothing,
+            Err(_) => return Self::Nothing,
+        }
+        match fs.read_dir(target).await {
+            Ok(entries) if entries.is_empty() => Self::RemoveContents(target.clone()),
+            _ => Self::Nothing,
         }
     }
 
     /// Execute the plan (best-effort). Returns a user-facing note when the
     /// removal failed (a failed cleanup must never be silent), None on
-    /// success.
-    fn run(&self) -> Option<String> {
+    /// success. `local` = the target is on the app's own machine (enables
+    /// the Windows read-only workaround, which is meaningless remotely).
+    async fn run(&self, fs: &dyn RepoFs, local: bool) -> Option<String> {
         let (dir, keep_root) = match self {
             Self::RemoveDir(p) => (p, false),
             Self::RemoveContents(p) => (p, true),
             Self::Nothing => return None,
         };
-        remove_clone_debris(dir, keep_root).err().map(|e| {
-            format!(
-                "The partial clone at '{}' could not be removed: {e}",
-                dir.display()
-            )
-        })
+        remove_clone_debris(fs, dir, keep_root, local)
+            .await
+            .err()
+            .map(|e| format!("The partial clone at '{dir}' could not be removed: {e}"))
     }
 }
 
@@ -488,16 +552,25 @@ impl CloneCleanup {
 /// kill (they die on broken pipe, not synchronously). So failed attempts are
 /// retried briefly, clearing read-only flags in between. Never touches
 /// anything outside `dir`.
-fn remove_clone_debris(dir: &Path, keep_root: bool) -> std::io::Result<()> {
+#[cfg_attr(not(windows), allow(unused_variables))]
+async fn remove_clone_debris(
+    fs: &dyn RepoFs,
+    dir: &HostPath,
+    keep_root: bool,
+    local: bool,
+) -> Result<(), FsError> {
     const ATTEMPTS: u32 = 10;
     let mut last_err = None;
     for attempt in 0..ATTEMPTS {
         if attempt > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             #[cfg(windows)]
-            clear_readonly_recursive(dir);
+            if local {
+                let path = dir.as_local();
+                let _ = tokio::task::spawn_blocking(move || clear_readonly_recursive(&path)).await;
+            }
         }
-        match try_remove(dir, keep_root) {
+        match try_remove(fs, dir, keep_root).await {
             Ok(()) => return Ok(()),
             Err(e) => last_err = Some(e),
         }
@@ -505,26 +578,26 @@ fn remove_clone_debris(dir: &Path, keep_root: bool) -> std::io::Result<()> {
     Err(last_err.expect("loop ran at least once"))
 }
 
-fn try_remove(dir: &Path, keep_root: bool) -> std::io::Result<()> {
+async fn try_remove(fs: &dyn RepoFs, dir: &HostPath, keep_root: bool) -> Result<(), FsError> {
     if !keep_root {
-        return match std::fs::remove_dir_all(dir) {
+        return match fs.remove_dir_all(dir).await {
             // Already gone (a cancel can race the clone's own early
             // failure, before git created anything): that IS the goal state.
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(FsError::NotFound { .. }) => Ok(()),
             other => other,
         };
     }
-    let entries = match std::fs::read_dir(dir) {
+    let entries = match fs.read_dir(dir).await {
         Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(FsError::NotFound { .. }) => return Ok(()),
         Err(e) => return Err(e),
     };
     for entry in entries {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            std::fs::remove_dir_all(entry.path())?;
+        let path = dir.join(&entry.name);
+        if entry.is_dir {
+            fs.remove_dir_all(&path).await?;
         } else {
-            std::fs::remove_file(entry.path())?;
+            fs.remove_file(&path).await?;
         }
     }
     Ok(())
@@ -555,7 +628,10 @@ fn clear_readonly_recursive(path: &Path) {
 }
 
 /// Clone `url` into `parent_dir/name`, open it, and optionally apply (and select)
-/// a profile. When a profile is given its auth is injected into the clone via
+/// a profile. `parent_dir` is a repo LOCATOR (bare path, `wsl://…`, or a
+/// `\\wsl.localhost\…` UNC path): a WSL destination is cloned by the distro's
+/// git, and a cancelled clone's debris is removed through the distro's agent.
+/// When a profile is given its auth is injected into the clone via
 /// `-c` (so the clone authenticates with that identity) and then applied to the
 /// new repo. Cancellable via `cancel_clone(op_id)`.
 #[tauri::command]
@@ -572,14 +648,11 @@ pub async fn repo_clone(
     branch: Option<String>,
     recurse_submodules: bool,
 ) -> Result<RepoSummary, AppError> {
-    let parent = PathBuf::from(&parent_dir);
-    if !parent.exists() {
-        return Err(AppError::NotARepo(format!(
-            "directory does not exist: {}",
-            parent.display()
-        )));
-    }
     let git_path = state.git_path.read().await.clone();
+    let (host, target) = resolve_new_repo_target(&state, &app, &parent_dir, &git_path).await?;
+    require_existing_dir(host.as_ref(), &target.dir, "directory").await?;
+    let parent = target.dir;
+    let local = matches!(target.locator, RepoLocator::Local { .. });
 
     // git-level `-c` auth overrides from the optional profile, then `clone`.
     let mut args: Vec<String> = Vec::new();
@@ -606,15 +679,12 @@ pub async fn repo_clone(
 
     // Decide NOW what a cancelled clone may delete: after the kill, the
     // target's content says nothing about who created it (see CloneCleanup).
-    let target = parent.join(&name);
-    let cleanup = CloneCleanup::plan(&target);
+    let fs = host.fs();
+    let cleanup = CloneCleanup::plan(fs.as_ref(), &parent.join(&name)).await;
 
     // Run on a transient runner registered for the op so cancel_clone can reach it.
     let oid = OperationId(op_id);
-    let runner = state.local_host().executor_for(
-        &HostPath::from_path(&git_path),
-        Some(&HostPath::from_path(&parent)),
-    );
+    let runner = host.executor_for(&target.git, Some(&parent));
     let op = Arc::new(TransientOp {
         runner: runner.clone(),
         cancelled: std::sync::atomic::AtomicBool::new(false),
@@ -631,12 +701,10 @@ pub async fn repo_clone(
     let out = result.map_err(AppError::from)?;
     if !out.success {
         // Cancelled by the user: a kill gives git no chance to clean up its
-        // partial target, so remove it ourselves (blocking fs work off the
-        // async thread). An expected outcome, not a remote error.
+        // partial target, so remove it ourselves (through the repo host's
+        // fs). An expected outcome, not a remote error.
         if op.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
-            let cleanup_failed = tokio::task::spawn_blocking(move || cleanup.run())
-                .await
-                .unwrap_or_else(|e| Some(format!("clone cleanup task failed: {e}")));
+            let cleanup_failed = cleanup.run(fs.as_ref(), local).await;
             return Err(AppError::Git(GitError::CloneCancelled { cleanup_failed }));
         }
         return Err(AppError::Git(classify_remote_error(
@@ -645,7 +713,7 @@ pub async fn repo_clone(
         )));
     }
 
-    let summary = probe_and_open(&state, &app, git_path, RepoLocator::local(parent.join(&name))).await?;
+    let summary = probe_and_open(&state, &app, git_path, target.locator.join(&name)).await?;
     // Remember where this clone went: the next clone dialog prefills its
     // folder field with it (session bookkeeping - never fails the clone).
     warn_if_bookkeeping_persist_failed(
@@ -1264,45 +1332,98 @@ mod tests {
         assert!(!super::same_dir(&a, &a.join("elsewhere")));
     }
 
-    use super::{build_clone_args, build_init_args, CloneCleanup};
+    use super::{build_clone_args, build_init_args, new_repo_target, CloneCleanup};
+    use legit_core::{HostPath, LocalFs};
+
+    fn hp(p: &std::path::Path) -> HostPath {
+        HostPath::from_path(p)
+    }
+
+    // Regression: `repo_init` / `repo_clone` took their destination as a bare
+    // local path, so the `\\wsl.localhost\…` folder the picker returns for a
+    // WSL directory ran WINDOWS git over the share (init half-succeeded, then
+    // the probe failed with "dubious ownership"). The destination must route
+    // like `open_repo`: distro host, posix path, the distro's git.
+    #[test]
+    fn new_repo_target_routes_wsl_unc_destination_to_the_distro() {
+        let global_git = std::path::Path::new(r"C:\Program Files\Git\cmd\git.exe");
+        let t = new_repo_target(
+            RepoLocator::parse(r"\\wsl.localhost\Ubuntu\home\u\test-repo"),
+            global_git,
+            None,
+            Some("/home/u"),
+        );
+        assert_eq!(t.git, HostPath("git".into()), "PATH git inside the distro, never the Windows git");
+        assert_eq!(t.dir, HostPath("/home/u/test-repo".into()));
+        assert_eq!(
+            t.locator,
+            RepoLocator::Wsl { distro: "Ubuntu".into(), path: HostPath("/home/u/test-repo".into()) }
+        );
+    }
 
     #[test]
-    fn cleanup_plan_removes_whole_dir_when_target_does_not_exist() {
+    fn new_repo_target_uses_the_distro_git_override_and_expands_tilde() {
+        let t = new_repo_target(
+            RepoLocator::parse("wsl://Ubuntu/~/proj"),
+            std::path::Path::new("/usr/bin/git"),
+            Some("/opt/git/bin/git"),
+            Some("/home/u"),
+        );
+        assert_eq!(t.git, HostPath("/opt/git/bin/git".into()));
+        assert_eq!(t.dir, HostPath("/home/u/proj".into()));
+        assert_eq!(t.locator.to_persist_string(), "wsl://Ubuntu/home/u/proj");
+    }
+
+    #[test]
+    fn new_repo_target_keeps_local_destinations_on_the_global_git() {
+        let t = new_repo_target(
+            RepoLocator::parse("/x/proj"),
+            std::path::Path::new("/usr/bin/git"),
+            Some("ignored-for-local"),
+            Some("/home/u"),
+        );
+        assert_eq!(t.git, HostPath("/usr/bin/git".into()));
+        assert_eq!(t.dir, HostPath("/x/proj".into()));
+        assert_eq!(t.locator, RepoLocator::local("/x/proj"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_plan_removes_whole_dir_when_target_does_not_exist() {
         let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("repo");
+        let target = hp(&dir.path().join("repo"));
         assert!(matches!(
-            CloneCleanup::plan(&target),
+            CloneCleanup::plan(&LocalFs, &target).await,
             CloneCleanup::RemoveDir(p) if p == target
         ));
     }
 
-    #[test]
-    fn cleanup_plan_removes_contents_when_target_is_an_empty_dir() {
+    #[tokio::test]
+    async fn cleanup_plan_removes_contents_when_target_is_an_empty_dir() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("repo");
         std::fs::create_dir(&target).unwrap();
         assert!(matches!(
-            CloneCleanup::plan(&target),
-            CloneCleanup::RemoveContents(p) if p == target
+            CloneCleanup::plan(&LocalFs, &hp(&target)).await,
+            CloneCleanup::RemoveContents(p) if p == hp(&target)
         ));
     }
 
-    #[test]
-    fn cleanup_plan_touches_nothing_when_target_has_content() {
+    #[tokio::test]
+    async fn cleanup_plan_touches_nothing_when_target_has_content() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("repo");
         std::fs::create_dir(&target).unwrap();
         std::fs::write(target.join("precious.txt"), "user data").unwrap();
         assert!(matches!(
-            CloneCleanup::plan(&target),
+            CloneCleanup::plan(&LocalFs, &hp(&target)).await,
             CloneCleanup::Nothing
         ));
     }
 
     /// The debris of a killed clone includes read-only files (git object
     /// files); removal must handle them.
-    #[test]
-    fn cleanup_remove_dir_deletes_readonly_debris() {
+    #[tokio::test]
+    async fn cleanup_remove_dir_deletes_readonly_debris() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("repo");
         std::fs::create_dir_all(target.join(".git/objects/ab")).unwrap();
@@ -1312,49 +1433,49 @@ mod tests {
         perms.set_readonly(true);
         std::fs::set_permissions(&obj, perms).unwrap();
 
-        assert_eq!(CloneCleanup::RemoveDir(target.clone()).run(), None);
+        assert_eq!(CloneCleanup::RemoveDir(hp(&target)).run(&LocalFs, true).await, None);
         assert!(!target.exists());
     }
 
-    #[test]
-    fn cleanup_remove_contents_keeps_the_users_directory() {
+    #[tokio::test]
+    async fn cleanup_remove_contents_keeps_the_users_directory() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("repo");
         std::fs::create_dir_all(target.join(".git")).unwrap();
         std::fs::write(target.join(".git/HEAD"), "ref: x").unwrap();
         std::fs::write(target.join("partial.txt"), "x").unwrap();
 
-        assert_eq!(CloneCleanup::RemoveContents(target.clone()).run(), None);
+        assert_eq!(CloneCleanup::RemoveContents(hp(&target)).run(&LocalFs, true).await, None);
         assert!(target.exists());
         assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);
     }
 
-    #[test]
-    fn cleanup_nothing_leaves_files_alone() {
+    #[tokio::test]
+    async fn cleanup_nothing_leaves_files_alone() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("repo");
         std::fs::create_dir(&target).unwrap();
         std::fs::write(target.join("precious.txt"), "user data").unwrap();
 
-        assert_eq!(CloneCleanup::Nothing.run(), None);
+        assert_eq!(CloneCleanup::Nothing.run(&LocalFs, true).await, None);
         assert!(target.join("precious.txt").exists());
     }
 
     /// A cancel can race the clone's own early failure, before git created
     /// anything: removing a target that is already gone is a success.
-    #[test]
-    fn cleanup_remove_dir_of_already_missing_target_is_success() {
+    #[tokio::test]
+    async fn cleanup_remove_dir_of_already_missing_target_is_success() {
         let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("repo");
-        assert_eq!(CloneCleanup::RemoveDir(target).run(), None);
+        let target = hp(&dir.path().join("repo"));
+        assert_eq!(CloneCleanup::RemoveDir(target).run(&LocalFs, true).await, None);
     }
 
     /// A cleanup that genuinely cannot remove the debris must say so (the
     /// note reaches the user), and must never fix permissions OUTSIDE the
     /// target to force the removal through.
     #[cfg(unix)]
-    #[test]
-    fn cleanup_reports_a_note_when_removal_is_blocked() {
+    #[tokio::test]
+    async fn cleanup_reports_a_note_when_removal_is_blocked() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("repo");
@@ -1363,7 +1484,7 @@ mod tests {
         // An unwritable parent blocks unlinking `repo` from it.
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
 
-        let note = CloneCleanup::RemoveDir(target.clone()).run();
+        let note = CloneCleanup::RemoveDir(hp(&target)).run(&LocalFs, true).await;
 
         // Restore before asserting so the tempdir can always be dropped.
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
