@@ -73,7 +73,7 @@ describe("CloneTabs", () => {
     expect(container.innerHTML).toBe("");
   });
 
-  it("shows one tab per clone, titled Cloning, with the percentage once git reports one", () => {
+  it("shows one tab per clone, named after the repo, without the percentage", () => {
     pendingClone();
     act(() => root.render(<CloneTabs />));
 
@@ -83,15 +83,13 @@ describe("CloneTabs", () => {
     });
 
     expect(tabs()).toHaveLength(1);
-    expect(tabText()).toContain("Cloning");
-    expect(tabs()[0].title).toContain("legit");
-    // No meter yet: git has not printed its first progress line.
-    expect(tabText()).not.toContain("%");
+    expect(tabText()).toContain("Cloning legit");
 
+    // The meter belongs to the progress view; the tab stays a stable name.
     act(() => {
       useRemoteProgressStore.getState().report(opId, { phase: "Receiving objects", percent: 42 });
     });
-    expect(tabText()).toContain("42%");
+    expect(tabText()).not.toContain("%");
 
     act(() => {
       useCloneStore.getState().start({ ...START, url: "https://example.com/other.git", name: "other" });
@@ -229,11 +227,8 @@ describe("CloneTabs", () => {
     formContainer.remove();
 
     expect(tabs()).toHaveLength(1);
+    expect(tabText()).toContain("Cloning legit");
     const opId = Object.keys(useCloneStore.getState().jobs)[0];
-    act(() => {
-      useRemoteProgressStore.getState().report(opId, { phase: "Receiving objects", percent: 8 });
-    });
-    expect(tabText()).toContain("8%");
 
     act(() => closeButton().click());
     await flush();

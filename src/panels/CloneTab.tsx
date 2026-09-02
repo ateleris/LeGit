@@ -1,12 +1,11 @@
 import { useCloneStore } from "../store/clone";
 import type { CloneJob } from "../store/clone";
-import { useRemoteProgressStore } from "../store/remoteProgress";
 import { useConfirmDestructive } from "../store/settings";
 import { cancelCloneWithConfirm } from "./cloneCancel";
 
 /**
- * One "Cloning" tab per running clone, rendered by `RepoTabBar` after the
- * repo tabs. A clone has no repo yet, so its tab is not a repo tab: it
+ * One "Cloning <name>" tab per running clone, rendered by `RepoTabBar` after
+ * the repo tabs (the percentage lives in the progress view, not the tab). A clone has no repo yet, so its tab is not a repo tab: it
  * cannot be dragged, and its close button CANCELS the clone (after
  * confirmation) instead of closing anything. Selecting it shows the clone's
  * progress view in the repo region (`CloneProgressView`).
@@ -29,12 +28,8 @@ function CloneTab({ job }: { job: CloneJob }) {
   const focused = useCloneStore((s) => s.focusedOpId === job.opId);
   const focus = useCloneStore((s) => s.focus);
   const confirm = useConfirmDestructive();
-  // Live transfer progress (legit://remote-progress, keyed by the op id). It
-  // only exists once git has printed its first meter line.
-  const percent = useRemoteProgressStore((s) => s.byOp[job.opId]?.percent ?? null);
 
   const cancel = () => void cancelCloneWithConfirm(job, confirm);
-  const status = job.cancelling ? "cancelling…" : percent != null ? `${percent}%` : null;
 
   return (
     <div
@@ -53,14 +48,9 @@ function CloneTab({ job }: { job: CloneJob }) {
       title={`Cloning ${job.name} from ${job.url}`}
     >
       <span className="legit-spinner" aria-hidden="true" />
-      <span className="legit-tab__name">Cloning</span>
-      {status && (
-        <span
-          className="legit-tab__status"
-          style={{ flex: "none", fontSize: "var(--fz-sm)", opacity: 0.8 }}
-        >
-          {status}
-        </span>
+      <span className="legit-tab__name">Cloning {job.name}</span>
+      {job.cancelling && (
+        <span style={{ flex: "none", fontSize: "var(--fz-sm)", opacity: 0.8 }}>cancelling…</span>
       )}
       <button
         className="legit-tab__close"

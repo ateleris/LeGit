@@ -27,6 +27,7 @@ export function RepoTabBar() {
   // the repo region shows its progress view, not the active repo's panels.
   const cloneFocused = useCloneStore((s) => s.focusedOpId !== null && s.focusedOpId in s.jobs);
   const hasClones = useCloneStore((s) => Object.keys(s.jobs).length > 0);
+  const focusClone = useCloneStore((s) => s.focus);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const activeTabRef = useRef<HTMLDivElement | null>(null);
 
@@ -232,6 +233,11 @@ export function RepoTabBar() {
                   justDragged.current = false; // this click ends a drag — ignore it
                   return;
                 }
+                // Explicit, not left to the activeRepoId subscription: clicking
+                // the repo that was already active (the common case - the clone
+                // tab took over from it) changes no store value, so only this
+                // call brings its panels back.
+                focusClone(null);
                 setActive(repo.id);
               }}
               onAuxClick={(e) => {
