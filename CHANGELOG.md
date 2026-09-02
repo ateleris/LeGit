@@ -78,6 +78,9 @@ lives in the git log and the GitHub release notes.
   restarted every 15 seconds in the background after `wsl --shutdown`.
   Auto-reconnect now applies to distributions with open repositories; a
   Settings-only connection reports the loss and waits for Reconnect.
+- The WSL indicator on a repository tab now uses the same colour as the tab's
+  name, so it brightens with the text on the active tab instead of staying
+  dimmed.
 
 ## [1.0.3] - 2026-08-24
 
