@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const cancelClone = vi.fn((_opId: string) => Promise.resolve(true));
 vi.mock("../lib/commands", () => ({ cancelClone: (id: string) => cancelClone(id) }));
 
-import { useCloneStore } from "./clone";
+import { cloneTargetPath, useCloneStore } from "./clone";
 import { useNotificationsStore } from "./notifications";
 import { useRemoteProgressStore } from "./remoteProgress";
 import { useRepoStore } from "./repos";
@@ -40,7 +40,8 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 
 beforeEach(() => {
   cancelClone.mockClear();
-  useCloneStore.setState({ jobs: {}, completedCount: 0 });
+  useCloneStore.setState({ jobs: {}, focusedOpId: null, completedCount: 0 });
+  useRepoStore.setState({ activeRepoId: null } as never);
   useNotificationsStore.setState({ toasts: [] });
   useRemoteProgressStore.setState({ byOp: {} });
 });
@@ -163,6 +164,67 @@ describe("clone store job lifecycle", () => {
     resolveB({ id: "repo-b" });
     await settle();
     expect(useCloneStore.getState().jobs).toEqual({});
+  });
+});
+
+describe("clone store tab focus", () => {
+  it("focuses a new clone and releases the focus when it settles", async () => {
+    const { resolve } = deferredClone();
+    const opId = useCloneStore.getState().start(START);
+    expect(useCloneStore.getState().focusedOpId).toBe(opId);
+
+    resolve({ id: "repo-1" });
+    await settle();
+    expect(useCloneStore.getState().focusedOpId).toBeNull();
+  });
+
+  it("keeps another clone's focus when an unfocused one settles", async () => {
+    let resolveA!: (v: unknown) => void;
+    let resolveB!: (v: unknown) => void;
+    const promises = [new Promise((r) => (resolveA = r)), new Promise((r) => (resolveB = r))];
+    let call = 0;
+    useRepoStore.setState({ cloneRepo: vi.fn(() => promises[call++]) } as never);
+
+    const a = useCloneStore.getState().start({ ...START, name: "alpha" });
+    useCloneStore.getState().start({ ...START, name: "beta" });
+    useCloneStore.getState().focus(a);
+
+    resolveB({ id: "repo-b" });
+    await settle();
+    expect(useCloneStore.getState().focusedOpId).toBe(a);
+
+    resolveA({ id: "repo-a" });
+    await settle();
+    expect(useCloneStore.getState().focusedOpId).toBeNull();
+  });
+
+  it("only focuses running clones", () => {
+    deferredClone();
+    const opId = useCloneStore.getState().start(START);
+    useCloneStore.getState().focus("not-a-job");
+    expect(useCloneStore.getState().focusedOpId).toBeNull();
+    useCloneStore.getState().focus(opId);
+    expect(useCloneStore.getState().focusedOpId).toBe(opId);
+  });
+
+  it("selecting a repo deselects the clone tab", () => {
+    deferredClone();
+    const opId = useCloneStore.getState().start(START);
+    expect(useCloneStore.getState().focusedOpId).toBe(opId);
+    useRepoStore.setState({ activeRepoId: "repo-1" } as never);
+    expect(useCloneStore.getState().focusedOpId).toBeNull();
+  });
+});
+
+describe("cloneTargetPath", () => {
+  it("joins with the parent's own separator style", () => {
+    expect(cloneTargetPath({ parentDir: "/src", name: "legit" })).toBe("/src/legit");
+    expect(cloneTargetPath({ parentDir: "/src/", name: "legit" })).toBe("/src/legit");
+    expect(cloneTargetPath({ parentDir: "C:\\src", name: "legit" })).toBe("C:\\src\\legit");
+    expect(cloneTargetPath({ parentDir: "\\\\wsl.localhost\\Ubuntu\\home\\u", name: "x" })).toBe(
+      "\\\\wsl.localhost\\Ubuntu\\home\\u\\x",
+    );
+    expect(cloneTargetPath({ parentDir: "wsl://Ubuntu/home/u", name: "x" })).toBe("wsl://Ubuntu/home/u/x");
   });
 });
 

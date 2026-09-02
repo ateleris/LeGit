@@ -10,7 +10,7 @@ import { useRepoStore } from "./repos";
 export interface CloneJob {
   opId: string;
   url: string;
-  /** Target folder name — what the strip labels the job with. */
+  /** Target folder name — what the tab and the progress view label the job with. */
   name: string;
   parentDir: string;
   startedAt: number;
@@ -30,8 +30,10 @@ export interface StartCloneArgs {
  * In-flight clones. Module-level (like the console's per-repo sessions)
  * because the op id must OUTLIVE the form that started it: a clone dialog
  * can be dismissed while its clone runs, and that id is the only handle on
- * the backend's cancellable `TransientOp`. The clone strip (app chrome)
- * renders this store, so a running clone stays visible and cancellable.
+ * the backend's cancellable `TransientOp`. Each job is a "Cloning" tab in
+ * the repo tab strip (`CloneTabs`), so a running clone stays visible and
+ * cancellable; the focused job's progress fills the repo region
+ * (`CloneProgressView`) the way an active repo's panels would.
  *
  * The outcome is reported from here as a toast: by the time a clone
  * finishes, the form that started it is usually gone, so an inline error
@@ -39,28 +41,43 @@ export interface StartCloneArgs {
  */
 interface CloneStore {
   jobs: Record<string, CloneJob>;
+  /** The clone whose tab is selected (its progress view shows instead of the
+   *  active repo's panels); null = a repo tab is selected. A new clone takes
+   *  focus so its progress is seen at once; selecting a repo tab clears it. */
+  focusedOpId: string | null;
   /** Bumped whenever a clone settles, so surfaces caching derived data (the
    *  Repositories panel's recents list) can refresh off it. */
   completedCount: number;
-  /** Mint an op id, register the job, and run it. Never rejects. */
+  /** Mint an op id, register the job, focus it, and run it. Never rejects. */
   start: (args: StartCloneArgs) => string;
   /** Ask the backend to kill the clone and clean up its partial target. */
   cancel: (opId: string) => void;
+  focus: (opId: string | null) => void;
+}
+
+/** The clone's destination as shown to the user; joins with the separator
+ *  style of `parentDir` so a Windows parent does not sprout a '/' tail. */
+export function cloneTargetPath(job: Pick<CloneJob, "parentDir" | "name">): string {
+  const parent = job.parentDir.replace(/[\\/]+$/, "");
+  const sep = parent.includes("\\") && !parent.includes("/") ? "\\" : "/";
+  return `${parent}${sep}${job.name}`;
 }
 
 export const useCloneStore = create<CloneStore>((set, get) => ({
   jobs: {},
+  focusedOpId: null,
   completedCount: 0,
 
   start({ url, parentDir, name, profileId, options }) {
     const opId = crypto.randomUUID();
-    // Registered BEFORE the await: the strip must be able to cancel this
+    // Registered BEFORE the await: the tab must be able to cancel this
     // clone from the very first frame, even if the caller unmounts at once.
     set((s) => ({
       jobs: {
         ...s.jobs,
         [opId]: { opId, url, name, parentDir, startedAt: Date.now(), cancelling: false },
       },
+      focusedOpId: opId,
     }));
 
     void (async () => {
@@ -85,7 +102,11 @@ export const useCloneStore = create<CloneStore>((set, get) => ({
         set((s) => {
           const jobs = { ...s.jobs };
           delete jobs[opId];
-          return { jobs, completedCount: s.completedCount + 1 };
+          return {
+            jobs,
+            completedCount: s.completedCount + 1,
+            focusedOpId: s.focusedOpId === opId ? null : s.focusedOpId,
+          };
         });
       }
     })();
@@ -105,4 +126,18 @@ export const useCloneStore = create<CloneStore>((set, get) => ({
     // rejection here only means the op had already finished.
     void cancelClone(opId).catch(() => {});
   },
+
+  focus(opId) {
+    set((s) => {
+      const next = opId !== null && opId in s.jobs ? opId : null;
+      return next === s.focusedOpId ? s : { focusedOpId: next };
+    });
+  },
 }));
+
+// Selecting (or being switched to) a repo — a tab click, a finished clone
+// opening its repo, `legit .` from a shell — deselects the clone tab, so the
+// repo's panels show instead of the progress view.
+useRepoStore.subscribe((s, prev) => {
+  if (s.activeRepoId !== prev.activeRepoId) useCloneStore.getState().focus(null);
+});

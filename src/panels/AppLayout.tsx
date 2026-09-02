@@ -16,7 +16,7 @@ import { useAutoFetch } from "../lib/useAutoFetch";
 import { useStartupUpdateCheck } from "../lib/useStartupUpdateCheck";
 import type { RegionPlacement } from "../lib/types";
 import { GlobalDock } from "./GlobalDock";
-import { CloneStrip } from "./CloneStrip";
+import { CloneProgressView } from "./CloneProgressView";
 import { OpStateStrip } from "./OpStateStrip";
 import { NoRepoHint } from "./NoRepoHint";
 import { LfsWarningBanner } from "./LfsWarningBanner";
@@ -355,12 +355,12 @@ export function AppLayout() {
           </div>
           <div style={{ flex: 1, minWidth: collapsed ? 0 : MIN_WIDTH, display: "flex", flexDirection: "column" }}>
             <RepoTabBar />
-            <CloneStrip />
             <OpStateStrip />
             <LfsWarningBanner />
             <div className="legit-repo-region" style={{ flex: 1, minHeight: 0, position: "relative" }}>
               <RepoDock />
               <NoRepoHint />
+              <CloneProgressView />
             </div>
           </div>
         </div>
@@ -391,12 +391,12 @@ export function AppLayout() {
         {dividerControls}
       </div>
       <RepoTabBar />
-      <CloneStrip />
       <OpStateStrip />
       <LfsWarningBanner />
       <div className="legit-repo-region" style={{ flex: 1, minHeight: 0, position: "relative" }}>
         <RepoDock />
         <NoRepoHint />
+        <CloneProgressView />
       </div>
       <CredentialPromptHost />
       <AskpassPromptHost />

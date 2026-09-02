@@ -9,7 +9,9 @@ import { ExternalEditorIcon, FolderIcon, RemotePageIcon, SuperprojectIcon } from
 import { ViewMenu } from "./ViewMenu";
 import { RepoOverflowMenu } from "./RepoOverflowMenu";
 import { RepoAddMenu } from "./RepoAddMenu";
+import { CloneTabs } from "./CloneTab";
 import { HostBadge } from "./shared/HostBadge";
+import { useCloneStore } from "../store/clone";
 
 const DRAG_THRESHOLD = 4; // px before a press becomes a drag
 
@@ -21,6 +23,10 @@ export function RepoTabBar() {
   const closeRepo = useRepoStore((s) => s.closeRepo);
   const reorderRepos = useRepoStore((s) => s.reorderRepos);
   const initialized = useRepoStore((s) => s.initialized);
+  // A selected "Cloning" tab takes the active highlight from the repo tabs:
+  // the repo region shows its progress view, not the active repo's panels.
+  const cloneFocused = useCloneStore((s) => s.focusedOpId !== null && s.focusedOpId in s.jobs);
+  const hasClones = useCloneStore((s) => Object.keys(s.jobs).length > 0);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const activeTabRef = useRef<HTMLDivElement | null>(null);
 
@@ -198,7 +204,7 @@ export function RepoTabBar() {
   return (
     <div className="legit-tabs" role="tablist">
       <div className="legit-tabs__scroll" ref={scrollerRef}>
-        {openRepos.length === 0 && (
+        {openRepos.length === 0 && !hasClones && (
           <span className="legit-subtle" style={{ padding: "0 12px", alignSelf: "center" }}>
             No repositories open.
           </span>
@@ -206,7 +212,7 @@ export function RepoTabBar() {
         {orderedIds.map((id) => {
           const repo = byId.get(id);
           if (!repo) return null;
-          const isActive = repo.id === activeRepoId;
+          const isActive = repo.id === activeRepoId && !cloneFocused;
           const isDragging = draggingId === repo.id;
           return (
             <div
@@ -262,6 +268,7 @@ export function RepoTabBar() {
             </div>
           );
         })}
+        <CloneTabs />
       </div>
       <div className="legit-tabs__actions">
         <RepoOverflowMenu />
