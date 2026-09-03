@@ -12,6 +12,8 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-03
+
 ### Added
 
 - **Remote repositories (WSL).** LeGit on Windows can now open repositories
