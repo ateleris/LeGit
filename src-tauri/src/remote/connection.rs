@@ -269,6 +269,22 @@ fn build_sinks(app: tauri::AppHandle, distro: String) -> HostSinks {
             }
         }),
         on_disconnect: Box::new(move || {
+            // EOF also arrives after a deliberate release (last tab on the
+            // distro closed): `release_wsl_host` unregisters the host BEFORE
+            // dropping the bridge, so an unregistered host is not a lost
+            // connection — no "lost" toast, no reconnect.
+            let registered = dc_app
+                .state::<AppState>()
+                .hosts
+                .lock()
+                .expect("hosts map poisoned")
+                .contains_key(&HostId::Wsl {
+                    distro: dc_distro.clone(),
+                });
+            if !registered {
+                tracing::debug!(distro = %dc_distro, "wsl host released - ignoring EOF");
+                return;
+            }
             emit_status(&dc_app, &dc_distro, "disconnected");
             let app = dc_app.clone();
             let distro = dc_distro.clone();
