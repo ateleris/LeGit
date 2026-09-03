@@ -309,7 +309,10 @@ async fn effective_editor_template(
 }
 
 /// Open the repo root in the configured external editor, or in the OS file
-/// manager when no editor is configured.
+/// manager when no editor is configured. Remote repos spawn the editor
+/// command INSIDE the distro (`code .` there does the VS Code Remote thing
+/// via interop); with no editor configured they fall back to revealing the
+/// root in Explorer through the `\\wsl.localhost\` share.
 #[tauri::command]
 #[specta::specta]
 pub async fn repo_open_in_editor(
@@ -319,11 +322,36 @@ pub async fn repo_open_in_editor(
     let session = state.get_session(&repo_id).await?;
     let template = effective_editor_template(&state, &session).await;
 
+    if let crate::remote::RepoLocator::Wsl { .. } = &session.locator {
+        if template.trim().is_empty() {
+            return crate::commands::files::reveal_remote_in_explorer(&session, &session.path);
+        }
+        let tokens = build_editor_invocation(&template, &session.path).map_err(AppError::Io)?;
+        return spawn_remote(&session, &tokens).await;
+    }
+
     if template.trim().is_empty() {
         return open_directory(&session.path);
     }
     let tokens = build_editor_invocation(&template, &session.path).map_err(AppError::Io)?;
     spawn_editor(&tokens, &session.path)
+}
+
+/// Fire-and-forget a template invocation on the repo's host (remote repos).
+/// PATH resolution happens there (the agent inherits the login-shell env).
+async fn spawn_remote(
+    session: &crate::state::RepoSession,
+    tokens: &[String],
+) -> Result<(), AppError> {
+    session
+        .host
+        .spawn_detached(
+            &tokens[0],
+            &tokens[1..],
+            Some(&legit_core::HostPath::from_path(&session.path)),
+        )
+        .await
+        .map_err(|e| AppError::Io(e.to_string()))
 }
 
 /// Open one working-tree file in the configured external editor (same
@@ -338,14 +366,28 @@ pub async fn repo_open_file_in_editor(
     path: String,
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
-    let abs = crate::commands::working::resolve_repo_relative(&session.path, &path)?;
-    if !abs.is_file() {
+    let fs = session.host.fs();
+    let abs =
+        crate::commands::working::resolve_repo_relative(fs.as_ref(), &session.path, &path).await?;
+    let is_file = matches!(
+        fs.stat(&legit_core::HostPath::from_path(&abs)).await,
+        Ok(Some(st)) if !st.is_dir
+    );
+    if !is_file {
         return Err(AppError::Io(format!(
             "{path} does not exist in the working tree"
         )));
     }
 
     let template = effective_editor_template(&state, &session).await;
+    if let crate::remote::RepoLocator::Wsl { .. } = &session.locator {
+        if template.trim().is_empty() {
+            return crate::commands::files::reveal_remote_in_explorer(&session, &abs);
+        }
+        let tokens =
+            build_editor_file_invocation(&template, &session.path, &abs).map_err(AppError::Io)?;
+        return spawn_remote(&session, &tokens).await;
+    }
     if template.trim().is_empty() {
         return crate::commands::files::reveal_in_file_manager(&abs);
     }

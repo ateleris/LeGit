@@ -41,6 +41,6 @@ export default defineConfig({
   },
   test: {
     // The wdio E2E suite (e2e/) has its own runner; vitest must not collect it.
-    exclude: [...configDefaults.exclude, "e2e/**"],
+    exclude: [...configDefaults.exclude, "e2e/**", ".claude/**"],
   },
 });

@@ -14,6 +14,11 @@ LeGit is a desktop **git GUI**: a **Tauri 2.x** app with a **Rust** backend and 
   (`AppState`, per-repo `RepoSession`), `watcher.rs` (filesystem watcher).
 - `src/` — React frontend: `panels/` (UI), `store/` (zustand), `lib/`
   (command wrappers + types), `theme/`, `icons/`, `styles/`.
+- Remote-repo crates: `crates/legit-watch` (extracted watcher core),
+  `crates/legit-proto` (agent wire protocol), `crates/legit-host` (`Host`
+  trait: Local + Remote impls), `crates/legit-agent` (the binary deployed
+  into a WSL distro); `src-tauri/src/remote/` (locator, wsl.exe transport,
+  connection lifecycle).
 
 ## Architecture & key decisions
 
@@ -32,6 +37,22 @@ harness caught it). When one command must relax a hardening default, pass a
 per-invocation override through `run_with_env` (applied after the base env, so
 it wins) - the continue/skip commands run with `GIT_EDITOR=true` to accept the
 prepared message unchanged.
+
+**Remote repositories run through a Host seam (WSL v1).** A repo lives on a
+`Host` (`legit-host`): every repo-side action — git spawn (`GitExecutor`,
+which now also carries `stream`/`cancel`), file access (`RepoFs` +
+`HostPath`, never raw `std::fs` on repo paths), the watcher, helper spawns —
+goes through the session's host, so a WSL repo behaves like a local one. The
+cut is at the EXECUTOR level: the `legit-agent` deployed into the distro is a
+dumb git-runner + fs + watcher host over an NDJSON stdio protocol
+(`legit-proto`, bidirectional — credentials relay agent→app), and ALL
+parsers/flows stay in `legit-core`, so `remote_git_flows.rs` runs the entire
+real-git suite through a spawned agent (the gate — keep it green). Repos are
+identified by LOCATOR strings (`wsl://<distro>/<path>`; local = bare path,
+persisted bookkeeping unchanged), hashed by `repo_hash_locator` (local hashes
+pinned byte-identical by test). Reconnect swaps the connection inside
+`RemoteHost` (`HostConn`) so sessions/ids survive `wsl --shutdown`. See
+`design/2026-08-31-remote-repositories-wsl.md`.
 
 **Backend logic is testable without git (executor seam).** `GitCliBackend` is
 generic over the `GitExecutor` trait (`executor.rs`; default `GitRunner`, so

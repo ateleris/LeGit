@@ -165,7 +165,7 @@ impl GitExecutor for FakeExecutor {
 fn backend(script: FakeExecutor) -> (GitCliBackend<FakeExecutor>, Arc<FakeExecutor>) {
     let exec = Arc::new(script);
     let lock = Arc::new(RwLock::new(exec.clone()));
-    (GitCliBackend::new(lock), exec)
+    (GitCliBackend::new(lock, Arc::new(crate::fs::LocalFs)), exec)
 }
 
 const STASH_PUSH_MSG: &str = "legit: auto-stash before switching to feature";

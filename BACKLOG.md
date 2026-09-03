@@ -24,6 +24,13 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
   padding sweep, theme.css value-equality test, `GlobalSettingsPanel`
   split. (The seventh review item, GitBackend naming normalization, stays
   a non-blocker - batch it with the next big backend feature.)
+  The Git slice of the `GlobalSettingsPanel` split landed 2026-09-01 with
+  the Git (WSL) group: the git-executable, line-endings and WSL sections
+  moved to their own files, and the duplicated `RadioGroup` / `ConfigRow` /
+  `ResolvedBadge` were deduped to `SigningSettings.tsx` with the
+  line-ending value tables in `lineEndingOptions.ts`. `RepoSettingsPanel`
+  still carries its own copies of those three helpers - the rest of the
+  split.
 
 ### v0.9.x -> first public release
 
@@ -143,6 +150,80 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   dialog plumbing.
 
 ## Smaller follow-ups
+
+- **Watcher: prune the watch set + make a failed watch visible** (2026-09-01,
+  split off from the startup-time fix — evidence and numbers in
+  `design/2026-09-01-watcher-startup-cost.md`):
+  - **Gitignored directories are still watched.** `notify` registers the
+    worktree recursively (one inotify watch per directory on Linux), so
+    `node_modules`, `target`, and `.cache` all get watches and only their
+    EVENTS are filtered afterwards. A home directory opened as a repo needs
+    ~540k watches (~15-20s and hundreds of MB of kernel memory) where the
+    non-ignored set is a few hundred. Approach: drive the walk with the
+    `ignore` crate (already a dependency) and register each non-ignored
+    directory NonRecursive; the catch is new directories, which then need a
+    watch added from the event handler — the debouncer is owned by
+    `WatcherCore`, so that wants a small owner thread fed by a channel
+    rather than a shared `Mutex<Debouncer>`. Measure against the global
+    watcher toggle, which stays the escape hatch.
+  - **A watch that fails is invisible.** `start_repo_watcher` logs a warning
+    and moves on, so the repo silently loses live updates (it happened for
+    real: "OS file watch limit reached"). Since the watch now starts in the
+    background there is not even a delay to notice. Wants a persistent
+    surface, not a toast — a "live updates off" badge on the repo tab next
+    to `HostBadge`, tooltip carrying the reason. Note the plumbing choice:
+    a Tauri event can be emitted before the frontend mounts its listener, so
+    the state belongs in `AppState` (next to `watchers`) and should be
+    readable by a command / carried on `RepoSummary`, with the event only as
+    the live update.
+
+- **Remote repositories: v1 deferrals** (2026-08-31, with the WSL feature —
+  architecture in `design/2026-08-31-remote-repositories-wsl.md`):
+  - **SSH hosts.** The protocol/transport is already agnostic (an
+    `AgentTransport` supplies byte pipes; the agent is a static musl
+    binary). Needs: an `SshTransport` (spawn `ssh.exe <host> <agent>
+    --stdio`), deploy over ssh/scp, an `ssh://user@host/path` locator
+    variant + `HostId::Ssh`, and host management UX. No protocol changes
+    expected.
+  - **Remote clone/init.** v1 only OPENS existing WSL repos; `repo_init` /
+    `repo_clone` still resolve their paths locally. Route them through a
+    host + locator like `probe_and_open` (clone needs the transient-op
+    cancel path, which is already `Arc<dyn GitExecutor>`).
+  - **Remote per-repo git overrides.** Per-HOST overrides landed
+    (`hosts/wsl-<distro>.json`, Settings → Git (WSL)), but the per-repo
+    override is still refused for remote sessions (`set_repo_git_path`).
+    Repo Settings now hides the field for WSL repos instead of showing a
+    Windows file picker (2026-09-01, `supportsRepoGitOverride`). To lift it:
+    probe the candidate through the session's host and make the picker not
+    browse the app machine.
+  - **Distro-side SSH keys.** LeGit's `~/.ssh` tools (list / generate /
+    upload) are app-machine-only: `commands/ssh_keys.rs` uses `std::fs` and
+    a local `ssh-keygen`. The WSL identity form therefore omits the
+    "Default SSH keys" field entirely (2026-09-01, with the Git (WSL)
+    settings group), so a WSL repo on an SSH remote needs its key managed
+    inside the distro by hand. To lift: route those commands through a
+    host's `fs()` / `spawn_detached` (as the config commands now do via
+    `settings_host.rs`), add a `distro` parameter mirroring
+    `commands/wsl_config.rs`, and decide where an uploaded key's private
+    half lives (the distro's `~/.ssh`, not the app machine's). The agent
+    already relays askpass, so a distro key's passphrase prompt works.
+  - **Batched global-config reads for remote hosts.** Loading a distro's
+    identity + signing + helper + line-endings view issues ~18 separate
+    `git config --get` spawns inside the distro (one per key per scope).
+    Correct, and it mirrors the local path exactly, but each is a process
+    over the NDJSON pipe. Replace with one `config --global --list -z` plus
+    one `--system --list -z` and a pure parser in
+    `legit-core/cli_impl/parsers/`, with keyed lookups on top.
+  - **Dedicated AgentGone error variant.** A dead connection surfaces as a
+    RunnerError::Io/FsError message ("agent connection lost") — correct but
+    unclassified; a `GitError` variant would let panels render "host
+    disconnected, reconnecting…" instead of a generic failure.
+  - **Binary sidecar frames.** Blob reads/`cat-file --batch` stdout cross
+    as base64 (capped, fine in practice); the handshake reserves
+    `encodings` for a `json1+bin` upgrade if profiling ever cares.
+  - **Agent-side askpass prompt polish.** SSH askpass relays through the
+    same broker as local (passphrase cache included); confirmations show
+    ssh's raw prompt text — fine, but the dialog could name the distro.
 
 - **Settings sync via a user-configured directory path** (2026-08-21,
   scope sharpened 2026-08-21 after design review; demand-driven - do not

@@ -1,6 +1,6 @@
 import type { IDockviewPanelHeaderProps } from "dockview-react";
 import { confirmDialog } from "../store/confirm";
-import { usePanelDirtyStore } from "../store/panel-dirty";
+import { isPanelDirty, usePanelDirtyStore } from "../store/panel-dirty";
 
 /**
  * Custom dockview tab that shows a confirm dialog before closing when the
@@ -15,7 +15,7 @@ import { usePanelDirtyStore } from "../store/panel-dirty";
  * dv-default-tab-action + SVG) so it looks identical to the default tab.
  */
 export function ConfirmCloseTab({ api }: IDockviewPanelHeaderProps) {
-  const isDirty = usePanelDirtyStore((s) => s.dirty[api.id] ?? false);
+  const isDirty = usePanelDirtyStore((s) => isPanelDirty(s.dirty, api.id));
 
   const handleClose = async (e: React.MouseEvent) => {
     e.stopPropagation();

@@ -21,17 +21,21 @@ export function usePanelApi(): DockviewPanelApi | null {
 }
 
 /**
- * Register this panel's dirty state so the custom close tab can show a
- * confirm dialog before closing when there are unsaved changes.
+ * Register a form's dirty state so the custom close tab can show a confirm
+ * dialog before closing when there are unsaved changes.
+ *
+ * `formKey` identifies the FORM, not the panel: a panel may host several
+ * independent forms (Global Settings has one git-config form per host), and
+ * without distinct keys a clean form would clear a dirty sibling's state.
  */
-export function usePanelDirty(isDirty: boolean) {
+export function usePanelDirty(isDirty: boolean, formKey = "default") {
   const api = useContext(PanelApiContext);
   const setDirty = usePanelDirtyStore((s) => s.setDirty);
   useEffect(() => {
     if (!api) return;
-    setDirty(api.id, isDirty);
-    return () => setDirty(api.id, false);
-  }, [api, isDirty, setDirty]);
+    setDirty(api.id, formKey, isDirty);
+    return () => setDirty(api.id, formKey, false);
+  }, [api, formKey, isDirty, setDirty]);
 }
 
 /** Run `callback` every time this panel gains focus. */

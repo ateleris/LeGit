@@ -75,7 +75,7 @@ export function CustomConfigEditor({
   push("credential.helper", local.credential_helper, draft.credential_helper);
 
   const dirty = changes.length > 0;
-  usePanelDirty(dirty);
+  usePanelDirty(dirty, "repo-custom-config");
 
   const isSsh = (format ?? inherited.gpg_format) === "ssh";
 

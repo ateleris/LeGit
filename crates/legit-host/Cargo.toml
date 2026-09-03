@@ -1,0 +1,20 @@
+[package]
+name = "legit-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LeGit host abstraction: where a repo lives (local machine or a remote agent) and how to run git, touch files, and watch it there."
+
+[dependencies]
+legit-core = { workspace = true }
+legit-watch = { workspace = true }
+legit-proto = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

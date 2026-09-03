@@ -10,6 +10,7 @@ use crate::commands::working::resolve_repo_relative;
 use crate::error::AppError;
 use crate::state::AppState;
 use legit_core::types::{FileAtRevision, RepoFileEntry};
+use legit_core::{HostPath, RepoFs};
 use std::path::PathBuf;
 
 
@@ -62,8 +63,8 @@ pub async fn repo_add_to_gitignore(
     let session = state.get_session(&repo_id).await?;
     // Defence in depth: reject absolute / traversal paths even though these
     // come from our own `ls-files` output.
-    resolve_repo_relative(&session.path, &path)?;
-    write_gitignore_line(&session.path, &path, is_dir).await
+    resolve_repo_relative(session.host.fs().as_ref(), &session.path, &path).await?;
+    write_gitignore_line(session.host.fs().as_ref(), &session.path, &path, is_dir).await
 }
 
 /// Stop tracking a file (`git rm --cached`, keeps it on disk) and add it to
@@ -78,13 +79,13 @@ pub async fn repo_untrack_path(
     is_dir: bool,
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
-    resolve_repo_relative(&session.path, &path)?;
+    resolve_repo_relative(session.host.fs().as_ref(), &session.path, &path).await?;
     session
         .backend
         .rm_cached(&[PathBuf::from(&path)])
         .await
         .map_err(AppError::Git)?;
-    write_gitignore_line(&session.path, &path, is_dir)
+    write_gitignore_line(session.host.fs().as_ref(), &session.path, &path, is_dir)
         .await
         .map_err(|e| {
             AppError::Io(format!(
@@ -105,8 +106,10 @@ pub async fn repo_file_worktree(
     path: String,
 ) -> Result<FileAtRevision, AppError> {
     let session = state.get_session(&repo_id).await?;
-    let abs = resolve_repo_relative(&session.path, &path)?;
-    let bytes = tokio::fs::read(&abs)
+    let fs = session.host.fs();
+    let abs = resolve_repo_relative(fs.as_ref(), &session.path, &path).await?;
+    let bytes = fs
+        .read(&HostPath::from_path(&abs), None)
         .await
         .map_err(|e| AppError::Io(format!("read {}: {e}", abs.display())))?;
     Ok(classify_worktree_bytes(&bytes))
@@ -133,7 +136,10 @@ pub async fn repo_reveal_path(
     path: String,
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
-    let abs = resolve_repo_relative(&session.path, &path)?;
+    let abs = resolve_repo_relative(session.host.fs().as_ref(), &session.path, &path).await?;
+    if let crate::remote::RepoLocator::Wsl { .. } = &session.locator {
+        return reveal_remote_in_explorer(&session, &abs);
+    }
     reveal_in_file_manager(&abs)
 }
 
@@ -157,32 +163,43 @@ fn gitignore_line(rel: &str, is_dir: bool) -> String {
 /// Compute the new `.gitignore` content after adding `line`, or `None` if the
 /// line is already present (verbatim, ignoring surrounding whitespace). A
 /// non-empty file without a trailing newline gets one before the new line is
-/// appended, so lines never merge.
-fn append_gitignore(existing: &str, line: &str) -> Option<String> {
-    if existing.lines().any(|l| l.trim() == line) {
+/// appended, so lines never merge. Byte-level on purpose: the whole file is
+/// written back, and existing non-UTF8 bytes must survive verbatim.
+fn append_gitignore(existing: &[u8], line: &str) -> Option<Vec<u8>> {
+    if existing
+        .split(|b| *b == b'\n')
+        .any(|l| l.trim_ascii() == line.as_bytes())
+    {
         return None;
     }
-    if existing.is_empty() {
-        return Some(format!("{line}\n"));
+    let mut out = existing.to_vec();
+    if !out.is_empty() && out.last() != Some(&b'\n') {
+        out.push(b'\n');
     }
-    let sep = if existing.ends_with('\n') { "" } else { "\n" };
-    Some(format!("{existing}{sep}{line}\n"))
+    out.extend_from_slice(line.as_bytes());
+    out.push(b'\n');
+    Some(out)
 }
 
 /// Read `.gitignore`, append the line for `rel`, write it back. No-op when the
 /// line is already there.
-async fn write_gitignore_line(root: &std::path::Path, rel: &str, is_dir: bool) -> Result<(), AppError> {
-    let gitignore = root.join(".gitignore");
-    let existing = match tokio::fs::read_to_string(&gitignore).await {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(AppError::Io(format!("read {}: {e}", gitignore.display()))),
+async fn write_gitignore_line(
+    fs: &dyn RepoFs,
+    root: &std::path::Path,
+    rel: &str,
+    is_dir: bool,
+) -> Result<(), AppError> {
+    let gitignore = HostPath::from_path(root).join(".gitignore");
+    let existing = match fs.read(&gitignore, None).await {
+        Ok(bytes) => bytes,
+        Err(legit_core::FsError::NotFound { .. }) => Vec::new(),
+        Err(e) => return Err(AppError::Io(format!("read {gitignore}: {e}"))),
     };
     let line = gitignore_line(rel, is_dir);
     if let Some(updated) = append_gitignore(&existing, &line) {
-        tokio::fs::write(&gitignore, updated)
+        fs.write(&gitignore, &updated)
             .await
-            .map_err(|e| AppError::Io(format!("write {}: {e}", gitignore.display())))?;
+            .map_err(|e| AppError::Io(format!("write {gitignore}: {e}")))?;
     }
     Ok(())
 }
@@ -194,6 +211,44 @@ async fn write_gitignore_line(root: &std::path::Path, rel: &str, is_dir: bool) -
 /// Launch the platform file manager focused on `abs`. Windows/macOS select the
 /// file; other platforms open its containing directory. Fire-and-forget: the
 /// spawned process is not awaited, but a failure to spawn is reported.
+/// Reveal a REMOTE repo path: Explorer opens the WSL filesystem through the
+/// `\\wsl.localhost\<distro>\...` share (runs on the Windows side — no agent
+/// involvement, and Explorer handles the 9P access itself). Windows-only by
+/// nature; other app OSes report it unsupported.
+pub(crate) fn reveal_remote_in_explorer(
+    session: &crate::state::RepoSession,
+    abs: &std::path::Path,
+) -> Result<(), AppError> {
+    let crate::remote::RepoLocator::Wsl { distro, .. } = &session.locator else {
+        return reveal_in_file_manager(abs);
+    };
+    let unc = wsl_unc_path(distro, &abs.to_string_lossy());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        return std::process::Command::new("explorer")
+            .raw_arg(format!("/select,\"{unc}\""))
+            .creation_flags(0x0800_0000)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| AppError::Io(format!("explorer: {e}")));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err(AppError::Io(format!(
+            "revealing {unc} requires Windows Explorer"
+        )))
+    }
+}
+
+/// `\\wsl.localhost\<distro>\home\...` form of a posix path in a distro.
+pub(crate) fn wsl_unc_path(distro: &str, posix: &str) -> String {
+    format!(
+        r"\\wsl.localhost\{distro}{}",
+        posix.replace('/', "\\")
+    )
+}
+
 /// Render a path in the plain backslash form explorer.exe requires. Explorer
 /// does not error on a malformed path argument - it silently opens the
 /// Documents folder instead. Two malformed-for-explorer forms actually reach
@@ -248,6 +303,16 @@ pub(crate) fn reveal_in_file_manager(abs: &std::path::Path) -> Result<(), AppErr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Explorer opens WSL repos through the \\wsl.localhost\ share; a
+    // malformed UNC silently opens Documents instead, so the form is pinned.
+    #[test]
+    fn wsl_unc_path_backslashes_the_posix_path() {
+        assert_eq!(
+            wsl_unc_path("Ubuntu", "/home/orell/github/LeGit/src/main.rs"),
+            r"\\wsl.localhost\Ubuntu\home\orell\github\LeGit\src\main.rs"
+        );
+    }
 
     // explorer.exe path form: these encode the "explorer opens Documents on a
     // malformed path" fallback - both inputs below are real (git prints
@@ -304,31 +369,45 @@ mod tests {
 
     #[test]
     fn append_gitignore_to_empty_file() {
-        assert_eq!(append_gitignore("", "/a"), Some("/a\n".to_string()));
+        assert_eq!(append_gitignore(b"", "/a"), Some(b"/a\n".to_vec()));
     }
 
     #[test]
     fn append_gitignore_appends_after_trailing_newline() {
         assert_eq!(
-            append_gitignore("/x\n", "/a"),
-            Some("/x\n/a\n".to_string())
+            append_gitignore(b"/x\n", "/a"),
+            Some(b"/x\n/a\n".to_vec())
         );
     }
 
     #[test]
     fn append_gitignore_adds_missing_newline_before_appending() {
         assert_eq!(
-            append_gitignore("/x", "/a"),
-            Some("/x\n/a\n".to_string())
+            append_gitignore(b"/x", "/a"),
+            Some(b"/x\n/a\n".to_vec())
         );
     }
 
     #[test]
     fn append_gitignore_is_noop_when_line_present() {
-        assert_eq!(append_gitignore("/a\n", "/a"), None);
-        assert_eq!(append_gitignore("*.log\n/a\n", "/a"), None);
+        assert_eq!(append_gitignore(b"/a\n", "/a"), None);
+        assert_eq!(append_gitignore(b"*.log\n/a\n", "/a"), None);
         // Surrounding whitespace on the existing line is ignored.
-        assert_eq!(append_gitignore("  /a  \n", "/a"), None);
+        assert_eq!(append_gitignore(b"  /a  \n", "/a"), None);
+        // CRLF files match too.
+        assert_eq!(append_gitignore(b"/a\r\n", "/a"), None);
+    }
+
+    #[test]
+    fn append_gitignore_preserves_non_utf8_bytes() {
+        // A Latin-1 comment ("# Auslöser"): appending one line must keep every
+        // existing byte verbatim - the old str-based version lossy-decoded the
+        // file and wrote U+FFFD replacements back over it.
+        let existing = b"# Ausl\xf6ser\n".to_vec();
+        assert_eq!(
+            append_gitignore(&existing, "/a"),
+            Some(b"# Ausl\xf6ser\n/a\n".to_vec())
+        );
     }
 
     #[test]

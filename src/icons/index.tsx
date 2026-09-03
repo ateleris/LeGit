@@ -32,6 +32,7 @@ import {
   Archive,
   RefreshCw,
   RotateCcw,
+  Server,
   SquarePen,
   Tag,
   Trash2,
@@ -70,6 +71,7 @@ function withDefaults(Base: LucideIcon, displayName: string) {
 export const BranchIcon = withDefaults(GitBranch, "BranchIcon");
 export const BranchPlusIcon = withDefaults(GitBranchPlus, "BranchPlusIcon");
 export const RemoteIcon = withDefaults(Cloud, "RemoteIcon");
+export const WslHostIcon = withDefaults(Server, "WslHostIcon");
 export const SuperprojectIcon = withDefaults(CornerLeftUp, "SuperprojectIcon");
 export const TagIcon = withDefaults(Tag, "TagIcon");
 export const StashIcon = withDefaults(Archive, "StashIcon");

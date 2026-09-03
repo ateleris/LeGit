@@ -1,3 +1,4 @@
+import { joinLocator } from "../../lib/locator";
 import { useCallback, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
@@ -79,7 +80,9 @@ export function SubmodulesSection() {
   // by canonical toplevel, so re-opening focuses the existing tab.
   const openSubmodule = (info: SubmoduleInfo) => {
     if (!repo || !info.state.populated) return;
-    openRepo(`${repo.path}/${info.path}`).catch((e) => notify.error(formatAppError(e)));
+    openRepo(joinLocator(repo.locator ?? repo.path, info.path)).catch((e) =>
+      notify.error(formatAppError(e)),
+    );
   };
 
   const updateAll = () =>

@@ -628,7 +628,7 @@ export function WorkingChangesPanel() {
   // selected in the submodule's log; a dirty-only row has no commit to jump
   // to and opens plain (source null).
   const openSubmodule = (path: string, source: DiffSource | null) => {
-    void openSubmoduleRepo(repo!.id, repo!.path, path, source).catch(
+    void openSubmoduleRepo(repo!.id, repo!.locator ?? repo!.path, path, source).catch(
       (err: unknown) => notify.error(formatAppError(err)),
     );
   };

@@ -1,0 +1,189 @@
+# Remote repositories (WSL), v1 — architecture & manual test checklist
+
+LeGit can open repositories that live inside a WSL distribution while the app
+runs on Windows, VS Code-Remote-style: a small `legit-agent` process runs in
+the distro and does everything repo-side. This note records the architecture,
+the decisions behind it, and the Windows-only manual test checklist (the
+automated story is summarized at the end).
+
+## Architecture (the executor cut)
+
+The agent is deliberately DUMB. It hosts exactly four capabilities next to the
+repo: run git (`GitRunner`, the same one the app uses locally), repo-side
+filesystem access (`RepoFs`), the filesystem watcher (`legit-watch`, native
+inotify — the whole reason `\\wsl.localhost\` was never an option), and
+detached process spawns (editor launch). Every parser, composed flow, and
+error classification stays in the app's `legit-core`: the wire surface
+(`legit-proto`) is ~20 methods and stable, so agent redeploys are rare, and
+the entire real-git flow suite covers remote repos automatically
+(`legit-agent/tests/remote_git_flows.rs` runs the identical suite through a
+spawned agent — the release gate).
+
+Crates: `legit-watch` (extracted watcher core), `legit-proto` (NDJSON frames,
+bidirectional: the agent also sends requests — credential relay),
+`legit-host` (`Host` trait; `LocalHost`; `RemoteHost` with a swap-on-reconnect
+`HostConn` so sessions survive agent death in place), `legit-agent` (musl-
+static bin). App side: `src-tauri/src/remote/` (locator, wsl.exe transport +
+deploy, connection lifecycle).
+
+Key mechanisms, each with its reason:
+
+- **Locators.** A repo is identified by a locator string; local = the bare
+  path (zero persistence migration — old recents parse unchanged), WSL =
+  `wsl://<distro>/<abs posix path>`. `repo_hash_locator` keeps local hashes
+  byte-identical (pinned by test) and hashes remote locators case-sensitively.
+- **One agent per distro**, repos multiplexed by request id over one NDJSON
+  stdio channel (`wsl.exe -d <D> --exec /bin/sh -lc 'exec <agent> --stdio'`;
+  login shell so git sees the user's own env — `SSH_AUTH_SOCK`, PATH,
+  proxies). The app discards banner noise until the agent's READY line.
+- **Deploy** pipes the binary over wsl.exe stdin into a version-keyed path
+  (`~/.local/share/legit/agent/<version>/`) with an atomic rename — never the
+  9P share. Exact version match at handshake; mismatch → redeploy. Bundling
+  gotcha (bit us 2026-08-31): in Tauri's `bundle.resources` MAP, a trailing
+  `/` on the target only means "directory" for GLOB sources; for a
+  single-file source the target is the full target FILE path, so
+  `"agent/legit-agent-x86_64": "agent/"` shipped a file literally named
+  `agent` (and the two arches clobbered each other) → "bundled agent binary
+  missing" at runtime. `tauri.windows.conf.json` must map each binary to its
+  full `agent/legit-agent-<arch>` target; verify by listing the NSIS
+  installer (`7z l LeGit_*-setup.exe`) for `agent/legit-agent-x86_64`.
+- **Backpressure.** The console's pager semantics survive the wire via
+  per-stream credit windows: the agent sends at most `window` unacked events,
+  then stops draining its bounded channel → git blocks, exactly like a local
+  pager (pinned by loopback tests, incl. cancel-under-pressure).
+- **op_state stays one round trip**: `RepoFs::probe_many` batches all 13
+  candidate git-dir probe files (existence + content) per poll.
+- **Credentials/askpass relay.** Agent-side git re-execs the agent as its
+  credential helper / SSH askpass (appended LAST via `GIT_CONFIG_*`, so the
+  user's WSL helpers keep winning), which forwards over a 0700 Unix socket →
+  `cred.request` on the control channel → the app's existing broker (session
+  cache / OS keychain / UI prompt). Helper hangup (killed git) cancels the
+  prompt. WSL2→Windows localhost TCP was rejected (NAT mode breaks it).
+- **Global-settings commands and hosts** (2026-09-01). `git config` at
+  GLOBAL scope is per-machine, so Global Settings has two disjoint command
+  surfaces: `global_*` for the app machine and `wsl_*`
+  (`commands/wsl_config.rs`) for a distro. Both resolve their executor
+  through `settings_executor` (`commands/settings_host.rs`) — the ONE place
+  a `SettingsHost` becomes a `Host` + unbound `executor_for`. Parallel
+  commands, not an optional `host` argument: an argument defaulting to the
+  app machine is fail-OPEN (a forgotten parameter silently writes the wrong
+  machine's `~/.gitconfig`), whereas the `wsl_*` commands never construct
+  `SettingsHost::Local` nor read `state.git_path` and so have no local
+  branch to fall into. All view/write logic stays shared and
+  executor-generic. Two invariants ride along, both pinned in
+  `config_util`'s tests: reads use `--global`/`--system` only and writes
+  always carry `--global`, because an unbound executor inherits its
+  process's cwd — and the agent's is the distro-side translation of the
+  app's, which may lie inside a repo under `/mnt/c`. Credential-helper
+  DETECTION is host-scoped the same way (git's exec-path listed through the
+  host's `RepoFs`), so a distro never offers Windows' `manager`/`wincred`.
+  Accounts and identity profiles stay app-global: they are keychain / LeGit
+  data the agent's credential relay already serves to WSL repos.
+- **Reconnect.** Agent death (stdio EOF; `wsl --shutdown`) marks the host
+  down, fails in-flight calls with AgentGone, toasts once per distro, and
+  retries 1s/2s/5s/then 15s while the distro still has OPEN REPO SESSIONS
+  (`should_keep_reconnecting`) — a host connected for Settings only is
+  never released (`release_wsl_host` runs from `close_repo`), so without
+  that check the loop would restart a deliberately stopped distro forever.
+  Reconnect swaps the connection INTO the existing `RemoteHost` (same
+  sessions, same repo ids), re-registers watches, and emits a full-domain
+  invalidation.
+  Closing a distro's last tab releases its agent (stdin EOF) so the WSL VM
+  can idle out.
+- **`legit .` launcher**: a POSIX script installed on every connect
+  (`~/.local/share/legit/bin/legit`, symlinked into `~/.local/bin` when it
+  exists) that execs the Windows exe (path recorded per-connect in
+  `host-exe`, `C:\… → /mnt/c/…`) with `--open wsl://$WSL_DISTRO_NAME<abs>`;
+  `tauri-plugin-single-instance` (registered first) forwards it to the
+  running app, and a fresh launch stashes it until after restore
+  (`take_pending_open`).
+- **UX**: the regular "Open repository…" covers WSL — `RepoLocator::parse`
+  recognizes `\\wsl.localhost\<distro>\…` / `\\wsl$\…` UNC paths (Explorer's
+  Linux node) and rewrites them to `wsl://` locators, so there is no
+  separate "Open in WSL…" entry point. Recents/tabs show a compact host
+  icon (`HostBadge`) with the distro on hover. Per-distro git CONFIG:
+  its own top-level settings group, Settings → Git (WSL) — git binary
+  (`hosts/wsl-<distro>.json`, probed through the agent, hot-swaps open
+  sessions) plus identity / signing / credential helper / line endings
+  written to the DISTRO's global git config through the agent's unbound
+  executor. One distro selector for the whole group; nothing connects until
+  the user asks (a distro that is already running connects on expand).
+  Reveal in Explorer uses `\\wsl.localhost\<distro>\...`; open-in-editor
+  spawns the template
+  inside the distro (`code .` → VS Code Remote via interop). Uninstall: an
+  NSIS pre-uninstall hook (`src-tauri/windows/hooks.nsh`, skipped in update
+  mode) removes `~/.local/share/legit` + the launcher symlink from every
+  distro.
+
+## Deliberate v1 limits (BACKLOG has the details)
+
+SSH hosts (protocol is transport-agnostic; needs an SshTransport + locator
+scheme); remote clone/init; remote per-repo git binary overrides (per-HOST
+overrides exist; the per-repo one is still refused for remote sessions, and
+Repo Settings hides the field for them); distro-side SSH keys (the WSL
+identity form omits the `~/.ssh` tools, which are app-machine-only); a
+dedicated AgentGone error variant (surfaces as an Io message today); binary
+sidecar frames (handshake reserves `encodings`).
+
+## Manual test checklist (Windows + real WSL)
+
+Fixture: a repo on the ext4 side (`~/...` in the distro) — that is the
+feature's point. `/mnt/c` repos (e.g. LeGit-Test) are a secondary sanity case.
+
+1. First connect: "Open repository…" → browse to the Linux node
+   (`\\wsl.localhost\<distro>\…`) of a stopped distro; deploy + cold start
+   stays under ~15s with a busy state; repo opens with a WSL icon on its tab
+   (distro name on hover).
+2. Upgrade: bump the app version, reconnect → silent redeploy (new
+   `agent/<version>/` dir) and the old version dirs are pruned right after
+   (best-effort `prune_stale_agents`). With `LEGIT_AGENT_BIN` set, every
+   connect redeploys (a rebuilt dev agent must never run stale).
+3. Watcher: edit/commit in a WSL terminal → panels refresh live.
+4. `wsl --shutdown` mid-session → sticky "Connection to <distro> lost" toast;
+   tabs stay; within ~15s the distro restarts, "Reconnected" toast, data
+   refreshes; watcher works again (re-registered).
+5. App exit → `wsl -d <D> --exec pgrep legit-agent` finds nothing (stdin EOF
+   kill); closing the last tab of a distro does the same without exiting.
+6. `legit .` in a WSL shell: app running (window focuses, repo opens) and not
+   running (app starts, repo opens after restore); from a subdirectory (opens
+   the toplevel); from a non-repo (NotARepo toast); `~/.local/bin` on PATH
+   hint on first install.
+7. Credentials: HTTPS fetch from a private remote in the WSL repo → the
+   in-app prompt appears tagged `[<distro>]`; remember → second fetch is
+   silent (keychain shared with local repos); cancel the fetch mid-prompt →
+   prompt closes. SSH fetch uses the user's WSL agent/keys untouched;
+   a passphrase-protected key without an agent prompts via askpass.
+8. Console panel: `log --oneline` pages with backpressure; cancel mid-page
+   kills promptly. Header context reads correctly for a WSL repo.
+9. Reveal in Explorer opens the `\\wsl.localhost\` folder with the file
+   selected; open-in-editor with `code "$ROOT"` opens VS Code Remote.
+10. Submodules: open a submodule row of a WSL repo → opens as a WSL repo.
+11. Restore: quit with local + WSL tabs open in a custom order → relaunch
+    restores both kinds in order (WSL restore tolerates a slow distro start).
+12. Recents: mixed local + WSL entries, WSL rows chipped, both reopen.
+13. Alpine (musl-only) smoke: connect + open a repo.
+14. Repo Settings → Git on a WSL repo: no `Browse…`, no Windows path — the
+    distribution's git is shown and the button opens Settings → Git (WSL).
+15. Settings → Git (WSL) (2026-09-01): the group is absent with no distros;
+    expanding it starts nothing for a stopped distro (`wsl -l -q --running`
+    before/after); Connect starts it once and every section loads. Save
+    `user.name` in the WSL form → `wsl -d <D> -- git config --global --get
+    user.name` shows it and the Windows `git config --global --get user.name`
+    is UNCHANGED (and the reverse for the Git group). Toggling
+    `commit.gpgsign` in one form leaves the other's radios alone. Switching
+    distro discards drafts. With both forms dirty, closing the panel asks to
+    confirm. `wsl --shutdown` with no repo open on that distro → "connection
+    lost", Save disabled, and `wsl -l -q --running` STAYS empty (no 15s
+    restart loop). The credential-helper picker lists the distro's helpers,
+    not Windows' `manager`/`wincred`.
+
+## Automated coverage (runs on Linux/WSL dev machines and CI)
+
+`cargo test --workspace`: the full real-git suite twice (local executor and
+through a spawned agent), loopback protocol edge cases (version mismatch,
+credit-window backpressure, cancel-under-pressure, agent death → AgentGone,
+remote watch, unknown method, credential relay round trip via real
+`git credential fill`), and pure-function pins (locator round-trips +
+repo-hash backward compat, UTF-16 wsl output decode, deploy command shape,
+`C:\ → /mnt/c`, `~` expansion forms, UNC path form, `--open` argv parse).
+Frontend: locator TS mirror tests + the usual suites.

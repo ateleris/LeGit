@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   ConsoleEventPayload,
   GitInvocation,
+  RemoteHostStatusPayload,
   RemoteProgressPayload,
   RepoChangedPayload,
 } from "./types";
@@ -49,6 +50,29 @@ export async function onRemoteProgress(
     (event) => handler(event.payload)
   );
   return unlisten;
+}
+
+/** Tauri event channel for remote host connectivity (WSL agent connections).
+ *  Matches `REMOTE_HOST_STATUS_EVENT` in `src-tauri/src/remote/connection.rs`. */
+export const REMOTE_HOST_STATUS_EVENT = "legit://remote-host-status";
+
+export async function onRemoteHostStatus(
+  handler: (payload: RemoteHostStatusPayload) => void
+): Promise<() => void> {
+  return listen<RemoteHostStatusPayload>(REMOTE_HOST_STATUS_EVENT, (event) =>
+    handler(event.payload)
+  );
+}
+
+/** Tauri event channel carrying a repo locator a second app invocation asked
+ *  to open (the `legit .` launcher). Matches `OPEN_LOCATOR_EVENT` in
+ *  `src-tauri/src/lib.rs`. */
+export const OPEN_LOCATOR_EVENT = "legit://open-locator";
+
+export async function onOpenLocator(
+  handler: (locator: string) => void
+): Promise<() => void> {
+  return listen<string>(OPEN_LOCATOR_EVENT, (event) => handler(event.payload));
 }
 
 /** Tauri event channel asking the UI to show a git credential prompt.

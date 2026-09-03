@@ -8,6 +8,9 @@ Cargo.lock.bak
 /src-tauri/gen
 /src-tauri/target
 /src-tauri/WixTools
+# Staged Linux agent binaries for the Windows bundle (built by CI /
+# scripts/build-agent-from-windows.ps1; see tauri.windows.conf.json).
+/src-tauri/agent/
 
 # Node
 node_modules

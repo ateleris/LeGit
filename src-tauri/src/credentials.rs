@@ -71,49 +71,10 @@ const KEYRING_SERVICE: &str = "LeGit Git Credentials";
 // Pure helpers (unit-tested)
 // ---------------------------------------------------------------------------
 
-/// The `credential.helper` config value invoking this executable in shim
-/// mode. `!` marks a shell command (git runs helpers through `sh`), the path
-/// is single-quoted so spaces survive word splitting (the exact failure mode
-/// that breaks full-path helpers passed unquoted), embedded single quotes are
-/// escaped the POSIX way, and backslashes become forward slashes because
-/// Git for Windows' sh resolves those more reliably.
-pub fn build_helper_value(exe_path: &str) -> String {
-    let normalized = exe_path.replace('\\', "/");
-    let quoted = normalized.replace('\'', r"'\''");
-    format!("!'{quoted}' --credential-helper")
-}
-
-/// Parse git's credential protocol input: `key=value` lines, terminated by a
-/// blank line / EOF. Unknown keys are kept (echoing them back is harmless);
-/// malformed lines are skipped.
-pub fn parse_credential_input(input: &str) -> HashMap<String, String> {
-    let mut fields = HashMap::new();
-    for line in input.lines() {
-        if line.is_empty() {
-            break;
-        }
-        if let Some((key, value)) = line.split_once('=') {
-            fields.insert(key.to_string(), value.to_string());
-        }
-    }
-    fields
-}
-
-/// Serialize answer fields back to git (credential protocol output).
-/// Values containing newlines would corrupt the protocol - skipped.
-pub fn format_credential_output(fields: &[(&str, &str)]) -> String {
-    let mut out = String::new();
-    for (key, value) in fields {
-        if value.contains('\n') || value.contains('\0') {
-            continue;
-        }
-        out.push_str(key);
-        out.push('=');
-        out.push_str(value);
-        out.push('\n');
-    }
-    out
-}
+// The shim-protocol text forms are SHARED with the remote agent's relay shim
+// (`legit-agent`): they live in `legit_proto::cred` and are re-exported here
+// so existing call sites and tests keep their names.
+pub use legit_proto::cred::{build_helper_value, format_credential_output, parse_credential_input};
 
 /// What an ssh askpass prompt is asking for. Classified backend-side (pure,
 /// tested) so the UI can render the right dialog: masked passphrase input,
@@ -461,21 +422,20 @@ async fn handle_connection(
         return Ok(());
     }
 
-    let response = match request.op.as_str() {
-        "get" => handle_get(&broker, &request.fields, request.cwd.as_deref(), &mut reader).await,
-        "store" => {
-            handle_store(&broker, &request.fields);
-            ShimResponse::default()
-        }
-        "erase" => {
-            handle_erase(&broker, &request.fields);
-            ShimResponse::default()
-        }
-        "askpass" => {
-            handle_askpass(&broker, &request.fields, request.cwd.as_deref(), &mut reader).await
-        }
-        _ => ShimResponse { cancel: true, ..Default::default() },
+    // Hangup detection: the shim writes nothing after its request, so any
+    // read completion means EOF (git was killed) or unexpected chatter.
+    let hangup = async move {
+        let mut eof_probe = [0u8; 1];
+        let _ = reader.read(&mut eof_probe).await;
     };
+    let response = dispatch_shim_request(
+        &broker,
+        &request.op,
+        &request.fields,
+        request.cwd.as_deref(),
+        hangup,
+    )
+    .await;
 
     let mut out = serde_json::to_string(&response).unwrap_or_else(|_| "{}".into());
     out.push('\n');
@@ -483,11 +443,56 @@ async fn handle_connection(
     Ok(())
 }
 
+/// Route one shim request to its handler. Transport-agnostic: `hangup` must
+/// resolve when the requesting process went away (so a UI prompt never
+/// outlives its git).
+async fn dispatch_shim_request(
+    broker: &std::sync::Arc<Broker>,
+    op: &str,
+    fields: &HashMap<String, String>,
+    cwd: Option<&str>,
+    hangup: impl std::future::Future<Output = ()> + Send,
+) -> ShimResponse {
+    match op {
+        "get" => handle_get(broker, fields, cwd, hangup).await,
+        "store" => {
+            handle_store(broker, fields);
+            ShimResponse::default()
+        }
+        "erase" => {
+            handle_erase(broker, fields);
+            ShimResponse::default()
+        }
+        "askpass" => handle_askpass(broker, fields, cwd, hangup).await,
+        _ => ShimResponse { cancel: true, ..Default::default() },
+    }
+}
+
+/// Answer a shim request relayed from a REMOTE agent (`cred.request` on its
+/// control channel): same broker, same caches/keychain/prompts as local git.
+/// Returns a cancel answer when the broker isn't running.
+pub async fn answer_relayed_request(
+    op: String,
+    fields: HashMap<String, String>,
+    cwd: Option<String>,
+    hangup: impl std::future::Future<Output = ()> + Send,
+) -> legit_proto::CredAnswer {
+    let Some(broker) = BROKER.get() else {
+        return legit_proto::CredAnswer { cancel: true, ..Default::default() };
+    };
+    let response = dispatch_shim_request(broker, &op, &fields, cwd.as_deref(), hangup).await;
+    legit_proto::CredAnswer {
+        username: response.username,
+        password: response.password,
+        cancel: response.cancel,
+    }
+}
+
 async fn handle_get(
     broker: &std::sync::Arc<Broker>,
     fields: &HashMap<String, String>,
     cwd: Option<&str>,
-    reader: &mut BufReader<tokio::net::tcp::OwnedReadHalf>,
+    hangup: impl std::future::Future<Output = ()> + Send,
 ) -> ShimResponse {
     let cancel = ShimResponse { cancel: true, ..Default::default() };
     let Some(key) = cred_key(fields) else { return cancel };
@@ -538,10 +543,9 @@ async fn handle_get(
 
     // Wait for the answer - but also notice the shim hanging up (the git
     // process was cancelled/killed), so the UI prompt doesn't outlive git.
-    let mut eof_probe = [0u8; 1];
     let reply = tokio::select! {
         reply = rx => reply.ok().flatten(),
-        _ = reader.read(&mut eof_probe) => None, // EOF or unexpected chatter
+        _ = hangup => None, // EOF or unexpected chatter
         _ = tokio::time::sleep(PROMPT_TIMEOUT) => None,
     };
     lock(&broker.pending).remove(&request_id);
@@ -596,7 +600,7 @@ async fn handle_askpass(
     broker: &std::sync::Arc<Broker>,
     fields: &HashMap<String, String>,
     cwd: Option<&str>,
-    reader: &mut BufReader<tokio::net::tcp::OwnedReadHalf>,
+    hangup: impl std::future::Future<Output = ()> + Send,
 ) -> ShimResponse {
     let cancel = ShimResponse { cancel: true, ..Default::default() };
     let Some(prompt) = fields.get("prompt") else { return cancel };
@@ -638,10 +642,9 @@ async fn handle_askpass(
 
     // Same 3-way wait as handle_get: answer, shim hangup (ssh/git killed),
     // or timeout.
-    let mut eof_probe = [0u8; 1];
     let reply = tokio::select! {
         reply = rx => reply.ok().flatten(),
-        _ = reader.read(&mut eof_probe) => None,
+        _ = hangup => None,
         _ = tokio::time::sleep(PROMPT_TIMEOUT) => None,
     };
     lock(&broker.pending).remove(&request_id);

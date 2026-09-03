@@ -9,8 +9,9 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
-    "tauri:build": "tauri build",
+    "stage-agent": "node scripts/stage-agent.mjs",
+    "tauri:dev": "node scripts/stage-agent.mjs && tauri dev --config src-tauri/tauri.dev.conf.json",
+    "tauri:build": "node scripts/stage-agent.mjs && tauri build",
     "test": "vitest run",
     "test:watch": "vitest"
   },

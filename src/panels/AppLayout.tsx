@@ -11,10 +11,12 @@ import { useRemoteProgressStore } from "../store/remoteProgress";
 import { saveRegionState } from "../lib/commands";
 import { onConsoleOutput, onGitInvocation, onRemoteProgress } from "../lib/events";
 import { useRepoChangeListener } from "../lib/useRepoChangeListener";
+import { useRemoteHostEvents } from "../lib/useRemoteHostEvents";
 import { useAutoFetch } from "../lib/useAutoFetch";
 import { useStartupUpdateCheck } from "../lib/useStartupUpdateCheck";
 import type { RegionPlacement } from "../lib/types";
 import { GlobalDock } from "./GlobalDock";
+import { CloneProgressView } from "./CloneProgressView";
 import { OpStateStrip } from "./OpStateStrip";
 import { NoRepoHint } from "./NoRepoHint";
 import { LfsWarningBanner } from "./LfsWarningBanner";
@@ -65,6 +67,7 @@ export function AppLayout() {
 
   // Live refresh from the backend filesystem watcher (primary refresh path).
   useRepoChangeListener();
+  useRemoteHostEvents();
 
   // Periodic background auto-fetch of the active repo (opt-in setting).
   useAutoFetch();
@@ -357,6 +360,7 @@ export function AppLayout() {
             <div className="legit-repo-region" style={{ flex: 1, minHeight: 0, position: "relative" }}>
               <RepoDock />
               <NoRepoHint />
+              <CloneProgressView />
             </div>
           </div>
         </div>
@@ -392,6 +396,7 @@ export function AppLayout() {
       <div className="legit-repo-region" style={{ flex: 1, minHeight: 0, position: "relative" }}>
         <RepoDock />
         <NoRepoHint />
+        <CloneProgressView />
       </div>
       <CredentialPromptHost />
       <AskpassPromptHost />

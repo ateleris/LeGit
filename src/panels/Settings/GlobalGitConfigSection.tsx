@@ -1,8 +1,14 @@
 // The ONE global git-config edit form (identity + signing + credential
 // helper), styled exactly like the profile editor: same bordered panel, same
-// Field rows, a single Save, so it reads as one coherent "~/.gitconfig" edit
+// Field rows, a single Save, so it reads as one coherent "global config" edit
 // view. Line endings stay in their own section (rarely touched together with
 // these).
+//
+// It renders for whichever host the `scope` names — the app machine's config
+// or a WSL distribution's own — so the two Settings groups can never drift
+// apart. Everything host-specific (which commands run, which affordances
+// exist, what the confirmation says) comes from the scope; see
+// `gitConfigHost.tsx`.
 //
 // Edit-only by design (design/2026-07-13-global-default-profile.md): no
 // profile can be applied here, and `core.sshCommand` is deliberately absent:
@@ -16,14 +22,6 @@ import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
 import { WarningIcon } from "../../icons";
 import { formatAppError } from "../../lib/types";
 import type { CredentialHelperView, IdentityView, ScopedConfig, SigningView } from "../../lib/types";
-import {
-  globalCredentialHelperView,
-  globalIdentityView,
-  globalSigningConfig,
-  globalWriteCredentialHelper,
-  globalWriteIdentity,
-  globalWriteSigning,
-} from "../../lib/commands";
 import { Button } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
 import { useDelayedFlag } from "../shared/useDelayedFlag";
@@ -31,6 +29,7 @@ import { Section, FieldNote } from "./primitives";
 import { CredentialHelperField } from "./CredentialHelperField";
 import { DefaultSshKeysField } from "./SshKeyTools";
 import { Field, WithBrowse } from "./GlobalProfilesSection";
+import type { GitConfigScope } from "./gitConfigHost";
 import {
   ResolvedBadge,
   RadioGroup,
@@ -40,11 +39,27 @@ import {
 
 interface ChangeItem { key: string; before: string | null; after: string | null }
 
-export function GlobalGitConfigSection() {
+/**
+ * `enabled` gates loading: a WSL form must not connect to (and thereby start)
+ * a distro on mount — the group's Connect action does that. Local scopes pass
+ * `true`. `reloadNonce` re-reads after a reconnect; `disabled` blocks saving
+ * while the host is unreachable.
+ */
+export function GlobalGitConfigSection({
+  scope,
+  enabled = true,
+  reloadNonce = 0,
+  disabled = false,
+}: {
+  scope: GitConfigScope;
+  enabled?: boolean;
+  reloadNonce?: number;
+  disabled?: boolean;
+}) {
   const [identity, setIdentity] = useState<IdentityView | null>(null);
   const [signing, setSigning] = useState<SigningView | null>(null);
   const [helperView, setHelperView] = useState<CredentialHelperView | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -54,11 +69,14 @@ export function GlobalGitConfigSection() {
   const [allowedSigners, setAllowedSigners] = useState("");
   const [helper, setHelper] = useState("");
 
-  const { busy: saving, run } = useDelayedBusy();
+  const { busy: savingNow, run } = useDelayedBusy();
   const [error, setError] = useState<string | null>(null);
   const [confirmPending, setConfirmPending] = useState(false);
   // Debounced loading indicator: fast loads never flash "Loading…".
   const showLoading = useDelayedFlag(loading);
+
+  const saving = savingNow || disabled;
+  const title = `Identity, signing & credentials ${scope.titleSuffix}`;
 
   const resetDrafts = useCallback(
     (id: IdentityView, sg: SigningView, ch: CredentialHelperView) => {
@@ -74,9 +92,15 @@ export function GlobalGitConfigSection() {
   );
 
   const load = useCallback(() => {
+    if (!enabled) return;
     setLoading(true);
+    setError(null);
     setConfirmPending(false);
-    Promise.all([globalIdentityView(), globalSigningConfig(), globalCredentialHelperView()])
+    Promise.all([
+      scope.api.identityView(),
+      scope.api.signingConfig(),
+      scope.api.credentialHelperView(),
+    ])
       .then(([id, sg, ch]) => {
         setIdentity(id);
         setSigning(sg);
@@ -85,9 +109,11 @@ export function GlobalGitConfigSection() {
       })
       .catch((e) => setError(formatAppError(e)))
       .finally(() => setLoading(false));
-  }, [resetDrafts]);
+  }, [enabled, scope, resetDrafts]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, reloadNonce]);
+  // `usePanelFocusEffect` never re-subscribes, so the callback must read
+  // `enabled` through the ref-stable `load` rather than close over it.
   usePanelFocusEffect(load);
 
   // Trimmed drafts; empty = unset the key.
@@ -113,9 +139,15 @@ export function GlobalGitConfigSection() {
   const helperChanged = helperView !== null && normHelper !== helperView.helper_global;
 
   const dirty = identityChanged || signingChanged || helperChanged;
-  usePanelDirty(dirty);
+  usePanelDirty(dirty, `git-config-${scope.id}`);
 
-  const title = "Identity, signing & credentials (global)";
+  if (!enabled) {
+    return (
+      <Section title={title} scope="git">
+        <span className="legit-subtle">Not loaded yet.</span>
+      </Section>
+    );
+  }
 
   if (loading) {
     return (
@@ -124,7 +156,17 @@ export function GlobalGitConfigSection() {
       </Section>
     );
   }
-  if (!identity || !signing || !helperView) return null;
+  if (!identity || !signing || !helperView) {
+    return (
+      <Section title={title} scope="git">
+        {error ? (
+          <pre className="legit-error">{error}</pre>
+        ) : (
+          showLoading && <span className="legit-subtle">Loading…</span>
+        )}
+      </Section>
+    );
+  }
 
   const isSsh = (format ?? signing.format.resolved.value) === "ssh";
 
@@ -148,9 +190,10 @@ export function GlobalGitConfigSection() {
         let id = identity;
         let sg = signing;
         let ch = helperView;
-        if (identityChanged) id = await globalWriteIdentity(normName, normEmail);
-        if (signingChanged) sg = await globalWriteSigning(gpgsign, format, normKey, normSigners);
-        if (helperChanged) ch = await globalWriteCredentialHelper(normHelper);
+        if (identityChanged) id = await scope.api.writeIdentity(normName, normEmail);
+        if (signingChanged)
+          sg = await scope.api.writeSigning(gpgsign, format, normKey, normSigners);
+        if (helperChanged) ch = await scope.api.writeCredentialHelper(normHelper);
         setIdentity(id);
         setSigning(sg);
         setHelperView(ch);
@@ -167,10 +210,37 @@ export function GlobalGitConfigSection() {
     if (typeof selected === "string") set(selected);
   };
 
+  /**
+   * A path field. `Browse…` opens the APP MACHINE's file dialog, so a remote
+   * scope gets a plain input instead — a `C:\…` path means nothing to a git
+   * running inside the distro.
+   */
+  const pathField = (
+    value: string,
+    onChange: (v: string) => void,
+    placeholder: string
+  ) =>
+    scope.showBrowse ? (
+      <WithBrowse
+        value={value}
+        onChange={onChange}
+        onBrowse={() => browseInto(onChange)}
+        placeholder={placeholder}
+      />
+    ) : (
+      <input
+        style={{ flex: 1, fontFamily: "monospace" }}
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={saving}
+      />
+    );
+
   return (
     <Section title={title} scope="git">
       <FieldNote>
-        writes to: ~/.gitconfig - the defaults every repo uses unless a profile
+        writes to: {scope.configFileLabel} - the defaults every repo there uses unless a profile
         is applied to it in Repo Settings
       </FieldNote>
 
@@ -210,7 +280,7 @@ export function GlobalGitConfigSection() {
 
         <Field label="commit.gpgsign">
           <RadioGroup
-            name="global-config-gpgsign"
+            name={`${scope.id}-config-gpgsign`}
             value={gpgsign}
             options={GPGSIGN_OPTIONS}
             onChange={setGpgsign}
@@ -222,7 +292,7 @@ export function GlobalGitConfigSection() {
 
         <Field label="gpg.format">
           <RadioGroup
-            name="global-config-format"
+            name={`${scope.id}-config-format`}
             value={format}
             options={FORMAT_OPTIONS}
             onChange={setFormat}
@@ -233,24 +303,18 @@ export function GlobalGitConfigSection() {
         </Field>
 
         <Field label="user.signingkey">
-          <WithBrowse
-            value={signingKey}
-            onChange={setSigningKey}
-            onBrowse={() => browseInto(setSigningKey)}
-            placeholder={isSsh ? "Path to SSH key (or literal public key)" : "GPG key id (e.g. ABC123…)"}
-          />
+          {pathField(
+            signingKey,
+            setSigningKey,
+            isSsh ? "Path to SSH key (or literal public key)" : "GPG key id (e.g. ABC123…)"
+          )}
           <ResolvedBadge label="system" value={signing.signing_key.system.value} source={signing.signing_key.system.source} />
           <ResolvedBadge label="resolved" value={signing.signing_key.resolved.value} source={signing.signing_key.resolved.source} isResolved />
         </Field>
 
         {isSsh && (
           <Field label="gpg.ssh.allowedSignersFile">
-            <WithBrowse
-              value={allowedSigners}
-              onChange={setAllowedSigners}
-              onBrowse={() => browseInto(setAllowedSigners)}
-              placeholder="Path to allowed signers file"
-            />
+            {pathField(allowedSigners, setAllowedSigners, "Path to allowed signers file")}
             <FieldNote>
               Required to verify SSH signatures. Without it, git cannot check them, so even
               your own SSH-signed commits show as <em>unsigned</em> in the log.
@@ -266,6 +330,8 @@ export function GlobalGitConfigSection() {
             onChange={setHelper}
             disabled={saving}
             systemHelper={helperView.helper_system}
+            listHelpers={scope.api.availableHelpers}
+            where={scope.hostWhere}
           />
           {normHelper && helperView.helper_system && (
             <FieldNote>
@@ -273,16 +339,19 @@ export function GlobalGitConfigSection() {
               <code>{helperView.helper_system}</code> still runs as well.
             </FieldNote>
           )}
+          {scope.credentialHelperNote && <FieldNote>{scope.credentialHelperNote}</FieldNote>}
         </Field>
 
-        <Field label="Default SSH keys (~/.ssh)">
-          <DefaultSshKeysField />
-        </Field>
+        {scope.showSshKeys && (
+          <Field label="Default SSH keys (~/.ssh)">
+            <DefaultSshKeysField />
+          </Field>
+        )}
 
         {confirmPending && (
           <div style={{ padding: "10px 12px", background: "var(--button-hover-bg)", border: "1px solid var(--panel-border)", borderRadius: 4 }}>
             <div style={{ fontWeight: 600, marginBottom: 6, color: "var(--error-fg)", display: "flex", alignItems: "center", gap: 6 }}>
-              <WarningIcon /> Save these changes to your global Git config (~/.gitconfig)?
+              <WarningIcon /> Save these changes to {scope.configFileLabel}?
             </div>
             <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
               {changes.map((c) => (
@@ -292,12 +361,10 @@ export function GlobalGitConfigSection() {
               ))}
             </div>
             <div style={{ fontSize: "var(--fz-md)", color: "var(--subtle-fg)", marginBottom: 10 }}>
-              These changes affect every repository on this machine that doesn't override
-              them (in LeGit: by applying a profile in Repo Settings), and every tool that
-              reads your global Git config.
+              {scope.confirmBlurb}
             </div>
             <div style={{ display: "flex", gap: 6 }}>
-              <Button variant="primary" onClick={handleConfirm} disabled={saving}>Save globally</Button>
+              <Button variant="primary" onClick={handleConfirm} disabled={saving}>Save</Button>
               <button onClick={() => setConfirmPending(false)}>Cancel</button>
             </div>
           </div>

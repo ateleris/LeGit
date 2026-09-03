@@ -1,0 +1,205 @@
+name: PR build
+
+# Build installable bundles for every platform on each PR push and upload
+# them as workflow artifacts, so a PR can be tried out without merging or
+# cutting a release. A sticky PR comment links to the downloads.
+#
+# Unlike release.yml this needs NO secrets: updater artifacts (which require
+# the signing key) are disabled via a --config override, and nothing is
+# published — artifacts expire after the retention period.
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One in-flight build per PR: a new push cancels the previous run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The Linux legit-agent binaries the Windows bundle ships (mirrors
+  # release.yml — deployed into a WSL distro on first connect).
+  build-agent:
+    name: Build legit-agent (musl)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - name: Install musl + aarch64 cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools gcc-aarch64-linux-gnu
+      - name: Build agents
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          cargo build -p legit-agent --release --target x86_64-unknown-linux-musl
+          cargo build -p legit-agent --release --target aarch64-unknown-linux-musl
+          mkdir -p agent-dist
+          cp target/x86_64-unknown-linux-musl/release/legit-agent agent-dist/legit-agent-x86_64
+          cp target/aarch64-unknown-linux-musl/release/legit-agent agent-dist/legit-agent-aarch64
+      - name: Selftest (x86_64 runs on the runner)
+        run: ./agent-dist/legit-agent-x86_64 --selftest
+      - uses: actions/upload-artifact@v7
+        with:
+          name: legit-agent
+          path: agent-dist/
+          if-no-files-found: error
+
+  build:
+    name: Build ${{ matrix.label }}
+    needs: build-agent
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest # Apple Silicon
+            label: macOS (Apple Silicon)
+            artifact: LeGit-macos-apple-silicon
+            rust-targets: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin"
+            bundle-paths: |
+              target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          - platform: macos-latest # Intel (cross-compiled on the arm runner)
+            label: macOS (Intel)
+            artifact: LeGit-macos-intel
+            rust-targets: x86_64-apple-darwin
+            args: "--target x86_64-apple-darwin"
+            bundle-paths: |
+              target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+          - platform: ubuntu-22.04 # .deb + .rpm + .AppImage
+            label: Linux
+            artifact: LeGit-linux
+            rust-targets: ""
+            args: ""
+            bundle-paths: |
+              target/release/bundle/deb/*.deb
+              target/release/bundle/rpm/*.rpm
+              target/release/bundle/appimage/*.AppImage
+          - platform: windows-latest # .msi + NSIS .exe
+            label: Windows
+            artifact: LeGit-windows
+            rust-targets: ""
+            args: ""
+            bundle-paths: |
+              target/release/bundle/msi/*.msi
+              target/release/bundle/nsis/*.exe
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # The Windows bundle ships the Linux agent binaries as resources
+      # (src-tauri/tauri.windows.conf.json) for WSL remote repositories.
+      - name: Stage legit-agent binaries (Windows)
+        if: matrix.platform == 'windows-latest'
+        uses: actions/download-artifact@v8
+        with:
+          name: legit-agent
+          path: src-tauri/agent/
+
+      # Tauri v2 Linux system libraries (mirrors .github/workflows/ci.yml).
+      - name: Install Tauri system dependencies (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # createUpdaterArtifacts needs the release signing key; PR builds only
+      # need the installers, so switch it off for this invocation.
+      - name: Write PR bundle config override
+        shell: bash
+        run: echo '{"bundle":{"createUpdaterArtifacts":false}}' > pr-bundle.conf.json
+
+      - name: Build bundles
+        run: npm run tauri:build -- --config pr-bundle.conf.json ${{ matrix.args }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.bundle-paths }}
+          retention-days: 14
+          if-no-files-found: error
+
+  # Sticky PR comment with direct download links for the uploaded artifacts.
+  # Skipped for fork PRs, whose GITHUB_TOKEN cannot write comments — the
+  # artifacts are still on the run's summary page.
+  comment:
+    name: Link artifacts on the PR
+    needs: build
+    if: github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork
+    runs-on: ubuntu-22.04
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const marker = '<!-- pr-build-artifacts -->';
+            const { data: { artifacts } } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+            });
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const rows = artifacts
+              .filter((a) => a.name !== 'legit-agent')
+              .map((a) => `| [${a.name}](${runUrl}/artifacts/${a.id}) | ${(a.size_in_bytes / 1048576).toFixed(1)} MB |`)
+              .join('\n');
+            const body = [
+              marker,
+              `### 📦 Installers for ${context.payload.pull_request.head.sha.slice(0, 7)}`,
+              '',
+              '| Artifact | Size |',
+              '| --- | --- |',
+              rows,
+              '',
+              `Downloads require being signed in to GitHub and expire after 14 days ([run](${runUrl})).`,
+            ].join('\n');
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find((c) => c.body.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

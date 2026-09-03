@@ -7,11 +7,14 @@
 // fully interactive (panels can still be arranged); `initialized` gates the
 // startup restore so the hint never flashes before the open repos load.
 
+import { useCloneStore } from "../store/clone";
 import { useRepoStore } from "../store/repos";
 
 export function NoRepoHint() {
-  const show = useRepoStore((s) => s.initialized && s.openRepos.length === 0);
-  if (!show) return null;
+  const noRepos = useRepoStore((s) => s.initialized && s.openRepos.length === 0);
+  // A running clone has a tab and a progress view: the user already got started.
+  const cloning = useCloneStore((s) => Object.keys(s.jobs).length > 0);
+  if (!noRepos || cloning) return null;
 
   return (
     <div

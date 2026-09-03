@@ -14,7 +14,7 @@ use crate::commands::config_util::{read_config_scope, write_config_local};
 use crate::commands::signing;
 use crate::error::AppError;
 use crate::state::{AppState, GitProfile};
-use legit_core::{GitError, GitRunner};
+use legit_core::{GitError, GitExecutor};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use uuid::Uuid;
@@ -137,7 +137,7 @@ fn normalize_draft(mk: &ManagedKeys) -> ManagedKeys {
 /// profile's auth/signing bundle, so a machine-wide `credential.helper` or
 /// `core.sshCommand` can't be applied by one click. The global/system reads
 /// exist for the repo section's "inherited" view.
-async fn read_managed_scope(runner: &GitRunner, flag: &'static str) -> ManagedKeys {
+async fn read_managed_scope(runner: &dyn GitExecutor, flag: &'static str) -> ManagedKeys {
     let at = |key: &'static str| async move {
         read_config_scope(runner, key, &[flag]).await.value
     };
@@ -158,7 +158,7 @@ async fn read_managed_scope(runner: &GitRunner, flag: &'static str) -> ManagedKe
     }
 }
 
-async fn read_local_managed(runner: &GitRunner) -> ManagedKeys {
+async fn read_local_managed(runner: &dyn GitExecutor) -> ManagedKeys {
     read_managed_scope(runner, "--local").await
 }
 
@@ -187,7 +187,7 @@ fn coalesce_inherited(global: ManagedKeys, system: ManagedKeys) -> ManagedKeys {
 ///
 /// Note: the value must be a form the git CLI can run via `sh -c`: a short name
 /// like `manager`, not a path containing spaces (which `sh` would word-split).
-async fn write_credential_helper(runner: &GitRunner, value: Option<&str>) -> Result<(), AppError> {
+async fn write_credential_helper(runner: &dyn GitExecutor, value: Option<&str>) -> Result<(), AppError> {
     // Drop any existing local entries first (exit 5 = none set; fine).
     let unset = runner
         .run_expecting(&["config", "--local", "--unset-all", KEY_CREDENTIAL_HELPER], &[5])
@@ -217,7 +217,7 @@ async fn write_credential_helper(runner: &GitRunner, value: Option<&str>) -> Res
 
 /// Write a managed-key set to LOCAL config. `None` for a field unsets it. The
 /// auth key is synthesized into a `core.sshCommand`.
-async fn write_managed(runner: &GitRunner, mk: &ManagedKeys) -> Result<(), AppError> {
+async fn write_managed(runner: &dyn GitExecutor, mk: &ManagedKeys) -> Result<(), AppError> {
     write_config_local(runner, KEY_USER_NAME, mk.user_name.as_deref()).await?;
     write_config_local(runner, KEY_USER_EMAIL, mk.user_email.as_deref()).await?;
     write_config_local(runner, signing::KEY_FORMAT, mk.gpg_format.as_deref()).await?;
@@ -234,7 +234,7 @@ async fn write_managed(runner: &GitRunner, mk: &ManagedKeys) -> Result<(), AppEr
 /// form (key PATH for the auth key; synthesized into `core.sshCommand` here,
 /// mirroring `write_managed`).
 async fn write_one_managed(
-    runner: &GitRunner,
+    runner: &dyn GitExecutor,
     key: &str,
     value: Option<&str>,
 ) -> Result<(), AppError> {
@@ -376,7 +376,7 @@ pub async fn apply_profile_core(
         .find(|p| p.id == profile_id)
         .cloned()
         .ok_or_else(|| AppError::UnknownProfile(profile_id.to_string()))?;
-    write_managed(&runner, &projection(&profile)).await?;
+    write_managed(runner.as_ref(), &projection(&profile)).await?;
     set_repo_profile_id(state, session, Some(profile_id.to_string())).await?;
     Ok(())
 }
@@ -438,7 +438,7 @@ fn parse_ssh_key_from_command(cmd: &str) -> Option<String> {
 /// Build a `ProfileStatus` for a repo from its live local config.
 async fn status_for(
     state: &AppState,
-    runner: &GitRunner,
+    runner: &dyn GitExecutor,
     stored_profile_id: Option<String>,
 ) -> ProfileStatus {
     let local = read_local_managed(runner).await;
@@ -585,7 +585,7 @@ pub async fn detect_active_profile_for_repo(
     let session = state.get_session(&repo_id).await?;
     let runner = session.runner.read().await.clone();
     let stored = session.settings.read().await.git_profile_id.clone();
-    Ok(status_for(&state, &runner, stored).await)
+    Ok(status_for(&state, runner.as_ref(), stored).await)
 }
 
 /// Read-only: local + inherited managed keys, for the repo identity section
@@ -598,9 +598,9 @@ pub async fn repo_managed_config_view(
 ) -> Result<ManagedConfigView, AppError> {
     let session = state.get_session(&repo_id).await?;
     let runner = session.runner.read().await.clone();
-    let local = read_managed_scope(&runner, "--local").await;
-    let global = read_managed_scope(&runner, "--global").await;
-    let system = read_managed_scope(&runner, "--system").await;
+    let local = read_managed_scope(runner.as_ref(), "--local").await;
+    let global = read_managed_scope(runner.as_ref(), "--global").await;
+    let system = read_managed_scope(runner.as_ref(), "--system").await;
     Ok(ManagedConfigView { local, inherited: coalesce_inherited(global, system) })
 }
 
@@ -624,7 +624,7 @@ pub async fn preview_apply_profile(
         .find(|p| p.id == profile_id)
         .cloned()
         .ok_or_else(|| AppError::UnknownProfile(profile_id.clone()))?;
-    let local = read_local_managed(&runner).await;
+    let local = read_local_managed(runner.as_ref()).await;
     Ok(diff_keys(&local, &projection(&profile)))
 }
 
@@ -641,7 +641,7 @@ pub async fn apply_profile_to_repo(
     apply_profile_core(&state, &session, &profile_id).await?;
     let runner = session.runner.read().await.clone();
     let stored = session.settings.read().await.git_profile_id.clone();
-    Ok(status_for(&state, &runner, stored).await)
+    Ok(status_for(&state, runner.as_ref(), stored).await)
 }
 
 /// Clear the repo's profile: unset all 8 managed keys locally and drop the
@@ -654,9 +654,9 @@ pub async fn clear_repo_profile(
 ) -> Result<ProfileStatus, AppError> {
     let session = state.get_session(&repo_id).await?;
     let runner = session.runner.read().await.clone();
-    write_managed(&runner, &ManagedKeys::all_unset()).await?;
+    write_managed(runner.as_ref(), &ManagedKeys::all_unset()).await?;
     set_repo_profile_id(&state, &session, None).await?;
-    Ok(status_for(&state, &runner, None).await)
+    Ok(status_for(&state, runner.as_ref(), None).await)
 }
 
 /// Custom-mode save: write only the keys the draft changes (relative to the
@@ -672,15 +672,15 @@ pub async fn write_repo_managed_config(
     let session = state.get_session(&repo_id).await?;
     let runner = session.runner.read().await.clone();
     let draft = normalize_draft(&draft);
-    let current = read_local_managed(&runner).await;
+    let current = read_local_managed(runner.as_ref()).await;
     for d in diff_keys(&current, &draft) {
         // KeyDiff's `profile` side carries the draft value here.
-        write_one_managed(&runner, &d.key, d.profile.as_deref())
+        write_one_managed(runner.as_ref(), &d.key, d.profile.as_deref())
             .await
             .map_err(|e| note_failed_key(e, &d.key))?;
     }
     let stored = session.settings.read().await.git_profile_id.clone();
-    Ok(status_for(&state, &runner, stored).await)
+    Ok(status_for(&state, runner.as_ref(), stored).await)
 }
 
 /// The identity git would use for a commit in this repo, resolved across all
@@ -703,8 +703,8 @@ pub async fn repo_resolved_identity(
     let runner = session.runner.read().await.clone();
     // No scope flag: `git config --get` resolves across all scopes.
     Ok(ResolvedIdentity {
-        user_name: read_config_scope(&runner, KEY_USER_NAME, &[]).await.value,
-        user_email: read_config_scope(&runner, KEY_USER_EMAIL, &[]).await.value,
+        user_name: read_config_scope(runner.as_ref(), KEY_USER_NAME, &[]).await.value,
+        user_email: read_config_scope(runner.as_ref(), KEY_USER_EMAIL, &[]).await.value,
     })
 }
 
@@ -719,10 +719,10 @@ pub async fn create_profile_from_repo(
 ) -> Result<GitProfile, AppError> {
     let session = state.get_session(&repo_id).await?;
     let runner = session.runner.read().await.clone();
-    let local = read_local_managed(&runner).await;
+    let local = read_local_managed(runner.as_ref()).await;
     // Re-parse the raw command so we only capture an auth key that round-trips
     // cleanly (a custom, non-`ssh -i` command is dropped rather than stored).
-    let ssh_raw = read_config_scope(&runner, KEY_SSH_COMMAND, &["--local"]).await.value;
+    let ssh_raw = read_config_scope(runner.as_ref(), KEY_SSH_COMMAND, &["--local"]).await.value;
     let auth_ssh_key = ssh_raw
         .as_deref()
         .and_then(parse_ssh_key_from_command)

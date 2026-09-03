@@ -1,0 +1,17 @@
+[package]
+name = "legit-watch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LeGit repo filesystem watcher: notify wiring, debounce, and change-domain classification."
+
+[dependencies]
+serde = { workspace = true }
+specta = { workspace = true }
+tracing = { workspace = true }
+notify = { workspace = true }
+notify-debouncer-full = { workspace = true }
+ignore = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

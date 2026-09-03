@@ -1,13 +1,16 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import { recentRepos } from "../lib/commands";
+import { parseLocator } from "../lib/locator";
 import { formatAppError } from "../lib/types";
 import { useGitProfiles } from "../lib/useGitProfiles";
+import { useCloneStore } from "../store/clone";
 import { useRepoStore } from "../store/repos";
 import { notify } from "../store/notifications";
 import { SectionLabel } from "./Commits/menu/primitives";
 import { AddRepoIcon } from "../icons";
 import { CloneForm, InitForm } from "./Repositories/forms";
+import { HostBadge } from "./shared/HostBadge";
 
 const RECENTS_SHOWN = 5;
 
@@ -18,13 +21,13 @@ type Mode = "menu" | "clone" | "init";
  * plus the most recent repos), so cloning or initializing never requires the
  * Repositories panel. The forms are the shared ones from `Repositories/forms`.
  *
- * While a clone is running the popover pins itself open — outside clicks and
- * Escape are ignored — because dismissing it would orphan the progress meter
- * and the cancel button. Only "Cancel clone" (or completion) releases it.
+ * Submitting a clone closes the popover at once: the clone lives in
+ * `useCloneStore` and is shown (and cancelled) from the app-chrome clone
+ * strip, so nothing here has to be pinned open to keep it reachable.
  */
 export function RepoAddMenu() {
   const openRepo = useRepoStore((s) => s.openRepo);
-  const cloneRepo = useRepoStore((s) => s.cloneRepo);
+  const startClone = useCloneStore((s) => s.start);
   const initRepo = useRepoStore((s) => s.initRepo);
 
   const [open, setOpen] = useState(false);
@@ -33,9 +36,6 @@ export function RepoAddMenu() {
   const { data: profiles = [], refetch: refetchProfiles } = useGitProfiles();
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
-  // Pin while a clone is in flight; a ref so the document listener sees the
-  // current value without re-registering.
-  const cloneBusyRef = useRef(false);
 
   const openRepoIds = useRepoStore((s) => s.openRepos.map((r) => r.id).join("\0"));
 
@@ -54,16 +54,15 @@ export function RepoAddMenu() {
   };
 
   // Dismiss on outside mousedown + Escape (capture phase, like every other
-  // menu) — unless a clone is running.
+  // menu).
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
     const onDown = (e: MouseEvent) => {
-      if (cloneBusyRef.current) return;
       if (ref.current && !ref.current.contains(e.target as Node)) close();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !cloneBusyRef.current) {
+      if (e.key === "Escape") {
         // Consumed: closing the menu must not leak to other Escape listeners
         // (e.g. exiting a maximized panel).
         e.stopPropagation();
@@ -139,9 +138,19 @@ export function RepoAddMenu() {
               {recents.length > 0 && (
                 <>
                   <SectionLabel>Recent</SectionLabel>
-                  {recents.slice(0, RECENTS_SHOWN).map((p) => (
-                    <MenuRow key={p} label={p} title={p} subtle onClick={() => doOpenRecent(p)} />
-                  ))}
+                  {recents.slice(0, RECENTS_SHOWN).map((p) => {
+                    const parsed = parseLocator(p);
+                    return (
+                      <MenuRow
+                        key={p}
+                        label={parsed.path}
+                        distro={parsed.host?.distro}
+                        title={p}
+                        subtle
+                        onClick={() => doOpenRecent(p)}
+                      />
+                    );
+                  })}
                 </>
               )}
             </>
@@ -152,11 +161,8 @@ export function RepoAddMenu() {
               profiles={profiles}
               onCancel={() => setMode("menu")}
               onError={setError}
-              onBusyChange={(busy) => {
-                cloneBusyRef.current = busy;
-              }}
-              onClone={async (url, parentDir, name, profileId, opId, options) => {
-                await cloneRepo(url, parentDir, name, profileId, opId, options);
+              onClone={(url, parentDir, name, profileId, options) => {
+                startClone({ url, parentDir, name, profileId, options });
                 close();
               }}
             />
@@ -187,11 +193,14 @@ function MenuRow({
   onClick,
   title,
   subtle,
+  distro,
 }: {
   label: string;
   onClick: () => void;
   title?: string;
   subtle?: boolean;
+  /** Small host badge before the label (the WSL distro of a recent). */
+  distro?: string;
 }) {
   const [hover, setHover] = useState(false);
   return (
@@ -203,19 +212,29 @@ function MenuRow({
       onMouseLeave={() => setHover(false)}
       className={subtle ? "legit-subtle" : undefined}
       style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 5,
         padding: "4px 8px",
         borderRadius: 3,
         cursor: "pointer",
         background: hover ? "var(--button-hover-bg)" : "transparent",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
         whiteSpace: "nowrap",
         fontSize: subtle ? "var(--fz-sm)" : undefined,
-        direction: subtle ? "rtl" : undefined,
-        textAlign: subtle ? "left" : undefined,
       }}
     >
-      {label}
+      {distro && <HostBadge distro={distro} />}
+      <span
+        style={{
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          // Recents are RTL-ellipsized so the repo NAME end stays visible.
+          direction: subtle ? "rtl" : undefined,
+          textAlign: subtle ? "left" : undefined,
+        }}
+      >
+        {label}
+      </span>
     </div>
   );
 }

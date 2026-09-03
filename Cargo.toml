@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/legit-core", "crates/legit-providers", "src-tauri"]
+members = ["crates/legit-core", "crates/legit-providers", "crates/legit-watch", "crates/legit-host", "crates/legit-proto", "crates/legit-agent", "src-tauri"]
 resolver = "2"
 
 [workspace.package]
@@ -12,6 +12,7 @@ rust-version = "1.77"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+base64 = "0.22"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
@@ -26,6 +27,9 @@ ignore = "0.4"
 
 legit-core = { path = "crates/legit-core" }
 legit-providers = { path = "crates/legit-providers" }
+legit-watch = { path = "crates/legit-watch" }
+legit-host = { path = "crates/legit-host" }
+legit-proto = { path = "crates/legit-proto" }
 
 [profile.release]
 codegen-units = 1

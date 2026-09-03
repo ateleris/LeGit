@@ -11,6 +11,7 @@
 use crate::backend::GitBackend;
 use crate::error::GitError;
 use crate::executor::GitExecutor;
+use crate::fs::HostPath;
 use crate::runner::{GitRunner, OperationId};
 use crate::types::{
     BlameHunk, BlobBytes, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
@@ -73,8 +74,13 @@ mod flow_tests;
 ///
 /// Generic over `GitExecutor` so composed flows are testable with a scripted
 /// fake; production code uses the default `GitRunner` and is unaffected.
-pub struct GitCliBackend<E: GitExecutor = GitRunner> {
+pub struct GitCliBackend<E: GitExecutor + ?Sized = GitRunner> {
     runner: Arc<RwLock<Arc<E>>>,
+    /// Host-filesystem access for the few flows that must read/mutate repo
+    /// files directly (op-state probe, submodule gitdir maintenance). Always
+    /// the filesystem of the machine the *repo* lives on — `LocalFs` for
+    /// local repos, the agent-backed impl for remote ones.
+    fs: Arc<dyn crate::fs::RepoFs>,
     /// Per-SHA signature-*presence* results (see `signature_presence`).
     /// Presence is immutable per SHA, so entries are never invalidated: a
     /// repeat query only pays the batched `cat-file` for commits not seen
@@ -83,10 +89,11 @@ pub struct GitCliBackend<E: GitExecutor = GitRunner> {
     sig_presence: std::sync::Mutex<HashMap<String, bool>>,
 }
 
-impl<E: GitExecutor> GitCliBackend<E> {
-    pub fn new(runner: Arc<RwLock<Arc<E>>>) -> Self {
+impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
+    pub fn new(runner: Arc<RwLock<Arc<E>>>, fs: Arc<dyn crate::fs::RepoFs>) -> Self {
         Self {
             runner,
+            fs,
             sig_presence: std::sync::Mutex::new(HashMap::new()),
         }
     }
@@ -787,8 +794,15 @@ impl<E: GitExecutor> GitCliBackend<E> {
             .run(&["rev-parse", "--absolute-git-dir"])
             .await?;
         Self::ensure_success(&out)?;
-        let gitdir = PathBuf::from(out.stdout.trim()).join("modules").join(name_path);
-        Ok(gitdir.is_dir().then_some(gitdir))
+        // Textual '/' join: the git dir is a host path (posix on a remote
+        // host), never native-join material for the app OS.
+        let gitdir = crate::fs::HostPath(out.stdout.trim().to_string())
+            .join(&format!("modules/{name}"));
+        let is_dir = matches!(
+            self.fs.stat(&gitdir).await.map_err(fs_internal)?,
+            Some(st) if st.is_dir
+        );
+        Ok(is_dir.then(|| gitdir.as_local()))
     }
 
     /// Run a `git stash apply`/`pop`, mapping a merge conflict (non-zero exit
@@ -1012,7 +1026,7 @@ impl<E: GitExecutor> GitCliBackend<E> {
 }
 
 #[async_trait]
-impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
+impl<E: GitExecutor + ?Sized> GitBackend for GitCliBackend<E> {
     async fn status(&self) -> Result<Vec<FileStatus>, GitError> {
         let mut statuses = self.status_entries().await?;
 
@@ -2230,9 +2244,19 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         let out = runner.run(&["rev-parse", "--show-toplevel"]).await?;
         Self::ensure_success(&out)?;
         drop(runner);
-        let root = PathBuf::from(out.stdout.trim());
-        let abs_to = root.join(to);
-        if abs_to.exists() {
+        let f = from.to_string_lossy().into_owned();
+        let t = to.to_string_lossy().into_owned();
+        // Textual '/' joins throughout: the toplevel is a host path (posix on
+        // a remote host), never native-join material for the app OS.
+        let root = crate::fs::HostPath(out.stdout.trim().to_string());
+        let abs_to = root.join(&t);
+        let exists = |p: crate::fs::HostPath| {
+            let fs = self.fs.clone();
+            async move {
+                Ok::<bool, GitError>(fs.stat(&p).await.map_err(fs_internal)?.is_some())
+            }
+        };
+        if exists(abs_to.clone()).await? {
             return Err(GitError::Internal(format!(
                 "target path '{}' already exists",
                 to.display()
@@ -2241,39 +2265,36 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
         // `git mv` refuses "destination directory does not exist": create the
         // missing parents, remembering the topmost one we created so a failed
         // move can clean up after itself.
-        let mut created: Option<PathBuf> = None;
+        let mut created: Option<crate::fs::HostPath> = None;
         if let Some(parent) = abs_to.parent() {
-            if !parent.exists() {
-                let mut probe = parent.to_path_buf();
+            if !exists(parent.clone()).await? {
+                let mut probe = parent.clone();
                 while let Some(up) = probe.parent() {
-                    if up.exists() {
+                    if exists(up.clone()).await? {
                         break;
                     }
-                    probe = up.to_path_buf();
+                    probe = up;
                 }
-                std::fs::create_dir_all(parent).map_err(|e| {
-                    GitError::Internal(format!(
-                        "could not create '{}': {e}",
-                        parent.display()
-                    ))
-                })?;
+                self.fs
+                    .create_dir_all(&parent)
+                    .await
+                    .map_err(|e| {
+                        GitError::Internal(format!("could not create '{parent}': {e}"))
+                    })?;
                 created = Some(probe);
             }
         }
-        let f = from.to_string_lossy().into_owned();
-        let t = to.to_string_lossy().into_owned();
         match self.run_simple(&["mv", "--", &f, &t]).await {
             Ok(()) => Ok(()),
             Err(e) => {
                 // Best-effort: remove the empty directories we just created;
                 // a failed cleanup must not be silent (house rule).
                 if let Some(dir) = created {
-                    if let Err(rm) = std::fs::remove_dir_all(&dir) {
+                    if let Err(rm) = self.fs.remove_dir_all(&dir).await {
                         return Err(append_error_note(
                             e,
                             &format!(
-                                "note: cleanup of created directory '{}' also failed: {rm}",
-                                dir.display()
+                                "note: cleanup of created directory '{dir}' also failed: {rm}"
                             ),
                         ));
                     }
@@ -2311,7 +2332,9 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
                 "no retained gitdir for submodule '{name}'"
             )));
         };
-        std::fs::remove_dir_all(&gitdir)
+        self.fs
+            .remove_dir_all(&crate::fs::HostPath::from_path(&gitdir))
+            .await
             .map_err(|e| GitError::Internal(format!("could not delete {}: {e}", gitdir.display())))
     }
 
@@ -3121,44 +3144,71 @@ impl<E: GitExecutor> GitBackend for GitCliBackend<E> {
             )));
         }
 
-        async fn read_opt(p: PathBuf) -> Option<String> {
-            tokio::fs::read_to_string(p).await.ok()
-        }
-        async fn exists(p: &Path) -> bool {
-            tokio::fs::metadata(p).await.is_ok()
-        }
+        // One batched probe for every candidate file — op_state is polled on
+        // each status refresh, so the whole disk walk must stay a single
+        // round trip on a remote host. Probe files are tiny; the cap only
+        // guards against pathological files.
+        const OP_STATE_CAP: u64 = 64 * 1024;
+        let merge_head = HostPath(lines[0].to_string());
+        let merge_msg = HostPath(lines[1].to_string());
+        let rebase_merge = HostPath(lines[2].to_string());
+        let rebase_apply = HostPath(lines[3].to_string());
+        let cherry = HostPath(lines[4].to_string());
+        let revert = HostPath(lines[5].to_string());
 
-        let merge_head = Path::new(lines[0]);
-        let merge_msg = Path::new(lines[1]);
-        let rebase_merge = Path::new(lines[2]);
-        let rebase_apply = Path::new(lines[3]);
-        let cherry = Path::new(lines[4]);
-        let revert = Path::new(lines[5]);
+        let paths = [
+            merge_head,                      // 0: existence only
+            merge_msg,                       // 1
+            rebase_merge.clone(),            // 2: dir existence gates 3..=6
+            rebase_merge.join("head-name"),  // 3
+            rebase_merge.join("onto"),       // 4
+            rebase_merge.join("msgnum"),     // 5
+            rebase_merge.join("end"),        // 6
+            rebase_apply.clone(),            // 7: dir existence gates 8..=10
+            rebase_apply.join("next"),       // 8
+            rebase_apply.join("last"),       // 9
+            rebase_apply.join("head-name"),  // 10
+            cherry,                          // 11
+            revert,                          // 12
+        ];
+        let mut probes = self
+            .fs
+            .probe_many(&paths, OP_STATE_CAP)
+            .await
+            .map_err(fs_internal)?;
+        if probes.len() != paths.len() {
+            return Err(GitError::Internal(format!(
+                "probe_many returned {} entries for {} paths",
+                probes.len(),
+                paths.len()
+            )));
+        }
+        let mut take = |i: usize| std::mem::replace(&mut probes[i], crate::fs::FsProbe::Missing);
 
         let probe = parsers::op_state::OpStateProbe {
-            merge_head: exists(merge_head).await,
-            merge_msg: read_opt(merge_msg.to_path_buf()).await,
-            rebase_merge: if exists(rebase_merge).await {
+            merge_head: take(0).exists(),
+            merge_msg: take(1).into_utf8(),
+            rebase_merge: if take(2).exists() {
                 Some(parsers::op_state::RebaseMergeFiles {
-                    head_name: read_opt(rebase_merge.join("head-name")).await,
-                    onto: read_opt(rebase_merge.join("onto")).await,
-                    msgnum: read_opt(rebase_merge.join("msgnum")).await,
-                    end: read_opt(rebase_merge.join("end")).await,
+                    head_name: take(3).into_utf8(),
+                    onto: take(4).into_utf8(),
+                    msgnum: take(5).into_utf8(),
+                    end: take(6).into_utf8(),
                 })
             } else {
                 None
             },
-            rebase_apply: if exists(rebase_apply).await {
+            rebase_apply: if take(7).exists() {
                 Some(parsers::op_state::RebaseApplyFiles {
-                    next: read_opt(rebase_apply.join("next")).await,
-                    last: read_opt(rebase_apply.join("last")).await,
-                    head_name: read_opt(rebase_apply.join("head-name")).await,
+                    next: take(8).into_utf8(),
+                    last: take(9).into_utf8(),
+                    head_name: take(10).into_utf8(),
                 })
             } else {
                 None
             },
-            cherry_pick_head: read_opt(cherry.to_path_buf()).await,
-            revert_head: read_opt(revert.to_path_buf()).await,
+            cherry_pick_head: take(11).into_utf8(),
+            revert_head: take(12).into_utf8(),
         };
         Ok(parsers::op_state::op_state_from_probe(probe))
     }
@@ -3330,6 +3380,10 @@ fn build_commit_args(opts: &CommitOptions) -> Vec<String> {
 /// `what` names the thing for the message ("branch", "tag", "revision", …).
 /// Only leading dashes are refused: everything else git rejects on its own
 /// with a better message than we could invent.
+fn fs_internal(e: crate::fs::FsError) -> GitError {
+    GitError::Internal(e.to_string())
+}
+
 fn safe_ref<'a>(what: &str, value: &'a str) -> Result<&'a str, GitError> {
     if value.starts_with('-') {
         return Err(GitError::UnsafeArgument(format!(

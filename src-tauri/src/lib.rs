@@ -9,6 +9,7 @@ mod credentials;
 mod error;
 mod git_resolve;
 mod logging;
+mod remote;
 mod state;
 mod watcher;
 
@@ -20,12 +21,56 @@ use tauri_specta::{collect_commands, Builder};
 
 /// Event carrying one parsed `--progress` update for an in-flight remote op
 /// (fetch/pull/push/clone), keyed by the frontend-minted operation id.
-const REMOTE_PROGRESS_EVENT: &str = "legit://remote-progress";
+pub(crate) const REMOTE_PROGRESS_EVENT: &str = "legit://remote-progress";
+
+/// Event carrying a repo locator the app was asked to open from outside
+/// (the `legit .` launcher / a second app invocation with `--open <locator>`).
+pub(crate) const OPEN_LOCATOR_EVENT: &str = "legit://open-locator";
+
+/// Extract the locator from an `--open <locator>` argv (the launcher's
+/// calling convention). Pure so the parsing is unit-testable.
+pub(crate) fn parse_open_arg(args: &[String]) -> Option<String> {
+    let idx = args.iter().position(|a| a == "--open")?;
+    args.get(idx + 1).cloned()
+}
+
+/// A locator passed to a FRESH launch (`LeGit.exe --open …` with no running
+/// instance): stashed at startup, consumed by the frontend once it finished
+/// restoring tabs (`take_pending_open`).
+pub(crate) struct PendingOpen(pub std::sync::Mutex<Option<String>>);
+
+#[cfg(test)]
+mod open_arg_tests {
+    use super::parse_open_arg;
+
+    // The launcher's calling convention (`LeGit.exe --open <locator>`) —
+    // argv[0] present or not, flag anywhere, missing value tolerated.
+    #[test]
+    fn parse_open_arg_finds_the_locator() {
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            parse_open_arg(&args(&["legit.exe", "--open", "wsl://Ubuntu/home/u/repo"])),
+            Some("wsl://Ubuntu/home/u/repo".into())
+        );
+        assert_eq!(
+            parse_open_arg(&args(&["--open", "/local/path"])),
+            Some("/local/path".into())
+        );
+        assert_eq!(parse_open_arg(&args(&["legit.exe"])), None);
+        assert_eq!(parse_open_arg(&args(&["legit.exe", "--open"])), None);
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+fn take_pending_open(state: tauri::State<'_, PendingOpen>) -> Option<String> {
+    state.0.lock().expect("pending open poisoned").take()
+}
 
 #[derive(Clone, serde::Serialize)]
-struct RemoteProgressPayload {
-    op_id: String,
-    progress: legit_core::RemoteProgress,
+pub(crate) struct RemoteProgressPayload {
+    pub(crate) op_id: String,
+    pub(crate) progress: legit_core::RemoteProgress,
 }
 
 pub fn run() {
@@ -40,10 +85,29 @@ pub fn run() {
     let context = tauri::generate_context!();
     logging::init_tracing(&context.config().identifier);
 
+    // A fresh launch may itself carry `--open <locator>` (launcher ran with
+    // no app running): stash it for the frontend to consume after restore.
+    let pending_open: Vec<String> = std::env::args().collect();
+    let pending_open = parse_open_arg(&pending_open);
+
     let specta_builder = Builder::<tauri::Wry>::new().commands(collect_commands![
         logging::frontend_log,
         logging::open_log_dir,
+        take_pending_open,
         commands::open_repo,
+        commands::wsl_list_distros,
+        commands::wsl_host_git_override,
+        commands::wsl_host_git_status,
+        commands::set_wsl_host_git_path,
+        commands::wsl_identity_view,
+        commands::wsl_write_identity,
+        commands::wsl_signing_config,
+        commands::wsl_write_signing,
+        commands::wsl_credential_helper_view,
+        commands::wsl_write_credential_helper,
+        commands::wsl_available_credential_helpers,
+        commands::wsl_line_endings_view,
+        commands::wsl_write_line_endings,
         commands::repo_init,
         commands::repo_clone,
         commands::cancel_clone,
@@ -282,11 +346,25 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        // MUST be the first plugin (its docs' contract): a second invocation
+        // (`legit .` in WSL execs `LeGit.exe --open wsl://…`) lands here and
+        // is forwarded to the frontend instead of starting a second app.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            use tauri::{Emitter as _, Manager as _};
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+            if let Some(locator) = parse_open_arg(&argv) {
+                let _ = app.emit(OPEN_LOCATOR_EVENT, locator);
+            }
+        }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .manage(PendingOpen(std::sync::Mutex::new(pending_open)))
         .invoke_handler(specta_builder.invoke_handler())
         .setup(move |app| {
             specta_builder.mount_events(app);

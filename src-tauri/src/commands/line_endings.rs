@@ -10,13 +10,14 @@ use crate::commands::config_util::{
     read_config_all_scopes, read_config_global_scopes, write_config_global, write_config_local,
     ConfigValue,
 };
+use crate::commands::settings_host::{settings_executor, SettingsHost};
 use crate::commands::working::resolve_repo_relative;
 use crate::error::AppError;
 use crate::state::AppState;
 use legit_core::types::{FileState, LineEndingKind, LineEndingStatusEntry, RenormalizeOutcome};
 use legit_core::{
     classify_line_endings, convert_line_endings, derive_line_ending_entry, parse_autocrlf,
-    parse_cat_file_batch, parse_check_attr_z, AutocrlfSetting, EolTextAttr, GitRunner,
+    parse_cat_file_batch, parse_check_attr_z, AutocrlfSetting, EolTextAttr, GitExecutor,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -60,10 +61,14 @@ pub struct LineEndingsView {
 
 /// Assemble the full repo-scope view: configs at all scopes plus the
 /// `.gitattributes` rules.
-async fn build_repo_view(repo_root: &Path, runner: &GitRunner) -> LineEndingsView {
+async fn build_repo_view(
+    fs: &dyn legit_core::RepoFs,
+    repo_root: &Path,
+    runner: &dyn GitExecutor,
+) -> LineEndingsView {
     let autocrlf = read_config_all_scopes(runner, "core.autocrlf").await;
     let eol = read_config_all_scopes(runner, "core.eol").await;
-    let (gitattributes, gitattributes_covers_all) = read_gitattributes(repo_root).await;
+    let (gitattributes, gitattributes_covers_all) = read_gitattributes(fs, repo_root).await;
 
     LineEndingsView {
         autocrlf_local: autocrlf.local,
@@ -84,7 +89,7 @@ async fn build_repo_view(repo_root: &Path, runner: &GitRunner) -> LineEndingsVie
 /// runner's cwd may lie inside some repo, and an all-scopes read would leak
 /// that repo's local config into the resolved value
 /// (see `read_config_global_scopes`).
-async fn build_global_view(runner: &GitRunner) -> LineEndingsView {
+pub(crate) async fn build_global_line_endings_view(runner: &dyn GitExecutor) -> LineEndingsView {
     let autocrlf = read_config_global_scopes(runner, "core.autocrlf").await;
     let eol = read_config_global_scopes(runner, "core.eol").await;
 
@@ -115,19 +120,19 @@ pub async fn repo_line_endings_view(
 ) -> Result<LineEndingsView, AppError> {
     let session = state.get_session(&repo_id).await?;
     let runner = session.runner.read().await.clone();
-    Ok(build_repo_view(&session.path, &runner).await)
+    Ok(build_repo_view(session.host.fs().as_ref(), &session.path, runner.as_ref()).await)
 }
 
-/// Read line-ending information at global scope (no repo required).
-/// `.gitattributes` doesn't apply at global scope.
+/// Read the app machine's line-ending config at global scope (no repo
+/// required). `.gitattributes` doesn't apply at global scope.
 #[tauri::command]
 #[specta::specta]
 pub async fn global_line_endings_view(
     state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> Result<LineEndingsView, AppError> {
-    let git_path = state.git_path.read().await.clone();
-    let runner = GitRunner::unbound(&git_path);
-    Ok(build_global_view(&runner).await)
+    let runner = settings_executor(&app, &state, &SettingsHost::Local).await?;
+    Ok(build_global_line_endings_view(runner.as_ref()).await)
 }
 
 /// Write `core.autocrlf` and `core.eol` to the repo's `.git/config`.
@@ -142,35 +147,47 @@ pub async fn repo_write_line_endings(
 ) -> Result<LineEndingsView, AppError> {
     let session = state.get_session(&repo_id).await?;
     let runner = session.runner.read().await.clone();
-    write_config_local(&runner, "core.autocrlf", autocrlf.as_deref()).await?;
-    write_config_local(&runner, "core.eol", eol.as_deref()).await?;
-    Ok(build_repo_view(&session.path, &runner).await)
+    write_config_local(runner.as_ref(), "core.autocrlf", autocrlf.as_deref()).await?;
+    write_config_local(runner.as_ref(), "core.eol", eol.as_deref()).await?;
+    Ok(build_repo_view(session.host.fs().as_ref(), &session.path, runner.as_ref()).await)
 }
 
-/// Write `core.autocrlf` and `core.eol` to `~/.gitconfig`.
+/// Write `core.autocrlf` and `core.eol` to the host's global git config.
 /// `None` means unset. Returns the refreshed global view.
+pub(crate) async fn write_line_endings_global(
+    runner: &dyn GitExecutor,
+    autocrlf: Option<&str>,
+    eol: Option<&str>,
+) -> Result<LineEndingsView, AppError> {
+    write_config_global(runner, "core.autocrlf", autocrlf).await?;
+    write_config_global(runner, "core.eol", eol).await?;
+    Ok(build_global_line_endings_view(runner).await)
+}
+
+/// Write `core.autocrlf` and `core.eol` to the app machine's `~/.gitconfig`.
 #[tauri::command]
 #[specta::specta]
 pub async fn global_write_line_endings(
     state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
     autocrlf: Option<String>,
     eol: Option<String>,
 ) -> Result<LineEndingsView, AppError> {
-    let git_path = state.git_path.read().await.clone();
-    let runner = GitRunner::unbound(&git_path);
-    write_config_global(&runner, "core.autocrlf", autocrlf.as_deref()).await?;
-    write_config_global(&runner, "core.eol", eol.as_deref()).await?;
-    Ok(build_global_view(&runner).await)
+    let runner = settings_executor(&app, &state, &SettingsHost::Local).await?;
+    write_line_endings_global(runner.as_ref(), autocrlf.as_deref(), eol.as_deref()).await
 }
 
 // ---------------------------------------------------------------------------
 // .gitattributes parsing
 // ---------------------------------------------------------------------------
 
-async fn read_gitattributes(repo_root: &Path) -> (Vec<GitAttrRule>, bool) {
-    let path = repo_root.join(".gitattributes");
-    let contents = match tokio::fs::read_to_string(&path).await {
-        Ok(s) => s,
+async fn read_gitattributes(
+    fs: &dyn legit_core::RepoFs,
+    repo_root: &Path,
+) -> (Vec<GitAttrRule>, bool) {
+    let path = legit_core::HostPath::from_path(&repo_root.join(".gitattributes"));
+    let contents = match fs.read(&path, None).await {
+        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
         Err(_) => return (vec![], false),
     };
 
@@ -236,7 +253,11 @@ pub async fn repo_line_ending_kind(
 ) -> Result<LineEndingKind, AppError> {
     let session = state.get_session(&repo_id).await?;
     let text: Option<String> = match rev.as_deref() {
-        None => read_capped_text(&resolve_repo_relative(&session.path, &path)?).await,
+        None => {
+            let fs = session.host.fs();
+            let abs = resolve_repo_relative(fs.as_ref(), &session.path, &path).await?;
+            read_capped_text(fs.as_ref(), &abs).await
+        }
         Some(spec_rev) => {
             let runner = session.runner.read().await.clone();
             // The index is addressed as `:path`; any other rev as `<rev>:path`.
@@ -268,19 +289,27 @@ pub async fn repo_revert_line_endings(
     target: LineEndingKind,
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
-    let abs = resolve_repo_relative(&session.path, &path)?;
+    let fs = session.host.fs();
+    let abs = resolve_repo_relative(fs.as_ref(), &session.path, &path).await?;
+    let hp = legit_core::HostPath::from_path(&abs);
 
-    let meta = tokio::fs::metadata(&abs).await.map_err(|e| AppError::Io(e.to_string()))?;
-    if meta.len() > MAX_LINE_ENDING_BYTES as u64 {
-        return Err(AppError::Io(format!("{path}: file too large to convert line endings")));
-    }
-    let bytes = tokio::fs::read(&abs).await.map_err(|e| AppError::Io(e.to_string()))?;
+    let bytes = match fs.read(&hp, Some(MAX_LINE_ENDING_BYTES as u64)).await {
+        Ok(b) => b,
+        Err(legit_core::FsError::TooLarge { .. }) => {
+            return Err(AppError::Io(format!(
+                "{path}: file too large to convert line endings"
+            )))
+        }
+        Err(e) => return Err(AppError::Io(e.to_string())),
+    };
 
     let converted = convert_line_endings(&bytes, target).ok_or_else(|| {
         AppError::Io(format!("{path}: cannot convert line endings (binary file or invalid target)"))
     })?;
     if converted != bytes {
-        tokio::fs::write(&abs, converted).await.map_err(|e| AppError::Io(e.to_string()))?;
+        fs.write(&hp, &converted)
+            .await
+            .map_err(|e| AppError::Io(e.to_string()))?;
     }
     Ok(())
 }
@@ -366,10 +395,11 @@ pub async fn repo_line_ending_status(
 
     let mut entries: Vec<LineEndingStatusEntry> = Vec::with_capacity(paths.len());
     for path in &paths {
-        let working = match resolve_repo_relative(&session.path, path) {
-            Ok(abs) => read_capped_bytes(&abs).await,
-            Err(_) => None,
-        };
+        let working =
+            match resolve_repo_relative(session.host.fs().as_ref(), &session.path, path).await {
+                Ok(abs) => read_capped_bytes(session.host.fs().as_ref(), &abs).await,
+                Err(_) => None,
+            };
         let (index, head) = blobs.get(path.as_str()).cloned().unwrap_or((None, None));
         let (text_attr, eol_set) = attrs
             .get(path)
@@ -391,12 +421,13 @@ pub async fn repo_line_ending_status(
 /// Read a working-tree file's raw bytes for line-ending classification;
 /// `None` if missing, unreadable, or over the size cap (byte-level sibling
 /// of `read_capped_text`).
-async fn read_capped_bytes(abs: &Path) -> Option<Vec<u8>> {
-    let meta = tokio::fs::metadata(abs).await.ok()?;
-    if meta.len() > MAX_LINE_ENDING_BYTES as u64 {
-        return None;
-    }
-    tokio::fs::read(abs).await.ok()
+async fn read_capped_bytes(fs: &dyn legit_core::RepoFs, abs: &Path) -> Option<Vec<u8>> {
+    fs.read(
+        &legit_core::HostPath::from_path(abs),
+        Some(MAX_LINE_ENDING_BYTES as u64),
+    )
+    .await
+    .ok()
 }
 
 /// 2 MB cap: above this the indicator is skipped rather than reading/scanning a
@@ -463,15 +494,27 @@ async fn remove_preview_index(session: &crate::state::RepoSession) {
     if !out.success {
         return;
     }
-    let rel = Path::new(out.stdout.trim());
-    let abs = if rel.is_absolute() { rel.to_path_buf() } else { session.path.join(rel) };
-    let mut name = abs.file_name().unwrap_or_default().to_os_string();
-    name.push(legit_core::cli_impl::parsers::renormalize::RENORMALIZE_PREVIEW_INDEX_SUFFIX);
-    let temp = abs.with_file_name(name);
-    let mut lock_name = temp.file_name().unwrap_or_default().to_os_string();
-    lock_name.push(".lock");
-    let _ = tokio::fs::remove_file(temp.with_file_name(lock_name)).await;
-    let _ = tokio::fs::remove_file(temp).await;
+    let (temp, lock) = preview_index_cleanup_paths(&session.host_root(), &out.stdout);
+    let fs = session.host.fs();
+    let _ = fs.remove_file(&lock).await;
+    let _ = fs.remove_file(&temp).await;
+}
+
+/// The preview's temp index + `.lock` as host paths, from raw
+/// `rev-parse --git-path index` output (relative to the repo root, or
+/// absolute). Textual '/' joins only - remote roots are posix.
+fn preview_index_cleanup_paths(
+    root: &legit_core::HostPath,
+    git_path_out: &str,
+) -> (legit_core::HostPath, legit_core::HostPath) {
+    let index = root.resolve(git_path_out.trim());
+    let temp = legit_core::HostPath(format!(
+        "{}{}",
+        index.as_str(),
+        legit_core::cli_impl::parsers::renormalize::RENORMALIZE_PREVIEW_INDEX_SUFFIX
+    ));
+    let lock = legit_core::HostPath(format!("{}.lock", temp.as_str()));
+    (temp, lock)
 }
 
 /// Run `git add --renormalize -- .`: restages tracked files through the
@@ -498,15 +541,19 @@ pub async fn repo_write_gitattributes_eol(
     eol: Option<String>,
 ) -> Result<LineEndingsView, AppError> {
     let session = state.get_session(&repo_id).await?;
-    let path = session.path.join(".gitattributes");
-    let existing = tokio::fs::read_to_string(&path).await.ok();
+    let fs = session.host.fs();
+    let hp = session.host_root().join(".gitattributes");
+    let existing = match fs.read(&hp, None).await {
+        Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
+        Err(_) => None,
+    };
     let updated =
         insert_covers_all_rule(existing.as_deref(), eol.as_deref()).map_err(AppError::Io)?;
-    tokio::fs::write(&path, updated)
+    fs.write(&hp, updated.as_bytes())
         .await
         .map_err(|e| AppError::Io(e.to_string()))?;
     let runner = session.runner.read().await.clone();
-    Ok(build_repo_view(&session.path, &runner).await)
+    Ok(build_repo_view(session.host.fs().as_ref(), &session.path, runner.as_ref()).await)
 }
 
 /// Build new `.gitattributes` content with a covers-all
@@ -555,7 +602,21 @@ fn insert_covers_all_rule(existing: Option<&str>, eol: Option<&str>) -> Result<S
 
 #[cfg(test)]
 mod tests {
-    use super::insert_covers_all_rule;
+    use super::{insert_covers_all_rule, preview_index_cleanup_paths};
+
+    #[test]
+    fn preview_index_cleanup_paths_join_textually() {
+        // Remote roots are posix even on Windows app builds: the cleanup path
+        // must be '/'-joined and match the GIT_INDEX_FILE the preview set
+        // (raw `--git-path index` output + suffix).
+        let root = legit_core::HostPath("/home/u/repo".into());
+        let (temp, lock) = preview_index_cleanup_paths(&root, ".git/index\n");
+        assert_eq!(temp.as_str(), "/home/u/repo/.git/index.legit-renormalize-preview");
+        assert_eq!(lock.as_str(), "/home/u/repo/.git/index.legit-renormalize-preview.lock");
+        // Absolute output (worktrees) is kept verbatim.
+        let (temp, _) = preview_index_cleanup_paths(&root, "/elsewhere/gitdir/index");
+        assert_eq!(temp.as_str(), "/elsewhere/gitdir/index.legit-renormalize-preview");
+    }
 
     #[test]
     fn creates_new_file_with_rule() {
@@ -597,12 +658,8 @@ mod tests {
 
 /// Read a working-tree file as text for line-ending classification; `None` if
 /// missing, unreadable, or over the size cap.
-async fn read_capped_text(abs: &Path) -> Option<String> {
-    let meta = tokio::fs::metadata(abs).await.ok()?;
-    if meta.len() > MAX_LINE_ENDING_BYTES as u64 {
-        return None;
-    }
-    let bytes = tokio::fs::read(abs).await.ok()?;
+async fn read_capped_text(fs: &dyn legit_core::RepoFs, abs: &Path) -> Option<String> {
+    let bytes = read_capped_bytes(fs, abs).await?;
     Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
