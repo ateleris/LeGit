@@ -15,7 +15,7 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
 
 ## Release blockers
 
-### v1.1.0
+### v1.2.0
 
 - **Frontend consolidation batch** (parked 2026-07-11, promoted to blocker
   2026-08-24; details in `design/2026-07-11-hardening-review.md` §D):
@@ -24,6 +24,15 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
   padding sweep, theme.css value-equality test, `GlobalSettingsPanel`
   split. (The seventh review item, GitBackend naming normalization, stays
   a non-blocker - batch it with the next big backend feature.)
+- **Keyboard shortcuts system** - full plan in
+  `design/2026-08-24-keyboard-shortcuts-system.md` (command registry +
+  keymap-as-data + one dispatcher with a context/dismissable stack + input
+  guard; seed bindings incl. Mod+Enter commit, fetch/pull/push, F5, tab
+  switching, Commits arrow-nav, and issue #21's Ctrl+A select-all in
+  Working Changes; generated help overlay; phases 2/3 = focus management,
+  then user keymap + palette). Phase 1 is roughly one focused session.
+  Related deferred note: a shortcut to open the commits context menu
+  (`design/2026-06-16-commits-context-menu-design.md`).
 
 ---
 
@@ -89,6 +98,14 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   dialog plumbing.
 
 ## Smaller follow-ups
+
+- **Classify an untracked nested git repo as a submodule candidate.** Git
+  reports a nested repo as one trailing-slash `? dir/` entry; the parser now
+  strips the slash so the row renders, but the entry is still a plain
+  `Untracked` file. Staging it as-is creates a gitlink without a
+  `.gitmodules` entry (the case `gitmodulesWarning` flags after the fact).
+  Better: detect the trailing-slash form in `parsers/status.rs`, give it a
+  dedicated state, and offer "add as submodule" / warn before a plain stage.
 
 - **Remote repositories: v1 deferrals** (2026-08-31, with the WSL feature —
   architecture in `design/2026-08-31-remote-repositories-wsl.md`):
@@ -237,15 +254,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   chunked sweep (~2-4 sessions) in the first quiet post-release window.
   `PANEL_TITLES` in `registry.tsx` shows the catalog shape and would be
   its first consumer. If "not needed": record that here and drop the item.
-- **Keyboard shortcuts system** - full plan in
-  `design/2026-08-24-keyboard-shortcuts-system.md` (command registry +
-  keymap-as-data + one dispatcher with a context/dismissable stack + input
-  guard; seed bindings incl. Mod+Enter commit, fetch/pull/push, F5, tab
-  switching, Commits arrow-nav, and issue #21's Ctrl+A select-all in
-  Working Changes; generated help overlay; phases 2/3 = focus management,
-  then user keymap + palette). Phase 1 is roughly one focused session.
-  Related deferred note: a shortcut to open the commits context menu
-  (`design/2026-06-16-commits-context-menu-design.md`).
 - **Commit graph: user-swappable shape tilesets** (designed 2026-08-19,
   stopped after approach approval; no spec yet). Let users restyle the
   graph's connectors and nodes with their own SVG fragments: a "texture

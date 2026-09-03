@@ -2007,6 +2007,24 @@ async fn status_reports_line_counts_per_side() {
 }
 
 #[tokio::test]
+async fn status_reports_untracked_nested_repo_without_trailing_slash() {
+    // git refuses to descend into a nested repo and reports the whole thing
+    // as one `? dir/` entry even with --untracked-files=all; the parsed path
+    // must arrive without the trailing slash (the UI splits paths on `/`).
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("base").await;
+
+    repo.git(&["init", "app/backend/FlowControl.NET"]).await;
+    repo.write("app/backend/FlowControl.NET/x.cs", "class X {}\n");
+
+    let status = repo.backend.status().await.unwrap();
+    assert_eq!(status.len(), 1, "{status:?}");
+    assert_eq!(status[0].path.as_os_str(), "app/backend/FlowControl.NET");
+    assert_eq!(status[0].state, FileState::Untracked);
+}
+
+#[tokio::test]
 async fn status_counts_work_before_the_first_commit() {
     // `diff --cached` runs against an unborn HEAD here; the counts must either
     // come back (git diffs the index against the empty tree) or degrade to

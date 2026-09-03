@@ -42,6 +42,9 @@ lives in the git log and the GitHub release notes.
 
 - A credential the server rejects no longer deletes a different stored
   credential for the same host from the OS keychain.
+- An untracked nested git repository (a submodule-to-be not yet added) showed
+  up in Working Changes as a nameless row under its parent folder; it now
+  renders under its own name.
 
 ### Security
 

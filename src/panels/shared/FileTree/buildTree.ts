@@ -59,16 +59,22 @@ function makeDir(name: string): DirNode {
   return { name, children: new Map(), files: [] };
 }
 
+/** Strip a trailing slash (git reports untracked nested repos as `dir/`). */
+function stripTrailingSlash(path: string): string {
+  return path.endsWith("/") ? path.replace(/\/+$/, "") : path;
+}
+
 export function baseName(path: string): string {
-  const i = path.lastIndexOf("/");
-  return i === -1 ? path : path.slice(i + 1);
+  const p = stripTrailingSlash(path);
+  const i = p.lastIndexOf("/");
+  return i === -1 ? p : p.slice(i + 1);
 }
 
 /** Build a nested directory tree from the changed files (by their new path). */
 function buildDirTree(files: FileTreeEntry[]): DirNode {
   const root = makeDir("");
   for (const f of files) {
-    const parts = f.path.split("/");
+    const parts = stripTrailingSlash(f.path).split("/");
     let cursor = root;
     for (let i = 0; i < parts.length - 1; i++) {
       const seg = parts[i];
