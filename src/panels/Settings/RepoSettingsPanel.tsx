@@ -148,7 +148,7 @@ export function RepoSettingsPanel() {
                 <Button
                   variant="primary"
                   disabled={applying}
-                  onClick={() => apply(draft.trim() === "" ? null : draft)}
+                  onClick={() => apply(draft.trim() === "" ? null : draft.trim())}
                 >
                   {draft.trim() === "" ? "Inherit" : "Apply override"}
                 </Button>

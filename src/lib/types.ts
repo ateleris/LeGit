@@ -32,10 +32,13 @@ export interface WslDistro {
   is_default: boolean;
 }
 
-/** Payload of the `legit://remote-host-status` event. */
+/** Payload of the `legit://remote-host-status` event. "disconnected" means
+ *  the backend reconnect loop is running; "gone" means the connection is lost
+ *  and no reconnect is coming (settings-only host, or host released);
+ *  "connect_failed" means an attempt failed and its caller reports the error. */
 export interface RemoteHostStatusPayload {
   distro: string;
-  status: "connecting" | "connected" | "disconnected";
+  status: "connecting" | "connected" | "disconnected" | "gone" | "connect_failed";
 }
 
 export type RegionPlacement = "top" | "left";

@@ -163,12 +163,12 @@ const PATH_CANDIDATES: [&str; 3] = ["manager", "manager-core", "libsecret"];
 /// PATH, which only sees `Git/cmd`). Derived lexically from the exec-path
 /// (`<exec>/../../bin`, `<exec>/../../../usr/bin`); on Linux/macOS both
 /// collapse to `/usr/bin`, a harmless extra scan. Pure; unit-tested.
-fn helper_scan_dirs(exec_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
-    let mut dirs = vec![exec_dir.to_path_buf()];
+fn helper_scan_dirs(exec_dir: &HostPath) -> Vec<HostPath> {
+    let mut dirs = vec![exec_dir.clone()];
     if let Some(prefix) = exec_dir.parent().and_then(|p| p.parent()) {
         dirs.push(prefix.join("bin"));
         if let Some(root) = prefix.parent() {
-            dirs.push(root.join("usr").join("bin"));
+            dirs.push(root.join("usr/bin"));
         }
     }
     dirs
@@ -204,14 +204,14 @@ async fn list_helpers_on(
     //    git itself puts on its children's PATH (see `helper_scan_dirs`).
     if let Ok(out) = runner.run(&["--exec-path"]).await {
         if out.success {
-            let exec_dir = std::path::PathBuf::from(out.stdout.trim());
+            let exec_dir = HostPath(out.stdout.trim().to_string());
             for dir in helper_scan_dirs(&exec_dir) {
-                let Ok(entries) = fs.read_dir(&HostPath::from_path(&dir)).await else { continue };
+                let Ok(entries) = fs.read_dir(&dir).await else { continue };
                 for entry in entries {
                     if let Some(name) = helper_name_from_filename(&entry.name) {
                         found
                             .entry(name)
-                            .or_insert_with(|| format!("{}/{}", dir.display(), entry.name));
+                            .or_insert_with(|| format!("{}/{}", dir.as_str(), entry.name));
                     }
                 }
             }
@@ -221,12 +221,12 @@ async fn list_helpers_on(
     // 2. Known external helpers (e.g. Git Credential Manager). The app
     //    process's PATH only describes the app machine, so a remote host gets
     //    the standard-directory probe instead.
-    let dirs: Vec<std::path::PathBuf> = if local {
+    let dirs: Vec<HostPath> = if local {
         std::env::var_os("PATH")
-            .map(|p| std::env::split_paths(&p).collect())
+            .map(|p| std::env::split_paths(&p).map(|d| HostPath::from_path(&d)).collect())
             .unwrap_or_default()
     } else {
-        remote_helper_dirs().into_iter().map(Into::into).collect()
+        remote_helper_dirs().into_iter().map(HostPath).collect()
     };
     for candidate in PATH_CANDIDATES {
         if found.contains_key(candidate) {
@@ -238,8 +238,8 @@ async fn list_helpers_on(
                 format!("git-credential-{candidate}.exe"),
             ] {
                 let p = dir.join(&fname);
-                if matches!(fs.stat(&HostPath::from_path(&p)).await, Ok(Some(st)) if !st.is_dir) {
-                    found.insert(candidate.to_string(), p.to_string_lossy().into_owned());
+                if matches!(fs.stat(&p).await, Ok(Some(st)) if !st.is_dir) {
+                    found.insert(candidate.to_string(), p.as_str().to_string());
                     break 'dirs;
                 }
             }
@@ -324,18 +324,28 @@ mod tests {
         // Git for Windows: exec-path is <prefix>/mingw64/libexec/git-core, but
         // GCM ships in <prefix>/mingw64/bin - a dir git prepends to child PATH,
         // so `helper = manager` works while an exec-path-only scan misses it.
-        let exec = Path::new("C:/Program Files/Git/mingw64/libexec/git-core");
-        let dirs = helper_scan_dirs(exec);
-        assert_eq!(dirs[0], exec.to_path_buf());
-        assert!(dirs.contains(&PathBuf::from("C:/Program Files/Git/mingw64/bin")));
-        assert!(dirs.contains(&PathBuf::from("C:/Program Files/Git/usr/bin")));
+        let exec = HostPath("C:/Program Files/Git/mingw64/libexec/git-core".into());
+        let dirs = helper_scan_dirs(&exec);
+        assert_eq!(dirs[0], exec);
+        assert!(dirs.contains(&HostPath("C:/Program Files/Git/mingw64/bin".into())));
+        assert!(dirs.contains(&HostPath("C:/Program Files/Git/usr/bin".into())));
+    }
+
+    #[test]
+    fn helper_scan_dirs_posix_exec_path_stays_posix() {
+        // Remote (WSL) exec-path on a Windows app build must be '/'-joined -
+        // a '\\' would be a literal filename character on the Linux side.
+        let dirs = helper_scan_dirs(&HostPath("/usr/lib/git-core".into()));
+        assert_eq!(dirs[0].as_str(), "/usr/lib/git-core");
+        assert!(dirs.iter().any(|d| d.as_str() == "/usr/bin"));
+        assert!(dirs.iter().all(|d| !d.as_str().contains('\\')));
     }
 
     #[test]
     fn helper_scan_dirs_handles_shallow_exec_path() {
         // A short exec-path must not panic or produce bogus dirs.
-        let dirs = helper_scan_dirs(Path::new("git-core"));
-        assert_eq!(dirs, vec![PathBuf::from("git-core")]);
+        let dirs = helper_scan_dirs(&HostPath("git-core".into()));
+        assert_eq!(dirs, vec![HostPath("git-core".into())]);
     }
 
     #[test]

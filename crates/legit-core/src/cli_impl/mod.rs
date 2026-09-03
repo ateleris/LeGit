@@ -794,15 +794,15 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
             .run(&["rev-parse", "--absolute-git-dir"])
             .await?;
         Self::ensure_success(&out)?;
-        let gitdir = PathBuf::from(out.stdout.trim()).join("modules").join(name_path);
+        // Textual '/' join: the git dir is a host path (posix on a remote
+        // host), never native-join material for the app OS.
+        let gitdir = crate::fs::HostPath(out.stdout.trim().to_string())
+            .join(&format!("modules/{name}"));
         let is_dir = matches!(
-            self.fs
-                .stat(&crate::fs::HostPath::from_path(&gitdir))
-                .await
-                .map_err(fs_internal)?,
+            self.fs.stat(&gitdir).await.map_err(fs_internal)?,
             Some(st) if st.is_dir
         );
-        Ok(is_dir.then_some(gitdir))
+        Ok(is_dir.then(|| gitdir.as_local()))
     }
 
     /// Run a `git stash apply`/`pop`, mapping a merge conflict (non-zero exit
@@ -2244,17 +2244,16 @@ impl<E: GitExecutor + ?Sized> GitBackend for GitCliBackend<E> {
         let out = runner.run(&["rev-parse", "--show-toplevel"]).await?;
         Self::ensure_success(&out)?;
         drop(runner);
-        let root = PathBuf::from(out.stdout.trim());
-        let abs_to = root.join(to);
-        let exists = |p: PathBuf| {
+        let f = from.to_string_lossy().into_owned();
+        let t = to.to_string_lossy().into_owned();
+        // Textual '/' joins throughout: the toplevel is a host path (posix on
+        // a remote host), never native-join material for the app OS.
+        let root = crate::fs::HostPath(out.stdout.trim().to_string());
+        let abs_to = root.join(&t);
+        let exists = |p: crate::fs::HostPath| {
             let fs = self.fs.clone();
             async move {
-                Ok::<bool, GitError>(
-                    fs.stat(&crate::fs::HostPath::from_path(&p))
-                        .await
-                        .map_err(fs_internal)?
-                        .is_some(),
-                )
+                Ok::<bool, GitError>(fs.stat(&p).await.map_err(fs_internal)?.is_some())
             }
         };
         if exists(abs_to.clone()).await? {
@@ -2266,46 +2265,36 @@ impl<E: GitExecutor + ?Sized> GitBackend for GitCliBackend<E> {
         // `git mv` refuses "destination directory does not exist": create the
         // missing parents, remembering the topmost one we created so a failed
         // move can clean up after itself.
-        let mut created: Option<PathBuf> = None;
+        let mut created: Option<crate::fs::HostPath> = None;
         if let Some(parent) = abs_to.parent() {
-            if !exists(parent.to_path_buf()).await? {
-                let mut probe = parent.to_path_buf();
+            if !exists(parent.clone()).await? {
+                let mut probe = parent.clone();
                 while let Some(up) = probe.parent() {
-                    if exists(up.to_path_buf()).await? {
+                    if exists(up.clone()).await? {
                         break;
                     }
-                    probe = up.to_path_buf();
+                    probe = up;
                 }
                 self.fs
-                    .create_dir_all(&crate::fs::HostPath::from_path(parent))
+                    .create_dir_all(&parent)
                     .await
                     .map_err(|e| {
-                        GitError::Internal(format!(
-                            "could not create '{}': {e}",
-                            parent.display()
-                        ))
+                        GitError::Internal(format!("could not create '{parent}': {e}"))
                     })?;
                 created = Some(probe);
             }
         }
-        let f = from.to_string_lossy().into_owned();
-        let t = to.to_string_lossy().into_owned();
         match self.run_simple(&["mv", "--", &f, &t]).await {
             Ok(()) => Ok(()),
             Err(e) => {
                 // Best-effort: remove the empty directories we just created;
                 // a failed cleanup must not be silent (house rule).
                 if let Some(dir) = created {
-                    if let Err(rm) = self
-                        .fs
-                        .remove_dir_all(&crate::fs::HostPath::from_path(&dir))
-                        .await
-                    {
+                    if let Err(rm) = self.fs.remove_dir_all(&dir).await {
                         return Err(append_error_note(
                             e,
                             &format!(
-                                "note: cleanup of created directory '{}' also failed: {rm}",
-                                dir.display()
+                                "note: cleanup of created directory '{dir}' also failed: {rm}"
                             ),
                         ));
                     }

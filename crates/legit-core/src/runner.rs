@@ -457,7 +457,7 @@ impl GitRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let (mut child, tree) = self.spawn_child(&mut cmd)?;
+        let (mut child, _tree) = self.spawn_child(&mut cmd)?;
 
         let mut stdin = child.stdin.take().expect("stdin piped");
         let stdout = child.stdout.take().expect("stdout piped");
@@ -503,7 +503,7 @@ impl GitRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let (mut child, tree) = self.spawn_child(&mut cmd)?;
+        let (mut child, _tree) = self.spawn_child(&mut cmd)?;
 
         let mut stdin = child.stdin.take().expect("stdin piped");
         let stdout = child.stdout.take().expect("stdout piped");

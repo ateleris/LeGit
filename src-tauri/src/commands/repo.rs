@@ -74,6 +74,9 @@ pub async fn open_session(
             tracing::info!(locator = %locator.to_persist_string(), id = %existing.id, "open: reusing existing session");
             return existing.summary();
         }
+        // Carry over settings a pre-locator version keyed by the repo's UNC
+        // toplevel (sync fs, allowed under the guard - no await).
+        crate::state::migrate_legacy_wsl_repo_dir(&state.repos_data_dir, &locator);
         let (_, settings_path) = state.repo_data_paths_locator(&locator);
         let repo_settings = load_repo_settings_sync(&settings_path);
         let resolved_git =
@@ -255,17 +258,13 @@ async fn start_repo_watcher(state: &AppState, app: &tauri::AppHandle, session: &
     }
     let runner = session.runner.read().await.clone();
     let git_dir = match runner.run(&["rev-parse", "--absolute-git-dir"]).await {
-        Ok(out) if out.success => PathBuf::from(out.stdout.trim()),
-        _ => session.path.join(".git"),
+        Ok(out) if out.success => HostPath(out.stdout.trim().to_string()),
+        _ => session.host_root().join(".git"),
     };
     let sink = crate::watcher::emit_sink(app.clone(), session.id.clone());
     match session
         .host
-        .watch(
-            &HostPath::from_path(&session.path),
-            &HostPath::from_path(&git_dir),
-            sink,
-        )
+        .watch(&session.host_root(), &git_dir, sink)
         .await
     {
         Ok(w) => {

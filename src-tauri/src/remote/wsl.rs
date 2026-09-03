@@ -140,10 +140,8 @@ fn wsl_command(distro: Option<&str>) -> tokio::process::Command {
         cmd.arg("-d").arg(d);
     }
     #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW (same as runner.rs)
-    }
+    // creation_flags is inherent on tokio's Command - no CommandExt needed.
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW (same as runner.rs)
     cmd.kill_on_drop(true);
     cmd
 }

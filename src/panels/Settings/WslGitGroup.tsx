@@ -19,6 +19,7 @@ import { setWslHostGitPath, wslHostGitOverride, wslListDistros } from "../../lib
 import { Button } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
 import { Section, Row, FieldNote, SettingsGroup } from "./primitives";
+import { GitStatusReadout } from "./GitStatusReadout";
 import { GlobalGitConfigSection } from "./GlobalGitConfigSection";
 import { LineEndingsGlobalSection } from "./LineEndingsGlobalSection";
 import { WslHostProvider, useWslHost } from "./WslHostContext";
@@ -196,38 +197,7 @@ function WslGitExecutableSection() {
   return (
     <Section title={`Git executable in ${distro}`}>
       {gitStatus ? (
-        <>
-          <Row label="Resolved path" value={<code>{gitStatus.resolved_path}</code>} />
-          <Row
-            label="Version"
-            value={
-              gitStatus.version ? (
-                <code>{gitStatus.version.raw}</code>
-              ) : (
-                <span className="legit-error">{gitStatus.error ?? "(unknown)"}</span>
-              )
-            }
-          />
-          <Row
-            label="Minimum required"
-            value={
-              <code>
-                {gitStatus.minimum_required[0]}.{gitStatus.minimum_required[1]}.
-                {gitStatus.minimum_required[2]}
-              </code>
-            }
-          />
-          <Row
-            label="Meets minimum"
-            value={
-              gitStatus.meets_minimum ? (
-                <span className="legit-success">yes</span>
-              ) : (
-                <span className="legit-error">no</span>
-              )
-            }
-          />
-        </>
+        <GitStatusReadout status={gitStatus} />
       ) : (
         <Row
           label="Version"

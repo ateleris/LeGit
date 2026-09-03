@@ -112,18 +112,47 @@ export const setWslHostGitPath = (distro: string, path: string | null) =>
 // src-tauri/src/commands/settings_host.rs): there is no argument by which one
 // of these could write the app machine's config. Every call CONNECTS to the
 // distro, starting it if stopped, so they only run on explicit user action.
+//
+// The two name maps below are the single source for the wrapper functions AND
+// for the isolation test (`gitConfigHost.test.ts`), which pins that the key
+// sets match while the command names stay disjoint — a WSL form can never
+// reach a `global_*` command.
+
+export const GLOBAL_GIT_CONFIG_COMMANDS = {
+  identityView: "global_identity_view",
+  writeIdentity: "global_write_identity",
+  signingConfig: "global_signing_config",
+  writeSigning: "global_write_signing",
+  credentialHelperView: "global_credential_helper_view",
+  writeCredentialHelper: "global_write_credential_helper",
+  availableHelpers: "list_available_credential_helpers",
+  lineEndingsView: "global_line_endings_view",
+  writeLineEndings: "global_write_line_endings",
+} as const;
+
+export const WSL_GIT_CONFIG_COMMANDS = {
+  identityView: "wsl_identity_view",
+  writeIdentity: "wsl_write_identity",
+  signingConfig: "wsl_signing_config",
+  writeSigning: "wsl_write_signing",
+  credentialHelperView: "wsl_credential_helper_view",
+  writeCredentialHelper: "wsl_write_credential_helper",
+  availableHelpers: "wsl_available_credential_helpers",
+  lineEndingsView: "wsl_line_endings_view",
+  writeLineEndings: "wsl_write_line_endings",
+} as const;
 
 export const wslIdentityView = (distro: string) =>
-  invoke<IdentityView>("wsl_identity_view", { distro });
+  invoke<IdentityView>(WSL_GIT_CONFIG_COMMANDS.identityView, { distro });
 
 export const wslWriteIdentity = (
   distro: string,
   name: string | null,
   email: string | null
-) => invoke<IdentityView>("wsl_write_identity", { distro, name, email });
+) => invoke<IdentityView>(WSL_GIT_CONFIG_COMMANDS.writeIdentity, { distro, name, email });
 
 export const wslSigningConfig = (distro: string) =>
-  invoke<SigningView>("wsl_signing_config", { distro });
+  invoke<SigningView>(WSL_GIT_CONFIG_COMMANDS.signingConfig, { distro });
 
 export const wslWriteSigning = (
   distro: string,
@@ -132,7 +161,7 @@ export const wslWriteSigning = (
   signingKey: string | null,
   allowedSigners: string | null
 ) =>
-  invoke<SigningView>("wsl_write_signing", {
+  invoke<SigningView>(WSL_GIT_CONFIG_COMMANDS.writeSigning, {
     distro,
     gpgsign,
     format,
@@ -141,23 +170,23 @@ export const wslWriteSigning = (
   });
 
 export const wslCredentialHelperView = (distro: string) =>
-  invoke<CredentialHelperView>("wsl_credential_helper_view", { distro });
+  invoke<CredentialHelperView>(WSL_GIT_CONFIG_COMMANDS.credentialHelperView, { distro });
 
 export const wslWriteCredentialHelper = (distro: string, helper: string | null) =>
-  invoke<CredentialHelperView>("wsl_write_credential_helper", { distro, helper });
+  invoke<CredentialHelperView>(WSL_GIT_CONFIG_COMMANDS.writeCredentialHelper, { distro, helper });
 
 /** Helpers installed INSIDE the distro (never Windows' manager/wincred). */
 export const wslAvailableCredentialHelpers = (distro: string) =>
-  invoke<AvailableHelper[]>("wsl_available_credential_helpers", { distro });
+  invoke<AvailableHelper[]>(WSL_GIT_CONFIG_COMMANDS.availableHelpers, { distro });
 
 export const wslLineEndingsView = (distro: string) =>
-  invoke<LineEndingsView>("wsl_line_endings_view", { distro });
+  invoke<LineEndingsView>(WSL_GIT_CONFIG_COMMANDS.lineEndingsView, { distro });
 
 export const wslWriteLineEndings = (
   distro: string,
   autocrlf: string | null,
   eol: string | null
-) => invoke<LineEndingsView>("wsl_write_line_endings", { distro, autocrlf, eol });
+) => invoke<LineEndingsView>(WSL_GIT_CONFIG_COMMANDS.writeLineEndings, { distro, autocrlf, eol });
 
 /** The `--open <locator>` a fresh launch carried, if any (consumed once). */
 export const takePendingOpen = () => invoke<string | null>("take_pending_open");
@@ -400,7 +429,7 @@ export const repoLineEndingsView = (repoId: string) =>
   invoke<LineEndingsView>("repo_line_endings_view", { repoId });
 
 export const globalLineEndingsView = () =>
-  invoke<LineEndingsView>("global_line_endings_view");
+  invoke<LineEndingsView>(GLOBAL_GIT_CONFIG_COMMANDS.lineEndingsView);
 
 export const repoWriteLineEndings = (
   repoId: string,
@@ -411,7 +440,7 @@ export const repoWriteLineEndings = (
 export const globalWriteLineEndings = (
   autocrlf: string | null,
   eol: string | null
-) => invoke<LineEndingsView>("global_write_line_endings", { autocrlf, eol });
+) => invoke<LineEndingsView>(GLOBAL_GIT_CONFIG_COMMANDS.writeLineEndings, { autocrlf, eol });
 
 /** Simulated `git add --renormalize` on a throwaway index (real index untouched). */
 export const repoRenormalizePreview = (repoId: string) =>
@@ -428,7 +457,7 @@ export const repoWriteGitattributesEol = (repoId: string, eol: string | null) =>
 // --- commit signing ---
 
 export const globalSigningConfig = () =>
-  invoke<SigningView>("global_signing_config");
+  invoke<SigningView>(GLOBAL_GIT_CONFIG_COMMANDS.signingConfig);
 
 export const globalWriteSigning = (
   gpgsign: string | null,
@@ -436,7 +465,7 @@ export const globalWriteSigning = (
   signingKey: string | null,
   allowedSigners: string | null
 ) =>
-  invoke<SigningView>("global_write_signing", {
+  invoke<SigningView>(GLOBAL_GIT_CONFIG_COMMANDS.writeSigning, {
     gpgsign,
     format,
     signingKey,
@@ -485,22 +514,22 @@ export const createProfileFromRepo = (repoId: string, name: string) =>
 // never a profile apply. Auth/signing bundles stay per-repo via profiles.
 
 export const globalIdentityView = () =>
-  invoke<IdentityView>("global_identity_view");
+  invoke<IdentityView>(GLOBAL_GIT_CONFIG_COMMANDS.identityView);
 
 export const globalWriteIdentity = (name: string | null, email: string | null) =>
-  invoke<IdentityView>("global_write_identity", { name, email });
+  invoke<IdentityView>(GLOBAL_GIT_CONFIG_COMMANDS.writeIdentity, { name, email });
 
 export const repoResolvedIdentity = (repoId: string) =>
   invoke<ResolvedIdentity>("repo_resolved_identity", { repoId });
 
 export const globalCredentialHelperView = () =>
-  invoke<CredentialHelperView>("global_credential_helper_view");
+  invoke<CredentialHelperView>(GLOBAL_GIT_CONFIG_COMMANDS.credentialHelperView);
 
 export const globalWriteCredentialHelper = (helper: string | null) =>
-  invoke<CredentialHelperView>("global_write_credential_helper", { helper });
+  invoke<CredentialHelperView>(GLOBAL_GIT_CONFIG_COMMANDS.writeCredentialHelper, { helper });
 
 export const listAvailableCredentialHelpers = () =>
-  invoke<AvailableHelper[]>("list_available_credential_helpers");
+  invoke<AvailableHelper[]>(GLOBAL_GIT_CONFIG_COMMANDS.availableHelpers);
 
 // SSH key management (phase 1 of the platform integrations).
 

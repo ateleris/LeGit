@@ -163,16 +163,22 @@ fn gitignore_line(rel: &str, is_dir: bool) -> String {
 /// Compute the new `.gitignore` content after adding `line`, or `None` if the
 /// line is already present (verbatim, ignoring surrounding whitespace). A
 /// non-empty file without a trailing newline gets one before the new line is
-/// appended, so lines never merge.
-fn append_gitignore(existing: &str, line: &str) -> Option<String> {
-    if existing.lines().any(|l| l.trim() == line) {
+/// appended, so lines never merge. Byte-level on purpose: the whole file is
+/// written back, and existing non-UTF8 bytes must survive verbatim.
+fn append_gitignore(existing: &[u8], line: &str) -> Option<Vec<u8>> {
+    if existing
+        .split(|b| *b == b'\n')
+        .any(|l| l.trim_ascii() == line.as_bytes())
+    {
         return None;
     }
-    if existing.is_empty() {
-        return Some(format!("{line}\n"));
+    let mut out = existing.to_vec();
+    if !out.is_empty() && out.last() != Some(&b'\n') {
+        out.push(b'\n');
     }
-    let sep = if existing.ends_with('\n') { "" } else { "\n" };
-    Some(format!("{existing}{sep}{line}\n"))
+    out.extend_from_slice(line.as_bytes());
+    out.push(b'\n');
+    Some(out)
 }
 
 /// Read `.gitignore`, append the line for `rel`, write it back. No-op when the
@@ -185,13 +191,13 @@ async fn write_gitignore_line(
 ) -> Result<(), AppError> {
     let gitignore = HostPath::from_path(root).join(".gitignore");
     let existing = match fs.read(&gitignore, None).await {
-        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-        Err(legit_core::FsError::NotFound { .. }) => String::new(),
+        Ok(bytes) => bytes,
+        Err(legit_core::FsError::NotFound { .. }) => Vec::new(),
         Err(e) => return Err(AppError::Io(format!("read {gitignore}: {e}"))),
     };
     let line = gitignore_line(rel, is_dir);
     if let Some(updated) = append_gitignore(&existing, &line) {
-        fs.write(&gitignore, updated.as_bytes())
+        fs.write(&gitignore, &updated)
             .await
             .map_err(|e| AppError::Io(format!("write {gitignore}: {e}")))?;
     }
@@ -363,31 +369,45 @@ mod tests {
 
     #[test]
     fn append_gitignore_to_empty_file() {
-        assert_eq!(append_gitignore("", "/a"), Some("/a\n".to_string()));
+        assert_eq!(append_gitignore(b"", "/a"), Some(b"/a\n".to_vec()));
     }
 
     #[test]
     fn append_gitignore_appends_after_trailing_newline() {
         assert_eq!(
-            append_gitignore("/x\n", "/a"),
-            Some("/x\n/a\n".to_string())
+            append_gitignore(b"/x\n", "/a"),
+            Some(b"/x\n/a\n".to_vec())
         );
     }
 
     #[test]
     fn append_gitignore_adds_missing_newline_before_appending() {
         assert_eq!(
-            append_gitignore("/x", "/a"),
-            Some("/x\n/a\n".to_string())
+            append_gitignore(b"/x", "/a"),
+            Some(b"/x\n/a\n".to_vec())
         );
     }
 
     #[test]
     fn append_gitignore_is_noop_when_line_present() {
-        assert_eq!(append_gitignore("/a\n", "/a"), None);
-        assert_eq!(append_gitignore("*.log\n/a\n", "/a"), None);
+        assert_eq!(append_gitignore(b"/a\n", "/a"), None);
+        assert_eq!(append_gitignore(b"*.log\n/a\n", "/a"), None);
         // Surrounding whitespace on the existing line is ignored.
-        assert_eq!(append_gitignore("  /a  \n", "/a"), None);
+        assert_eq!(append_gitignore(b"  /a  \n", "/a"), None);
+        // CRLF files match too.
+        assert_eq!(append_gitignore(b"/a\r\n", "/a"), None);
+    }
+
+    #[test]
+    fn append_gitignore_preserves_non_utf8_bytes() {
+        // A Latin-1 comment ("# Auslöser"): appending one line must keep every
+        // existing byte verbatim - the old str-based version lossy-decoded the
+        // file and wrote U+FFFD replacements back over it.
+        let existing = b"# Ausl\xf6ser\n".to_vec();
+        assert_eq!(
+            append_gitignore(&existing, "/a"),
+            Some(b"# Ausl\xf6ser\n/a\n".to_vec())
+        );
     }
 
     #[test]

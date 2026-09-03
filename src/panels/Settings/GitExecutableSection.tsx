@@ -7,7 +7,8 @@ import { useState } from "react";
 import { formatAppError } from "../../lib/types";
 import { useGitStatusStore } from "../../store/git-status";
 import { Button } from "../shared/buttons";
-import { Section, Row, FieldNote } from "./primitives";
+import { Section, FieldNote } from "./primitives";
+import { GitStatusReadout } from "./GitStatusReadout";
 
 export function GitExecutableSection() {
   const status = useGitStatusStore((s) => s.status);
@@ -35,36 +36,7 @@ export function GitExecutableSection() {
     <Section title="Git executable (default for all repos)">
       {status ? (
         <>
-          <Row label="Resolved path" value={<code>{status.resolved_path}</code>} />
-          <Row
-            label="Version"
-            value={
-              status.version ? (
-                <code>{status.version.raw}</code>
-              ) : (
-                <span className="legit-error">{status.error ?? "(unknown)"}</span>
-              )
-            }
-          />
-          <Row
-            label="Minimum required"
-            value={
-              <code>
-                {status.minimum_required[0]}.{status.minimum_required[1]}.
-                {status.minimum_required[2]}
-              </code>
-            }
-          />
-          <Row
-            label="Meets minimum"
-            value={
-              status.meets_minimum ? (
-                <span className="legit-success">yes</span>
-              ) : (
-                <span className="legit-error">no</span>
-              )
-            }
-          />
+          <GitStatusReadout status={status} />
           <FieldNote>writes to: global settings</FieldNote>
           <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
             <input
@@ -77,7 +49,7 @@ export function GitExecutableSection() {
             <Button
               variant="primary"
               disabled={pending}
-              onClick={() => apply(draft.trim() === "" ? null : draft)}
+              onClick={() => apply(draft.trim() === "" ? null : draft.trim())}
             >
               Apply
             </Button>

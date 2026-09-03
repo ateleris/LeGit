@@ -172,7 +172,7 @@ pub(crate) async fn resolve_repo_relative(
             let name = joined
                 .file_name()
                 .expect("plain final component");
-            HostPath::from_path(&canonical_parent.as_local().join(name))
+            canonical_parent.join(&name)
         }
         Err(e) => return Err(AppError::Io(format!("resolve {joined}: {e}"))),
     };

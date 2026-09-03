@@ -9,10 +9,33 @@
 //
 // The command tables are two flat name maps with identical key sets: a WSL
 // form can only ever reach a `wsl_*` command, and that is pinned by a test
-// (`gitConfigHost.test.ts`) rather than by review.
+// (`gitConfigHost.test.ts`) rather than by review. The maps live in
+// lib/commands.ts, where the wrapper functions below are defined FROM them —
+// so the tested names and the invoked names cannot diverge.
 
 import type { ReactNode } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import {
+  GLOBAL_GIT_CONFIG_COMMANDS,
+  WSL_GIT_CONFIG_COMMANDS,
+  globalCredentialHelperView,
+  globalIdentityView,
+  globalLineEndingsView,
+  globalSigningConfig,
+  globalWriteCredentialHelper,
+  globalWriteIdentity,
+  globalWriteLineEndings,
+  globalWriteSigning,
+  listAvailableCredentialHelpers,
+  wslAvailableCredentialHelpers,
+  wslCredentialHelperView,
+  wslIdentityView,
+  wslLineEndingsView,
+  wslSigningConfig,
+  wslWriteCredentialHelper,
+  wslWriteIdentity,
+  wslWriteLineEndings,
+  wslWriteSigning,
+} from "../../lib/commands";
 import type {
   AvailableHelper,
   CredentialHelperView,
@@ -67,60 +90,38 @@ export interface GitConfigScope {
   api: GitConfigHostApi;
 }
 
-/** The app machine's commands. */
-const LOCAL_COMMANDS = {
-  identityView: "global_identity_view",
-  writeIdentity: "global_write_identity",
-  signingConfig: "global_signing_config",
-  writeSigning: "global_write_signing",
-  credentialHelperView: "global_credential_helper_view",
-  writeCredentialHelper: "global_write_credential_helper",
-  availableHelpers: "list_available_credential_helpers",
-  lineEndingsView: "global_line_endings_view",
-  writeLineEndings: "global_write_line_endings",
-} as const;
-
-/** A WSL distribution's commands — same keys, disjoint names. */
-const WSL_COMMANDS = {
-  identityView: "wsl_identity_view",
-  writeIdentity: "wsl_write_identity",
-  signingConfig: "wsl_signing_config",
-  writeSigning: "wsl_write_signing",
-  credentialHelperView: "wsl_credential_helper_view",
-  writeCredentialHelper: "wsl_write_credential_helper",
-  availableHelpers: "wsl_available_credential_helpers",
-  lineEndingsView: "wsl_line_endings_view",
-  writeLineEndings: "wsl_write_line_endings",
-} as const;
-
 /** Exported for the contract test only. */
-export const GIT_CONFIG_COMMANDS = { local: LOCAL_COMMANDS, wsl: WSL_COMMANDS };
+export const GIT_CONFIG_COMMANDS = {
+  local: GLOBAL_GIT_CONFIG_COMMANDS,
+  wsl: WSL_GIT_CONFIG_COMMANDS,
+};
 
-/** The operations both tables must name — keys shared, values disjoint. */
-type CommandTable = Record<keyof typeof LOCAL_COMMANDS, string>;
+/** The app machine's api: the `global_*` wrappers, verbatim. */
+const LOCAL_API: GitConfigHostApi = {
+  identityView: globalIdentityView,
+  writeIdentity: globalWriteIdentity,
+  signingConfig: globalSigningConfig,
+  writeSigning: globalWriteSigning,
+  credentialHelperView: globalCredentialHelperView,
+  writeCredentialHelper: globalWriteCredentialHelper,
+  availableHelpers: listAvailableCredentialHelpers,
+  lineEndingsView: globalLineEndingsView,
+  writeLineEndings: globalWriteLineEndings,
+};
 
-/** Build the api from a command table; `extra` carries the distro, if any. */
-function apiFor(cmd: CommandTable, extra: Record<string, unknown>): GitConfigHostApi {
+/** A distribution's api: the `wsl_*` wrappers with the distro bound. */
+function wslApi(distro: string): GitConfigHostApi {
   return {
-    identityView: () => invoke<IdentityView>(cmd.identityView, { ...extra }),
-    writeIdentity: (name, email) =>
-      invoke<IdentityView>(cmd.writeIdentity, { ...extra, name, email }),
-    signingConfig: () => invoke<SigningView>(cmd.signingConfig, { ...extra }),
+    identityView: () => wslIdentityView(distro),
+    writeIdentity: (name, email) => wslWriteIdentity(distro, name, email),
+    signingConfig: () => wslSigningConfig(distro),
     writeSigning: (gpgsign, format, signingKey, allowedSigners) =>
-      invoke<SigningView>(cmd.writeSigning, {
-        ...extra,
-        gpgsign,
-        format,
-        signingKey,
-        allowedSigners,
-      }),
-    credentialHelperView: () => invoke<CredentialHelperView>(cmd.credentialHelperView, { ...extra }),
-    writeCredentialHelper: (helper) =>
-      invoke<CredentialHelperView>(cmd.writeCredentialHelper, { ...extra, helper }),
-    availableHelpers: () => invoke<AvailableHelper[]>(cmd.availableHelpers, { ...extra }),
-    lineEndingsView: () => invoke<LineEndingsView>(cmd.lineEndingsView, { ...extra }),
-    writeLineEndings: (autocrlf, eol) =>
-      invoke<LineEndingsView>(cmd.writeLineEndings, { ...extra, autocrlf, eol }),
+      wslWriteSigning(distro, gpgsign, format, signingKey, allowedSigners),
+    credentialHelperView: () => wslCredentialHelperView(distro),
+    writeCredentialHelper: (helper) => wslWriteCredentialHelper(distro, helper),
+    availableHelpers: () => wslAvailableCredentialHelpers(distro),
+    lineEndingsView: () => wslLineEndingsView(distro),
+    writeLineEndings: (autocrlf, eol) => wslWriteLineEndings(distro, autocrlf, eol),
   };
 }
 
@@ -140,7 +141,7 @@ export const localGitConfigScope: GitConfigScope = {
   ),
   showSshKeys: true,
   showBrowse: true,
-  api: apiFor(LOCAL_COMMANDS, {}),
+  api: LOCAL_API,
 };
 
 /**
@@ -172,6 +173,6 @@ export function wslGitConfigScope(distro: string): GitConfigScope {
         distribution.
       </>
     ),
-    api: apiFor(WSL_COMMANDS, { distro }),
+    api: wslApi(distro),
   };
 }

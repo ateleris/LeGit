@@ -5,6 +5,7 @@ import type { GitStatus } from "../../lib/types";
 import { useGitStatusStore } from "../../store/git-status";
 import { copyText } from "../../lib/clipboard";
 import { Button } from "../shared/buttons";
+import { formatVersionTriple } from "../Settings/GitStatusReadout";
 
 interface Props {
   status: GitStatus;
@@ -81,9 +82,7 @@ export function GitSetupGate({ status, children }: Props) {
         <p>
           LeGit detected <code>git {status.version.raw}</code> at{" "}
           <code>{status.resolved_path}</code>. The recommended minimum is{" "}
-          <strong>
-            {status.minimum_required[0]}.{status.minimum_required[1]}.{status.minimum_required[2]}
-          </strong>{" "}
+          <strong>{formatVersionTriple(status.minimum_required)}</strong>{" "}
           (needed for SSH commit signing among other things). You can continue,
           but some features may not work.
         </p>

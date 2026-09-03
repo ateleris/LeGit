@@ -241,7 +241,7 @@ pub async fn repo_lfs_untrack(
 /// Root `.gitattributes` text via the repo host's fs (missing = empty, like
 /// the read_to_string().unwrap_or_default() it replaces).
 async fn read_gitattributes(session: &crate::state::RepoSession) -> String {
-    let hp = legit_core::HostPath::from_path(&session.path.join(".gitattributes"));
+    let hp = session.host_root().join(".gitattributes");
     match session.host.fs().read(&hp, None).await {
         Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
         Err(_) => String::new(),
@@ -252,7 +252,7 @@ async fn write_gitattributes(
     session: &crate::state::RepoSession,
     content: &str,
 ) -> Result<(), AppError> {
-    let hp = legit_core::HostPath::from_path(&session.path.join(".gitattributes"));
+    let hp = session.host_root().join(".gitattributes");
     session
         .host
         .fs()

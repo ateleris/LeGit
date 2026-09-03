@@ -2,8 +2,9 @@
 # where the Windows bundle expects it (src-tauri/agent/legit-agent-<arch>).
 #
 # Release builds get the agent from CI (see .github/workflows/release.yml);
-# this script is the dev fallback so a local `tauri build` on Windows can
-# produce a bundle with WSL support. It builds inside the DEFAULT distro
+# `npm run tauri:dev` / `tauri:build` stage a missing agent automatically
+# (scripts/stage-agent.mjs). This script is the explicit REBUILD: it always
+# recompiles the x86_64 agent, so run it after changing legit-agent code. It builds inside the DEFAULT distro
 # against this same checkout through the /mnt/<drive> mount.
 #
 # Alternative for dev runs (no bundling needed): build the agent in WSL

@@ -7,7 +7,6 @@ use crate::error::AppError;
 use crate::state::AppState;
 use base64::Engine as _;
 use legit_core::types::BlobBytes;
-use std::path::{Path, PathBuf};
 
 /// Per-side preview cap (spec: 20 MB). Protects the IPC channel and the
 /// query cache, not server memory: cat-file cannot stop mid-blob anyway.
@@ -115,9 +114,10 @@ fn parse_lfs_pointer(bytes: &[u8]) -> Option<LfsPointer> {
 }
 
 /// `<git-dir>/lfs/objects/<oid[0..2]>/<oid[2..4]>/<oid>` (the LFS store is
-/// plain files; oid is validated 64-hex by the parser).
-fn lfs_object_path(git_dir: &Path, oid: &str) -> PathBuf {
-    git_dir.join("lfs").join("objects").join(&oid[..2]).join(&oid[2..4]).join(oid)
+/// plain files; oid is validated 64-hex by the parser). Textual '/' join:
+/// the git dir may be a remote posix path on a Windows app build.
+fn lfs_object_path(git_dir: &legit_core::HostPath, oid: &str) -> legit_core::HostPath {
+    git_dir.join(&format!("lfs/objects/{}/{}/{oid}", &oid[..2], &oid[2..4]))
 }
 
 fn classify_bytes(bytes: Vec<u8>) -> FilePreview {
@@ -136,10 +136,10 @@ fn classify_bytes(bytes: Vec<u8>) -> FilePreview {
 /// fetches.
 async fn resolve_lfs(
     fs: &dyn legit_core::RepoFs,
-    git_dir: &Path,
+    git_dir: &legit_core::HostPath,
     pointer: LfsPointer,
 ) -> FilePreview {
-    let obj = legit_core::HostPath::from_path(&lfs_object_path(git_dir, &pointer.oid));
+    let obj = lfs_object_path(git_dir, &pointer.oid);
     match fs.stat(&obj).await {
         Ok(Some(st)) if st.len > MAX_PREVIEW_BYTES => FilePreview::TooLarge { size: st.len },
         Ok(Some(_)) => match fs.read(&obj, Some(MAX_PREVIEW_BYTES)).await {
@@ -200,7 +200,7 @@ pub async fn repo_file_preview(
         let runner = session.runner.read().await.clone();
         let out = runner.run(&["rev-parse", "--git-dir"]).await?;
         if out.success {
-            let git_dir = session.path.join(out.stdout.trim());
+            let git_dir = session.host_root().resolve(out.stdout.trim());
             return Ok(resolve_lfs(fs.as_ref(), &git_dir, pointer).await);
         }
         return Ok(FilePreview::LfsMissing { oid: pointer.oid, size: pointer.size });
@@ -211,7 +211,6 @@ pub async fn repo_file_preview(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     #[test]
     fn detects_image_formats_by_magic() {
@@ -258,10 +257,12 @@ mod tests {
 
     #[test]
     fn lfs_object_path_layout() {
+        // Textual '/' joins: a remote posix git dir must never grow '\\' on a
+        // Windows app build.
         let oid = "4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393";
         assert_eq!(
-            lfs_object_path(Path::new("/repo/.git"), oid),
-            Path::new("/repo/.git/lfs/objects/4d/7a").join(oid)
+            lfs_object_path(&legit_core::HostPath("/repo/.git".into()), oid).as_str(),
+            format!("/repo/.git/lfs/objects/4d/7a/{oid}")
         );
     }
 
@@ -286,8 +287,9 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let git_dir = dir.path();
         let p = parse_lfs_pointer(POINTER.as_bytes()).unwrap();
+        let git_dir_hp = legit_core::HostPath::from_path(git_dir);
         // Missing object: pointer info surfaces.
-        match resolve_lfs(&legit_core::LocalFs, git_dir, parse_lfs_pointer(POINTER.as_bytes()).unwrap())
+        match resolve_lfs(&legit_core::LocalFs, &git_dir_hp, parse_lfs_pointer(POINTER.as_bytes()).unwrap())
             .await
         {
             FilePreview::LfsMissing { oid, size } => {
@@ -297,10 +299,10 @@ mod tests {
             other => panic!("expected LfsMissing, got {other:?}"),
         }
         // Present object: classified like any bytes.
-        let obj = lfs_object_path(git_dir, &p.oid);
+        let obj = lfs_object_path(&git_dir_hp, &p.oid).as_local();
         std::fs::create_dir_all(obj.parent().unwrap()).unwrap();
         std::fs::write(&obj, b"\x89PNG\r\n\x1a\nDATA").unwrap();
-        match resolve_lfs(&legit_core::LocalFs, git_dir, p).await {
+        match resolve_lfs(&legit_core::LocalFs, &git_dir_hp, p).await {
             FilePreview::Image { format: ImageFormat::Png, .. } => {}
             other => panic!("expected Image, got {other:?}"),
         }

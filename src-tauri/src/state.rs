@@ -51,6 +51,10 @@ pub fn repo_hash_locator(locator: &RepoLocator) -> String {
         }
         remote => remote.to_persist_string(),
     };
+    hash16(&input)
+}
+
+fn hash16(input: &str) -> String {
     let mut h = Sha256::new();
     h.update(input.as_bytes());
     let b = h.finalize();
@@ -58,6 +62,56 @@ pub fn repo_hash_locator(locator: &RepoLocator) -> String {
         "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
         b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]
     )
+}
+
+/// The repos/<hash> names a PRE-LOCATOR version computed for a WSL repo
+/// opened through its Explorer share: git reported the toplevel as
+/// `//wsl.localhost/<distro>/<path>` (or the legacy `//wsl$/...`), which
+/// `repo_hash` case-folded like any Windows-local path.
+fn legacy_wsl_repo_hashes(distro: &str, posix_path: &str) -> [String; 2] {
+    ["wsl.localhost", "wsl$"]
+        .map(|server| hash16(&format!("//{server}/{distro}{posix_path}").to_lowercase()))
+}
+
+/// One-time repo-identity migration: a WSL repo that older versions keyed by
+/// its UNC toplevel re-keys as `wsl://...` — rename its existing
+/// repos/<hash>/ directory so per-repo settings survive, and refresh
+/// `path.txt` to the persisted locator. No-op when the locator-keyed
+/// directory already exists (live settings are never clobbered) or no legacy
+/// directory is found. Best-effort: a failed rename only costs the old
+/// settings, never the open.
+pub fn migrate_legacy_wsl_repo_dir(repos_data_dir: &Path, locator: &RepoLocator) {
+    let RepoLocator::Wsl { distro, path } = locator else {
+        return;
+    };
+    let new_dir = repos_data_dir.join(repo_hash_locator(locator));
+    if new_dir.exists() {
+        return;
+    }
+    for hash in legacy_wsl_repo_hashes(distro, path.as_str()) {
+        let old_dir = repos_data_dir.join(&hash);
+        if !old_dir.is_dir() {
+            continue;
+        }
+        match std::fs::rename(&old_dir, &new_dir) {
+            Ok(()) => {
+                let _ = std::fs::write(new_dir.join("path.txt"), locator.to_persist_string());
+                tracing::info!(
+                    from = %old_dir.display(),
+                    to = %new_dir.display(),
+                    "migrated legacy UNC-keyed WSL repo data dir"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    err = %e,
+                    from = %old_dir.display(),
+                    "legacy WSL repo data dir migration failed"
+                );
+            }
+        }
+        return;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -572,6 +626,13 @@ impl RepoSession {
         }
     }
 
+    /// The repo root as a `HostPath`. Extend it with `HostPath::join` /
+    /// `HostPath::resolve` — never `self.path.join`: remote roots are posix
+    /// and a Windows build's native join would insert '\\' into them.
+    pub fn host_root(&self) -> legit_core::HostPath {
+        legit_core::HostPath::from_path(&self.path)
+    }
+
     pub fn summary(&self) -> RepoSummary {
         RepoSummary {
             id: self.id.clone(),
@@ -888,6 +949,57 @@ mod tests {
             repo_hash_locator(&RepoLocator::local("/tmp/legit-fixed-example")),
             "25bd95ddb634925e"
         );
+    }
+
+    // A WSL repo opened on a PRE-LOCATOR version went through git's UNC
+    // toplevel (`//wsl.localhost/<distro>/<path>`), hashed as a lowercased
+    // local path. Re-keying it as wsl:// must carry the existing repos/<hash>/
+    // directory over, or its per-repo settings silently detach.
+    #[test]
+    fn migrates_legacy_unc_hashed_repo_dir_to_locator_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let locator = RepoLocator::Wsl {
+            distro: "Ubuntu".into(),
+            path: legit_core::HostPath("/home/u/Repo".into()),
+        };
+        // Exactly what dev's repo_hash produced on Windows for that repo:
+        // the raw git output, lowercased by the case-folding branch.
+        let legacy = hash16("//wsl.localhost/ubuntu/home/u/repo");
+        let legacy_dir = dir.path().join(&legacy);
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        std::fs::write(legacy_dir.join("settings.json"), b"{\"git_path_override\":null}").unwrap();
+        std::fs::write(legacy_dir.join("path.txt"), b"//wsl.localhost/Ubuntu/home/u/Repo").unwrap();
+
+        migrate_legacy_wsl_repo_dir(dir.path(), &locator);
+
+        let new_dir = dir.path().join(repo_hash_locator(&locator));
+        assert!(new_dir.join("settings.json").exists(), "settings must move to the locator hash");
+        assert!(!legacy_dir.exists(), "legacy dir must be renamed away");
+        assert_eq!(
+            std::fs::read_to_string(new_dir.join("path.txt")).unwrap(),
+            "wsl://Ubuntu/home/u/Repo",
+            "path.txt must be refreshed to the persisted locator"
+        );
+
+        // Idempotent: with the new dir present, nothing moves (a fresh legacy
+        // dir appearing later must never clobber live settings).
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        std::fs::write(legacy_dir.join("settings.json"), b"{}").unwrap();
+        migrate_legacy_wsl_repo_dir(dir.path(), &locator);
+        assert!(legacy_dir.exists(), "an existing locator dir wins");
+    }
+
+    #[test]
+    fn migration_ignores_local_and_unrelated_repos() {
+        let dir = tempfile::tempdir().unwrap();
+        migrate_legacy_wsl_repo_dir(dir.path(), &RepoLocator::local("/x"));
+        // No legacy dir at all: nothing to do, nothing created.
+        let locator = RepoLocator::Wsl {
+            distro: "Ubuntu".into(),
+            path: legit_core::HostPath("/home/u/proj".into()),
+        };
+        migrate_legacy_wsl_repo_dir(dir.path(), &locator);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
     // Remote paths live on case-sensitive filesystems: the app OS's case

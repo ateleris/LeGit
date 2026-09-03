@@ -42,7 +42,8 @@ lives in the git log and the GitHub release notes.
 
 ### Fixed
 
-- Closing the last tab of a WSL repository no longer shows a "Connection lost — reconnecting…" toast; that only appears when the distro actually goes away.
+- Closing the last tab of a WSL repository no longer shows a "Connection lost — reconnecting…" toast; "reconnecting…" now only appears while the app will actually reconnect. A distro connected only for Settings reports the loss plainly instead, and a standing "reconnecting…" toast is retired when the reconnect stops.
+- The git executable path from Settings is trimmed before it is applied, so a stray trailing space no longer breaks resolution.
 - Cancelling a clone on Windows sometimes failed with "The partial clone
   could not be removed … being used by another process": only git's top
   process was killed and an orphaned helper kept the pack file open. A cancel

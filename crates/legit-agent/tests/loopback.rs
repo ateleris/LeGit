@@ -142,6 +142,67 @@ async fn stream_respects_credit_window_backpressure() {
 }
 
 #[tokio::test]
+async fn concurrent_streams_from_two_executors_stay_separate() {
+    // Two repos on the same connection = two RemoteExecutors (one per
+    // session) sharing one agent. Their concurrent streams must neither
+    // cross-route output nor stall: stream ids come from the shared
+    // connection, not a per-executor counter that would mint the same id
+    // twice.
+    let (conn, _guard) = common::connect_agent().await;
+    let dir_a = tempfile::tempdir().unwrap();
+    let dir_b = tempfile::tempdir().unwrap();
+    let exec_a = Arc::new(git_exec(&conn, dir_a.path()).await);
+    let exec_b = Arc::new(git_exec(&conn, dir_b.path()).await);
+    temp_repo(&exec_a).await;
+    temp_repo(&exec_b).await;
+    for i in 0..100 {
+        exec_a.run(&["config", &format!("test.alpha{i}"), "a"]).await.unwrap();
+        exec_b.run(&["config", &format!("test.beta{i}"), "b"]).await.unwrap();
+    }
+
+    // Tiny undrained channels park both streams at their credit windows, so
+    // both are REGISTERED concurrently before either finishes.
+    let (tx_a, mut rx_a) = tokio::sync::mpsc::channel::<RunnerEvent>(2);
+    let (tx_b, mut rx_b) = tokio::sync::mpsc::channel::<RunnerEvent>(2);
+    let sa = {
+        let exec = exec_a.clone();
+        tokio::spawn(async move { exec.stream(&["config", "--list"], OperationId::new(), tx_a).await })
+    };
+    let sb = {
+        let exec = exec_b.clone();
+        tokio::spawn(async move { exec.stream(&["config", "--list"], OperationId::new(), tx_b).await })
+    };
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    let collect = |mut rx: tokio::sync::mpsc::Receiver<RunnerEvent>| async move {
+        let mut out = String::new();
+        while let Some(ev) = rx.recv().await {
+            if let RunnerEvent::Stdout { line } = ev {
+                out.push_str(&line);
+                out.push('\n');
+            }
+        }
+        out
+    };
+    let (out_a, out_b) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(collect(rx_a), collect(rx_b))
+    })
+    .await
+    .expect("both streams must complete - a stalled one means its credits were orphaned");
+    let (exit_a, exit_b) = tokio::time::timeout(Duration::from_secs(5), async {
+        (sa.await.unwrap().unwrap(), sb.await.unwrap().unwrap())
+    })
+    .await
+    .expect("stream calls resolve");
+    assert_eq!((exit_a, exit_b), (0, 0));
+
+    assert!(out_a.contains("test.alpha0=a"), "A lost its own output");
+    assert!(out_b.contains("test.beta0=b"), "B lost its own output");
+    assert!(!out_a.contains("test.beta"), "B's output cross-routed into A");
+    assert!(!out_b.contains("test.alpha"), "A's output cross-routed into B");
+}
+
+#[tokio::test]
 async fn cancel_kills_a_paused_stream() {
     let (conn, _guard) = common::connect_agent().await;
     let dir = tempfile::tempdir().unwrap();

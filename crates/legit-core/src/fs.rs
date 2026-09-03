@@ -42,6 +42,18 @@ impl HostPath {
         }
     }
 
+    /// Interpret git output that is either absolute or relative to `self`.
+    /// Posix-absolute is checked textually: remote host paths start with '/'
+    /// even when the app runs on Windows, where `Path::is_absolute("/x")`
+    /// is false.
+    pub fn resolve(&self, s: &str) -> HostPath {
+        if s.starts_with('/') || Path::new(s).is_absolute() {
+            HostPath(s.to_string())
+        } else {
+            self.join(s)
+        }
+    }
+
     /// Native path form — for `LocalFs` (and other app-machine-local uses)
     /// only; meaningless for a path on a remote host.
     pub fn as_local(&self) -> PathBuf {
@@ -302,6 +314,23 @@ mod tests {
         assert_eq!(HostPath("/a/b".into()).join("c").0, "/a/b/c");
         assert_eq!(HostPath("/a/b/".into()).join("c").0, "/a/b/c");
         assert_eq!(HostPath("C:\\r\\".into()).join("x").0, "C:\\r\\x");
+    }
+
+    #[test]
+    fn host_path_resolve_keeps_posix_absolute_on_any_app_os() {
+        let root = HostPath("/home/u/repo".into());
+        // Posix-absolute must be recognized even on Windows builds, where
+        // Path::is_absolute("/x") is false.
+        assert_eq!(root.resolve("/home/u/repo/.git").0, "/home/u/repo/.git");
+        assert_eq!(root.resolve(".git").0, "/home/u/repo/.git");
+        assert_eq!(root.resolve(".git/index").0, "/home/u/repo/.git/index");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn host_path_resolve_keeps_drive_absolute() {
+        let root = HostPath("C:\\repo".into());
+        assert_eq!(root.resolve("C:\\repo\\.git").0, "C:\\repo\\.git");
     }
 
     #[tokio::test]

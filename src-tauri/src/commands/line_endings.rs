@@ -494,20 +494,27 @@ async fn remove_preview_index(session: &crate::state::RepoSession) {
     if !out.success {
         return;
     }
-    let rel = Path::new(out.stdout.trim());
-    let abs = if rel.is_absolute() { rel.to_path_buf() } else { session.path.join(rel) };
-    let mut name = abs.file_name().unwrap_or_default().to_os_string();
-    name.push(legit_core::cli_impl::parsers::renormalize::RENORMALIZE_PREVIEW_INDEX_SUFFIX);
-    let temp = abs.with_file_name(name);
-    let mut lock_name = temp.file_name().unwrap_or_default().to_os_string();
-    lock_name.push(".lock");
+    let (temp, lock) = preview_index_cleanup_paths(&session.host_root(), &out.stdout);
     let fs = session.host.fs();
-    let _ = fs
-        .remove_file(&legit_core::HostPath::from_path(&temp.with_file_name(lock_name)))
-        .await;
-    let _ = fs
-        .remove_file(&legit_core::HostPath::from_path(&temp))
-        .await;
+    let _ = fs.remove_file(&lock).await;
+    let _ = fs.remove_file(&temp).await;
+}
+
+/// The preview's temp index + `.lock` as host paths, from raw
+/// `rev-parse --git-path index` output (relative to the repo root, or
+/// absolute). Textual '/' joins only - remote roots are posix.
+fn preview_index_cleanup_paths(
+    root: &legit_core::HostPath,
+    git_path_out: &str,
+) -> (legit_core::HostPath, legit_core::HostPath) {
+    let index = root.resolve(git_path_out.trim());
+    let temp = legit_core::HostPath(format!(
+        "{}{}",
+        index.as_str(),
+        legit_core::cli_impl::parsers::renormalize::RENORMALIZE_PREVIEW_INDEX_SUFFIX
+    ));
+    let lock = legit_core::HostPath(format!("{}.lock", temp.as_str()));
+    (temp, lock)
 }
 
 /// Run `git add --renormalize -- .`: restages tracked files through the
@@ -535,7 +542,7 @@ pub async fn repo_write_gitattributes_eol(
 ) -> Result<LineEndingsView, AppError> {
     let session = state.get_session(&repo_id).await?;
     let fs = session.host.fs();
-    let hp = legit_core::HostPath::from_path(&session.path.join(".gitattributes"));
+    let hp = session.host_root().join(".gitattributes");
     let existing = match fs.read(&hp, None).await {
         Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
         Err(_) => None,
@@ -595,7 +602,21 @@ fn insert_covers_all_rule(existing: Option<&str>, eol: Option<&str>) -> Result<S
 
 #[cfg(test)]
 mod tests {
-    use super::insert_covers_all_rule;
+    use super::{insert_covers_all_rule, preview_index_cleanup_paths};
+
+    #[test]
+    fn preview_index_cleanup_paths_join_textually() {
+        // Remote roots are posix even on Windows app builds: the cleanup path
+        // must be '/'-joined and match the GIT_INDEX_FILE the preview set
+        // (raw `--git-path index` output + suffix).
+        let root = legit_core::HostPath("/home/u/repo".into());
+        let (temp, lock) = preview_index_cleanup_paths(&root, ".git/index\n");
+        assert_eq!(temp.as_str(), "/home/u/repo/.git/index.legit-renormalize-preview");
+        assert_eq!(lock.as_str(), "/home/u/repo/.git/index.legit-renormalize-preview.lock");
+        // Absolute output (worktrees) is kept verbatim.
+        let (temp, _) = preview_index_cleanup_paths(&root, "/elsewhere/gitdir/index");
+        assert_eq!(temp.as_str(), "/elsewhere/gitdir/index.legit-renormalize-preview");
+    }
 
     #[test]
     fn creates_new_file_with_rule() {

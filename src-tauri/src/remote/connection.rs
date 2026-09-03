@@ -27,7 +27,9 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct RemoteHostStatusPayload {
     pub distro: String,
-    /// "connecting" | "connected" | "disconnected"
+    /// "connecting" | "connected" | "disconnected" (lost, reconnect loop
+    /// running) | "gone" (lost, no reconnect coming) | "connect_failed"
+    /// (an attempt failed; the caller surfaces the error itself)
     pub status: String,
 }
 
@@ -45,6 +47,31 @@ fn emit_status(app: &tauri::AppHandle, distro: &str, status: &str) {
 #[derive(Default)]
 pub struct WslHosts {
     entries: tokio::sync::Mutex<HashMap<String, WslEntry>>,
+    /// One connect gate per distro: connects to the SAME distro serialize on
+    /// it, while `entries` is only ever held for lookup/insert - so one
+    /// distro's slow first connect (boot, deploy, handshake) never blocks
+    /// another distro's fast path or connect.
+    connect_locks: tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+}
+
+impl WslHosts {
+    async fn live_host(&self, distro: &str) -> Option<Arc<RemoteHost>> {
+        self.entries
+            .lock()
+            .await
+            .get(distro)
+            .filter(|e| e.host.is_alive())
+            .map(|e| e.host.clone())
+    }
+
+    async fn connect_lock(&self, distro: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.connect_locks
+            .lock()
+            .await
+            .entry(distro.to_string())
+            .or_default()
+            .clone()
+    }
 }
 
 struct WslEntry {
@@ -85,26 +112,32 @@ pub async fn ensure_wsl_host(
     state: &AppState,
     distro: &str,
 ) -> Result<Arc<RemoteHost>, AppError> {
-    let mut entries = state.wsl_hosts.entries.lock().await;
-    if let Some(entry) = entries.get(distro) {
-        if entry.host.is_alive() {
-            return Ok(entry.host.clone());
-        }
+    if let Some(host) = state.wsl_hosts.live_host(distro).await {
+        return Ok(host);
+    }
+    // Serialize connects per distro; the entries map stays free for other
+    // hosts while this distro boots/deploys/handshakes.
+    let gate = state.wsl_hosts.connect_lock(distro).await;
+    let _connecting = gate.lock().await;
+    // Re-check after winning the gate: a racing caller may have connected.
+    if let Some(host) = state.wsl_hosts.live_host(distro).await {
+        return Ok(host);
     }
     emit_status(app, distro, "connecting");
-    let result = connect_locked(app, state, distro, &mut entries).await;
+    let result = connect(app, state, distro).await;
     match &result {
         Ok(_) => emit_status(app, distro, "connected"),
-        Err(_) => emit_status(app, distro, "disconnected"),
+        // Not "disconnected": no reconnect loop follows a failed attempt, and
+        // the caller (open flow / Settings) reports the error itself.
+        Err(_) => emit_status(app, distro, "connect_failed"),
     }
     result
 }
 
-async fn connect_locked(
+async fn connect(
     app: &tauri::AppHandle,
     state: &AppState,
     distro: &str,
-    entries: &mut HashMap<String, WslEntry>,
 ) -> Result<Arc<RemoteHost>, AppError> {
     // Deploy when the version-keyed path is absent (first run or upgrade).
     // Under the `LEGIT_AGENT_BIN` dev override ALWAYS deploy: a rebuilt dev
@@ -143,17 +176,50 @@ async fn connect_locked(
     .await
     .map_err(|e| AppError::Io(format!("agent connection to '{distro}': {e}")))?;
 
-    let host = match entries.get_mut(distro) {
+    // The connect gate serializes connects for this distro; `entries` is
+    // locked only around lookup/insert so other distros never wait on the
+    // reattach/handshake work.
+    let existing = state
+        .wsl_hosts
+        .entries
+        .lock()
+        .await
+        .get(distro)
+        .map(|e| e.host.clone());
+    let host = match existing {
         // Reconnect: swap the connection into the existing host so sessions
         // recover in place, and re-establish its watches.
-        Some(entry) => {
-            entry
-                .host
-                .reattach(conn)
+        Some(host) => {
+            host.reattach(conn)
                 .await
                 .map_err(|e| AppError::Io(format!("reattach to '{distro}': {e}")))?;
-            entry.child = child;
-            entry.host.clone()
+            let mut entries = state.wsl_hosts.entries.lock().await;
+            match entries.get_mut(distro) {
+                Some(entry) => entry.child = child,
+                // Released while the handshake ran (last tab on the distro
+                // closed): the caller still wants a live host - re-register
+                // it like a fresh connect.
+                None => {
+                    entries.insert(
+                        distro.to_string(),
+                        WslEntry {
+                            host: host.clone(),
+                            child,
+                        },
+                    );
+                    state
+                        .hosts
+                        .lock()
+                        .expect("hosts map poisoned")
+                        .insert(
+                            HostId::Wsl {
+                                distro: distro.to_string(),
+                            },
+                            host.clone(),
+                        );
+                }
+            }
+            host
         }
         None => {
             let host = Arc::new(RemoteHost::new(
@@ -162,13 +228,18 @@ async fn connect_locked(
                 },
                 conn,
             ));
-            entries.insert(
-                distro.to_string(),
-                WslEntry {
-                    host: host.clone(),
-                    child,
-                },
-            );
+            state
+                .wsl_hosts
+                .entries
+                .lock()
+                .await
+                .insert(
+                    distro.to_string(),
+                    WslEntry {
+                        host: host.clone(),
+                        child,
+                    },
+                );
             state
                 .hosts
                 .lock()
@@ -285,11 +356,27 @@ fn build_sinks(app: tauri::AppHandle, distro: String) -> HostSinks {
                 tracing::debug!(distro = %dc_distro, "wsl host released - ignoring EOF");
                 return;
             }
-            emit_status(&dc_app, &dc_distro, "disconnected");
             let app = dc_app.clone();
             let distro = dc_distro.clone();
             tokio::spawn(async move {
-                reconnect_with_backoff(app, distro).await;
+                // "disconnected" promises a reconnect - only emit it when the
+                // loop will actually run. A settings-only host (no repo open
+                // on the distro) is never auto-reconnected: its loss is
+                // terminal until the user reconnects by hand.
+                let state = app.state::<AppState>();
+                let locators: Vec<RepoLocator> = state
+                    .repos
+                    .read()
+                    .await
+                    .values()
+                    .map(|s| s.locator.clone())
+                    .collect();
+                if !should_keep_reconnecting(&distro, &locators) {
+                    emit_status(&app, &distro, "gone");
+                    return;
+                }
+                emit_status(&app, &distro, "disconnected");
+                reconnect_with_backoff(app.clone(), distro).await;
             });
         }),
     }
@@ -322,7 +409,9 @@ async fn reconnect_with_backoff(app: tauri::AppHandle, distro: String) {
         attempt += 1;
 
         let state = app.state::<AppState>();
-        // Stop when the host was released (or never existed).
+        // Stop when the host was released (or never existed). "gone" retires
+        // the frontend's sticky "reconnecting…" toast - the promise it makes
+        // no longer holds.
         if !state
             .wsl_hosts
             .entries
@@ -330,6 +419,7 @@ async fn reconnect_with_backoff(app: tauri::AppHandle, distro: String) {
             .await
             .contains_key(&distro)
         {
+            emit_status(&app, &distro, "gone");
             return;
         }
         // Stop for a settings-only host: nothing depends on it being live.
@@ -342,6 +432,7 @@ async fn reconnect_with_backoff(app: tauri::AppHandle, distro: String) {
             .collect();
         if !should_keep_reconnecting(&distro, &locators) {
             tracing::debug!(distro, "no repos open on this distro - not reconnecting");
+            emit_status(&app, &distro, "gone");
             return;
         }
         match ensure_wsl_host(&app, &state, &distro).await {
@@ -380,6 +471,27 @@ mod tests {
             "Ubuntu",
             &[wsl("Debian"), wsl("Ubuntu")]
         ));
+    }
+
+    // One distro's (slow) first connect must never block another distro's
+    // fast path or connect: the gate is per distro, not the whole registry.
+    #[tokio::test]
+    async fn connect_gates_are_per_distro() {
+        let hosts = WslHosts::default();
+        let a = hosts.connect_lock("Ubuntu").await;
+        let b = hosts.connect_lock("Debian").await;
+        let _connecting_a = a.lock().await;
+        let b_guard =
+            tokio::time::timeout(std::time::Duration::from_millis(200), b.lock()).await;
+        assert!(b_guard.is_ok(), "another distro's connect gate must be free");
+        // The SAME distro's connects serialize on one gate.
+        let a_again = hosts.connect_lock("Ubuntu").await;
+        assert!(tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            a_again.lock()
+        )
+        .await
+        .is_err());
     }
 
     // A settings-only connection (the Git (WSL) group probed a distro with no

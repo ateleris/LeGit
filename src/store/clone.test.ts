@@ -253,6 +253,18 @@ describe("clone store outcome toasts", () => {
     expect(messages()).toEqual([["error", "could not remove /src/legit"]]);
   });
 
+  it("stays silent when a failure races the user's cancel", async () => {
+    const { reject } = deferredClone();
+    const opId = useCloneStore.getState().start(START);
+    useCloneStore.getState().cancel(opId);
+    // git failed on its own before the backend registered the cancel, so the
+    // error classifies as AuthFailed rather than CloneCancelled - but the
+    // user asked for this clone to end; no error toast.
+    reject(gitError("AuthFailed"));
+    await settle();
+    expect(messages()).toEqual([]);
+  });
+
   it("gives the profile hint for an auth failure", async () => {
     const { reject } = deferredClone();
     useCloneStore.getState().start(START);

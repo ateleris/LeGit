@@ -86,7 +86,10 @@ export function WslHostProvider({
     let unlisten: (() => void) | undefined;
     let disposed = false;
     void onRemoteHostStatus((p) => {
-      const next = p.status as WslHostStatus;
+      // Settings-wise "gone" and a failed attempt ARE disconnects: the group
+      // shows "lost" and offers Reconnect either way.
+      const next: WslHostStatus =
+        p.status === "gone" || p.status === "connect_failed" ? "disconnected" : p.status;
       setStatuses((prev) => {
         // Only a RECOVERY re-reads: the config may have changed while the
         // host was down. Bumping on every "connected" would double-load

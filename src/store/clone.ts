@@ -90,6 +90,10 @@ export const useCloneStore = create<CloneStore>((set, get) => ({
           // could not remove the partial clone's files.
           const note = cloneCancelCleanupFailure(e);
           if (note) notify.error(note);
+        } else if (get().jobs[opId]?.cancelling) {
+          // A failure that raced the user's Cancel (git settled before the
+          // kill landed, so it classified as its own error): the user asked
+          // for this clone to end - no error toast.
         } else if (gitErrorKind(e) === "AuthFailed") {
           notify.error(
             `Could not clone ${name}: authentication failed. Pick a profile with the right credentials, or fix your global git credentials.`,

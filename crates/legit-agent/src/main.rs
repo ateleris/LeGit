@@ -31,7 +31,7 @@ use legit_proto::{
 };
 use legit_watch::WatcherCore;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::mpsc;
 
 const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -88,36 +88,31 @@ fn serve_stdio() {
 
 /// Per-stream credit window (see `GitStreamParams::window`): the consumer
 /// takes one credit per forwarded event and stalls at zero, which backs the
-/// pressure up through the bounded channel into git itself.
+/// pressure up through the bounded channel into git itself. A `Semaphore`,
+/// not Mutex+Notify: permits are stored, so an `add` landing between the
+/// taker's zero-check and its waiter registration can never be lost (a lost
+/// wakeup would stall the stream forever - see `take_never_misses_a_racing_add`).
 struct Credits {
-    avail: Mutex<u32>,
-    notify: Notify,
+    sem: tokio::sync::Semaphore,
 }
 
 impl Credits {
     fn new(window: u32) -> Self {
         Self {
-            avail: Mutex::new(window),
-            notify: Notify::new(),
+            sem: tokio::sync::Semaphore::new(window as usize),
         }
     }
 
     async fn take(&self) {
-        loop {
-            {
-                let mut avail = self.avail.lock().expect("credits poisoned");
-                if *avail > 0 {
-                    *avail -= 1;
-                    return;
-                }
-            }
-            self.notify.notified().await;
-        }
+        self.sem
+            .acquire()
+            .await
+            .expect("credits semaphore never closed")
+            .forget();
     }
 
     fn add(&self, n: u32) {
-        *self.avail.lock().expect("credits poisoned") += n;
-        self.notify.notify_waiters();
+        self.sem.add_permits(n as usize);
     }
 }
 
@@ -639,4 +634,55 @@ async fn git_stream(
 
     let exit_code = result.map_err(|e| we2(&e))?;
     Ok(to_value(&GitStreamDone { exit_code }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Credits;
+    use std::sync::Arc;
+
+    /// `take()`/`add()` must never lose a wakeup. The adder grants exactly one
+    /// credit per completed take (never a second one that could paper over a
+    /// missed first - the production host acks one credit per delivered
+    /// event), from a spinning OS thread so the grant lands nanoseconds after
+    /// the taker re-enters `take()` and blocks at zero. A lost wakeup parks
+    /// the taker forever, which in production stalls a remote stream
+    /// unrecoverably.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn take_never_misses_a_racing_add() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        const ROUNDS: u32 = 200_000;
+        let credits = Arc::new(Credits::new(0));
+        let took = Arc::new(AtomicU32::new(0));
+
+        let adder = {
+            let credits = credits.clone();
+            let took = took.clone();
+            std::thread::spawn(move || {
+                for i in 0..ROUNDS {
+                    while took.load(Ordering::Acquire) < i {
+                        std::hint::spin_loop();
+                    }
+                    credits.add(1);
+                }
+            })
+        };
+        let taker = {
+            let credits = credits.clone();
+            let took = took.clone();
+            tokio::spawn(async move {
+                for _ in 0..ROUNDS {
+                    credits.take().await;
+                    took.fetch_add(1, Ordering::Release);
+                }
+            })
+        };
+
+        tokio::time::timeout(std::time::Duration::from_secs(30), taker)
+            .await
+            .expect("deadlock: take() missed an add() and parked forever")
+            .expect("taker panicked");
+        adder.join().expect("adder panicked");
+    }
 }

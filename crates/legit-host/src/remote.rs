@@ -91,6 +91,11 @@ struct StreamEntry {
 pub struct AgentConnection {
     writer_tx: mpsc::Sender<String>,
     next_id: AtomicU64,
+    /// Stream ids live on the CONNECTION, not the executor: every executor
+    /// multiplexing over this agent draws from the same counter, so two
+    /// sessions on one distro can never mint the same id (which would
+    /// cross-route their console output and orphan a credit window).
+    next_stream_id: AtomicU64,
     pending: Mutex<HashMap<u64, oneshot::Sender<Result<serde_json::Value, WireError>>>>,
     streams: Mutex<HashMap<u64, StreamEntry>>,
     watches: Mutex<HashMap<u64, Arc<dyn Fn(WatchBatch) + Send + Sync>>>,
@@ -155,6 +160,7 @@ impl AgentConnection {
         let conn = Arc::new(AgentConnection {
             writer_tx: writer_tx.clone(),
             next_id: AtomicU64::new(1),
+            next_stream_id: AtomicU64::new(1),
             pending: Mutex::new(HashMap::new()),
             streams: Mutex::new(HashMap::new()),
             watches: Mutex::new(HashMap::new()),
@@ -362,7 +368,6 @@ pub struct RemoteExecutor {
     conn: Arc<HostConn>,
     git_path: HostPath,
     cwd: Option<HostPath>,
-    next_stream_id: AtomicU64,
 }
 
 impl RemoteExecutor {
@@ -371,7 +376,6 @@ impl RemoteExecutor {
             conn,
             git_path,
             cwd,
-            next_stream_id: AtomicU64::new(1),
         }
     }
 
@@ -523,8 +527,10 @@ impl GitExecutor for RemoteExecutor {
         events_tx: mpsc::Sender<RunnerEvent>,
     ) -> Result<i32, RunnerError> {
         let conn = self.conn.get();
-        let stream_id = self.next_stream_id.fetch_add(1, Ordering::Relaxed)
-            | ((std::process::id() as u64) << 32);
+        // Allocated from the shared connection (see `next_stream_id`); the id
+        // only needs uniqueness within this connection's lifetime - the agent
+        // dies with it.
+        let stream_id = conn.next_stream_id.fetch_add(1, Ordering::Relaxed);
         // Agent-pushed events land in an unbounded buffer (bounded in practice
         // by the credit window) so the connection reader never blocks; the
         // forwarder below applies the caller's REAL backpressure and returns
