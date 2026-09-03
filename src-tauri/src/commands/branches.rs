@@ -2,7 +2,7 @@
 //! See DESIGN-v0.2.md §D.3 for repo-scoped command patterns.
 
 use crate::{error::AppError, state::AppState};
-use legit_core::{OperationId, RemoteCheckoutOutcome, SwitchOutcome};
+use legit_core::{BranchMergeAnalysis, OperationId, RemoteCheckoutOutcome, SwitchResult};
 
 #[tauri::command]
 #[specta::specta]
@@ -42,7 +42,7 @@ pub async fn repo_switch_branch(
     state: tauri::State<'_, AppState>,
     repo_id: String,
     name: String,
-) -> Result<SwitchOutcome, AppError> {
+) -> Result<SwitchResult, AppError> {
     let behavior = {
         let s = state.global_settings.read().await;
         s.switch_dirty_behavior.unwrap_or_default()
@@ -95,6 +95,21 @@ pub async fn repo_delete_branch(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn repo_branch_merge_analysis(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    name: String,
+) -> Result<BranchMergeAnalysis, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .branch_merge_analysis(&name)
+        .await
+        .map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn repo_delete_remote_branch(
     state: tauri::State<'_, AppState>,
     repo_id: String,
@@ -132,7 +147,7 @@ pub async fn repo_checkout_commit(
     state: tauri::State<'_, AppState>,
     repo_id: String,
     sha: String,
-) -> Result<SwitchOutcome, AppError> {
+) -> Result<SwitchResult, AppError> {
     let behavior = {
         let s = state.global_settings.read().await;
         s.switch_dirty_behavior.unwrap_or_default()

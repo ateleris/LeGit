@@ -20,6 +20,11 @@ describe("baseName", () => {
     expect(baseName("a/b/c.txt")).toBe("c.txt");
     expect(baseName("c.txt")).toBe("c.txt");
   });
+
+  test("ignores a trailing slash (untracked nested repo paths)", () => {
+    expect(baseName("a/b/")).toBe("b");
+    expect(baseName("b/")).toBe("b");
+  });
 });
 
 describe("flatten (flat mode)", () => {
@@ -64,6 +69,16 @@ describe("flatten (tree mode)", () => {
     const rows = flatten(files("src/a.ts", "src/deep/b.ts", "top.txt"), "tree", collapsed);
     expect(shape(rows)).toEqual(["dir:0:src(2)", "file:0:top.txt"]);
     expect((rows[0] as { collapsed: boolean }).collapsed).toBe(true);
+  });
+
+  test("a trailing slash does not create a nameless leaf", () => {
+    // git status reports a nested repo as `dir/`; the entry must render as a
+    // file row named after the last real segment, not an empty leaf.
+    const rows = flatten(files("app/backend/FlowControl.NET/"), "tree", none);
+    expect(shape(rows)).toEqual([
+      "dir:0:app/backend(1)",
+      "file:1:app/backend/FlowControl.NET/",
+    ]);
   });
 
   test("a compressed chain collapses under its FULL path key", () => {

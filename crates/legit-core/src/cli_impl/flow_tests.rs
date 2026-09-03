@@ -10,7 +10,7 @@
 use super::*;
 use crate::executor::GitExecutor;
 use crate::runner::{RunOutput, RunnerError};
-use crate::types::{BlobBytes, KeyId};
+use crate::types::{BlobBytes, KeyId, SubmoduleAutoUpdateStatus};
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
@@ -184,7 +184,7 @@ async fn switch_try_directly_runs_only_the_switch() {
         .switch_branch("feature", SwitchDirtyBehavior::TryDirectly)
         .await
         .unwrap();
-    assert_eq!(outcome, SwitchOutcome::Clean);
+    assert_eq!(outcome.outcome, SwitchOutcome::Clean);
     exec.assert_done();
 }
 
@@ -210,7 +210,7 @@ async fn switch_auto_stash_dirty_tree_pops_the_created_entry() {
         .switch_branch("feature", SwitchDirtyBehavior::AutoStash)
         .await
         .unwrap();
-    assert_eq!(outcome, SwitchOutcome::Clean);
+    assert_eq!(outcome.outcome, SwitchOutcome::Clean);
     exec.assert_done();
 }
 
@@ -243,7 +243,7 @@ async fn switch_auto_stash_ignores_concurrently_created_foreign_stash() {
         .switch_branch("feature", SwitchDirtyBehavior::AutoStash)
         .await
         .unwrap();
-    assert_eq!(outcome, SwitchOutcome::Clean);
+    assert_eq!(outcome.outcome, SwitchOutcome::Clean);
     exec.assert_done();
 }
 
@@ -274,7 +274,7 @@ async fn switch_auto_stash_clean_tree_never_touches_preexisting_stash() {
         .switch_branch("feature", SwitchDirtyBehavior::AutoStash)
         .await
         .unwrap();
-    assert_eq!(outcome, SwitchOutcome::Clean);
+    assert_eq!(outcome.outcome, SwitchOutcome::Clean);
     exec.assert_done();
 }
 
@@ -360,7 +360,7 @@ async fn switch_stash_and_keep_leaves_the_entry_parked() {
         .switch_branch("feature", SwitchDirtyBehavior::StashAndKeep)
         .await
         .unwrap();
-    assert_eq!(outcome, SwitchOutcome::ChangesStashed);
+    assert_eq!(outcome.outcome, SwitchOutcome::ChangesStashed);
     exec.assert_done();
 }
 
@@ -388,7 +388,7 @@ async fn switch_pop_conflict_is_an_outcome_not_an_error() {
         .switch_branch("feature", SwitchDirtyBehavior::AutoStash)
         .await
         .unwrap();
-    assert!(matches!(outcome, SwitchOutcome::StashPopConflicts { .. }), "{outcome:?}");
+    assert!(matches!(outcome.outcome, SwitchOutcome::StashPopConflicts { .. }), "{outcome:?}");
     exec.assert_done();
 }
 
@@ -2484,6 +2484,88 @@ async fn submodule_update_remote_attach_skips_attached_and_survives_checkout_fai
     exec.assert_done();
 }
 
+// A submodule move can exit 0 while LFS downloads inside it failed
+// (lfs.skipdownloaderrors / non-required filter): the per-submodule result
+// must carry the stubs, never a silent Updated.
+#[tokio::test]
+async fn submodule_update_remote_exit_zero_with_lfs_errors_reports_stubs() {
+    let sha_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["ls-files", "--stage", "-z"],
+        ok(&format!("160000 {sha_a} 0\tlib\0")),
+    );
+    fake.expect(
+        &["config", "-f", ".gitmodules", "-z", "--get-regexp", "^submodule\\."],
+        ok("submodule.lib.path\nlib\0submodule.lib.url\nu\0"),
+    );
+    fake.expect(
+        &["config", "-z", "--get-regexp", "^submodule\\."],
+        ok("submodule.lib.url\nu\0"),
+    );
+    fake.expect(&["status", "--porcelain=v2", "-z", "--untracked-files=all"], ok(""));
+    fake.expect(&["-C", "lib", "rev-parse", "--show-prefix", "HEAD"], ok(&format!("\n{sha_a}\n")));
+    fake.expect(&["-C", "lib", "rev-parse", "--abbrev-ref", "HEAD"], ok("main\n"));
+    fake.expect(
+        &["submodule", "update", "--remote", "--checkout", "--", "lib"],
+        out(
+            0,
+            "",
+            "Error downloading object: assets/big.bin (8f786a0): Smudge error: [404] Object does not exist on the server\n",
+        ),
+    );
+    fake.expect(&["add", "--", "lib"], ok(""));
+    let (b, exec) = backend(fake);
+
+    let results = b
+        .submodule_update_remote(
+            &[],
+            SubmoduleUpdateStrategy::Checkout,
+            SwitchDirtyBehavior::TryDirectly,
+            false,
+            OperationId("a".into()),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(results[0].status, SubmoduleAutoUpdateStatus::Updated), "{results:?}");
+    let stubs = results[0].lfs_stubs.as_ref().expect("stubs reported");
+    assert_eq!(stubs.files, vec!["assets/big.bin".to_string()]);
+    assert!(stubs.missing_on_remote);
+    exec.assert_done();
+}
+
+// Same for the bulk `submodule update` (init/recursive).
+#[tokio::test]
+async fn submodule_update_exit_zero_with_lfs_errors_reports_stubs() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["submodule", "update", "--init"],
+        out(
+            0,
+            "",
+            "Error downloading object: lib/big.bin (8f786a0): Smudge error: [404] Object does not exist on the server\n",
+        ),
+    );
+    let (b, exec) = backend(fake);
+
+    let stubs = b
+        .submodule_update(
+            SubmoduleUpdateOptions {
+                init: true,
+                recursive: false,
+                paths: vec![],
+                attach_branch: false,
+            },
+            OperationId("a".into()),
+        )
+        .await
+        .unwrap()
+        .expect("stubs reported");
+    assert_eq!(stubs.files, vec!["lib/big.bin".to_string()]);
+    assert!(stubs.missing_on_remote);
+    exec.assert_done();
+}
+
 #[tokio::test]
 async fn submodule_create_branch_switches_with_c() {
     let fake = FakeExecutor::default();
@@ -2790,7 +2872,7 @@ async fn delete_branch_safe_vs_force_flag() {
 }
 
 #[tokio::test]
-async fn delete_branch_failure_surfaces_stderr() {
+async fn delete_branch_unmerged_refusal_is_classified() {
     let fake = FakeExecutor::default();
     fake.expect(
         &["branch", "-d", "--end-of-options", "feat"],
@@ -2800,9 +2882,72 @@ async fn delete_branch_failure_surfaces_stderr() {
 
     let err = b.delete_branch("feat", false).await.unwrap_err();
     assert!(
-        matches!(&err, GitError::CommandFailed { stderr, .. } if stderr.contains("not fully merged")),
+        matches!(&err, GitError::BranchNotFullyMerged { branch, stderr }
+            if branch == "feat" && stderr.contains("not fully merged")),
         "{err:?}"
     );
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn branch_merge_analysis_runs_contains_and_cherry_against_the_remote_default() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "--verify", "refs/heads/feat"], ok("abc123\n"));
+    fake.expect(
+        &["for-each-ref", "--contains", "abc123", "--format=%(refname:short)", "refs/heads", "refs/remotes"],
+        ok("feat\norigin/feat\norigin/HEAD\norigin/main\n"),
+    );
+    fake.expect(&["remote"], ok("origin\n"));
+    fake.expect(&["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], ok("origin/main\n"));
+    fake.expect(&["cherry", "origin/main", "refs/heads/feat"], ok("- 7a5e5f\n- 9b2c1d\n"));
+    let (b, exec) = backend(fake);
+
+    let a = b.branch_merge_analysis("feat").await.unwrap();
+    assert_eq!(a.merged_into, vec!["origin/main".to_string()]);
+    assert_eq!(a.equivalent_in.as_deref(), Some("origin/main"));
+    exec.assert_done();
+}
+
+// An unset `refs/remotes/<remote>/HEAD` symref (only clones set it) falls
+// back to probing <remote>/main, then <remote>/master.
+#[tokio::test]
+async fn branch_merge_analysis_falls_back_to_main_when_head_symref_is_unset() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "--verify", "refs/heads/feat"], ok("abc123\n"));
+    fake.expect(
+        &["for-each-ref", "--contains", "abc123", "--format=%(refname:short)", "refs/heads", "refs/remotes"],
+        ok("feat\n"),
+    );
+    fake.expect(&["remote"], ok("origin\n"));
+    fake.expect(
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        fail(128, "fatal: ref refs/remotes/origin/HEAD is not a symbolic ref"),
+    );
+    fake.expect(&["rev-parse", "--verify", "--quiet", "refs/remotes/origin/main"], ok("def456\n"));
+    fake.expect(&["cherry", "origin/main", "refs/heads/feat"], ok("+ 7a5e5f\n"));
+    let (b, exec) = backend(fake);
+
+    let a = b.branch_merge_analysis("feat").await.unwrap();
+    assert!(a.merged_into.is_empty(), "{a:?}");
+    assert_eq!(a.equivalent_in, None, "a `+` line means unmatched commits");
+    exec.assert_done();
+}
+
+// No remotes: no baseline exists, so the cherry check must NOT run.
+#[tokio::test]
+async fn branch_merge_analysis_without_remotes_skips_the_cherry_check() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["rev-parse", "--verify", "refs/heads/feat"], ok("abc123\n"));
+    fake.expect(
+        &["for-each-ref", "--contains", "abc123", "--format=%(refname:short)", "refs/heads", "refs/remotes"],
+        ok("feat\nmain\n"),
+    );
+    fake.expect(&["remote"], ok(""));
+    let (b, exec) = backend(fake);
+
+    let a = b.branch_merge_analysis("feat").await.unwrap();
+    assert_eq!(a.merged_into, vec!["main".to_string()]);
+    assert_eq!(a.equivalent_in, None);
     exec.assert_done();
 }
 
@@ -2826,7 +2971,7 @@ async fn checkout_commit_detaches_via_switch() {
         .checkout_commit("abc123", SwitchDirtyBehavior::TryDirectly)
         .await
         .unwrap();
-    assert_eq!(outcome, SwitchOutcome::Clean);
+    assert_eq!(outcome.outcome, SwitchOutcome::Clean);
     exec.assert_done();
 }
 
@@ -2934,6 +3079,74 @@ async fn pull_default_lets_repo_config_decide() {
     b.pull(PullOptions { strategy: PullStrategy::Default }, OperationId("op".into()))
         .await
         .unwrap();
+    exec.assert_done();
+}
+
+// Like the pull case below: a switch can exit 0 while LFS downloads failed,
+// leaving pointer stubs - the result must carry that, never a silent Clean.
+#[tokio::test]
+async fn switch_exit_zero_with_lfs_errors_reports_stub_files() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["switch", "--end-of-options", "feature"],
+        out(
+            0,
+            "",
+            "Error downloading object: feat.bin (d686331): Smudge error: [404] Object does not exist on the server\n",
+        ),
+    );
+    let (b, exec) = backend(fake);
+
+    let r = b
+        .switch_branch("feature", SwitchDirtyBehavior::TryDirectly)
+        .await
+        .unwrap();
+    assert_eq!(r.outcome, SwitchOutcome::Clean);
+    let stubs = r.lfs_stubs.expect("stubs reported");
+    assert_eq!(stubs.files, vec!["feat.bin".to_string()]);
+    assert!(stubs.missing_on_remote);
+    exec.assert_done();
+}
+
+// git exits 0 under lfs.skipdownloaderrors (or a non-required filter) while
+// leaving pointer stubs: the outcome must carry that, never a silent Ok.
+#[tokio::test]
+async fn pull_exit_zero_with_lfs_errors_reports_stub_files() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["-c", "gc.auto=0", "-c", "maintenance.auto=false", "pull", "--progress"],
+        out(
+            0,
+            "",
+            "Downloading big.bin (2.0 KB)\nError downloading object: big.bin (8f786a0): Smudge error: [404] Object does not exist on the server\n",
+        ),
+    );
+    let (b, exec) = backend(fake);
+
+    let outcome = b
+        .pull(PullOptions { strategy: PullStrategy::Default }, OperationId("op".into()))
+        .await
+        .unwrap();
+    let stubs = outcome.lfs_stubs.expect("stubs reported");
+    assert_eq!(stubs.files, vec!["big.bin".to_string()]);
+    assert!(stubs.missing_on_remote);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn pull_clean_success_reports_no_stub_files() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["-c", "gc.auto=0", "-c", "maintenance.auto=false", "pull", "--progress"],
+        ok("Already up to date.\n"),
+    );
+    let (b, exec) = backend(fake);
+
+    let outcome = b
+        .pull(PullOptions { strategy: PullStrategy::Default }, OperationId("op".into()))
+        .await
+        .unwrap();
+    assert!(outcome.lfs_stubs.is_none());
     exec.assert_done();
 }
 
@@ -3325,6 +3538,39 @@ async fn option_like_refs_are_refused_before_git_runs() {
             include_stashes: false,
         }),
         "log revision_range"
+    );
+
+    // Remote NAMES sit in positional slots too: `git fetch --upload-pack=<cmd>`
+    // and `git push --receive-pack=<cmd>` run <cmd> locally for path/ssh
+    // transports, and a name reaches these slots from the repo's own config.
+    assert_refused!(
+        b.fetch(
+            FetchOptions { all: false, prune: false, remote: Some(evil.to_string()) },
+            OperationId::new()
+        ),
+        "fetch"
+    );
+    assert_refused!(
+        b.push(
+            PushOptions {
+                remote: evil.to_string(),
+                branch: "main".to_string(),
+                set_upstream: false,
+                force_with_lease: false,
+                recurse_submodules: None,
+            },
+            OperationId::new()
+        ),
+        "push"
+    );
+    assert_refused!(b.prune_remote(evil, OperationId::new()), "prune_remote");
+    assert_refused!(b.add_remote(evil, "https://example.com/r.git"), "add_remote");
+    assert_refused!(b.remove_remote(evil), "remove_remote");
+    assert_refused!(b.rename_remote(evil, "ok"), "rename_remote old name");
+    assert_refused!(b.rename_remote("ok", evil), "rename_remote new name");
+    assert_refused!(
+        b.set_remote_url(evil, "https://example.com/r.git", false),
+        "set_remote_url"
     );
 
     // Nothing ran: the script was never touched.

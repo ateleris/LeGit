@@ -9,17 +9,17 @@
 use crate::error::GitError;
 use crate::runner::OperationId;
 use crate::types::{
-    BlameHunk, BlobBytes, Branch, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
+    BlameHunk, BlobBytes, Branch, BranchMergeAnalysis, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
     FetchOptions, FileAtRevision, FileHistoryEntry, FileStatus, GitmodulesFinding, HunkOp,
-    LfsStatus, LogOptions,
-    MergeOptions, MergeOutcome, PullOptions, PushOptions, RebaseOutcome, RebaseStep,
+    LfsStatus, LfsStubs, LogOptions,
+    MergeOptions, MergeOutcome, PullOptions, PullOutcome, PushOptions, RebaseOutcome, RebaseStep,
     RebaseRangeInfo, ReflogEntry, Remote, RemoteCheckoutOutcome, RemoteTag, RenormalizeOutcome,
     RepoFileEntry, RepoOpState,
     ResetMode, SequenceOutcome, StashApplyOutcome,
     StashEntry, StashOutcome, SubmoduleAutoUpdateResult, SubmoduleGitdirInfo, SubmoduleInfo,
     SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy, SwitchDirtyBehavior,
-    SwitchOutcome, TagInfo, TrackingStatus,
+    SwitchResult, TagInfo, TrackingStatus,
 };
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
@@ -223,7 +223,7 @@ pub trait GitBackend: Send + Sync {
         &self,
         opts: SubmoduleUpdateOptions,
         op_id: OperationId,
-    ) -> Result<(), GitError>;
+    ) -> Result<Option<LfsStubs>, GitError>;
 
     /// Copy `.gitmodules` URLs into `.git/config` and the submodules' origin
     /// remotes (`git submodule sync`). Empty `paths` = all.
@@ -338,7 +338,7 @@ pub trait GitBackend: Send + Sync {
     async fn fetch(&self, opts: FetchOptions, op_id: OperationId) -> Result<(), GitError>;
 
     /// Pull (fetch + integrate) for the current branch. Cancellable via `op_id`.
-    async fn pull(&self, opts: PullOptions, op_id: OperationId) -> Result<(), GitError>;
+    async fn pull(&self, opts: PullOptions, op_id: OperationId) -> Result<PullOutcome, GitError>;
 
     /// Push the current branch to its remote. Cancellable via `op_id`.
     async fn push(&self, opts: PushOptions, op_id: OperationId) -> Result<(), GitError>;
@@ -380,7 +380,7 @@ pub trait GitBackend: Send + Sync {
     /// markers, stash kept) or `StashPopFailed` (not applied, changes remain
     /// in the stash). A dirty-tree refusal under `TryDirectly` returns
     /// `WouldOverwriteLocalChanges`.
-    async fn switch_branch(&self, name: &str, behavior: SwitchDirtyBehavior) -> Result<SwitchOutcome, GitError>;
+    async fn switch_branch(&self, name: &str, behavior: SwitchDirtyBehavior) -> Result<SwitchResult, GitError>;
 
     /// Check out a remote-tracking branch. Accepts `origin/feature-x` or the
     /// full `refs/remotes/origin/feature-x`. Creates a local tracking branch
@@ -396,6 +396,11 @@ pub trait GitBackend: Send + Sync {
     /// Delete a local branch. `force = true` maps to `-D`; `false` uses `-d`.
     async fn delete_branch(&self, name: &str, force: bool) -> Result<(), GitError>;
 
+    /// After a `BranchNotFullyMerged` refusal: gather the signals that say
+    /// whether force-deleting `name` is actually safe (see
+    /// `BranchMergeAnalysis`).
+    async fn branch_merge_analysis(&self, name: &str) -> Result<BranchMergeAnalysis, GitError>;
+
     /// Delete a branch on `remote` (`git push <remote> --delete
     /// refs/heads/<name>`; the explicit refs/heads/ can never take a
     /// same-named tag). The local branch is untouched — local and remote
@@ -408,7 +413,7 @@ pub trait GitBackend: Send + Sync {
 
     /// Check out a commit by SHA, entering detached HEAD.
     /// Respects `behavior` for dirty-tree handling identically to `switch_branch`.
-    async fn checkout_commit(&self, sha: &str, behavior: SwitchDirtyBehavior) -> Result<SwitchOutcome, GitError>;
+    async fn checkout_commit(&self, sha: &str, behavior: SwitchDirtyBehavior) -> Result<SwitchResult, GitError>;
 
     /// List local tags (`git for-each-ref refs/tags`), with annotated tags
     /// peeled to the commit they tag.

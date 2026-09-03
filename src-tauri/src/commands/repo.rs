@@ -5,10 +5,12 @@
 use crate::error::AppError;
 use crate::remote::RepoLocator;
 use crate::state::{
-    load_repo_settings_sync, AppState, LaneLock, RepoSession, RepoSettings,
+    load_repo_settings_sync, AppState, CloneOutcome, LaneLock, RepoSession, RepoSettings,
     RepoSummary, TransientOp,
 };
-use legit_core::{classify_remote_error, FsError, GitError, HostPath, OperationId, RepoFs};
+use legit_core::{
+    classify_remote_error, lfs_stubs_from_stderr, FsError, GitError, HostPath, OperationId, RepoFs,
+};
 use legit_host::Host;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -646,7 +648,7 @@ pub async fn repo_clone(
     depth: Option<u32>,
     branch: Option<String>,
     recurse_submodules: bool,
-) -> Result<RepoSummary, AppError> {
+) -> Result<CloneOutcome, AppError> {
     let git_path = state.git_path.read().await.clone();
     let (host, target) = resolve_new_repo_target(&state, &app, &parent_dir, &git_path).await?;
     require_existing_dir(host.as_ref(), &target.dir, "directory").await?;
@@ -725,7 +727,10 @@ pub async fn repo_clone(
         let session = state.get_session(&summary.id).await?;
         crate::commands::profiles::apply_profile_core(&state, &session, &pid).await?;
     }
-    Ok(summary)
+    // git can exit 0 while LFS downloads failed (lfs.skipdownloaderrors,
+    // non-required filter), leaving pointer stubs in the fresh clone - the
+    // user must learn the files hold no real content.
+    Ok(CloneOutcome { summary, lfs_stubs: lfs_stubs_from_stderr(&out.stderr) })
 }
 
 /// Cancel an in-flight `repo_clone` by its `op_id`. Returns whether the op was found.

@@ -15,12 +15,45 @@ const valid = () => ({
 
 describe("isValidColor", () => {
   test("accepts hex (3/4/6/8) and functional colors", () => {
-    for (const c of ["#fff", "#ffff", "#4a9eff", "#4a9eff33", "rgb(1,2,3)", "hsla(1, 2%, 3%, .5)", "oklch(0.5 0.1 200)"]) {
+    for (const c of [
+      "#fff",
+      "#ffff",
+      "#4a9eff",
+      "#4a9eff33",
+      "rgb(1,2,3)",
+      "rgba(74, 158, 255, 0.5)",
+      "hsla(1, 2%, 3%, .5)",
+      "hsl(120deg 50% 50%)",
+      "oklch(0.5 0.1 200)",
+      "oklch(0.5 0.1 200 / 50%)",
+      "rgb(1 2 3 / 0.5)",
+      " RGB(1, 2, 3) ",
+    ]) {
       expect(isValidColor(c), c).toBe(true);
     }
   });
-  test("rejects non-colors", () => {
-    for (const c of ["red", "", 42, null, "#12345", "url(x)"]) {
+  // Palette values become CSS custom properties verbatim: a colour followed
+  // by more tokens, a nested function, or a `;` would smuggle in arbitrary
+  // CSS (e.g. a `url(` background loading a remote beacon).
+  test("rejects non-colors and anything beyond a single colour", () => {
+    for (const c of [
+      "red",
+      "",
+      42,
+      null,
+      "#12345",
+      "#ggg",
+      "url(x)",
+      "rgb(0,0,0) url(https://example.com/x)",
+      "rgb(0,0,0); background: red",
+      "rgb(0 0 0) rgb(1 1 1)",
+      "rgb(var(--x))",
+      "rgb (1,2,3)",
+      "rgb(1,2,3)) rgb(",
+      "rgb()",
+      "expression(1)",
+      "color-mix(in srgb, red, blue)",
+    ]) {
       expect(isValidColor(c), String(c)).toBe(false);
     }
   });

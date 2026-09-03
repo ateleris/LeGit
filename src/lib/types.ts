@@ -7,6 +7,7 @@
 // compiles before the first cargo build.
 
 import type { CommitDateFormat } from "./time";
+import { lfsCauseSentence } from "./lfsMessages";
 
 export type RepoId = string;
 
@@ -39,6 +40,13 @@ export interface WslDistro {
 export interface RemoteHostStatusPayload {
   distro: string;
   status: "connecting" | "connected" | "disconnected" | "gone" | "connect_failed";
+}
+
+/** repo_clone's result: the opened repo plus any LFS pointer stubs the
+ * clone's checkout left behind. */
+export interface CloneOutcome {
+  summary: RepoSummary;
+  lfs_stubs: LfsStubs | null;
 }
 
 export type RegionPlacement = "top" | "left";
@@ -291,6 +299,12 @@ export function formatAppError(e: unknown): string {
     if (ae.kind === "Git" && ae.details && typeof ae.details === "object") {
       const g = ae.details as { kind?: string; details?: unknown };
       const inner = g.details;
+      // LFS failures get the friendly cause everywhere - the raw stderr is
+      // 404/transfer noise that names neither cause nor fix.
+      if (g.kind === "LfsDownloadFailed" && inner && typeof inner === "object") {
+        const d = inner as { files?: string[]; missing_on_remote?: boolean };
+        return lfsCauseSentence(d.files ?? [], d.missing_on_remote ?? false);
+      }
       if (typeof inner === "string") return inner;
       if (inner && typeof inner === "object") {
         const stderr = (inner as Record<string, unknown>).stderr;
@@ -728,6 +742,8 @@ export type SubmoduleAutoUpdateStatus =
 export interface SubmoduleAutoUpdateResult {
   path: string;
   status: SubmoduleAutoUpdateStatus;
+  /** LFS pointer stubs the move left inside the submodule. */
+  lfs_stubs: LfsStubs | null;
 }
 
 export type DiffEntry =
@@ -829,6 +845,38 @@ export interface Branch {
   created_at: number;
 }
 
+/** A git-lfs download failure's residue: worktree paths left as pointer
+ * stubs instead of real content. git can exit 0 in this state
+ * (lfs.skipdownloaderrors, non-required filter), so operations report it as
+ * data - never a silent success. */
+export interface LfsStubs {
+  files: string[];
+  /** The objects are absent on the server (missing upload). */
+  missing_on_remote: boolean;
+}
+
+/** Result of a successful pull: any LFS pointer stubs it left behind. */
+export interface PullOutcome {
+  lfs_stubs: LfsStubs | null;
+}
+
+/** A switch/checkout's outcome plus any LFS pointer stubs it left behind. */
+export interface SwitchResult {
+  outcome: SwitchOutcome;
+  lfs_stubs: LfsStubs | null;
+}
+
+/** Post-refusal analysis for a "not fully merged" branch delete. */
+export interface BranchMergeAnalysis {
+  /** Refs (short names) that already contain the branch tip - a true merge
+   * landed and only the checked-out base is stale. The branch itself, its
+   * remote counterparts, and remote HEAD symrefs are excluded. */
+  merged_into: string[];
+  /** Baseline ref (e.g. "origin/main") holding a patch-id equivalent of
+   * every commit unique to the branch (squash/rebase merge), if found. */
+  equivalent_in: string | null;
+}
+
 export type SwitchOutcome =
   | { kind: "clean" }
   /** `stash_and_keep`: the uncommitted changes were deliberately left parked
@@ -859,6 +907,8 @@ export interface RemoteCheckoutOutcome {
   local_branch: string;
   switch: SwitchOutcome;
   fast_forward: FastForwardResult;
+  /** LFS pointer stubs the checkout left behind. */
+  lfs_stubs: LfsStubs | null;
 }
 
 /** One mismatch between the STAGED .gitmodules blob and the staged gitlinks

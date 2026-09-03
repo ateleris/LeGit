@@ -15,7 +15,11 @@ export default defineConfig({
       ignored: ["**/src-tauri/**", "**/target/**", "**/crates/**"],
     },
   },
-  envPrefix: ["VITE_", "TAURI_"],
+  // NOT "TAURI_": that prefix matches TAURI_SIGNING_PRIVATE_KEY, which
+  // release.yml exports into the environment of this very build, and a bare
+  // `import.meta.env` reference anywhere would inline it into the bundle.
+  // Pinned by viteEnvPrefix.test.ts.
+  envPrefix: ["VITE_"],
   build: {
     target: "esnext",
     sourcemap: true,

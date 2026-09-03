@@ -17,6 +17,8 @@ import {
   repoRebase,
   repoSetUpstream,
 } from "../../lib/commands";
+import { deleteBranchGuided } from "../../lib/branchDelete";
+import { notifyLfsStubs } from "../../lib/lfsFeedback";
 import { groupRemoteBranches, shortRemoteBranchName, splitRemoteRef } from "../../lib/branchGroups";
 import { ChevronDownIcon, ChevronRightIcon } from "../../icons";
 import { Button } from "../shared/buttons";
@@ -240,7 +242,7 @@ export function BranchesSection() {
     if (confirmDestructive) {
       const ok = await confirmDialog({
         title: "Delete branch",
-        message: "Deletes the local branch (safe delete: git refuses if it is not fully merged).",
+        message: "Deletes the local branch (safe delete: a not fully merged branch prompts with guidance first).",
         detail: b.name,
         confirmLabel: "Delete branch",
       });
@@ -249,14 +251,20 @@ export function BranchesSection() {
     void doDelete(b.name, false);
   };
 
+  // Safe deletes go through the guided flow: a "not fully merged" refusal
+  // raises the central dialog with a case-specific force-delete offer.
   const doDelete = async (name: string, force: boolean) => {
-    if (await runMut(() => repoDeleteBranch(repo!.id, name, force))) setEdit(null);
+    const action = force
+      ? () => repoDeleteBranch(repo!.id, name, true)
+      : () => deleteBranchGuided(repo!.id, name);
+    if (await runMut(action)) setEdit(null);
   };
 
   const doCheckout = async (name: string) => {
     await runSwitch(async () => {
-      const outcome = await repoSwitchBranch(repo!.id, name);
-      notifySwitchOutcome(outcome, name);
+      const result = await repoSwitchBranch(repo!.id, name);
+      notifySwitchOutcome(result.outcome, name);
+      notifyLfsStubs(result.lfs_stubs, "switch");
       void autoUpdateSubmodules(queryClient, repo!.id);
     });
   };
@@ -265,6 +273,7 @@ export function BranchesSection() {
     await runSwitch(async () => {
       const outcome = await repoCheckoutRemoteBranch(repo!.id, fullRef);
       notifyRemoteCheckoutOutcome(outcome, fullRef.replace(/^refs\/remotes\//, ""));
+      notifyLfsStubs(outcome.lfs_stubs, "checkout");
       void autoUpdateSubmodules(queryClient, repo!.id);
     });
   }, [repo, runSwitch, queryClient]);

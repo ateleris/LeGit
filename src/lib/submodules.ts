@@ -2,6 +2,7 @@ import { joinLocator } from "./locator";
 import type { QueryClient } from "@tanstack/react-query";
 import type { DiffEntry, DiffSource, SubmoduleAutoUpdateResult, SubmoduleInfo } from "./types";
 import { repoDiff, repoSubmoduleAutoUpdate } from "./commands";
+import { lfsStubWarning } from "./lfsFeedback";
 import { invalidateRepoDomains } from "./repoInvalidation";
 import { notify } from "../store/notifications";
 import { useRepoStore } from "../store/repos";
@@ -36,7 +37,10 @@ export function notifySubmoduleUpdateResults(results: SubmoduleAutoUpdateResult[
     } else if (s.kind === "changes_stashed") {
       notify.success(`Submodule ${r.path} updated - changes parked in its stash`);
     }
-    // updated / changes_carried: silent success.
+    // updated / changes_carried: silent success - except when the move left
+    // LFS pointer stubs behind (the files hold no real content).
+    const stubWarning = lfsStubWarning(r.lfs_stubs, `update of submodule ${r.path}`);
+    if (stubWarning) notify.error(stubWarning);
   }
 }
 

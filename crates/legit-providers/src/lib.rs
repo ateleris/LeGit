@@ -150,6 +150,9 @@ fn client() -> Result<reqwest::Client, ProviderError> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .user_agent("LeGit")
+        // Every endpoint is a fixed https URL; a redirect would carry the
+        // token header (GitLab's PRIVATE-TOKEN is not one reqwest strips).
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| ProviderError::Http(e.to_string()))
 }

@@ -108,3 +108,19 @@ describe("cloneCancelCleanupFailure", () => {
     expect(cloneCancelCleanupFailure(new Error("x"))).toBeNull();
   });
 });
+
+describe("formatAppError: LFS download failures", () => {
+  it("shows the friendly cause instead of raw stderr", () => {
+    const e = {
+      kind: "Git",
+      details: {
+        kind: "LfsDownloadFailed",
+        details: { files: ["big.bin"], missing_on_remote: true, stderr: "404 noise" },
+      },
+    };
+    const m = formatAppError(e);
+    expect(m).toContain("big.bin");
+    expect(m).toContain("git lfs push");
+    expect(m).not.toContain("404 noise");
+  });
+});

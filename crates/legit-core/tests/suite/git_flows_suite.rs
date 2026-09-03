@@ -562,7 +562,7 @@ async fn switch_auto_stash_carries_changes_to_the_target_branch() {
         .switch_branch("feature", SwitchDirtyBehavior::AutoStash)
         .await
         .unwrap();
-    assert_eq!(outcome, SwitchOutcome::Clean);
+    assert_eq!(outcome.outcome, SwitchOutcome::Clean);
     // The dirty edit travelled along; the transient stash entry is gone.
     assert_eq!(repo.read("a.txt"), "wip\n");
     assert!(repo.backend.stashes().await.unwrap().is_empty());
@@ -582,7 +582,7 @@ async fn switch_stash_and_keep_parks_the_changes() {
         .switch_branch("feature", SwitchDirtyBehavior::StashAndKeep)
         .await
         .unwrap();
-    assert_eq!(outcome, SwitchOutcome::ChangesStashed);
+    assert_eq!(outcome.outcome, SwitchOutcome::ChangesStashed);
     // Target branch starts clean; the WIP is retrievable from the stash.
     assert_eq!(repo.read("a.txt"), "base\n");
     assert_eq!(repo.backend.stashes().await.unwrap().len(), 1);
@@ -2013,6 +2013,24 @@ async fn status_reports_line_counts_per_side() {
 }
 
 #[tokio::test]
+async fn status_reports_untracked_nested_repo_without_trailing_slash() {
+    // git refuses to descend into a nested repo and reports the whole thing
+    // as one `? dir/` entry even with --untracked-files=all; the parsed path
+    // must arrive without the trailing slash (the UI splits paths on `/`).
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("base").await;
+
+    repo.git(&["init", "app/backend/FlowControl.NET"]).await;
+    repo.write("app/backend/FlowControl.NET/x.cs", "class X {}\n");
+
+    let status = repo.backend.status().await.unwrap();
+    assert_eq!(status.len(), 1, "{status:?}");
+    assert_eq!(status[0].path.as_os_str(), "app/backend/FlowControl.NET");
+    assert_eq!(status[0].state, FileState::Untracked);
+}
+
+#[tokio::test]
 async fn status_counts_work_before_the_first_commit() {
     // `diff --cached` runs against an unborn HEAD here; the counts must either
     // come back (git diffs the index against the empty tree) or degrade to
@@ -2548,6 +2566,31 @@ async fn submodule_remove_keeps_gitdir_and_delete_is_separate() {
     assert!(matches!(err, legit_core::GitError::Internal(_)), "{err:?}");
 }
 
+/// `.git/modules/<name>` replaced by a symlink: the gitdir helpers must
+/// refuse it rather than report or delete whatever it points at.
+#[cfg(unix)]
+#[tokio::test]
+async fn submodule_gitdir_symlink_is_refused() {
+    let (sup, _lib) = repo_with_submodule().await;
+    sup.backend.submodule_remove(Path::new("lib")).await.unwrap();
+    let modules_lib = sup.path.join(".git").join("modules").join("lib");
+    assert!(modules_lib.is_dir(), "retained gitdir expected at {}", modules_lib.display());
+
+    std::fs::remove_dir_all(&modules_lib).unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("precious.txt"), "keep\n").unwrap();
+    std::os::unix::fs::symlink(outside.path(), &modules_lib).unwrap();
+
+    let err = sup.backend.submodule_gitdir_info("lib").await.unwrap_err();
+    assert!(matches!(err, legit_core::GitError::Internal(_)), "{err:?}");
+    let err = sup.backend.submodule_delete_gitdir("lib").await.unwrap_err();
+    assert!(matches!(err, legit_core::GitError::Internal(_)), "{err:?}");
+    assert!(
+        outside.path().join("precious.txt").exists(),
+        "the symlink target must be untouched"
+    );
+}
+
 /// Fixture: superproject records a NEW submodule commit (touching lib.txt)
 /// while the submodule is checked out at the OLD one. Returns (sup, old, new).
 async fn submodule_pointer_ahead() -> (TestRepo, String, String) {
@@ -2809,6 +2852,198 @@ async fn push_flips_the_tag_lists_target_on_remote_flag() {
         tags.iter().find(|t| t.name == "v1").unwrap().target_on_remote,
         "the push must flip target_on_remote without a fetch"
     );
+}
+
+// Pins the real `git branch -d` refusal (exit code + "not fully merged"
+// stderr) that `classify_branch_delete_error` matches on.
+#[tokio::test]
+async fn branch_delete_unmerged_refusal_classifies() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["switch", "-c", "feature"]).await;
+    repo.write("f.txt", "work\n");
+    repo.commit_all("feature work").await;
+    repo.git(&["switch", "main"]).await;
+
+    let err = repo
+        .backend
+        .delete_branch("feature", false)
+        .await
+        .expect_err("unmerged safe delete must be refused");
+    match err {
+        GitError::BranchNotFullyMerged { branch, stderr } => {
+            assert_eq!(branch, "feature");
+            assert!(
+                stderr.to_lowercase().contains("not fully merged"),
+                "unexpected stderr: {stderr}"
+            );
+        }
+        other => panic!("expected BranchNotFullyMerged, got {other:?}"),
+    }
+}
+
+// Validates the LFS missing-object assumptions against the real binaries
+// (git + git-lfs, file:// standalone transfer): a default-config pull fails
+// loudly with the stderr shapes `parse_lfs_download_failure` matches, and
+// under `lfs.skipdownloaderrors` the same pull exits 0 leaving pointer stubs
+// the `PullOutcome` must report. Skipped where git-lfs is not installed
+// (e.g. plain WSL); CI runners ship it.
+#[tokio::test]
+async fn pull_with_missing_lfs_objects_classifies_and_reports_stubs() {
+    let author = TestRepo::init().await;
+    let probe = GitRunner::for_repo("git", &author.path)
+        .run(&["lfs", "version"])
+        .await
+        .expect("spawn git");
+    if !probe.success {
+        eprintln!("git-lfs not available; skipping LFS flow test");
+        return;
+    }
+
+    let (_keep, remote_path, url) = bare_remote().await;
+    author.git(&["lfs", "install", "--local"]).await;
+    author.write("base.txt", "base\n");
+    author.commit_all("base").await;
+    author.git(&["remote", "add", "origin", &url]).await;
+    author.git(&["push", "-u", "origin", "main"]).await;
+    author.git(&["lfs", "track", "*.bin"]).await;
+    author.write("big.bin", "lfs payload\n");
+    author.commit_all("lfs file").await;
+    author.git(&["push", "origin", "main"]).await;
+    author.git(&["switch", "-c", "feature"]).await;
+    author.write("feat.bin", "other lfs payload\n");
+    author.commit_all("feature lfs file").await;
+    author.git(&["push", "origin", "feature"]).await;
+    author.git(&["switch", "main"]).await;
+
+    // The uploads never reached the server, as far as the reader knows.
+    std::fs::remove_dir_all(remote_path.join("lfs")).expect("delete remote lfs objects");
+
+    // Reader at the base commit; the pull brings the LFS commit in.
+    let reader = TestRepo::init().await;
+    reader.git(&["lfs", "install", "--local"]).await;
+    reader.git(&["remote", "add", "origin", &url]).await;
+    reader.git(&["fetch", "origin"]).await;
+    reader.git(&["reset", "--hard", "origin/main~1"]).await;
+    reader.git(&["branch", "--set-upstream-to=origin/main", "main"]).await;
+
+    let err = reader
+        .backend
+        .pull(
+            PullOptions { strategy: PullStrategy::Default },
+            OperationId("lfs-pull".into()),
+        )
+        .await
+        .expect_err("default-config pull must fail loudly");
+    match err {
+        GitError::LfsDownloadFailed { files, missing_on_remote, .. } => {
+            assert_eq!(files, vec!["big.bin".to_string()]);
+            assert!(missing_on_remote);
+        }
+        other => panic!("expected LfsDownloadFailed, got {other:?}"),
+    }
+
+    // The failed checkout leaves untracked leftovers; clear them, then the
+    // tolerant config makes the same pull "succeed" with pointer stubs.
+    reader.git(&["clean", "-fd"]).await;
+    reader.git(&["config", "lfs.skipdownloaderrors", "true"]).await;
+    let outcome = reader
+        .backend
+        .pull(
+            PullOptions { strategy: PullStrategy::Default },
+            OperationId("lfs-pull-2".into()),
+        )
+        .await
+        .expect("skipdownloaderrors pull exits 0");
+    let stubs = outcome.lfs_stubs.expect("stubs reported");
+    assert_eq!(stubs.files, vec!["big.bin".to_string()]);
+    assert!(stubs.missing_on_remote);
+    assert!(
+        reader.read("big.bin").starts_with("version https://git-lfs.github.com/spec/v1"),
+        "the file on disk must be a pointer stub"
+    );
+
+    // A switch under the same tolerant config also exits 0 with stubs: the
+    // SwitchResult must carry them.
+    reader.git(&["branch", "feature", "origin/feature"]).await;
+    let switch = reader
+        .backend
+        .switch_branch("feature", SwitchDirtyBehavior::TryDirectly)
+        .await
+        .expect("skipdownloaderrors switch exits 0");
+    assert_eq!(switch.outcome, SwitchOutcome::Clean);
+    let stubs = switch.lfs_stubs.expect("switch stubs reported");
+    assert_eq!(stubs.files, vec!["feat.bin".to_string()]);
+    assert!(stubs.missing_on_remote);
+}
+
+// A true (`--no-ff`) merge whose result the checked-out branch does not yet
+// contain: `-d` is still refused, but the analysis names the merged-into ref.
+#[tokio::test]
+async fn branch_merge_analysis_reports_a_true_merge() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    let base = repo.head().await;
+    repo.git(&["switch", "-c", "feature"]).await;
+    repo.write("f.txt", "work\n");
+    repo.commit_all("feature work").await;
+    repo.git(&["switch", "main"]).await;
+    repo.git(&["merge", "--no-ff", "--no-edit", "feature"]).await;
+    repo.git(&["switch", "-c", "other", &base]).await;
+
+    let err = repo.backend.delete_branch("feature", false).await.expect_err("refused");
+    assert!(matches!(err, GitError::BranchNotFullyMerged { .. }), "{err:?}");
+
+    let a = repo.backend.branch_merge_analysis("feature").await.unwrap();
+    assert_eq!(a.merged_into, vec!["main".to_string()]);
+    assert_eq!(a.equivalent_in, None, "no remote, so no baseline");
+}
+
+// The PR squash-merge shape: the branch's changes landed on the remote
+// default branch under a different SHA, so no ref contains the tip - only
+// the patch-id check can say the work is merged.
+#[tokio::test]
+async fn branch_merge_analysis_detects_a_squash_merge_on_the_remote() {
+    let (_keep, _remote_path, url) = bare_remote().await;
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["remote", "add", "origin", &url]).await;
+    repo.git(&["push", "-u", "origin", "main"]).await;
+
+    repo.git(&["switch", "-c", "feature"]).await;
+    repo.write("f.txt", "work\n");
+    repo.commit_all("feature work").await;
+    repo.git(&["switch", "main"]).await;
+    repo.git(&["merge", "--squash", "feature"]).await;
+    repo.git(&["commit", "-m", "feature (#1)"]).await;
+    repo.git(&["push", "origin", "main"]).await;
+
+    let err = repo.backend.delete_branch("feature", false).await.expect_err("refused");
+    assert!(matches!(err, GitError::BranchNotFullyMerged { .. }), "{err:?}");
+
+    let a = repo.backend.branch_merge_analysis("feature").await.unwrap();
+    assert!(a.merged_into.is_empty(), "{a:?}");
+    assert_eq!(a.equivalent_in.as_deref(), Some("origin/main"));
+}
+
+// Genuinely unmerged work must trip neither signal - the UI's data-loss
+// warning depends on both staying empty.
+#[tokio::test]
+async fn branch_merge_analysis_reports_nothing_for_unmerged_work() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["switch", "-c", "feature"]).await;
+    repo.write("f.txt", "work\n");
+    repo.commit_all("feature work").await;
+    repo.git(&["switch", "main"]).await;
+
+    let a = repo.backend.branch_merge_analysis("feature").await.unwrap();
+    assert!(a.merged_into.is_empty(), "{a:?}");
+    assert_eq!(a.equivalent_in, None);
 }
 
 #[tokio::test]
@@ -3466,7 +3701,7 @@ async fn delete_branch_safe_refuses_unmerged_force_deletes() {
 
     let err = repo.backend.delete_branch("wip", false).await.unwrap_err();
     assert!(
-        matches!(&err, GitError::CommandFailed { stderr, .. } if stderr.contains("not fully merged")),
+        matches!(&err, GitError::BranchNotFullyMerged { branch, .. } if branch == "wip"),
         "safe delete must refuse an unmerged branch, got {err:?}"
     );
     // The branch survived the refused delete.
@@ -3502,7 +3737,7 @@ async fn checkout_commit_detaches_head() {
         .checkout_commit(&first, SwitchDirtyBehavior::TryDirectly)
         .await
         .unwrap();
-    assert_eq!(outcome, SwitchOutcome::Clean);
+    assert_eq!(outcome.outcome, SwitchOutcome::Clean);
     // HEAD is detached at the first commit.
     let head = repo.git(&["rev-parse", "HEAD"]).await.trim().to_string();
     assert_eq!(head, first);

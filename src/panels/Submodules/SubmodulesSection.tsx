@@ -26,6 +26,7 @@ import {
 } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notifySubmoduleUpdateResults } from "../../lib/submodules";
+import { notifyLfsStubs } from "../../lib/lfsFeedback";
 import { notify } from "../../store/notifications";
 import { confirmDialog } from "../../store/confirm";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
@@ -86,8 +87,11 @@ export function SubmodulesSection() {
   };
 
   const updateAll = () =>
-    run(() =>
-      repoSubmoduleUpdate(repo!.id, { init: true, recursive, paths: [] }, crypto.randomUUID()),
+    run(async () =>
+      notifyLfsStubs(
+        await repoSubmoduleUpdate(repo!.id, { init: true, recursive, paths: [] }, crypto.randomUUID()),
+        "submodule update",
+      ),
     );
 
   const pullLatest = (paths: string[]) =>
@@ -219,20 +223,26 @@ export function SubmodulesSection() {
               busy={busy}
               onOpen={() => openSubmodule(s)}
               onInitUpdate={() =>
-                run(() =>
-                  repoSubmoduleUpdate(
-                    repo.id,
-                    { init: true, recursive: false, paths: [s.path] },
-                    crypto.randomUUID(),
+                run(async () =>
+                  notifyLfsStubs(
+                    await repoSubmoduleUpdate(
+                      repo.id,
+                      { init: true, recursive: false, paths: [s.path] },
+                      crypto.randomUUID(),
+                    ),
+                    "submodule update",
                   ),
                 )
               }
               onUpdate={() =>
-                run(() =>
-                  repoSubmoduleUpdate(
-                    repo.id,
-                    { init: false, recursive: false, paths: [s.path] },
-                    crypto.randomUUID(),
+                run(async () =>
+                  notifyLfsStubs(
+                    await repoSubmoduleUpdate(
+                      repo.id,
+                      { init: false, recursive: false, paths: [s.path] },
+                      crypto.randomUUID(),
+                    ),
+                    "submodule update",
                   ),
                 )
               }

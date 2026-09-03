@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { cancelClone } from "../lib/commands";
 import type { CloneOptions } from "../lib/commands";
+import { lfsDownloadErrorMessage } from "../lib/lfsFeedback";
 import { cloneCancelCleanupFailure, formatAppError, gitErrorKind } from "../lib/types";
 import { notify } from "./notifications";
 import { useRemoteProgressStore } from "./remoteProgress";
@@ -99,7 +100,9 @@ export const useCloneStore = create<CloneStore>((set, get) => ({
             `Could not clone ${name}: authentication failed. Pick a profile with the right credentials, or fix your global git credentials.`,
           );
         } else {
-          notify.error(`Could not clone ${name}: ${formatAppError(e)}`);
+          notify.error(
+            `Could not clone ${name}: ${lfsDownloadErrorMessage(e, "clone") ?? formatAppError(e)}`,
+          );
         }
       } finally {
         useRemoteProgressStore.getState().clear(opId);

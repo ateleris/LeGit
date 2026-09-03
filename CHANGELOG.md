@@ -39,6 +39,29 @@ lives in the git log and the GitHub release notes.
   installed inside the distribution instead of Windows'. Connected accounts
   and identity profiles stay under "Git" — they are LeGit's own and already
   apply to WSL repositories.
+- Dev and PR builds show the commit they were built from next to the version
+  (`1.0.3+abc1234`) in About and the log file's session banner, so artifacts
+  and bug reports identify their exact build - with a `.wip` suffix when the
+  build carried uncommitted changes. Releases keep the clean version.
+
+### Changed
+
+- Failed git-lfs downloads (e.g. objects never uploaded to the server) now
+  surface an actionable message naming the affected files and the fix
+  (`git lfs push` by whoever pushed them) instead of raw LFS noise - and
+  any pull, branch switch, checkout, clone, or submodule update that
+  "succeeds" while leaving LFS pointer stubs on disk now warns that those
+  files hold no real content instead of reporting plain success.
+
+- Deleting a branch that git refuses as "not fully merged" now explains why
+  and offers a force delete in place: after a merge it names the branch that
+  already contains the work, after a squash/rebase PR merge it reports the
+  changes as merged despite differing commit IDs, and only genuinely
+  unmerged work gets a data-loss warning.
+
+- "Test SSH connection" now shows an unknown server's host key fingerprint
+  for confirmation instead of trusting it silently, matching what a fetch or
+  push over SSH already does.
 
 ### Fixed
 
@@ -89,6 +112,28 @@ lives in the git log and the GitHub release notes.
 - The WSL indicator on a repository tab now uses the same colour as the tab's
   name, so it brightens with the text on the active tab instead of staying
   dimmed.
+- A credential the server rejects no longer deletes a different stored
+  credential for the same host from the OS keychain.
+- An untracked nested git repository (a submodule-to-be not yet added) showed
+  up in Working Changes as a nameless row under its parent folder; it now
+  renders under its own name.
+
+### Security
+
+- A token embedded in a remote URL (`https://<token>@github.com/...`) is no
+  longer written to the log file when adding or editing a remote; only the
+  redacted form is logged. Existing log files may still contain one - the
+  log folder is reachable from Global Settings, About.
+
+- Imported themes are checked more strictly: a palette entry must be a single
+  colour, so a theme can no longer smuggle other CSS (such as a remote
+  `url(...)` that would phone home) into the UI.
+
+- Remote names that look like command-line options are now refused, as branch
+  and tag names already were.
+
+- The app ships with a Content Security Policy, and deleting a submodule's
+  retained git directory refuses to follow a symlink out of the repository.
 
 ## [1.0.3] - 2026-08-24
 

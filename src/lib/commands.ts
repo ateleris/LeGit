@@ -8,7 +8,12 @@ import { invoke } from "@tauri-apps/api/core";
 import type { CommitDateFormat } from "./time";
 import type {
   Branch,
+  BranchMergeAnalysis,
+  CloneOutcome,
   Commit,
+  LfsStubs,
+  PullOutcome,
+  SwitchResult,
   CommitDetails,
   CommitId,
   GlobalSettings,
@@ -245,7 +250,7 @@ export const repoClone = (
   opId: string,
   options: CloneOptions = {}
 ) =>
-  invoke<RepoSummary>("repo_clone", {
+  invoke<CloneOutcome>("repo_clone", {
     url,
     parentDir,
     name,
@@ -903,10 +908,13 @@ export const repoCreateBranch = (
   });
 
 export const repoSwitchBranch = (repoId: string, name: string) =>
-  invoke<SwitchOutcome>("repo_switch_branch", { repoId, name });
+  invoke<SwitchResult>("repo_switch_branch", { repoId, name });
 
 export const repoDeleteBranch = (repoId: string, name: string, force: boolean) =>
   invoke<void>("repo_delete_branch", { repoId, name, force });
+
+export const repoBranchMergeAnalysis = (repoId: string, name: string) =>
+  invoke<BranchMergeAnalysis>("repo_branch_merge_analysis", { repoId, name });
 
 export const repoDeleteRemoteBranch = (repoId: string, remote: string, name: string, opId: string) =>
   invoke<void>("repo_delete_remote_branch", { repoId, remote, name, opId });
@@ -918,7 +926,7 @@ export const repoCheckoutRemoteBranch = (repoId: string, remoteRef: string) =>
   invoke<RemoteCheckoutOutcome>("repo_checkout_remote_branch", { repoId, remoteRef });
 
 export const repoCheckoutCommit = (repoId: string, sha: string) =>
-  invoke<SwitchOutcome>("repo_checkout_commit", { repoId, sha });
+  invoke<SwitchResult>("repo_checkout_commit", { repoId, sha });
 
 // --- submodules ---
 
@@ -936,7 +944,7 @@ export const repoSubmoduleUpdate = (
   repoId: string,
   opts: SubmoduleUpdateOptions,
   opId: string,
-) => invoke<void>("repo_submodule_update", { repoId, opts, opId });
+) => invoke<LfsStubs | null>("repo_submodule_update", { repoId, opts, opId });
 
 export const repoSubmoduleSync = (repoId: string, paths: string[], recursive: boolean) =>
   invoke<void>("repo_submodule_sync", { repoId, paths, recursive });
@@ -1100,8 +1108,8 @@ export const saveStashIncludeUntracked = (includeUntracked: boolean) =>
 export const repoFetch = (repoId: string, opts: FetchOptions, opId: string) =>
   invoke<null>("repo_fetch", { repoId, opts, opId });
 
-export const repoPull = (repoId: string, opts: PullOptions, opId: string) =>
-  invoke<null>("repo_pull", { repoId, opts, opId });
+export const repoPull = (repoId: string, opts: PullOptions, opId: string): Promise<PullOutcome> =>
+  invoke<PullOutcome>("repo_pull", { repoId, opts, opId });
 
 export const repoPush = (repoId: string, opts: PushOptions, opId: string) =>
   invoke<null>("repo_push", { repoId, opts, opId });
@@ -1152,6 +1160,8 @@ export const frontendLog = (level: "error" | "warn" | "info", message: string) =
 
 /** Open the log directory in the OS file manager. */
 export const openLogDir = () => invoke<null>("open_log_dir");
+
+export const appBuildHash = () => invoke<string | null>("app_build_hash");
 
 // --- column preferences ---
 

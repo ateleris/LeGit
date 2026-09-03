@@ -11,6 +11,7 @@ import { useRemoteProgressStore } from "../../store/remoteProgress";
 import { useSettingsStore } from "../../store/settings";
 import { remoteOpErrorMessage } from "../../lib/pushFeedback";
 import { pushWithTagFollowUp } from "../../lib/autoPushTags";
+import { notifyLfsStubs } from "../../lib/lfsFeedback";
 import { notify } from "../../store/notifications";
 import { BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon, StashIcon } from "../../icons";
 import { MenuItem, Separator } from "./menu/primitives";
@@ -149,7 +150,7 @@ export function RemoteSyncToolbar({
           // User cancelled — the failure is expected, no toast.
         } else {
           // Classified wording shared with the branch menus' push action.
-          notify.error(remoteOpErrorMessage(e));
+          notify.error(remoteOpErrorMessage(e, kind === "pull" ? "pull" : "generic"));
         }
       } finally {
         useRemoteProgressStore.getState().clear(opId);
@@ -175,6 +176,10 @@ export function RemoteSyncToolbar({
       "pull",
       (opId) =>
         repoPull(repoId, { strategy: pullStrategy }, opId).then((r) => {
+          // git can exit 0 yet leave LFS pointer stubs (skipdownloaderrors,
+          // non-required filter) - the user must learn the files hold no
+          // real content, never a bare "Pulled".
+          notifyLfsStubs(r.lfs_stubs, "pull");
           // A pull can move submodule pointers exactly like a switch does.
           void autoUpdateSubmodules(queryClient, repoId);
           return r;

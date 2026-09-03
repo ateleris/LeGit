@@ -83,15 +83,25 @@ pub fn parse_status(output: &str) -> Vec<FileStatus> {
                     result.push(FileStatus::new(path, FileState::Conflicted, false));
                 }
             }
-            // Untracked / ignored: single entry, never staged.
+            // Untracked / ignored: single entry, never staged. Git reports a
+            // directory it won't descend into (e.g. a nested git repo) as
+            // `dir/` - strip the slash so downstream path splitting stays sane.
             b'?' => {
                 if let Some(path) = record.strip_prefix("? ") {
-                    result.push(FileStatus::new(path, FileState::Untracked, false));
+                    result.push(FileStatus::new(
+                        path.trim_end_matches('/'),
+                        FileState::Untracked,
+                        false,
+                    ));
                 }
             }
             b'!' => {
                 if let Some(path) = record.strip_prefix("! ") {
-                    result.push(FileStatus::new(path, FileState::Ignored, false));
+                    result.push(FileStatus::new(
+                        path.trim_end_matches('/'),
+                        FileState::Ignored,
+                        false,
+                    ));
                 }
             }
             _ => {}
@@ -275,6 +285,28 @@ mod tests {
             parse_status(&out),
             vec![fs("scratch.tmp", FileState::Untracked, false)]
         );
+    }
+
+    #[test]
+    fn untracked_nested_repo_loses_its_trailing_slash() {
+        // git reports a directory it won't descend into (a nested git repo,
+        // even with --untracked-files=all) as `? dir/` - the slash must not
+        // leak downstream, where paths are split on `/`. PathBuf's Eq
+        // normalizes components, so assert on the raw string that crosses IPC.
+        let out = stream(&["? app/backend/FlowControl.NET/"]);
+        let entries = parse_status(&out);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path.as_os_str(), "app/backend/FlowControl.NET");
+        assert_eq!(entries[0].state, FileState::Untracked);
+    }
+
+    #[test]
+    fn ignored_directory_loses_its_trailing_slash() {
+        let out = stream(&["! target/"]);
+        let entries = parse_status(&out);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path.as_os_str(), "target");
+        assert_eq!(entries[0].state, FileState::Ignored);
     }
 
     #[test]

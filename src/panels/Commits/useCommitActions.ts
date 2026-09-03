@@ -37,6 +37,8 @@ import {
 } from "../../lib/commands";
 import type { Commit, CommitId, MergeOptions, RepoSummary, ResetMode } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
+import { deleteBranchGuided } from "../../lib/branchDelete";
+import { notifyLfsStubs } from "../../lib/lfsFeedback";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { autoUpdateSubmodules } from "../../lib/submodules";
 import { notify } from "../../store/notifications";
@@ -181,9 +183,10 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
         const repo = repoOf();
         if (!repo) return;
         try {
-          const outcome = await repoSwitchBranch(repo.id, name);
+          const result = await repoSwitchBranch(repo.id, name);
           invalidate(repo.id, BRANCH_DOMAINS);
-          notifySwitchOutcome(outcome, name);
+          notifySwitchOutcome(result.outcome, name);
+          notifyLfsStubs(result.lfs_stubs, "switch");
           void autoUpdateSubmodules(queryClient, repo.id);
         } catch (e) {
           notifySwitchError(e);
@@ -197,6 +200,7 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
           const outcome = await repoCheckoutRemoteBranch(repo.id, remoteRef);
           invalidate(repo.id, BRANCH_DOMAINS);
           notifyRemoteCheckoutOutcome(outcome, remoteRef);
+          notifyLfsStubs(outcome.lfs_stubs, "checkout");
           void autoUpdateSubmodules(queryClient, repo.id);
         } catch (e) {
           notifySwitchError(e);
@@ -207,9 +211,10 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
         const repo = repoOf();
         if (!repo) return;
         try {
-          const outcome = await repoCheckoutCommit(repo.id, sha);
+          const result = await repoCheckoutCommit(repo.id, sha);
           invalidate(repo.id, BRANCH_DOMAINS);
-          notifySwitchOutcome(outcome, sha.slice(0, 8));
+          notifySwitchOutcome(result.outcome, sha.slice(0, 8));
+          notifyLfsStubs(result.lfs_stubs, "checkout");
           void autoUpdateSubmodules(queryClient, repo.id);
         } catch (e) {
           notifySwitchError(e);
@@ -228,11 +233,15 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
         }
       },
 
+      // Safe deletes go through the guided flow: a "not fully merged"
+      // refusal raises the central dialog with a case-specific force-delete
+      // offer.
       handleBranchDelete: async (name: string, force: boolean) => {
         const repo = repoOf();
         if (!repo) return;
         try {
-          await repoDeleteBranch(repo.id, name, force);
+          if (force) await repoDeleteBranch(repo.id, name, true);
+          else await deleteBranchGuided(repo.id, name);
           invalidate(repo.id, BRANCH_DOMAINS);
         } catch (e) {
           notify.error(formatAppError(e));

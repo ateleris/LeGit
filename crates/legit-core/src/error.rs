@@ -25,6 +25,24 @@ pub enum GitError {
     #[error("switching would overwrite local changes: {0}")]
     WouldOverwriteLocalChanges(String),
 
+    /// `git branch -d` refused because the branch is not fully merged (its
+    /// tip is not reachable from the upstream / HEAD). The UI reacts with a
+    /// guided force-delete offer instead of a raw error.
+    #[error("branch not fully merged: {stderr}")]
+    BranchNotFullyMerged { branch: String, stderr: String },
+
+    /// A git-lfs smudge/download failure inside an operation (pull, switch,
+    /// clone, ...): the affected worktree paths hold no real content. When
+    /// `missing_on_remote`, the objects were never uploaded (whoever pushed
+    /// the commit must `git lfs push`); otherwise the download itself failed
+    /// (network/auth).
+    #[error("LFS download failed: {stderr}")]
+    LfsDownloadFailed {
+        files: Vec<String>,
+        missing_on_remote: bool,
+        stderr: String,
+    },
+
     #[error("git command failed (exit {exit_code}): {stderr}")]
     CommandFailed { exit_code: i32, stderr: String },
 

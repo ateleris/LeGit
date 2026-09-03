@@ -464,6 +464,50 @@ pub struct Branch {
     pub created_at: i64,
 }
 
+/// A git-lfs download failure's residue in the worktree: paths left as
+/// pointer stubs instead of real content. git can exit 0 in this state
+/// (`lfs.skipdownloaderrors`, non-required filter), so operations report it
+/// as data - the user must learn the files hold no real content, never a
+/// silent success.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct LfsStubs {
+    pub files: Vec<String>,
+    /// The objects are absent on the server (missing upload), not a
+    /// network/auth problem.
+    pub missing_on_remote: bool,
+}
+
+/// Result of a successful `pull`: any LFS pointer stubs it left behind.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct PullOutcome {
+    pub lfs_stubs: Option<LfsStubs>,
+}
+
+/// A switch/checkout's outcome plus any LFS pointer stubs the checkout left
+/// behind (see `LfsStubs`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct SwitchResult {
+    pub outcome: SwitchOutcome,
+    pub lfs_stubs: Option<LfsStubs>,
+}
+
+/// Post-refusal analysis for a "not fully merged" branch delete: the signals
+/// that let the UI say whether force-deleting is actually safe.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct BranchMergeAnalysis {
+    /// Refs (short names) that already contain the branch tip - a true merge
+    /// landed and only the checked-out base is stale. The branch itself, its
+    /// remote counterparts, and remote HEAD symrefs are excluded.
+    /// (No literal star-slash here: specta copies this into a TS block
+    /// comment in bindings.ts, where it would terminate the comment.)
+    pub merged_into: Vec<String>,
+    /// Baseline ref (e.g. `origin/main`) whose history holds a patch-id
+    /// equivalent of every commit unique to the branch - the signature of a
+    /// squash/rebase merge. `None` when no baseline was found or commits
+    /// remain unmatched.
+    pub equivalent_in: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SwitchOutcome {
@@ -510,6 +554,8 @@ pub struct RemoteCheckoutOutcome {
     pub local_branch: String,
     pub switch: SwitchOutcome,
     pub fast_forward: FastForwardResult,
+    /// LFS pointer stubs the checkout left behind (see `LfsStubs`).
+    pub lfs_stubs: Option<LfsStubs>,
 }
 
 /// Result of `git add --renormalize`: the files git restaged through the
@@ -1114,4 +1160,6 @@ pub enum SubmoduleAutoUpdateStatus {
 pub struct SubmoduleAutoUpdateResult {
     pub path: PathBuf,
     pub status: SubmoduleAutoUpdateStatus,
+    /// LFS pointer stubs the move left inside the submodule (see `LfsStubs`).
+    pub lfs_stubs: Option<LfsStubs>,
 }

@@ -9,7 +9,7 @@
 
 use crate::error::AppError;
 use crate::state::AppState;
-use legit_core::types::{FetchOptions, PullOptions, PushOptions, Remote, TrackingStatus};
+use legit_core::types::{FetchOptions, PullOptions, PullOutcome, PushOptions, Remote, TrackingStatus};
 use legit_core::OperationId;
 
 /// Fetch from remote(s). Cancellable via `op_id` (see `console_cancel`).
@@ -37,7 +37,7 @@ pub async fn repo_pull(
     repo_id: String,
     opts: PullOptions,
     op_id: String,
-) -> Result<(), AppError> {
+) -> Result<PullOutcome, AppError> {
     let session = state.get_session(&repo_id).await?;
     session
         .backend

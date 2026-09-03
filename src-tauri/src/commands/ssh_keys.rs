@@ -89,6 +89,37 @@ fn valid_ssh_host(host: &str) -> bool {
         && !host.ends_with(['-', '.'])
 }
 
+/// Argv for the `ssh -T git@<host>` probe.
+///
+/// With the askpass broker wired up, `StrictHostKeyChecking` stays at ssh's
+/// default `ask`, so an unknown host key reaches the in-app confirmation
+/// dialog (fingerprint and all) exactly like every git-spawned ssh. Only the
+/// no-broker fallback must stay non-interactive, and there a prompt would
+/// hang the probe - hence `accept-new` in that branch alone.
+fn build_probe_args(
+    host: &str,
+    key: Option<&Path>,
+    broker: bool,
+) -> Vec<std::ffi::OsString> {
+    let mut args: Vec<std::ffi::OsString> = vec!["-T".into()];
+    if !broker {
+        args.push("-o".into());
+        args.push("BatchMode=yes".into());
+        args.push("-o".into());
+        args.push("StrictHostKeyChecking=accept-new".into());
+    }
+    args.push("-o".into());
+    args.push("ConnectTimeout=10".into());
+    if let Some(key) = key {
+        args.push("-i".into());
+        args.push(key.into());
+        args.push("-o".into());
+        args.push("IdentitiesOnly=yes".into());
+    }
+    args.push(format!("git@{host}").into());
+    args
+}
+
 /// The platform's "add an SSH key" settings page. Fixed map (the frontend
 /// passes an id, never a URL).
 fn platform_add_key_url(platform: &str) -> Option<&'static str> {
@@ -266,33 +297,24 @@ pub async fn test_ssh_auth(
     if !valid_ssh_host(&host) {
         return Err(AppError::Io(format!("invalid SSH host {host:?}")));
     }
-    let mut cmd = quiet_command("ssh");
     // With the askpass broker running, drop BatchMode and wire SSH_ASKPASS so
     // an encrypted key prompts for its passphrase in-app (and give the human
     // time to type it). Without a broker (should not happen in a running
     // app), keep the old strictly non-interactive behavior.
     let askpass_env = crate::credentials::askpass_child_env();
-    let timeout_secs: u64 = if askpass_env.is_some() { 320 } else { 30 };
-    cmd.arg("-T");
-    match askpass_env {
-        Some(env) => {
-            for (k, v) in env {
-                cmd.env(k, v);
-            }
-        }
-        None => {
-            cmd.arg("-o").arg("BatchMode=yes");
+    let broker = askpass_env.is_some();
+    let timeout_secs: u64 = if broker { 320 } else { 30 };
+    let mut cmd = quiet_command("ssh");
+    if let Some(env) = askpass_env {
+        for (k, v) in env {
+            cmd.env(k, v);
         }
     }
-    cmd.arg("-o")
-        .arg("StrictHostKeyChecking=accept-new")
-        .arg("-o")
-        .arg("ConnectTimeout=10");
-    if let Some(p) = private_key_path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
-        let key = expand_home(p)?;
-        cmd.arg("-i").arg(&key).arg("-o").arg("IdentitiesOnly=yes");
-    }
-    cmd.arg(format!("git@{host}"));
+    let key = match private_key_path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) => Some(expand_home(p)?),
+        None => None,
+    };
+    cmd.args(build_probe_args(&host, key.as_deref(), broker));
 
     let run = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), cmd.output());
     let out = match run.await {
@@ -417,5 +439,28 @@ mod tests {
         assert!(platform_add_key_url("gitlab").is_some());
         assert!(platform_add_key_url("azure_devops").is_some());
         assert_eq!(platform_add_key_url("bitbucket"), None);
+    }
+
+    // With the askpass broker present, an unknown host key must reach the
+    // in-app confirmation dialog (ssh's default `ask`) exactly like every
+    // git-spawned ssh does; auto-accepting is only for the no-broker
+    // fallback, where a prompt would hang the probe.
+    #[test]
+    fn probe_routes_host_key_confirmation_through_the_broker() {
+        let joined = |args: &[std::ffi::OsString]| {
+            args.iter().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ")
+        };
+
+        let with_broker = joined(&build_probe_args("github.com", None, true));
+        assert!(!with_broker.contains("StrictHostKeyChecking"), "{with_broker}");
+        assert!(!with_broker.contains("BatchMode"), "{with_broker}");
+        assert!(with_broker.starts_with("-T "), "{with_broker}");
+        assert!(with_broker.ends_with(" git@github.com"), "{with_broker}");
+
+        let without = joined(&build_probe_args("gitlab.com", Some(Path::new("/k/id")), false));
+        assert!(without.contains("-o BatchMode=yes"), "{without}");
+        assert!(without.contains("-o StrictHostKeyChecking=accept-new"), "{without}");
+        assert!(without.contains("-i /k/id -o IdentitiesOnly=yes"), "{without}");
+        assert!(without.ends_with(" git@gitlab.com"), "{without}");
     }
 }

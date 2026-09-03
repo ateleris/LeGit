@@ -45,8 +45,9 @@ pub async fn set_active_theme(
     state: tauri::State<'_, AppState>,
     name: String,
 ) -> Result<(), AppError> {
+    let safe = sanitize_theme_name(&name)?;
     state.mutate_global(|s| {
-        s.active_theme = Some(name);
+        s.active_theme = Some(safe);
     })
     .await
 }
@@ -484,7 +485,7 @@ pub async fn load_theme(
     name: String,
 ) -> Result<serde_json::Value, AppError> {
     for dir in [&state.user_themes_dir, &state.builtin_themes_dir] {
-        let path = dir.join(format!("{name}{THEME_EXT}"));
+        let path = theme_file_path(dir, &name)?;
         if path.exists() {
             let bytes = tokio::fs::read(&path).await?;
             let value: serde_json::Value =
@@ -506,7 +507,7 @@ pub async fn save_theme(
     let safe = sanitize_theme_name(&name)?;
     let dir = state.user_themes_dir.clone();
     tokio::fs::create_dir_all(&dir).await?;
-    let path = dir.join(format!("{safe}{THEME_EXT}"));
+    let path = theme_file_path(&dir, &safe)?;
     let json = serde_json::to_string_pretty(&contents)?;
     tokio::fs::write(&path, json).await?;
     Ok(ThemeEntry {
@@ -522,8 +523,7 @@ pub async fn delete_theme(
     state: tauri::State<'_, AppState>,
     name: String,
 ) -> Result<(), AppError> {
-    let safe = sanitize_theme_name(&name)?;
-    let path = state.user_themes_dir.join(format!("{safe}{THEME_EXT}"));
+    let path = theme_file_path(&state.user_themes_dir, &name)?;
     if path.exists() {
         tokio::fs::remove_file(path).await?;
     }
@@ -609,17 +609,32 @@ fn validate_theme(value: &serde_json::Value) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Palette values are written straight into CSS custom properties, so the
+/// whole string must be ONE colour: a nested `(` would admit `url(...)` (a
+/// remote fetch when the token is used in a `background` shorthand) and
+/// anything after the closing paren a second declaration.
 fn is_valid_color(s: &str) -> bool {
     let s = s.trim();
     if let Some(rest) = s.strip_prefix('#') {
         return matches!(rest.len(), 3 | 4 | 6 | 8) && rest.chars().all(|c| c.is_ascii_hexdigit());
     }
     let lower = s.to_lowercase();
-    lower.starts_with("rgb(")
-        || lower.starts_with("rgba(")
-        || lower.starts_with("hsl(")
-        || lower.starts_with("hsla(")
-        || lower.starts_with("oklch(")
+    let Some(open) = lower.find('(') else { return false };
+    if !matches!(&lower[..open], "rgb" | "rgba" | "hsl" | "hsla" | "oklch") {
+        return false;
+    }
+    let Some(body) = lower[open + 1..].strip_suffix(')') else { return false };
+    !body.trim().is_empty()
+        && body.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, ' ' | ',' | '.' | '%' | '/' | '+' | '-')
+        })
+}
+
+/// The on-disk path of one theme file. Every theme path in this module goes
+/// through here so the frontend-supplied name is confined to `dir`.
+fn theme_file_path(dir: &std::path::Path, name: &str) -> Result<PathBuf, AppError> {
+    let safe = sanitize_theme_name(name)?;
+    Ok(dir.join(format!("{safe}{THEME_EXT}")))
 }
 
 fn sanitize_theme_name(name: &str) -> Result<String, AppError> {
@@ -727,5 +742,65 @@ mod tests {
         let mut v = good();
         v["name"] = json!("   ");
         assert!(validate_theme(&v).is_err());
+    }
+
+    // Every theme file path (load, save, delete) is built by one helper, so a
+    // name from the frontend can never leave the themes directory.
+    #[test]
+    fn theme_file_path_confines_names_to_the_directory() {
+        let dir = std::path::Path::new("themes-root");
+        assert_eq!(
+            theme_file_path(dir, "Dark").unwrap(),
+            dir.join("Dark.legit-theme.json")
+        );
+        assert_eq!(
+            theme_file_path(dir, "  Solar Flare ").unwrap(),
+            dir.join("Solar Flare.legit-theme.json")
+        );
+        for bad in ["../x", "/etc/passwd", "C:\\x", "a/b", "a\\b", "", "   ", "a\0b"] {
+            assert!(theme_file_path(dir, bad).is_err(), "expected rejection: {bad:?}");
+        }
+    }
+
+    // Palette values become CSS custom properties verbatim, so the grammar
+    // must be a colour and nothing else: no trailing tokens, no nested
+    // functions (`url(`, `var(`), no declarations smuggled in after a `;`.
+    #[test]
+    fn color_validation_accepts_real_colors_only() {
+        for ok in [
+            "#fff",
+            "#ffff",
+            "#4a9eff",
+            "#4a9eff33",
+            "rgb(1,2,3)",
+            "rgba(74, 158, 255, 0.5)",
+            "hsl(1, 2%, 3%)",
+            "hsla(1, 2%, 3%, .5)",
+            "hsl(120deg 50% 50%)",
+            "oklch(0.5 0.1 200)",
+            "oklch(0.5 0.1 200 / 50%)",
+            "rgb(1 2 3 / 0.5)",
+            " RGB(1, 2, 3) ",
+        ] {
+            assert!(is_valid_color(ok), "expected valid: {ok:?}");
+        }
+        for bad in [
+            "red",
+            "",
+            "#12345",
+            "#ggg",
+            "url(x)",
+            "rgb(0,0,0) url(https://example.com/x)",
+            "rgb(0,0,0); background: red",
+            "rgb(0 0 0) rgb(1 1 1)",
+            "rgb(var(--x))",
+            "rgb (1,2,3)",
+            "rgb(1,2,3)) rgb(",
+            "rgb()",
+            "expression(1)",
+            "color-mix(in srgb, red, blue)",
+        ] {
+            assert!(!is_valid_color(bad), "expected invalid: {bad:?}");
+        }
     }
 }

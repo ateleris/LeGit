@@ -5,8 +5,8 @@
 use crate::error::AppError;
 use crate::state::AppState;
 use legit_core::types::{
-    CommitId, SubmoduleAutoUpdateResult, SubmoduleGitdirInfo, SubmoduleInfo, SubmoduleLog,
-    SubmoduleUpdateOptions, SubmoduleUpdateStrategy,
+    CommitId, LfsStubs, SubmoduleAutoUpdateResult, SubmoduleGitdirInfo, SubmoduleInfo,
+    SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy,
 };
 use legit_core::OperationId;
 use std::path::PathBuf;
@@ -32,7 +32,7 @@ pub async fn repo_submodule_update(
     repo_id: String,
     opts: SubmoduleUpdateOptions,
     op_id: String,
-) -> Result<(), AppError> {
+) -> Result<Option<LfsStubs>, AppError> {
     let session = state.get_session(&repo_id).await?;
     let mut opts = opts;
     // The frontend never sets this; it mirrors the global setting.

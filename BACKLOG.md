@@ -15,7 +15,7 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
 
 ## Release blockers
 
-### v1.1.0
+### v1.2.0
 
 - **Frontend consolidation batch** (parked 2026-07-11, promoted to blocker
   2026-08-24; details in `design/2026-07-11-hardening-review.md` §D):
@@ -31,60 +31,15 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
   line-ending value tables in `lineEndingOptions.ts`. `RepoSettingsPanel`
   still carries its own copies of those three helpers - the rest of the
   split.
-
-### v0.9.x -> first public release
-
-(none - the blocker list emptied 2026-08-21: license landed, funding links
-landed, first-run experience shipped. What remains before flipping the repo
-public is a final read-through of the README and a smoke pass of the app.)
-
-Decided and recorded, no action:
-- **Release / distribution model: OPEN SOURCE + donations** - confirmed by
-  Simon 2026-08-21 (option (a) of the 2026-08-19 trade-off: best
-  adoption/trust for a git client and the strongest Ateleris marketing;
-  donations are a tip jar, not a plan). Rejected: closed-source free
-  download, fair source (FSL), free-personal + paid-commercial, open core.
-- **License: GPL-3.0-or-later** - chosen by Simon 2026-08-21 (copyleft: no
-  proprietary forks; "or later" per FSF convention). LICENSE file landed
-  (verbatim gnu.org text), workspace Cargo.toml `license` set (all three
-  crates inherit), package.json `license` field added, tauri.conf.json
-  `bundle.licenseFile` points at ../LICENSE so installers embed the text
-  (bundle license id itself defaults to the Cargo.toml value). Note the
-  consequence recorded 2026-08-19: relicensing later needs a CLA once
-  outside contributions land.
-- **Funding links: Stripe donate link** - landed 2026-08-21.
-  `.github/FUNDING.yml` uses a `custom:` entry with Simon's Stripe payment
-  link (Sponsor button, zero platform signup); the README got a Donate
-  badge in the header row plus a short "Want to say thanks?" section at the
-  end. GitHub Sponsors / Ko-fi can be appended to FUNDING.yml later as
-  one-liners if ever wanted.
-- **Git is not bundled** (trade study
-  `design/2026-07-07-bundled-git-trade-study.md`; revisit trigger +
-  download-on-demand fallback design are in the study).
-- **Code signing stays deferred**, SmartScreen/Gatekeeper warnings
-  documented.
-- **Standalone reword-a-commit action** (outside the interactive-rebase
-  panel): dropped 2026-07-05; the rebase panel's reword step covers it.
-- **git-flow helpers, archive export, git notes, sparse checkout**: decided
-  against 2026-08-20 (competitive feature review vs SourceTree / GitKraken /
-  Fork / Git Extensions / Sublime Merge / Tower). git-flow is ceremony in
-  decline and LeGit's branch tooling doesn't need it; the other three are
-  Git-Extensions-tier rarities the built-in Console covers when needed.
-  Revisit only on real user demand.
-- **LFS smudge-on-demand + "fetch LFS content" action**: dropped
-  2026-08-17 - content is on disk / in `.git/lfs/objects`, and display
-  value only materializes with rendered previews (now shipped for images).
-  Stub recovery stays `git lfs pull` in the Console.
-- **README screenshot branding spot check**: dropped 2026-08-18.
-- **Summon into the last-active group**: dropped 2026-08-21 after checking.
-  Placement memory persists in the layout envelope, so the default-placement
-  split only happens on a panel's first-ever open; and the active group at
-  summon time is usually the group the user just clicked in, so stacking
-  there would cover the panel driving the interaction (dockview's implicit
-  active-group add is already avoided in `openRepoPanel` because it can be
-  the hidden console group). If first-open splits ever hurt, the viable
-  variant is a descriptor-level `joinGroupOf` list generalizing the
-  Diff/File View/Blame collocation (summon.ts Case 2c), not the active group.
+- **Keyboard shortcuts system** - full plan in
+  `design/2026-08-24-keyboard-shortcuts-system.md` (command registry +
+  keymap-as-data + one dispatcher with a context/dismissable stack + input
+  guard; seed bindings incl. Mod+Enter commit, fetch/pull/push, F5, tab
+  switching, Commits arrow-nav, and issue #21's Ctrl+A select-all in
+  Working Changes; generated help overlay; phases 2/3 = focus management,
+  then user keymap + palette). Phase 1 is roughly one focused session.
+  Related deferred note: a shortcut to open the commits context menu
+  (`design/2026-06-16-commits-context-menu-design.md`).
 
 ---
 
@@ -176,6 +131,14 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
     the state belongs in `AppState` (next to `watchers`) and should be
     readable by a command / carried on `RepoSummary`, with the event only as
     the live update.
+
+- **Classify an untracked nested git repo as a submodule candidate.** Git
+  reports a nested repo as one trailing-slash `? dir/` entry; the parser now
+  strips the slash so the row renders, but the entry is still a plain
+  `Untracked` file. Staging it as-is creates a gitlink without a
+  `.gitmodules` entry (the case `gitmodulesWarning` flags after the fact).
+  Better: detect the trailing-slash form in `parsers/status.rs`, give it a
+  dedicated state, and offer "add as submodule" / warn before a plain stage.
 
 - **Remote repositories: v1 deferrals** (2026-08-31, with the WSL feature —
   architecture in `design/2026-08-31-remote-repositories-wsl.md`):
@@ -323,9 +286,10 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   blockers 2026-08-24.)
 - **Structural splits, when next touched** (2026-08-06 review remainder;
   CommitsPanel.tsx split done 2026-08-24 - queries hook, row context menu,
-  RemoteSyncToolbar): `WorkingChangesPanel.tsx` (~1100-line function;
-  CommitComposer + shared FileRowMenu), `cli_impl/mod.rs` (~5000 lines;
-  submodule + line-ending blocks).
+  RemoteSyncToolbar; `cli_impl/mod.rs` submodule + line-ending blocks
+  extracted 2026-09-01 into `submodules.rs` / `line_endings.rs`):
+  `WorkingChangesPanel.tsx` (~1100-line function; CommitComposer + shared
+  FileRowMenu).
 - **Internationalization: decide want/need (2026-08-04).** Open product
   question, not a commitment: is a non-English UI worth it for LeGit's
   audience? Inputs: git terminology stays English in most clients, and
@@ -342,15 +306,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   chunked sweep (~2-4 sessions) in the first quiet post-release window.
   `PANEL_TITLES` in `registry.tsx` shows the catalog shape and would be
   its first consumer. If "not needed": record that here and drop the item.
-- **Keyboard shortcuts system** - full plan in
-  `design/2026-08-24-keyboard-shortcuts-system.md` (command registry +
-  keymap-as-data + one dispatcher with a context/dismissable stack + input
-  guard; seed bindings incl. Mod+Enter commit, fetch/pull/push, F5, tab
-  switching, Commits arrow-nav, and issue #21's Ctrl+A select-all in
-  Working Changes; generated help overlay; phases 2/3 = focus management,
-  then user keymap + palette). Phase 1 is roughly one focused session.
-  Related deferred note: a shortcut to open the commits context menu
-  (`design/2026-06-16-commits-context-menu-design.md`).
 - **Commit graph: user-swappable shape tilesets** (designed 2026-08-19,
   stopped after approach approval; no spec yet). Let users restyle the
   graph's connectors and nodes with their own SVG fragments: a "texture
@@ -378,6 +333,15 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   (skipped: fails on servers without reachable-sha1 fetch support).
 
 ## Only if it hurts in practice
+
+- **LFS stub reporting for stash/discard/restore paths** (the last
+  remainder of the LFS missing-objects feedback; everything else shipped
+  2026-09-01: classification + per-flow wording, exit-0 stub detection for
+  pull / switch / checkout / clone / submodule updates via `LfsStubs` on
+  each outcome, friendly `formatAppError` case via the import-free
+  `lfsMessages.ts`). Stash apply/pop, discard, and restore-file-at-revision
+  also run checkouts that can smudge; wire the same `lfs_stubs_from_stderr`
+  pattern through their outcomes.
 
 - **Native crash dumps (minidump/crashpad).** The crash logging shipped
   2026-08-21 (`src-tauri/src/logging.rs`: rotating file log, panic hook with

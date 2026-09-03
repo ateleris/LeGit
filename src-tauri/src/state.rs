@@ -665,6 +665,15 @@ pub struct RepoSummary {
     pub locator: String,
 }
 
+/// `repo_clone`'s result: the opened repo plus any LFS pointer stubs the
+/// clone's checkout left behind (git can exit 0 with failed LFS downloads
+/// under `lfs.skipdownloaderrors` / a non-required filter).
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct CloneOutcome {
+    pub summary: RepoSummary,
+    pub lfs_stubs: Option<legit_core::LfsStubs>,
+}
+
 // ---------------------------------------------------------------------------
 // App state
 // ---------------------------------------------------------------------------

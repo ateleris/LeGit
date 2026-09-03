@@ -16,7 +16,7 @@ pub mod types;
 pub use backend::GitBackend;
 pub use cli_impl::{
     checkin_normalizes, classify_line_endings, classify_line_endings_normalized,
-    classify_remote_error, convert_line_endings, derive_line_ending_entry,
+    classify_remote_error, lfs_stubs_from_stderr, convert_line_endings, derive_line_ending_entry,
     is_binary_bytes, mixed_endings_in_bytes, parse_autocrlf, parse_cat_file_batch,
     parse_check_attr_z, BINARY_SNIFF_WINDOW,
     AutocrlfSetting, EolTextAttr, GitCliBackend,
