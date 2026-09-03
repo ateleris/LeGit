@@ -88,8 +88,9 @@ function fileTitle(file: FileTreeEntry): string {
 const PLAIN_FILE_META = { Icon: File, color: "var(--subtle-fg)" } as const;
 
 // Icon per change kind (lucide): + added, pencil modified, trash deleted,
-// swap-arrows renamed, copy copied.
-const STATUS_META: Record<FileState, { Icon: LucideIcon; color: string }> = {
+// swap-arrows renamed, copy copied. Exported so `renderFileIcon` overrides
+// can keep the per-state colour while swapping the glyph.
+export const STATUS_META: Record<FileState, { Icon: LucideIcon; color: string }> = {
   Added: { Icon: Plus, color: "var(--status-added)" },
   Modified: { Icon: Pencil, color: "var(--status-modified)" },
   Deleted: { Icon: Trash2, color: "var(--status-deleted)" },

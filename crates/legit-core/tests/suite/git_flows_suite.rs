@@ -2096,6 +2096,27 @@ async fn status_reports_a_conflict_as_a_single_unstaged_entry() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+async fn submodules_lists_a_declared_but_never_added_submodule() {
+    // Half-added state: `.gitmodules` declares the path but the gitlink was
+    // never `git add`ed (git reports the directory as plain untracked). The
+    // enumeration must still surface the declared row.
+    let repo = TestRepo::init().await;
+    repo.write(
+        ".gitmodules",
+        "[submodule \"lib\"]\n\tpath = lib\n\turl = https://x.invalid/lib.git\n",
+    );
+
+    let subs = repo.backend.submodules().await.unwrap();
+    assert_eq!(subs.len(), 1, "{subs:?}");
+    let s = &subs[0];
+    assert_eq!(s.name, "lib");
+    assert_eq!(s.path, PathBuf::from("lib"));
+    assert_eq!(s.recorded_sha, None);
+    assert!(!s.state.initialized && !s.state.populated);
+    assert_eq!(s.gitmodules_url.as_deref(), Some("https://x.invalid/lib.git"));
+}
+
+#[tokio::test]
 async fn submodules_reports_a_real_submodule() {
     let (sup, _lib) = repo_with_submodule().await;
 
@@ -2305,6 +2326,51 @@ async fn file_diff_returns_a_submodule_entry_for_a_pointer_move() {
     assert_eq!(sub.old_sha.as_ref().map(|s| s.as_str().to_string()), Some(old));
     assert_eq!(sub.new_sha.as_ref().map(|s| s.as_str().to_string()), Some(new));
     assert!(!sub.dirty);
+}
+
+#[tokio::test]
+async fn file_diff_presents_an_untracked_nested_repo_as_a_submodule_add() {
+    // A nested repo not yet added to the index: git reports it as a single
+    // collapsed untracked entry `dir/` (even with --untracked-files=all) and
+    // shows no diff for it. The viewer must get the submodule add that
+    // staging would record instead of "no changes".
+    let repo = TestRepo::init().await;
+    repo.git(&["init", "vendor/embedded"]).await;
+    for args in [
+        ["-C", "vendor/embedded", "config", "user.name", "LeGit Test"].as_slice(),
+        &["-C", "vendor/embedded", "config", "user.email", "test@example.invalid"],
+        &["-C", "vendor/embedded", "config", "commit.gpgsign", "false"],
+        &["-C", "vendor/embedded", "config", "core.autocrlf", "false"],
+    ] {
+        repo.git(args).await;
+    }
+    repo.write("vendor/embedded/f.txt", "x\n");
+    repo.git(&["-C", "vendor/embedded", "add", "."]).await;
+    repo.git(&["-C", "vendor/embedded", "commit", "-m", "nested"]).await;
+    let head = repo.git(&["-C", "vendor/embedded", "rev-parse", "HEAD"]).await.trim().to_string();
+
+    // Pin the row-path shape the diff request carries: git reports the
+    // collapsed `vendor/embedded/` form, and the status parser strips the
+    // trailing slash (string compare - PathBuf equality normalizes slashes
+    // and would hide the shape).
+    let status = repo.backend.status().await.unwrap();
+    let entry = status
+        .iter()
+        .find(|s| s.path.to_string_lossy().starts_with("vendor/"))
+        .expect("nested repo entry");
+    assert_eq!(entry.path.to_string_lossy(), "vendor/embedded");
+    assert_eq!(entry.state, FileState::Untracked);
+
+    // Request the diff with exactly the row path, as the app does.
+    let diff = repo
+        .backend
+        .file_diff(&DiffSource::WorkingUnstaged, &entry.path, None, 3)
+        .await
+        .unwrap();
+    let DiffEntry::Submodule(sub) = diff else { panic!("expected Submodule: {diff:?}") };
+    assert_eq!(sub.path, PathBuf::from("vendor/embedded"));
+    assert_eq!(sub.old_sha, None);
+    assert_eq!(sub.new_sha, Some(CommitId::new(&head)));
 }
 
 #[tokio::test]

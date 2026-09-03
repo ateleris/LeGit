@@ -399,16 +399,6 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         Self::ensure_success(&ls)?;
         let gitlinks = sub::parse_gitlinks(&ls.stdout);
 
-        // No gitlinks -> no rows, guaranteed: `assemble_submodules` iterates
-        // gitlinks only (config-only entries never surface). Skip the three
-        // follow-up reads entirely - in a repo without submodules the two
-        // config `--get-regexp` calls exit 1 ("no matches"), which painted
-        // the Git Log panel red on every derived refetch, and all three are
-        // wasted spawns for a known-empty answer.
-        if gitlinks.is_empty() {
-            return Ok(Vec::new());
-        }
-
         // Both config reads exit 1 for "no matches / no file" - that is a
         // normal state (e.g. declared-but-uninitialized submodules), never an
         // error, so it must not log as a failed call either.
@@ -416,6 +406,16 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
             Ok(o) if o.success => sub::parse_submodule_config(&o.stdout),
             _ => Default::default(),
         };
+
+        // No gitlinks AND nothing declared -> no rows; skip the remaining
+        // reads (wasted spawns for a known-empty answer). Declared-only
+        // entries (`.gitmodules` written but the gitlink never `git add`ed)
+        // must NOT hit this fast path: `assemble_submodules` surfaces them
+        // as declared-but-never-added rows.
+        if gitlinks.is_empty() && gitmodules.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let local = match runner.run_expecting(&sub::LOCAL_SUBMODULE_CONFIG_ARGS, &[1]).await {
             Ok(o) if o.success => sub::parse_submodule_config(&o.stdout),
             _ => Default::default(),

@@ -65,6 +65,9 @@ lives in the git log and the GitHub release notes.
 
 ### Fixed
 
+- A submodule declared in `.gitmodules` but not yet staged (`git add` of the path still pending) now appears in the Refs panel's Submodules section instead of being hidden until the first gitlink is staged.
+- Submodule rows in Working Changes now show the fork icon (staged and unstaged alike), so a to-be-added submodule no longer looks like a plain new file.
+- Opening the diff of a not-yet-staged nested repository (e.g. a submodule before `git add`) no longer shows "no changes"; it shows the submodule view with the commit that staging would record.
 - Closing the last tab of a WSL repository no longer shows a "Connection lost — reconnecting…" toast; "reconnecting…" now only appears while the app will actually reconnect. A distro connected only for Settings reports the loss plainly instead, and a standing "reconnecting…" toast is retired when the reconnect stops.
 - The git executable path from Settings is trimmed before it is applied, so a stray trailing space no longer breaks resolution.
 - Cancelling a clone on Windows sometimes failed with "The partial clone

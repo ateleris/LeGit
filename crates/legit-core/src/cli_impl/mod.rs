@@ -23,7 +23,7 @@ use crate::types::{
     ReflogEntry, Remote,
     RemoteCheckoutOutcome, RemoteTag,
     RenormalizeOutcome, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode, SequenceOutcome, SignMode, StashApplyOutcome, StashEntry,
-    StashOutcome, SubmoduleAutoUpdateResult, SubmoduleGitdirInfo,
+    StashOutcome, SubmoduleAutoUpdateResult, SubmoduleChange, SubmoduleGitdirInfo,
     SubmoduleInfo, SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy,
     SwitchDirtyBehavior, SwitchOutcome, SwitchResult, TagInfo, TrackingStatus,
 };
@@ -256,6 +256,46 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
             Some(0) | Some(1) => Ok(out.stdout),
             _ => Ok(String::new()),
         }
+    }
+
+    /// The submodule change `git add` would record for an untracked nested
+    /// repo, or `None` when `path` is not one. The status parser strips the
+    /// trailing slash from git's collapsed `dir/` untracked form, so the
+    /// request path carries no directory marker - probe unconditionally: on
+    /// a plain file `-C` fails instantly and the diff stays empty.
+    /// `--show-prefix` guards against git walking up from a plain directory
+    /// into the superproject (a repo root reports an empty prefix); any
+    /// probe failure (e.g. unborn HEAD) means "not presentable", never an
+    /// error.
+    async fn untracked_repo_dir_change(
+        &self,
+        path: &Path,
+    ) -> Result<Option<SubmoduleChange>, GitError> {
+        let path_str = path.to_string_lossy();
+        let dir = path_str.trim_end_matches('/');
+        if dir.is_empty() {
+            return Ok(None);
+        }
+        let runner = self.runner().await;
+        let out = match runner
+            .run(&["-C", dir, "rev-parse", "--show-prefix", "HEAD"])
+            .await
+        {
+            Ok(o) if o.success => o,
+            _ => return Ok(None),
+        };
+        let mut lines = out.stdout.lines();
+        let prefix = lines.next().unwrap_or("").trim();
+        let sha = lines.next().unwrap_or("").trim();
+        if !prefix.is_empty() || sha.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(SubmoduleChange {
+            path: PathBuf::from(dir),
+            old_sha: None,
+            new_sha: Some(CommitId::new(sha)),
+            dirty: false,
+        }))
     }
 
     /// Diff a single file between two tree-ish revisions (all lines added when
@@ -1166,6 +1206,15 @@ impl<E: GitExecutor + ?Sized> GitBackend for GitCliBackend<E> {
         context: u32,
     ) -> Result<DiffEntry, GitError> {
         let raw = self.run_diff_text(source, path, old_path, context).await?;
+        // An untracked nested repo yields an empty diff (`git diff` ignores
+        // untracked paths and `--no-index` refuses directories), which would
+        // read as "no changes". Present what staging would record instead: a
+        // submodule add at the nested repo's HEAD.
+        if raw.trim().is_empty() && matches!(source, DiffSource::WorkingUnstaged) {
+            if let Some(sub) = self.untracked_repo_dir_change(path).await? {
+                return Ok(DiffEntry::Submodule(sub));
+            }
+        }
         Ok(parsers::diff::parse_file_diff(&raw))
     }
 

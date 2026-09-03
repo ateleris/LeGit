@@ -1221,6 +1221,104 @@ async fn file_diff_untracked_probe_failure_is_an_error_not_untracked() {
     exec.assert_done();
 }
 
+#[tokio::test]
+async fn file_diff_presents_an_untracked_nested_repo_as_a_submodule_add() {
+    // An untracked nested repo yields an empty `git diff` and `--no-index`
+    // refuses directories, so the viewer read "no changes". It must instead
+    // present what staging would record: a submodule add at the nested
+    // repo's HEAD (probed like submodules()). The request path carries NO
+    // trailing slash - the status parser strips git's collapsed `dir/` form,
+    // so the probe cannot be gated on it.
+    let sha_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["-c", "diff.submodule=short", "diff", "--no-color", "--no-ext-diff", "-U3", "--", "subs/declared-only"],
+        ok(""),
+    );
+    fake.expect(&["ls-files", "-z", "--", "subs/declared-only"], ok(""));
+    fake.expect(
+        &["diff", "--no-index", "--no-color", "--no-ext-diff", "-U3", "--", "/dev/null", "subs/declared-only"],
+        fail(128, "fatal: not a regular file"),
+    );
+    fake.expect(
+        &["-C", "subs/declared-only", "rev-parse", "--show-prefix", "HEAD"],
+        ok(&format!("\n{sha_a}\n")),
+    );
+    let (b, exec) = backend(fake);
+
+    let entry = b
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("subs/declared-only"), None, 3)
+        .await
+        .unwrap();
+    let DiffEntry::Submodule(sub) = entry else { panic!("expected Submodule: {entry:?}") };
+    assert_eq!(sub.path, PathBuf::from("subs/declared-only"));
+    assert_eq!(sub.old_sha, None);
+    assert_eq!(sub.new_sha, Some(CommitId::new(sha_a)));
+    assert!(!sub.dirty);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn file_diff_untracked_nested_repo_tolerates_a_trailing_slash() {
+    // Same as above with git's raw collapsed `dir/` shape, in case a caller
+    // passes it through unstripped.
+    let sha_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["-c", "diff.submodule=short", "diff", "--no-color", "--no-ext-diff", "-U3", "--", "subs/declared-only/"],
+        ok(""),
+    );
+    fake.expect(&["ls-files", "-z", "--", "subs/declared-only/"], ok(""));
+    fake.expect(
+        &["diff", "--no-index", "--no-color", "--no-ext-diff", "-U3", "--", "/dev/null", "subs/declared-only/"],
+        fail(128, "fatal: not a regular file"),
+    );
+    fake.expect(
+        &["-C", "subs/declared-only", "rev-parse", "--show-prefix", "HEAD"],
+        ok(&format!("\n{sha_a}\n")),
+    );
+    let (b, exec) = backend(fake);
+
+    let entry = b
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("subs/declared-only/"), None, 3)
+        .await
+        .unwrap();
+    let DiffEntry::Submodule(sub) = entry else { panic!("expected Submodule: {entry:?}") };
+    assert_eq!(sub.path, PathBuf::from("subs/declared-only"));
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn file_diff_untracked_plain_dir_stays_no_changes() {
+    // An untracked directory that is NOT a repo root: the probe escapes into
+    // the superproject (non-empty prefix) and the result stays an empty text
+    // diff - never a fabricated submodule entry.
+    let sha_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["-c", "diff.submodule=short", "diff", "--no-color", "--no-ext-diff", "-U3", "--", "plain"],
+        ok(""),
+    );
+    fake.expect(&["ls-files", "-z", "--", "plain"], ok(""));
+    fake.expect(
+        &["diff", "--no-index", "--no-color", "--no-ext-diff", "-U3", "--", "/dev/null", "plain"],
+        fail(128, "fatal: not a regular file"),
+    );
+    fake.expect(
+        &["-C", "plain", "rev-parse", "--show-prefix", "HEAD"],
+        ok(&format!("plain/\n{sha_a}\n")),
+    );
+    let (b, exec) = backend(fake);
+
+    let entry = b
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("plain"), None, 3)
+        .await
+        .unwrap();
+    let DiffEntry::Text(text) = entry else { panic!("expected Text: {entry:?}") };
+    assert!(text.hunks.is_empty());
+    exec.assert_done();
+}
+
 // ---------------------------------------------------------------------------
 // conflict file sides — index stages :1/:2/:3
 // ---------------------------------------------------------------------------
@@ -1796,20 +1894,58 @@ async fn file_history_with_start_rev_walks_from_that_rev() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn submodules_without_gitlinks_runs_only_ls_files() {
-    // A repo without submodules answers from the index listing alone: the
-    // config `--get-regexp` reads (which exit 1 on "no matches" and used to
-    // land as failed calls in the Git Log on every derived refetch) and the
-    // status read must not run - assert_done encodes that.
+async fn submodules_without_gitlinks_or_gitmodules_stops_after_config_probe() {
+    // A repo without submodules answers from the index listing plus one
+    // `.gitmodules` probe (exit 1 = "no matches / no file", a normal state
+    // that must not log as a failure): the local config read, the status
+    // read, and the probes must not run - assert_done encodes that.
     let sha_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let fake = FakeExecutor::default();
     fake.expect(
         &["ls-files", "--stage", "-z"],
         ok(&format!("100644 {sha_a} 0\tREADME.md\0100644 {sha_a} 0\tsrc/main.rs\0")),
     );
+    fake.expect(
+        &["config", "-f", ".gitmodules", "-z", "--get-regexp", "^submodule\\."],
+        fail(1, ""),
+    );
     let (b, exec) = backend(fake);
 
     assert!(b.submodules().await.unwrap().is_empty());
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn submodules_surfaces_declared_but_never_added_entry() {
+    // `.gitmodules` declares a path but no gitlink exists in the index (the
+    // half-added state: config written/staged, submodule never `git add`ed).
+    // The row must still surface so the Refs panel can show it - the
+    // no-gitlink fast path applies only when nothing is declared either.
+    let sha_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["ls-files", "--stage", "-z"],
+        ok(&format!("100644 {sha_a} 0\t.gitmodules\0")),
+    );
+    fake.expect(
+        &["config", "-f", ".gitmodules", "-z", "--get-regexp", "^submodule\\."],
+        ok("submodule.lib.path\nlib\0submodule.lib.url\nhttps://x.invalid/lib.git\0"),
+    );
+    fake.expect(&["config", "-z", "--get-regexp", "^submodule\\."], fail(1, ""));
+    fake.expect(
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        ok("? lib/\0"),
+    );
+    let (b, exec) = backend(fake);
+
+    let subs = b.submodules().await.unwrap();
+    assert_eq!(subs.len(), 1);
+    let s = &subs[0];
+    assert_eq!(s.name, "lib");
+    assert_eq!(s.path, std::path::PathBuf::from("lib"));
+    assert_eq!(s.recorded_sha, None, "no gitlink in the index");
+    assert!(!s.state.initialized && !s.state.populated);
+    // assert_done proves no per-path probe ran (there is nothing to probe).
     exec.assert_done();
 }
 

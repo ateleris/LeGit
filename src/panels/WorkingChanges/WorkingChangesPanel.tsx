@@ -4,15 +4,16 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
 import { usePanelActiveEffect, usePanelFocusEffect } from "../PanelApiContext";
-import { repoBranches, repoCommit, repoConflictEntries, repoConflictReopen, repoCreateStashPaths, repoDiscard, repoGitmodulesConsistency, repoListRemotes, repoLog, repoResolvedIdentity, repoResolveTakeSide, repoResolveUndoPaths, repoStage, repoStagedMarkerPaths, repoStatus, repoTrackingStatus, repoUnstage, repoUnstagedMarkerPaths } from "../../lib/commands";
-import type { Branch, Commit, CommitButtonMode, ConflictEntry, ConflictSide, DiffRequest, DiffSource, FileStatus, GitmodulesFinding, Remote, ResolvedIdentity, TrackingStatus } from "../../lib/types";
+import { repoBranches, repoCommit, repoConflictEntries, repoConflictReopen, repoCreateStashPaths, repoDiscard, repoGitmodulesConsistency, repoListRemotes, repoLog, repoResolvedIdentity, repoResolveTakeSide, repoResolveUndoPaths, repoStage, repoStagedMarkerPaths, repoStatus, repoSubmodules, repoTrackingStatus, repoUnstage, repoUnstagedMarkerPaths } from "../../lib/commands";
+import type { Branch, Commit, CommitButtonMode, ConflictEntry, ConflictSide, DiffRequest, DiffSource, FileStatus, GitmodulesFinding, Remote, ResolvedIdentity, SubmoduleInfo, TrackingStatus } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { useCommitDraftStore } from "../../store/commitDraft";
 import { notify } from "../../store/notifications";
 import { confirmDialog } from "../../store/confirm";
 import { segStyle } from "../shared/segmented";
-import { FileTree } from "../shared/FileTree/FileTree";
+import { FileTree, STATUS_META } from "../shared/FileTree/FileTree";
+import { GitFork } from "lucide-react";
 import { LineEndingRowBadge } from "../shared/LineEndingBadge";
 import { useLineEndingStatusMap } from "../shared/lineEndingStatus";
 import { ToolbarButton } from "../shared/ToolbarButton";
@@ -45,6 +46,7 @@ import {
   type CommitPushTarget,
 } from "./commitButtonMode";
 import { gitmodulesFindingLabel } from "./gitmodulesWarning";
+import { isSubmodulePath, submodulePathSet } from "./submoduleRows";
 import { takeSideLabels } from "./conflictLabels";
 import { formatEolChanges, stagedEolChanges } from "./lineEndingWarning";
 import {
@@ -294,6 +296,33 @@ export function WorkingChangesPanel() {
     enabled: !!repo,
     staleTime: 5_000,
   });
+
+  // Known submodule paths (gitlinked, or declared in .gitmodules but never
+  // added) drive the fork-glyph icon override below, so a to-be-added
+  // submodule never reads as a plain new file.
+  const { data: submodules = [] } = useQuery<SubmoduleInfo[]>({
+    queryKey: [repo?.id, "submodules"],
+    queryFn: () => repoSubmodules(repo!.id),
+    enabled: !!repo,
+    staleTime: 5_000,
+  });
+  const submodulePaths = useMemo(() => submodulePathSet(submodules), [submodules]);
+  const submoduleFileIcon = useCallback(
+    (file: FileTreeEntry): ReactNode => {
+      // Conflicted keeps its warning triangle - the conflict cue outranks
+      // the submodule one.
+      if (!file.change || file.change === "Conflicted") return null;
+      if (!isSubmodulePath(file.path, submodulePaths)) return null;
+      // Titled span: the innermost title wins on hover, making the
+      // submodule distinction visible as a tooltip.
+      return (
+        <span title="submodule" aria-label="submodule" style={{ display: "inline-flex" }}>
+          <GitFork size={iconSize} color={STATUS_META[file.change].color} />
+        </span>
+      );
+    },
+    [submodulePaths, iconSize],
+  );
 
   // Batch line-ending summary - drives the row chips and the commit
   // warning. Disabled entirely when both features are off.
@@ -1014,7 +1043,8 @@ export function WorkingChangesPanel() {
               }}
               // An unstaged (formerly staged) resolution that still holds
               // markers keeps the conflict triangle; genuinely Conflicted
-              // rows already derive it from their status.
+              // rows already derive it from their status. Submodule rows
+              // fall back to the fork glyph.
               renderFileIcon={(f) =>
                 opActive && f.change !== "Conflicted" && unstagedMarkerSet.has(f.path) ? (
                   <span
@@ -1023,7 +1053,9 @@ export function WorkingChangesPanel() {
                   >
                     <WarningIcon size={iconSize} />
                   </span>
-                ) : null
+                ) : (
+                  submoduleFileIcon(f)
+                )
               }
               renderBadge={
                 chipsEnabled
@@ -1164,6 +1196,7 @@ export function WorkingChangesPanel() {
               // A staged resolution that still holds conflict markers keeps
               // reading as conflicted: the warning triangle replaces the
               // status icon, same position and colour as during the conflict.
+              // Submodule rows fall back to the fork glyph.
               renderFileIcon={(f) =>
                 opActive && stagedMarkerSet.has(f.path) ? (
                   <span
@@ -1172,7 +1205,9 @@ export function WorkingChangesPanel() {
                   >
                     <WarningIcon size={iconSize} />
                   </span>
-                ) : null
+                ) : (
+                  submoduleFileIcon(f)
+                )
               }
               renderBadge={
                 chipsEnabled
