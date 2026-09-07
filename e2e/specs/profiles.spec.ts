@@ -44,6 +44,30 @@ async function clickDockTab(title: string): Promise<void> {
   throw new Error(`dock tab "${title}" did not activate after 4 clicks`);
 }
 
+/** Click-and-verify with bounded retries, the clickDockTab rationale applied
+ *  to controls INSIDE Global Settings: the sections above the profiles
+ *  section fill in asynchronously (git executable probe, git-config reads,
+ *  the WSL group removing itself on machines without WSL), so the section
+ *  shifts vertically between WebDriver's scroll-into-view and its click - a
+ *  single click can land beside the intended control. Verifying the click's
+ *  expected effect and re-clicking at fresh coordinates makes the spec
+ *  immune to WHERE the click lands, without papering over a genuinely
+ *  broken control. */
+async function clickVerified(selector: string, verified: () => Promise<boolean>): Promise<void> {
+  const el = $(selector);
+  await el.waitForDisplayed({ timeout: 15_000 });
+  for (let attempt = 0; attempt < 4; attempt++) {
+    await el.click();
+    try {
+      await browser.waitUntil(verified, { timeout: 2_000 });
+      return;
+    } catch {
+      // Content shifted under the click - loop re-clicks at fresh coordinates.
+    }
+  }
+  throw new Error(`clicking ${selector} did not produce its expected effect after 4 clicks`);
+}
+
 /** Open a repo panel through the View menu. The first-run default layout
  *  (2026-08-21) starts with the tooling panels closed - Repo Settings is no
  *  longer an open dock tab, so the spec opens it the way a user would. */
@@ -77,9 +101,15 @@ describe("profiles: cross-panel freshness + delete confirmation", () => {
   });
 
   it("creating a profile updates the unfocused repo dropdown", async () => {
-    await $('[data-testid="profile-new"]').click();
+    await clickVerified('[data-testid="profile-new"]', () =>
+      $('[data-testid="profile-name-input"]').isDisplayed(),
+    );
+    // setValue addresses the element by reference (no coordinates) - safe.
     await $('[data-testid="profile-name-input"]').setValue(PROFILE_NAME);
-    await $('[data-testid="profile-save"]').click();
+    // A successful save closes the editor.
+    await clickVerified('[data-testid="profile-save"]', async () =>
+      !(await $('[data-testid="profile-name-input"]').isExisting()),
+    );
     await browser.waitUntil(
       async () => (await repoDropdownOptions()).includes(PROFILE_NAME),
       { timeout: 15_000, timeoutMsg: "new profile did not reach the repo dropdown without focus" },
@@ -87,14 +117,18 @@ describe("profiles: cross-panel freshness + delete confirmation", () => {
   });
 
   it("delete asks for confirmation first", async () => {
-    await $('[data-testid="profile-delete"]').click();
-    await $('[data-testid="profile-delete-confirm"]').waitForDisplayed({ timeout: 10_000 });
+    await clickVerified('[data-testid="profile-delete"]', () =>
+      $('[data-testid="profile-delete-confirm"]').isDisplayed(),
+    );
     // Not deleted yet: the repo dropdown still lists it.
     expect(await repoDropdownOptions()).toContain(PROFILE_NAME);
   });
 
   it("confirming the delete removes it from the unfocused repo dropdown", async () => {
-    await $('[data-testid="profile-delete-confirm"]').click();
+    // A successful delete removes the row (and with it the confirm button).
+    await clickVerified('[data-testid="profile-delete-confirm"]', async () =>
+      !(await $('[data-testid="profile-delete-confirm"]').isExisting()),
+    );
     await browser.waitUntil(
       async () => !(await repoDropdownOptions()).includes(PROFILE_NAME),
       { timeout: 15_000, timeoutMsg: "deleted profile still in the repo dropdown without focus" },
