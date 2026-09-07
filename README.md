@@ -53,8 +53,11 @@ Grab the build for your OS from the [Releases](../../releases) page:
 | Linux | `.AppImage`, or `.deb` |
 
 > Builds are not code-signed yet, so your OS may warn on first launch:
-> Windows SmartScreen → **More info → Run anyway**; macOS → right-click →
-> **Open**.
+> Windows SmartScreen → **More info → Run anyway**. macOS reports the app
+> as "damaged" (Gatekeeper quarantine on unsigned apps): after copying
+> LeGit to Applications, run
+> `xattr -dr com.apple.quarantine /Applications/LeGit.app`
+> in Terminal once, then launch normally.
 
 ### Build from source
 
