@@ -5,6 +5,7 @@ import {
   type DockviewReadyEvent,
 } from "dockview-react";
 import { applyPanelConstraints, useDockviewStore } from "../store/dockview";
+import { useLayoutsStore } from "../store/layouts";
 import { notify } from "../store/notifications";
 import { useThemeStore } from "../store/themes";
 import { useSummonStore } from "../store/summon";
@@ -67,6 +68,8 @@ export function RepoDock() {
             fallbacks: useSummonStore.getState().fallbackPositions,
           });
         } catch { /* ignore */ }
+        // The docks no longer match a saved layout once they change.
+        useLayoutsStore.getState().noteDockLayoutChanged();
       });
     },
     [setRepoApi]

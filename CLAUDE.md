@@ -221,6 +221,16 @@ project memory for details.
     and re-initialise on change — see `RefsPanel` (keyed `PaneviewReact`,
     patches the persisted layout's `headerSize` on restore) and the
     `--dv-tabs-and-actions-container-height` mapping in `global.css`.
+- **Controls sharing a row share ONE height.** The app deliberately has two
+  control sizes - the roomy global `input`/`button` chrome and the compact
+  2em toolbar metrics - but they must never mix within the same row (a tall
+  input next to short buttons looks broken). Inside `.legit-panel__toolbar`
+  the normalization in `global.css` sizes ALL buttons, selects, and inputs
+  (every variant except checkbox/radio - type-scoped selectors like
+  `input[type="text"]` are a trap, a typeless `<input>` matches none) to the
+  compact height; don't opt controls out with inline heights/padding.
+  Enforced by `src/styles/toolbarControls.test.ts`. Rows built outside a
+  toolbar pick one size for every control in the row.
 - Follow existing panel/store/parser patterns; keep files focused.
 - The diff viewer's inline and split views must keep **action parity** (wire new
   per-hunk/per-line capabilities through the shared helpers, apply to both).

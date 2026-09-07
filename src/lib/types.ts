@@ -270,6 +270,23 @@ export interface ThemeEntry {
   path: string;
 }
 
+export interface LayoutEntry {
+  name: string;
+  path: string;
+}
+
+/** A saved panel layout (`.legit-layout.json`): a named snapshot of both
+ *  docks. `global` is the global dock's plain dockview JSON; `repo` is the
+ *  repo dock's envelope ({ dockview, placements, fallbacks }). Either may be
+ *  null when that dock had nothing to capture, never both. */
+export interface LayoutDocument {
+  format: "legit-layout";
+  formatVersion: number;
+  name: string;
+  global: unknown;
+  repo: unknown;
+}
+
 export type AppError =
   | { kind: "UnknownRepo"; details: string }
   | { kind: "NotARepo"; details: string }
@@ -278,6 +295,7 @@ export type AppError =
   | { kind: "GitUnavailable"; details: string }
   | { kind: "ForbiddenArg"; details: string }
   | { kind: "InvalidTheme"; details: string }
+  | { kind: "InvalidLayout"; details: string }
   | { kind: "Settings"; details: string }
   | { kind: "ParseArgs"; details: string }
   | { kind: "InvalidLockIndex"; details: number }

@@ -1,10 +1,9 @@
-// Saved "default layout": the user snapshots the current window layout
-// ("Save as default layout" in the View menu) and "Reset to default layout"
-// restores it. Without a snapshot, reset falls back to the built-in
-// first-launch layout. The snapshot reuses the docks' live-persistence
-// formats verbatim (repo: envelope { dockview, placements, fallbacks };
-// global: plain dockview JSON), applied through the same restore path the
-// docks use on startup.
+// Dock layout snapshots: capture/apply for both docks' persistence formats
+// (repo: envelope { dockview, placements, fallbacks }; global: plain dockview
+// JSON), shared by the startup restore, the baked defaults, and named layouts
+// (see namedLayouts.ts). The SAVED_* keys are the retired "saved default"
+// localStorage snapshot, kept only for its one-time migration into a named
+// layout.
 
 import type { DockviewApi } from "dockview-react";
 import { applyPanelConstraints } from "../store/dockview";
@@ -22,6 +21,9 @@ import {
   REPO_DOCKVIEW_COMPONENTS,
 } from "./registry";
 
+// Legacy "saved default" snapshot keys - written by the retired
+// "Save as default layout" menu entry, read only by the one-time migration
+// into a named layout (store/layouts.ts).
 export const SAVED_REPO_LAYOUT_KEY = "legit.repo-dock-layout-default";
 export const SAVED_GLOBAL_LAYOUT_KEY = "legit.global-dock-layout-default";
 
@@ -46,6 +48,12 @@ export function parseRepoLayoutEnvelope(raw: string | null): RepoLayoutEnvelope 
   } catch {
     return null;
   }
+  return coerceRepoLayoutEnvelope(parsed);
+}
+
+/** Same tolerance rules as `parseRepoLayoutEnvelope`, for already-parsed
+ *  values (a named layout document's `repo` field). */
+export function coerceRepoLayoutEnvelope(parsed: unknown): RepoLayoutEnvelope | null {
   if (!parsed || typeof parsed !== "object") return null;
   const envelope = parsed as {
     dockview?: unknown;
@@ -223,31 +231,6 @@ export function applyRepoLayoutEnvelope(api: DockviewApi, envelope: RepoLayoutEn
   return true;
 }
 
-/** Persist the current layout of both docks as the saved default. */
-export function saveLayoutAsDefault(globalApi: DockviewApi | null, repoApi: DockviewApi | null) {
-  try {
-    if (repoApi) {
-      localStorage.setItem(SAVED_REPO_LAYOUT_KEY, JSON.stringify(captureRepoLayoutEnvelope(repoApi)));
-    }
-    if (globalApi) {
-      localStorage.setItem(SAVED_GLOBAL_LAYOUT_KEY, JSON.stringify(globalApi.toJSON()));
-    }
-  } catch {
-    /* quota - the snapshot simply isn't saved */
-  }
-}
-
-/**
- * Restore the repo dock to the saved default layout. Returns false when no
- * snapshot exists or it fails to apply - the caller then rebuilds the
- * built-in first-launch layout.
- */
-export function applySavedRepoLayout(api: DockviewApi): boolean {
-  const envelope = parseRepoLayoutEnvelope(localStorage.getItem(SAVED_REPO_LAYOUT_KEY));
-  if (!envelope) return false;
-  return applyRepoLayoutEnvelope(api, envelope);
-}
-
 /**
  * Apply a plain global-dock layout JSON (sanitized: retired panels pruned).
  * Shared by the startup restore, the saved default, and the baked default.
@@ -265,19 +248,6 @@ export function applyGlobalLayoutJson(api: DockviewApi, json: unknown): boolean 
   if (api.panels.length === 0) return false;
   applyPanelConstraints(api);
   return true;
-}
-
-/** Same as `applySavedRepoLayout`, for the global dock's plain-JSON layout. */
-export function applySavedGlobalLayout(api: DockviewApi): boolean {
-  const raw = localStorage.getItem(SAVED_GLOBAL_LAYOUT_KEY);
-  if (!raw) return false;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return false;
-  }
-  return applyGlobalLayoutJson(api, parsed);
 }
 
 /**

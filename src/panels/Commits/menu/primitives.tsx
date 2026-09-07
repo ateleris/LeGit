@@ -166,11 +166,17 @@ export function Submenu({
   label,
   children,
   testId,
+  onClickActivate,
 }: {
   label: React.ReactNode;
   children: React.ReactNode;
   /** Stable hook for the E2E suite (on the trigger entry). */
   testId?: string;
+  /** When set, the trigger doubles as a regular menu entry: clicking it runs
+   *  this action instead of pinning the flyout (which still opens on hover) —
+   *  e.g. a View-menu layout entry that applies on click and holds its
+   *  secondary actions in the flyout. Keyboard activation runs the action. */
+  onClickActivate?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   // Pinned = clicked open (native behavior: an explicitly opened submenu does
@@ -264,6 +270,10 @@ export function Submenu({
         // close it on every click. Click-only activation (keyboard
         // Enter/Space) opens too.
         onClick={() => {
+          if (onClickActivate) {
+            onClickActivate();
+            return;
+          }
           enter();
           pin();
         }}

@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import logoUrl from "./assets/legit-logo.png";
 import { useAppVersion } from "./lib/appVersion";
 import { useThemeStore } from "./store/themes";
+import { useLayoutsStore } from "./store/layouts";
 import { useSettingsStore } from "./store/settings";
 import { useGitStatusStore } from "./store/git-status";
 import { useRepoStore } from "./store/repos";
@@ -50,6 +51,7 @@ export function App() {
   const initSettings = useSettingsStore((s) => s.init);
   const initGitStatus = useGitStatusStore((s) => s.refresh);
   const initRepos = useRepoStore((s) => s.init);
+  const initLayouts = useLayoutsStore((s) => s.init);
   const gitStatus = useGitStatusStore((s) => s.status);
   const [bootPhase, setBootPhase] = useState<BootPhase>("git");
 
@@ -69,13 +71,16 @@ export function App() {
         await initGitStatus();
         setBootPhase("repos");
         await initRepos();
+        // Not boot-critical (the View menu re-lists on open) — after repos so
+        // it never delays the first paint; failures degrade to an empty list.
+        initLayouts().catch((e) => console.warn("failed to load layouts", e));
       } finally {
         // Each init is non-throwing internally, but a failure here must never
         // strand the user on the splash.
         setBootPhase("done");
       }
     })();
-  }, [initSettings, initThemes, initGitStatus, initRepos]);
+  }, [initSettings, initThemes, initGitStatus, initRepos, initLayouts]);
 
   // Block the app until we know whether git is available (DESIGN.md §7.6) AND
   // the persisted repos + theme are restored, so the first real paint shows a

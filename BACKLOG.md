@@ -38,6 +38,9 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
   switching, Commits arrow-nav, and issue #21's Ctrl+A select-all in
   Working Changes; generated help overlay; phases 2/3 = focus management,
   then user keymap + palette). Phase 1 is roughly one focused session.
+  Also seed shortcuts for applying saved layouts (2026-09-07, with the
+  named-layouts feature): e.g. Ctrl+Alt+1..9 for the first N layouts in
+  list order (digits, QWERTZ-safe) via `useLayoutsStore.apply`.
   Related deferred note: a shortcut to open the commits context menu
   (`design/2026-06-16-commits-context-menu-design.md`).
 
@@ -217,8 +220,10 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
     Builtin/User in `read_theme_dir`, read-only in the Theme Editor like
     builtins (duplicate-to-edit) - sidesteps name-collision and
     upstream-deletion semantics. `active_theme` syncs as a normal pref.
-  - Phase 2 candidates: dock layouts (needs them out of localStorage
-    into the exportable surface first), an export/import bundle file.
+  - Phase 2 candidates: named layouts (since 2026-09-07 they are files
+    under `<app-data>/layouts/`, so a synced `layouts/` dir mirrors the
+    themes approach; the LIVE dock state stays localStorage and stays
+    local), an export/import bundle file.
 
 - **Files panel:** untrack a folder (`rm_cached` needs `-r` for a
   directory); persist view mode / show-ignored (ephemeral component state
@@ -333,6 +338,17 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   (skipped: fails on servers without reachable-sha1 fetch support).
 
 ## Only if it hurts in practice
+
+- **Named layouts: deferred apply for an unmounted dock** (decided
+  2026-09-07: fine as-is, layouts are mostly for the repo side). Applying a
+  layout never changes the global region's expanded/collapsed state; while
+  the global dock is collapsed (or no repo is open, for the repo dock) that
+  dock's part of the layout is SKIPPED, so expanding later shows the
+  pre-apply arrangement even though the checkmark says the layout is
+  active. Fix if it ever confuses: when the dock's API is null, write that
+  part into its live-persistence key (`legit.global-dock-layout` /
+  `legit.repo-dock-layout`) so the next mount restores it - expansion state
+  itself stays untouched.
 
 - **LFS stub reporting for stash/discard/restore paths** (the last
   remainder of the LFS missing-objects feedback; everything else shipped

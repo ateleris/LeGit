@@ -29,6 +29,8 @@ import type {
   RestoreResult,
   ThemeEntry,
   ThemeDocument,
+  LayoutEntry,
+  LayoutDocument,
   LineEndingsView,
   SigningView,
   GitProfile,
@@ -427,6 +429,22 @@ export const saveTheme = (name: string, contents: ThemeDocument) =>
 
 export const deleteTheme = (name: string) =>
   invoke<null>("delete_theme", { name });
+
+// --- layouts ---
+
+export const listLayouts = () => invoke<LayoutEntry[]>("list_layouts");
+
+export const loadLayout = (name: string) =>
+  invoke<unknown>("load_layout", { name });
+
+export const saveLayout = (name: string, contents: LayoutDocument) =>
+  invoke<LayoutEntry>("save_layout", { name, contents });
+
+export const renameLayout = (oldName: string, newName: string) =>
+  invoke<LayoutEntry>("rename_layout", { oldName, newName });
+
+export const deleteLayout = (name: string) =>
+  invoke<null>("delete_layout", { name });
 
 // --- line endings ---
 

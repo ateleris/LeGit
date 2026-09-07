@@ -1,65 +1,93 @@
 import { useEffect, useRef, useState } from "react";
 import { CheckIcon } from "../icons";
+import { formatAppError } from "../lib/types";
+import { confirmDialog } from "../store/confirm";
 import { hasMaximizedPanel, toggleMaximizeActivePanel, useDockviewStore } from "../store/dockview";
+import { useLayoutsStore } from "../store/layouts";
 import { notify } from "../store/notifications";
+import { useConfirmDestructive } from "../store/settings";
 import { GLOBAL_PANELS, REPO_PANELS } from "./registry";
-import { buildDefaultGlobalLayout, summonGlobalPanel } from "./GlobalDock";
-import { buildDefaultRepoLayout, openRepoPanel } from "./RepoDock";
+import { summonGlobalPanel } from "./GlobalDock";
+import { openRepoPanel } from "./RepoDock";
 import {
-  applyBakedGlobalLayout,
-  applyBakedRepoLayout,
-  applySavedGlobalLayout,
-  applySavedRepoLayout,
-  saveLayoutAsDefault,
-} from "./layoutSnapshot";
-import { MenuItem, SectionLabel, Separator } from "./Commits/menu/primitives";
+  MENU_LAYER_ATTR,
+  MenuItem,
+  MenuLevelProvider,
+  SectionLabel,
+  Separator,
+  Submenu,
+} from "./Commits/menu/primitives";
 
 /**
- * Dropdown that lets the user re-open closed panels in either dock.
- * Lives in the repo tab strip.
+ * Dropdown that lets the user re-open closed panels in either dock and switch
+ * between saved layouts (managed in the Layouts panel). Lives in the repo tab
+ * strip.
  */
 export function ViewMenu() {
+  const confirmDestructive = useConfirmDestructive();
   const globalApi = useDockviewStore((s) => s.globalApi);
   const repoApi = useDockviewStore((s) => s.repoApi);
+  const layouts = useLayoutsStore((s) => s.layouts);
+  const lastApplied = useLayoutsStore((s) => s.lastApplied);
+  const applyLayout = useLayoutsStore((s) => s.apply);
+  const saveCurrent = useLayoutsStore((s) => s.saveCurrent);
+  const refreshList = useLayoutsStore((s) => s.refreshList);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as HTMLElement;
+      if (ref.current && ref.current.contains(target)) return;
+      // Submenu flyouts portal to document.body — anything inside a marked
+      // menu layer counts as inside this menu.
+      if (target.closest?.(`[${MENU_LAYER_ATTR}]`)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
 
-  // Snapshot the current arrangement of both docks; "Reset to default layout"
-  // restores it from now on.
-  const saveAsDefault = () => {
-    saveLayoutAsDefault(globalApi, repoApi);
-    notify.info("Saved the current layout as the default.");
+  // The Layouts panel (or another window) may have changed the saved set —
+  // re-list every time the menu opens.
+  useEffect(() => {
+    if (open) refreshList().catch(() => {});
+  }, [open, refreshList]);
+
+  const onApplyLayout = async (name: string) => {
     setOpen(false);
+    try {
+      await applyLayout(name);
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
   };
 
-  // Restore the saved default layout; without one, the baked-in default
-  // (defaultLayouts.ts); if even that fails, the programmatic builders.
-  const resetLayouts = () => {
-    if (globalApi && !applySavedGlobalLayout(globalApi)) {
-      globalApi.clear();
-      if (!applyBakedGlobalLayout(globalApi)) {
-        globalApi.clear();
-        buildDefaultGlobalLayout(globalApi);
-      }
-    }
-    if (repoApi && !applySavedRepoLayout(repoApi)) {
-      repoApi.clear();
-      if (!applyBakedRepoLayout(repoApi)) {
-        repoApi.clear();
-        buildDefaultRepoLayout(repoApi);
-      }
-    }
+  const onOverrideLayout = async (name: string) => {
     setOpen(false);
+    try {
+      if (confirmDestructive) {
+        const ok = await confirmDialog({
+          title: "Override layout",
+          message: "Replaces the saved layout with the current arrangement.",
+          detail: name,
+          confirmLabel: "Override",
+        });
+        if (!ok) return;
+      }
+      await saveCurrent(name);
+      notify.success(`Layout "${name}" now holds the current arrangement.`);
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
   };
+
+  const checkSlot = (checked: boolean) => (
+    <span style={{ display: "inline-flex", justifyContent: "center", width: "1.5em" }}>
+      {checked ? <CheckIcon /> : null}
+    </span>
+  );
 
   const menuItem = (
     id: string,
@@ -68,9 +96,7 @@ export function ViewMenu() {
     onClick: () => void
   ) => (
     <MenuItem key={id} testId={`view-menu-${id}`} onClick={onClick}>
-      <span style={{ display: "inline-flex", justifyContent: "center", width: "1.5em" }}>
-        {isOpen ? <CheckIcon /> : null}
-      </span>
+      {checkSlot(isOpen)}
       {title}
     </MenuItem>
   );
@@ -97,39 +123,64 @@ export function ViewMenu() {
             padding: 4,
           }}
         >
-          <SectionLabel>Global panels</SectionLabel>
-          {GLOBAL_PANELS.map((p) =>
-            menuItem(p.id, p.title, !!globalApi?.getPanel(p.id), () => {
-              // Summon (not a plain open): expands the global region first if
-              // it is collapsed, where globalApi would be null.
-              summonGlobalPanel(p.id);
-              setOpen(false);
-            })
-          )}
-          <Separator />
-          <SectionLabel>Repo panels</SectionLabel>
-          {/* summonOnly panels (interactive-rebase) are transient: they exist
-              only while their operation does, so they get no re-open entry. */}
-          {REPO_PANELS.filter((p) => !p.summonOnly).map((p) =>
-            menuItem(p.id, p.title, !!repoApi?.getPanel(p.id), () => {
-              openRepoPanel(repoApi, p.id);
-              setOpen(false);
-            })
-          )}
-          <Separator />
-          {/* Focus mode: maximize the active panel's group over its dock
-              region; exiting restores the previous arrangement. The label is
-              computed when the menu opens (a fresh render), so it always
-              reflects the current state. */}
-          <MenuItem testId="view-menu-maximize" onClick={() => { toggleMaximizeActivePanel(); setOpen(false); }}>
-            <span style={{ display: "flex", justifyContent: "space-between", gap: "2em" }}>
-              <span>{hasMaximizedPanel() ? "Exit maximized panel" : "Maximize panel"}</span>
-              <span style={{ color: "var(--subtle-fg)" }}>Ctrl+Shift+M</span>
-            </span>
-          </MenuItem>
-          <Separator />
-          <MenuItem onClick={saveAsDefault}>Save as default layout</MenuItem>
-          <MenuItem onClick={resetLayouts}>Reset to default layout</MenuItem>
+          <MenuLevelProvider>
+            <SectionLabel>Global panels</SectionLabel>
+            {GLOBAL_PANELS.map((p) =>
+              menuItem(p.id, p.title, !!globalApi?.getPanel(p.id), () => {
+                // Summon (not a plain open): expands the global region first if
+                // it is collapsed, where globalApi would be null.
+                summonGlobalPanel(p.id);
+                setOpen(false);
+              })
+            )}
+            <Separator />
+            <SectionLabel>Repo panels</SectionLabel>
+            {/* summonOnly panels (interactive-rebase) are transient: they exist
+                only while their operation does, so they get no re-open entry. */}
+            {REPO_PANELS.filter((p) => !p.summonOnly).map((p) =>
+              menuItem(p.id, p.title, !!repoApi?.getPanel(p.id), () => {
+                openRepoPanel(repoApi, p.id);
+                setOpen(false);
+              })
+            )}
+            {layouts.length > 0 && (
+              <>
+                <Separator />
+                <SectionLabel>Layouts</SectionLabel>
+                {layouts.map((l) => (
+                  <Submenu
+                    key={l.name}
+                    testId={`view-menu-layout-${l.name}`}
+                    label={
+                      <>
+                        {checkSlot(lastApplied === l.name)}
+                        {l.name}
+                      </>
+                    }
+                    onClickActivate={() => void onApplyLayout(l.name)}
+                  >
+                    <MenuItem
+                      testId={`view-menu-layout-override-${l.name}`}
+                      onClick={() => void onOverrideLayout(l.name)}
+                    >
+                      Override with current layout
+                    </MenuItem>
+                  </Submenu>
+                ))}
+              </>
+            )}
+            <Separator />
+            {/* Focus mode: maximize the active panel's group over its dock
+                region; exiting restores the previous arrangement. The label is
+                computed when the menu opens (a fresh render), so it always
+                reflects the current state. */}
+            <MenuItem testId="view-menu-maximize" onClick={() => { toggleMaximizeActivePanel(); setOpen(false); }}>
+              <span style={{ display: "flex", justifyContent: "space-between", gap: "2em" }}>
+                <span>{hasMaximizedPanel() ? "Exit maximized panel" : "Maximize panel"}</span>
+                <span style={{ color: "var(--subtle-fg)" }}>Ctrl+Shift+M</span>
+              </span>
+            </MenuItem>
+          </MenuLevelProvider>
         </div>
       )}
     </div>

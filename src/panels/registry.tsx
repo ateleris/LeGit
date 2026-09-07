@@ -18,6 +18,7 @@ import { RefsPanel } from "./Refs/RefsPanel";
 import { ReleaseNotesPanel } from "./ReleaseNotes/ReleaseNotesPanel";
 import { RepositoriesPanel } from "./Repositories/RepositoriesPanel";
 import { ThemeEditorPanel } from "./ThemeEditor/ThemeEditorPanel";
+import { LayoutsPanel } from "./Layouts/LayoutsPanel";
 import { GlobalSettingsPanel } from "./Settings/GlobalSettingsPanel";
 import { RepoSettingsPanel } from "./Settings/RepoSettingsPanel";
 import { PanelApiProvider } from "./PanelApiContext";
@@ -52,6 +53,7 @@ export const GLOBAL_PANELS: PanelDescriptor[] = [
   { id: "global-settings", title: "Global Settings", scope: "global" },
   { id: "repositories", title: "Repositories", scope: "global" },
   { id: "theme-editor", title: "Theme Editor", scope: "global" },
+  { id: "layouts", title: "Layouts", scope: "global" },
 ];
 
 // Menu order: Repo Settings first, then the default layout's main views,
@@ -215,6 +217,7 @@ export const GLOBAL_DOCKVIEW_COMPONENTS: Record<
   repositories: wrap(RepositoriesPanel),
   "theme-editor": wrap(ThemeEditorPanel),
   "global-settings": wrap(GlobalSettingsPanel),
+  layouts: wrap(LayoutsPanel),
 };
 
 export const REPO_DOCKVIEW_COMPONENTS: Record<

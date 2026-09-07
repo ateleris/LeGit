@@ -707,6 +707,8 @@ pub struct AppState {
     pub wsl_hosts: crate::remote::connection::WslHosts,
     /// On-disk root for per-host settings: `hosts/wsl-<distro>.json`.
     pub hosts_data_dir: PathBuf,
+    /// On-disk location for saved panel layouts: `layouts/<name>.legit-layout.json`.
+    pub layouts_dir: PathBuf,
     /// Cached per-host settings, keyed by distro (lazily loaded).
     pub host_settings: RwLock<HashMap<String, HostSettings>>,
 }
@@ -732,11 +734,15 @@ impl AppState {
     ) -> Self {
         let mut hosts: HashMap<HostId, Arc<dyn Host>> = HashMap::new();
         hosts.insert(HostId::Local, Arc::new(LocalHost));
-        // Sibling of `repos/` under the app-data dir.
+        // Siblings of `repos/` under the app-data dir.
         let hosts_data_dir = repos_data_dir
             .parent()
             .map(|p| p.join("hosts"))
             .unwrap_or_else(|| repos_data_dir.join("hosts"));
+        let layouts_dir = repos_data_dir
+            .parent()
+            .map(|p| p.join("layouts"))
+            .unwrap_or_else(|| repos_data_dir.join("layouts"));
         Self {
             repos: RwLock::new(HashMap::new()),
             hosts: Mutex::new(hosts),
@@ -750,6 +756,7 @@ impl AppState {
             transient_ops: Mutex::new(HashMap::new()),
             wsl_hosts: crate::remote::connection::WslHosts::default(),
             hosts_data_dir,
+            layouts_dir,
             host_settings: RwLock::new(HashMap::new()),
         }
     }

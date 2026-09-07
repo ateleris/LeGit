@@ -34,6 +34,9 @@ pub enum AppError {
     #[error("invalid theme: {0}")]
     InvalidTheme(String),
 
+    #[error("invalid layout: {0}")]
+    InvalidLayout(String),
+
     #[error("settings error: {0}")]
     Settings(String),
 

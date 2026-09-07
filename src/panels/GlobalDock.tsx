@@ -6,6 +6,7 @@ import {
 } from "dockview-react";
 import { applyPanelConstraints, useDockviewStore } from "../store/dockview";
 import { useGlobalRegionStore } from "../store/globalRegion";
+import { useLayoutsStore } from "../store/layouts";
 import { GLOBAL_DOCKVIEW_COMPONENTS, GLOBAL_DOCKVIEW_TAB_COMPONENTS, GLOBAL_PANELS, PANEL_TITLES } from "./registry";
 import { applyBakedGlobalLayout, applyGlobalLayoutJson } from "./layoutSnapshot";
 import { DockWatermark } from "./shared/DockWatermark";
@@ -92,6 +93,8 @@ export function readyGlobalDock(api: DockviewApi) {
 
   api.onDidLayoutChange(() => {
     try { persistLayout(api.toJSON()); } catch { /* ignore */ }
+    // The docks no longer match a saved layout once they change.
+    useLayoutsStore.getState().noteDockLayoutChanged();
   });
 
   // Deliver a summon that was waiting for this mount. Deliberately NOT
@@ -156,6 +159,22 @@ export function summonGlobalPanel(id: string) {
     return;
   }
   pendingSummon = id;
+}
+
+/**
+ * Re-add a global panel WITHOUT activating it (a background tab in the
+ * active group). For restoring presence where focus must stay put — e.g. the
+ * Layouts panel after applying a layout replaced the dock; the summon path
+ * would steal focus. No-op when the panel is already open or the dock is
+ * unmounted.
+ */
+export function restoreGlobalPanelInactive(id: string) {
+  const api = useDockviewStore.getState().globalApi;
+  if (!api) return;
+  const desc = GLOBAL_PANELS.find((p) => p.id === id);
+  if (!desc) return;
+  if (api.getPanel(id)) return;
+  api.addPanel({ id: desc.id, component: desc.id, title: desc.title, inactive: true });
 }
 
 /** Open or focus a global panel by id. */

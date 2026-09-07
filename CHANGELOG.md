@@ -12,6 +12,23 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Named layouts.** Save any number of panel arrangements under a name and
+  switch between them from the View menu (click applies; each entry's
+  submenu can override the layout with the current arrangement). The new
+  Layouts panel manages them - save, apply, override, rename, delete,
+  import/export as `.legit-layout.json` files - and offers "Reset to default
+  layout". The whole layout set can be exported/imported as a single file
+  (e.g. when setting up LeGit on a new machine); Import accepts both file
+  kinds.
+
+### Changed
+
+- The View menu's "Save as default layout" / "Reset to default layout"
+  entries were replaced by named layouts; an existing saved default is
+  migrated to a layout called "My layout" automatically.
+
 ## [1.1.0] - 2026-09-03
 
 ### Added

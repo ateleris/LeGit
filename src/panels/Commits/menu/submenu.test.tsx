@@ -233,6 +233,38 @@ describe("Submenu", () => {
     expect(byTestId("rename")).not.toBeNull();
   });
 
+  it("onClickActivate: click runs the action instead of pinning; hover still opens", async () => {
+    // A trigger that doubles as a regular entry (a View-menu layout row:
+    // click applies, the flyout holds the secondary actions).
+    const activate = vi.fn();
+    await act(async () =>
+      root.render(
+        <MenuLevelProvider>
+          <Submenu testId="sub-a" label="A" onClickActivate={activate}>
+            <MenuItem testId="item-a" onClick={() => {}}>
+              a-entry
+            </MenuItem>
+          </Submenu>
+        </MenuLevelProvider>,
+      ),
+    );
+    const trigger = byTestId("sub-a")!;
+    // Keyboard-style activation (no prior hover) runs the action, not the flyout.
+    await click(trigger);
+    expect(activate).toHaveBeenCalledTimes(1);
+    expect(byTestId("item-a")).toBeNull();
+    // Hover still opens the flyout, and a click while it shows must not pin it.
+    await hover(trigger);
+    expect(byTestId("item-a")).not.toBeNull();
+    await click(trigger);
+    expect(activate).toHaveBeenCalledTimes(2);
+    await unhover(trigger);
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(byTestId("item-a")).toBeNull();
+  });
+
   it("the pin resets when the flyout closes", async () => {
     // Pin, close via sibling takeover, reopen by hover: the flyout must be
     // transient again (a stale pin would make every later hover sticky).
