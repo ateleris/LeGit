@@ -19,6 +19,7 @@ import {
   ChevronRight,
   Cloud,
   CornerLeftUp,
+  EyeOff,
   Folder,
   GitBranch,
   GitBranchPlus,
@@ -72,6 +73,7 @@ export const BranchIcon = withDefaults(GitBranch, "BranchIcon");
 export const BranchPlusIcon = withDefaults(GitBranchPlus, "BranchPlusIcon");
 export const RemoteIcon = withDefaults(Cloud, "RemoteIcon");
 export const WslHostIcon = withDefaults(Server, "WslHostIcon");
+export const WatchOffIcon = withDefaults(EyeOff, "WatchOffIcon");
 export const SuperprojectIcon = withDefaults(CornerLeftUp, "SuperprojectIcon");
 export const TagIcon = withDefaults(Tag, "TagIcon");
 export const StashIcon = withDefaults(Archive, "StashIcon");

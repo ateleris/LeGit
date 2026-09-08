@@ -14,16 +14,22 @@
 //! the frontend, which maps it to scoped `queryClient.invalidateQueries`.
 //!
 //! Limitations (documented, accepted for now):
-//! - Gitignored dirs are still *watched* by `notify`; we only filter their
-//!   events post-hoc via a root-`.gitignore` matcher. Pruning them from the
-//!   watch set is a future optimization — the global disable toggle is the
-//!   escape hatch for pathological repos (e.g. huge `node_modules` on a slow FS).
-//! - Registering the watch therefore costs O(whole tree): notify walks the
-//!   worktree up front, one inotify watch per directory on Linux. A home
-//!   directory opened as a repo needs ~540k of them and takes tens of seconds,
-//!   which is why the app starts the watch in the BACKGROUND and refreshes the
-//!   repo once it is live (`start_repo_watcher`) instead of blocking on it.
-//!   Symlinked directories are excluded from that walk (see `WatcherCore::start`).
+//! - On Linux the watch set is PRUNED to non-gitignored directories (one
+//!   NonRecursive inotify watch each; see `PRUNE_WATCH_SET`), so a huge
+//!   ignored tree (`node_modules`, `target`, a package cache) costs nothing.
+//!   Directories created later are added from the event handler, which means
+//!   writes inside a brand-new directory within the debounce window arrive
+//!   only as the directory-creation event itself - correct at the domain
+//!   level (the creation already refreshes Status/Diff), but an individual
+//!   path may be missed. Files force-added (`git add -f`) inside an ignored
+//!   directory are not watched at all - the same blind spot the event filter
+//!   below always had.
+//! - On other platforms the recursive registration walks the whole worktree
+//!   up front (a single ReadDirectoryChangesW/FSEvents handle is cheap; only
+//!   the debouncer's file-id walk pays per entry), which is why the app
+//!   starts the watch in the BACKGROUND and refreshes the repo once it is
+//!   live (`start_repo_watcher`) instead of blocking on it. Symlinked
+//!   directories are excluded from that walk (see `WatcherCore::start`).
 //! - Only the repo-root `.gitignore` feeds the matcher (not nested/global ones);
 //!   it only suppresses redundant refreshes, so `git status` stays authoritative.
 //! - Self-induced events (LeGit's own git ops) also trip the watcher; the
@@ -43,12 +49,14 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
+use std::sync::mpsc;
 use std::time::{Duration, SystemTime};
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
+use ignore::WalkBuilder;
 use notify::event::{AccessKind, AccessMode, ModifyKind};
 use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode};
-use notify_debouncer_full::{new_debouncer_opt, DebounceEventResult, Debouncer, RecommendedCache};
+use notify_debouncer_full::{new_debouncer_opt, DebounceEventResult, RecommendedCache};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -117,10 +125,40 @@ const MAX_TRIGGER_PATHS: usize = 8;
 /// keep it cheap (an event emit / channel send).
 pub type WatchSink = Box<dyn Fn(WatchBatch) + Send + Sync + 'static>;
 
-/// Owns the live debouncer for one repo. Dropping it stops the watch thread and
-/// all callbacks — that is the entire teardown (used on repo close / app exit).
+/// Prune the watch set to non-gitignored directories. Only where a recursive
+/// watch costs one kernel watch PER DIRECTORY (inotify): a home directory
+/// opened as a repo needed ~540k watches (~15-20s, hundreds of MB of kernel
+/// memory) where the non-ignored set is a few hundred. On Windows/macOS a
+/// recursive registration is a single cheap handle and per-directory watches
+/// would be strictly worse (one handle + buffer each), so those keep it.
+const PRUNE_WATCH_SET: bool = cfg!(target_os = "linux");
+
+/// Owner-thread commands. The debouncer lives on a dedicated thread because
+/// the sink callback runs on the debouncer's own thread and must not call
+/// back into it (a shared `Mutex<Debouncer>` would deadlock there); new-dir
+/// registrations go over this channel instead.
+enum WatchCmd {
+    /// Register watches for a directory tree that appeared after start
+    /// (pruned mode only).
+    AddTree(PathBuf),
+    Shutdown,
+}
+
+/// Owns the live debouncer for one repo (via its owner thread). Dropping it
+/// stops the watch thread and all callbacks — that is the entire teardown
+/// (used on repo close / app exit).
 pub struct WatcherCore {
-    _debouncer: Debouncer<RecommendedWatcher, RecommendedCache>,
+    cmd_tx: mpsc::Sender<WatchCmd>,
+    owner: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for WatcherCore {
+    fn drop(&mut self) {
+        let _ = self.cmd_tx.send(WatchCmd::Shutdown);
+        if let Some(owner) = self.owner.take() {
+            let _ = owner.join();
+        }
+    }
 }
 
 impl WatcherCore {
@@ -135,6 +173,8 @@ impl WatcherCore {
         let ignore = build_ignore(&worktree);
         let worktree_cb = worktree.clone();
         let git_dir_cb = git_dir.clone();
+        let (cmd_tx, cmd_rx) = mpsc::channel::<WatchCmd>();
+        let dir_tx = cmd_tx.clone();
         // (size, mtime) per DOMAIN-RELEVANT git-dir path, kept across batches:
         // an event whose file is byte-identical since last time (AV/sync-client
         // attribute or stream write-backs) is dropped instead of refetching.
@@ -165,6 +205,19 @@ impl WatcherCore {
                     // by the fingerprint check below instead.)
                     if is_noise_kind(&ev.event.kind) {
                         continue;
+                    }
+                    // Pruned mode: a directory that appeared after start has
+                    // no watch yet — hand it to the owner thread. The `is_dir`
+                    // stat stays out of `is_new_dir_candidate` so the decision
+                    // is testable without a filesystem.
+                    if PRUNE_WATCH_SET && is_dir_candidate_kind(&ev.event.kind) {
+                        for path in &ev.event.paths {
+                            if is_new_dir_candidate(path, &worktree_cb, &git_dir_cb, &ignore)
+                                && path.is_dir()
+                            {
+                                let _ = dir_tx.send(WatchCmd::AddTree(path.clone()));
+                            }
+                        }
                     }
                     for path in &ev.event.paths {
                         let path_domains = path_contribution(
@@ -210,23 +263,121 @@ impl WatcherCore {
             Config::default().with_follow_symlinks(false),
         )?;
 
-        // Working tree (recursive). `Debouncer::watch` also registers the path
-        // as a cache root so renames are tracked across the tree - on Windows
-        // that walk stats every entry to build the file-id map; on Linux
-        // `RecommendedCache` is `NoCache` and the walk costs nothing.
-        debouncer.watch(&worktree, RecursiveMode::Recursive)?;
-
-        // Watch the git dir separately only when it isn't already under the
-        // working tree (the common `<toplevel>/.git` case is covered above).
-        if !git_dir.starts_with(&worktree) {
+        if PRUNE_WATCH_SET {
+            // The git dir is always watched recursively: ref writes create
+            // directories (`refs/heads/feature/`) whose files must be seen
+            // immediately - the debounced dynamic-add path would race them.
+            // Its size is bounded (objects fan-out, refs), unlike a worktree.
             debouncer.watch(&git_dir, RecursiveMode::Recursive)?;
+            debouncer.watch(&worktree, RecursiveMode::NonRecursive)?;
+            for dir in watch_roots(&worktree, &git_dir) {
+                if let Err(e) = debouncer.watch(&dir, RecursiveMode::NonRecursive) {
+                    match e.kind {
+                        // Out of kernel watches: the watch as a whole is
+                        // broken - fail start so the UI can say so.
+                        notify::ErrorKind::MaxFilesWatch => return Err(e),
+                        // A directory can vanish between the walk and its
+                        // registration (build churn while opening the repo);
+                        // losing one directory must not fail the whole watch.
+                        _ => {
+                            tracing::warn!(dir = %dir.display(), err = %e, "failed to watch directory")
+                        }
+                    }
+                }
+            }
+        } else {
+            // Working tree (recursive). `Debouncer::watch` also registers the
+            // path as a cache root so renames are tracked across the tree - on
+            // Windows that walk stats every entry to build the file-id map.
+            debouncer.watch(&worktree, RecursiveMode::Recursive)?;
+
+            // Watch the git dir separately only when it isn't already under the
+            // working tree (the common `<toplevel>/.git` case is covered above).
+            if !git_dir.starts_with(&worktree) {
+                debouncer.watch(&git_dir, RecursiveMode::Recursive)?;
+            }
         }
 
-        tracing::debug!(worktree = %worktree.display(), git_dir = %git_dir.display(), "repo watcher started");
+        let owner = std::thread::spawn(move || {
+            while let Ok(cmd) = cmd_rx.recv() {
+                match cmd {
+                    WatchCmd::AddTree(root) => {
+                        for dir in watch_roots(&root, &git_dir) {
+                            if let Err(e) = debouncer.watch(&dir, RecursiveMode::NonRecursive) {
+                                tracing::warn!(dir = %dir.display(), err = %e, "failed to watch new directory");
+                            }
+                        }
+                    }
+                    WatchCmd::Shutdown => break,
+                }
+            }
+            // The debouncer drops here, stopping its threads and callbacks.
+        });
+
+        tracing::debug!(worktree = %worktree.display(), "repo watcher started");
         Ok(WatcherCore {
-            _debouncer: debouncer,
+            cmd_tx,
+            owner: Some(owner),
         })
     }
+}
+
+/// The non-gitignored directories under `root` (including `root` itself),
+/// excluding the `git_dir` subtree — the pruned watch set. Full nested
+/// `.gitignore` semantics via the `ignore` crate; ignoring a directory can
+/// never hide trackable content (git cannot re-include inside an excluded
+/// directory), so pruning matched directories is safe. Symlinks are not
+/// followed, mirroring the watcher config.
+fn watch_roots(root: &Path, git_dir: &Path) -> Vec<PathBuf> {
+    let git_dir = git_dir.to_path_buf();
+    let mut builder = WalkBuilder::new(root);
+    builder
+        .hidden(false)
+        .parents(false)
+        .ignore(false)
+        .git_global(false)
+        .git_exclude(true)
+        .require_git(false)
+        .follow_links(false)
+        .filter_entry(move |e| e.path() != git_dir);
+    let mut out = Vec::new();
+    for entry in builder.build() {
+        match entry {
+            Ok(e) if e.file_type().map(|t| t.is_dir()).unwrap_or(false) => {
+                out.push(e.into_path());
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!(err = %e, "watch-set walk error"),
+        }
+    }
+    out
+}
+
+/// Event kinds that can introduce a directory the watch set doesn't cover
+/// yet: creations and renames/moves INTO the tree. Everything else (data
+/// writes, removals) can only involve paths that were already there.
+fn is_dir_candidate_kind(kind: &EventKind) -> bool {
+    matches!(
+        kind,
+        EventKind::Create(_) | EventKind::Modify(ModifyKind::Name(_))
+    )
+}
+
+/// Whether `path` would belong to the pruned watch set: a worktree path
+/// outside the git dir that the ignore matcher does not exclude. The caller
+/// still has to confirm it is a directory (a stat, kept out of here so the
+/// decision is testable without a filesystem).
+fn is_new_dir_candidate(path: &Path, worktree: &Path, git_dir: &Path, ignore: &Gitignore) -> bool {
+    if path.starts_with(git_dir) {
+        return false;
+    }
+    let Ok(rel) = path.strip_prefix(worktree) else {
+        return false;
+    };
+    if rel.as_os_str().is_empty() || rel.starts_with(".git") {
+        return false;
+    }
+    !ignore.matched_path_or_any_parents(rel, true).is_ignore()
 }
 
 /// Map one changed path to the query domains it affects, accumulating into `out`.
@@ -869,6 +1020,155 @@ mod tests {
         assert_eq!(
             display_path(&wt.join("src/main.rs"), wt, gd),
             Path::new("src").join("main.rs").to_string_lossy()
+        );
+    }
+
+    // --- pruned watch set ---------------------------------------------------
+
+    #[test]
+    fn watch_roots_skips_gitignored_directories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let wt = tmp.path().join("repo");
+        let gd = wt.join(".git");
+        for d in ["src", "node_modules/dep", "target/debug"] {
+            std::fs::create_dir_all(wt.join(d)).unwrap();
+        }
+        std::fs::create_dir_all(&gd).unwrap();
+        std::fs::write(wt.join(".gitignore"), "node_modules/\ntarget/\n").unwrap();
+
+        let roots = watch_roots(&wt, &gd);
+        assert!(roots.contains(&wt), "the worktree root itself is watched");
+        assert!(roots.contains(&wt.join("src")));
+        assert!(
+            !roots.iter().any(|p| p.starts_with(wt.join("node_modules"))),
+            "gitignored trees must not be in the watch set: {roots:?}"
+        );
+        assert!(!roots.iter().any(|p| p.starts_with(wt.join("target"))));
+        assert!(
+            !roots.iter().any(|p| p.starts_with(&gd)),
+            "the git dir is watched separately (recursively): {roots:?}"
+        );
+    }
+
+    #[test]
+    fn watch_roots_respects_nested_gitignore_files() {
+        // The pruned set uses full nested-.gitignore semantics (safe: git
+        // cannot re-include content inside an excluded directory), even
+        // though event filtering only knows the root .gitignore.
+        let tmp = tempfile::tempdir().unwrap();
+        let wt = tmp.path().join("repo");
+        let gd = wt.join(".git");
+        std::fs::create_dir_all(gd.clone()).unwrap();
+        std::fs::create_dir_all(wt.join("sub/build/out")).unwrap();
+        std::fs::create_dir_all(wt.join("sub/src")).unwrap();
+        std::fs::write(wt.join("sub/.gitignore"), "build/\n").unwrap();
+
+        let roots = watch_roots(&wt, &gd);
+        assert!(roots.contains(&wt.join("sub")));
+        assert!(roots.contains(&wt.join("sub/src")));
+        assert!(
+            !roots.iter().any(|p| p.starts_with(wt.join("sub/build"))),
+            "nested-ignored trees must be pruned: {roots:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn watch_roots_does_not_follow_symlinked_directories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let wt = tmp.path().join("repo");
+        let gd = wt.join(".git");
+        let outside = tmp.path().join("outside/deep");
+        std::fs::create_dir_all(&gd).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(tmp.path().join("outside"), wt.join("linked")).unwrap();
+
+        let roots = watch_roots(&wt, &gd);
+        assert!(
+            !roots.iter().any(|p| p.ends_with("linked") || p.starts_with(tmp.path().join("outside"))),
+            "symlinked directories must not enter the watch set: {roots:?}"
+        );
+    }
+
+    #[test]
+    fn new_dir_candidates_are_worktree_dirs_outside_git_dir_and_ignores() {
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        let mut b = GitignoreBuilder::new(wt);
+        b.add_line(None, "node_modules/").unwrap();
+        let ig = b.build().unwrap();
+
+        assert!(is_new_dir_candidate(Path::new("/repo/newdir"), wt, gd, &ig));
+        assert!(is_new_dir_candidate(Path::new("/repo/a/b/c"), wt, gd, &ig));
+        // Ignored (directly or via an ignored parent): no watch needed.
+        assert!(!is_new_dir_candidate(Path::new("/repo/node_modules"), wt, gd, &ig));
+        assert!(!is_new_dir_candidate(Path::new("/repo/node_modules/dep"), wt, gd, &ig));
+        // The git dir is covered by its own recursive watch.
+        assert!(!is_new_dir_candidate(Path::new("/repo/.git/refs/heads/f"), wt, gd, &ig));
+        // Outside the worktree, and the worktree itself: never.
+        assert!(!is_new_dir_candidate(Path::new("/elsewhere/x"), wt, gd, &ig));
+        assert!(!is_new_dir_candidate(Path::new("/repo"), wt, gd, &ig));
+    }
+
+    #[test]
+    fn dir_candidate_kinds_are_creates_and_renames() {
+        use notify::event::{CreateKind, DataChange, RenameMode};
+        assert!(is_dir_candidate_kind(&EventKind::Create(CreateKind::Folder)));
+        assert!(is_dir_candidate_kind(&EventKind::Create(CreateKind::Any)));
+        assert!(is_dir_candidate_kind(&EventKind::Modify(ModifyKind::Name(
+            RenameMode::To
+        ))));
+        assert!(!is_dir_candidate_kind(&EventKind::Modify(ModifyKind::Data(
+            DataChange::Any
+        ))));
+        assert!(!is_dir_candidate_kind(&EventKind::Remove(
+            notify::event::RemoveKind::Any
+        )));
+    }
+
+    // Directories created after start must still produce events (pruned mode
+    // adds their watches dynamically from the event handler; recursive mode
+    // covers them by construction).
+    #[test]
+    fn events_in_directories_created_after_start_are_reported() {
+        use std::sync::mpsc;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let worktree = tmp.path().join("repo");
+        let git_dir = worktree.join(".git");
+        std::fs::create_dir_all(&git_dir).unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        let _core = WatcherCore::start(
+            worktree.clone(),
+            git_dir,
+            Box::new(move |batch| {
+                let _ = tx.send(batch);
+            }),
+        )
+        .unwrap();
+
+        // Nested creation in one burst (mkdir -p shape).
+        let nested = worktree.join("newdir/nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("directory creation reports a change");
+
+        // Writes inside the new directory must be seen once its watch is
+        // live; registration races the debounced create event, so retry.
+        let mut reported = false;
+        for i in 0..20 {
+            std::fs::write(nested.join("file.txt"), format!("{i}")).unwrap();
+            if let Ok(batch) = rx.recv_timeout(Duration::from_millis(700)) {
+                if batch.domains.contains(&ChangeDomain::Status) {
+                    reported = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            reported,
+            "a write inside a directory created after start must report a change"
         );
     }
 

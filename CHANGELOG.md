@@ -12,6 +12,19 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- A repo whose file watcher failed to start now shows a "live updates off"
+  badge on its tab with the reason (previously the failure was only a log
+  line and the repo silently stopped auto-refreshing).
+
+### Changed
+
+- On Linux/WSL the file watcher no longer registers watches inside
+  gitignored directories, so repos with huge ignored trees (`node_modules`,
+  `target`, package caches) start their watch in a fraction of the time and
+  no longer risk the OS watch limit.
+
 ## [1.1.1] - 2026-09-08
 
 ### Added

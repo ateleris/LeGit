@@ -24,6 +24,17 @@ export interface RepoSummary {
   /** Persistable locator string (bare path locally, `wsl://<distro>/<path>`
    * remotely) — what recents store and `openRepo` accepts. */
   locator?: string;
+  /** Why the repo's filesystem watcher failed to start; null/absent =
+   * watching (or watching deliberately disabled). Drives the "live updates
+   * off" badge on the repo tab. */
+  watch_error?: string | null;
+}
+
+/** Payload of the `legit://watch-state` event: a repo's watcher came up
+ * (error null) or failed to start (error = reason). */
+export interface WatchStatePayload {
+  repo_id: RepoId;
+  error: string | null;
 }
 
 /** One WSL distribution (backend `remote::wsl::WslDistro`). */

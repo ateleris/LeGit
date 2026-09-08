@@ -89,10 +89,6 @@ const PAGE_SIZE = 500;
 // Cap for the toolbar search: hits are cycled, and both underlying walks are
 // capped - a big cap costs only git time.
 
-// Easter egg (inherited from the retired Search panel): searching for
-// "abdäsele" swaps the window title between "LeGit" and "LegIt" (dev builds:
-// "LeGit DEV" / "LegIt DEV"). Purely session-local: nothing is persisted, a
-// restart restores the real title.
 async function toggleAbdaesele(): Promise<void> {
   const win = getCurrentWindow();
   const title = await win.title();

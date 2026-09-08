@@ -645,6 +645,7 @@ impl RepoSession {
                 .to_string(),
             host: self.locator.host_ref(),
             locator: self.locator.to_persist_string(),
+            watch_error: None,
         }
     }
 }
@@ -663,6 +664,12 @@ pub struct RepoSummary {
     /// bookkeeping stores and `open_repo` accepts.
     #[serde(default)]
     pub locator: String,
+    /// Why the repo's filesystem watcher failed to start (`None` = watching,
+    /// or watching deliberately disabled). Feeds the "live updates off" badge
+    /// on the repo tab. `RepoSession::summary` leaves it `None`;
+    /// `AppState::attach_watch_error` fills it where state is at hand.
+    #[serde(default)]
+    pub watch_error: Option<String>,
 }
 
 /// `repo_clone`'s result: the opened repo plus any LFS pointer stubs the
@@ -688,6 +695,13 @@ pub struct AppState {
     /// agent). `std::sync::Mutex` (not async) so close and teardown stay
     /// trivial. See `crate::watcher`.
     pub watchers: Mutex<HashMap<RepoId, WatchHandle>>,
+    /// Why a repo's watcher failed to start (keyed by `RepoId`; absent =
+    /// watching or deliberately disabled). Lives here, not only in an event:
+    /// a failure during restore can be emitted before the frontend mounts its
+    /// listener, so the state must be readable later — it is carried on
+    /// `RepoSummary` (`list_repos`), with `WATCH_STATE_EVENT` as the live
+    /// update.
+    pub watch_errors: Mutex<HashMap<RepoId, String>>,
     pub global_settings: Arc<RwLock<GlobalSettings>>,
     /// Resolved git binary path the runner uses *right now*.
     pub git_path: RwLock<PathBuf>,
@@ -747,6 +761,7 @@ impl AppState {
             repos: RwLock::new(HashMap::new()),
             hosts: Mutex::new(hosts),
             watchers: Mutex::new(HashMap::new()),
+            watch_errors: Mutex::new(HashMap::new()),
             global_settings: Arc::new(RwLock::new(global_settings)),
             git_path: RwLock::new(git_path),
             global_settings_path,
@@ -759,6 +774,13 @@ impl AppState {
             layouts_dir,
             host_settings: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// Fill `RepoSummary::watch_error` from `watch_errors` for summaries
+    /// crossing IPC (a `RepoSession` cannot — it has no state access).
+    pub fn attach_watch_error(&self, mut summary: RepoSummary) -> RepoSummary {
+        summary.watch_error = self.watch_errors.lock().unwrap().get(&summary.id).cloned();
+        summary
     }
 
     pub async fn get_session(&self, repo_id: &str) -> Result<Arc<RepoSession>, AppError> {

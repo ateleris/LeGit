@@ -74,7 +74,7 @@ pub async fn open_session(
         let mut repos = state.repos.write().await;
         if let Some(existing) = repos.values().find(|s| sessions_match(s, &locator)) {
             tracing::info!(locator = %locator.to_persist_string(), id = %existing.id, "open: reusing existing session");
-            return existing.summary();
+            return state.attach_watch_error(existing.summary());
         }
         // Carry over settings a pre-locator version keyed by the repo's UNC
         // toplevel (sync fs, allowed under the guard - no await).
@@ -282,6 +282,10 @@ async fn start_repo_watcher(state: &AppState, app: &tauri::AppHandle, session: &
                 }
                 state.watchers.lock().unwrap().insert(session.id.clone(), w);
             }
+            // Clear a stale failure (e.g. a retry via the watcher toggle) so
+            // the "live updates off" badge disappears.
+            state.watch_errors.lock().unwrap().remove(&session.id);
+            crate::watcher::emit_watch_state(app, &session.id, None);
             // A watch only reports events from its registration onward, and the
             // repo has been on screen since before that: anything that changed
             // in between would never arrive. Refresh once, now.
@@ -289,6 +293,17 @@ async fn start_repo_watcher(state: &AppState, app: &tauri::AppHandle, session: &
         }
         Err(e) => {
             tracing::warn!(repo_id = %session.id, err = %e, "failed to start repo watcher");
+            // The repo silently loses live updates otherwise (it happened for
+            // real: "OS file watch limit reached") — record it for the tab
+            // badge. State first, event second: a reader must never see the
+            // event and then miss the state.
+            let msg = e.to_string();
+            state
+                .watch_errors
+                .lock()
+                .unwrap()
+                .insert(session.id.clone(), msg.clone());
+            crate::watcher::emit_watch_state(app, &session.id, Some(&msg));
         }
     }
 }
@@ -769,6 +784,7 @@ pub async fn close_repo(
 
     // Stop and drop the repo's watcher (no-op if watching was disabled).
     state.watchers.lock().unwrap().remove(&repo_id);
+    state.watch_errors.lock().unwrap().remove(&repo_id);
 
     if let Some(locator) = locator {
         let key = locator.to_persist_string();
@@ -855,6 +871,12 @@ pub async fn set_watcher_enabled(
         }
     } else {
         state.watchers.lock().unwrap().clear();
+        // Watching is now OFF deliberately: the failure badge must not
+        // linger (or the tab would claim a failure that no longer applies).
+        let failed: Vec<String> = state.watch_errors.lock().unwrap().drain().map(|(id, _)| id).collect();
+        for id in failed {
+            crate::watcher::emit_watch_state(&app, &id, None);
+        }
     }
     Ok(())
 }
@@ -865,7 +887,10 @@ pub async fn list_repos(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<RepoSummary>, AppError> {
     let repos = state.repos.read().await;
-    let mut out: Vec<RepoSummary> = repos.values().map(|s| s.summary()).collect();
+    let mut out: Vec<RepoSummary> = repos
+        .values()
+        .map(|s| state.attach_watch_error(s.summary()))
+        .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
 }

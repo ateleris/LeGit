@@ -56,6 +56,9 @@ interface RepoStore {
   setActive: (id: RepoId | null) => void;
   /** Reorder the open-repo tabs to `orderedIds` and persist the order. */
   reorderRepos: (orderedIds: RepoId[]) => void;
+  /** Patch a repo's watch state (from the `legit://watch-state` event):
+   * error = watcher failed to start, null = watching again. */
+  setWatchError: (id: RepoId, error: string | null) => void;
 
   /** Fetch and cache repo settings for the given repo. */
   loadRepoSettings: (id: RepoId) => Promise<void>;
@@ -199,6 +202,14 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
     // must not linger (or resurrect if the repo is reopened later).
     useConsoleStore.getState().dropRepo(id);
     await get().refresh();
+  },
+
+  setWatchError(id, error) {
+    set((s) => ({
+      openRepos: s.openRepos.map((r) =>
+        r.id === id ? { ...r, watch_error: error } : r
+      ),
+    }));
   },
 
   setActive(id: RepoId | null) {

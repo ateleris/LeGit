@@ -73,12 +73,19 @@ recursive `ReadDirectoryChangesW` handle is otherwise cheap.
 
 ## What is left (BACKLOG, "Smaller follow-ups")
 
-- Gitignored directories are still watched; only their events are filtered.
-  Pruning them from the watch set is the real fix for pathological trees.
-- A watch that fails to start is still only a log line. It needs a persistent
-  surface (a "live updates off" badge on the repo tab) — and the state has to
-  live in `AppState`, because an event emitted during restore can precede the
-  frontend's listener.
+Both follow-ups landed 2026-09-08:
+
+- Gitignored directories are pruned from the watch set on Linux (the inotify
+  platform): `WatcherCore::start` walks with the `ignore` crate and registers
+  each non-ignored directory NonRecursive (git dir stays recursive — ref
+  writes create directories whose files must be seen immediately). New
+  directories are added from the event handler via a channel to an owner
+  thread that holds the debouncer. Windows/macOS keep the single recursive
+  watch (one handle is cheap there; per-directory handles would be worse).
+- A failed watch is now visible: `AppState::watch_errors` (state, because an
+  event emitted during restore can precede the frontend's listener), carried
+  on `RepoSummary::watch_error`, live-updated via `legit://watch-state`, and
+  rendered as the "live updates off" badge on the repo tab.
 
 ## Testing note
 

@@ -14,6 +14,30 @@ use legit_watch::WatchSink;
 /// Tauri event channel carrying which query domains changed for a repo.
 pub const REPO_CHANGED_EVENT: &str = "legit://repo-changed";
 
+/// Tauri event channel carrying a repo's watch state: `error` set = the
+/// watcher failed to start (live updates off), `None` = watching. The live
+/// counterpart of `RepoSummary::watch_error` / `AppState::watch_errors` — a
+/// failure during restore can precede the frontend listener, so the event
+/// alone would be lossy.
+pub const WATCH_STATE_EVENT: &str = "legit://watch-state";
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct WatchStatePayload {
+    pub repo_id: String,
+    pub error: Option<String>,
+}
+
+/// Emit [`WATCH_STATE_EVENT`] for `repo_id`.
+pub fn emit_watch_state(app: &AppHandle, repo_id: &str, error: Option<&str>) {
+    let payload = WatchStatePayload {
+        repo_id: repo_id.to_string(),
+        error: error.map(str::to_string),
+    };
+    if let Err(e) = app.emit(WATCH_STATE_EVENT, payload) {
+        tracing::warn!(err = %e, "failed to emit watch-state event");
+    }
+}
+
 /// A sink that emits each batch as [`REPO_CHANGED_EVENT`] for `repo_id`.
 pub fn emit_sink(app: AppHandle, repo_id: String) -> WatchSink {
     Box::new(move |batch: WatchBatch| {

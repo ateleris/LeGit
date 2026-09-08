@@ -11,6 +11,7 @@ import { RepoOverflowMenu } from "./RepoOverflowMenu";
 import { RepoAddMenu } from "./RepoAddMenu";
 import { CloneTabs } from "./CloneTab";
 import { HostBadge } from "./shared/HostBadge";
+import { WatchOffBadge } from "./shared/WatchOffBadge";
 import { useCloneStore } from "../store/clone";
 
 const DRAG_THRESHOLD = 4; // px before a press becomes a drag
@@ -258,6 +259,7 @@ export function RepoTabBar() {
               title={repo.path}
             >
               {repo.host && <HostBadge distro={repo.host.distro} />}
+              {repo.watch_error != null && <WatchOffBadge reason={repo.watch_error} />}
               <span className="legit-tab__name">{repo.name}</span>
               <button
                 className="legit-tab__close"

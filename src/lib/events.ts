@@ -5,6 +5,7 @@ import type {
   RemoteHostStatusPayload,
   RemoteProgressPayload,
   RepoChangedPayload,
+  WatchStatePayload,
 } from "./types";
 
 /** Tauri event channel used by `console_exec`. Matches the constant in
@@ -32,6 +33,21 @@ export async function onRepoChanged(
 ): Promise<() => void> {
   const unlisten = await listen<RepoChangedPayload>(
     REPO_CHANGED_EVENT,
+    (event) => handler(event.payload)
+  );
+  return unlisten;
+}
+
+/** Tauri event channel for a repo's watch state (watcher failed to start /
+ *  came up). Matches `WATCH_STATE_EVENT` in `src-tauri/src/watcher.rs`. */
+export const WATCH_STATE_EVENT = "legit://watch-state";
+
+/** Subscribe to watch-state events. Returns an unsubscribe function. */
+export async function onWatchState(
+  handler: (payload: WatchStatePayload) => void
+): Promise<() => void> {
+  const unlisten = await listen<WatchStatePayload>(
+    WATCH_STATE_EVENT,
     (event) => handler(event.payload)
   );
   return unlisten;

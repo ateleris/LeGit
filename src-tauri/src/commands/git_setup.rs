@@ -125,6 +125,7 @@ pub async fn set_repo_git_path(
     // them; open_session starts a new watcher for it.
     state.repos.write().await.remove(&repo_id);
     state.watchers.lock().unwrap().remove(&repo_id);
+    state.watch_errors.lock().unwrap().remove(&repo_id);
     let summary = open_session(
         &state,
         &app,
