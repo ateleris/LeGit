@@ -12,6 +12,8 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-09-08
+
 ### Added
 
 - **Named layouts.** Save any number of panel arrangements under a name and
