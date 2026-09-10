@@ -62,6 +62,14 @@ interface GraphCellProps {
    */
   isStash?: boolean;
   /**
+   * Stash-node fill override: the BASE commit's lane colour (per-theme
+   * `stashBaseLaneColor` toggle), so a stash reads as belonging to the
+   * branch it was taken from. Null/absent = the row's own lane colour. Only
+   * the node square recolours - the connector stubs are edge geometry and
+   * keep the row lane.
+   */
+  stashNodeColor?: string | null;
+  /**
    * Resolved avatar image URL (opt-in `commit_avatars` setting): when set,
    * the dot renders as the avatar clipped to a circle with a lane-coloured
    * ring; `null` falls back to the plain dot. Resolved from the author email
@@ -164,6 +172,7 @@ export function GraphCell({
   ownLanePassThrough = false,
   hollow = false,
   isStash = false,
+  stashNodeColor = null,
   avatarUrl = null,
 }: GraphCellProps) {
   const halfRow = rowHeight / 2;
@@ -309,7 +318,7 @@ export function GraphCell({
           the synthetic working-directory row; otherwise a filled lane-coloured
           dot. */}
       {isStash ? (
-        <StashNode cx={dotX} cy={halfRow} dotRadius={dotRadius} color={dotColor} />
+        <StashNode cx={dotX} cy={halfRow} dotRadius={dotRadius} color={stashNodeColor ?? dotColor} />
       ) : hollow ? (
         <circle
           cx={dotX} cy={halfRow} r={dotRadius}

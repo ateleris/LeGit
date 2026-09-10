@@ -1295,8 +1295,10 @@ export interface CommitDetails {
 export type TokenFilterId =
   | "lighter-soft"
   | "lighter"
+  | "lighter-strong"
   | "darker-soft"
   | "darker"
+  | "darker-strong"
   | "faded"
   | "subtle";
 
@@ -1316,4 +1318,21 @@ export interface ThemeDocument {
   description?: string;
   palette: Record<string, string>;
   tokens: Record<string, ThemeTokenBinding>;
+  /** Colour branch chips from their graph lane instead of the static
+   * ref.branch/ref.remote tokens. Optional and additive: absent = off, and
+   * both validators ignore unknown keys, so older files stay valid. */
+  laneColoredBranchChips?: boolean;
+  /** Per-part filters applied to the LANE colour while
+   * `laneColoredBranchChips` is on; a null/absent part uses the raw lane
+   * colour. Defaults (fg raw, border Faded, bg Subtle) mirror the static
+   * chips' alpha recipe in the lane's hue. */
+  laneChipFilters?: {
+    fg?: TokenFilterId | null;
+    border?: TokenFilterId | null;
+    bg?: TokenFilterId | null;
+  };
+  /** Colour a stash node with the lane of its BASE commit instead of the
+   * lane the stash row itself occupies, so it reads as belonging to the
+   * branch it was taken from. Optional and additive; absent = off. */
+  stashBaseLaneColor?: boolean;
 }

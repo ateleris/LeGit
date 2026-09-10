@@ -11,6 +11,8 @@ import { InlineRenameInput } from "./InlineRenameInput";
 import { buildChips, computeVisibleCount } from "./refChips";
 import type { WorktreeMark } from "../../Worktrees/worktreeRows";
 import { checkedOutInWorktreeMessage } from "../../../lib/switchFeedback";
+import { filterCssValue } from "../../../theme/filters";
+import type { TokenFilterId } from "../../../lib/types";
 import { notify } from "../../../store/notifications";
 import type { ChipDescriptor } from "./refChips";
 
@@ -85,6 +87,9 @@ interface RefsCellProps {
   worktreeHeads?: { name: string; path: string; dirty: boolean }[];
   /** Open a worktree as its own repo tab (worktree-head chip menu). */
   onOpenWorktree?: (path: string) => void;
+  /** Lane-coloured chips (per-theme toggle): the ROW's lane colour as a CSS
+   *  var() string plus the theme's per-part filters, or null when off. */
+  laneChip?: LaneChipStyle | null;
   /** Hide merge/rebase entries while a merge/rebase is already running. */
   opInProgress?: boolean;
   /** Merge `target` (local name or remote ref) into the current branch. */
@@ -96,7 +101,7 @@ interface RefsCellProps {
 const CHIP_GAP = 3;
 
 /** Renders ref decoration chips for a commit row. */
-export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, renamingBranch, onBranchRenameSave, onBranchRenameCancel, creatingBranch, onCreateBranchSave, onCreateBranchCancel, creatingTag, onCreateTagSave, onCreateTagCancel, pushedTags, tagTargetsOnRemote, tagRemote, remotes, onTagPush, onTagDelete, onTagDeleteRemote, onBranchCheckout, onBranchRename, onBranchPush, onBranchSetUpstream, upstreamCandidatesFor, onBranchDelete, onRemoteCheckout, onRemoteBranchDelete, currentBranch, opInProgress, onBranchMerge, onBranchRebaseOnto, worktreeBranches, worktreeHeads, onOpenWorktree }: RefsCellProps) {
+export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, renamingBranch, onBranchRenameSave, onBranchRenameCancel, creatingBranch, onCreateBranchSave, onCreateBranchCancel, creatingTag, onCreateTagSave, onCreateTagCancel, pushedTags, tagTargetsOnRemote, tagRemote, remotes, onTagPush, onTagDelete, onTagDeleteRemote, onBranchCheckout, onBranchRename, onBranchPush, onBranchSetUpstream, upstreamCandidatesFor, onBranchDelete, onRemoteCheckout, onRemoteBranchDelete, currentBranch, opInProgress, onBranchMerge, onBranchRebaseOnto, worktreeBranches, worktreeHeads, onOpenWorktree, laneChip }: RefsCellProps) {
   const { openMenu, closeMenu } = usePanelContextMenu();
   const [visibleCount, setVisibleCount] = useState(Number.MAX_SAFE_INTEGER);
   const [popover, setPopover] = useState<{ x: number; y: number } | null>(null);
@@ -355,6 +360,7 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
         textSize={textSize}
         tagPushed={tagPushed}
         worktreeMark={worktreeMark}
+        laneChip={laneChip}
         tagRemote={tagRemote ?? null}
         unclamped={unclamped}
         onContextMenu={(e) => openMenu(e, menuSection)}
@@ -492,6 +498,8 @@ interface ChipProps {
   tagRemote?: string | null;
   /** Branch chips: the OTHER worktree this branch is checked out in. */
   worktreeMark?: WorktreeMark | null;
+  /** Lane-coloured mode: the row's lane colour + part filters. */
+  laneChip?: LaneChipStyle | null;
   /** Lift the row clamp (`maxWidth: 160`): overflow-popover chips exist to
    *  reveal the collapsed refs, so they may use the popover's full width. */
   unclamped?: boolean;
@@ -598,7 +606,7 @@ function ChipLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = null, worktreeMark = null, unclamped = false, onContextMenu, onDoubleClickAction }: ChipProps) {
+function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = null, worktreeMark = null, laneChip = null, unclamped = false, onContextMenu, onDoubleClickAction }: ChipProps) {
   const handleContextMenu = onContextMenu;
   const handleDoubleClick = onDoubleClickAction
     ? (e: React.MouseEvent) => {
@@ -651,7 +659,7 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
         <span
           onContextMenu={handleContextMenu}
           onDoubleClick={handleDoubleClick}
-          style={chipStyle({ variant: "branch", isCheckedOut, textSize, unclamped })}
+          style={chipStyle({ variant: "branch", isCheckedOut, textSize, unclamped, laneChip })}
           title={`${chip.value}${isCheckedOut ? " — checked out" : ""}${wtHint}${checkoutHint}`}
         >
           {isCheckedOut && <CurrentDot />}
@@ -672,7 +680,7 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
         <span
           onContextMenu={handleContextMenu}
           onDoubleClick={handleDoubleClick}
-          style={chipStyle({ variant: "branch", isCheckedOut, textSize, unclamped })}
+          style={chipStyle({ variant: "branch", isCheckedOut, textSize, unclamped, laneChip })}
           title={`${shortBranch(chip.local)} → ${shortRemote(chip.remote)}${isCheckedOut ? " — checked out" : ""}${wtHint}${checkoutHint}`}
         >
           {isCheckedOut && <CurrentDot />}
@@ -687,7 +695,7 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
         <span
           onContextMenu={handleContextMenu}
           onDoubleClick={handleDoubleClick}
-          style={chipStyle({ variant: "remote", textSize, unclamped })}
+          style={chipStyle({ variant: "remote", textSize, unclamped, laneChip })}
           title={`${chip.value}${checkoutHint}`}
         >
           <RemoteIcon /> <ChipLabel>{shortRemote(chip.value)}</ChipLabel>
@@ -854,6 +862,15 @@ type ChipVariant =
   | "head"
   | "other";
 
+/** Lane-coloured chip inputs: the row's lane colour (a CSS var() string)
+ *  and the theme's per-part filters applied to it (null = raw lane). */
+export interface LaneChipStyle {
+  tint: string;
+  fg: TokenFilterId | null;
+  border: TokenFilterId | null;
+  bg: TokenFilterId | null;
+}
+
 // Chip colours are theme tokens (see src/theme/tokens.ts, group "Refs"). The
 // fallbacks preserve the previous hardcoded look if a theme omits a token.
 function chipStyle({
@@ -861,6 +878,7 @@ function chipStyle({
   isCheckedOut,
   textSize,
   unclamped,
+  laneChip,
 }: {
   variant: ChipVariant;
   isCheckedOut?: boolean;
@@ -868,6 +886,11 @@ function chipStyle({
   /** Popover chips reveal collapsed refs: replace the row clamp (160px) with
    *  the container's width so the full name shows. */
   unclamped?: boolean;
+  /** Lane-coloured mode (per-theme toggle): the row's graph lane colour and
+   *  the theme's per-part filters. Branch and remote chips derive fg,
+   *  border, and bg by applying each part's filter to the lane colour;
+   *  current stays marked by dot/weight/border width. */
+  laneChip?: LaneChipStyle | null;
 }): React.CSSProperties {
   const base: React.CSSProperties = {
     ...BASE_CHIP,
@@ -876,6 +899,15 @@ function chipStyle({
   };
   switch (variant) {
     case "branch":
+      if (laneChip) {
+        return {
+          ...base,
+          background: filterCssValue(laneChip.bg, laneChip.tint),
+          border: `${isCheckedOut ? 1.5 : 1}px solid ${filterCssValue(laneChip.border, laneChip.tint)}`,
+          color: filterCssValue(laneChip.fg, laneChip.tint),
+          fontWeight: isCheckedOut ? 600 : 400,
+        };
+      }
       return {
         ...base,
         background: isCheckedOut
@@ -891,6 +923,16 @@ function chipStyle({
       };
 
     case "remote":
+      if (laneChip) {
+        // Remote chips follow their lane too; the cloud icon keeps telling
+        // them apart from local branch chips.
+        return {
+          ...base,
+          background: filterCssValue(laneChip.bg, laneChip.tint),
+          border: `1px solid ${filterCssValue(laneChip.border, laneChip.tint)}`,
+          color: filterCssValue(laneChip.fg, laneChip.tint),
+        };
+      }
       return {
         ...base,
         background: "var(--ref-remote-bg, rgba(170, 130, 255, 0.15))",

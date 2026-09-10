@@ -35,7 +35,7 @@ interface ThemeStore {
   cancelEditing: () => void;
   updateDraftPalette: (palette: Record<string, string>) => void;
   updateDraftTokens: (tokens: ThemeDocument["tokens"]) => void;
-  updateDraftMeta: (patch: Partial<Pick<ThemeDocument, "name" | "description" | "author">>) => void;
+  updateDraftMeta: (patch: Partial<Pick<ThemeDocument, "name" | "description" | "author" | "laneColoredBranchChips" | "laneChipFilters" | "stashBaseLaneColor">>) => void;
   saveDraftAs: (name: string) => Promise<void>;
   deleteUserTheme: (name: string) => Promise<void>;
   importThemeFromJson: (json: unknown, suggestedName?: string) => Promise<ThemeEntry>;

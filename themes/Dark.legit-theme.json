@@ -251,5 +251,8 @@
     "warning.fg": "warning",
     "merge.fold.bg": "merge-fold",
     "merge.fold.fg": "subtle-fg"
+  },
+  "laneChipFilters": {
+    "fg": "lighter-soft"
   }
 }

@@ -259,3 +259,45 @@ describe("GraphCell continuation and pass-through lines", () => {
     expect(lines.filter((l) => l.props.x1 === 20)).toHaveLength(0);
   });
 });
+
+describe("stash node colour", () => {
+  const stashCell = (stashNodeColor?: string | null) =>
+    GraphCell({
+      commitId: "stash",
+      commitLane: 1,
+      totalLanes: 3,
+      activeLanes: new Set(),
+      edges: [],
+      incomingEdges: [],
+      rowHeight: 40,
+      laneSpacing: 40,
+      dotRadius: 5,
+      lineWidth: 1.5,
+      isStash: true,
+      stashNodeColor,
+    });
+
+  // The cell returns an unrendered element tree: the stash glyph appears as
+  // the StashNode COMPONENT element, so its colour is asserted via props.
+  const findStashNodeColor = (el: any): string | null => {
+    if (!el || typeof el !== "object") return null;
+    if (typeof el.type === "function" && el.props?.color !== undefined) {
+      return el.props.color;
+    }
+    const children = el.props?.children;
+    const list = Array.isArray(children) ? children.flat(Infinity) : [children];
+    for (const c of list) {
+      const hit = findStashNodeColor(c);
+      if (hit) return hit;
+    }
+    return null;
+  };
+
+  it("uses the override (the base commit's lane) when given", () => {
+    expect(findStashNodeColor(stashCell("var(--graph-lane-3)"))).toBe("var(--graph-lane-3)");
+  });
+
+  it("falls back to the row's own lane colour", () => {
+    expect(findStashNodeColor(stashCell(null))).toBe("var(--graph-lane-1)");
+  });
+});

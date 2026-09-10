@@ -53,6 +53,12 @@ export const TOKEN_FILTERS: readonly TokenFilterDef[] = [
     apply: (c) => mixToward(c, { r: 255, g: 255, b: 255 }, 0.15),
   },
   {
+    id: "lighter-strong",
+    label: "Lighter (40%)",
+    css: (v) => `color-mix(in srgb, ${v}, white 40%)`,
+    apply: (c) => mixToward(c, { r: 255, g: 255, b: 255 }, 0.4),
+  },
+  {
     id: "darker-soft",
     label: "Darker (8%)",
     css: (v) => `color-mix(in srgb, ${v}, black 8%)`,
@@ -63,6 +69,12 @@ export const TOKEN_FILTERS: readonly TokenFilterDef[] = [
     label: "Darker (15%)",
     css: (v) => `color-mix(in srgb, ${v}, black 15%)`,
     apply: (c) => mixToward(c, { r: 0, g: 0, b: 0 }, 0.15),
+  },
+  {
+    id: "darker-strong",
+    label: "Darker (40%)",
+    css: (v) => `color-mix(in srgb, ${v}, black 40%)`,
+    apply: (c) => mixToward(c, { r: 0, g: 0, b: 0 }, 0.4),
   },
   {
     id: "faded",
@@ -108,6 +120,38 @@ export function makeBinding(ref: string, filter: TokenFilterId | null): ThemeTok
 /** Rebind to a different palette entry, keeping the filter. */
 export function withRef(binding: ThemeTokenBinding, ref: string): ThemeTokenBinding {
   return makeBinding(ref, bindingFilter(binding));
+}
+
+/** A filter's CSS recipe applied to an arbitrary colour expression (used by
+ * the lane-coloured chips, whose input is the lane var, not a palette var);
+ * null = the expression unchanged. */
+export function filterCssValue(filter: TokenFilterId | null, colorExpr: string): string {
+  const def = filter ? filterById(filter) : undefined;
+  return def ? def.css(colorExpr) : colorExpr;
+}
+
+/** Lane-chip part filters when the theme sets none: the static chips' own
+ * alpha recipe (bg 15%, border 45%, label full strength) in the lane hue. */
+export const LANE_CHIP_DEFAULT_FILTERS: {
+  fg: TokenFilterId | null;
+  border: TokenFilterId | null;
+  bg: TokenFilterId | null;
+} = { fg: null, border: "faded", bg: "subtle" };
+
+/** The theme's lane-chip filters with defaults applied per PART. `null` is
+ * an EXPLICIT "raw lane colour" choice and must survive; only an absent
+ * (undefined) part falls back to the default - `??` would conflate the two
+ * and snap "Lane color" back to the default. */
+export function effectiveLaneChipFilters(
+  stored: { fg?: TokenFilterId | null; border?: TokenFilterId | null; bg?: TokenFilterId | null } | undefined,
+): { fg: TokenFilterId | null; border: TokenFilterId | null; bg: TokenFilterId | null } {
+  const part = (v: TokenFilterId | null | undefined, def: TokenFilterId | null) =>
+    v === undefined ? def : v;
+  return {
+    fg: part(stored?.fg, LANE_CHIP_DEFAULT_FILTERS.fg),
+    border: part(stored?.border, LANE_CHIP_DEFAULT_FILTERS.border),
+    bg: part(stored?.bg, LANE_CHIP_DEFAULT_FILTERS.bg),
+  };
 }
 
 /** The CSS value written for a token var, given the palette var expression. */

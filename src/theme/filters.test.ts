@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  LANE_CHIP_DEFAULT_FILTERS,
   bindingCssValue,
   bindingFilter,
   bindingRef,
+  effectiveLaneChipFilters,
   makeBinding,
   parseHexColor,
   resolveBindingColor,
@@ -92,5 +94,44 @@ describe("parseHexColor", () => {
     expect(parseHexColor("#4080c0")).toEqual({ r: 64, g: 128, b: 192, a: 1 });
     expect(parseHexColor("#4080c080")?.a).toBeCloseTo(128 / 255);
     expect(parseHexColor("rgb(1,2,3)")).toBeNull();
+  });
+});
+
+describe("strong lighten/darken filters", () => {
+  // Added for lane-coloured chips: mid-tone lane palettes (Cozy) need more
+  // than 15% to reach a readable label over their own wash.
+  it("darker-strong mixes 40% toward black, lighter-strong 40% toward white", () => {
+    expect(bindingCssValue({ ref: "x", filter: "darker-strong" }, "var(--p-x)")).toBe(
+      "color-mix(in srgb, var(--p-x), black 40%)",
+    );
+    expect(bindingCssValue({ ref: "x", filter: "lighter-strong" }, "var(--p-x)")).toBe(
+      "color-mix(in srgb, var(--p-x), white 40%)",
+    );
+    expect(resolveBindingColor({ ref: "x", filter: "darker-strong" }, { x: "#808080" })).toBe(
+      "#4d4d4d",
+    );
+    expect(resolveBindingColor({ ref: "x", filter: "lighter-strong" }, { x: "#808080" })).toBe(
+      "#b3b3b3",
+    );
+  });
+});
+
+describe("effectiveLaneChipFilters", () => {
+  it("fills missing parts with the defaults", () => {
+    expect(effectiveLaneChipFilters(undefined)).toEqual(LANE_CHIP_DEFAULT_FILTERS);
+    expect(effectiveLaneChipFilters({ fg: "darker-strong" })).toEqual({
+      ...LANE_CHIP_DEFAULT_FILTERS,
+      fg: "darker-strong",
+    });
+  });
+
+  it("keeps an EXPLICIT null (raw lane colour) instead of snapping to the default", () => {
+    // Regression: "Lane color" could not be chosen for border/bg - the ??
+    // resolution treated the stored null as unset and restored the default.
+    expect(effectiveLaneChipFilters({ border: null, bg: null })).toEqual({
+      fg: null,
+      border: null,
+      bg: null,
+    });
   });
 });

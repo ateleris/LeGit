@@ -230,25 +230,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   interaction) remain gated on demand per the design note. (The
   read-only per-worktree DIRTY indicator - chip dot + Worktrees-pane
   badge via `--no-optional-locks status` probes - shipped 2026-09-10.)
-- **Theme editor: color branch chips by their graph lane** (2026-09-10).
-  A per-theme TOGGLE between today's static chip tokens and lane-derived
-  chip colors, so a branch chip visually matches the lane its tip occupies
-  and the eye can follow a branch through the tree. Both modes stay
-  available; the theme editor greys out (deactivates) the token inputs the
-  active mode does not use (static chip tokens when lane-derived is on).
-  Recommended approach when picked up: DERIVE, do not add per-lane chip
-  tokens. Lane colors already come from the themed lane palette (cyclic),
-  so per-lane chip tokens would multiply TOKEN_CONTRACT (a breaking-change
-  surface) and still need a cycling rule past the last lane; instead
-  compute the chip style from the row's lane color at render time, e.g.
-  `background: color-mix(in srgb, var(--lane-color) 25%, var(--panel-bg))`
-  with `border-color: var(--lane-color)` and the NORMAL chip text token
-  for the label. The toggle is a new optional field in
-  `.legit-theme.json` (additive = safe for the user-theme contract);
-  chips of branches not currently in the graph window fall back to the
-  static tokens. Contrast: keep the wash weak and the text token
-  unchanged, and extend `CONTRAST_PAIRS` with a worst-case lane-wash pair
-  so built-ins stay AA when the toggle is on.
 - **Commits panel: drop / squash for a multi-selection of unpushed commits**
   (2026-09-10). QoL context-menu entries when the selection contains only
   commits that are not on any remote (the existing `target_on_remote` /
@@ -353,6 +334,13 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   (skipped: fails on servers without reachable-sha1 fetch support).
 
 ## Only if it hurts in practice
+
+- **Lane-colored branch chips: editor ContrastSection rows** (the one
+  remainder; feature + AA enforcement shipped 2026-09-10). The armed
+  contract check (3:1 AA-Large floor, `contract.test.ts`) covers the
+  built-ins; the Theme Editor's ContrastSection could additionally show
+  live lane-wash rows so USERS see their own theme's lane-chip ratios
+  while picking `laneChipFilters`. Add if theme authors ask.
 
 - **Named layouts: deferred apply for an unmounted dock** (decided
   2026-09-07: fine as-is, layouts are mostly for the repo side). Applying a

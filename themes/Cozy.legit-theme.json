@@ -261,5 +261,8 @@
     "tab.fg": "subtle-fg",
     "tab.strip.bg": "panel-bg",
     "warning.fg": "warning"
+  },
+  "laneChipFilters": {
+    "fg": "darker-strong"
   }
 }

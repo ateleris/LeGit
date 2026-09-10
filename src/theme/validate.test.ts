@@ -113,3 +113,21 @@ describe("validateTheme", () => {
     expect(asTheme({})).toBeNull();
   });
 });
+
+describe("laneColoredBranchChips field", () => {
+  test("a theme carrying the toggle validates and keeps the field", () => {
+    const doc = {
+      format: "legit-theme",
+      formatVersion: 1,
+      name: "Lane Test",
+      palette: { base: "#101010" },
+      tokens: {},
+      laneColoredBranchChips: true,
+    };
+    const result = validateTheme(doc);
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    // Validation must not strip unknown/optional fields: the raw document is
+    // what gets saved and what the chip renderer reads.
+    expect((doc as { laneColoredBranchChips: boolean }).laneColoredBranchChips).toBe(true);
+  });
+});

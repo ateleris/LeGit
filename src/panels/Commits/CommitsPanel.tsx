@@ -3,6 +3,8 @@ import { PanelError } from "../shared/PanelError";
 import { useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
+import { useThemeStore } from "../../store/themes";
+import { effectiveLaneChipFilters } from "../../theme/filters";
 import {
   useSettingsStore,
   COMMITS_ROW_HEIGHT_DEFAULT,
@@ -296,6 +298,18 @@ export function CommitsPanel() {
 
   const opState = useOpState(repo?.id);
   const opInProgress = !!opState && opState.kind !== "none";
+
+  // Lane-coloured branch chips (per-theme toggle + per-part filters).
+  // Reading draft-first gives the Theme Editor live preview while editing.
+  const themeDoc = useThemeStore((s) => s.draft ?? s.activeDocument);
+  const laneChipFilters = useMemo(
+    () =>
+      themeDoc?.laneColoredBranchChips
+        ? effectiveLaneChipFilters(themeDoc.laneChipFilters)
+        : null,
+    [themeDoc],
+  );
+  const stashBaseLaneColor = themeDoc?.stashBaseLaneColor ?? false;
 
   // Open a detached worktree (from its HEAD chip) as its own repo tab.
   const handleOpenWorktree = useCallback(
@@ -1508,6 +1522,11 @@ export function CommitsPanel() {
                             worktreeBranches={worktreeBranches}
                             worktreeHeads={worktreeHeadsBySha.get(commit.id)}
                             onOpenWorktree={handleOpenWorktree}
+                            laneChip={
+                              laneChipFilters
+                                ? { tint: laneColor(commitLane), ...laneChipFilters }
+                                : null
+                            }
                             textSize={TEXT_SIZE}
                             renamingBranch={renamingBranch}
                             onBranchRenameSave={handleBranchRenameSave}
@@ -1565,6 +1584,18 @@ export function CommitsPanel() {
                             ownLanePassThrough={ownLanePassThrough}
                             hollow={isWorkingDir}
                             isStash={stashSelectorById.has(commit.id)}
+                            stashNodeColor={
+                              // Per-theme: paint the stash with its BASE
+                              // commit's lane so it reads as belonging to the
+                              // branch it was taken from (base outside the
+                              // loaded window falls back to the own lane).
+                              stashBaseLaneColor &&
+                              stashSelectorById.has(commit.id) &&
+                              commit.parents[0] !== undefined &&
+                              assignments.has(commit.parents[0])
+                                ? laneColor(assignments.get(commit.parents[0])!)
+                                : null
+                            }
                             avatarEmail={
                               // Only regular commit dots carry an avatar — not
                               // the working-dir ring or stash squares.

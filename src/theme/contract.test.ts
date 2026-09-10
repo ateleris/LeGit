@@ -5,8 +5,8 @@ import { describe, expect, it } from "vitest";
 import { CONTRAST_PAIRS, PALETTE_CONTRACT, TOKEN_CONTRACT } from "./tokens";
 import { contrastRatio } from "./contrast";
 import { DEFAULT_THEME } from "./defaults";
-import { bindingRef, resolveBindingColor } from "./filters";
-import type { ThemeTokenBinding } from "../lib/types";
+import { LANE_CHIP_DEFAULT_FILTERS, bindingRef, makeBinding, resolveBindingColor } from "./filters";
+import type { ThemeTokenBinding, TokenFilterId } from "../lib/types";
 
 // Read as a plain file: vite's `?raw` pipeline returns an empty string for
 // .css under vitest, so the raw-import shortcut silently checks nothing.
@@ -19,6 +19,8 @@ const themeCss = readFileSync(new URL("../styles/theme.css", import.meta.url), "
 // silently rendering with fallback colours.
 
 interface ThemeJson {
+  laneColoredBranchChips?: boolean;
+  laneChipFilters?: { fg?: TokenFilterId | null; border?: TokenFilterId | null; bg?: TokenFilterId | null };
   name?: string;
   palette: Record<string, string>;
   tokens: Record<string, string | { ref: string; filter: string }>;
@@ -270,4 +272,74 @@ describe("no references to undefined CSS variables", () => {
       `References to undefined CSS variables:\n${violations.join("\n")}`,
     ).toEqual([]);
   });
+});
+
+// Lane-coloured branch chips derive their background at render time
+// (color-mix of the lane colour into the panel bg), which the token-pair
+// machinery above cannot see. Mirror the mix numerically: any user can
+// duplicate a built-in theme and enable the toggle, so EVERY bundled theme
+// must keep the branch-chip text AA over every lane's wash.
+// Lane-coloured chips derive every part from the lane colour at render time
+// (per-theme laneChipFilters, defaults in LANE_CHIP_DEFAULT_FILTERS) - the
+// token-pair machinery above cannot see that. Mirror the recipe numerically:
+// any user can duplicate a built-in theme and enable the toggle, so every
+// bundled theme must keep the chip label at the 3:1 floor over every lane's
+// wash (AA-Large tier, like the syntax-over-diff-wash pairs: hue-derived
+// text over a same-hue wash in an opt-in mode; the static default is full
+// AA). Built-ins whose raw lane colours cannot carry a label declare a
+// stronger fg filter in their own laneChipFilters.
+describe("built-in themes keep branch-chip text AA over every lane wash", () => {
+  const LANE_TOKENS = [
+    "graph.lane.0",
+    "graph.lane.1",
+    "graph.lane.2",
+    "graph.lane.3",
+    "graph.lane.4",
+    "graph.lane.5",
+    "graph.lane.fallback",
+  ] as const;
+
+  for (const [label, theme] of bundledThemes) {
+    it(`${label} keeps chip text readable over each lane wash`, () => {
+      const resolve = (token: string): string => {
+        const binding = theme.tokens[token];
+        expect(binding, `token "${token}" missing from ${label} theme`).toBeDefined();
+        const color = resolveBindingColor(binding as ThemeTokenBinding, theme.palette);
+        expect(color, `token "${token}" unresolvable in ${label} theme`).toBeDefined();
+        return color!;
+      };
+      // The lane-chip parts are the LANE colour with the theme's per-part
+      // filters (or the defaults) applied - mirror that numerically.
+      const filters = { ...LANE_CHIP_DEFAULT_FILTERS, ...(theme.laneChipFilters ?? {}) };
+      const lanePart = (laneToken: string, filter: typeof filters.fg): string => {
+        const binding = theme.tokens[laneToken];
+        expect(binding, `token "${laneToken}" missing from ${label} theme`).toBeDefined();
+        const color = resolveBindingColor(
+          makeBinding(bindingRef(binding as ThemeTokenBinding), filter ?? null),
+          theme.palette,
+        );
+        expect(color, `lane part unresolvable for "${laneToken}" in ${label}`).toBeDefined();
+        return color!;
+      };
+      const panel = resolve("panel.bg");
+      const failures: string[] = [];
+      // 3:1 (the AA-Large tier), like the syntax-over-diff-wash pairs: the
+      // label is hue-derived text over a same-hue wash, an opt-in aesthetic
+      // mode whose static default stays full AA. Raw lane colours measure
+      // 3.5-4.4 over their own 15% wash across the built-ins.
+      const FLOOR = 3;
+      for (const laneToken of LANE_TOKENS) {
+        const fg = lanePart(laneToken, filters.fg);
+        const bg = lanePart(laneToken, filters.bg);
+        const ratio = contrastRatio(fg, bg, panel);
+        if (ratio === null || ratio < FLOOR) {
+          failures.push(`${laneToken}: ${ratio === null ? "n/a" : ratio.toFixed(2)}`);
+        }
+      }
+      expect(
+        failures,
+        `${label} theme lane-chip washes below the ${FLOOR}:1 floor:\n${failures.join("\n")}`,
+      ).toEqual([]);
+    });
+  }
 });

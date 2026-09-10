@@ -30,6 +30,11 @@ lives in the git log and the GitHub release notes.
   worktree shows a dot on its chip and a "dirty" badge in the Worktrees
   section, and a worktree tab live-updates when refs change in the main
   checkout.
+- Themes can color branch and remote chips by the graph lane their commit
+  occupies, with per-part filters (foreground/border/background) applied
+  to the lane color - new toggle and dropdowns under Refs in the Theme
+  Editor, off by default. A companion toggle colors stash nodes by their
+  BASE commit's lane instead of their own row's lane.
 - SVG files now render as images in the diff viewer (old/new panes, like
   PNGs) and in the file preview, falling back to the text diff when the
   content is not actually SVG.

@@ -30,6 +30,9 @@ export function resolveTheme(doc: ThemeDocument): ThemeDocument {
     author: doc.author,
     palette: { ...DEFAULT_THEME.palette, ...doc.palette },
     tokens: { ...DEFAULT_THEME.tokens, ...doc.tokens },
+    laneColoredBranchChips: doc.laneColoredBranchChips ?? false,
+    laneChipFilters: doc.laneChipFilters,
+    stashBaseLaneColor: doc.stashBaseLaneColor ?? false,
   };
 
   // For each known token, if it's missing or references an undefined palette
