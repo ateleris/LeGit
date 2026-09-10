@@ -20,6 +20,12 @@ lives in the git log and the GitHub release notes.
   "Stage rename" and "Discard rename" (back to the tracked spelling) plus
   the usual blame/history/editor actions. Opt out via the new "Detect
   case-only renames" setting.
+- Multi-selecting unpushed commits in the graph now offers "Drop N
+  commits" and "Squash N commits into one" (with an editable message,
+  prefilled from the selected commits) in the context menu. Both run as an
+  automatic rebase in the background; a conflict rolls the branch back
+  unchanged. The entries only appear when every selected commit is on no
+  remote.
 - Worktree support: a new Worktrees section in the Refs panel lists all
   worktrees and can add (new or existing branch), open as a separate repo
   tab, remove (with a force offer for dirty trees), and prune. Switching

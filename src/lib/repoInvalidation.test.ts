@@ -140,6 +140,7 @@ describe("withDerivedDomains", () => {
       "log",
       "submodules",
       "tracking",
+      "unpushed",
     ]);
   });
   test("leaves unrelated domains alone", () => {
@@ -158,7 +159,7 @@ describe("withDerivedDomains", () => {
   test("external ref moves refresh the ahead/behind counter", () => {
     // An external `git fetch` classifies as branches only; the tracking
     // query domain must be derived or the sync toolbar goes stale.
-    expect(withDerivedDomains(["branches"])).toEqual(["branches", "submodules", "tracking"]);
+    expect(withDerivedDomains(["branches"])).toEqual(["branches", "submodules", "tracking", "unpushed"]);
     expect(withDerivedDomains(["status"])).not.toContain("tracking");
   });
 });

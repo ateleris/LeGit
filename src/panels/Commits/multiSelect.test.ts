@@ -3,7 +3,7 @@
 // resulting set (ordering for cherry-pick vs revert, the compare pair, the
 // merge-commit guard). Pure data-in/data-out, like the other Commits helpers.
 import { describe, it, expect } from "vitest";
-import { applyRowClickSelection, bulkActionPlan, type SelectionState } from "./multiSelect";
+import { applyRowClickSelection, bulkActionPlan, bulkRebasePlan, selectionContiguous, type SelectionState } from "./multiSelect";
 
 const ROWS = ["e", "d", "c", "b", "a"]; // display order: newest first
 const selectable = (id: string) => id !== "wd" && id !== "stash1";
@@ -108,5 +108,51 @@ describe("bulkActionPlan", () => {
   it("flags a merge commit in the selection", () => {
     expect(bulkActionPlan(new Set(["d", "c"]), rows).containsMerge).toBe(true);
     expect(bulkActionPlan(new Set(["b", "c"]), rows).containsMerge).toBe(false);
+  });
+});
+
+describe("bulkRebasePlan", () => {
+  // rangeNewestFirst mirrors `git log base..HEAD` order.
+  const range = ["c4", "c3", "c2", "c1"];
+
+
+  it("drop: selected commits drop, the rest pick, todo order oldest first", () => {
+    const plan = bulkRebasePlan("drop", new Set(["c3", "c1"]), range, null);
+    expect(plan).toEqual([
+      { action: "drop", sha: "c1" },
+      { action: "pick", sha: "c2" },
+      { action: "drop", sha: "c3" },
+      { action: "pick", sha: "c4" },
+    ]);
+  });
+
+  it("squash: reword on the OLDEST selected carrying the message, the other selected as fixup right behind it", () => {
+    const plan = bulkRebasePlan("squash", new Set(["c3", "c1"]), range, "combined");
+    expect(plan).toEqual([
+      { action: "reword", sha: "c1", message: "combined" },
+      { action: "fixup", sha: "c3" },
+      { action: "pick", sha: "c2" },
+      { action: "pick", sha: "c4" },
+    ]);
+  });
+
+  it("squash keeps the selected commits' relative order among the fixups", () => {
+    const plan = bulkRebasePlan("squash", new Set(["c4", "c2", "c1"]), range, "m")!;
+    expect(plan.map((s) => s.sha)).toEqual(["c1", "c2", "c4", "c3"]);
+    expect(plan.map((s) => s.action)).toEqual(["reword", "fixup", "fixup", "pick"]);
+  });
+
+  it("returns null when a selected commit is missing from the range", () => {
+    expect(bulkRebasePlan("drop", new Set(["zz"]), range, null)).toBeNull();
+  });
+});
+
+describe("selectionContiguous", () => {
+  const row = (id: string, isMerge = false) => ({ id, isMerge });
+  it("true for an unbroken display run, false when a commit sits between", () => {
+    const rows = [row("c4"), row("c3"), row("c2"), row("c1")];
+    expect(selectionContiguous(new Set(["c3", "c2"]), rows)).toBe(true);
+    expect(selectionContiguous(new Set(["c3", "c1"]), rows)).toBe(false);
+    expect(selectionContiguous(new Set(["c2"]), rows)).toBe(true);
   });
 });

@@ -323,6 +323,12 @@ pub trait GitBackend: Send + Sync {
     /// Drop stale bookkeeping of manually deleted worktrees.
     async fn worktree_prune(&self) -> Result<(), GitError>;
 
+    /// Commits reachable from HEAD but from NO remote-tracking ref, newest
+    /// first, capped at `max_count` (all-remotes semantics, matching the
+    /// reword hard-block). Backs the bulk drop/squash gate: those actions
+    /// rewrite history and must only ever see unpublished commits.
+    async fn unpushed_commits(&self, max_count: u32) -> Result<Vec<CommitId>, GitError>;
+
     /// Remove a submodule the safe way (magit semantics): refuse if its
     /// worktree is dirty/conflicted, absorb an embedded gitdir, `deinit -f`,
     /// then `git rm -f` (stages the `.gitmodules` edit). The gitdir under

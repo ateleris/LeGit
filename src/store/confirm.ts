@@ -32,11 +32,15 @@ export interface ConfirmRequest {
   /** Danger-styled confirm button. Default true - most callers confirm a
    *  destructive action; pass false for neutral decisions. */
   danger?: boolean;
+  /** Prompt variant: a multi-line text input between message and buttons.
+   *  Confirm resolves the edited value (see `promptDialog`); a blank value
+   *  disables the confirm button. */
+  input?: { initialValue: string };
 }
 
 export interface PendingConfirm extends ConfirmRequest {
   id: number;
-  resolve: (confirmed: boolean) => void;
+  resolve: (confirmed: boolean, value?: string) => void;
 }
 
 let nextId = 1;
@@ -44,8 +48,11 @@ let nextId = 1;
 interface ConfirmStore {
   queue: PendingConfirm[];
   request: (req: ConfirmRequest) => Promise<boolean>;
+  /** Queue a request with a raw resolver (the prompt variant needs the
+   *  edited value, not just the boolean). */
+  requestRaw: (req: ConfirmRequest, resolve: PendingConfirm["resolve"]) => void;
   /** Resolve the dialog with the given id (host calls this). */
-  settle: (id: number, confirmed: boolean) => void;
+  settle: (id: number, confirmed: boolean, value?: string) => void;
 }
 
 export const useConfirmStore = create<ConfirmStore>((set, get) => ({
@@ -53,19 +60,35 @@ export const useConfirmStore = create<ConfirmStore>((set, get) => ({
 
   request: (req) =>
     new Promise<boolean>((resolve) => {
-      const pending: PendingConfirm = { ...req, id: nextId++, resolve };
-      set((s) => ({ queue: [...s.queue, pending] }));
+      get().requestRaw(req, (confirmed) => resolve(confirmed));
     }),
 
-  settle: (id, confirmed) => {
+  requestRaw: (req, resolve) => {
+    const pending: PendingConfirm = { ...req, id: nextId++, resolve };
+    set((s) => ({ queue: [...s.queue, pending] }));
+  },
+
+  settle: (id, confirmed, value) => {
     const pending = get().queue.find((p) => p.id === id);
     if (!pending) return;
     set((s) => ({ queue: s.queue.filter((p) => p.id !== id) }));
-    pending.resolve(confirmed);
+    pending.resolve(confirmed, value);
   },
 }));
 
 /** Ask the user to confirm. Resolves true on confirm, false on cancel. */
 export function confirmDialog(req: ConfirmRequest): Promise<boolean> {
   return useConfirmStore.getState().request(req);
+}
+
+/** Ask for a text value (multi-line). Resolves the edited value on confirm,
+ *  null on cancel/Escape. */
+export function promptDialog(
+  req: ConfirmRequest & { input: { initialValue: string } },
+): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
+    useConfirmStore
+      .getState()
+      .requestRaw(req, (confirmed, value) => resolve(confirmed ? value ?? "" : null));
+  });
 }

@@ -67,5 +67,10 @@ export function withDerivedDomains(domains: string[]): string[] {
   if (out.includes("status") && !out.includes("case_drift")) {
     out.push("case_drift");
   }
+  // Commits and ref moves (local or remote) change which commits are
+  // unpublished; `unpushed` is a frontend query domain only.
+  if (out.includes("branches") && !out.includes("unpushed")) {
+    out.push("unpushed");
+  }
   return out;
 }

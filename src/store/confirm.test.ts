@@ -1,38 +1,30 @@
-// Unit tests for the confirmation-dialog store: promise settlement, queue
-// order, and settle-by-id semantics.
-import { describe, it, expect, beforeEach } from "vitest";
-import { useConfirmStore, confirmDialog } from "./confirm";
+// The prompt variant of the central dialog: resolves the edited text on
+// confirm, null on cancel - backs the bulk-squash message editor.
+import { describe, expect, it } from "vitest";
+import { promptDialog, useConfirmStore } from "./confirm";
 
-beforeEach(() => {
-  useConfirmStore.setState({ queue: [] });
-});
-
-describe("confirm store", () => {
-  it("resolves true on confirm and false on cancel", async () => {
-    const a = confirmDialog({ title: "A", message: "m", confirmLabel: "Do" });
-    const b = confirmDialog({ title: "B", message: "m", confirmLabel: "Do" });
-    const [idA, idB] = useConfirmStore.getState().queue.map((p) => p.id);
-
-    useConfirmStore.getState().settle(idA, true);
-    useConfirmStore.getState().settle(idB, false);
-    await expect(a).resolves.toBe(true);
-    await expect(b).resolves.toBe(false);
-    expect(useConfirmStore.getState().queue).toEqual([]);
+describe("promptDialog", () => {
+  it("resolves the edited value on confirm", async () => {
+    const p = promptDialog({
+      title: "Squash 3 commits",
+      message: "Commit message for the squashed commit:",
+      confirmLabel: "Squash",
+      input: { initialValue: "a\n\nb" },
+    });
+    const pending = useConfirmStore.getState().queue.at(-1)!;
+    expect(pending.input?.initialValue).toBe("a\n\nb");
+    useConfirmStore.getState().settle(pending.id, true, "edited message");
+    await expect(p).resolves.toBe("edited message");
   });
 
-  it("queues requests in order; settling removes only the addressed one", () => {
-    void confirmDialog({ title: "first", message: "m", confirmLabel: "Do" });
-    void confirmDialog({ title: "second", message: "m", confirmLabel: "Do" });
-    const { queue, settle } = useConfirmStore.getState();
-    expect(queue.map((p) => p.title)).toEqual(["first", "second"]);
-
-    settle(queue[0].id, false);
-    expect(useConfirmStore.getState().queue.map((p) => p.title)).toEqual(["second"]);
-  });
-
-  it("settling an unknown id is a no-op", () => {
-    void confirmDialog({ title: "A", message: "m", confirmLabel: "Do" });
-    useConfirmStore.getState().settle(9999, true);
-    expect(useConfirmStore.getState().queue).toHaveLength(1);
+  it("resolves null on cancel", async () => {
+    const p = promptDialog({
+      message: "m",
+      confirmLabel: "Ok",
+      input: { initialValue: "x" },
+    });
+    const pending = useConfirmStore.getState().queue.at(-1)!;
+    useConfirmStore.getState().settle(pending.id, false);
+    await expect(p).resolves.toBeNull();
   });
 });

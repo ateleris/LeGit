@@ -823,6 +823,11 @@ export const repoRebaseInteractive = (repoId: string, base: string, plan: Rebase
   invoke<RebaseOutcome>("repo_rebase_interactive", { repoId, base, plan });
 
 /** Pushed-set + ancestry probe for the interactive-rebase panel. */
+/** Commits reachable from HEAD but on NO remote-tracking ref (newest first,
+ * capped) - the bulk drop/squash gate. */
+export const repoUnpushedCommits = (repoId: string, maxCount: number) =>
+  invoke<CommitId[]>("repo_unpushed_commits", { repoId, maxCount });
+
 export const repoRebaseRangeInfo = (repoId: string, base: string) =>
   invoke<RebaseRangeInfo>("repo_rebase_range_info", { repoId, base });
 

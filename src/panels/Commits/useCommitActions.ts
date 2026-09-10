@@ -23,10 +23,13 @@ import {
   repoDeleteRemoteTag,
   repoDeleteTag,
   repoDropStash,
+  repoLog,
   repoMerge,
   repoPopStash,
   repoPushTag,
   repoRebase,
+  repoRebaseAbort,
+  repoRebaseInteractive,
   repoRenameBranch,
   repoRenameStash,
   repoReset,
@@ -38,6 +41,7 @@ import {
 import type { Commit, CommitId, MergeOptions, RepoSummary, ResetMode } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { deleteBranchGuided } from "../../lib/branchDelete";
+import { bulkRebasePlan } from "./multiSelect";
 import { notifyLfsStubs } from "../../lib/lfsFeedback";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { autoUpdateSubmodules } from "../../lib/submodules";
@@ -111,6 +115,61 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
         } catch (e) {
           invalidate(repo.id, OP_DOMAINS);
           notifyOpError(e);
+        }
+      },
+
+      // Bulk history rewrite (drop / squash of an UNPUSHED selection): an
+      // automatic interactive rebase over base..HEAD. The range is fetched
+      // fresh (never the visible rows - the log can be filtered or show
+      // other branches). Unlike the sequencer ops, a conflict ABORTS and
+      // rolls back: the branch is left unchanged.
+      handleBulkRewrite: async (
+        kind: "drop" | "squash",
+        selected: ReadonlySet<CommitId>,
+        base: CommitId,
+        message: string | null,
+      ) => {
+        const repo = repoOf();
+        if (!repo || selected.size === 0) return;
+        const verb = kind === "drop" ? "Drop" : "Squash";
+        const label = `${selected.size} commits`;
+        try {
+          const range = await repoLog(repo.id, undefined, undefined, `${base}..HEAD`);
+          const plan = bulkRebasePlan(kind, selected, range.map((c) => c.id), message);
+          if (!plan) {
+            notify.error(
+              "The selection no longer matches the branch history - refresh and try again.",
+            );
+            return;
+          }
+          const outcome = await repoRebaseInteractive(repo.id, base, plan);
+          if (outcome.kind === "conflicts") {
+            // Roll back rather than parking in the conflict state: the user
+            // asked for a one-shot action, not a rebase session.
+            try {
+              await repoRebaseAbort(repo.id);
+              notify.error(
+                `${verb} aborted: replaying the remaining commits conflicted. The branch is unchanged.`,
+              );
+            } catch (abortErr) {
+              // A failed recovery step must never be silent (house rule).
+              notify.error(
+                `${verb} conflicted AND the automatic abort failed (${formatAppError(abortErr)}). ` +
+                  "Resolve or abort the rebase from the banner.",
+              );
+            }
+          } else if (outcome.kind === "completed_with_stash_conflicts") {
+            notify.success(kind === "drop" ? `Dropped ${label}.` : `Squashed ${label} into one.`);
+            notify.error(outcome.message);
+          } else if (outcome.kind === "already_up_to_date") {
+            notify.info("Nothing to rewrite - the branch is already in that state.");
+          } else {
+            notify.success(kind === "drop" ? `Dropped ${label}.` : `Squashed ${label} into one.`);
+          }
+        } catch (e) {
+          notifyOpError(e);
+        } finally {
+          invalidate(repo.id, [...OP_DOMAINS, "tracking", "stashes", "unpushed"]);
         }
       },
 

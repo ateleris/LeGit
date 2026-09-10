@@ -117,6 +117,23 @@ pub async fn repo_rebase_range_info(
         .map_err(AppError::Git)
 }
 
+/// Commits reachable from HEAD but on NO remote-tracking ref (newest first,
+/// capped). Backs the bulk drop/squash gate.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_unpushed_commits(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    max_count: u32,
+) -> Result<Vec<legit_core::CommitId>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .unpushed_commits(max_count)
+        .await
+        .map_err(AppError::Git)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn repo_conflict_file_sides(

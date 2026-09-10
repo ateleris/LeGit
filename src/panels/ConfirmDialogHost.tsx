@@ -45,8 +45,14 @@ let lastPointer: Point | null = null;
 
 function ConfirmDialog({ request }: { request: PendingConfirm }) {
   const settle = useConfirmStore((s) => s.settle);
+  // Prompt variant: the edited value travels with the confirm.
+  const [inputValue, setInputValue] = useState(request.input?.initialValue ?? "");
   const cancel = useCallback(() => settle(request.id, false), [settle, request.id]);
-  const confirm = useCallback(() => settle(request.id, true), [settle, request.id]);
+  const confirm = useCallback(
+    () => settle(request.id, true, request.input ? inputValue : undefined),
+    [settle, request.id, request.input, inputValue],
+  );
+  const confirmDisabled = request.input !== undefined && inputValue.trim() === "";
 
   // Pointer position captured at mount; the dialog is measured after the
   // first (hidden) render, then placed near it. No anchor -> centered.
@@ -151,18 +157,40 @@ function ConfirmDialog({ request }: { request: PendingConfirm }) {
             {request.notes}
           </div>
         )}
+        {request.input && (
+          <textarea
+            autoFocus
+            data-testid="confirm-dialog-input"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={(e) => {
+              // Multi-line input: Enter stays a newline; Mod+Enter confirms.
+              if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !confirmDisabled) {
+                e.preventDefault();
+                confirm();
+              }
+            }}
+            rows={Math.min(8, Math.max(3, inputValue.split("\n").length))}
+            style={{ resize: "vertical", fontFamily: "inherit", fontSize: "var(--fz-md)" }}
+          />
+        )}
         {request.warning && (
           <strong className="legit-error" style={{ fontSize: "var(--fz-md)" }}>
             {request.warning}
           </strong>
         )}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5em" }}>
-          <button autoFocus data-testid="confirm-dialog-cancel" onClick={cancel}>
+          <button
+            autoFocus={request.input === undefined}
+            data-testid="confirm-dialog-cancel"
+            onClick={cancel}
+          >
             {request.cancelLabel ?? "Cancel"}
           </button>
           <Button
             variant={(request.danger ?? true) ? "danger" : "primary"}
             data-testid="confirm-dialog-confirm"
+            disabled={confirmDisabled}
             onClick={confirm}
           >
             {request.confirmLabel}

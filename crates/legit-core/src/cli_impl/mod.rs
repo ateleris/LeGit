@@ -1748,6 +1748,22 @@ impl<E: GitExecutor + ?Sized> GitBackend for GitCliBackend<E> {
         self.worktree_prune().await
     }
 
+    async fn unpushed_commits(&self, max_count: u32) -> Result<Vec<CommitId>, GitError> {
+        let runner = self.runner().await;
+        let n = max_count.to_string();
+        let out = runner
+            .run(&["rev-list", "-n", &n, "HEAD", "--not", "--remotes"])
+            .await?;
+        Self::ensure_success(&out)?;
+        Ok(out
+            .stdout
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(CommitId::new)
+            .collect())
+    }
+
     async fn submodule_remove(&self, path: &Path) -> Result<(), GitError> {
         self.submodule_remove(path).await
     }

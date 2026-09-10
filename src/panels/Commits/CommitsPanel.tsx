@@ -29,6 +29,7 @@ import { formatAppError } from "../../lib/types";
 import { worktreeLocator } from "../../lib/locator";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { notify } from "../../store/notifications";
+import { promptDialog } from "../../store/confirm";
 import { BranchIcon, RemoteIcon, SignedIcon, TagIcon } from "../../icons";
 import { useSignatureStore } from "../../store/signatures";
 import { formatAbsolute, formatFull, formatRelative } from "../../lib/time";
@@ -41,7 +42,7 @@ import { computeEdgeSpans } from "./graph/spans";
 import { pickHeadCommitId } from "./headId";
 import { growJumpWindow, pendingJumpAction, shouldCenterScroll } from "./scrollToRow";
 import { quickSearchMatch } from "./commitSearch";
-import { applyRowClickSelection, bulkActionPlan, type SelectionState } from "./multiSelect";
+import { applyRowClickSelection, bulkActionPlan, type SelectionState , selectionContiguous } from "./multiSelect";
 import type { LaneEdge, LaneIndex, LaneResult, LockMap, RefsAtCommit } from "./graph/types";
 import { buildLockMap, buildRefsAt, buildStashSelectorById } from "./commitRows";
 import { BRANCH_DOMAINS, useCommitActions } from "./useCommitActions";
@@ -282,6 +283,7 @@ export function CommitsPanel() {
     upstreamMap,
     worktreeBranches,
     worktreeHeadsBySha,
+    unpushedSet,
     currentBranchName,
     tagRemote,
     remoteNames,
@@ -341,6 +343,7 @@ export function CommitsPanel() {
     handleReset,
     handleUndoLastCommit,
     handleRebaseOnto,
+    handleBulkRewrite,
     handleBranchCheckout,
     handleBranchDelete,
     handleBranchPush,
@@ -1419,11 +1422,30 @@ export function CommitsPanel() {
                   // bulk menu for the whole set. Any other row falls through
                   // to its normal single-row menu.
                   if (selectedIds.size >= 2 && selectedIds.has(commit.id) && isMultiSelectable(commit.id)) {
-                    const plan = bulkActionPlan(
-                      selectedIds,
-                      rows.map((r) => ({ id: r.id, isMerge: (r.parents?.length ?? 0) > 1 })),
-                    );
+                    const bulkRows = rows.map((r) => ({
+                      id: r.id,
+                      isMerge: (r.parents?.length ?? 0) > 1,
+                    }));
+                    const plan = bulkActionPlan(selectedIds, bulkRows);
                     if (plan.count >= 2) {
+                      // Drop/squash: history rewrites, offered only when the
+                      // WHOLE selection is unpublished, merge-free, and not
+                      // rooted (base = the oldest selected commit's parent).
+                      const selectedInOrder = rows.filter((r) => selectedIds.has(r.id));
+                      const oldest = selectedInOrder[selectedInOrder.length - 1];
+                      const base = oldest?.parents?.[0];
+                      const allUnpushed = selectedInOrder.every((r) => unpushedSet.has(r.id));
+                      const rewrite =
+                        base !== undefined && allUnpushed && !plan.containsMerge
+                          ? { contiguous: selectionContiguous(selectedIds, bulkRows) }
+                          : null;
+                      // Snapshots: the selection can change while the confirm
+                      // or the message dialog is open.
+                      const selectedSnapshot = new Set(selectedInOrder.map((r) => r.id));
+                      const prefill = selectedInOrder
+                        .map((r) => commitMessageById.get(r.id) ?? r.id.slice(0, 8))
+                        .reverse()
+                        .join("\n\n");
                       openMenu(
                         e,
                         <BulkSelectionMenu
@@ -1431,6 +1453,25 @@ export function CommitsPanel() {
                           opInProgress={opInProgress}
                           handleCherryPick={handleCherryPick}
                           handleRevert={handleRevert}
+                          rewrite={rewrite}
+                          onDrop={() => {
+                            if (base) void handleBulkRewrite("drop", selectedSnapshot, base, null);
+                          }}
+                          onSquash={() => {
+                            if (!base) return;
+                            void (async () => {
+                              const message = await promptDialog({
+                                title: `Squash ${selectedSnapshot.size} commits`,
+                                message: "Commit message for the squashed commit:",
+                                confirmLabel: "Squash",
+                                danger: false,
+                                input: { initialValue: prefill },
+                              });
+                              if (message !== null) {
+                                void handleBulkRewrite("squash", selectedSnapshot, base, message);
+                              }
+                            })();
+                          }}
                         />,
                       );
                       return;

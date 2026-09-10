@@ -3,7 +3,7 @@
 // from a selection. Pure data-in/data-out, like the other Commits helpers,
 // so the rules live in multiSelect.test.ts rather than in panel wiring.
 
-import type { CommitId } from "../../lib/types";
+import type { CommitId, RebaseStep } from "../../lib/types";
 
 export interface SelectionState {
   /** The last-clicked row: shift-range anchor, and the commit whose details
@@ -100,4 +100,63 @@ export function bulkActionPlan(
       inRows.length === 2 ? { from: newestFirst[1], to: newestFirst[0] } : null,
     containsMerge: inRows.some((r) => r.isMerge),
   };
+}
+
+/** A bulk drop/squash rebase plan over the FULL `base..HEAD` range
+ * (`rangeNewestFirst`, as `git log` returns it - never the visible rows,
+ * which can be filtered or show other branches). Todo order: oldest first.
+ * Drop: selected commits drop, the rest pick. Squash: the OLDEST selected
+ * commit rewords to `message` and the other selected commits follow it as
+ * fixup (non-contiguous selections collapse at the oldest position; a fixup
+ * melds into the preceding kept step, so the reword's message wins and no
+ * editor opens). Null when a selected commit is missing from the range -
+ * the caller must not run a plan that silently ignores selection. */
+export function bulkRebasePlan(
+  kind: "drop" | "squash",
+  selected: ReadonlySet<CommitId>,
+  rangeNewestFirst: readonly CommitId[],
+  message: string | null,
+): RebaseStep[] | null {
+  const range = new Set(rangeNewestFirst);
+  for (const id of selected) {
+    if (!range.has(id)) return null;
+  }
+  const oldestFirst = [...rangeNewestFirst].reverse();
+  if (kind === "drop") {
+    return oldestFirst.map((sha) => ({
+      action: selected.has(sha) ? "drop" : "pick",
+      sha,
+    }));
+  }
+  const steps: RebaseStep[] = [];
+  let emittedGroup = false;
+  for (const sha of oldestFirst) {
+    if (!selected.has(sha)) {
+      steps.push({ action: "pick", sha });
+      continue;
+    }
+    if (emittedGroup) continue;
+    emittedGroup = true;
+    steps.push({ action: "reword", sha, message: message ?? "" });
+    for (const other of oldestFirst) {
+      if (other !== sha && selected.has(other)) {
+        steps.push({ action: "fixup", sha: other });
+      }
+    }
+  }
+  return steps;
+}
+
+/** Whether the selected commits form an unbroken run in the display rows -
+ * drives the "collapses at the oldest selected commit's position" warning
+ * for non-contiguous squashes (a heads-up, not a gate). */
+export function selectionContiguous(
+  selected: ReadonlySet<CommitId>,
+  rows: readonly BulkRow[],
+): boolean {
+  const indices = rows
+    .map((r, i) => (selected.has(r.id) ? i : -1))
+    .filter((i) => i >= 0);
+  if (indices.length <= 1) return true;
+  return indices[indices.length - 1] - indices[0] === indices.length - 1;
 }

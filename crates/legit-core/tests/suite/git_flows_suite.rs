@@ -5296,3 +5296,75 @@ async fn switch_refusal_names_the_other_worktree() {
     }
     repo.backend.worktree_remove(&wt_str, true).await.expect("cleanup");
 }
+
+// ---------------------------------------------------------------------------
+// Bulk drop / squash building blocks
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn unpushed_commits_shrinks_as_remote_tracking_refs_advance() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "a\n");
+    repo.commit_all("one").await;
+    let c1 = repo.head().await;
+    repo.write("b.txt", "b\n");
+    repo.commit_all("two").await;
+    let c2 = repo.head().await;
+
+    // No remote-tracking refs: everything is unpushed, newest first.
+    let unpushed = repo.backend.unpushed_commits(100).await.expect("unpushed");
+    assert_eq!(unpushed, vec![CommitId::new(c2.clone()), CommitId::new(c1.clone())]);
+
+    // A remote-tracking ref at c1 (created directly - `--remotes` reads
+    // refs/remotes/*, no network involved) publishes c1; c2 stays unpushed.
+    repo.git(&["update-ref", "refs/remotes/origin/main", &c1]).await;
+    let unpushed = repo.backend.unpushed_commits(100).await.expect("unpushed after ref");
+    assert_eq!(unpushed, vec![CommitId::new(c2)]);
+
+    // The cap applies.
+    repo.git(&["update-ref", "-d", "refs/remotes/origin/main"]).await;
+    let capped = repo.backend.unpushed_commits(1).await.expect("capped");
+    assert_eq!(capped.len(), 1);
+}
+
+#[tokio::test]
+async fn squash_selection_plan_collapses_to_one_commit_with_the_edited_message() {
+    // The bulk "Squash N into one" plan shape: reword on the OLDEST selected
+    // commit carrying the edited message, the other selected commits as
+    // fixup right behind it, everything else picked - non-contiguous
+    // selections collapse at the oldest position and NO editor ever opens.
+    use legit_core::RebaseStep;
+
+    let repo = TestRepo::init().await;
+    repo.write("base.txt", "base\n");
+    repo.commit_all("base").await;
+    let base = repo.head().await;
+
+    repo.write("a.txt", "a\n");
+    repo.commit_all("add a").await;
+    let c1 = repo.head().await;
+    repo.write("b.txt", "b\n");
+    repo.commit_all("add b").await;
+    let c2 = repo.head().await;
+    repo.write("c.txt", "c\n");
+    repo.commit_all("add c").await;
+    let c3 = repo.head().await;
+
+    // Selection = {c1, c3} (non-contiguous), edited message on the oldest.
+    let plan = vec![
+        RebaseStep::reword(&c1, "combined: a and c\n\nedited in the dialog"),
+        RebaseStep::new(legit_core::RebaseAction::Fixup, &c3),
+        RebaseStep::new(legit_core::RebaseAction::Pick, &c2),
+    ];
+    let outcome = repo.backend.rebase_interactive(&base, &plan).await.unwrap();
+    assert_eq!(outcome, RebaseOutcome::Completed);
+
+    // Two commits on top of base: the squashed pair (with the edited
+    // message) and the untouched c2.
+    let log = repo.git(&["log", "--format=%s", &format!("{base}..HEAD")]).await;
+    let subjects: Vec<&str> = log.lines().collect();
+    assert_eq!(subjects, vec!["add b", "combined: a and c"]);
+    let full = repo.git(&["log", "-n", "2", "--format=%B", "HEAD"]).await;
+    assert!(full.contains("edited in the dialog"), "{full}");
+    assert!(repo.exists("a.txt") && repo.exists("b.txt") && repo.exists("c.txt"));
+}

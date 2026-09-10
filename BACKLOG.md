@@ -230,22 +230,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   interaction) remain gated on demand per the design note. (The
   read-only per-worktree DIRTY indicator - chip dot + Worktrees-pane
   badge via `--no-optional-locks status` probes - shipped 2026-09-10.)
-- **Commits panel: drop / squash for a multi-selection of unpushed commits**
-  (2026-09-10). QoL context-menu entries when the selection contains only
-  commits that are not on any remote (the existing `target_on_remote` /
-  tracking data gates the entries): "Drop N commits" and "Squash N commits
-  into one" (message editor prefilled with the concatenated messages).
-  Implementation approach: an AUTOMATIC interactive rebase in the
-  background - generate the todo list (`drop`/`squash` lines over
-  `git rebase -i <base>`) and feed it via `GIT_SEQUENCE_EDITOR` (the
-  runner's env-override seam, like the continue/skip commands' GIT_EDITOR
-  relaxation), never opening the rebase UI; the squashed message goes
-  through `GIT_EDITOR=true` with the message prepared beforehand
-  (`rebase.instructionFormat` caveats apply). Non-contiguous selections
-  are fine (the todo rewrite reorders nothing; drop/squash lines apply to
-  the picked shas), but a squash of non-contiguous commits should warn that
-  they collapse at the OLDEST selected commit's position. Conflicts abort
-  and roll back (`rebase --abort`) with the standard error surface.
 - **Commits panel search: touched-path query kind** (`git log -- <path>`) -
   the one search mode the shipped search bar (2026-07-30) lacks. NOTE: the
   Search panel was removed 2026-07-30 as redundant; with it went the UI

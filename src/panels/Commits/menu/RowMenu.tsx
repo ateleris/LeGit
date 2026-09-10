@@ -7,7 +7,8 @@ import { branchesAt } from "../cells/refChips";
 import { mainlineChoices } from "../mainline";
 import { undoLastCommitPlan } from "../undoLastCommit";
 import type { BulkPlan } from "../multiSelect";
-import { usePanelContextMenu } from "./PanelContextMenu";
+import { useMenuConfirm, usePanelContextMenu } from "./PanelContextMenu";
+import { useConfirmDestructive } from "../../../store/settings";
 import { MenuItem, SectionLabel, Separator, Submenu } from "./primitives";
 import { BranchMenuSection, RemoteBranchMenuSection } from "./BranchMenuSection";
 import { StashMenuSection } from "./StashMenuSection";
@@ -45,14 +46,39 @@ export function BulkSelectionMenu({
   opInProgress,
   handleCherryPick,
   handleRevert,
+  rewrite,
+  onDrop,
+  onSquash,
 }: {
   plan: BulkPlan;
   opInProgress: boolean;
   handleCherryPick: (shas: CommitId[], mainline?: number) => void;
   handleRevert: (shas: CommitId[], mainline?: number) => void;
+  /** Drop/squash availability: null hides the entries (a selected commit is
+   *  pushed, is a merge, or sits at the root). `contiguous` drives the
+   *  collapse warning for non-contiguous squashes. */
+  rewrite?: { contiguous: boolean } | null;
+  onDrop?: () => void;
+  onSquash?: () => void;
 }) {
   const { closeMenu } = usePanelContextMenu();
+  const menuConfirm = useMenuConfirm();
+  const confirmDestructive = useConfirmDestructive();
   const comparePair = plan.compare;
+  const requestDrop = () => {
+    const run = () => {
+      closeMenu();
+      onDrop?.();
+    };
+    if (!confirmDestructive) {
+      run();
+      return;
+    }
+    menuConfirm(
+      `Drop ${plan.count} commits? They are removed from the branch's history permanently.`,
+      run,
+    );
+  };
   return (
     <>
       <SectionLabel>{plan.count} commits selected</SectionLabel>
@@ -85,6 +111,25 @@ export function BulkSelectionMenu({
               The selection contains a merge commit - cherry-pick
               or revert it on its own to choose a mainline parent.
             </MenuNote>
+          )}
+          {rewrite && (
+            <>
+              <MenuItem onClick={requestDrop}>
+                {confirmDestructive
+                  ? `Drop ${plan.count} commits…`
+                  : `Drop ${plan.count} commits`}
+              </MenuItem>
+              <MenuItem onClick={() => { closeMenu(); onSquash?.(); }}>
+                Squash {plan.count} commits into one…
+              </MenuItem>
+              {!rewrite.contiguous && (
+                <MenuNote>
+                  The selection is not contiguous - the squashed commit lands
+                  at the OLDEST selected commit's position, and the commits
+                  in between are replayed on top of it.
+                </MenuNote>
+              )}
+            </>
           )}
         </>
       )}

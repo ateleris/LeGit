@@ -4083,3 +4083,25 @@ fn diff_entry_kind(e: &DiffEntry) -> &'static str {
         DiffEntry::TooLarge { .. } => "TooLarge",
     }
 }
+
+#[tokio::test]
+async fn unpushed_commits_lists_shas_not_on_any_remote() {
+    // Backs the bulk drop/squash menu gate: the selection must be a subset
+    // of these. `--not --remotes` = all-remotes semantics, matching the
+    // reword hard-block.
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["rev-list", "-n", "500", "HEAD", "--not", "--remotes"],
+        ok("2222222222222222222222222222222222222222\n1111111111111111111111111111111111111111\n"),
+    );
+    let (b, exec) = backend(fake);
+    let shas = b.unpushed_commits(500).await.unwrap();
+    assert_eq!(
+        shas,
+        vec![
+            CommitId::new("2222222222222222222222222222222222222222"),
+            CommitId::new("1111111111111111111111111111111111111111"),
+        ]
+    );
+    exec.assert_done();
+}

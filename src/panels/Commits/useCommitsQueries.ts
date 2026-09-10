@@ -14,6 +14,7 @@ import {
   repoStatus,
   repoTags,
   repoTrackingStatus,
+  repoUnpushedCommits,
   repoWorktreeList,
 } from "../../lib/commands";
 import { pushedTagNames, resolveTagRemote } from "../../lib/tags";
@@ -148,6 +149,16 @@ export function useCommitsQueries(
     staleTime: 5_000,
   });
 
+  // Unpushed set (all-remotes semantics): gates the bulk drop/squash menu
+  // entries - history rewrites must only ever see unpublished commits.
+  const { data: unpushedIds = [] } = useQuery<CommitId[]>({
+    queryKey: [repo?.id, "unpushed"],
+    queryFn: () => repoUnpushedCommits(repo!.id, 1000),
+    enabled: !!repo,
+    staleTime: 5_000,
+  });
+  const unpushedSet = useMemo(() => new Set<CommitId>(unpushedIds), [unpushedIds]);
+
   // Worktree list — drives the branch chips' "checked out in another
   // worktree" indicator (kept fresh by the watcher's worktrees domain).
   const { data: worktrees = [] } = useQuery<WorktreeInfo[]>({
@@ -247,6 +258,7 @@ export function useCommitsQueries(
     upstreamMap,
     worktreeBranches,
     worktreeHeadsBySha,
+    unpushedSet,
     currentBranchName,
     tags,
     remotesList,
