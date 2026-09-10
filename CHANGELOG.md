@@ -12,6 +12,14 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-09-10
+
+### Fixed
+
+- Submodules opened as a repo tab no longer show their own checkout as a
+  foreign worktree (bogus entry in the Worktrees section, worktree icon on
+  their own branch chip in the graph).
+
 ## [1.2.0] - 2026-09-10
 
 ### Added

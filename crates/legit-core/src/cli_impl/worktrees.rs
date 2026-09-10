@@ -16,6 +16,28 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         let out = runner.run(&parsers::worktrees::WORKTREE_LIST_ARGS).await?;
         Self::ensure_success(&out)?;
         let mut list = parsers::worktrees::parse_worktree_list(&out.stdout);
+        // git names an absorbed submodule's gitdir as the main worktree's
+        // path; resolve the real toplevel and fix the entry (best-effort: a
+        // failed probe leaves the list as parsed). A bare main has no
+        // toplevel to ask for.
+        if list.first().is_some_and(|m| !m.bare) {
+            let probe = runner
+                .run(&[
+                    "rev-parse",
+                    "--path-format=absolute",
+                    "--git-common-dir",
+                    "--show-toplevel",
+                ])
+                .await;
+            if let Ok(o) = probe {
+                if o.success {
+                    let mut lines = o.stdout.lines();
+                    if let (Some(common), Some(top)) = (lines.next(), lines.next()) {
+                        fix_absorbed_submodule_main_path(&mut list, common.trim(), top.trim());
+                    }
+                }
+            }
+        }
         // Best-effort dirtiness per checkout, for the read-only indicators.
         // `--no-optional-locks` keeps the probe from writing ANOTHER
         // worktree's index (a plain `status` refreshes the stat cache);
@@ -99,6 +121,23 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
     }
 }
 
+/// In a submodule with an absorbed gitdir, `git worktree list` reports the
+/// gitdir (`<super>/.git/modules/<name>`) as the main worktree's path - it
+/// derives the entry from the common dir and ignores `core.worktree` - so
+/// the session's own checkout would render as a foreign worktree. When the
+/// main entry's path is the git common dir, rewrite it to the real toplevel.
+pub(super) fn fix_absorbed_submodule_main_path(
+    list: &mut [WorktreeInfo],
+    common_dir: &str,
+    toplevel: &str,
+) {
+    let norm = |p: &str| p.replace('\\', "/");
+    let Some(main) = list.first_mut() else { return };
+    if main.is_main && norm(&main.path) == norm(common_dir) {
+        main.path = toplevel.to_string();
+    }
+}
+
 /// Best-effort (branch, worktree path) from git's two refusal messages:
 /// switch/checkout: `fatal: '<branch>' is already checked out at '<path>'`;
 /// branch delete (wording varies by git version):
@@ -116,6 +155,59 @@ pub(super) fn parse_checked_out_elsewhere(stderr: &str) -> (Option<String>, Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entry(path: &str, is_main: bool) -> WorktreeInfo {
+        WorktreeInfo {
+            path: path.to_string(),
+            head: Some("1111111111111111111111111111111111111111".into()),
+            branch: Some("main".into()),
+            is_main,
+            detached: false,
+            bare: false,
+            locked: None,
+            prunable: None,
+            dirty: None,
+        }
+    }
+
+    #[test]
+    fn rewrites_the_gitdir_main_entry_of_an_absorbed_submodule() {
+        let mut list = vec![entry("/super/.git/modules/lib", true)];
+        fix_absorbed_submodule_main_path(
+            &mut list,
+            "/super/.git/modules/lib",
+            "/super/lib",
+        );
+        assert_eq!(list[0].path, "/super/lib");
+    }
+
+    #[test]
+    fn leaves_a_normal_repo_untouched() {
+        let mut list = vec![entry("/repo", true), entry("/wt", false)];
+        fix_absorbed_submodule_main_path(&mut list, "/repo/.git", "/repo");
+        assert_eq!(list[0].path, "/repo");
+        assert_eq!(list[1].path, "/wt");
+    }
+
+    #[test]
+    fn leaves_a_linked_worktree_sessions_main_entry_untouched() {
+        // Seen from a linked worktree: the main entry is the MAIN repo's
+        // toplevel (not this session's), which is correct as-is.
+        let mut list = vec![entry("/repo", true), entry("/wt", false)];
+        fix_absorbed_submodule_main_path(&mut list, "/repo/.git", "/wt");
+        assert_eq!(list[0].path, "/repo");
+    }
+
+    #[test]
+    fn compares_paths_across_separator_styles() {
+        let mut list = vec![entry("C:/super/.git/modules/lib", true)];
+        fix_absorbed_submodule_main_path(
+            &mut list,
+            "C:\\super\\.git\\modules\\lib",
+            "C:/super/lib",
+        );
+        assert_eq!(list[0].path, "C:/super/lib");
+    }
 
     #[test]
     fn extracts_branch_and_path_from_the_switch_refusal() {

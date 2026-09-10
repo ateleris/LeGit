@@ -3916,6 +3916,11 @@ async fn worktree_list_parses_the_porcelain_stream_and_probes_dirtiness() {
         &["worktree", "list", "--porcelain", "-z"],
         ok("worktree /repo\0HEAD 1111111111111111111111111111111111111111\0branch refs/heads/main\0\0worktree /wt\0HEAD 2222222222222222222222222222222222222222\0branch refs/heads/feature\0\0"),
     );
+    // Main-entry fixup probe (absorbed-submodule gitdir detection).
+    fake.expect(
+        &["rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel"],
+        ok("/repo/.git\n/repo\n"),
+    );
     // One read-only dirtiness probe per checkout; --no-optional-locks so
     // probing ANOTHER worktree never writes its index.
     fake.expect(
@@ -3945,12 +3950,43 @@ async fn worktree_list_skips_the_dirty_probe_for_prunable_entries() {
         ok("worktree /repo\0HEAD 1111111111111111111111111111111111111111\0branch refs/heads/main\0\0worktree /gone\0HEAD 2222222222222222222222222222222222222222\0detached\0prunable gitdir file points to non-existent location\0\0"),
     );
     fake.expect(
+        &["rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel"],
+        ok("/repo/.git\n/repo\n"),
+    );
+    fake.expect(
         &["--no-optional-locks", "-C", "/repo", "status", "--porcelain", "-z"],
         ok(""),
     );
     let (b, exec) = backend(fake);
     let list = b.worktree_list().await.unwrap();
     assert_eq!(list[1].dirty, None);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn worktree_list_rewrites_an_absorbed_submodule_gitdir_main_entry() {
+    // Inside a submodule git reports the GITDIR as the main worktree's path
+    // (`worktree list` ignores core.worktree); the list must name the real
+    // checkout, and the dirty probe must target it too.
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["worktree", "list", "--porcelain", "-z"],
+        ok("worktree /super/.git/modules/lib\0HEAD 1111111111111111111111111111111111111111\0branch refs/heads/main\0\0"),
+    );
+    fake.expect(
+        &["rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel"],
+        ok("/super/.git/modules/lib\n/super/lib\n"),
+    );
+    fake.expect(
+        &["--no-optional-locks", "-C", "/super/lib", "status", "--porcelain", "-z"],
+        ok(""),
+    );
+    let (b, exec) = backend(fake);
+    let list = b.worktree_list().await.unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].path, "/super/lib");
+    assert!(list[0].is_main);
+    assert_eq!(list[0].dirty, Some(false));
     exec.assert_done();
 }
 
