@@ -12,6 +12,8 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-10
+
 ### Added
 
 - Case-only renames (e.g. `test.c` -> `Test.c`), which git cannot see on
