@@ -1,0 +1,123 @@
+//! Worktree management for `GitCliBackend` (list/add/remove/prune) and the
+//! checked-out-elsewhere message extractor.
+//!
+//! The `GitBackend` trait impl in `mod.rs` delegates to the same-named
+//! inherent methods here (a trait impl cannot span files).
+
+use crate::error::GitError;
+use crate::executor::GitExecutor;
+use crate::types::{WorktreeAddMode, WorktreeInfo};
+
+use super::{parsers, safe_ref, GitCliBackend};
+
+impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
+    pub(super) async fn worktree_list(&self) -> Result<Vec<WorktreeInfo>, GitError> {
+        let runner = self.runner().await;
+        let out = runner.run(&parsers::worktrees::WORKTREE_LIST_ARGS).await?;
+        Self::ensure_success(&out)?;
+        let mut list = parsers::worktrees::parse_worktree_list(&out.stdout);
+        // Best-effort dirtiness per checkout, for the read-only indicators.
+        // `--no-optional-locks` keeps the probe from writing ANOTHER
+        // worktree's index (a plain `status` refreshes the stat cache);
+        // bare/prunable entries have nothing to probe. A failed probe leaves
+        // None - never an error.
+        for w in &mut list {
+            if w.bare || w.prunable.is_some() {
+                continue;
+            }
+            let probe = runner
+                .run(&["--no-optional-locks", "-C", &w.path, "status", "--porcelain", "-z"])
+                .await;
+            w.dirty = match probe {
+                Ok(o) if o.success => Some(!o.stdout.is_empty()),
+                _ => None,
+            };
+        }
+        Ok(list)
+    }
+
+    pub(super) async fn worktree_add(
+        &self,
+        path: &str,
+        mode: &WorktreeAddMode,
+    ) -> Result<(), GitError> {
+        if path.trim().is_empty() {
+            return Err(GitError::Internal("worktree path is empty".into()));
+        }
+        match mode {
+            WorktreeAddMode::Checkout { branch } => {
+                let b = safe_ref("branch", branch)?;
+                self.run_simple(&["worktree", "add", "--", path, b]).await
+            }
+            WorktreeAddMode::NewBranch { name, start_point } => {
+                let n = safe_ref("branch", name)?;
+                match start_point.as_deref() {
+                    Some(s) => {
+                        let s = safe_ref("revision", s)?;
+                        self.run_simple(&["worktree", "add", "-b", n, "--", path, s]).await
+                    }
+                    None => self.run_simple(&["worktree", "add", "-b", n, "--", path]).await,
+                }
+            }
+        }
+    }
+
+    pub(super) async fn worktree_remove(&self, path: &str, force: bool) -> Result<(), GitError> {
+        if force {
+            self.run_simple(&["worktree", "remove", "--force", "--", path]).await
+        } else {
+            self.run_simple(&["worktree", "remove", "--", path]).await
+        }
+    }
+
+    pub(super) async fn worktree_prune(&self) -> Result<(), GitError> {
+        self.run_simple(&["worktree", "prune"]).await
+    }
+}
+
+/// Best-effort (branch, worktree path) from git's two refusal messages:
+/// switch/checkout: `fatal: '<branch>' is already checked out at '<path>'`;
+/// branch delete (wording varies by git version):
+/// `error: Cannot delete branch '<b>' checked out at '<path>'` or
+/// `error: cannot delete branch '<b>' used by worktree at '<path>'`.
+pub(super) fn parse_checked_out_elsewhere(stderr: &str) -> (Option<String>, Option<String>) {
+    // Both messages quote the branch first and the path last.
+    let quoted: Vec<&str> = stderr.split('\'').skip(1).step_by(2).collect();
+    match quoted.as_slice() {
+        [branch, .., path] => (Some(branch.to_string()), Some(path.to_string())),
+        _ => (None, None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_branch_and_path_from_the_switch_refusal() {
+        let (b, p) = parse_checked_out_elsewhere(
+            "fatal: 'feature' is already checked out at '/home/u/wt-feature'",
+        );
+        assert_eq!(b.as_deref(), Some("feature"));
+        assert_eq!(p.as_deref(), Some("/home/u/wt-feature"));
+    }
+
+    #[test]
+    fn extracts_from_the_branch_delete_refusals() {
+        let (b, p) = parse_checked_out_elsewhere(
+            "error: Cannot delete branch 'feature' checked out at '/home/u/wt-feature'",
+        );
+        assert_eq!(b.as_deref(), Some("feature"));
+        assert_eq!(p.as_deref(), Some("/home/u/wt-feature"));
+        let (b2, p2) = parse_checked_out_elsewhere(
+            "error: cannot delete branch 'f' used by worktree at '/w'",
+        );
+        assert_eq!(b2.as_deref(), Some("f"));
+        assert_eq!(p2.as_deref(), Some("/w"));
+    }
+
+    #[test]
+    fn unrecognized_message_yields_nones() {
+        assert_eq!(parse_checked_out_elsewhere("fatal: something else"), (None, None));
+    }
+}

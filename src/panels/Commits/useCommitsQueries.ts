@@ -14,9 +14,11 @@ import {
   repoStatus,
   repoTags,
   repoTrackingStatus,
+  repoWorktreeList,
 } from "../../lib/commands";
 import { pushedTagNames, resolveTagRemote } from "../../lib/tags";
 import { buildUpstreamMap } from "./commitRows";
+import { branchWorktreeMap, detachedWorktreeHeads } from "../Worktrees/worktreeRows";
 import { mergeSearchResults } from "./commitSearch";
 import type {
   Branch,
@@ -28,6 +30,7 @@ import type {
   RepoSummary,
   TagInfo,
   TrackingStatus,
+  WorktreeInfo,
 } from "../../lib/types";
 
 /** Full-history search result cap (matches the removed Search panel). */
@@ -145,6 +148,25 @@ export function useCommitsQueries(
     staleTime: 5_000,
   });
 
+  // Worktree list — drives the branch chips' "checked out in another
+  // worktree" indicator (kept fresh by the watcher's worktrees domain).
+  const { data: worktrees = [] } = useQuery<WorktreeInfo[]>({
+    queryKey: [repo?.id, "worktrees"],
+    queryFn: () => repoWorktreeList(repo!.id),
+    enabled: !!repo,
+    staleTime: 5_000,
+  });
+  const worktreeBranches = useMemo(
+    () => branchWorktreeMap(worktrees, repo?.path ?? null),
+    [worktrees, repo?.path],
+  );
+  // HEAD sha -> other worktrees sitting detached there (their only visible
+  // trace in the graph - a branch checkout shows on the branch chip).
+  const worktreeHeadsBySha = useMemo(
+    () => detachedWorktreeHeads(worktrees, repo?.path ?? null),
+    [worktrees, repo?.path],
+  );
+
   // Full local ref → full upstream ref (e.g. refs/heads/dev → refs/remotes/origin/dev).
   const upstreamMap = useMemo(() => buildUpstreamMap(branches), [branches]);
 
@@ -223,6 +245,8 @@ export function useCommitsQueries(
     tracking,
     status,
     upstreamMap,
+    worktreeBranches,
+    worktreeHeadsBySha,
     currentBranchName,
     tags,
     remotesList,

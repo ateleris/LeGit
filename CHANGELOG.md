@@ -20,6 +20,16 @@ lives in the git log and the GitHub release notes.
   "Stage rename" and "Discard rename" (back to the tracked spelling) plus
   the usual blame/history/editor actions. Opt out via the new "Detect
   case-only renames" setting.
+- Worktree support: a new Worktrees section in the Refs panel lists all
+  worktrees and can add (new or existing branch), open as a separate repo
+  tab, remove (with a force offer for dirty trees), and prune. Switching
+  to a branch that is checked out in another worktree now says which one,
+  branch chips in the commit graph mark such branches with a worktree
+  icon (tooltip names the worktree), detached worktree HEADs appear as
+  their own chip in the graph (right-click opens that worktree), a dirty
+  worktree shows a dot on its chip and a "dirty" badge in the Worktrees
+  section, and a worktree tab live-updates when refs change in the main
+  checkout.
 - A repo whose file watcher failed to start now shows a "live updates off"
   badge on its tab with the reason (previously the failure was only a log
   line and the repo silently stopped auto-refreshing).

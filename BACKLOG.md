@@ -56,8 +56,8 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 `GitRunner` (+ parser if it returns data) -> Tauri command (registered in
 `lib.rs`) -> wrapper in `lib/commands.ts` + type in `lib/types.ts` -> UI.
 
-- **Worktrees** (add/list/remove) and **bisect**. The two whole-feature gaps
-  left vs a full-featured client. Deferred to post v1.0.0 (decided
+- **Bisect.** The one whole-feature gap left vs a full-featured client
+  (worktrees shipped 2026-09-10). Deferred to post v1.0.0 (decided
   2026-07-20).
 - **Platform integrations, open remainders** (SSH key tools, PAT connect,
   and broker HTTPS auth shipped 2026-07-13; scope = GitHub/GitLab/ADO,
@@ -218,6 +218,53 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   invalidation mid-walk must restart the walk), and the auto-seek needs a
   guardrail (~50k commits: stop and ask via toast). Keep-everything-loaded
   stays the model; windowed unloading was rejected 2026-07-30.
+- **Worktrees, deferred slices** (2026-09-10; mode analysis in
+  `design/2026-09-10-worktrees-parallel-graph.md`; stage B1 - worktree
+  positions as read-only graph decorations - shipped 2026-09-10: branch
+  chips carry the worktree icon and an "Open worktree" menu entry,
+  detached worktree HEADs get their own chip with the same menu):
+  detached-checkout mode for `worktree add`; lock/unlock actions; a
+  guided "open that worktree" action on the CheckedOutInWorktree refusal
+  TOAST (the chip menus have it; the refusal message itself stays
+  text-only). Stages B2/B3 (active-worktree switcher, full parallel
+  interaction) remain gated on demand per the design note. (The
+  read-only per-worktree DIRTY indicator - chip dot + Worktrees-pane
+  badge via `--no-optional-locks status` probes - shipped 2026-09-10.)
+- **Theme editor: color branch chips by their graph lane** (2026-09-10).
+  A per-theme TOGGLE between today's static chip tokens and lane-derived
+  chip colors, so a branch chip visually matches the lane its tip occupies
+  and the eye can follow a branch through the tree. Both modes stay
+  available; the theme editor greys out (deactivates) the token inputs the
+  active mode does not use (static chip tokens when lane-derived is on).
+  Recommended approach when picked up: DERIVE, do not add per-lane chip
+  tokens. Lane colors already come from the themed lane palette (cyclic),
+  so per-lane chip tokens would multiply TOKEN_CONTRACT (a breaking-change
+  surface) and still need a cycling rule past the last lane; instead
+  compute the chip style from the row's lane color at render time, e.g.
+  `background: color-mix(in srgb, var(--lane-color) 25%, var(--panel-bg))`
+  with `border-color: var(--lane-color)` and the NORMAL chip text token
+  for the label. The toggle is a new optional field in
+  `.legit-theme.json` (additive = safe for the user-theme contract);
+  chips of branches not currently in the graph window fall back to the
+  static tokens. Contrast: keep the wash weak and the text token
+  unchanged, and extend `CONTRAST_PAIRS` with a worst-case lane-wash pair
+  so built-ins stay AA when the toggle is on.
+- **Commits panel: drop / squash for a multi-selection of unpushed commits**
+  (2026-09-10). QoL context-menu entries when the selection contains only
+  commits that are not on any remote (the existing `target_on_remote` /
+  tracking data gates the entries): "Drop N commits" and "Squash N commits
+  into one" (message editor prefilled with the concatenated messages).
+  Implementation approach: an AUTOMATIC interactive rebase in the
+  background - generate the todo list (`drop`/`squash` lines over
+  `git rebase -i <base>`) and feed it via `GIT_SEQUENCE_EDITOR` (the
+  runner's env-override seam, like the continue/skip commands' GIT_EDITOR
+  relaxation), never opening the rebase UI; the squashed message goes
+  through `GIT_EDITOR=true` with the message prepared beforehand
+  (`rebase.instructionFormat` caveats apply). Non-contiguous selections
+  are fine (the todo rewrite reorders nothing; drop/squash lines apply to
+  the picked shas), but a squash of non-contiguous commits should warn that
+  they collapse at the OLDEST selected commit's position. Conflicts abort
+  and roll back (`rebase --abort`) with the standard error surface.
 - **Commits panel search: touched-path query kind** (`git log -- <path>`) -
   the one search mode the shipped search bar (2026-07-30) lacks. NOTE: the
   Search panel was removed 2026-07-30 as redundant; with it went the UI

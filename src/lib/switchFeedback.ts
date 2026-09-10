@@ -2,7 +2,7 @@
 // Branches panels so the messaging (and its accuracy) stays in one place.
 
 import type { RemoteCheckoutOutcome, SwitchOutcome } from "./types";
-import { formatAppError, gitErrorKind } from "./types";
+import { formatAppError, gitErrorDetails, gitErrorKind } from "./types";
 import { lfsDownloadErrorMessage } from "./lfsFeedback";
 import { notify } from "../store/notifications";
 
@@ -82,7 +82,26 @@ export function formatSwitchError(e: unknown): string {
       "first — or enable auto-stash in Settings to carry them across."
     );
   }
+  if (gitErrorKind(e) === "CheckedOutInWorktree") {
+    const d = gitErrorDetails<{ branch: string | null; path: string | null }>(e);
+    return checkedOutInWorktreeMessage(d?.branch ?? null, d?.path ?? null);
+  }
   return formatAppError(e);
+}
+
+/** Guidance for a branch that is checked out in another worktree. Shared by
+ * the refused-switch error path and the branch chip's double-click toast
+ * (the chip skips the doomed git call and explains directly). */
+export function checkedOutInWorktreeMessage(
+  branch: string | null,
+  path: string | null,
+): string {
+  const name = branch ? `"${branch}"` : "This branch";
+  const where = path ? ` (${path})` : "";
+  return (
+    `${name} is already checked out in another worktree${where}. ` +
+    "Open that worktree to work on it, or create a new branch here."
+  );
 }
 
 /** Toast variant of `formatSwitchError`. */

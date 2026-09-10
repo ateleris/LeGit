@@ -14,6 +14,25 @@ const upstreams = (pairs: Record<string, string>) =>
   new Map(Object.entries(pairs));
 
 describe("buildChips", () => {
+  it("appends worktree-head chips after the branch group", () => {
+    const out = buildChips(
+      [branch("refs/heads/dev"), remote("refs/remotes/origin/other"), tag("refs/tags/v1")],
+      NO_UPSTREAM,
+      [{ name: "wt-hotfix", path: "/wt-hotfix", dirty: false }],
+    );
+    expect(out).toEqual([
+      { kind: "branch", value: "refs/heads/dev" },
+      { kind: "worktreeHead", name: "wt-hotfix", path: "/wt-hotfix", dirty: false },
+      { kind: "remote", value: "refs/remotes/origin/other" },
+      { kind: "tag", value: "refs/tags/v1" },
+    ]);
+  });
+
+  it("renders a worktree-head chip alone on an undecorated commit", () => {
+    const out = buildChips([], NO_UPSTREAM, [{ name: "wt-a", path: "/wt-a", dirty: true }]);
+    expect(out).toEqual([{ kind: "worktreeHead", name: "wt-a", path: "/wt-a", dirty: true }]);
+  });
+
   it("fuses a local branch with its upstream remote on the same commit", () => {
     const out = buildChips(
       [branch("refs/heads/dev"), remote("refs/remotes/origin/dev")],

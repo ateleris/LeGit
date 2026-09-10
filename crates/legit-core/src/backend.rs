@@ -19,7 +19,7 @@ use crate::types::{
     ResetMode, SequenceOutcome, StashApplyOutcome,
     StashEntry, StashOutcome, SubmoduleAutoUpdateResult, SubmoduleGitdirInfo, SubmoduleInfo,
     SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy, SwitchDirtyBehavior,
-    SwitchResult, TagInfo, TrackingStatus,
+    SwitchResult, TagInfo, TrackingStatus, WorktreeAddMode, WorktreeInfo,
 };
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
@@ -310,6 +310,18 @@ pub trait GitBackend: Send + Sync {
         index_path: &str,
         disk_path: &str,
     ) -> Result<(), GitError>;
+
+    /// All worktrees of this repo (`git worktree list`), main first.
+    async fn worktree_list(&self) -> Result<Vec<WorktreeInfo>, GitError>;
+
+    /// Create a worktree at `path` (absolute, on the repo's host).
+    async fn worktree_add(&self, path: &str, mode: &WorktreeAddMode) -> Result<(), GitError>;
+
+    /// Remove a worktree checkout. Without `force` git refuses a dirty tree.
+    async fn worktree_remove(&self, path: &str, force: bool) -> Result<(), GitError>;
+
+    /// Drop stale bookkeeping of manually deleted worktrees.
+    async fn worktree_prune(&self) -> Result<(), GitError>;
 
     /// Remove a submodule the safe way (magit semantics): refuse if its
     /// worktree is dirty/conflicted, absorb an embedded gitdir, `deinit -f`,

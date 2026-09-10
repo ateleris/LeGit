@@ -19,6 +19,7 @@ import { RemotesSection } from "../Remotes/RemotesPanel";
 import { StashesSection } from "../Stashes/StashesPanel";
 import { SubmodulesSection } from "../Submodules/SubmodulesSection";
 import { TagsSection } from "../Tags/TagsSection";
+import { WorktreesSection } from "../Worktrees/WorktreesSection";
 import { ReflogSection } from "../Reflog/ReflogSection";
 import { defaultPaneSizes, sanitizePaneviewLayout } from "./refsLayout";
 
@@ -39,6 +40,7 @@ const DEFAULT_PANES = [
   { id: "tags", title: "Tags", isExpanded: false },
   { id: "stashes", title: "Stashes", isExpanded: true },
   { id: "submodules", title: "Submodules", isExpanded: false },
+  { id: "worktrees", title: "Worktrees", isExpanded: false },
   { id: "reflog", title: "Reflog", isExpanded: false },
 ] as const;
 
@@ -48,6 +50,7 @@ const PANE_COMPONENTS: Record<string, FunctionComponent<IPaneviewPanelProps>> = 
   tags: () => <TagsSection />,
   stashes: () => <StashesSection />,
   submodules: () => <SubmodulesSection />,
+  worktrees: () => <WorktreesSection />,
   reflog: () => <ReflogSection />,
 };
 

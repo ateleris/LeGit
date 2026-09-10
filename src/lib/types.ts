@@ -235,7 +235,8 @@ export type ChangeDomain =
   | "tags"
   | "diff"
   | "op_state"
-  | "submodules";
+  | "submodules"
+  | "worktrees";
 
 /** Payload of the `legit://repo-changed` event emitted by the FS watcher. */
 export interface RepoChangedPayload {
@@ -363,6 +364,15 @@ export function gitErrorKind(e: unknown): string | null {
     }
   }
   return null;
+}
+
+/** The typed payload of a `GitError` variant (its `details` content), or
+ *  null when `e` is not a git error. Callers check `gitErrorKind` first so
+ *  the cast below matches the variant they asked for. */
+export function gitErrorDetails<T>(e: unknown): T | null {
+  if (gitErrorKind(e) === null) return null;
+  const git = (e as AppError).details as { details?: T };
+  return git.details ?? null;
 }
 
 /** For a cancelled clone (`GitError::CloneCancelled`): the note describing a
@@ -964,6 +974,32 @@ export interface CaseDriftEntry {
   /** The drifting component is a directory (the fix renames the directory). */
   is_dir: boolean;
 }
+
+/** One entry of `git worktree list` (matches legit-core `WorktreeInfo`).
+ * `path` is absolute ON THE REPO'S HOST and is the worktree's identity. */
+export interface WorktreeInfo {
+  path: string;
+  /** HEAD commit sha; null only for a bare main entry. */
+  head: string | null;
+  /** Short branch name; null when detached or bare. */
+  branch: string | null;
+  /** The first listed entry is the main worktree. */
+  is_main: boolean;
+  detached: boolean;
+  bare: boolean;
+  /** Present when locked; the lock reason ("" when none was given). */
+  locked: string | null;
+  /** Present when prunable; git's reason. */
+  prunable: string | null;
+  /** Uncommitted changes in that checkout (untracked included); null when
+   * not probed (bare/prunable) or the probe failed. */
+  dirty: boolean | null;
+}
+
+/** How `worktree add` populates the new worktree (matches `WorktreeAddMode`). */
+export type WorktreeAddMode =
+  | { kind: "checkout"; branch: string }
+  | { kind: "new_branch"; name: string; start_point: string | null };
 
 export type SwitchDirtyBehavior = "try_directly" | "auto_stash" | "stash_and_keep";
 

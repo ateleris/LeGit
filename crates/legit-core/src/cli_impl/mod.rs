@@ -25,7 +25,7 @@ use crate::types::{
     RenormalizeOutcome, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode, SequenceOutcome, SignMode, StashApplyOutcome, StashEntry,
     StashOutcome, SubmoduleAutoUpdateResult, SubmoduleChange, SubmoduleGitdirInfo,
     SubmoduleInfo, SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy,
-    SwitchDirtyBehavior, SwitchOutcome, SwitchResult, TagInfo, TrackingStatus,
+    SwitchDirtyBehavior, SwitchOutcome, SwitchResult, TagInfo, TrackingStatus, WorktreeAddMode, WorktreeInfo,
 };
 
 /// Git's well-known empty-tree object id, used as the "before" side when
@@ -55,6 +55,7 @@ use tokio::sync::RwLock;
 pub mod parsers;
 mod case_drift;
 mod line_endings;
+mod worktrees;
 pub use line_endings::*;
 mod submodules;
 
@@ -1718,6 +1719,22 @@ impl<E: GitExecutor + ?Sized> GitBackend for GitCliBackend<E> {
         self.discard_case_rename(index_path, disk_path).await
     }
 
+    async fn worktree_list(&self) -> Result<Vec<WorktreeInfo>, GitError> {
+        self.worktree_list().await
+    }
+
+    async fn worktree_add(&self, path: &str, mode: &WorktreeAddMode) -> Result<(), GitError> {
+        self.worktree_add(path, mode).await
+    }
+
+    async fn worktree_remove(&self, path: &str, force: bool) -> Result<(), GitError> {
+        self.worktree_remove(path, force).await
+    }
+
+    async fn worktree_prune(&self) -> Result<(), GitError> {
+        self.worktree_prune().await
+    }
+
     async fn submodule_remove(&self, path: &Path) -> Result<(), GitError> {
         self.submodule_remove(path).await
     }
@@ -3145,6 +3162,14 @@ fn classify_switch_error(exit_code: i32, stderr: &str) -> GitError {
     {
         return GitError::WouldOverwriteLocalChanges(stderr.trim().to_string());
     }
+    if lc.contains("already checked out at") || lc.contains("used by worktree at") {
+        let (branch, path) = worktrees::parse_checked_out_elsewhere(stderr);
+        return GitError::CheckedOutInWorktree {
+            branch,
+            path,
+            stderr: stderr.trim().to_string(),
+        };
+    }
     if lc.contains("invalid reference") {
         return GitError::RefNotFound(stderr.trim().to_string());
     }
@@ -3156,9 +3181,19 @@ fn classify_switch_error(exit_code: i32, stderr: &str) -> GitError {
 
 /// Map a failed non-force `git branch -d` to a specific `GitError`: the
 /// "not fully merged" refusal → `BranchNotFullyMerged` (so the UI can offer
-/// a guided force delete), everything else → `CommandFailed`.
+/// a guided force delete), a checked-out-in-worktree refusal →
+/// `CheckedOutInWorktree`, everything else → `CommandFailed`.
 fn classify_branch_delete_error(exit_code: i32, stderr: &str, branch: &str) -> GitError {
-    if stderr.to_lowercase().contains("not fully merged") {
+    let lc = stderr.to_lowercase();
+    if lc.contains("checked out at") || lc.contains("used by worktree at") {
+        let (b, path) = worktrees::parse_checked_out_elsewhere(stderr);
+        return GitError::CheckedOutInWorktree {
+            branch: b.or_else(|| Some(branch.to_string())),
+            path,
+            stderr: stderr.trim().to_string(),
+        };
+    }
+    if lc.contains("not fully merged") {
         return GitError::BranchNotFullyMerged {
             branch: branch.to_string(),
             stderr: stderr.trim().to_string(),

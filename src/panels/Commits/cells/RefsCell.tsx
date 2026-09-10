@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { BranchIcon, RemoteIcon, TagIcon } from "../../../icons";
+import { BranchIcon, RemoteIcon, TagIcon, WorktreeIcon } from "../../../icons";
 import type { LaneLock, MergeOptions, RefDecoration } from "../../../lib/types";
 import { usePanelContextMenu } from "../menu/PanelContextMenu";
 import { LaneLockSection } from "../menu/LaneLockSection";
-import { Separator } from "../menu/primitives";
+import { MenuItem, Separator } from "../menu/primitives";
 import { BranchMenuSection, RemoteBranchMenuSection } from "../menu/BranchMenuSection";
 import { TagMenuSection } from "../menu/TagMenuSection";
 import { InlineRenameInput } from "./InlineRenameInput";
 import { buildChips, computeVisibleCount } from "./refChips";
+import type { WorktreeMark } from "../../Worktrees/worktreeRows";
+import { checkedOutInWorktreeMessage } from "../../../lib/switchFeedback";
+import { notify } from "../../../store/notifications";
 import type { ChipDescriptor } from "./refChips";
 
 interface RefsCellProps {
@@ -72,6 +75,16 @@ interface RefsCellProps {
   onRemoteBranchDelete?: (remoteRef: string) => void;
   /** Current branch (merge/rebase menu labels); null when HEAD is detached. */
   currentBranch?: string | null;
+  /** Short branch name -> worktree mark, for branches checked out in ANOTHER
+   *  worktree: their chips carry the worktree indicator (switching to them
+   *  here is refused by git), with a dot when that checkout is dirty. */
+  worktreeBranches?: ReadonlyMap<string, WorktreeMark>;
+  /** OTHER worktrees sitting DETACHED on this row's commit - rendered as
+   *  read-only worktree chips (branch checkouts are marked on the branch
+   *  chip instead). */
+  worktreeHeads?: { name: string; path: string; dirty: boolean }[];
+  /** Open a worktree as its own repo tab (worktree-head chip menu). */
+  onOpenWorktree?: (path: string) => void;
   /** Hide merge/rebase entries while a merge/rebase is already running. */
   opInProgress?: boolean;
   /** Merge `target` (local name or remote ref) into the current branch. */
@@ -83,7 +96,7 @@ interface RefsCellProps {
 const CHIP_GAP = 3;
 
 /** Renders ref decoration chips for a commit row. */
-export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, renamingBranch, onBranchRenameSave, onBranchRenameCancel, creatingBranch, onCreateBranchSave, onCreateBranchCancel, creatingTag, onCreateTagSave, onCreateTagCancel, pushedTags, tagTargetsOnRemote, tagRemote, remotes, onTagPush, onTagDelete, onTagDeleteRemote, onBranchCheckout, onBranchRename, onBranchPush, onBranchSetUpstream, upstreamCandidatesFor, onBranchDelete, onRemoteCheckout, onRemoteBranchDelete, currentBranch, opInProgress, onBranchMerge, onBranchRebaseOnto }: RefsCellProps) {
+export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, renamingBranch, onBranchRenameSave, onBranchRenameCancel, creatingBranch, onCreateBranchSave, onCreateBranchCancel, creatingTag, onCreateTagSave, onCreateTagCancel, pushedTags, tagTargetsOnRemote, tagRemote, remotes, onTagPush, onTagDelete, onTagDeleteRemote, onBranchCheckout, onBranchRename, onBranchPush, onBranchSetUpstream, upstreamCandidatesFor, onBranchDelete, onRemoteCheckout, onRemoteBranchDelete, currentBranch, opInProgress, onBranchMerge, onBranchRebaseOnto, worktreeBranches, worktreeHeads, onOpenWorktree }: RefsCellProps) {
   const { openMenu, closeMenu } = usePanelContextMenu();
   const [visibleCount, setVisibleCount] = useState(Number.MAX_SAFE_INTEGER);
   const [popover, setPopover] = useState<{ x: number; y: number } | null>(null);
@@ -127,8 +140,8 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
   // Priority-sorted chips: HEAD pair, branches (fused with their remote where
   // applicable), remotes, tags, other.
   const chips = useMemo(
-    () => buildChips(decorations, upstreamMap),
-    [decorations, upstreamMap],
+    () => buildChips(decorations, upstreamMap, worktreeHeads ?? []),
+    [decorations, upstreamMap, worktreeHeads],
   );
 
   // Measure the hidden full chip row and compute how many chips fit on the
@@ -188,6 +201,10 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
         : chip.kind === "fusedBranch"
           ? chip.local
           : null;
+    // The OTHER worktree this chip's branch is checked out in (icon + menu).
+    const worktreeMark = refName !== null
+      ? worktreeBranches?.get(shortBranch(refName)) ?? null
+      : null;
 
     // In-place branch rename: the matching chip becomes an input.
     if (!forMeasure && renamingBranch != null && refName !== null) {
@@ -222,22 +239,32 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
         const isCurrent = headOfTarget === localRef;
 
         return (
-          <BranchMenuSection
-            name={localName}
-            isCurrent={isCurrent}
-            currentBranch={currentBranch ?? null}
-            opInProgress={opInProgress ?? false}
-            upstream={upstreamMap.get(localRef) ?? null}
-            upstreamCandidates={upstreamCandidatesFor?.(localName) ?? []}
-            remotes={remotes ?? []}
-            onCheckout={() => { closeMenu(); onBranchCheckout?.(localName); }}
-            onRename={() => { closeMenu(); onBranchRename?.(localName); }}
-            onPush={(remote, setUpstream) => { closeMenu(); onBranchPush?.(localName, remote, setUpstream); }}
-            onSetUpstream={(up) => { closeMenu(); onBranchSetUpstream?.(localName, up); }}
-            onDelete={(force) => { closeMenu(); onBranchDelete?.(localName, force); }}
-            onMerge={(options) => { closeMenu(); onBranchMerge?.(localName, options); }}
-            onRebaseOnto={() => { closeMenu(); onBranchRebaseOnto?.(localName); }}
-          />
+          <>
+            {worktreeMark && (
+              <>
+                <MenuItem onClick={() => { closeMenu(); onOpenWorktree?.(worktreeMark.path); }}>
+                  Open worktree
+                </MenuItem>
+                <Separator />
+              </>
+            )}
+            <BranchMenuSection
+              name={localName}
+              isCurrent={isCurrent}
+              currentBranch={currentBranch ?? null}
+              opInProgress={opInProgress ?? false}
+              upstream={upstreamMap.get(localRef) ?? null}
+              upstreamCandidates={upstreamCandidatesFor?.(localName) ?? []}
+              remotes={remotes ?? []}
+              onCheckout={() => { closeMenu(); onBranchCheckout?.(localName); }}
+              onRename={() => { closeMenu(); onBranchRename?.(localName); }}
+              onPush={(remote, setUpstream) => { closeMenu(); onBranchPush?.(localName, remote, setUpstream); }}
+              onSetUpstream={(up) => { closeMenu(); onBranchSetUpstream?.(localName, up); }}
+              onDelete={(force) => { closeMenu(); onBranchDelete?.(localName, force); }}
+              onMerge={(options) => { closeMenu(); onBranchMerge?.(localName, options); }}
+              onRebaseOnto={() => { closeMenu(); onBranchRebaseOnto?.(localName); }}
+            />
+          </>
         );
       }
       if (chip.kind === "remote") {
@@ -269,6 +296,13 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
           />
         );
       }
+      if (chip.kind === "worktreeHead") {
+        return (
+          <MenuItem onClick={() => { closeMenu(); onOpenWorktree?.(chip.path); }}>
+            Open worktree
+          </MenuItem>
+        );
+      }
       return undefined;
     };
 
@@ -293,6 +327,13 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
         const localRef = chip.kind === "fusedBranch" ? chip.local : chip.value;
         if (headOfTarget === localRef) return undefined; // already checked out
         const localName = localRef.replace(/^refs\/heads\//, "");
+        // Checked out in another worktree: git would refuse the switch, so
+        // double-click explains instead of silently doing nothing (the
+        // tooltip's checkout hint is suppressed via the mark).
+        if (worktreeMark) {
+          const mark = worktreeMark;
+          return () => notify.info(checkedOutInWorktreeMessage(localName, mark.path));
+        }
         return onBranchCheckout && (() => onBranchCheckout(localName));
       }
       if (chip.kind === "remote") {
@@ -313,6 +354,7 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
         headOfTarget={headOfTarget}
         textSize={textSize}
         tagPushed={tagPushed}
+        worktreeMark={worktreeMark}
         tagRemote={tagRemote ?? null}
         unclamped={unclamped}
         onContextMenu={(e) => openMenu(e, menuSection)}
@@ -448,6 +490,8 @@ interface ChipProps {
   tagPushed?: boolean;
   /** Remote the pushed indicator refers to (tooltip). */
   tagRemote?: string | null;
+  /** Branch chips: the OTHER worktree this branch is checked out in. */
+  worktreeMark?: WorktreeMark | null;
   /** Lift the row clamp (`maxWidth: 160`): overflow-popover chips exist to
    *  reveal the collapsed refs, so they may use the popover's full width. */
   unclamped?: boolean;
@@ -500,6 +544,40 @@ function RemoteIndicator({ remoteRef }: { remoteRef: string }) {
   );
 }
 
+/**
+ * Worktree indicator on a branch chip: the branch is checked out in ANOTHER
+ * worktree, so switching to it in this one is refused by git. Inherits the
+ * chip's foreground colour like the remote indicator.
+ */
+function WorktreeIndicator({ mark }: { mark: WorktreeMark }) {
+  return (
+    <span
+      title={`Checked out in worktree ${mark.path}${mark.dirty ? " — uncommitted changes" : ""}`}
+      style={{ display: "inline-flex", alignItems: "center", gap: "0.15em" }}
+    >
+      <WorktreeIcon /> {mark.dirty && <DirtyDot />}
+    </span>
+  );
+}
+
+/** Small filled dot marking a worktree with uncommitted changes. Inherits
+ *  the chip's foreground colour like the icons around it. */
+function DirtyDot() {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        width: "0.45em",
+        height: "0.45em",
+        borderRadius: "50%",
+        background: "currentColor",
+        display: "inline-block",
+        flexShrink: 0,
+      }}
+    />
+  );
+}
+
 /** The chip's text, ellipsized when the chip hits its width limit. The
  *  ellipsis must live on a block-ish child: `textOverflow` on the chip span
  *  itself never applies (a flex container clips its items with a hard cut -
@@ -520,7 +598,7 @@ function ChipLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = null, unclamped = false, onContextMenu, onDoubleClickAction }: ChipProps) {
+function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = null, worktreeMark = null, unclamped = false, onContextMenu, onDoubleClickAction }: ChipProps) {
   const handleContextMenu = onContextMenu;
   const handleDoubleClick = onDoubleClickAction
     ? (e: React.MouseEvent) => {
@@ -531,7 +609,10 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
         onDoubleClickAction();
       }
     : undefined;
-  const checkoutHint = onDoubleClickAction ? " — double-click to checkout" : "";
+  // A worktree-locked chip's double-click shows guidance, not a checkout -
+  // the hint must not promise one.
+  const checkoutHint =
+    onDoubleClickAction && !worktreeMark ? " — double-click to checkout" : "";
 
   switch (chip.kind) {
     case "head":
@@ -548,17 +629,34 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
         </span>
       );
 
+    case "worktreeHead":
+      // Another worktree's detached HEAD: read-only position marker, styled
+      // like the detached-HEAD chip it is (in that worktree).
+      return (
+        <span
+          onContextMenu={handleContextMenu}
+          style={chipStyle({ variant: "head", textSize, unclamped })}
+          title={`Worktree "${chip.name}" — detached HEAD at this commit (${chip.path})${chip.dirty ? " — uncommitted changes" : ""}`}
+        >
+          <WorktreeIcon /> {chip.dirty && <DirtyDot />} <ChipLabel>{chip.name}</ChipLabel>
+        </span>
+      );
+
     case "branch": {
       const isCheckedOut = headOfTarget !== null && chip.value === headOfTarget;
+      const wtHint = worktreeMark
+        ? ` — checked out in worktree ${worktreeMark.path}${worktreeMark.dirty ? " (uncommitted changes)" : ""}`
+        : "";
       return (
         <span
           onContextMenu={handleContextMenu}
           onDoubleClick={handleDoubleClick}
           style={chipStyle({ variant: "branch", isCheckedOut, textSize, unclamped })}
-          title={`${chip.value}${isCheckedOut ? " — checked out" : ""}${checkoutHint}`}
+          title={`${chip.value}${isCheckedOut ? " — checked out" : ""}${wtHint}${checkoutHint}`}
         >
           {isCheckedOut && <CurrentDot />}
-          <BranchIcon /> <ChipLabel>{shortBranch(chip.value)}</ChipLabel>
+          <BranchIcon /> {worktreeMark && <WorktreeIndicator mark={worktreeMark} />}
+          <ChipLabel>{shortBranch(chip.value)}</ChipLabel>
         </span>
       );
     }
@@ -567,15 +665,19 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
       // Local branch fused with its upstream remote (same commit): the local
       // pill plus a trailing remote indicator.
       const isCheckedOut = headOfTarget !== null && chip.local === headOfTarget;
+      const wtHint = worktreeMark
+        ? ` — checked out in worktree ${worktreeMark.path}${worktreeMark.dirty ? " (uncommitted changes)" : ""}`
+        : "";
       return (
         <span
           onContextMenu={handleContextMenu}
           onDoubleClick={handleDoubleClick}
           style={chipStyle({ variant: "branch", isCheckedOut, textSize, unclamped })}
-          title={`${shortBranch(chip.local)} → ${shortRemote(chip.remote)}${isCheckedOut ? " — checked out" : ""}${checkoutHint}`}
+          title={`${shortBranch(chip.local)} → ${shortRemote(chip.remote)}${isCheckedOut ? " — checked out" : ""}${wtHint}${checkoutHint}`}
         >
           {isCheckedOut && <CurrentDot />}
-          <BranchIcon /> <RemoteIndicator remoteRef={chip.remote} /> <ChipLabel>{shortBranch(chip.local)}</ChipLabel>
+          <BranchIcon /> {worktreeMark && <WorktreeIndicator mark={worktreeMark} />}
+          <RemoteIndicator remoteRef={chip.remote} /> <ChipLabel>{shortBranch(chip.local)}</ChipLabel>
         </span>
       );
     }

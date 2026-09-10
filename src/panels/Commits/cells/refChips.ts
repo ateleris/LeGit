@@ -15,6 +15,7 @@ export type ChipDescriptor =
   | { kind: "branch"; value: string }
   | { kind: "remote"; value: string }
   | { kind: "tag"; value: string }
+  | { kind: "worktreeHead"; name: string; path: string; dirty: boolean }
   | { kind: "other"; value: string };
 
 /**
@@ -46,6 +47,10 @@ export type ChipDescriptor =
 export function buildChips(
   decorations: RefDecoration[],
   upstreamMap: Map<string, string>,
+  /** OTHER worktrees whose detached HEAD sits on this commit - rendered as
+   *  read-only worktree chips (a branch checkout is instead marked on that
+   *  branch's own chip). */
+  worktreeHeads: { name: string; path: string; dirty: boolean }[] = [],
 ): ChipDescriptor[] {
   const headOf = decorations.find((d) => d.type === "headOf");
   const headOfTarget = headOf && headOf.type === "headOf" ? headOf.value : null;
@@ -118,6 +123,9 @@ export function buildChips(
         break;
     }
   }
+  for (const w of worktreeHeads) {
+    descriptors.push({ kind: "worktreeHead", name: w.name, path: w.path, dirty: w.dirty });
+  }
 
   const groupOf = (d: ChipDescriptor): number => {
     switch (d.kind) {
@@ -127,6 +135,10 @@ export function buildChips(
         return d.local === headOfTarget ? 0 : 1;
       case "branch":
         return d.value === headOfTarget ? 0 : 1;
+      case "worktreeHead":
+        // After the branch group (stable sort keeps the append order), before
+        // remotes: it marks a checkout position, not just a ref.
+        return 1;
       case "remote":
         return 2;
       case "tag":

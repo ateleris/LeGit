@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PanelError } from "../shared/PanelError";
 import { useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useActiveRepo } from "../../store/repos";
+import { useActiveRepo, useRepoStore } from "../../store/repos";
 import {
   useSettingsStore,
   COMMITS_ROW_HEIGHT_DEFAULT,
@@ -24,6 +24,7 @@ import { notifySwitchError } from "../../lib/switchFeedback";
 import { useOpState } from "../../lib/useOpState";
 import type { Branch, Commit, CommitId, Signature } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
+import { worktreeLocator } from "../../lib/locator";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { notify } from "../../store/notifications";
 import { BranchIcon, RemoteIcon, SignedIcon, TagIcon } from "../../icons";
@@ -277,6 +278,8 @@ export function CommitsPanel() {
     tracking,
     status,
     upstreamMap,
+    worktreeBranches,
+    worktreeHeadsBySha,
     currentBranchName,
     tagRemote,
     remoteNames,
@@ -293,6 +296,20 @@ export function CommitsPanel() {
 
   const opState = useOpState(repo?.id);
   const opInProgress = !!opState && opState.kind !== "none";
+
+  // Open a detached worktree (from its HEAD chip) as its own repo tab.
+  const handleOpenWorktree = useCallback(
+    (path: string) => {
+      if (!repo) return;
+      void useRepoStore
+        .getState()
+        .openRepo(worktreeLocator(repo.locator ?? repo.path, path))
+        .catch(
+          (e: unknown) => notify.error(formatAppError(e)),
+        );
+    },
+    [repo],
+  );
 
   // Verification verdicts for every commit inspected in Commit Details this
   // session (the list itself never verifies - it only knows presence). Each
@@ -1488,6 +1505,9 @@ export function CommitsPanel() {
                             locks={rawLocks}
                             repoId={repo.id}
                             upstreamMap={upstreamMap}
+                            worktreeBranches={worktreeBranches}
+                            worktreeHeads={worktreeHeadsBySha.get(commit.id)}
+                            onOpenWorktree={handleOpenWorktree}
                             textSize={TEXT_SIZE}
                             renamingBranch={renamingBranch}
                             onBranchRenameSave={handleBranchRenameSave}

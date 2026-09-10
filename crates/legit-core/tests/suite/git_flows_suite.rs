@@ -25,7 +25,7 @@ use legit_core::{
     PullOptions, PullStrategy, PushOptions, PushRecurseMode, RebaseOutcome, RefDecoration,
     RefSelector, RemoteProgress, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode,
     SequenceOutcome, SignatureStatus, StashApplyOutcome, StashOutcome, SubmoduleAutoUpdateStatus,
-    SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy, SwitchDirtyBehavior,
+    SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy, SwitchDirtyBehavior, WorktreeAddMode,
     SwitchOutcome,
 };
 use std::path::{Path, PathBuf};
@@ -5223,4 +5223,76 @@ async fn unstaging_both_rename_paths_restores_the_index() {
         status.iter().all(|s| !s.staged),
         "unstaging a rename pair must leave nothing staged: {status:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Worktrees
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn worktree_add_list_remove_round_trip() {
+    let repo = TestRepo::init().await;
+    repo.write("f.txt", "x\n");
+    repo.commit_all("init").await;
+    repo.git(&["branch", "feature"]).await;
+
+    let wt = repo.path.join("..").join(format!(
+        "wt-{}",
+        repo.path.file_name().unwrap().to_string_lossy()
+    ));
+    let wt_str = wt.to_string_lossy().into_owned();
+    repo.backend
+        .worktree_add(&wt_str, &WorktreeAddMode::Checkout { branch: "feature".into() })
+        .await
+        .expect("worktree_add");
+
+    let list = repo.backend.worktree_list().await.expect("worktree_list");
+    assert_eq!(list.len(), 2, "{list:?}");
+    assert!(list[0].is_main);
+    assert_eq!(list[1].branch.as_deref(), Some("feature"));
+    assert!(list[1].head.is_some());
+    assert_eq!(list[0].dirty, Some(false), "clean checkouts probe clean: {list:?}");
+    assert_eq!(list[1].dirty, Some(false));
+
+    // A dirty worktree refuses a plain remove; force removes it.
+    std::fs::write(wt.join("dirty.txt"), "x").expect("write");
+    let list = repo.backend.worktree_list().await.expect("worktree_list dirty");
+    assert_eq!(list[1].dirty, Some(true), "the untracked file must probe dirty: {list:?}");
+    assert_eq!(list[0].dirty, Some(false), "the main checkout stays clean");
+    assert!(repo.backend.worktree_remove(&wt_str, false).await.is_err());
+    repo.backend.worktree_remove(&wt_str, true).await.expect("force remove");
+    let list = repo.backend.worktree_list().await.expect("list after remove");
+    assert_eq!(list.len(), 1);
+}
+
+#[tokio::test]
+async fn switch_refusal_names_the_other_worktree() {
+    // Pins the real message wording the classifier matches on.
+    let repo = TestRepo::init().await;
+    repo.write("f.txt", "x\n");
+    repo.commit_all("init").await;
+    repo.git(&["branch", "feature"]).await;
+    let wt = repo.path.join("..").join(format!(
+        "wtc-{}",
+        repo.path.file_name().unwrap().to_string_lossy()
+    ));
+    let wt_str = wt.to_string_lossy().into_owned();
+    repo.backend
+        .worktree_add(&wt_str, &WorktreeAddMode::Checkout { branch: "feature".into() })
+        .await
+        .expect("worktree_add");
+
+    let err = repo
+        .backend
+        .switch_branch("feature", SwitchDirtyBehavior::TryDirectly)
+        .await
+        .expect_err("switch to a branch checked out elsewhere must refuse");
+    match err {
+        GitError::CheckedOutInWorktree { branch, path, .. } => {
+            assert_eq!(branch.as_deref(), Some("feature"));
+            assert!(path.is_some(), "the refusal names the worktree path");
+        }
+        other => panic!("expected CheckedOutInWorktree, got {other:?}"),
+    }
+    repo.backend.worktree_remove(&wt_str, true).await.expect("cleanup");
 }

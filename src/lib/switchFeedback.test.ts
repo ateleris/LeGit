@@ -4,6 +4,7 @@
 
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import {
+  checkedOutInWorktreeMessage,
   notifySwitchOutcome,
   notifyRemoteCheckoutOutcome,
   formatSwitchError,
@@ -119,6 +120,33 @@ describe("notifyRemoteCheckoutOutcome", () => {
 });
 
 describe("formatSwitchError", () => {
+  test("the checked-out-elsewhere message is exported for direct use", () => {
+    // The branch chip's double-click shows this same guidance as a toast
+    // (without spawning a doomed git call), so the wording lives in one place.
+    const msg = checkedOutInWorktreeMessage("feature", "/home/u/wt-feature");
+    expect(msg).toContain('"feature"');
+    expect(msg).toContain("/home/u/wt-feature");
+    expect(msg.toLowerCase()).toContain("worktree");
+  });
+
+  test("names the other worktree for a checked-out-elsewhere refusal", () => {
+    const e = {
+      kind: "Git",
+      details: {
+        kind: "CheckedOutInWorktree",
+        details: {
+          branch: "feature",
+          path: "/home/u/wt-feature",
+          stderr: "fatal: 'feature' is already checked out at '/home/u/wt-feature'",
+        },
+      },
+    };
+    const msg = formatSwitchError(e);
+    expect(msg).toContain("feature");
+    expect(msg).toContain("/home/u/wt-feature");
+    expect(msg.toLowerCase()).toContain("worktree");
+  });
+
   test("dirty-tree refusal gets the actionable message", () => {
     const e = {
       kind: "Git",

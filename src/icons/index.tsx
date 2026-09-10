@@ -21,6 +21,7 @@ import {
   CornerLeftUp,
   EyeOff,
   Folder,
+  FolderGit2,
   GitBranch,
   GitBranchPlus,
   Globe,
@@ -73,6 +74,7 @@ export const BranchIcon = withDefaults(GitBranch, "BranchIcon");
 export const BranchPlusIcon = withDefaults(GitBranchPlus, "BranchPlusIcon");
 export const RemoteIcon = withDefaults(Cloud, "RemoteIcon");
 export const WslHostIcon = withDefaults(Server, "WslHostIcon");
+export const WorktreeIcon = withDefaults(FolderGit2, "WorktreeIcon");
 export const WatchOffIcon = withDefaults(EyeOff, "WatchOffIcon");
 export const SuperprojectIcon = withDefaults(CornerLeftUp, "SuperprojectIcon");
 export const TagIcon = withDefaults(Tag, "TagIcon");

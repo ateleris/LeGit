@@ -65,6 +65,7 @@ pub fn all_domains() -> Vec<ChangeDomain> {
         ChangeDomain::Tags,
         ChangeDomain::Diff,
         ChangeDomain::OpState,
+        ChangeDomain::Worktrees,
         ChangeDomain::Submodules,
     ]
 }

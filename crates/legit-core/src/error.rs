@@ -31,6 +31,17 @@ pub enum GitError {
     #[error("branch not fully merged: {stderr}")]
     BranchNotFullyMerged { branch: String, stderr: String },
 
+    /// A branch operation was refused because the branch is checked out in
+    /// another worktree (git allows a branch in only one worktree at a
+    /// time). `branch`/`path` are best-effort extractions from git's
+    /// message so the UI can name (and offer to open) that worktree.
+    #[error("branch is checked out in another worktree: {stderr}")]
+    CheckedOutInWorktree {
+        branch: Option<String>,
+        path: Option<String>,
+        stderr: String,
+    },
+
     /// A git-lfs smudge/download failure inside an operation (pull, switch,
     /// clone, ...): the affected worktree paths hold no real content. When
     /// `missing_on_remote`, the objects were never uploaded (whoever pushed

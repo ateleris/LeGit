@@ -56,3 +56,18 @@ export function hostLabel(host: HostRef | null | undefined): string | null {
 export function supportsRepoGitOverride(host: HostRef | null | undefined): boolean {
   return !host;
 }
+
+/** Locator for a worktree at `absPath` - absolute ON THE REPO'S HOST, as
+ * `git worktree list` reports it - on the same host as `parentLocator`.
+ * Local repos: the path IS the locator; WSL repos keep scheme + distro. */
+export function worktreeLocator(parentLocator: string, absPath: string): string {
+  const m = /^wsl:\/\/([^/]+)\//.exec(parentLocator);
+  return m ? `wsl://${m[1]}${absPath}` : absPath;
+}
+
+/** Whether the app machine's native folder picker can produce valid paths
+ * for this repo's host. False for WSL repos: the dialog yields Windows
+ * paths, never distro paths (same reasoning as supportsRepoGitOverride). */
+export function supportsHostFolderPicker(host: HostRef | null | undefined): boolean {
+  return !host;
+}

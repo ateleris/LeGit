@@ -1144,6 +1144,44 @@ pub struct CaseDriftEntry {
     pub is_dir: bool,
 }
 
+/// One entry of `git worktree list --porcelain`. `path` is the worktree's
+/// absolute path ON ITS HOST and doubles as the stable worktree identity
+/// (the future mode-B WorktreeId - see
+/// design/2026-09-10-worktrees-parallel-graph.md). `head` is carried so the
+/// commit graph can decorate worktree HEADs later without a new query.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct WorktreeInfo {
+    pub path: String,
+    /// HEAD commit sha; None only for a bare main entry.
+    pub head: Option<String>,
+    /// Short branch name (refs/heads/ stripped); None when detached or bare.
+    pub branch: Option<String>,
+    /// The first listed entry is the main worktree.
+    pub is_main: bool,
+    pub detached: bool,
+    pub bare: bool,
+    /// Present when locked; the lock reason ("" when none was given).
+    pub locked: Option<String>,
+    /// Present when prunable; git's reason.
+    pub prunable: Option<String>,
+    /// Whether the checkout has uncommitted changes (untracked included).
+    /// None when not probed (bare/prunable entries) or the probe failed -
+    /// the indicator is best-effort, never a blocker.
+    pub dirty: Option<bool>,
+}
+
+/// How `worktree add` populates the new worktree. Detached checkouts are a
+/// deliberate non-goal for v1 (add on demand).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorktreeAddMode {
+    /// Check out an existing local branch (git refuses one that is already
+    /// checked out in another worktree).
+    Checkout { branch: String },
+    /// Create a new branch at `start_point` (HEAD when None) and check it out.
+    NewBranch { name: String, start_point: Option<String> },
+}
+
 /// State of a removed submodule's retained gitdir (`.git/modules/<name>`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct SubmoduleGitdirInfo {

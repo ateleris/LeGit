@@ -66,6 +66,8 @@ import type {
   TrackingStatus,
   GitmodulesFinding,
   CaseDriftEntry,
+  WorktreeAddMode,
+  WorktreeInfo,
   Remote,
   RemoteCheckoutOutcome,
   SwitchOutcome,
@@ -922,6 +924,19 @@ export const repoStageCaseRename = (repoId: string, from: string, to: string) =>
 /** Discard case drift: rename the disk file back to the tracked spelling. */
 export const repoDiscardCaseRename = (repoId: string, indexPath: string, diskPath: string) =>
   invoke<null>("repo_discard_case_rename", { repoId, indexPath, diskPath });
+
+/** All worktrees of the repo, main first. */
+export const repoWorktreeList = (repoId: string) =>
+  invoke<WorktreeInfo[]>("repo_worktree_list", { repoId });
+
+export const repoWorktreeAdd = (repoId: string, path: string, mode: WorktreeAddMode) =>
+  invoke<null>("repo_worktree_add", { repoId, path, mode });
+
+export const repoWorktreeRemove = (repoId: string, path: string, force: boolean) =>
+  invoke<null>("repo_worktree_remove", { repoId, path, force });
+
+export const repoWorktreePrune = (repoId: string) =>
+  invoke<null>("repo_worktree_prune", { repoId });
 
 /// Reword (rename) a commit's message; returns the new commit id. v1 rewords
 /// HEAD only and refuses commits already pushed to a remote.

@@ -22,3 +22,4 @@ pub mod tags;
 pub mod conflicts;
 pub mod op_state;
 pub mod resolve;
+pub mod worktrees;

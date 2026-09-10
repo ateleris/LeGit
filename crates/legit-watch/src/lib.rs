@@ -91,6 +91,10 @@ pub enum ChangeDomain {
     /// (index, `.gitmodules`) already arrive via `Status`, which the frontend
     /// derives into the submodules query (`withDerivedDomains`).
     Submodules,
+    /// Worktree metadata changed: a write inside `.git/worktrees/**`
+    /// (worktree add/remove/lock, or another worktree's HEAD move). Drives
+    /// the Refs panel's Worktrees pane.
+    Worktrees,
 }
 
 /// One debounced batch's classified result, handed to the host's sink.
@@ -173,6 +177,10 @@ impl WatcherCore {
         let ignore = build_ignore(&worktree);
         let worktree_cb = worktree.clone();
         let git_dir_cb = git_dir.clone();
+        // A LINKED worktree's ref/object changes land in the shared git dir,
+        // not its private one - watch and classify both.
+        let common = common_dir_of(&git_dir);
+        let common_cb = common.clone();
         let (cmd_tx, cmd_rx) = mpsc::channel::<WatchCmd>();
         let dir_tx = cmd_tx.clone();
         // (size, mtime) per DOMAIN-RELEVANT git-dir path, kept across batches:
@@ -224,6 +232,7 @@ impl WatcherCore {
                             path,
                             &worktree_cb,
                             &git_dir_cb,
+                            common_cb.as_deref(),
                             &ignore,
                             &mut seen,
                             stat_fingerprint,
@@ -233,7 +242,7 @@ impl WatcherCore {
                         }
                         trigger_count += 1;
                         if triggers.len() < MAX_TRIGGER_PATHS {
-                            let rel = display_path(path, &worktree_cb, &git_dir_cb);
+                            let rel = display_path(path, &worktree_cb, &git_dir_cb, common_cb.as_deref());
                             if !triggers.contains(&rel) {
                                 triggers.push(rel);
                             }
@@ -269,6 +278,9 @@ impl WatcherCore {
             // immediately - the debounced dynamic-add path would race them.
             // Its size is bounded (objects fan-out, refs), unlike a worktree.
             debouncer.watch(&git_dir, RecursiveMode::Recursive)?;
+            if let Some(c) = &common {
+                debouncer.watch(c, RecursiveMode::Recursive)?;
+            }
             debouncer.watch(&worktree, RecursiveMode::NonRecursive)?;
             for dir in watch_roots(&worktree, &git_dir) {
                 if let Err(e) = debouncer.watch(&dir, RecursiveMode::NonRecursive) {
@@ -295,6 +307,11 @@ impl WatcherCore {
             // working tree (the common `<toplevel>/.git` case is covered above).
             if !git_dir.starts_with(&worktree) {
                 debouncer.watch(&git_dir, RecursiveMode::Recursive)?;
+            }
+            if let Some(c) = &common {
+                if !c.starts_with(&worktree) {
+                    debouncer.watch(c, RecursiveMode::Recursive)?;
+                }
             }
         }
 
@@ -385,13 +402,22 @@ fn classify(
     path: &Path,
     worktree: &Path,
     git_dir: &Path,
+    common: Option<&Path>,
     ignore: &Gitignore,
     out: &mut BTreeSet<ChangeDomain>,
 ) {
-    // Inside the git dir: HEAD/refs/index drive log/branches/status.
+    // Inside the git dir: HEAD/refs/index drive log/branches/status. The
+    // session's own (possibly per-worktree) git dir wins over the common
+    // one - it is nested inside it.
     if let Ok(rel) = path.strip_prefix(git_dir) {
         classify_git(rel, out);
         return;
+    }
+    if let Some(common) = common {
+        if let Ok(rel) = path.strip_prefix(common) {
+            classify_git(rel, out);
+            return;
+        }
     }
     // Otherwise a working-tree path.
     if let Ok(rel) = path.strip_prefix(worktree) {
@@ -515,6 +541,13 @@ fn classify_git(rel: &Path, out: &mut BTreeSet<ChangeDomain>) {
                 out.insert(ChangeDomain::Diff);
             }
         }
+        // Linked-worktree metadata (`.git/worktrees/<name>/...`): worktree
+        // add/remove/lock and other worktrees' HEAD moves. Drives the
+        // Worktrees pane only - another worktree's private state is not
+        // this session's status/log.
+        "worktrees" => {
+            out.insert(ChangeDomain::Worktrees);
+        }
         // In-progress merge/rebase state affects all three (conflicts + refs)
         // plus the op-state banner; each step rewrites worktree/index content
         // (conflict markers), so open diffs go stale too.
@@ -527,6 +560,18 @@ fn classify_git(rel: &Path, out: &mut BTreeSet<ChangeDomain>) {
         }
         _ => {}
     }
+}
+
+/// The shared git dir behind a LINKED worktree's private gitdir
+/// (`<common>/worktrees/<name>` -> `<common>`); None for a main gitdir.
+/// Path-shape based: that layout is git's on-disk contract for linked
+/// worktrees, so no filesystem access is needed.
+fn common_dir_of(git_dir: &Path) -> Option<PathBuf> {
+    let parent = git_dir.parent()?;
+    if parent.file_name()?.to_str()? != "worktrees" {
+        return None;
+    }
+    parent.parent().map(Path::to_path_buf)
 }
 
 /// Event kinds that can never reflect a git data change: pure reads and
@@ -574,18 +619,22 @@ fn path_contribution(
     path: &Path,
     worktree: &Path,
     git_dir: &Path,
+    common: Option<&Path>,
     ignore: &Gitignore,
     seen: &mut HashMap<PathBuf, Option<Fingerprint>>,
     fingerprint: impl Fn(&Path) -> Option<Fingerprint>,
 ) -> BTreeSet<ChangeDomain> {
     let mut path_domains = BTreeSet::new();
-    classify(path, worktree, git_dir, ignore, &mut path_domains);
+    classify(path, worktree, git_dir, common, ignore, &mut path_domains);
     if path_domains.is_empty() {
         return path_domains;
     }
-    // Git-dir files: suppress unless the content fingerprint moved (dedupes
-    // AV/sync-client attribute write-backs and repeat events for one path).
-    if path.starts_with(git_dir) && !fingerprint_changed(seen, path, fingerprint(path)) {
+    // Git-dir files (own or common): suppress unless the content fingerprint
+    // moved (dedupes AV/sync-client attribute write-backs and repeat events
+    // for one path).
+    let in_git_dir =
+        path.starts_with(git_dir) || common.is_some_and(|c| path.starts_with(c));
+    if in_git_dir && !fingerprint_changed(seen, path, fingerprint(path)) {
         path_domains.clear();
     }
     path_domains
@@ -610,9 +659,14 @@ fn fingerprint_changed(
 
 /// Repo-relative display form of a trigger path: git-dir paths as
 /// ".git/<rel>", worktree paths as-is, anything else verbatim.
-fn display_path(path: &Path, worktree: &Path, git_dir: &Path) -> String {
+fn display_path(path: &Path, worktree: &Path, git_dir: &Path, common: Option<&Path>) -> String {
     if let Ok(rel) = path.strip_prefix(git_dir) {
         return Path::new(".git").join(rel).to_string_lossy().into_owned();
+    }
+    if let Some(common) = common {
+        if let Ok(rel) = path.strip_prefix(common) {
+            return Path::new(".git").join(rel).to_string_lossy().into_owned();
+        }
     }
     if let Ok(rel) = path.strip_prefix(worktree) {
         return rel.to_string_lossy().into_owned();
@@ -637,7 +691,7 @@ mod tests {
 
     fn domains(path: &str, worktree: &Path, git_dir: &Path, ignore: &Gitignore) -> Vec<ChangeDomain> {
         let mut out = BTreeSet::new();
-        classify(&worktree.join(path), worktree, git_dir, ignore, &mut out);
+        classify(&worktree.join(path), worktree, git_dir, None, ignore, &mut out);
         out.into_iter().collect()
     }
 
@@ -655,6 +709,7 @@ mod tests {
             Path::new("/repo/.git/objects/ab/cdef0123"),
             wt,
             gd,
+            None,
             &Gitignore::empty(),
             &mut seen,
             |_| Some((1, None)),
@@ -671,16 +726,16 @@ mod tests {
         let mut seen = HashMap::new();
         // First sighting: domains reported, path recorded.
         let first =
-            path_contribution(refs, wt, gd, &Gitignore::empty(), &mut seen, |_| Some((1, None)));
+            path_contribution(refs, wt, gd, None, &Gitignore::empty(), &mut seen, |_| Some((1, None)));
         assert!(!first.is_empty());
         assert_eq!(seen.len(), 1);
         // Same fingerprint again: deduped.
         let second =
-            path_contribution(refs, wt, gd, &Gitignore::empty(), &mut seen, |_| Some((1, None)));
+            path_contribution(refs, wt, gd, None, &Gitignore::empty(), &mut seen, |_| Some((1, None)));
         assert!(second.is_empty(), "unchanged fingerprint must suppress the path");
         // Changed fingerprint: reported again.
         let third =
-            path_contribution(refs, wt, gd, &Gitignore::empty(), &mut seen, |_| Some((2, None)));
+            path_contribution(refs, wt, gd, None, &Gitignore::empty(), &mut seen, |_| Some((2, None)));
         assert!(!third.is_empty());
     }
 
@@ -693,6 +748,7 @@ mod tests {
             Path::new("/repo/src/main.rs"),
             wt,
             gd,
+            None,
             &Gitignore::empty(),
             &mut seen,
             |_| None,
@@ -725,7 +781,7 @@ mod tests {
         let wt = Path::new("/repo");
         let gd = Path::new("/repo/.git");
         let mut out = BTreeSet::new();
-        classify(Path::new("/repo/.git/index"), wt, gd, &Gitignore::empty(), &mut out);
+        classify(Path::new("/repo/.git/index"), wt, gd, None, &Gitignore::empty(), &mut out);
         assert_eq!(
             out.into_iter().collect::<Vec<_>>(),
             vec![ChangeDomain::Status, ChangeDomain::Diff]
@@ -741,7 +797,7 @@ mod tests {
         let gd = Path::new("/repo/.git");
         for anchor in ["HEAD", "refs/heads/main", "packed-refs", "MERGE_HEAD", "ORIG_HEAD"] {
             let mut out = BTreeSet::new();
-            classify(&gd.join(anchor), wt, gd, &Gitignore::empty(), &mut out);
+            classify(&gd.join(anchor), wt, gd, None, &Gitignore::empty(), &mut out);
             assert!(out.contains(&ChangeDomain::Diff), "{anchor} should drive Diff, got {out:?}");
         }
     }
@@ -754,7 +810,7 @@ mod tests {
         let gd = Path::new("/repo/.git");
         for quiet in ["refs/remotes/origin/main", "refs/tags/v1.0", "refs/stash"] {
             let mut out = BTreeSet::new();
-            classify(&gd.join(quiet), wt, gd, &Gitignore::empty(), &mut out);
+            classify(&gd.join(quiet), wt, gd, None, &Gitignore::empty(), &mut out);
             assert!(!out.contains(&ChangeDomain::Diff), "{quiet} should not drive Diff, got {out:?}");
         }
     }
@@ -764,7 +820,7 @@ mod tests {
         let wt = Path::new("/repo");
         let gd = Path::new("/repo/.git");
         let mut out = BTreeSet::new();
-        classify(Path::new("/repo/.git/refs/heads/main"), wt, gd, &Gitignore::empty(), &mut out);
+        classify(Path::new("/repo/.git/refs/heads/main"), wt, gd, None, &Gitignore::empty(), &mut out);
         let got: Vec<_> = out.into_iter().collect();
         assert!(got.contains(&ChangeDomain::Log) && got.contains(&ChangeDomain::Branches));
     }
@@ -776,7 +832,7 @@ mod tests {
         let wt = Path::new("/repo");
         let gd = Path::new("/repo/.git");
         let mut out = BTreeSet::new();
-        classify(Path::new("/repo/.git/refs/stash"), wt, gd, &Gitignore::empty(), &mut out);
+        classify(Path::new("/repo/.git/refs/stash"), wt, gd, None, &Gitignore::empty(), &mut out);
         assert!(out.contains(&ChangeDomain::Stashes), "got {out:?}");
         assert!(out.contains(&ChangeDomain::Log));
     }
@@ -786,7 +842,7 @@ mod tests {
         let wt = Path::new("/repo");
         let gd = Path::new("/repo/.git");
         let mut out = BTreeSet::new();
-        classify(Path::new("/repo/.git/refs/heads/main"), wt, gd, &Gitignore::empty(), &mut out);
+        classify(Path::new("/repo/.git/refs/heads/main"), wt, gd, None, &Gitignore::empty(), &mut out);
         assert!(!out.contains(&ChangeDomain::Stashes), "got {out:?}");
     }
 
@@ -799,7 +855,7 @@ mod tests {
         let wt = Path::new("/repo");
         let gd = Path::new("/repo/.git");
         let mut out = BTreeSet::new();
-        classify(Path::new("/repo/.git/refs/remotes/origin/main"), wt, gd, &Gitignore::empty(), &mut out);
+        classify(Path::new("/repo/.git/refs/remotes/origin/main"), wt, gd, None, &Gitignore::empty(), &mut out);
         assert!(out.contains(&ChangeDomain::Tags), "got {out:?}");
         assert!(out.contains(&ChangeDomain::Log));
         assert!(out.contains(&ChangeDomain::Branches));
@@ -811,7 +867,7 @@ mod tests {
         let wt = Path::new("/repo");
         let gd = Path::new("/repo/.git");
         let mut out = BTreeSet::new();
-        classify(Path::new("/repo/.git/refs/heads/main"), wt, gd, &Gitignore::empty(), &mut out);
+        classify(Path::new("/repo/.git/refs/heads/main"), wt, gd, None, &Gitignore::empty(), &mut out);
         assert!(!out.contains(&ChangeDomain::Tags), "got {out:?}");
     }
 
@@ -821,7 +877,7 @@ mod tests {
         let wt = Path::new("/repo");
         let gd = Path::new("/repo/.git");
         let mut out = BTreeSet::new();
-        classify(Path::new("/repo/.git/packed-refs"), wt, gd, &Gitignore::empty(), &mut out);
+        classify(Path::new("/repo/.git/packed-refs"), wt, gd, None, &Gitignore::empty(), &mut out);
         assert!(out.contains(&ChangeDomain::Stashes), "got {out:?}");
         assert!(out.contains(&ChangeDomain::Tags), "got {out:?}");
     }
@@ -831,10 +887,10 @@ mod tests {
         let wt = Path::new("/repo");
         let gd = Path::new("/repo/.git");
         let mut out = BTreeSet::new();
-        classify(Path::new("/repo/.git/refs/tags/v1.0"), wt, gd, &Gitignore::empty(), &mut out);
+        classify(Path::new("/repo/.git/refs/tags/v1.0"), wt, gd, None, &Gitignore::empty(), &mut out);
         assert!(out.contains(&ChangeDomain::Tags), "got {out:?}");
         let mut branch = BTreeSet::new();
-        classify(Path::new("/repo/.git/refs/heads/main"), wt, gd, &Gitignore::empty(), &mut branch);
+        classify(Path::new("/repo/.git/refs/heads/main"), wt, gd, None, &Gitignore::empty(), &mut branch);
         assert!(!branch.contains(&ChangeDomain::Tags), "got {branch:?}");
     }
 
@@ -844,7 +900,7 @@ mod tests {
         let gd = Path::new("/repo/.git");
         for noise in ["objects/ab/cdef", "index.lock", "refs/heads/main.lock", "logs/HEAD"] {
             let mut out = BTreeSet::new();
-            classify(&gd.join(noise), wt, gd, &Gitignore::empty(), &mut out);
+            classify(&gd.join(noise), wt, gd, None, &Gitignore::empty(), &mut out);
             assert!(out.is_empty(), "{noise} should be ignored, got {out:?}");
         }
     }
@@ -857,7 +913,7 @@ mod tests {
         let wt = Path::new("/repo");
         let gd = Path::new("/repo/.git");
         let mut out = BTreeSet::new();
-        classify(Path::new("/repo/.git/modules/lib/HEAD"), wt, gd, &Gitignore::empty(), &mut out);
+        classify(Path::new("/repo/.git/modules/lib/HEAD"), wt, gd, None, &Gitignore::empty(), &mut out);
         assert!(out.contains(&ChangeDomain::Submodules), "got {out:?}");
         assert!(out.contains(&ChangeDomain::Status), "pointer move shows in status too");
         assert!(out.contains(&ChangeDomain::Diff), "gitlink change shows in an open diff");
@@ -872,7 +928,7 @@ mod tests {
         let mut out = BTreeSet::new();
         classify(
             Path::new("/repo/.git/modules/vendor/lib/refs/heads/main"),
-            wt, gd, &Gitignore::empty(), &mut out,
+            wt, gd, None, &Gitignore::empty(), &mut out,
         );
         assert!(out.contains(&ChangeDomain::Submodules), "got {out:?}");
     }
@@ -888,7 +944,7 @@ mod tests {
             "/repo/.git/modules/lib/FETCH_HEAD",
         ] {
             let mut out = BTreeSet::new();
-            classify(Path::new(noisy), wt, gd, &Gitignore::empty(), &mut out);
+            classify(Path::new(noisy), wt, gd, None, &Gitignore::empty(), &mut out);
             assert!(out.is_empty(), "{noisy} classified as {out:?}");
         }
     }
@@ -901,7 +957,7 @@ mod tests {
         let wt = Path::new("/repo");
         let gd = Path::new("/repo/.git");
         let mut out = BTreeSet::new();
-        classify(Path::new("/repo/.git/FETCH_HEAD"), wt, gd, &Gitignore::empty(), &mut out);
+        classify(Path::new("/repo/.git/FETCH_HEAD"), wt, gd, None, &Gitignore::empty(), &mut out);
         assert!(out.is_empty(), "got {out:?}");
     }
 
@@ -920,7 +976,7 @@ mod tests {
         let wt = Path::new("/repo");
         let gd = Path::new("/repo/.git");
         let mut out = BTreeSet::new();
-        classify(Path::new("/repo/.git/MERGE_HEAD"), wt, gd, &Gitignore::empty(), &mut out);
+        classify(Path::new("/repo/.git/MERGE_HEAD"), wt, gd, None, &Gitignore::empty(), &mut out);
         assert!(out.contains(&ChangeDomain::OpState));
     }
 
@@ -929,7 +985,7 @@ mod tests {
         let wt = Path::new("/repo");
         let gd = Path::new("/repo/.git");
         let mut out = BTreeSet::new();
-        classify(Path::new("/repo/.git/rebase-merge/msgnum"), wt, gd, &Gitignore::empty(), &mut out);
+        classify(Path::new("/repo/.git/rebase-merge/msgnum"), wt, gd, None, &Gitignore::empty(), &mut out);
         assert!(out.contains(&ChangeDomain::OpState) && out.contains(&ChangeDomain::Status));
         assert!(out.contains(&ChangeDomain::Diff), "rebase steps rewrite worktree/index content");
     }
@@ -939,7 +995,7 @@ mod tests {
         let wt = Path::new("/repo");
         let gd = Path::new("/repo/.git");
         let mut out = BTreeSet::new();
-        classify(Path::new("/repo/.git/MERGE_MSG"), wt, gd, &Gitignore::empty(), &mut out);
+        classify(Path::new("/repo/.git/MERGE_MSG"), wt, gd, None, &Gitignore::empty(), &mut out);
         assert_eq!(out.into_iter().collect::<Vec<_>>(), vec![ChangeDomain::OpState]);
     }
 
@@ -1014,13 +1070,81 @@ mod tests {
         let wt = Path::new("/repo");
         let gd = Path::new("/repo/.git");
         assert_eq!(
-            display_path(&gd.join("packed-refs"), wt, gd),
+            display_path(&gd.join("packed-refs"), wt, gd, None),
             Path::new(".git").join("packed-refs").to_string_lossy()
         );
         assert_eq!(
-            display_path(&wt.join("src/main.rs"), wt, gd),
+            display_path(&wt.join("src/main.rs"), wt, gd, None),
             Path::new("src").join("main.rs").to_string_lossy()
         );
+    }
+
+    #[test]
+    fn worktree_metadata_classifies_to_the_worktrees_domain_only() {
+        // Add/remove/lock of linked worktrees, and OTHER worktrees' HEAD
+        // moves, live under .git/worktrees/** - they drive the Worktrees
+        // pane, not this session's status/log.
+        let wt = Path::new("/repo");
+        let gd = Path::new("/repo/.git");
+        for p in [
+            "/repo/.git/worktrees/wt-a/HEAD",
+            "/repo/.git/worktrees/wt-a/locked",
+            "/repo/.git/worktrees/wt-a/gitdir",
+        ] {
+            let mut out = BTreeSet::new();
+            classify(Path::new(p), wt, gd, None, &Gitignore::empty(), &mut out);
+            assert_eq!(
+                out.into_iter().collect::<Vec<_>>(),
+                vec![ChangeDomain::Worktrees],
+                "{p}"
+            );
+        }
+    }
+
+    #[test]
+    fn common_dir_of_detects_the_linked_gitdir_shape() {
+        assert_eq!(
+            common_dir_of(Path::new("/repo/.git/worktrees/wt-a")),
+            Some(PathBuf::from("/repo/.git"))
+        );
+        assert_eq!(common_dir_of(Path::new("/repo/.git")), None);
+        assert_eq!(common_dir_of(Path::new("/repo")), None);
+    }
+
+    #[test]
+    fn common_dir_events_classify_like_git_dir_events() {
+        // A LINKED worktree's session: git_dir is the private
+        // .git/worktrees/<name>; ref moves land in the COMMON dir and must
+        // still drive log/branches.
+        let wt = Path::new("/wt-a");
+        let gd = Path::new("/repo/.git/worktrees/wt-a");
+        let common = Path::new("/repo/.git");
+        let mut out = BTreeSet::new();
+        classify(
+            Path::new("/repo/.git/refs/heads/main"),
+            wt,
+            gd,
+            Some(common),
+            &Gitignore::empty(),
+            &mut out,
+        );
+        let got: Vec<_> = out.into_iter().collect();
+        assert!(
+            got.contains(&ChangeDomain::Log) && got.contains(&ChangeDomain::Branches),
+            "{got:?}"
+        );
+        // The session's OWN private gitdir still classifies via the git_dir
+        // prefix (checked before the common one).
+        let mut own = BTreeSet::new();
+        classify(
+            Path::new("/repo/.git/worktrees/wt-a/HEAD"),
+            wt,
+            gd,
+            Some(common),
+            &Gitignore::empty(),
+            &mut own,
+        );
+        assert!(own.contains(&ChangeDomain::Log), "own HEAD is a HEAD move: {own:?}");
     }
 
     // --- pruned watch set ---------------------------------------------------
@@ -1170,6 +1294,35 @@ mod tests {
             reported,
             "a write inside a directory created after start must report a change"
         );
+    }
+
+    #[test]
+    fn linked_worktree_watch_sees_common_dir_ref_moves() {
+        use std::sync::mpsc;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let main_git = tmp.path().join("repo/.git");
+        let private = main_git.join("worktrees/wt-a");
+        let wt = tmp.path().join("wt-a");
+        std::fs::create_dir_all(main_git.join("refs/heads")).unwrap();
+        std::fs::create_dir_all(&private).unwrap();
+        std::fs::create_dir_all(&wt).unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        let _core = WatcherCore::start(
+            wt,
+            private,
+            Box::new(move |batch| {
+                let _ = tx.send(batch);
+            }),
+        )
+        .unwrap();
+
+        std::fs::write(main_git.join("refs/heads/main"), "1111\n").unwrap();
+        let batch = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("a common-dir ref write must reach a linked worktree's watch");
+        assert!(batch.domains.contains(&ChangeDomain::Branches), "{batch:?}");
     }
 
     // --- watch registration (real filesystem) -----------------------------

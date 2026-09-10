@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatWslLocator, hostLabel, parseLocator, supportsRepoGitOverride } from "./locator";
+import { formatWslLocator, hostLabel, parseLocator, supportsHostFolderPicker, supportsRepoGitOverride, worktreeLocator } from "./locator";
 
 describe("parseLocator", () => {
   it("treats bare paths as local, byte-identical", () => {
@@ -42,5 +42,29 @@ describe("supportsRepoGitOverride", () => {
   // cannot pick a binary inside a distro — so the UI must not offer it.
   it("refuses it for a WSL repo", () => {
     expect(supportsRepoGitOverride({ kind: "wsl", distro: "Ubuntu" })).toBe(false);
+  });
+});
+
+describe("worktreeLocator", () => {
+  it("keeps a local worktree path as a bare locator", () => {
+    expect(worktreeLocator("C:/repos/app", "C:/repos/app-wt")).toBe("C:/repos/app-wt");
+  });
+  it("keeps the wsl scheme and distro for a WSL parent", () => {
+    expect(worktreeLocator("wsl://Ubuntu/home/u/app", "/home/u/app-wt")).toBe(
+      "wsl://Ubuntu/home/u/app-wt",
+    );
+  });
+});
+
+describe("supportsHostFolderPicker", () => {
+  it("offers the native picker for local repos only", () => {
+    expect(supportsHostFolderPicker(null)).toBe(true);
+    expect(supportsHostFolderPicker(undefined)).toBe(true);
+  });
+
+  // The app machine's dialog yields Windows paths, never distro paths -
+  // same reasoning as supportsRepoGitOverride.
+  it("refuses it for a WSL repo", () => {
+    expect(supportsHostFolderPicker({ kind: "wsl", distro: "Ubuntu" })).toBe(false);
   });
 });

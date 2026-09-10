@@ -10,7 +10,7 @@
 use super::*;
 use crate::executor::GitExecutor;
 use crate::runner::{RunOutput, RunnerError};
-use crate::types::{BlobBytes, CaseDriftEntry, KeyId, SubmoduleAutoUpdateStatus};
+use crate::types::{BlobBytes, CaseDriftEntry, KeyId, SubmoduleAutoUpdateStatus, WorktreeAddMode};
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
@@ -3902,5 +3902,117 @@ async fn discard_case_rename_rejects_non_case_only_input() {
     assert!(b.discard_case_rename("a.c", "b.c").await.is_err(), "different names");
     assert!(b.discard_case_rename("a.c", "a.c").await.is_err(), "identical names");
     assert!(b.discard_case_rename("../a.c", "../A.c").await.is_err(), "path escape");
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
+// worktrees - list/add/remove sequences + checked-out-elsewhere classification
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn worktree_list_parses_the_porcelain_stream_and_probes_dirtiness() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["worktree", "list", "--porcelain", "-z"],
+        ok("worktree /repo\0HEAD 1111111111111111111111111111111111111111\0branch refs/heads/main\0\0worktree /wt\0HEAD 2222222222222222222222222222222222222222\0branch refs/heads/feature\0\0"),
+    );
+    // One read-only dirtiness probe per checkout; --no-optional-locks so
+    // probing ANOTHER worktree never writes its index.
+    fake.expect(
+        &["--no-optional-locks", "-C", "/repo", "status", "--porcelain", "-z"],
+        ok(""),
+    );
+    fake.expect(
+        &["--no-optional-locks", "-C", "/wt", "status", "--porcelain", "-z"],
+        ok(" M f.txt\0"),
+    );
+    let (b, exec) = backend(fake);
+    let list = b.worktree_list().await.unwrap();
+    assert_eq!(list.len(), 2);
+    assert!(list[0].is_main);
+    assert_eq!(list[0].dirty, Some(false));
+    assert_eq!(list[1].branch.as_deref(), Some("feature"));
+    assert_eq!(list[1].dirty, Some(true));
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn worktree_list_skips_the_dirty_probe_for_prunable_entries() {
+    // A prunable checkout's path is gone - probing it would only error.
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["worktree", "list", "--porcelain", "-z"],
+        ok("worktree /repo\0HEAD 1111111111111111111111111111111111111111\0branch refs/heads/main\0\0worktree /gone\0HEAD 2222222222222222222222222222222222222222\0detached\0prunable gitdir file points to non-existent location\0\0"),
+    );
+    fake.expect(
+        &["--no-optional-locks", "-C", "/repo", "status", "--porcelain", "-z"],
+        ok(""),
+    );
+    let (b, exec) = backend(fake);
+    let list = b.worktree_list().await.unwrap();
+    assert_eq!(list[1].dirty, None);
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn worktree_add_variants_build_the_right_args() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["worktree", "add", "--", "/wt", "feature"], ok(""));
+    fake.expect(&["worktree", "add", "-b", "topic", "--", "/wt2"], ok(""));
+    fake.expect(
+        &["worktree", "add", "-b", "hotfix", "--", "/wt3", "v1.0"],
+        ok(""),
+    );
+    let (b, exec) = backend(fake);
+    b.worktree_add("/wt", &WorktreeAddMode::Checkout { branch: "feature".into() })
+        .await
+        .unwrap();
+    b.worktree_add(
+        "/wt2",
+        &WorktreeAddMode::NewBranch { name: "topic".into(), start_point: None },
+    )
+    .await
+    .unwrap();
+    b.worktree_add(
+        "/wt3",
+        &WorktreeAddMode::NewBranch { name: "hotfix".into(), start_point: Some("v1.0".into()) },
+    )
+    .await
+    .unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn worktree_remove_passes_force_only_when_asked() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["worktree", "remove", "--", "/wt"], ok(""));
+    fake.expect(&["worktree", "remove", "--force", "--", "/wt"], ok(""));
+    fake.expect(&["worktree", "prune"], ok(""));
+    let (b, exec) = backend(fake);
+    b.worktree_remove("/wt", false).await.unwrap();
+    b.worktree_remove("/wt", true).await.unwrap();
+    b.worktree_prune().await.unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn switch_to_a_branch_checked_out_elsewhere_is_classified() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["switch", "--end-of-options", "feature"],
+        fail(128, "fatal: 'feature' is already checked out at '/home/u/wt-feature'"),
+    );
+    let (b, exec) = backend(fake);
+    let err = b
+        .switch_branch("feature", SwitchDirtyBehavior::TryDirectly)
+        .await
+        .unwrap_err();
+    match err {
+        GitError::CheckedOutInWorktree { branch, path, .. } => {
+            assert_eq!(branch.as_deref(), Some("feature"));
+            assert_eq!(path.as_deref(), Some("/home/u/wt-feature"));
+        }
+        other => panic!("expected CheckedOutInWorktree, got {other:?}"),
+    }
     exec.assert_done();
 }
