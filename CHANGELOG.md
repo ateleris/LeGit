@@ -28,13 +28,15 @@ lives in the git log and the GitHub release notes.
   remote.
 - Worktree support: a new Worktrees section in the Refs panel lists all
   worktrees and can add (new or existing branch), open as a separate repo
-  tab, remove (with a force offer for dirty trees), and prune. Switching
+  tab, remove (with a force offer for dirty trees), lock/unlock (with an
+  optional reason), add detached at a revision, and prune. Switching
   to a branch that is checked out in another worktree now says which one,
   branch chips in the commit graph mark such branches with a worktree
   icon (tooltip names the worktree), detached worktree HEADs appear as
   their own chip in the graph (right-click opens that worktree), a dirty
   worktree shows a dot on its chip and a "dirty" badge in the Worktrees
-  section, and a worktree tab live-updates when refs change in the main
+  section, the checked-out-elsewhere refusal toast opens that worktree on
+  click, and a worktree tab live-updates when refs change in the main
   checkout.
 - Themes can color branch and remote chips by the graph lane their commit
   occupies, with per-part filters (foreground/border/background) applied

@@ -129,6 +129,25 @@ describe("formatSwitchError", () => {
     expect(msg.toLowerCase()).toContain("worktree");
   });
 
+  test("the refusal toast carries an open-worktree action when a handler is given", () => {
+    const e = {
+      kind: "Git",
+      details: {
+        kind: "CheckedOutInWorktree",
+        details: { branch: "f", path: "/wt", stderr: "s" },
+      },
+    };
+    const opened: string[] = [];
+    notifySwitchError(e, { onOpenWorktree: (p) => opened.push(p) });
+    const [msg, opts] = vi.mocked(notify.error).mock.calls[0] as [
+      string,
+      { action?: () => void } | undefined,
+    ];
+    expect(msg.toLowerCase()).toContain("click");
+    opts?.action?.();
+    expect(opened).toEqual(["/wt"]);
+  });
+
   test("names the other worktree for a checked-out-elsewhere refusal", () => {
     const e = {
       kind: "Git",

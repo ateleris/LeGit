@@ -1002,7 +1002,8 @@ export interface WorktreeInfo {
 /** How `worktree add` populates the new worktree (matches `WorktreeAddMode`). */
 export type WorktreeAddMode =
   | { kind: "checkout"; branch: string }
-  | { kind: "new_branch"; name: string; start_point: string | null };
+  | { kind: "new_branch"; name: string; start_point: string | null }
+  | { kind: "detach"; rev: string | null };
 
 export type SwitchDirtyBehavior = "try_directly" | "auto_stash" | "stash_and_keep";
 

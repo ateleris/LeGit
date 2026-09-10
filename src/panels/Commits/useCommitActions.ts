@@ -43,10 +43,12 @@ import { formatAppError } from "../../lib/types";
 import { deleteBranchGuided } from "../../lib/branchDelete";
 import { bulkRebasePlan } from "./multiSelect";
 import { notifyLfsStubs } from "../../lib/lfsFeedback";
+import { worktreeLocator } from "../../lib/locator";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { autoUpdateSubmodules } from "../../lib/submodules";
 import { notify } from "../../store/notifications";
 import { useSettingsStore } from "../../store/settings";
+import { useRepoStore } from "../../store/repos";
 import {
   notifySwitchOutcome,
   notifyRemoteCheckoutOutcome,
@@ -84,6 +86,16 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
     const repoOf = () => ctx.current.repo;
     const invalidate = (repoId: string, domains: readonly string[]) =>
       invalidateRepoDomains(queryClient, repoId, domains);
+    // A checked-out-elsewhere refusal's toast opens the blocking worktree on
+    // click (host-correct locator, same as the chip menus).
+    const openWorktreeFromToast = (path: string) => {
+      const repo = repoOf();
+      if (!repo) return;
+      void useRepoStore
+        .getState()
+        .openRepo(worktreeLocator(repo.locator ?? repo.path, path))
+        .catch((err: unknown) => notify.error(formatAppError(err)));
+    };
 
     return {
       // --- merge / rebase / sequencer (conflicts pause into op-state; a
@@ -248,7 +260,7 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
           notifyLfsStubs(result.lfs_stubs, "switch");
           void autoUpdateSubmodules(queryClient, repo.id);
         } catch (e) {
-          notifySwitchError(e);
+          notifySwitchError(e, { onOpenWorktree: openWorktreeFromToast });
         }
       },
 
@@ -262,7 +274,7 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
           notifyLfsStubs(outcome.lfs_stubs, "checkout");
           void autoUpdateSubmodules(queryClient, repo.id);
         } catch (e) {
-          notifySwitchError(e);
+          notifySwitchError(e, { onOpenWorktree: openWorktreeFromToast });
         }
       },
 
@@ -276,7 +288,7 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
           notifyLfsStubs(result.lfs_stubs, "checkout");
           void autoUpdateSubmodules(queryClient, repo.id);
         } catch (e) {
-          notifySwitchError(e);
+          notifySwitchError(e, { onOpenWorktree: openWorktreeFromToast });
         }
       },
 

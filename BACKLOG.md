@@ -92,12 +92,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   2026-08-17/18): a Files-panel context-menu track/untrack entry, file
   locking (`git lfs locks`) - these matter mainly to asset-heavy teams,
   which LeGit does not currently target.
-- **Binary preview remainder** (image previews in Diff + File View incl.
-  local LFS objects shipped 2026-08-18, spec
-  `docs/superpowers/specs/2026-08-18-binary-image-preview-design.md`):
-  audio (MP3/WAV/OGG playable panes - the RIFF/WAV sniff case is already
-  encoded), zoom / 1:1 toggle, swipe/onion-skin comparison (SVG shipped
-  2026-09-10, extension-triggered). Add on demand.
 - **Patches: create + apply** (from the 2026-08-20 competitive review;
   SourceTree, Fork, and Git Extensions all have both). "Create patch" from a
   commit or a selected range (multi-select shipped 2026-08-22) via
@@ -218,18 +212,14 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   invalidation mid-walk must restart the walk), and the auto-seek needs a
   guardrail (~50k commits: stop and ask via toast). Keep-everything-loaded
   stays the model; windowed unloading was rejected 2026-07-30.
-- **Worktrees, deferred slices** (2026-09-10; mode analysis in
-  `design/2026-09-10-worktrees-parallel-graph.md`; stage B1 - worktree
-  positions as read-only graph decorations - shipped 2026-09-10: branch
-  chips carry the worktree icon and an "Open worktree" menu entry,
-  detached worktree HEADs get their own chip with the same menu):
-  detached-checkout mode for `worktree add`; lock/unlock actions; a
-  guided "open that worktree" action on the CheckedOutInWorktree refusal
-  TOAST (the chip menus have it; the refusal message itself stays
-  text-only). Stages B2/B3 (active-worktree switcher, full parallel
-  interaction) remain gated on demand per the design note. (The
-  read-only per-worktree DIRTY indicator - chip dot + Worktrees-pane
-  badge via `--no-optional-locks status` probes - shipped 2026-09-10.)
+- **Worktrees, stages B2/B3** (2026-09-10; mode analysis in
+  `design/2026-09-10-worktrees-parallel-graph.md`). Everything else
+  shipped 2026-09-10 (pane with add/detach/lock/remove/prune, B1 graph
+  decorations, dirty indicators, guided open on chips AND the refusal
+  toast). B2 = active-worktree switcher scoping Working Changes/composer
+  inside one tab (per-worktree executors + worktree-scoped query keys);
+  B3 = full parallel interaction incl. one workdir row per dirty
+  worktree. Gated on demand: tab switching may well be enough.
 - **Commits panel search: touched-path query kind** (`git log -- <path>`) -
   the one search mode the shipped search bar (2026-07-30) lacks. NOTE: the
   Search panel was removed 2026-07-30 as redundant; with it went the UI

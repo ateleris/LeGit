@@ -104,7 +104,23 @@ export function checkedOutInWorktreeMessage(
   );
 }
 
-/** Toast variant of `formatSwitchError`. */
-export function notifySwitchError(e: unknown) {
-  notify.error(formatSwitchError(e));
+/** Toast variant of `formatSwitchError`. A checked-out-elsewhere refusal
+ * carries a click action that opens the blocking worktree, when the caller
+ * can provide one (clicking a toast otherwise opens the Git Log). */
+export function notifySwitchError(
+  e: unknown,
+  opts?: { onOpenWorktree?: (path: string) => void },
+) {
+  const message = formatSwitchError(e);
+  if (opts?.onOpenWorktree && gitErrorKind(e) === "CheckedOutInWorktree") {
+    const d = gitErrorDetails<{ path: string | null }>(e);
+    if (d?.path) {
+      const path = d.path;
+      notify.error(`${message} Click here to open it.`, {
+        action: () => opts.onOpenWorktree!(path),
+      });
+      return;
+    }
+  }
+  notify.error(message);
 }

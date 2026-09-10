@@ -59,6 +59,13 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
                     None => self.run_simple(&["worktree", "add", "-b", n, "--", path]).await,
                 }
             }
+            WorktreeAddMode::Detach { rev } => match rev.as_deref() {
+                Some(r) => {
+                    let r = safe_ref("revision", r)?;
+                    self.run_simple(&["worktree", "add", "--detach", "--", path, r]).await
+                }
+                None => self.run_simple(&["worktree", "add", "--detach", "--", path]).await,
+            },
         }
     }
 
@@ -72,6 +79,23 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
 
     pub(super) async fn worktree_prune(&self) -> Result<(), GitError> {
         self.run_simple(&["worktree", "prune"]).await
+    }
+
+    pub(super) async fn worktree_lock(
+        &self,
+        path: &str,
+        reason: Option<&str>,
+    ) -> Result<(), GitError> {
+        match reason {
+            Some(r) => {
+                self.run_simple(&["worktree", "lock", "--reason", r, "--", path]).await
+            }
+            None => self.run_simple(&["worktree", "lock", "--", path]).await,
+        }
+    }
+
+    pub(super) async fn worktree_unlock(&self, path: &str) -> Result<(), GitError> {
+        self.run_simple(&["worktree", "unlock", "--", path]).await
     }
 }
 

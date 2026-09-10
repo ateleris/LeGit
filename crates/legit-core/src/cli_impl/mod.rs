@@ -1748,6 +1748,14 @@ impl<E: GitExecutor + ?Sized> GitBackend for GitCliBackend<E> {
         self.worktree_prune().await
     }
 
+    async fn worktree_lock(&self, path: &str, reason: Option<&str>) -> Result<(), GitError> {
+        self.worktree_lock(path, reason).await
+    }
+
+    async fn worktree_unlock(&self, path: &str) -> Result<(), GitError> {
+        self.worktree_unlock(path).await
+    }
+
     async fn unpushed_commits(&self, max_count: u32) -> Result<Vec<CommitId>, GitError> {
         let runner = self.runner().await;
         let n = max_count.to_string();

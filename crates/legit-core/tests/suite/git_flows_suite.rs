@@ -5254,6 +5254,16 @@ async fn worktree_add_list_remove_round_trip() {
     assert_eq!(list[0].dirty, Some(false), "clean checkouts probe clean: {list:?}");
     assert_eq!(list[1].dirty, Some(false));
 
+    // Lock protects the worktree (with the reason surfaced in the list);
+    // unlock releases it.
+    repo.backend.worktree_lock(&wt_str, Some("on a usb drive")).await.expect("lock");
+    let list = repo.backend.worktree_list().await.expect("list locked");
+    assert_eq!(list[1].locked.as_deref(), Some("on a usb drive"));
+    assert!(repo.backend.worktree_remove(&wt_str, false).await.is_err(), "locked refuses remove");
+    repo.backend.worktree_unlock(&wt_str).await.expect("unlock");
+    let list = repo.backend.worktree_list().await.expect("list unlocked");
+    assert_eq!(list[1].locked, None);
+
     // A dirty worktree refuses a plain remove; force removes it.
     std::fs::write(wt.join("dirty.txt"), "x").expect("write");
     let list = repo.backend.worktree_list().await.expect("worktree_list dirty");
@@ -5263,6 +5273,20 @@ async fn worktree_add_list_remove_round_trip() {
     repo.backend.worktree_remove(&wt_str, true).await.expect("force remove");
     let list = repo.backend.worktree_list().await.expect("list after remove");
     assert_eq!(list.len(), 1);
+
+    // Detached add: parks at the given rev with no branch.
+    let wt2 = repo.path.join("..").join(format!(
+        "wtd-{}",
+        repo.path.file_name().unwrap().to_string_lossy()
+    ));
+    let wt2_str = wt2.to_string_lossy().into_owned();
+    repo.backend
+        .worktree_add(&wt2_str, &WorktreeAddMode::Detach { rev: Some("feature".into()) })
+        .await
+        .expect("detached add");
+    let list = repo.backend.worktree_list().await.expect("list detached");
+    assert!(list[1].detached && list[1].branch.is_none(), "{list:?}");
+    repo.backend.worktree_remove(&wt2_str, true).await.expect("cleanup");
 }
 
 #[tokio::test]

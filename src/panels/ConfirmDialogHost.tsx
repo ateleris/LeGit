@@ -52,7 +52,8 @@ function ConfirmDialog({ request }: { request: PendingConfirm }) {
     () => settle(request.id, true, request.input ? inputValue : undefined),
     [settle, request.id, request.input, inputValue],
   );
-  const confirmDisabled = request.input !== undefined && inputValue.trim() === "";
+  const confirmDisabled =
+    request.input !== undefined && !request.input.allowEmpty && inputValue.trim() === "";
 
   // Pointer position captured at mount; the dialog is measured after the
   // first (hidden) render, then placed near it. No anchor -> centered.

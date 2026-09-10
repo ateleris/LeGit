@@ -323,6 +323,12 @@ pub trait GitBackend: Send + Sync {
     /// Drop stale bookkeeping of manually deleted worktrees.
     async fn worktree_prune(&self) -> Result<(), GitError>;
 
+    /// Protect a worktree from remove/prune (`git worktree lock`), with an
+    /// optional reason shown in the list.
+    async fn worktree_lock(&self, path: &str, reason: Option<&str>) -> Result<(), GitError>;
+
+    async fn worktree_unlock(&self, path: &str) -> Result<(), GitError>;
+
     /// Commits reachable from HEAD but from NO remote-tracking ref, newest
     /// first, capped at `max_count` (all-remotes semantics, matching the
     /// reword hard-block). Backs the bulk drop/squash gate: those actions

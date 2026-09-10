@@ -34,8 +34,9 @@ export interface ConfirmRequest {
   danger?: boolean;
   /** Prompt variant: a multi-line text input between message and buttons.
    *  Confirm resolves the edited value (see `promptDialog`); a blank value
-   *  disables the confirm button. */
-  input?: { initialValue: string };
+   *  disables the confirm button unless `allowEmpty` (optional inputs like
+   *  a lock reason). */
+  input?: { initialValue: string; allowEmpty?: boolean };
 }
 
 export interface PendingConfirm extends ConfirmRequest {
@@ -84,7 +85,7 @@ export function confirmDialog(req: ConfirmRequest): Promise<boolean> {
 /** Ask for a text value (multi-line). Resolves the edited value on confirm,
  *  null on cancel/Escape. */
 export function promptDialog(
-  req: ConfirmRequest & { input: { initialValue: string } },
+  req: ConfirmRequest & { input: { initialValue: string; allowEmpty?: boolean } },
 ): Promise<string | null> {
   return new Promise<string | null>((resolve) => {
     useConfirmStore

@@ -325,6 +325,8 @@ pub fn run() {
         commands::repo_worktree_add,
         commands::repo_worktree_remove,
         commands::repo_worktree_prune,
+        commands::repo_worktree_lock,
+        commands::repo_worktree_unlock,
         commands::repo_reword_commit,
         commands::repo_fetch,
         commands::repo_pull,

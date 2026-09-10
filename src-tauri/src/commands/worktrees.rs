@@ -59,3 +59,35 @@ pub async fn repo_worktree_prune(
     let session = state.get_session(&repo_id).await?;
     session.backend.worktree_prune().await.map_err(AppError::Git)
 }
+
+/// Protect a worktree from remove/prune, with an optional reason.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_worktree_lock(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    path: String,
+    reason: Option<String>,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .worktree_lock(&path, reason.as_deref())
+        .await
+        .map_err(AppError::Git)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_worktree_unlock(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    path: String,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .worktree_unlock(&path)
+        .await
+        .map_err(AppError::Git)
+}

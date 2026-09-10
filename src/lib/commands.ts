@@ -943,6 +943,13 @@ export const repoWorktreeRemove = (repoId: string, path: string, force: boolean)
 export const repoWorktreePrune = (repoId: string) =>
   invoke<null>("repo_worktree_prune", { repoId });
 
+/** Protect a worktree from remove/prune, with an optional reason. */
+export const repoWorktreeLock = (repoId: string, path: string, reason: string | null) =>
+  invoke<null>("repo_worktree_lock", { repoId, path, reason });
+
+export const repoWorktreeUnlock = (repoId: string, path: string) =>
+  invoke<null>("repo_worktree_unlock", { repoId, path });
+
 /// Reword (rename) a commit's message; returns the new commit id. v1 rewords
 /// HEAD only and refuses commits already pushed to a remote.
 export const repoRewordCommit = (repoId: string, commitId: string, message: string) =>

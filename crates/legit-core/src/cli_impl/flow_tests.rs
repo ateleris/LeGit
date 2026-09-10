@@ -3963,6 +3963,11 @@ async fn worktree_add_variants_build_the_right_args() {
         &["worktree", "add", "-b", "hotfix", "--", "/wt3", "v1.0"],
         ok(""),
     );
+    fake.expect(&["worktree", "add", "--detach", "--", "/wt4"], ok(""));
+    fake.expect(
+        &["worktree", "add", "--detach", "--", "/wt5", "v2.0"],
+        ok(""),
+    );
     let (b, exec) = backend(fake);
     b.worktree_add("/wt", &WorktreeAddMode::Checkout { branch: "feature".into() })
         .await
@@ -3979,6 +3984,12 @@ async fn worktree_add_variants_build_the_right_args() {
     )
     .await
     .unwrap();
+    b.worktree_add("/wt4", &WorktreeAddMode::Detach { rev: None })
+        .await
+        .unwrap();
+    b.worktree_add("/wt5", &WorktreeAddMode::Detach { rev: Some("v2.0".into()) })
+        .await
+        .unwrap();
     exec.assert_done();
 }
 
@@ -4103,5 +4114,21 @@ async fn unpushed_commits_lists_shas_not_on_any_remote() {
             CommitId::new("1111111111111111111111111111111111111111"),
         ]
     );
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn worktree_lock_and_unlock_build_the_right_args() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["worktree", "lock", "--", "/wt"], ok(""));
+    fake.expect(
+        &["worktree", "lock", "--reason", "usb drive", "--", "/wt"],
+        ok(""),
+    );
+    fake.expect(&["worktree", "unlock", "--", "/wt"], ok(""));
+    let (b, exec) = backend(fake);
+    b.worktree_lock("/wt", None).await.unwrap();
+    b.worktree_lock("/wt", Some("usb drive")).await.unwrap();
+    b.worktree_unlock("/wt").await.unwrap();
     exec.assert_done();
 }

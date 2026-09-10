@@ -1175,8 +1175,7 @@ pub struct WorktreeInfo {
     pub dirty: Option<bool>,
 }
 
-/// How `worktree add` populates the new worktree. Detached checkouts are a
-/// deliberate non-goal for v1 (add on demand).
+/// How `worktree add` populates the new worktree.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WorktreeAddMode {
@@ -1185,6 +1184,8 @@ pub enum WorktreeAddMode {
     Checkout { branch: String },
     /// Create a new branch at `start_point` (HEAD when None) and check it out.
     NewBranch { name: String, start_point: Option<String> },
+    /// Detached checkout at `rev` (HEAD when None).
+    Detach { rev: Option<String> },
 }
 
 /// State of a removed submodule's retained gitdir (`.git/modules/<name>`).

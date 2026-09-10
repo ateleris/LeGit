@@ -28,3 +28,18 @@ describe("promptDialog", () => {
     await expect(p).resolves.toBeNull();
   });
 });
+
+describe("promptDialog allowEmpty", () => {
+  it("is carried on the pending request for the host's confirm gating", () => {
+    // The worktree lock reason is OPTIONAL: a blank value must be
+    // confirmable when the caller says so (default stays blank-disabled).
+    void promptDialog({
+      message: "Lock reason (optional):",
+      confirmLabel: "Lock",
+      input: { initialValue: "", allowEmpty: true },
+    });
+    const pending = useConfirmStore.getState().queue.at(-1)!;
+    expect(pending.input?.allowEmpty).toBe(true);
+    useConfirmStore.getState().settle(pending.id, true, "");
+  });
+});

@@ -7,14 +7,16 @@ import {
   repoBranches,
   repoWorktreeAdd,
   repoWorktreeList,
+  repoWorktreeLock,
   repoWorktreePrune,
   repoWorktreeRemove,
+  repoWorktreeUnlock,
 } from "../../lib/commands";
 import type { Branch, WorktreeAddMode, WorktreeInfo } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { supportsHostFolderPicker, worktreeLocator } from "../../lib/locator";
 import { notify } from "../../store/notifications";
-import { confirmDialog } from "../../store/confirm";
+import { confirmDialog, promptDialog } from "../../store/confirm";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { ToolbarButton } from "../shared/ToolbarButton";
@@ -30,7 +32,7 @@ export function WorktreesSection() {
   const confirmDestructive = useConfirmDestructive();
   const [adding, setAdding] = useState(false);
   const [addPath, setAddPath] = useState("");
-  const [addMode, setAddMode] = useState<"new_branch" | "checkout">("new_branch");
+  const [addMode, setAddMode] = useState<"new_branch" | "checkout" | "detach">("new_branch");
   const [addBranch, setAddBranch] = useState("");
 
   const { data: worktrees = [] } = useQuery<WorktreeInfo[]>({
@@ -84,7 +86,9 @@ export function WorktreesSection() {
       const mode: WorktreeAddMode =
         addMode === "new_branch"
           ? { kind: "new_branch", name: addBranch, start_point: null }
-          : { kind: "checkout", branch: addBranch };
+          : addMode === "checkout"
+            ? { kind: "checkout", branch: addBranch }
+            : { kind: "detach", rev: addBranch.trim() === "" ? null : addBranch.trim() };
       await repoWorktreeAdd(repo.id, addPath.trim(), mode);
       setAdding(false);
       setAddPath("");
@@ -153,14 +157,15 @@ export function WorktreesSection() {
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <select
               value={addMode}
-              onChange={(e) => setAddMode(e.target.value as "new_branch" | "checkout")}
+              onChange={(e) => setAddMode(e.target.value as "new_branch" | "checkout" | "detach")}
             >
               <option value="new_branch">New branch</option>
               <option value="checkout">Existing branch</option>
+              <option value="detach">Detached at revision</option>
             </select>
-            {addMode === "new_branch" ? (
+            {addMode === "new_branch" || addMode === "detach" ? (
               <input
-                placeholder="Branch name"
+                placeholder={addMode === "detach" ? "Revision (blank = HEAD)" : "Branch name"}
                 value={addBranch}
                 onChange={(e) => setAddBranch(e.target.value)}
                 style={{ flex: 1, minWidth: 0 }}
@@ -180,7 +185,11 @@ export function WorktreesSection() {
               </select>
             )}
             <button
-              disabled={busy || addPath.trim() === "" || addBranch.trim() === ""}
+              disabled={
+                busy ||
+                addPath.trim() === "" ||
+                (addMode !== "detach" && addBranch.trim() === "")
+              }
               onClick={() => void submitAdd()}
             >
               Create
@@ -236,6 +245,31 @@ export function WorktreesSection() {
                     void openRepo(worktreeLocator(repo.locator ?? repo.path, w.path)).catch(
                       (e: unknown) => notify.error(formatAppError(e)),
                     )
+                  }
+                />
+              )}
+              {!w.is_main && (
+                <ToolbarButton
+                  label={w.locked !== null ? "Unlock" : "Lock"}
+                  disabled={busy}
+                  onClick={() =>
+                    w.locked !== null
+                      ? void run(async () => {
+                          await repoWorktreeUnlock(repo.id, w.path);
+                        })
+                      : void (async () => {
+                          const reason = await promptDialog({
+                            title: "Lock worktree",
+                            message: "Reason (optional, shown in the list):",
+                            confirmLabel: "Lock",
+                            danger: false,
+                            input: { initialValue: "", allowEmpty: true },
+                          });
+                          if (reason === null) return;
+                          void run(async () => {
+                            await repoWorktreeLock(repo.id, w.path, reason.trim() || null);
+                          });
+                        })()
                   }
                 />
               )}

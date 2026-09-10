@@ -50,7 +50,8 @@ export const useNotificationsStore = create<NotificationsStore>((set) => ({
 
 /** Convenience for non-component code (e.g. action handlers). */
 export const notify = {
-  error: (message: string) => useNotificationsStore.getState().push("error", message),
+  error: (message: string, opts?: NotificationOptions) =>
+    useNotificationsStore.getState().push("error", message, opts),
   success: (message: string) => useNotificationsStore.getState().push("success", message),
   info: (message: string, opts?: NotificationOptions) =>
     useNotificationsStore.getState().push("info", message, opts),

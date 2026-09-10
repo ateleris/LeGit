@@ -337,7 +337,11 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
         // tooltip's checkout hint is suppressed via the mark).
         if (worktreeMark) {
           const mark = worktreeMark;
-          return () => notify.info(checkedOutInWorktreeMessage(localName, mark.path));
+          return () =>
+            notify.info(
+              `${checkedOutInWorktreeMessage(localName, mark.path)}${onOpenWorktree ? " Click here to open it." : ""}`,
+              onOpenWorktree ? { action: () => onOpenWorktree(mark.path) } : undefined,
+            );
         }
         return onBranchCheckout && (() => onBranchCheckout(localName));
       }
