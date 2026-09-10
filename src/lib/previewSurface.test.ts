@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { binarySizes, hasImageSide, sideNotice } from "./previewSurface";
+import { binarySizes, hasImageSide, sideNotice, isSvgPath } from "./previewSurface";
 import type { FilePreview } from "./types";
 
 const img: FilePreview = { kind: "image", format: "png", size: 10, base64: "aa" };
@@ -36,5 +36,14 @@ describe("previewSurface", () => {
     expect(binarySizes(undefined, undefined)).toBeNull();
     // An image side still reports its size in the fallback summary.
     expect(binarySizes(img, undefined)).toContain("10 bytes");
+  });
+});
+
+describe("isSvgPath", () => {
+  it("matches the .svg extension case-insensitively", () => {
+    expect(isSvgPath("icons/logo.svg")).toBe(true);
+    expect(isSvgPath("LOGO.SVG")).toBe(true);
+    expect(isSvgPath("logo.svg.bak")).toBe(false);
+    expect(isSvgPath("svg")).toBe(false);
   });
 });

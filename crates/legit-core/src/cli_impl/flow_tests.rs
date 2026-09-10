@@ -4016,3 +4016,70 @@ async fn switch_to_a_branch_checked_out_elsewhere_is_classified() {
     }
     exec.assert_done();
 }
+
+#[tokio::test]
+async fn oversized_diff_classifies_as_too_large() {
+    // A multi-MB diff (e.g. a minified SVG) crashed the webview with
+    // renderer OOM when rendered as text - the cap turns it into a notice.
+    let fake = FakeExecutor::default();
+    let big = format!(
+        "diff --git a/big.svg b/big.svg\n--- a/big.svg\n+++ b/big.svg\n@@ -0,0 +1 @@\n+{}\n",
+        "x".repeat(21 * 1024 * 1024),
+    );
+    fake.expect(
+        &["-c", "diff.submodule=short", "diff", "--no-color", "--no-ext-diff", "-U3", "--", "big.svg"],
+        ok(&big),
+    );
+    let (b, exec) = backend(fake);
+    let entry = b
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("big.svg"), None, 3)
+        .await
+        .unwrap();
+    match entry {
+        DiffEntry::TooLarge { bytes } => assert!(bytes > 21 * 1024 * 1024, "{bytes}"),
+        other => panic!("expected TooLarge, got a {} entry", diff_entry_kind(&other)),
+    }
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn oversized_untracked_fallback_classifies_as_too_large() {
+    // The worst case from the field: an UNTRACKED multi-MB file goes through
+    // `diff --no-index /dev/null <file>`, turning the whole file into one
+    // diff. The cap must apply to that fallback output too.
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["-c", "diff.submodule=short", "diff", "--no-color", "--no-ext-diff", "-U3", "--", "big.svg"],
+        ok(""),
+    );
+    fake.expect(&["ls-files", "-z", "--", "big.svg"], ok(""));
+    let big = format!(
+        "diff --git a/dev/null b/big.svg\n--- /dev/null\n+++ b/big.svg\n@@ -0,0 +1 @@\n+{}\n",
+        "y".repeat(21 * 1024 * 1024),
+    );
+    fake.expect(
+        &["diff", "--no-index", "--no-color", "--no-ext-diff", "-U3", "--", "/dev/null", "big.svg"],
+        out(1, &big, ""),
+    );
+    let (b, exec) = backend(fake);
+    let entry = b
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("big.svg"), None, 3)
+        .await
+        .unwrap();
+    assert!(
+        matches!(entry, DiffEntry::TooLarge { .. }),
+        "expected TooLarge, got a {} entry",
+        diff_entry_kind(&entry)
+    );
+    exec.assert_done();
+}
+
+/// Variant name without dumping multi-MB content into assertion messages.
+fn diff_entry_kind(e: &DiffEntry) -> &'static str {
+    match e {
+        DiffEntry::Text(_) => "Text",
+        DiffEntry::Binary(_) => "Binary",
+        DiffEntry::Submodule(_) => "Submodule",
+        DiffEntry::TooLarge { .. } => "TooLarge",
+    }
+}

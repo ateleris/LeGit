@@ -18,12 +18,15 @@ import {
   repoUnstageLines,
   repoWriteWorktreeFile,
 } from "../../lib/commands";
-import type { DiffEntry, DiffRequest } from "../../lib/types";
+import type { DiffEntry, DiffRequest ,
+  TextDiff,
+} from "../../lib/types";
 import { diffSides } from "../../lib/diffSides";
 import { LineEndingBadge, RevertableLineEndingBadge } from "../shared/LineEndingBadge";
 import { SubmoduleDiffView, SubmoduleDirtyNotice } from "./SubmoduleDiffView";
 import { ImageDiffView } from "./ImageDiffView";
-import { binarySizes } from "../../lib/previewSurface";
+import { binarySizes, isSvgPath } from "../../lib/previewSurface";
+import { formatByteSize } from "../../lib/formatBytes";
 import { LfsPointerNotice } from "../shared/LfsPointerNotice";
 import { lfsPointerDiffSides } from "../../lib/lfsPointer";
 import { formatAppError } from "../../lib/types";
@@ -644,7 +647,9 @@ function DiffBody({
     return <SubmoduleDiffView repoId={request.repoId} change={data.Submodule} />;
   }
 
-  const text = data.Text;
+  // The whole text-diff rendering, as a function so the SVG image branch
+  // below can use it as its no-image fallback.
+  const renderTextDiff = (text: TextDiff): React.ReactNode => {
   if (text.hunks.length === 0) {
     // A rename/copy with no content change has no hunks — say so explicitly
     // rather than the bare "No changes".
@@ -710,5 +715,33 @@ function DiffBody({
       syntaxPath={syntaxPath}
     />
   );
+  };
+
+  const renderTooLarge = (bytes: number) => (
+    <div className="legit-panel__body">
+      <span className="legit-subtle">
+        Diff too large to display ({formatByteSize(bytes)}, cap 20 MiB).
+      </span>
+    </div>
+  );
+
+  // SVG is text to git, so it never classifies as Binary - route .svg paths
+  // through the image panes (extension-triggered), falling back to the text
+  // diff (or the too-large notice) when no side previews as an image.
+  if (isSvgPath(request.path) && ("Text" in data || "TooLarge" in data)) {
+    return (
+      <ImageDiffView
+        repoId={request.repoId}
+        source={request.source}
+        path={request.path}
+        oldPath={request.oldPath ?? null}
+        fallback={() =>
+          "TooLarge" in data ? renderTooLarge(data.TooLarge.bytes) : renderTextDiff(data.Text)
+        }
+      />
+    );
+  }
+  if ("TooLarge" in data) return renderTooLarge(data.TooLarge.bytes);
+  return renderTextDiff(data.Text);
 }
 

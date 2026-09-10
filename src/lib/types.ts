@@ -794,7 +794,10 @@ export interface SubmoduleAutoUpdateResult {
 export type DiffEntry =
   | { Text: TextDiff }
   | { Binary: BinaryDiff }
-  | { Submodule: SubmoduleChange };
+  | { Submodule: SubmoduleChange }
+  /** The raw diff exceeded the display cap (20 MB); the panel shows a
+   * notice instead of crashing the webview on multi-MB content. */
+  | { TooLarge: { bytes: number } };
 
 /** A file's content at a revision: text, or a binary classification with the
  * blob's exact byte size (mirrors `FileAtRevision` in types.rs). */
@@ -1210,7 +1213,7 @@ export interface LfsStatus {
   initialized: boolean;
 }
 
-export type ImageFormat = "png" | "jpeg" | "gif" | "webp" | "bmp" | "ico";
+export type ImageFormat = "png" | "jpeg" | "gif" | "webp" | "bmp" | "ico" | "svg";
 
 /** Preview of a file's content at a rev (mirror of legit-app's FilePreview):
  * an image payload, or why there is none. `absent` covers unresolvable

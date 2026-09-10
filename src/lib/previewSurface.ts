@@ -33,3 +33,11 @@ export function binarySizes(oldP?: FilePreview, newP?: FilePreview): string | nu
   if (o) return `${o}, removed`;
   return null;
 }
+
+/** Extension check for the diff panel's SVG image routing (mirrors the
+ * backend's `is_svg_path`): SVG is text to git, so it is extension-
+ * triggered, never sniffed. */
+export function isSvgPath(path: string): boolean {
+  const ext = path.split(".").pop() ?? "";
+  return path.length > 4 && ext.toLowerCase() === "svg";
+}

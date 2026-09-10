@@ -21,6 +21,9 @@ pub enum ImageFormat {
     Webp,
     Bmp,
     Ico,
+    /// Extension-triggered (SVG is text - no magic bytes to sniff); the
+    /// webview renders it via an `<img>` data URL, where scripts never run.
+    Svg,
 }
 
 /// What a preview request resolved to. `Absent` covers unresolvable specs
@@ -120,9 +123,12 @@ fn lfs_object_path(git_dir: &legit_core::HostPath, oid: &str) -> legit_core::Hos
     git_dir.join(&format!("lfs/objects/{}/{}/{oid}", &oid[..2], &oid[2..4]))
 }
 
-fn classify_bytes(bytes: Vec<u8>) -> FilePreview {
+fn classify_bytes(bytes: Vec<u8>, svg_hint: bool) -> FilePreview {
     let size = bytes.len() as u64;
-    match detect_image_format(&bytes) {
+    // Magic bytes first: a binary image renamed .svg is still that image.
+    let format = detect_image_format(&bytes)
+        .or_else(|| (svg_hint && looks_like_svg(&bytes)).then_some(ImageFormat::Svg));
+    match format {
         Some(format) => FilePreview::Image {
             format,
             size,
@@ -132,18 +138,34 @@ fn classify_bytes(bytes: Vec<u8>) -> FilePreview {
     }
 }
 
+/// Whether the content plausibly IS svg markup: an `<svg` tag in the head of
+/// the file (past any XML prolog, BOM, or comments). A named-but-not-svg
+/// file must fall through to the text diff, not a broken image pane.
+fn looks_like_svg(bytes: &[u8]) -> bool {
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]).to_lowercase();
+    head.contains("<svg")
+}
+
+/// Extension check (case-insensitive). SVG is text, so unlike the binary
+/// formats it is triggered by the path, never sniffed on its own.
+fn is_svg_path(path: &str) -> bool {
+    path.rsplit('.').next().is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
+        && path.len() > 4
+}
+
 /// Preview the pointer's object from the repo host's LFS storage; never
 /// fetches.
 async fn resolve_lfs(
     fs: &dyn legit_core::RepoFs,
     git_dir: &legit_core::HostPath,
     pointer: LfsPointer,
+    svg_hint: bool,
 ) -> FilePreview {
     let obj = lfs_object_path(git_dir, &pointer.oid);
     match fs.stat(&obj).await {
         Ok(Some(st)) if st.len > MAX_PREVIEW_BYTES => FilePreview::TooLarge { size: st.len },
         Ok(Some(_)) => match fs.read(&obj, Some(MAX_PREVIEW_BYTES)).await {
-            Ok(bytes) => classify_bytes(bytes),
+            Ok(bytes) => classify_bytes(bytes, svg_hint),
             Err(_) => FilePreview::LfsMissing { oid: pointer.oid, size: pointer.size },
         },
         _ => FilePreview::LfsMissing { oid: pointer.oid, size: pointer.size },
@@ -201,11 +223,11 @@ pub async fn repo_file_preview(
         let out = runner.run(&["rev-parse", "--git-dir"]).await?;
         if out.success {
             let git_dir = session.host_root().resolve(out.stdout.trim());
-            return Ok(resolve_lfs(fs.as_ref(), &git_dir, pointer).await);
+            return Ok(resolve_lfs(fs.as_ref(), &git_dir, pointer, is_svg_path(&path)).await);
         }
         return Ok(FilePreview::LfsMissing { oid: pointer.oid, size: pointer.size });
     }
-    Ok(classify_bytes(bytes))
+    Ok(classify_bytes(bytes, is_svg_path(&path)))
 }
 
 #[cfg(test)]
@@ -268,13 +290,13 @@ mod tests {
 
     #[test]
     fn classifies_bytes_image_vs_not() {
-        match classify_bytes(b"\x89PNG\r\n\x1a\nDATA".to_vec()) {
+        match classify_bytes(b"\x89PNG\r\n\x1a\nDATA".to_vec(), false) {
             FilePreview::Image { format: ImageFormat::Png, size: 12, base64 } => {
                 assert!(!base64.is_empty())
             }
             other => panic!("expected Image, got {other:?}"),
         }
-        match classify_bytes(vec![0x00, 0x01, 0x02]) {
+        match classify_bytes(vec![0x00, 0x01, 0x02], false) {
             FilePreview::NotPreviewable { size: 3 } => {}
             other => panic!("expected NotPreviewable, got {other:?}"),
         }
@@ -289,7 +311,7 @@ mod tests {
         let p = parse_lfs_pointer(POINTER.as_bytes()).unwrap();
         let git_dir_hp = legit_core::HostPath::from_path(git_dir);
         // Missing object: pointer info surfaces.
-        match resolve_lfs(&legit_core::LocalFs, &git_dir_hp, parse_lfs_pointer(POINTER.as_bytes()).unwrap())
+        match resolve_lfs(&legit_core::LocalFs, &git_dir_hp, parse_lfs_pointer(POINTER.as_bytes()).unwrap(), false)
             .await
         {
             FilePreview::LfsMissing { oid, size } => {
@@ -302,9 +324,60 @@ mod tests {
         let obj = lfs_object_path(&git_dir_hp, &p.oid).as_local();
         std::fs::create_dir_all(obj.parent().unwrap()).unwrap();
         std::fs::write(&obj, b"\x89PNG\r\n\x1a\nDATA").unwrap();
-        match resolve_lfs(&legit_core::LocalFs, &git_dir_hp, p).await {
+        match resolve_lfs(&legit_core::LocalFs, &git_dir_hp, p, false).await {
             FilePreview::Image { format: ImageFormat::Png, .. } => {}
             other => panic!("expected Image, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod svg_tests {
+    use super::*;
+
+    #[test]
+    fn svg_hint_with_svg_content_previews_as_svg_image() {
+        let body = b"<?xml version=\"1.0\"?>\n<!-- logo -->\n<svg xmlns=\"http://www.w3.org/2000/svg\"/>".to_vec();
+        match classify_bytes(body, true) {
+            FilePreview::Image { format: ImageFormat::Svg, .. } => {}
+            other => panic!("expected an Svg image preview, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn svg_hint_with_non_svg_content_stays_not_previewable() {
+        // A file merely NAMED .svg must not render as one.
+        match classify_bytes(b"just text".to_vec(), true) {
+            FilePreview::NotPreviewable { .. } => {}
+            other => panic!("expected NotPreviewable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn svg_content_without_the_hint_stays_not_previewable() {
+        // Extension-triggered only: sniffing markup content is not enough
+        // to call something an image (mirrors detect_image_format's
+        // deliberate no-extension-guessing, inverted).
+        match classify_bytes(b"<svg xmlns=\"x\"/>".to_vec(), false) {
+            FilePreview::NotPreviewable { .. } => {}
+            other => panic!("expected NotPreviewable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn svg_hint_never_overrides_a_binary_sniff() {
+        // A png renamed to .svg previews as the png it is.
+        match classify_bytes(b"\x89PNG\r\n\x1a\nDATA".to_vec(), true) {
+            FilePreview::Image { format: ImageFormat::Png, .. } => {}
+            other => panic!("expected a Png image preview, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn is_svg_path_matches_the_extension_case_insensitively() {
+        assert!(is_svg_path("icons/logo.svg"));
+        assert!(is_svg_path("LOGO.SVG"));
+        assert!(!is_svg_path("logo.svg.bak"));
+        assert!(!is_svg_path("svg"));
     }
 }

@@ -30,6 +30,9 @@ lives in the git log and the GitHub release notes.
   worktree shows a dot on its chip and a "dirty" badge in the Worktrees
   section, and a worktree tab live-updates when refs change in the main
   checkout.
+- SVG files now render as images in the diff viewer (old/new panes, like
+  PNGs) and in the file preview, falling back to the text diff when the
+  content is not actually SVG.
 - A repo whose file watcher failed to start now shows a "live updates off"
   badge on its tab with the reason (previously the failure was only a log
   line and the repo silently stopped auto-refreshing).
@@ -43,6 +46,9 @@ lives in the git log and the GitHub release notes.
 
 ### Fixed
 
+- Clicking a very large changed file (e.g. a multi-megabyte exported SVG)
+  no longer crashes the app with an out-of-memory error: diffs above 20 MB
+  now show a "too large to display" notice instead of rendering.
 - Clicking a staged rename in Working Changes now shows it as a rename
   (with content hunks if the file was also edited) instead of a whole-file
   addition; the row also shows the old name.

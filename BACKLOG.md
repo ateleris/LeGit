@@ -96,8 +96,8 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   local LFS objects shipped 2026-08-18, spec
   `docs/superpowers/specs/2026-08-18-binary-image-preview-design.md`):
   audio (MP3/WAV/OGG playable panes - the RIFF/WAV sniff case is already
-  encoded), SVG (text to git, needs an extension-triggered path),
-  zoom / 1:1 toggle, swipe/onion-skin comparison. Add on demand.
+  encoded), zoom / 1:1 toggle, swipe/onion-skin comparison (SVG shipped
+  2026-09-10, extension-triggered). Add on demand.
 - **Patches: create + apply** (from the 2026-08-20 competitive review;
   SourceTree, Fork, and Git Extensions all have both). "Create patch" from a
   commit or a selected range (multi-select shipped 2026-08-22) via

@@ -365,6 +365,11 @@ pub enum DiffEntry {
     Text(TextDiff),
     Binary(BinaryDiff),
     Submodule(SubmoduleChange),
+    /// The raw diff text exceeded the display cap. Rendering it would move
+    /// multiple copies of the content through IPC and the webview (which
+    /// crashed with renderer OOM on multi-MB single-line files); the panel
+    /// shows a notice instead. An outcome, not an error (house rule).
+    TooLarge { bytes: u64 },
 }
 
 /// One commit in a single file's history (`git log --follow`), with the

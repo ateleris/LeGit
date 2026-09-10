@@ -4,7 +4,8 @@ import { formatByteSize } from "../../lib/formatBytes";
 
 /** data: URL for an image preview payload (CSP is null; data URLs render). */
 export function previewDataUrl(format: ImageFormat, base64: string): string {
-  const mime = format === "ico" ? "image/x-icon" : `image/${format}`;
+  const mime =
+    format === "ico" ? "image/x-icon" : format === "svg" ? "image/svg+xml" : `image/${format}`;
   return `data:${mime};base64,${base64}`;
 }
 

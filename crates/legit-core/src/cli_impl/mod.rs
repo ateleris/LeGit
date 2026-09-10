@@ -28,6 +28,11 @@ use crate::types::{
     SwitchDirtyBehavior, SwitchOutcome, SwitchResult, TagInfo, TrackingStatus, WorktreeAddMode, WorktreeInfo,
 };
 
+/// Display cap for a single file's diff text. Above this the entry crosses
+/// IPC as `DiffEntry::TooLarge` instead of content - aligned with the
+/// preview path's `MAX_PREVIEW_BYTES` (20 MB).
+const MAX_DIFF_TEXT_BYTES: usize = 20 * 1024 * 1024;
+
 /// Git's well-known empty-tree object id, used as the "before" side when
 /// diffing a root commit (which has no parent).
 const EMPTY_TREE_OID: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -1213,6 +1218,14 @@ impl<E: GitExecutor + ?Sized> GitBackend for GitCliBackend<E> {
         context: u32,
     ) -> Result<DiffEntry, GitError> {
         let raw = self.run_diff_text(source, path, old_path, context).await?;
+        // Cap what reaches the webview: rendering a multi-MB diff moves
+        // several copies of the content through IPC, JSON and the editor
+        // (which crashed WebView2 with renderer OOM on minified multi-MB
+        // SVGs - single giant lines are the worst case). Applies to every
+        // source, the untracked `--no-index` fallback included.
+        if raw.len() > MAX_DIFF_TEXT_BYTES {
+            return Ok(DiffEntry::TooLarge { bytes: raw.len() as u64 });
+        }
         // An untracked nested repo yields an empty diff (`git diff` ignores
         // untracked paths and `--no-index` refuses directories), which would
         // read as "no changes". Present what staging would record instead: a
