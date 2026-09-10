@@ -9,6 +9,7 @@ import {
   saveUiFontSize,
   setWatcherEnabled,
   setConfirmDiscard,
+  setDetectCaseRenames,
   setCheckoutNewBranch,
   setCheckoutRemoteFastForward,
   setSubmoduleAttachBranch,
@@ -113,6 +114,7 @@ interface SettingsStore {
   setUiFontSize: (size: number) => Promise<void>;
   setWatcherEnabled: (enabled: boolean) => Promise<void>;
   setConfirmDiscard: (confirm: boolean) => Promise<void>;
+  setDetectCaseRenames: (enabled: boolean) => Promise<void>;
   setCheckoutNewBranch: (enabled: boolean) => Promise<void>;
   setCheckoutRemoteFastForward: (enabled: boolean) => Promise<void>;
   setSubmoduleAttachBranch: (enabled: boolean) => Promise<void>;
@@ -221,6 +223,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const s = get().settings;
     if (s) {
       set({ settings: { ...s, confirm_discard: confirm } });
+    }
+  },
+
+  async setDetectCaseRenames(enabled) {
+    await setDetectCaseRenames(enabled);
+    const s = get().settings;
+    if (s) {
+      set({ settings: { ...s, detect_case_renames: enabled } });
     }
   },
 

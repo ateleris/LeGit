@@ -65,6 +65,7 @@ import type {
   PushRecurseMode,
   TrackingStatus,
   GitmodulesFinding,
+  CaseDriftEntry,
   Remote,
   RemoteCheckoutOutcome,
   SwitchOutcome,
@@ -341,6 +342,9 @@ export const setWarnOnLineEndingCommit = (warn: boolean) =>
 
 export const setConfirmDiscard = (confirm: boolean) =>
   invoke<null>("set_confirm_discard", { confirm });
+
+export const setDetectCaseRenames = (enabled: boolean) =>
+  invoke<null>("set_detect_case_renames", { enabled });
 
 export const setCheckoutNewBranch = (enabled: boolean) =>
   invoke<null>("set_checkout_new_branch", { enabled });
@@ -905,6 +909,19 @@ export const repoCommit = (repoId: string, message: string, amend = false) =>
 /** Pre-commit check: staged .gitmodules vs staged gitlinks (empty = consistent). */
 export const repoGitmodulesConsistency = (repoId: string) =>
   invoke<GitmodulesFinding[]>("repo_gitmodules_consistency", { repoId });
+
+/** Case-only rename drift (index vs on-disk case); empty on case-sensitive
+ * filesystems. */
+export const repoCaseDrift = (repoId: string) =>
+  invoke<CaseDriftEntry[]>("repo_case_drift", { repoId });
+
+/** Stage a case-only rename via `git mv` (also normalizes the on-disk case). */
+export const repoStageCaseRename = (repoId: string, from: string, to: string) =>
+  invoke<null>("repo_stage_case_rename", { repoId, from, to });
+
+/** Discard case drift: rename the disk file back to the tracked spelling. */
+export const repoDiscardCaseRename = (repoId: string, indexPath: string, diskPath: string) =>
+  invoke<null>("repo_discard_case_rename", { repoId, indexPath, diskPath });
 
 /// Reword (rename) a commit's message; returns the new commit id. v1 rewords
 /// HEAD only and refuses commits already pushed to a remote.

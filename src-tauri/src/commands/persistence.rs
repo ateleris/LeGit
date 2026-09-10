@@ -207,6 +207,19 @@ pub async fn set_confirm_discard(
     .await
 }
 
+/// Detect case-only renames git status cannot see (default true).
+#[tauri::command]
+#[specta::specta]
+pub async fn set_detect_case_renames(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state.mutate_global(|s| {
+        s.detect_case_renames = enabled;
+    })
+    .await
+}
+
 /// Whether creating a branch also checks it out (default true).
 #[tauri::command]
 #[specta::specta]

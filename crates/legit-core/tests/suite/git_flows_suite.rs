@@ -5102,3 +5102,125 @@ async fn file_diff_of_a_rename_still_finds_hunks() {
         other => panic!("expected a text diff, got {other:?}"),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Case-only rename drift (case-insensitive filesystems)
+// ---------------------------------------------------------------------------
+
+/// Whether the filesystem under `path` treats names case-insensitively -
+/// decides which half of the case-drift flow the suite can exercise here.
+fn fs_is_case_insensitive(path: &Path) -> bool {
+    let probe = path.join("legit-casecheck.tmp");
+    std::fs::write(&probe, "x").expect("write probe");
+    let insensitive = path.join("LEGIT-CASECHECK.TMP").exists();
+    std::fs::remove_file(&probe).expect("remove probe");
+    insensitive
+}
+
+#[tokio::test]
+async fn case_drift_scan_matches_the_filesystem() {
+    let repo = TestRepo::init().await;
+    repo.write("test.c", "int x;\n");
+    repo.commit_all("init").await;
+
+    if !fs_is_case_insensitive(&repo.path) {
+        // Case-sensitive: git leaves core.ignorecase unset at init, and the
+        // scan must gate on that (`config --get` exit 1) and report nothing.
+        // This pins the "unset means no scan" exit-code assumption.
+        let drift = repo.backend.case_drift().await.expect("case_drift");
+        assert_eq!(drift, vec![], "no drift can exist on a case-sensitive fs");
+        return;
+    }
+
+    // Case-insensitive (a Windows/macOS checkout, or /mnt/c under WSL): the
+    // user's original bug. Rename on disk only; git status stays clean.
+    std::fs::rename(repo.path.join("test.c"), repo.path.join("test.c.tmp")).expect("tmp");
+    std::fs::rename(repo.path.join("test.c.tmp"), repo.path.join("Test.c")).expect("case");
+    let status = repo.backend.status().await.expect("status");
+    assert_eq!(status, vec![], "a case-only disk rename is invisible to git status");
+
+    let drift = repo.backend.case_drift().await.expect("case_drift");
+    assert_eq!(drift.len(), 1, "the rename must be detected: {drift:?}");
+    assert_eq!(drift[0].index_path, "test.c");
+    assert_eq!(drift[0].disk_path, "Test.c");
+    assert!(!drift[0].is_dir);
+
+    // Discard renames the disk file back to the tracked spelling and leaves
+    // the index untouched (tree fully clean). Spelling is checked via a
+    // directory listing - a stat cannot see case on this filesystem.
+    repo.backend
+        .discard_case_rename("test.c", "Test.c")
+        .await
+        .expect("discard_case_rename");
+    let names: Vec<String> = std::fs::read_dir(&repo.path)
+        .expect("read_dir")
+        .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+        .collect();
+    assert!(names.contains(&"test.c".to_string()), "disk spelling restored: {names:?}");
+    assert_eq!(repo.backend.status().await.expect("status"), vec![]);
+    assert_eq!(repo.backend.case_drift().await.expect("case_drift"), vec![]);
+
+    // Re-arm the drift for the staging half.
+    std::fs::rename(repo.path.join("test.c"), repo.path.join("test.c.tmp")).expect("tmp");
+    std::fs::rename(repo.path.join("test.c.tmp"), repo.path.join("Test.c")).expect("case");
+    let drift = repo.backend.case_drift().await.expect("case_drift re-armed");
+    assert_eq!(drift.len(), 1, "{drift:?}");
+
+    // The fix stages the rename and clears the drift.
+    repo.backend
+        .stage_case_rename("test.c", "Test.c")
+        .await
+        .expect("stage_case_rename");
+    let status = repo.backend.status().await.expect("status after fix");
+    let staged = status
+        .iter()
+        .find(|s| s.staged && s.path == Path::new("Test.c"))
+        .unwrap_or_else(|| panic!("the staged rename must show up in status: {status:?}"));
+    assert_eq!(
+        staged.old_path.as_deref(),
+        Some(Path::new("test.c")),
+        "the staged entry must carry the rename source for diff pairing"
+    );
+    let drift = repo.backend.case_drift().await.expect("case_drift after fix");
+    assert_eq!(drift, vec![], "fixed drift must not be re-reported");
+}
+
+#[tokio::test]
+async fn staged_rename_status_carries_the_original_path() {
+    // The Diff panel pairs a rename's sides via old_path; a status entry
+    // without it made a staged rename diff as a whole-file add/delete.
+    let repo = TestRepo::init().await;
+    repo.write("old.c", "int x;\n");
+    repo.commit_all("init").await;
+    repo.git(&["mv", "old.c", "new.c"]).await;
+
+    let status = repo.backend.status().await.expect("status");
+    let entry = status
+        .iter()
+        .find(|s| s.staged && s.state == FileState::Renamed)
+        .expect("staged rename entry");
+    assert_eq!(entry.path, PathBuf::from("new.c"));
+    assert_eq!(entry.old_path.as_deref(), Some(Path::new("old.c")));
+}
+
+#[tokio::test]
+async fn unstaging_both_rename_paths_restores_the_index() {
+    // The frontend expands a rename's unstage to BOTH paths
+    // (expandUnstagePaths): `restore --staged` on the new path alone leaves
+    // the source's deletion staged. Pin the assumption that restoring the
+    // pair returns the index to HEAD with nothing left staged.
+    let repo = TestRepo::init().await;
+    repo.write("old.c", "int x;\n");
+    repo.commit_all("init").await;
+    repo.git(&["mv", "old.c", "new.c"]).await;
+
+    repo.backend
+        .unstage(&[PathBuf::from("new.c"), PathBuf::from("old.c")])
+        .await
+        .expect("unstage");
+    let status = repo.backend.status().await.expect("status");
+    assert!(
+        status.iter().all(|s| !s.staged),
+        "unstaging a rename pair must leave nothing staged: {status:?}"
+    );
+}

@@ -132,7 +132,7 @@ describe("stale-while-unfocused, refetch-on-focus (real QueryClient)", () => {
 
 describe("withDerivedDomains", () => {
   test("adds submodules alongside status", () => {
-    expect(withDerivedDomains(["status"])).toEqual(["status", "submodules"]);
+    expect(withDerivedDomains(["status"])).toEqual(["status", "submodules", "case_drift"]);
   });
   test("adds submodules and tracking alongside branches", () => {
     expect(withDerivedDomains(["branches", "log"])).toEqual([
@@ -146,7 +146,14 @@ describe("withDerivedDomains", () => {
     expect(withDerivedDomains(["tags"])).toEqual(["tags"]);
   });
   test("does not duplicate", () => {
-    expect(withDerivedDomains(["status", "submodules"])).toEqual(["status", "submodules"]);
+    expect(withDerivedDomains(["status", "submodules"])).toEqual(["status", "submodules", "case_drift"]);
+  });
+  test("worktree changes refresh the case-drift scan", () => {
+    // A case-only rename arrives as a status-classified watcher event while
+    // git status itself stays clean - only a derived case_drift domain makes
+    // the scan re-run.
+    expect(withDerivedDomains(["status"])).toContain("case_drift");
+    expect(withDerivedDomains(["branches"])).not.toContain("case_drift");
   });
   test("external ref moves refresh the ahead/behind counter", () => {
     // An external `git fetch` classifies as branches only; the tracking

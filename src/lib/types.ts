@@ -98,6 +98,9 @@ export interface GlobalSettings {
   watcher_enabled?: boolean;
   /** Whether discarding changes asks for confirmation first (default true). */
   confirm_discard?: boolean;
+  /** Detect case-only renames git status cannot see and offer to stage them
+   * (default true). Only ever scans on case-insensitive filesystems. */
+  detect_case_renames?: boolean;
   /** Whether creating a branch also checks it out (default true). */
   checkout_new_branch?: boolean;
   /** Periodic background auto-fetch of the active repo's remotes (default off).
@@ -616,6 +619,9 @@ export interface FileStatus {
   deletions: number | null;
   /** True when git reports the file as binary (numstat `-`/`-`). */
   binary: boolean;
+  /** Rename/copy source path, set only on Renamed/Copied entries. A rename's
+   * diff must pair both sides via this, or it reads as a whole-file add. */
+  old_path?: string | null;
 }
 
 /** A file changed by a commit, vs its first parent (matches legit-core `CommitFileChange`). */
@@ -946,6 +952,18 @@ export interface RemoteCheckoutOutcome {
 export type GitmodulesFinding =
   | { kind: "entry_without_gitlink"; name: string; path: string }
   | { kind: "gitlink_without_entry"; path: string };
+
+/** A tracked path whose on-disk spelling differs from the index only by
+ *  letter case - a rename git status cannot see on a case-insensitive
+ *  filesystem. Feeds the Working Changes panel's synthetic rename rows. */
+export interface CaseDriftEntry {
+  /** Path as recorded in the index (repo-relative). */
+  index_path: string;
+  /** The same path as actually spelled on disk. */
+  disk_path: string;
+  /** The drifting component is a directory (the fix renames the directory). */
+  is_dir: boolean;
+}
 
 export type SwitchDirtyBehavior = "try_directly" | "auto_stash" | "stash_and_keep";
 

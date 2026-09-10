@@ -37,8 +37,8 @@ pub const NUMSTAT_STAGED_ARGS: [&str; 5] = ["diff", "--numstat", "-M", "-z", "--
 /// Parse the stdout of `git status --porcelain=v2 -z`.
 ///
 /// Record tags: `1` ordinary change, `2` rename/copy (the original path is
-/// the next NUL field - consumed and ignored, we report the new path only),
-/// `u` unmerged, `?` untracked, `!` ignored. In `<XY>`, `X` is the index
+/// the next NUL field - surfaced as `old_path` on the entry, keyed by the
+/// new path), `u` unmerged, `?` untracked, `!` ignored. In `<XY>`, `X` is the index
 /// (staged) column and `Y` the working-tree column, `.` meaning unmodified -
 /// a path both staged and re-modified produces two entries, exactly like the
 /// old v1 parser. `#` headers appear only with `--branch`/`--show-stash`
@@ -67,12 +67,21 @@ pub fn parse_status(output: &str) -> Vec<FileStatus> {
                 }
             }
             // `2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path>` +
-            // the original path as the next NUL field - consume it.
+            // the original path as the next NUL field - attached to the
+            // rename/copy entries so their diff can pair both sides.
             b'2' => {
-                tokens.next();
+                let orig = tokens.next();
                 let mut fields = record.splitn(10, ' ');
                 if let (Some(xy), Some(path)) = (fields.nth(1), fields.nth(7)) {
+                    let before = result.len();
                     push_columns(xy, path, &mut result);
+                    if let Some(orig) = orig.filter(|o| !o.is_empty()) {
+                        for entry in &mut result[before..] {
+                            if matches!(entry.state, FileState::Renamed | FileState::Copied) {
+                                entry.old_path = Some(orig.into());
+                            }
+                        }
+                    }
                 }
             }
             // `u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>` -
@@ -322,13 +331,41 @@ mod tests {
     fn parses_rename_and_consumes_original_path() {
         // `2 ... new.rs\0old.rs\0` - the original path is a separate field.
         let out = stream(&[&ren("R.", "R100", "new.rs"), "old.rs"]);
-        assert_eq!(parse_status(&out), vec![fs("new.rs", FileState::Renamed, true)]);
+        let expected = FileStatus {
+            old_path: Some("old.rs".into()),
+            ..fs("new.rs", FileState::Renamed, true)
+        };
+        assert_eq!(parse_status(&out), vec![expected]);
+    }
+
+    #[test]
+    fn rename_carries_the_original_path() {
+        // The Diff panel needs the rename source to pair the two sides
+        // (`--find-renames -- old new`); without it a staged rename diffs as
+        // a whole-file add (new path) or delete (old path).
+        let out = stream(&[&ren("R.", "R100", "new.rs"), "old.rs"]);
+        let entries = parse_status(&out);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].old_path.as_deref(),
+            Some(std::path::Path::new("old.rs"))
+        );
+    }
+
+    #[test]
+    fn non_rename_entries_have_no_original_path() {
+        let out = stream(&[&ord("M.", "src/main.rs")]);
+        assert_eq!(parse_status(&out)[0].old_path, None);
     }
 
     #[test]
     fn parses_worktree_rename() {
         let out = stream(&[&ren(".R", "R100", "new.rs"), "old.rs"]);
-        assert_eq!(parse_status(&out), vec![fs("new.rs", FileState::Renamed, false)]);
+        let expected = FileStatus {
+            old_path: Some("old.rs".into()),
+            ..fs("new.rs", FileState::Renamed, false)
+        };
+        assert_eq!(parse_status(&out), vec![expected]);
     }
 
     #[test]

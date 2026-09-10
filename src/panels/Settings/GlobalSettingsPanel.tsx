@@ -90,6 +90,7 @@ export function GlobalSettingsPanel() {
           <AutoFetchSection />
           <ExternalEditorSection />
           <LineEndingChangesSection />
+          <DetectCaseRenamesSection />
         </SettingsGroup>
 
         <SettingsGroup id="git" title="Git" caption="Integration & configuration">
@@ -1040,6 +1041,38 @@ function ConfirmDiscardSection() {
         Covers discarding changes, deleting branches, dropping stashes, and
         removing remotes or themes. When off, these run immediately without a
         prompt.
+      </FieldNote>
+    </Section>
+  );
+}
+
+function DetectCaseRenamesSection() {
+  const enabled = useSettingsStore((s) => s.settings?.detect_case_renames ?? true);
+  const setDetectCaseRenames = useSettingsStore((s) => s.setDetectCaseRenames);
+  const { busy: saving, run } = useDelayedBusy();
+
+  const toggle = () => run(() => setDetectCaseRenames(!enabled));
+
+  return (
+    <Section title="Case-only renames">
+      <FieldNote>writes to: global settings — applies to all repos</FieldNote>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <input
+          type="checkbox"
+          id="global-detect-case-renames"
+          checked={enabled}
+          onChange={toggle}
+          disabled={saving}
+        />
+        <label htmlFor="global-detect-case-renames" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
+          Detect case-only renames
+        </label>
+      </div>
+      <FieldNote>
+        On case-insensitive filesystems (Windows, macOS) renaming a file only
+        by letter case is invisible to git status. When on, Working Changes
+        shows such renames with a one-click "Stage rename" fix. Repos on
+        case-sensitive filesystems are never scanned.
       </FieldNote>
     </Section>
   );

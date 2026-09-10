@@ -52,7 +52,10 @@ export function invalidateRepoDomains(
  * - `tracking`: ahead/behind counts change whenever refs move, e.g. an
  *   EXTERNAL `git fetch` updating remote-tracking refs (`branches`).
  *   `tracking` is a frontend query domain only, so without this derivation
- *   the sync toolbar goes stale until an in-app action. */
+ *   the sync toolbar goes stale until an in-app action.
+ * - `case_drift`: a case-only rename classifies as `status` in the watcher
+ *   while `git status` itself stays clean - only re-running the drift scan
+ *   can surface it. Frontend query domain only. */
 export function withDerivedDomains(domains: string[]): string[] {
   const out = [...domains];
   if ((out.includes("status") || out.includes("branches")) && !out.includes("submodules")) {
@@ -60,6 +63,9 @@ export function withDerivedDomains(domains: string[]): string[] {
   }
   if (out.includes("branches") && !out.includes("tracking")) {
     out.push("tracking");
+  }
+  if (out.includes("status") && !out.includes("case_drift")) {
+    out.push("case_drift");
   }
   return out;
 }

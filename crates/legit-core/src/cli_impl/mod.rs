@@ -14,7 +14,7 @@ use crate::executor::GitExecutor;
 use crate::fs::HostPath;
 use crate::runner::{GitRunner, OperationId};
 use crate::types::{
-    BlameHunk, BlobBytes, Branch, BranchMergeAnalysis, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
+    BlameHunk, BlobBytes, Branch, BranchMergeAnalysis, CaseDriftEntry, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
     FastForwardResult, FetchOptions, FfMode, FileAtRevision, FileHistoryEntry, FileState, FileStatus,
     GitmodulesFinding,
@@ -53,6 +53,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub mod parsers;
+mod case_drift;
 mod line_endings;
 pub use line_endings::*;
 mod submodules;
@@ -160,7 +161,8 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         // `--end-of-options` must be the last one - after it git reads a flag
         // as a rev/pathspec.
         let old_str = old_path.map(|p| p.to_string_lossy().into_owned());
-        if old_str.as_deref().is_some_and(|o| o != path_str) {
+        let paired_rename = old_str.as_deref().is_some_and(|o| o != path_str);
+        if paired_rename {
             args.push("--find-renames".into());
         }
         match source {
@@ -194,8 +196,12 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         Self::ensure_success(&output)?;
         // Untracked files don't appear in `git diff` at all (empty output), so a
         // diff of one would read as "no changes". Show the whole file as added by
-        // diffing it against the empty side instead. Two cases produce this:
-        if output.stdout.trim().is_empty() {
+        // diffing it against the empty side instead. A request that carries a
+        // rename source is exempt: its empty output means "pure rename" (the
+        // rename notice), and the untracked probe would misfire on a case-only
+        // rename (`ls-files` matches case-sensitively, the drifted file is
+        // tracked under the other spelling). Two cases produce this:
+        if output.stdout.trim().is_empty() && !paired_rename {
             // 1. A working-tree untracked file (`git diff` ignores it).
             if matches!(source, DiffSource::WorkingUnstaged)
                 && self.is_untracked(&runner, &path_str).await?
@@ -1209,8 +1215,12 @@ impl<E: GitExecutor + ?Sized> GitBackend for GitCliBackend<E> {
         // An untracked nested repo yields an empty diff (`git diff` ignores
         // untracked paths and `--no-index` refuses directories), which would
         // read as "no changes". Present what staging would record instead: a
-        // submodule add at the nested repo's HEAD.
-        if raw.trim().is_empty() && matches!(source, DiffSource::WorkingUnstaged) {
+        // submodule add at the nested repo's HEAD. A rename request is exempt:
+        // its empty diff means "pure rename", never an untracked repo.
+        if raw.trim().is_empty()
+            && old_path.is_none()
+            && matches!(source, DiffSource::WorkingUnstaged)
+        {
             if let Some(sub) = self.untracked_repo_dir_change(path).await? {
                 return Ok(DiffEntry::Submodule(sub));
             }
@@ -1690,6 +1700,22 @@ impl<E: GitExecutor + ?Sized> GitBackend for GitCliBackend<E> {
 
     async fn gitmodules_consistency(&self) -> Result<Vec<GitmodulesFinding>, GitError> {
         self.gitmodules_consistency().await
+    }
+
+    async fn case_drift(&self) -> Result<Vec<CaseDriftEntry>, GitError> {
+        self.case_drift().await
+    }
+
+    async fn stage_case_rename(&self, from: &str, to: &str) -> Result<(), GitError> {
+        self.stage_case_rename(from, to).await
+    }
+
+    async fn discard_case_rename(
+        &self,
+        index_path: &str,
+        disk_path: &str,
+    ) -> Result<(), GitError> {
+        self.discard_case_rename(index_path, disk_path).await
     }
 
     async fn submodule_remove(&self, path: &Path) -> Result<(), GitError> {

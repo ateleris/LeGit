@@ -9,7 +9,7 @@
 use crate::error::GitError;
 use crate::runner::OperationId;
 use crate::types::{
-    BlameHunk, BlobBytes, Branch, BranchMergeAnalysis, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
+    BlameHunk, BlobBytes, Branch, BranchMergeAnalysis, CaseDriftEntry, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
     FetchOptions, FileAtRevision, FileHistoryEntry, FileStatus, GitmodulesFinding, HunkOp,
     LfsStatus, LfsStubs, LogOptions,
@@ -291,6 +291,25 @@ pub trait GitBackend: Send + Sync {
     /// states, but committing one breaks consumers (`submodule init`, clone
     /// recursion, `push --recurse-submodules`).
     async fn gitmodules_consistency(&self) -> Result<Vec<GitmodulesFinding>, GitError>;
+
+    /// Tracked paths whose on-disk spelling differs from the index only by
+    /// letter case - renames `git status` cannot see on a case-insensitive
+    /// filesystem. Always empty when `core.ignorecase` is false/unset (the
+    /// drift state cannot exist, and no directory is listed). Findings feed
+    /// the Working Changes panel's synthetic rename rows.
+    async fn case_drift(&self) -> Result<Vec<CaseDriftEntry>, GitError>;
+
+    /// Stage a case-only rename (`git mv`), which also normalizes the
+    /// on-disk case. Rejects pairs that differ by more than case.
+    async fn stage_case_rename(&self, from: &str, to: &str) -> Result<(), GitError>;
+
+    /// Discard detected case drift: rename the disk file back to the tracked
+    /// spelling (`index_path`), leaving the index untouched.
+    async fn discard_case_rename(
+        &self,
+        index_path: &str,
+        disk_path: &str,
+    ) -> Result<(), GitError>;
 
     /// Remove a submodule the safe way (magit semantics): refuse if its
     /// worktree is dirty/conflicted, absorb an embedded gitdir, `deinit -f`,

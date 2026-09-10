@@ -318,6 +318,11 @@ pub struct GlobalSettings {
     /// actions run immediately.
     #[serde(default = "default_true")]
     pub confirm_discard: bool,
+    /// Detect case-only renames git status cannot see (tracked path vs
+    /// on-disk case on case-insensitive filesystems) and offer to stage
+    /// them. When off, the scan never runs.
+    #[serde(default = "default_true")]
+    pub detect_case_renames: bool,
     /// Whether creating a branch also checks it out (default true). Applies
     /// to the Commits panel's inline create and the Branches section's form;
     /// "branch from stash" always checks out (`git stash branch` semantics).
@@ -452,6 +457,7 @@ impl Default for GlobalSettings {
             ui_font_size: default_ui_font_size(),
             watcher_enabled: true,
             confirm_discard: true,
+            detect_case_renames: true,
             checkout_new_branch: true,
             auto_fetch_enabled: false,
             auto_fetch_interval_minutes: default_auto_fetch_interval(),

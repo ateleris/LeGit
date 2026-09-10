@@ -94,6 +94,54 @@ pub async fn repo_gitmodules_consistency(
         .map_err(AppError::Git)
 }
 
+/// Case-only rename drift: tracked paths whose on-disk case differs from the
+/// index - invisible to `git status` on a case-insensitive filesystem. Empty
+/// when `core.ignorecase` is false/unset.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_case_drift(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<Vec<legit_core::CaseDriftEntry>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.case_drift().await.map_err(AppError::Git)
+}
+
+/// Stage a case-only rename (`git mv`), normalizing the on-disk case too.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_stage_case_rename(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    from: String,
+    to: String,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .stage_case_rename(&from, &to)
+        .await
+        .map_err(AppError::Git)
+}
+
+/// Discard detected case drift: rename the disk file back to the tracked
+/// spelling, leaving the index untouched.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_discard_case_rename(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    index_path: String,
+    disk_path: String,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .discard_case_rename(&index_path, &disk_path)
+        .await
+        .map_err(AppError::Git)
+}
+
 /// Commit the staged changes with the given message; returns the new commit id.
 /// When `amend` is set, rewrites HEAD instead of creating a new commit.
 #[tauri::command]

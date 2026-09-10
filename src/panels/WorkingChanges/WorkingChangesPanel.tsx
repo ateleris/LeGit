@@ -2,13 +2,12 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
-import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
+import { useSettingsStore } from "../../store/settings";
 import { usePanelActiveEffect, usePanelFocusEffect } from "../PanelApiContext";
-import { repoBranches, repoCommit, repoConflictEntries, repoConflictReopen, repoCreateStashPaths, repoDiscard, repoGitmodulesConsistency, repoListRemotes, repoLog, repoResolvedIdentity, repoResolveTakeSide, repoResolveUndoPaths, repoStage, repoStagedMarkerPaths, repoStatus, repoSubmodules, repoTrackingStatus, repoUnstage, repoUnstagedMarkerPaths } from "../../lib/commands";
-import type { Branch, Commit, CommitButtonMode, ConflictEntry, ConflictSide, DiffRequest, DiffSource, FileStatus, GitmodulesFinding, Remote, ResolvedIdentity, SubmoduleInfo, TrackingStatus } from "../../lib/types";
+import { repoCaseDrift, repoConflictEntries, repoConflictReopen, repoCreateStashPaths, repoDiscard, repoDiscardCaseRename, repoResolveTakeSide, repoResolveUndoPaths, repoStage, repoStageCaseRename, repoStagedMarkerPaths, repoStatus, repoSubmodules, repoUnstage, repoUnstagedMarkerPaths } from "../../lib/commands";
+import type { CaseDriftEntry, ConflictEntry, ConflictSide, DiffRequest, DiffSource, FileStatus, SubmoduleInfo } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
-import { useCommitDraftStore } from "../../store/commitDraft";
 import { notify } from "../../store/notifications";
 import { confirmDialog } from "../../store/confirm";
 import { segStyle } from "../shared/segmented";
@@ -17,66 +16,42 @@ import { GitFork } from "lucide-react";
 import { LineEndingRowBadge } from "../shared/LineEndingBadge";
 import { useLineEndingStatusMap } from "../shared/lineEndingStatus";
 import { ToolbarButton } from "../shared/ToolbarButton";
-import { Button, IconButton } from "../shared/buttons";
+import { IconButton } from "../shared/buttons";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
-import { ChevronDownIcon, StageIcon, UnstageIcon, WarningIcon } from "../../icons";
-import { PanelContextMenuProvider, useMenuConfirm, type BaselineEntry } from "../Commits/menu/PanelContextMenu";
+import { StageIcon, UnstageIcon, WarningIcon } from "../../icons";
+import { PanelContextMenuProvider, type BaselineEntry } from "../Commits/menu/PanelContextMenu";
 import { MenuItem } from "../Commits/menu/primitives";
-import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
-import { OpenInEditorMenuItem } from "../shared/OpenInEditorMenuItem";
-import { AddToGitignoreMenuItem } from "../shared/AddToGitignoreMenuItem";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notifyResolutionInvisible } from "../../lib/mergeFeedback";
 import { openSubmoduleRepo } from "../../lib/submodules";
-import { summonGlobalPanel } from "../GlobalDock";
 import { useOpState } from "../../lib/useOpState";
-import { isDetachedHead } from "../../lib/detachedHead";
-import { pushWithTagFollowUp } from "../../lib/autoPushTags";
-import { remoteOpErrorMessage } from "../../lib/pushFeedback";
-import { PUSH_DOMAINS } from "../Commits/useCommitActions";
-import { CaretDropdown } from "../shared/CaretDropdown";
-import {
-  commitAndPushMenuLabel,
-  commitButtonPlan,
-  commitPushFailureMessage,
-  commitPushSuccessMessage,
-  type CommitPushTarget,
-} from "./commitButtonMode";
-import { gitmodulesFindingLabel } from "./gitmodulesWarning";
 import { isSubmodulePath, submodulePathSet } from "./submoduleRows";
-import { takeSideLabels } from "./conflictLabels";
-import { formatEolChanges, stagedEolChanges } from "./lineEndingWarning";
+import { stagedEolChanges } from "./lineEndingWarning";
 import {
   orderedWorkingChangesSections,
   type WorkingChangesSection,
 } from "./sectionOrder";
-
-/**
- * "Reopen conflict" entry for a row (staged or unstaged again) that was a
- * conflict resolution: restores the conflicted state, discarding the current
- * resolution. Destructive, so it inline-confirms per the global
- * destructive-confirmation setting (a hook-using component because the menu
- * content is built inline).
- */
-function ReopenConflictMenuItem({ onReopen }: { onReopen: () => void }) {
-  const confirmDestructive = useConfirmDestructive();
-  const menuConfirm = useMenuConfirm();
-  const request = () => {
-    if (!confirmDestructive) {
-      onReopen();
-      return;
-    }
-    menuConfirm("Reopen conflict? The current resolution will be discarded.", onReopen);
-  };
-  return (
-    <MenuItem onClick={request}>
-      {confirmDestructive ? "Reopen conflict…" : "Reopen conflict"}
-    </MenuItem>
-  );
-}
+import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
+import { OpenInEditorMenuItem } from "../shared/OpenInEditorMenuItem";
+import {
+  caseDriftByPath,
+  caseDriftTitle,
+  selectionDiffAction,
+  splitDriftTargets,
+  withCaseDriftRows,
+} from "./caseDrift";
+import { CommitComposer } from "./CommitComposer";
+import { FileRowMenu } from "./FileRowMenu";
+import {
+  dropSelection,
+  moveSelection,
+  type Section as ListSection,
+  type Selection,
+} from "./selection";
+import { expandUnstagePaths } from "./unstagePaths";
 
 /** Persisted unstaged/staged height split (fraction of the first file
  *  section in render order) + its clamp, so neither list can be squeezed
@@ -88,6 +63,7 @@ const SPLIT_MAX = 0.85;
 const toEntry = (s: FileStatus): FileTreeEntry => ({
   path: s.path,
   change: s.state,
+  old_path: s.old_path ?? undefined,
   additions: s.additions ?? undefined,
   deletions: s.deletions ?? undefined,
   binary: s.binary,
@@ -120,46 +96,6 @@ function CountsSummary({ add, del }: { add: number; del: number }) {
 const fileCountLabel = (n: number): string => `${n} ${n === 1 ? "file" : "files"}`;
 
 /**
- * Selection follow-through when `paths` move from one section to another (e.g.
- * staging). Generalises the single-select rule to a set: if none of the
- * selection moved, leave it; if all of it moved, follow it into `to`; if only
- * some moved, keep the not-moved paths in `from` (selection lives in one list).
- */
-function moveSelection(
-  sel: Selection | null,
-  from: Section,
-  to: Section,
-  paths: string[],
-): Selection | null {
-  if (sel?.section !== from) return sel;
-  const remaining = sel.paths.filter((p) => !paths.includes(p));
-  if (remaining.length === sel.paths.length) return sel;
-  if (remaining.length === 0) return { section: to, paths: sel.paths };
-  return { section: from, paths: remaining };
-}
-
-/** Drop discarded `paths` from an unstaged selection; empty clears it. */
-function dropSelection(sel: Selection | null, paths: string[]): Selection | null {
-  if (sel?.section !== "unstaged") return sel;
-  const remaining = sel.paths.filter((p) => !paths.includes(p));
-  return remaining.length ? { section: "unstaged", paths: remaining } : null;
-}
-
-/**
- * Which list the selection lives in, plus the set of selected paths within it.
- * A partially-staged file appears in BOTH sections under the same path, so a
- * path alone can't identify an entry — the selection is scoped to one section.
- * Multi-select (Ctrl/Shift) is confined to a single list: selecting in one
- * section replaces any selection in the other, so the two lists never highlight
- * simultaneously.
- */
-type Section = "staged" | "unstaged";
-interface Selection {
-  section: Section;
-  paths: string[];
-}
-
-/**
  * Working Changes panel — Staged / Unstaged sections over the working tree,
  * with per-file and bulk stage/unstage/discard and a commit box. Summoned into
  * the shared side region when the uncommitted-changes row is selected.
@@ -176,22 +112,18 @@ export function WorkingChangesPanel() {
   );
   // Whether discard actions prompt first (global setting, default on).
   const confirmDiscardEnabled = useSettingsStore((s) => s.settings?.confirm_discard ?? true);
+  // Case-only rename detection (global setting, default on). Off = the scan
+  // query never runs.
+  const detectCaseRenames = useSettingsStore((s) => s.settings?.detect_case_renames ?? true);
   // Line-ending features: repo override else global (both default on).
   const chipsGlobal = useSettingsStore((s) => s.settings?.line_ending_chips_in_changes ?? true);
   const warnEolGlobal = useSettingsStore((s) => s.settings?.warn_on_line_ending_commit ?? true);
   const repoSettings = useRepoStore((s) => (repo ? s.repoSettings[repo.id] : undefined));
   const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
-  const updateRepoSetting = useRepoStore((s) => s.updateRepoSetting);
   const chipsEnabled = repoSettings?.line_ending_chips_in_changes ?? chipsGlobal;
   const warnEolCommit = repoSettings?.warn_on_line_ending_commit ?? warnEolGlobal;
-  // Commit button default: plain commit vs commit-and-push. Per-repo ONLY,
-  // set via the button's caret menu (deliberately no settings-panel section).
-  const commitMode: CommitButtonMode = repoSettings?.commit_button_mode ?? "commit";
-  const pushRecurseSubmodules = useSettingsStore(
-    (s) => s.settings?.push_recurse_submodules ?? null,
-  );
-  // Belt and braces: the cache is normally filled by setActive, but the caret
-  // menu persists through it, so make sure it is actually loaded.
+  // Belt and braces: the cache is normally filled by setActive, but the commit
+  // button's caret menu persists through it, so make sure it is actually loaded.
   useEffect(() => {
     if (repo && !repoSettings) void loadRepoSettings(repo.id);
   }, [repo?.id, repoSettings, loadRepoSettings]);
@@ -249,30 +181,10 @@ export function WorkingChangesPanel() {
     }
   }, []);
 
-  // The draft commit message lives in a per-repo store, not component state:
-  // this panel shares a dock slot and unmounts whenever the user opens e.g. a
-  // commit, and a typed draft must survive that round-trip.
-  const message = useCommitDraftStore((s) => (repo ? (s.drafts[repo.id] ?? "") : ""));
-  const setDraft = useCommitDraftStore((s) => s.setDraft);
-  const clearDraft = useCommitDraftStore((s) => s.clearDraft);
-  const setMessage = (m: string) => {
-    if (!repo) return;
-    if (m.length === 0) clearDraft(repo.id);
-    else setDraft(repo.id, m);
-  };
-  // When set, the commit rewrites HEAD (`git commit --amend`) instead of
-  // creating a new commit. Reset after each successful commit.
-  const [amend, setAmend] = useState(false);
   // The selected files, scoped to one section so the two lists never highlight
   // at once (a partially-staged file shares its path across both). Drives both
   // row highlighting and the bulk context-menu actions.
   const [selected, setSelected] = useState<Selection | null>(null);
-  const [confirmDetachedCommit, setConfirmDetachedCommit] = useState(false);
-  const [confirmAmendPushed, setConfirmAmendPushed] = useState(false);
-  const [confirmEolCommit, setConfirmEolCommit] = useState(false);
-  // Non-empty = the .gitmodules consistency warning banner is up.
-  const [gitmodulesFindings, setGitmodulesFindings] = useState<GitmodulesFinding[]>([]);
-  const [commitMenuOpen, setCommitMenuOpen] = useState(false);
 
   // Clear the selection when the repo changes — a stale path from the previous
   // repo must not leak into actions or a diff summon for the new repo.
@@ -281,7 +193,6 @@ export function WorkingChangesPanel() {
     if (prevRepoId.current === repo?.id) return;
     prevRepoId.current = repo?.id;
     setSelected(null);
-    setGitmodulesFindings([]);
   }, [repo?.id]);
 
   const {
@@ -328,62 +239,6 @@ export function WorkingChangesPanel() {
   // warning. Disabled entirely when both features are off.
   const eolMap = useLineEndingStatusMap(repo?.id, chipsEnabled || warnEolCommit);
 
-  // The latest commit — drives amend message prefill and the "has commits"
-  // guard (amend is impossible on an unborn branch). Kept fresh because
-  // refresh() invalidates the [repo.id, "log"] key after each commit.
-  const { data: headLog = [] } = useQuery<Commit[]>({
-    queryKey: [repo?.id, "log", "head1"],
-    queryFn: () => repoLog(repo!.id, 1),
-    enabled: !!repo,
-    staleTime: 5_000,
-  });
-  const head = headLog[0] ?? null;
-
-  // Tracking status — to warn before amending a commit that's already pushed.
-  // Shares React Query's cache with the Commits panel (same key).
-  const { data: tracking } = useQuery<TrackingStatus | null>({
-    queryKey: [repo?.id, "tracking"],
-    queryFn: () => repoTrackingStatus(repo!.id),
-    enabled: !!repo,
-    staleTime: 5_000,
-  });
-  // HEAD is already published when it has an upstream and no local-only commits
-  // ahead of it (ahead === 0 → the tip is on the remote). Amending then rewrites
-  // pushed history and needs a force-push.
-  const amendingPushed = amend && !!tracking && tracking.ahead === 0;
-
-  // Branches + remotes — drive the split commit button's Push/Publish label
-  // and push target (`tracking` cannot: it is null for detached, untracked
-  // AND gone upstreams alike, and `upstream_gone` lives only on `Branch`).
-  // Both share React Query's cache with the Commits panel (same keys).
-  const { data: branches = [] } = useQuery<Branch[]>({
-    queryKey: [repo?.id, "branches"],
-    queryFn: () => repoBranches(repo!.id),
-    enabled: !!repo,
-    staleTime: 5_000,
-  });
-  const { data: remotes = [] } = useQuery<Remote[]>({
-    queryKey: [repo?.id, "remotes"],
-    queryFn: () => repoListRemotes(repo!.id),
-    enabled: !!repo,
-    staleTime: 5_000,
-  });
-  const currentBranch = branches.find((b) => b.is_current && !b.is_remote) ?? null;
-  const remoteNames = remotes.map((r) => r.name);
-
-  // Commit identity resolved across all config scopes: when name or email is
-  // missing everywhere, a commit fails with git's "Please tell me who you are";
-  // the composer warns BEFORE that and links to the profile settings. Identity
-  // changes rarely and ~/.gitconfig isn't watched, so a moderate staleTime plus
-  // the panel-focus refetch keeps it honest after the user sets one.
-  const { data: identity } = useQuery<ResolvedIdentity>({
-    queryKey: [repo?.id, "identity"],
-    queryFn: () => repoResolvedIdentity(repo!.id),
-    enabled: !!repo,
-    staleTime: 30_000,
-  });
-  const identityMissing = !!identity && (!identity.user_name || !identity.user_email);
-
   // Refresh whenever the panel is focused or swapped/summoned into view, so the
   // working tree is re-read after edits made while it wasn't the shown panel.
   const reload = useCallback(() => { refetch(); }, [refetch]);
@@ -392,6 +247,29 @@ export function WorkingChangesPanel() {
 
   const staged = useMemo(() => status.filter((s) => s.staged).map(toEntry), [status]);
   const unstaged = useMemo(() => status.filter((s) => !s.staged).map(toEntry), [status]);
+
+  // Case-only rename drift: renames git status cannot see (case-insensitive
+  // filesystems). Surfaced as synthetic rename rows in the Unstaged list with
+  // a "Stage rename" action; the backend returns [] on case-sensitive
+  // filesystems without scanning. Invalidated via the derived "case_drift"
+  // domain, so the repo-open catch-up refresh also covers renames made while
+  // the app was closed.
+  const { data: caseDrift = [] } = useQuery<CaseDriftEntry[]>({
+    queryKey: [repo?.id, "case_drift"],
+    queryFn: () => repoCaseDrift(repo!.id),
+    enabled: !!repo && detectCaseRenames,
+    staleTime: 5_000,
+  });
+  // Only entries that actually became synthetic rows get row overrides - a
+  // path collision with a real status row must not restyle that row.
+  const driftByPath = useMemo(() => {
+    const statusPaths = new Set(unstaged.map((f) => f.path));
+    return caseDriftByPath(caseDrift.filter((d) => !statusPaths.has(d.disk_path)));
+  }, [unstaged, caseDrift]);
+  const unstagedWithDrift = useMemo(
+    () => withCaseDriftRows(unstaged, caseDrift),
+    [unstaged, caseDrift],
+  );
 
   // Line-count sums for the toolbar (whole panel) and the section headers.
   // The panel-wide file count is unique paths — a partially staged file has an
@@ -486,32 +364,73 @@ export function WorkingChangesPanel() {
   // (deselecting the rest), then acts on it.
   // Open a file's diff in the Diff panel; the source side depends on which
   // section the row lives in.
+  // The entry backing a row, preferring the clicked section's side (a
+  // partially-staged file has one entry per section under the same path).
+  const entryFor = useCallback(
+    (section: ListSection, path: string): FileStatus | undefined =>
+      status.find((s) => s.path === path && s.staged === (section === "staged")) ??
+      status.find((s) => s.path === path),
+    [status],
+  );
+
   const openDiff = useCallback(
-    (section: Section, path: string) => {
+    (section: ListSection, path: string) => {
       if (!repo) return;
       const source: DiffSource =
         section === "staged" ? { kind: "working_staged" } : { kind: "working_unstaged" };
-      const change = status.find((s) => s.path === path)?.state;
+      const entry = entryFor(section, path);
+      const change = entry?.state;
       // Conflicted files open the dedicated Merge panel; everything else the
       // Diff panel. The two share one dock slot (swapSummon closes the other).
       if (change === "Conflicted") {
         useSummonStore.getState().swapSummon("merge", "diff", { repoId: repo.id, path });
       } else {
-        useSummonStore
-          .getState()
-          .swapSummon("diff", "merge", { repoId: repo.id, path, source, change } satisfies DiffRequest);
+        useSummonStore.getState().swapSummon("diff", "merge", {
+          repoId: repo.id,
+          path,
+          source,
+          change,
+          // Lets the diff pair a rename's sides; without it a staged rename
+          // reads as a whole-file add.
+          oldPath: entry?.old_path ?? null,
+        } satisfies DiffRequest);
       }
     },
-    [repo, status],
+    [repo, entryFor],
+  );
+
+  // A case-drift row's diff request: the rename pair, whose diff is empty
+  // (git sees a clean tree), so the Diff panel renders the "Renamed from
+  // old → new (no content changes)" notice - mirroring the staged side.
+  const driftDiffRequest = useCallback(
+    (d: CaseDriftEntry): DiffRequest => ({
+      repoId: repo!.id,
+      path: d.disk_path,
+      source: { kind: "working_unstaged" },
+      change: "Renamed",
+      oldPath: d.index_path,
+    }),
+    [repo],
   );
 
   // Track the selection and, when exactly one file is selected, show its diff.
   const onSelectSection = useCallback(
-    (section: Section, paths: string[]) => {
+    (section: ListSection, paths: string[]) => {
       setSelected({ section, paths });
-      if (paths.length === 1) openDiff(section, paths[0]);
+      switch (selectionDiffAction(section, paths, driftByPath)) {
+        case "open":
+          openDiff(section, paths[0]);
+          break;
+        case "open_drift": {
+          const d = driftByPath.get(paths[0])!;
+          useSummonStore.getState().swapSummon("diff", "merge", driftDiffRequest(d));
+          break;
+        }
+        case "keep":
+          break;
+      }
     },
-    [openDiff],
+    [openDiff, driftByPath, driftDiffRequest],
   );
 
   // After a stage/unstage/discard, keep an ALREADY-OPEN diff viewer in sync with
@@ -526,8 +445,8 @@ export function WorkingChangesPanel() {
       if (next && next.paths.length === 1) {
         const source: DiffSource =
           next.section === "staged" ? { kind: "working_staged" } : { kind: "working_unstaged" };
-        const change = status.find((s) => s.path === next.paths[0])?.state;
-        if (change === "Conflicted") {
+        const entry = entryFor(next.section, next.paths[0]);
+        if (entry?.state === "Conflicted") {
           store.notifyIfOpen("merge", { repoId: repo.id, path: next.paths[0] });
           store.notifyIfOpen("diff", null);
         } else {
@@ -535,7 +454,8 @@ export function WorkingChangesPanel() {
             repoId: repo.id,
             path: next.paths[0],
             source,
-            change,
+            change: entry?.state,
+            oldPath: entry?.old_path ?? null,
           } satisfies DiffRequest);
           store.notifyIfOpen("merge", null);
         }
@@ -546,7 +466,7 @@ export function WorkingChangesPanel() {
         store.notifyIfOpen("merge", null);
       }
     },
-    [repo, status],
+    [repo, entryFor],
   );
 
   // Summoned from the log's working-dir row: the shared Diff/Merge slot may
@@ -568,7 +488,7 @@ export function WorkingChangesPanel() {
   // The selection is what the detail views show, so an already-open Diff or
   // Merge panel follows it - but a right-click never force-opens one
   // (syncOpenDiff uses notifyIfOpen).
-  const selectForMenu = (section: Section, path: string): string[] => {
+  const selectForMenu = (section: ListSection, path: string): string[] => {
     if (selected?.section === section && selected.paths.includes(path)) return selected.paths;
     const next: Selection = { section, paths: [path] };
     setSelected(next);
@@ -597,14 +517,25 @@ export function WorkingChangesPanel() {
   // dropped from the selection.
   const stage = (paths: string[]) =>
     run(async () => {
-      await repoStage(repo!.id, paths);
+      // Drift rows route through the rename command - `git add` on a path
+      // git considers clean would silently do nothing.
+      const { drift, rest } = splitDriftTargets(paths, driftByPath);
+      if (rest.length > 0) await repoStage(repo!.id, rest);
+      for (const d of drift) {
+        await repoStageCaseRename(repo!.id, d.index_path, d.disk_path);
+      }
+      if (drift.length > 0) {
+        invalidateRepoDomains(queryClient, repo!.id, ["case_drift"]);
+      }
       const next = moveSelection(selected, "unstaged", "staged", paths);
       setSelected(next);
       syncOpenDiff(selected, next);
     });
   const unstage = (paths: string[]) =>
     run(async () => {
-      await repoUnstage(repo!.id, paths);
+      // A rename must restore BOTH its paths, or the source's deletion
+      // stays staged (see expandUnstagePaths).
+      await repoUnstage(repo!.id, expandUnstagePaths(paths, staged));
       const next = moveSelection(selected, "staged", "unstaged", paths);
       setSelected(next);
       syncOpenDiff(selected, next);
@@ -664,141 +595,20 @@ export function WorkingChangesPanel() {
 
   const doDiscard = (paths: string[]) =>
     run(async () => {
-      await repoDiscard(repo!.id, paths);
+      // Drift rows route through the rename-back command - a plain discard
+      // pathspec would not match anything git considers changed.
+      const { drift, rest } = splitDriftTargets(paths, driftByPath);
+      if (rest.length > 0) await repoDiscard(repo!.id, rest);
+      for (const d of drift) {
+        await repoDiscardCaseRename(repo!.id, d.index_path, d.disk_path);
+      }
+      if (drift.length > 0) {
+        invalidateRepoDomains(queryClient, repo!.id, ["case_drift"]);
+      }
       const next = dropSelection(selected, paths);
       setSelected(next);
       syncOpenDiff(selected, next);
     });
-  // The push leg the in-flight commit chains (set by requestCommit from the
-  // plan, consumed by commit). A ref, not state: the confirm banners defer
-  // commit() to a later click and the value must survive that gap unchanged.
-  const pendingPushRef = useRef<CommitPushTarget | null>(null);
-  const commit = () =>
-    run(async () => {
-      const push = pendingPushRef.current;
-      pendingPushRef.current = null;
-      await repoCommit(repo!.id, message, amend);
-      setMessage("");
-      setAmend(false);
-      if (push) {
-        // Push failures are their own outcome — the commit already stands, so
-        // they must never surface through run()'s onError as a failed commit.
-        try {
-          await pushWithTagFollowUp(
-            queryClient,
-            repo!.id,
-            {
-              remote: push.remote,
-              branch: push.branch,
-              set_upstream: push.setUpstream,
-              force_with_lease: false,
-              recurse_submodules: pushRecurseSubmodules,
-            },
-            crypto.randomUUID(),
-          );
-          notify.success(commitPushSuccessMessage(push));
-        } catch (e) {
-          notify.error(commitPushFailureMessage(remoteOpErrorMessage(e)));
-        }
-        invalidateRepoDomains(queryClient, repo!.id, PUSH_DOMAINS);
-      }
-    });
-
-  // A detached-HEAD commit is reachable only through the reflog once HEAD
-  // moves on, so always ask first — this is a data-loss warning, not a
-  // destructive-action confirm, so it is deliberately NOT gated by the
-  // global confirmation setting. Judged from the HEAD commit's log
-  // decorations: a bare `head` decoration = detached.
-  const detached = isDetachedHead(head);
-  // Final gate before the actual commit: the line-ending warning (per its
-  // setting). Runs LAST so it also covers commits approved through the
-  // detached-HEAD / amend-pushed / .gitmodules confirms.
-  const proceedEolGate = () => {
-    if (warnEolCommit && eolChanges.length > 0) {
-      setConfirmEolCommit(true);
-      return;
-    }
-    commit();
-  };
-  // .gitmodules consistency gate: warn before committing a staged state
-  // whose .gitmodules and gitlinks disagree (manual edits, half-done
-  // removals). Always on - it fires only on genuinely broken states, and it
-  // is a repo-integrity warning like detached-HEAD, deliberately not gated
-  // by the confirm setting. Best-effort: a failing CHECK must never block
-  // committing.
-  const proceedCommit = () => {
-    void (async () => {
-      const findings = await repoGitmodulesConsistency(repo!.id).catch(
-        () => [] as GitmodulesFinding[],
-      );
-      if (findings.length > 0) {
-        setGitmodulesFindings(findings);
-        return;
-      }
-      proceedEolGate();
-    })();
-  };
-  // The split button's plan under the persisted mode: the label shown, and
-  // whether the commit chains a push. Amend/detached/no-target all degrade to
-  // a plain commit inside the plan, so the label never over-promises.
-  const commitPlan = commitButtonPlan({
-    mode: commitMode,
-    amend,
-    detached,
-    currentBranch,
-    remotes: remoteNames,
-  });
-  const requestCommit = () => {
-    // The push leg is decided at request time and parked in the ref: the
-    // confirm banners defer commit() to a later click, and the plan must
-    // survive that gap unchanged.
-    pendingPushRef.current = commitPlan.push;
-    if (detached) {
-      setConfirmDetachedCommit(true);
-      return;
-    }
-    // Amending an already-pushed commit rewrites published history (force-push
-    // needed, disrupts collaborators). Warn first — like the detached case, a
-    // history-safety warning, deliberately NOT gated by the confirm setting.
-    if (amendingPushed) {
-      setConfirmAmendPushed(true);
-      return;
-    }
-    proceedCommit();
-  };
-  // Caret-menu pick configures the button (persists the mode for this repo),
-  // it does not commit — the same semantics as the Stash and Pull-strategy
-  // carets. Committing stays one explicit click on the (now relabeled) button.
-  const pickCommitMode = (mode: CommitButtonMode) => {
-    setCommitMenuOpen(false);
-    if (!repo) return;
-    void updateRepoSetting(repo.id, "commit_button_mode", mode);
-  };
-
-  // Drop a pending detached-HEAD confirmation once HEAD is back on a branch
-  // (e.g. the user switched away with the prompt still open).
-  useEffect(() => {
-    if (!detached) setConfirmDetachedCommit(false);
-  }, [detached]);
-
-  // Drop a pending amend-pushed confirmation if it no longer applies (amend
-  // toggled off, or new local commits mean the tip is no longer published).
-  useEffect(() => {
-    if (!amendingPushed) setConfirmAmendPushed(false);
-  }, [amendingPushed]);
-
-  // Drop a pending line-ending confirmation once it no longer applies
-  // (files unstaged, endings reverted, or the setting turned off).
-  useEffect(() => {
-    if (!warnEolCommit || eolChanges.length === 0) setConfirmEolCommit(false);
-  }, [warnEolCommit, eolChanges.length]);
-
-  // Prefill HEAD's message when turning amend on, but only if the box is empty
-  // so typed-but-uncommitted text is never clobbered.
-  const toggleAmend = (next: boolean) => {
-    setAmend(next);
-    if (next && head && message.trim().length === 0) setMessage(head.message);
-  };
 
   // Confirm before discarding (destructive) via the central dialog; then run
   // it. The label defaults to the lone path, or "N files" for a bulk
@@ -816,6 +626,21 @@ export function WorkingChangesPanel() {
     doDiscard(paths);
   };
 
+  // Discard confirm for a lone drift row, with wording that doesn't overstate:
+  // renaming back loses nothing (unlike a content discard).
+  const requestDiscardCaseRename = async (d: CaseDriftEntry) => {
+    if (confirmDiscardEnabled) {
+      const ok = await confirmDialog({
+        title: "Discard rename",
+        message: `Renames the ${d.is_dir ? "folder" : "file"} back to its tracked spelling.`,
+        detail: `${d.disk_path} → ${d.index_path}`,
+        confirmLabel: "Discard",
+      });
+      if (!ok) return;
+    }
+    doDiscard([d.disk_path]);
+  };
+
   if (!repo) {
     return (
       <div className="legit-panel">
@@ -825,12 +650,6 @@ export function WorkingChangesPanel() {
       </div>
     );
   }
-
-  // Amend allows a message-only commit (no staged files required), but needs an
-  // existing HEAD to rewrite.
-  const canCommit = amend
-    ? !!head && message.trim().length > 0 && !busy
-    : staged.length > 0 && message.trim().length > 0 && !busy;
 
   const baseline: BaselineEntry[] = [{ label: "Refresh", onClick: refresh, disabled: busy }];
 
@@ -895,18 +714,20 @@ export function WorkingChangesPanel() {
             sectionRef={refOf("unstaged")}
             testId="wc-unstaged"
             title="Unstaged"
-            count={unstaged.length}
+            count={unstagedWithDrift.length}
             additions={unstagedTotals.add}
             deletions={unstagedTotals.del}
             actions={
-              unstaged.length > 0 && (
+              unstagedWithDrift.length > 0 && (
                 <>
                   <ToolbarButton
                     label="Discard all"
                     disabled={busy}
                     onClick={() =>
                       requestDiscard(
-                        unstaged.filter((f) => f.change !== "SubmoduleDirty").map((f) => f.path),
+                        unstagedWithDrift
+                          .filter((f) => f.change !== "SubmoduleDirty")
+                          .map((f) => f.path),
                         "all unstaged files",
                       )
                     }
@@ -915,7 +736,11 @@ export function WorkingChangesPanel() {
                     label="Stage all"
                     disabled={busy}
                     onClick={() =>
-                      stage(unstaged.filter((f) => f.change !== "SubmoduleDirty").map((f) => f.path))
+                      stage(
+                        unstagedWithDrift
+                          .filter((f) => f.change !== "SubmoduleDirty")
+                          .map((f) => f.path),
+                      )
                     }
                   />
                 </>
@@ -923,7 +748,7 @@ export function WorkingChangesPanel() {
             }
           >
             <FileTree
-              files={unstaged}
+              files={unstagedWithDrift}
               viewMode={viewMode}
               selectedPath={null}
               multiSelect
@@ -932,113 +757,66 @@ export function WorkingChangesPanel() {
               rowHeight={rowHeight}
               iconSize={iconSize}
               onContextMenu={(f, e) => {
-                const targets = selectForMenu("unstaged", f.path);
-                const many = targets.length > 1;
-                if (f.change === "SubmoduleDirty" && !many) {
+                const d = driftByPath.get(f.path);
+                if (d) {
+                  // A synthetic case-drift row: stage/discard route through
+                  // the rename commands; blame and history exist under the
+                  // TRACKED spelling, the editor opens the on-disk file.
                   openMenu(
                     e,
                     <>
-                      <MenuItem onClick={() => { closeMenu(); openSubmodule(f.path, null); }}>
-                        Open submodule
+                      <MenuItem onClick={() => { void stage([d.disk_path]); closeMenu(); }}>
+                        Stage rename
                       </MenuItem>
-                      <MenuItem
-                        onClick={() => {
-                          closeMenu();
-                          useSummonStore.getState().summon("file-history", f.path);
-                        }}
-                      >
-                        File history
+                      <MenuItem onClick={() => { void requestDiscardCaseRename(d); closeMenu(); }}>
+                        Discard rename
                       </MenuItem>
+                      {!d.is_dir && (
+                        <MenuItem
+                          onClick={() => {
+                            closeMenu();
+                            useSummonStore.getState().summon("blame", d.index_path);
+                          }}
+                        >
+                          Blame file
+                        </MenuItem>
+                      )}
+                      {!d.is_dir && (
+                        <MenuItem
+                          onClick={() => {
+                            closeMenu();
+                            useSummonStore.getState().summon("file-history", d.index_path);
+                          }}
+                        >
+                          File history
+                        </MenuItem>
+                      )}
+                      <CopyPathMenuSection path={f.path} onClose={closeMenu} />
+                      {!d.is_dir && <OpenInEditorMenuItem path={d.disk_path} onClose={closeMenu} />}
                     </>,
                   );
                   return;
                 }
+                const targets = selectForMenu("unstaged", f.path);
                 openMenu(
                   e,
-                  <>
-                    {!many && f.change === "Conflicted" && (
-                      <>
-                        <MenuItem onClick={() => { void takeSide(f.path, "ours"); closeMenu(); }}>
-                          {takeSideLabels(conflictKinds.get(f.path)).ours}
-                        </MenuItem>
-                        <MenuItem onClick={() => { void takeSide(f.path, "theirs"); closeMenu(); }}>
-                          {takeSideLabels(conflictKinds.get(f.path)).theirs}
-                        </MenuItem>
-                        <MenuItem onClick={() => { stage([f.path]); closeMenu(); }}>
-                          Mark resolved
-                        </MenuItem>
-                      </>
-                    )}
-                    {!many && f.change === "SubmoduleChanged" && (
-                      <MenuItem
-                        onClick={() => {
-                          closeMenu();
-                          openSubmodule(f.path, { kind: "working_unstaged" });
-                        }}
-                      >
-                        Open submodule
-                      </MenuItem>
-                    )}
-                    {!many && f.change !== "Conflicted" && opActive && reopenable.has(f.path) && (
-                      <ReopenConflictMenuItem
-                        onReopen={() => {
-                          closeMenu();
-                          void reopenConflict(f.path);
-                        }}
-                      />
-                    )}
-                    <MenuItem onClick={() => { stage(targets); closeMenu(); }}>
-                      {many ? `Stage ${targets.length} selected` : "Stage"}
-                    </MenuItem>
-                    <MenuItem
-                      onClick={() => { void requestDiscard(targets); closeMenu(); }}
-                    >
-                      {many
-                        ? `Discard ${targets.length} selected`
-                        : f.change === "Untracked"
-                        ? "Delete file"
-                        : "Discard changes"}
-                    </MenuItem>
-                    {!opActive && stashablePaths(unstaged, targets).length > 0 && (
-                      <MenuItem
-                        onClick={() => {
-                          void stashFiles(stashablePaths(unstaged, targets));
-                          closeMenu();
-                        }}
-                      >
-                        {many
-                          ? `Stash ${stashablePaths(unstaged, targets).length} selected`
-                          : "Stash file"}
-                      </MenuItem>
-                    )}
-                    {!many && f.change !== "Untracked" && f.change !== "SubmoduleChanged" && (
-                      <MenuItem
-                        onClick={() => {
-                          closeMenu();
-                          useSummonStore.getState().summon("blame", f.path);
-                        }}
-                      >
-                        Blame file
-                      </MenuItem>
-                    )}
-                    {!many && (
-                      <MenuItem
-                        onClick={() => {
-                          closeMenu();
-                          useSummonStore.getState().summon("file-history", f.path);
-                        }}
-                      >
-                        File history
-                      </MenuItem>
-                    )}
-                    {!many && <CopyPathMenuSection path={f.path} onClose={closeMenu} />}
-                    {!many && f.change !== "Deleted" && f.change !== "SubmoduleChanged" && (
-                      <OpenInEditorMenuItem path={f.path} onClose={closeMenu} />
-                    )}
-                    {!many && f.change === "Untracked" && (
-                      <AddToGitignoreMenuItem path={f.path} onClose={closeMenu} />
-                    )}
-                  </>,
+                  <FileRowMenu
+                    section="unstaged"
+                    file={f}
+                    targets={targets}
+                    opActive={opActive}
+                    reopenable={reopenable}
+                    conflictKinds={conflictKinds}
+                    stashable={opActive ? [] : stashablePaths(unstaged, targets)}
+                    onPrimary={stage}
+                    onDiscard={(paths) => void requestDiscard(paths)}
+                    onStash={(paths) => void stashFiles(paths)}
+                    onTakeSide={(path, side) => void takeSide(path, side)}
+                    onMarkResolved={(path) => stage([path])}
+                    onReopenConflict={(path) => void reopenConflict(path)}
+                    onOpenSubmodule={openSubmodule}
+                    closeMenu={closeMenu}
+                  />,
                 );
               }}
               // An unstaged (formerly staged) resolution that still holds
@@ -1057,25 +835,48 @@ export function WorkingChangesPanel() {
                   submoduleFileIcon(f)
                 )
               }
-              renderBadge={
-                chipsEnabled
-                  ? (f) => {
-                      const entry = eolMap.get(f.path);
-                      return entry ? (
-                        <LineEndingRowBadge repoId={repo.id} entry={entry} side="unstaged" disabled={busy} />
-                      ) : null;
-                    }
-                  : undefined
-              }
-              renderActions={(f) =>
+              renderBadge={(f) => {
+                const d = driftByPath.get(f.path);
+                if (d) {
+                  return (
+                    <span
+                      className="legit-subtle"
+                      title={caseDriftTitle(d)}
+                      style={{
+                        fontSize: "var(--fz-xs)",
+                        border: "1px solid var(--panel-border)",
+                        borderRadius: 3,
+                        padding: "0 0.35em",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      case
+                    </span>
+                  );
+                }
+                if (!chipsEnabled) return null;
+                const entry = eolMap.get(f.path);
+                return entry ? (
+                  <LineEndingRowBadge repoId={repo.id} entry={entry} side="unstaged" disabled={busy} />
+                ) : null;
+              }}
+              renderActions={(f) => {
+                const d = driftByPath.get(f.path);
+                if (d) {
+                  return (
+                    <IconButton title="Stage rename" disabled={busy} onClick={() => stage([d.disk_path])}>
+                      <StageIcon />
+                    </IconButton>
+                  );
+                }
                 // A dirty-inside submodule has nothing stageable (the pointer
                 // is unmoved) - no stage button, the row is informational.
-                f.change === "SubmoduleDirty" ? null : (
+                return f.change === "SubmoduleDirty" ? null : (
                   <IconButton title="Stage" disabled={busy} onClick={() => stage([f.path])}>
                     <StageIcon />
                   </IconButton>
-                )
-              }
+                );
+              }}
               renderDirActions={(paths) => (
                 <IconButton title={`Stage folder (${fileCountLabel(paths.length)})`} disabled={busy} onClick={() => stage(paths)}>
                   <StageIcon />
@@ -1130,67 +931,23 @@ export function WorkingChangesPanel() {
                 const targets = selectForMenu("staged", f.path);
                 openMenu(
                   e,
-                  <>
-                    {targets.length === 1 && f.change === "SubmoduleChanged" && (
-                      <MenuItem
-                        onClick={() => {
-                          closeMenu();
-                          openSubmodule(f.path, { kind: "working_staged" });
-                        }}
-                      >
-                        Open submodule
-                      </MenuItem>
-                    )}
-                    {targets.length === 1 && opActive && reopenable.has(f.path) && (
-                      <ReopenConflictMenuItem
-                        onReopen={() => {
-                          closeMenu();
-                          void reopenConflict(f.path);
-                        }}
-                      />
-                    )}
-                    <MenuItem onClick={() => { unstage(targets); closeMenu(); }}>
-                      {targets.length > 1 ? `Unstage ${targets.length} selected` : "Unstage"}
-                    </MenuItem>
-                    {!opActive && stashablePaths(staged, targets).length > 0 && (
-                      <MenuItem
-                        onClick={() => {
-                          void stashFiles(stashablePaths(staged, targets));
-                          closeMenu();
-                        }}
-                      >
-                        {targets.length > 1
-                          ? `Stash ${stashablePaths(staged, targets).length} selected`
-                          : "Stash file"}
-                      </MenuItem>
-                    )}
-                    {targets.length === 1 && f.change !== "Added" && f.change !== "SubmoduleChanged" && (
-                      <MenuItem
-                        onClick={() => {
-                          closeMenu();
-                          useSummonStore.getState().summon("blame", f.path);
-                        }}
-                      >
-                        Blame file
-                      </MenuItem>
-                    )}
-                    {targets.length === 1 && (
-                      <MenuItem
-                        onClick={() => {
-                          closeMenu();
-                          useSummonStore.getState().summon("file-history", f.path);
-                        }}
-                      >
-                        File history
-                      </MenuItem>
-                    )}
-                    {targets.length === 1 && (
-                      <CopyPathMenuSection path={f.path} onClose={closeMenu} />
-                    )}
-                    {targets.length === 1 && f.change !== "Deleted" && f.change !== "SubmoduleChanged" && (
-                      <OpenInEditorMenuItem path={f.path} onClose={closeMenu} />
-                    )}
-                  </>,
+                  <FileRowMenu
+                    section="staged"
+                    file={f}
+                    targets={targets}
+                    opActive={opActive}
+                    reopenable={reopenable}
+                    conflictKinds={conflictKinds}
+                    stashable={opActive ? [] : stashablePaths(staged, targets)}
+                    onPrimary={unstage}
+                    onDiscard={() => {}}
+                    onStash={(paths) => void stashFiles(paths)}
+                    onTakeSide={() => {}}
+                    onMarkResolved={() => {}}
+                    onReopenConflict={(path) => void reopenConflict(path)}
+                    onOpenSubmodule={openSubmodule}
+                    closeMenu={closeMenu}
+                  />,
                 );
               }}
               // A staged resolution that still holds conflict markers keeps
@@ -1240,232 +997,30 @@ export function WorkingChangesPanel() {
             />
           </Section>
           );
-          const commitComposer = (
-          <div key="commit" style={{ flexShrink: 0, borderTop: "1px solid var(--panel-border)", padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-          {identityMissing && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "6px 8px",
-                border: "1px solid var(--panel-border)",
-                borderRadius: 4,
-                background: "var(--button-hover-bg)",
-                fontSize: "var(--fz-md)",
-              }}
-            >
-              <span style={{ display: "inline-flex", color: "var(--warning-fg)" }}>
-                <WarningIcon />
-              </span>
-              <span style={{ flex: 1, minWidth: 0 }}>
-                No git identity is set ({!identity?.user_name && <code>user.name</code>}
-                {!identity?.user_name && !identity?.user_email && ", "}
-                {!identity?.user_email && <code>user.email</code>}): committing will fail.
-              </span>
-              <button onClick={() => summonGlobalPanel("global-settings")}>
-                Set identity…
-              </button>
-            </div>
-          )}
-          <textarea
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            placeholder="Commit message"
-            rows={3}
-            style={{ resize: "vertical", fontFamily: "inherit", fontSize: "var(--fz-md)" }}
-          />
-          {confirmDetachedCommit ? (
-            <div
-              style={{
-                padding: "8px 10px",
-                border: "1px solid var(--panel-border)",
-                borderRadius: 4,
-                background: "var(--button-hover-bg)",
-              }}
-            >
-              <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
-                HEAD is <strong>detached</strong> — no branch points here, so once you
-                switch away this commit is only reachable via the reflog. Commit anyway?
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <Button
-                  variant="primary"
-                  disabled={busy}
-                  onClick={() => {
-                    setConfirmDetachedCommit(false);
-                    proceedCommit();
-                  }}
-                >
-                  Commit anyway
-                </Button>
-                <button disabled={busy} onClick={() => setConfirmDetachedCommit(false)}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : confirmAmendPushed ? (
-            <div
-              style={{
-                padding: "8px 10px",
-                border: "1px solid var(--panel-border)",
-                borderRadius: 4,
-                background: "var(--button-hover-bg)",
-              }}
-            >
-              <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
-                The last commit is <strong>already pushed</strong>
-                {tracking?.upstream ? <> to <code>{tracking.upstream}</code></> : null}. Amending
-                rewrites it, so you'll need to force-push and it may disrupt anyone who has pulled
-                it. Amend anyway?
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <Button
-                  variant="danger"
-                  disabled={busy}
-                  onClick={() => {
-                    setConfirmAmendPushed(false);
-                    proceedCommit();
-                  }}
-                >
-                  Amend anyway
-                </Button>
-                <button disabled={busy} onClick={() => setConfirmAmendPushed(false)}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : gitmodulesFindings.length > 0 ? (
-            <div
-              style={{
-                padding: "8px 10px",
-                border: "1px solid var(--panel-border)",
-                borderRadius: 4,
-                background: "var(--button-hover-bg)",
-              }}
-            >
-              <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
-                This commit records a <strong>.gitmodules</strong> that does not match its
-                submodules:
-                <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
-                  {gitmodulesFindings.map((f) => (
-                    <li key={`${f.kind}:${"name" in f ? f.name : ""}:${f.path}`}>
-                      {gitmodulesFindingLabel(f)}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <Button
-                  variant="danger"
-                  disabled={busy}
-                  onClick={() => {
-                    setGitmodulesFindings([]);
-                    proceedEolGate();
-                  }}
-                >
-                  Commit anyway
-                </Button>
-                <button disabled={busy} onClick={() => setGitmodulesFindings([])}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : confirmEolCommit ? (
-            <div
-              style={{
-                padding: "8px 10px",
-                border: "1px solid var(--panel-border)",
-                borderRadius: 4,
-                background: "var(--button-hover-bg)",
-              }}
-            >
-              <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
-                {eolChanges.length === 1 ? (
-                  <>1 file changes <strong>line endings</strong>: </>
-                ) : (
-                  <>{eolChanges.length} files change <strong>line endings</strong>: </>
-                )}
-                <code>{formatEolChanges(eolChanges)}</code>. Commit anyway?
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <Button
-                  variant="primary"
-                  disabled={busy}
-                  onClick={() => {
-                    setConfirmEolCommit(false);
-                    commit();
-                  }}
-                >
-                  Commit anyway
-                </Button>
-                <button disabled={busy} onClick={() => setConfirmEolCommit(false)}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fz-sm)", color: "var(--subtle-fg)" }}>
-                <input type="checkbox" checked={amend} disabled={!head || busy} onChange={(e) => toggleAmend(e.target.checked)} />
-                Amend last commit
-              </label>
-              {/* Split button: the action half runs the persisted mode, the
-                  caret configures it (persist-only, per repo, like the Stash
-                  caret). The label is the plan's — it already degrades
-                  (amend/detached/no target), so it never promises a push that
-                  will not happen. */}
-              <div style={{ position: "relative", display: "flex", marginLeft: "auto" }}>
-                <Button variant="primary" rounded="left" data-testid="commit-button" disabled={!canCommit} onClick={requestCommit}>
-                  {commitPlan.label} {!amend && staged.length > 0 ? `(${staged.length})` : ""}
-                </Button>
-                <Button
-                  variant="primary"
-                  rounded="right"
-                  title="Commit mode"
-                  disabled={busy}
-                  onClick={() => setCommitMenuOpen((o) => !o)}
-                  style={{ padding: "2px 4px", marginLeft: 1 }}
-                >
-                  <ChevronDownIcon />
-                </Button>
-                {commitMenuOpen && (
-                  <CaretDropdown onClose={() => setCommitMenuOpen(false)}>
-                    {(
-                      [
-                        { mode: "commit" as const, label: "Commit" },
-                        {
-                          mode: "commit_and_push" as const,
-                          label: commitAndPushMenuLabel(currentBranch, remoteNames),
-                        },
-                      ]
-                    ).map((entry) => (
-                      <MenuItem key={entry.mode} onClick={() => pickCommitMode(entry.mode)}>
-                        <span style={{ fontWeight: entry.mode === commitMode ? 600 : 400 }}>
-                          {entry.mode === commitMode ? "✓ " : " "}
-                          {entry.label}
-                        </span>
-                      </MenuItem>
-                    ))}
-                  </CaretDropdown>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-          );
           const blocks: Record<WorkingChangesSection, ReactNode> = {
             unstaged: unstagedSection,
             staged: stagedSection,
-            commit: commitComposer,
+            commit: (
+              <CommitComposer
+                key="commit"
+                repo={repo}
+                stagedCount={staged.length}
+                busy={busy}
+                run={run}
+                eolChanges={eolChanges}
+                warnEolCommit={warnEolCommit}
+              />
+            ),
           };
           // Render sections top-to-bottom in the user's order. When there are
           // no changes, the two file lists collapse into a single "No changes"
           // filler shown in the first list slot; the commit composer keeps its
-          // ordered position.
+          // ordered position. Synthetic case-drift rows count as changes: they
+          // are actionable even on an otherwise clean tree.
+          const hasRows = status.length > 0 || driftByPath.size > 0;
           let emptyShown = false;
           return sectionOrder.map((id) => {
-            if (id !== "commit" && status.length === 0) {
+            if (id !== "commit" && !hasRows) {
               if (emptyShown) return null;
               emptyShown = true;
               return (
@@ -1474,7 +1029,7 @@ export function WorkingChangesPanel() {
                 </div>
               );
             }
-            if (id === sashBeforeId && status.length > 0) {
+            if (id === sashBeforeId && hasRows) {
               return (
                 <Fragment key={id}>
                   <div
@@ -1557,4 +1112,3 @@ function Section({
     </div>
   );
 }
-

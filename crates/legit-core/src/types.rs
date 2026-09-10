@@ -200,6 +200,10 @@ pub struct FileStatus {
     pub deletions: Option<u32>,
     /// True when git reports the file as binary (numstat `-`/`-`).
     pub binary: bool,
+    /// Rename/copy source path, set only on `Renamed`/`Copied` entries. The
+    /// diff of such an entry must pair both sides (`--find-renames -- old
+    /// new`), or it reads as a whole-file add/delete.
+    pub old_path: Option<PathBuf>,
 }
 
 impl FileStatus {
@@ -213,6 +217,7 @@ impl FileStatus {
             additions: None,
             deletions: None,
             binary: false,
+            old_path: None,
         }
     }
 }
@@ -1119,6 +1124,24 @@ pub enum GitmodulesFinding {
     EntryWithoutGitlink { name: String, path: String },
     /// An indexed gitlink that no `.gitmodules` section points at.
     GitlinkWithoutEntry { path: String },
+}
+
+/// A tracked path whose on-disk spelling differs from the index only by
+/// letter case. On a case-insensitive filesystem (`core.ignorecase=true`)
+/// `git status` cannot see such a rename - the index path still resolves to
+/// the renamed file - so it is detected by comparing index paths against
+/// directory listings and fixed by staging the rename (`git mv`). A finding,
+/// not an error (like `GitmodulesFinding`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct CaseDriftEntry {
+    /// Path as recorded in the index (repo-relative, '/'-separated).
+    pub index_path: String,
+    /// The same path as actually spelled on disk.
+    pub disk_path: String,
+    /// The drifting component is a directory: the fix renames the directory,
+    /// covering every tracked path under it (nested drift is collapsed to
+    /// the shallowest drifting component).
+    pub is_dir: bool,
 }
 
 /// State of a removed submodule's retained gitdir (`.git/modules/<name>`).

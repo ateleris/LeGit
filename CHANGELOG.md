@@ -14,6 +14,12 @@ lives in the git log and the GitHub release notes.
 
 ### Added
 
+- Case-only renames (e.g. `test.c` -> `Test.c`), which git cannot see on
+  Windows/macOS, are now detected and shown as rename rows in Working
+  Changes - including renames made while LeGit was closed. The row offers
+  "Stage rename" and "Discard rename" (back to the tracked spelling) plus
+  the usual blame/history/editor actions. Opt out via the new "Detect
+  case-only renames" setting.
 - A repo whose file watcher failed to start now shows a "live updates off"
   badge on its tab with the reason (previously the failure was only a log
   line and the repo silently stopped auto-refreshing).
@@ -24,6 +30,14 @@ lives in the git log and the GitHub release notes.
   gitignored directories, so repos with huge ignored trees (`node_modules`,
   `target`, package caches) start their watch in a fraction of the time and
   no longer risk the OS watch limit.
+
+### Fixed
+
+- Clicking a staged rename in Working Changes now shows it as a rename
+  (with content hunks if the file was also edited) instead of a whole-file
+  addition; the row also shows the old name.
+- Unstaging a staged rename now unstages both sides; previously the old
+  path's deletion silently stayed staged.
 
 ## [1.1.1] - 2026-09-08
 
