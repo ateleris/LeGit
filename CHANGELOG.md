@@ -12,6 +12,8 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-09-11
+
 ### Added
 
 - Filter boxes for the Branches, Tags, and Stashes lists in the Refs panel
