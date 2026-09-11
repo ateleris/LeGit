@@ -89,9 +89,11 @@ export interface GlobalSettings {
   /** Remembered Changed Files panel view mode ("tree" | "flat"). */
   changed_files_view_mode?: string | null;
   branch_list_view?: string | null;
-  /** Sort order for branches/tags in the Refs panel
+  /** Sort order for branches in the Refs panel
    * ("alphabetical" | "date" | "date_reversed"); null = alphabetical. */
   refs_sort_mode?: string | null;
+  /** Sort order for the Tags section; null = inherit refs_sort_mode. */
+  tags_sort_mode?: string | null;
   /** Global UI font size (px) — base for the panel text scale and min sizes. */
   ui_font_size?: number;
   /** Whether the filesystem watcher auto-refreshes the UI on disk changes. */

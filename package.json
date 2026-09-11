@@ -1,7 +1,7 @@
 {
   "name": "legit",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.2.1",
   "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
@@ -46,6 +46,6 @@
     "happy-dom": "^20.10.6",
     "typescript": "^6.0.3",
     "vite": "^8.1.3",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.11"
   }
 }

@@ -5290,6 +5290,25 @@ async fn worktree_add_list_remove_round_trip() {
 }
 
 #[tokio::test]
+async fn worktree_list_in_a_submodule_names_the_checkout_not_the_gitdir() {
+    // Real git reports an absorbed submodule's GITDIR (.git/modules/...) as
+    // the main worktree's path; the backend must rewrite it to the checkout,
+    // or the submodule session's own worktree renders as a foreign one.
+    let (sup, _lib) = repo_with_submodule().await;
+    let (backend, _guard) = make_backend(&sup.path.join("lib")).await;
+    let list = backend.worktree_list().await.expect("worktree_list");
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert!(list[0].is_main);
+    let path = list[0].path.replace('\\', "/");
+    assert!(
+        !path.contains("/.git/"),
+        "main entry must be the checkout, not the gitdir: {path}"
+    );
+    assert!(path.ends_with("/lib"), "{path}");
+    assert_eq!(list[0].dirty, Some(false));
+}
+
+#[tokio::test]
 async fn switch_refusal_names_the_other_worktree() {
     // Pins the real message wording the classifier matches on.
     let repo = TestRepo::init().await;

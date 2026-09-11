@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
@@ -24,6 +24,10 @@ import { StashIcon } from "../../icons";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { InlineEditor } from "../shared/InlineEditor";
+import { ShrinkingPathText } from "../shared/ShrinkingPathText";
+import { splitStashMessage } from "../shared/pathSplit";
+import { RefFilterRow } from "../shared/RefFilterRow";
+import { matchesRefFilter } from "../../lib/refFilter";
 import { Button } from "../shared/buttons";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { isRowBackgroundClick, jumpPanelsToCommit } from "../shared/jumpToCommit";
@@ -64,6 +68,12 @@ export function StashesSection() {
     enabled: !!repo,
     staleTime: 5_000,
   });
+
+  const [filterQuery, setFilterQuery] = useState("");
+  const filteredStashes = useMemo(
+    () => stashes.filter((s) => matchesRefFilter(s.message, filterQuery)),
+    [stashes, filterQuery],
+  );
 
   const reload = useCallback(() => { refetch(); }, [refetch]);
   usePanelFocusEffect(reload);
@@ -208,13 +218,20 @@ export function StashesSection() {
         className="legit-panel__body"
         style={{ display: "flex", flexDirection: "column", gap: 10 }}
       >
+        {stashes.length > 0 && (
+          <RefFilterRow query={filterQuery} onQueryChange={setFilterQuery} label="stashes" />
+        )}
         {stashes.length === 0 ? (
           <span className="legit-subtle" style={{ fontSize: "var(--fz-md)" }}>
             No stashes.
           </span>
+        ) : filteredStashes.length === 0 ? (
+          <span className="legit-subtle" style={{ fontSize: "var(--fz-md)" }}>
+            No matches.
+          </span>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {stashes.map((s) => (
+            {filteredStashes.map((s) => (
               // Rows (and the per-row edit/confirm state) are keyed by the
               // stash SHA — stable across the reordering a rename/drop causes,
               // where positional selectors would attach state to the wrong row.
@@ -385,18 +402,11 @@ function StashRow({
         <span style={{ color: "var(--ref-stash-fg)", flexShrink: 0, display: "inline-flex" }}>
           <StashIcon />
         </span>
-        <span
-          style={{
-            fontSize: "var(--fz-md)",
-            flex: 1,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
+        <ShrinkingPathText
+          {...splitStashMessage(stash.message)}
+          style={{ fontSize: "var(--fz-md)", flex: 1 }}
           title={stash.message}
-        >
-          {stash.message}
-        </span>
+        />
         <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", flexShrink: 0 }}>
           {formatRelative(stash.timestamp)}
         </span>

@@ -12,6 +12,30 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- Filter boxes for the Branches, Tags, and Stashes lists in the Refs panel
+  (substring match, Esc clears).
+
+### Changed
+
+- The branches/tags sort order dropdown moved from Global Settings into the
+  Branches and Tags sections, next to the filter box; the two sections now
+  keep independent sort orders (tags inherit the branches order until
+  changed).
+
+- Long branch, tag, and stash names in the Refs panel now truncate the path
+  prefix first, so the name itself stays visible (as file names already did
+  in Working Changes).
+
+## [1.2.1] - 2026-09-10
+
+### Fixed
+
+- Submodules opened as a repo tab no longer show their own checkout as a
+  foreign worktree (bogus entry in the Worktrees section, worktree icon on
+  their own branch chip in the graph).
+
 ## [1.2.0] - 2026-09-10
 
 ### Added

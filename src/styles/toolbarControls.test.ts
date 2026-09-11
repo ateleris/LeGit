@@ -53,4 +53,14 @@ describe("toolbar control heights", () => {
     expect(buttonHeight).toBeDefined();
     expect(inputHeight).toBe(buttonHeight);
   });
+
+  it("legit-compact-controls shares the toolbar normalization rules", () => {
+    // Compact control rows outside a toolbar (Refs filter/sort rows) must use
+    // the SAME rules, not a copy, so the two heights can never drift apart.
+    expect(buttonRules[0].selectors).toContain(".legit-compact-controls button");
+    expect(inputRules[0].selectors).toContain(
+      '.legit-compact-controls input:not([type="checkbox"]):not([type="radio"])',
+    );
+    expect(inputRules[0].selectors).toContain(".legit-compact-controls select");
+  });
 });

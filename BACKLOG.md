@@ -15,7 +15,7 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
 
 ## Release blockers
 
-### v1.2.0
+### v1.3.0
 
 - **Frontend consolidation batch** (parked 2026-07-11, promoted to blocker
   2026-08-24; details in `design/2026-07-11-hardening-review.md` §D):

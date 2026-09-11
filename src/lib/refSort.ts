@@ -13,6 +13,16 @@ export function coerceRefsSortMode(value: string | null | undefined): RefsSortMo
   return value === "date" || value === "date_reversed" ? value : REFS_SORT_MODE_DEFAULT;
 }
 
+/** The Tags section's sort mode: its own setting when set (a set-but-unknown
+ * value coerces to the default rather than re-coupling to branches), else
+ * inherited from the branches mode. */
+export function resolveTagsSortMode(
+  own: string | null | undefined,
+  inherited: string | null | undefined,
+): RefsSortMode {
+  return coerceRefsSortMode(own ?? inherited);
+}
+
 /** Natural-order name comparison: case-insensitive, numeric-aware, so
  * "v1.9" sorts before "v1.10" (unlike git's byte-wise refname order). */
 const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });

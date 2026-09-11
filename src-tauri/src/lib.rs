@@ -345,6 +345,7 @@ pub fn run() {
         commands::save_changed_files_view_mode,
         commands::save_branch_list_view,
         commands::save_refs_sort_mode,
+        commands::save_tags_sort_mode,
         commands::set_checkout_new_branch,
         commands::save_ui_font_size,
         commands::save_commits_graph_metrics,

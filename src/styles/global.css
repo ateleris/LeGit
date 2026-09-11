@@ -315,7 +315,8 @@ button.legit-region-divider__toggle:hover {
    fat global `button` base and would make their bar taller than everyone
    else's - normalize them to the same compact metrics ghost buttons and the
    segmented toggles already use inline (the 2em control height above). */
-.legit-panel__toolbar button {
+.legit-panel__toolbar button,
+.legit-compact-controls button {
   padding: 0 8px;
   font-size: var(--fz-sm);
   line-height: 1.2;
@@ -335,7 +336,9 @@ button.legit-region-divider__toggle:hover {
    Controls sharing a row must share one height (pinned in
    src/styles/toolbarControls.test.ts). */
 .legit-panel__toolbar input:not([type="checkbox"]):not([type="radio"]),
-.legit-panel__toolbar select {
+.legit-panel__toolbar select,
+.legit-compact-controls input:not([type="checkbox"]):not([type="radio"]),
+.legit-compact-controls select {
   height: calc(var(--fz-sm) * 2);
   box-sizing: border-box;
   font-size: var(--fz-sm);

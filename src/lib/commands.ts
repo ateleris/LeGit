@@ -1239,6 +1239,9 @@ export const saveBranchListView = (mode: string) =>
 export const saveRefsSortMode = (mode: string) =>
   invoke<null>("save_refs_sort_mode", { mode });
 
+export const saveTagsSortMode = (mode: string) =>
+  invoke<null>("save_tags_sort_mode", { mode });
+
 /** Persists the global UI font size (px); returns the clamped value. */
 export const saveUiFontSize = (size: number) =>
   invoke<number>("save_ui_font_size", { size });
