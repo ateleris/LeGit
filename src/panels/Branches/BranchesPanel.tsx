@@ -43,6 +43,10 @@ import type { Branch, MergeOptions, Remote } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { InlineEditor } from "../shared/InlineEditor";
+import { ShrinkingPathText } from "../shared/ShrinkingPathText";
+import { splitRefName } from "../shared/pathSplit";
+import { RefFilterRow } from "../shared/RefFilterRow";
+import { matchesRefFilter, filterRemoteGroups } from "../../lib/refFilter";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { isRowBackgroundClick, jumpPanelsToCommit } from "../shared/jumpToCommit";
 import { PanelContextMenuProvider } from "../Commits/menu/PanelContextMenu";
@@ -183,9 +187,17 @@ export function BranchesSection() {
     [sortMode],
   );
 
+  // Filter is ephemeral per-section state; it narrows the local list and the
+  // remote groups by substring (remote branches by their short name).
+  const [filterQuery, setFilterQuery] = useState("");
+
   const localBranches = useMemo(
     () => sortBranches(branches.filter((b) => !b.is_remote)),
     [branches, sortBranches],
+  );
+  const filteredLocal = useMemo(
+    () => localBranches.filter((b) => matchesRefFilter(b.name, filterQuery)),
+    [localBranches, filterQuery],
   );
   const remoteBranches = branches.filter((b) => b.is_remote);
 
@@ -200,11 +212,14 @@ export function BranchesSection() {
   // sorting the flat list up front sorts every group.
   const remoteGroups = useMemo(
     () =>
-      groupRemoteBranches(
-        sortBranches(branches.filter((b) => b.is_remote)),
-        remotes.map((r) => r.name),
+      filterRemoteGroups(
+        groupRemoteBranches(
+          sortBranches(branches.filter((b) => b.is_remote)),
+          remotes.map((r) => r.name),
+        ),
+        filterQuery,
       ),
-    [branches, remotes, sortBranches],
+    [branches, remotes, sortBranches, filterQuery],
   );
 
   const [collapsedRemotes, setCollapsedRemotes] = useState<Record<string, boolean>>(
@@ -375,6 +390,9 @@ export function BranchesSection() {
         className="legit-panel__body"
         style={{ display: "flex", flexDirection: "column", gap: 10 }}
       >
+        {branches.length > 0 && (
+          <RefFilterRow query={filterQuery} onQueryChange={setFilterQuery} sortScope="branches" label="branches" />
+        )}
         {localBranches.length > 0 && (() => {
           // One row renderer shared by both modes so flat mode stays exactly
           // the pre-tree rendering; tree mode indents it and shows the leaf
@@ -440,9 +458,14 @@ export function BranchesSection() {
                   </button>
                 </div>
               </div>
+              {filteredLocal.length === 0 && (
+                <span className="legit-subtle" style={{ fontSize: "var(--fz-md)" }}>
+                  No matches.
+                </span>
+              )}
               {branchView === "flat"
-                ? localBranches.map((b) => renderLocalRow(b))
-                : branchTreeRows(localBranches.map((b) => b.name), collapsedFor("local")).map((row) =>
+                ? filteredLocal.map((b) => renderLocalRow(b))
+                : branchTreeRows(filteredLocal.map((b) => b.name), collapsedFor("local")).map((row) =>
                     row.kind === "dir" ? (
                       <BranchFolderRow
                         key={`d:${row.path}`}
@@ -779,18 +802,18 @@ function LocalBranchRow({
         </InlineEditor>
       ) : (
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <span
-            style={{ fontSize: "var(--fz-lg)", fontFamily: "monospace", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+          <ShrinkingPathText
+            {...splitRefName(displayName ?? branch.name)}
+            style={{ fontSize: "var(--fz-lg)", fontFamily: "monospace", flex: 1 }}
             title={branch.name}
           >
             {branch.is_current && (
               // Same token as the commit graph's checked-out branch chip
               // (RefsCell chipStyle), so "this is the current branch" reads
               // as one colour across the app.
-              <span style={{ color: "var(--ref-branch-current-fg, rgb(130, 220, 130))", marginRight: 6 }}>●</span>
+              <span style={{ color: "var(--ref-branch-current-fg, rgb(130, 220, 130))", marginRight: 6, flexShrink: 0 }}>●</span>
             )}
-            {displayName ?? branch.name}
-          </span>
+          </ShrinkingPathText>
           <DivergenceBadge branch={branch} />
           <div style={{ display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap" }}>
             {!branch.is_current && (
@@ -839,34 +862,19 @@ function RemoteBranchRow({
         flexWrap: "wrap",
       }}
     >
-      <span
-        style={{
-          fontSize: "var(--fz-lg)",
-          fontFamily: "monospace",
-          flex: 1,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {shortName}
-      </span>
+      <ShrinkingPathText
+        {...splitRefName(shortName)}
+        style={{ fontSize: "var(--fz-lg)", fontFamily: "monospace", flex: 1 }}
+      />
       {trackingBranch ? (
         <>
           <DivergenceBadge branch={trackingBranch} />
-          <span
+          <ShrinkingPathText
+            prefix={`tracking: ${splitRefName(trackingBranch.name).prefix}`}
+            leaf={splitRefName(trackingBranch.name).leaf}
             className="legit-subtle"
-            style={{
-              fontSize: "var(--fz-sm)",
-              flexShrink: 0,
-              maxWidth: "100%",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            tracking: {trackingBranch.name}
-          </span>
+            style={{ fontSize: "var(--fz-sm)", flexShrink: 0, maxWidth: "100%" }}
+          />
         </>
       ) : (
         <ToolbarButton label="Checkout" disabled={busy} onClick={onCheckout} style={{ flexShrink: 0 }} />

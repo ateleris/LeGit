@@ -5,6 +5,7 @@ import {
   saveRegionState,
   saveChangedFilesViewMode,
   saveRefsSortMode,
+  saveTagsSortMode,
   saveCommitsGraphMetrics,
   saveUiFontSize,
   setWatcherEnabled,
@@ -111,6 +112,7 @@ interface SettingsStore {
   setChangedFilesViewMode: (mode: "tree" | "flat") => Promise<void>;
   setBranchListView: (mode: "tree" | "flat") => Promise<void>;
   setRefsSortMode: (mode: RefsSortMode) => Promise<void>;
+  setTagsSortMode: (mode: RefsSortMode) => Promise<void>;
   setUiFontSize: (size: number) => Promise<void>;
   setWatcherEnabled: (enabled: boolean) => Promise<void>;
   setConfirmDiscard: (confirm: boolean) => Promise<void>;
@@ -207,6 +209,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const s = get().settings;
     if (s) {
       set({ settings: { ...s, refs_sort_mode: mode } });
+    }
+  },
+
+  async setTagsSortMode(mode) {
+    await saveTagsSortMode(mode);
+    const s = get().settings;
+    if (s) {
+      set({ settings: { ...s, tags_sort_mode: mode } });
     }
   },
 

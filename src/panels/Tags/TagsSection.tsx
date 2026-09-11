@@ -20,13 +20,17 @@ import type { Remote, RemoteTag, TagInfo } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
 import { RemoteIcon, TagIcon } from "../../icons";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
+import { ShrinkingPathText } from "../shared/ShrinkingPathText";
+import { splitRefName } from "../shared/pathSplit";
+import { RefFilterRow } from "../shared/RefFilterRow";
+import { matchesRefFilter } from "../../lib/refFilter";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { isRowBackgroundClick, jumpPanelsToCommit } from "../shared/jumpToCommit";
 import { Button } from "../shared/buttons";
 import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
 import { useTagRemoteChoice, useTagRemoteStore } from "../../store/tagRemote";
-import { coerceRefsSortMode, sortRefs } from "../../lib/refSort";
+import { resolveTagsSortMode, sortRefs } from "../../lib/refSort";
 
 // A tag mutation touches the tag list and the graph decorations.
 const AFFECTED_DOMAINS = ["tags", "log"];
@@ -74,11 +78,19 @@ export function TagsSection() {
   });
   const pushed = useMemo(() => pushedTagNames(tags, remoteTags), [tags, remoteTags]);
 
-  // User-selected sort order (global setting); display order only.
-  const sortMode = coerceRefsSortMode(useSettingsStore((s) => s.settings?.refs_sort_mode));
+  // User-selected sort order (own setting, inheriting the branches mode
+  // until set); display order only.
+  const sortMode = useSettingsStore((s) =>
+    resolveTagsSortMode(s.settings?.tags_sort_mode, s.settings?.refs_sort_mode),
+  );
   const sortedTags = useMemo(
     () => sortRefs(tags, sortMode, (t) => t.name, (t) => t.created_at),
     [tags, sortMode],
+  );
+  const [filterQuery, setFilterQuery] = useState("");
+  const filteredTags = useMemo(
+    () => sortedTags.filter((t) => matchesRefFilter(t.name, filterQuery)),
+    [sortedTags, filterQuery],
   );
 
   const reload = useCallback(() => { refetch(); }, [refetch]);
@@ -177,13 +189,20 @@ export function TagsSection() {
           </label>
         )}
 
+        {tags.length > 0 && (
+          <RefFilterRow query={filterQuery} onQueryChange={setFilterQuery} sortScope="tags" label="tags" />
+        )}
         {tags.length === 0 ? (
           <span className="legit-subtle" style={{ fontSize: "var(--fz-md)" }}>
             No tags.
           </span>
+        ) : filteredTags.length === 0 ? (
+          <span className="legit-subtle" style={{ fontSize: "var(--fz-md)" }}>
+            No matches.
+          </span>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {sortedTags.map((t) => (
+            {filteredTags.map((t) => (
               <TagRow
                 key={t.name}
                 tag={t}
@@ -291,18 +310,11 @@ function TagRow({
         <span style={{ color: "var(--ref-tag-fg)", flexShrink: 0, display: "inline-flex" }}>
           <TagIcon />
         </span>
-        <span
-          style={{
-            fontSize: "var(--fz-md)",
-            fontFamily: "monospace",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
+        <ShrinkingPathText
+          {...splitRefName(tag.name)}
+          style={{ fontSize: "var(--fz-md)", fontFamily: "monospace" }}
           title={tag.name}
-        >
-          {tag.name}
-        </span>
+        />
         {pushed && (
           <span
             title={`Pushed to ${remote}`}

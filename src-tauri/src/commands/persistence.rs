@@ -110,7 +110,7 @@ pub async fn save_branch_list_view(
     .await
 }
 
-/// Persist the Refs panel sort order for branches and tags
+/// Persist the Refs panel sort order for branches
 /// (`"alphabetical"` | `"date"` | `"date_reversed"`). Unknown values are
 /// stored as-is; the frontend falls back to alphabetical when reading.
 #[tauri::command]
@@ -121,6 +121,20 @@ pub async fn save_refs_sort_mode(
 ) -> Result<(), AppError> {
     state.mutate_global(|s| {
         s.refs_sort_mode = Some(mode);
+    })
+    .await
+}
+
+/// Persist the Tags section's own sort order (same values; unset inherits
+/// `refs_sort_mode`).
+#[tauri::command]
+#[specta::specta]
+pub async fn save_tags_sort_mode(
+    state: tauri::State<'_, AppState>,
+    mode: String,
+) -> Result<(), AppError> {
+    state.mutate_global(|s| {
+        s.tags_sort_mode = Some(mode);
     })
     .await
 }

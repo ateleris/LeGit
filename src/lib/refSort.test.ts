@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { coerceRefsSortMode, sortRefs } from "./refSort";
+import { coerceRefsSortMode, resolveTagsSortMode, sortRefs } from "./refSort";
 
 interface Ref {
   name: string;
@@ -56,5 +56,26 @@ describe("coerceRefsSortMode", () => {
     expect(coerceRefsSortMode(null)).toBe("alphabetical");
     expect(coerceRefsSortMode(undefined)).toBe("alphabetical");
     expect(coerceRefsSortMode("newest")).toBe("alphabetical");
+  });
+});
+
+describe("resolveTagsSortMode", () => {
+  it("an own value wins over the inherited one", () => {
+    expect(resolveTagsSortMode("date", "date_reversed")).toBe("date");
+  });
+
+  it("unset inherits the branches mode", () => {
+    expect(resolveTagsSortMode(null, "date")).toBe("date");
+    expect(resolveTagsSortMode(undefined, "date_reversed")).toBe("date_reversed");
+  });
+
+  it("both unset falls back to alphabetical", () => {
+    expect(resolveTagsSortMode(null, null)).toBe("alphabetical");
+  });
+
+  it("an unknown own value falls back to alphabetical, not the inherited mode", () => {
+    // A set-but-garbage value means the user decoupled tags; inheriting the
+    // branches mode would silently re-couple them.
+    expect(resolveTagsSortMode("newest", "date")).toBe("alphabetical");
   });
 });

@@ -26,6 +26,7 @@ import type { LucideIcon } from "lucide-react";
 import type { FileState } from "../../../lib/types";
 import { useRestoreVirtualizerScroll } from "../../PanelApiContext";
 import { baseName, flatten, type FileTreeEntry, type Row, type ViewMode } from "./buildTree";
+import { ShrinkingPathText } from "../ShrinkingPathText";
 
 interface FileTreeProps {
   files: FileTreeEntry[];
@@ -479,28 +480,13 @@ function FileRowView({
       </span>
 
       {viewMode === "flat" ? (
-        // Prefer showing the full filename: the directory prefix shrinks away
-        // first (the huge flex-shrink factor means the name only starts to
-        // shrink once the prefix is gone), so the row reads
-        // "start/of/path…filename" when space is tight. A filename that still
-        // doesn't fit on its own ellipsizes instead of overlapping the +/-
-        // stats.
         <span style={{ display: "flex", flex: 1, minWidth: 0, alignItems: "center", whiteSpace: "nowrap" }}>
-          {dir && (
-            <span
-              className="legit-subtle"
-              style={{
-                flexShrink: 9999,
-                minWidth: 0,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {dir}
-            </span>
-          )}
-          <span data-testid="file-row-name" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{name}</span>
+          <ShrinkingPathText
+            prefix={dir}
+            leaf={name}
+            prefixClassName="legit-subtle"
+            leafTestId="file-row-name"
+          />
           {badge && <RowBadge>{badge}</RowBadge>}
         </span>
       ) : (

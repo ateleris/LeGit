@@ -302,10 +302,14 @@ pub struct GlobalSettings {
     /// flat. Toggled from the Branches section header, applies globally.
     #[serde(default)]
     pub branch_list_view: Option<String>,
-    /// Sort order for branches and tags in the Refs panel
+    /// Sort order for branches in the Refs panel
     /// (`"alphabetical"` | `"date"` | `"date_reversed"`). `None` = alphabetical.
+    /// Tags inherit this unless `tags_sort_mode` is set.
     #[serde(default)]
     pub refs_sort_mode: Option<String>,
+    /// Sort order for the Tags section. `None` = inherit `refs_sort_mode`.
+    #[serde(default)]
+    pub tags_sort_mode: Option<String>,
     /// Global UI font size (px). Base for every panel's text scale and for the
     /// panel min-size constraints.
     #[serde(default = "default_ui_font_size")]
@@ -454,6 +458,7 @@ impl Default for GlobalSettings {
             changed_files_view_mode: None,
             branch_list_view: None,
             refs_sort_mode: None,
+            tags_sort_mode: None,
             ui_font_size: default_ui_font_size(),
             watcher_enabled: true,
             confirm_discard: true,
