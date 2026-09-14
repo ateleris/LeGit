@@ -93,15 +93,15 @@ export function ConnectedAccountsSection() {
       </FieldNote>
 
       {accounts.length > 0 && (
-        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ marginTop: "0.667em", display: "flex", flexDirection: "column", gap: "0.5em" }}>
           {accounts.map(({ account: a, token_present }) => (
             <div
               key={a.platform}
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 8,
-                padding: "6px 8px",
+                gap: "0.667em",
+                padding: "0.5em 0.667em",
                 background: "var(--button-hover-bg)",
                 borderRadius: 4,
               }}
@@ -112,7 +112,7 @@ export function ConnectedAccountsSection() {
                   {a.display_name ? `${a.display_name} (${a.username})` : a.username}
                 </span>
                 {!token_present && (
-                  <span style={{ color: "var(--warning-fg)", marginLeft: 8, fontSize: "var(--fz-sm)" }}>
+                  <span style={{ color: "var(--warning-fg)", marginLeft: "0.667em", fontSize: "var(--fz-sm)" }}>
                     token missing (revoked or erased): connect again below
                   </span>
                 )}
@@ -137,8 +137,8 @@ export function ConnectedAccountsSection() {
         </div>
       )}
 
-      <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      <div style={{ marginTop: "0.833em", display: "flex", flexDirection: "column", gap: "0.5em" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5em", flexWrap: "wrap" }}>
           <select value={platform} disabled={busy} onChange={(e) => setPlatform(e.target.value)}>
             {SSH_PLATFORMS.map((p) => (
               <option key={p.id} value={p.id}>
@@ -169,7 +169,7 @@ export function ConnectedAccountsSection() {
         <FieldNote>{TOKEN_HINTS[platform]}</FieldNote>
       </div>
 
-      {error && <pre className="legit-error" style={{ marginTop: 6 }}>{error}</pre>}
+      {error && <pre className="legit-error" style={{ marginTop: "0.5em" }}>{error}</pre>}
     </Section>
   );
 }

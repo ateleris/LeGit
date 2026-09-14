@@ -9,6 +9,7 @@ import { installCrashLogging } from "./lib/crashLog";
 import "dockview-react/dist/styles/dockview.css";
 import "./styles/theme.css";
 import "./styles/global.css";
+import { STALE } from "./lib/queryTiming";
 
 // Suppress the webview's native context menu (Inspect, Save as…) everywhere.
 // Our own context menus open from their React onContextMenu handlers, which set
@@ -32,7 +33,7 @@ installCrashLogging();
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 30_000,
+      staleTime: STALE.appDefault,
       retry: 1,
       // Re-read git state when the window regains focus, so changes made in a
       // terminal/editor while the app was in the background show up. This is

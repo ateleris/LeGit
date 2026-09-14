@@ -5,6 +5,7 @@ import { formatAppError } from "../../lib/types";
 import { useRepoStore } from "../../store/repos";
 import { notify } from "../../store/notifications";
 import { Button } from "../shared/buttons";
+import { STALE } from "../../lib/queryTiming";
 
 /**
  * View for a `SubmoduleDirty` working-changes entry: the pointer is unmoved,
@@ -19,9 +20,9 @@ export function SubmoduleDirtyNotice({ repoId, path }: { repoId: string; path: s
   return (
     <div
       className="legit-panel__body"
-      style={{ display: "flex", flexDirection: "column", gap: 10 }}
+      style={{ display: "flex", flexDirection: "column", gap: "0.833em" }}
     >
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: "0.667em" }}>
         <span style={{ fontSize: "var(--fz-md)", fontFamily: "monospace" }}>{path}</span>
         <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
           submodule
@@ -68,16 +69,16 @@ export function SubmoduleDiffView({
     queryKey: [repoId, "submodule-log", path, old_sha, new_sha],
     queryFn: () => repoSubmoduleLog(repoId, path, old_sha, new_sha!),
     enabled: new_sha !== null,
-    staleTime: 60_000,
+    staleTime: STALE.stable,
     retry: false,
   });
 
   return (
     <div
       className="legit-panel__body"
-      style={{ display: "flex", flexDirection: "column", gap: 10 }}
+      style={{ display: "flex", flexDirection: "column", gap: "0.833em" }}
     >
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: "0.667em", flexWrap: "wrap" }}>
         <span style={{ fontSize: "var(--fz-md)", fontFamily: "monospace" }}>{path}</span>
         <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
           submodule
@@ -101,7 +102,7 @@ export function SubmoduleDiffView({
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 8,
+          gap: "0.667em",
           fontFamily: "monospace",
           fontSize: "var(--fz-md)",
         }}
@@ -130,11 +131,11 @@ export function SubmoduleDiffView({
             No new commits between the pointers (backwards move or divergence).
           </span>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.333em" }}>
             {data.commits.map((c) => (
               <div
                 key={c.id}
-                style={{ display: "flex", gap: 8, fontSize: "var(--fz-md)" }}
+                style={{ display: "flex", gap: "0.667em", fontSize: "var(--fz-md)" }}
               >
                 <span
                   className="legit-subtle"

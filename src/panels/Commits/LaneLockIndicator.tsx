@@ -2,10 +2,10 @@
 // locked lane. Clicking (or right-clicking) it opens a small context menu to
 // remove the lock.
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useCallback, useState } from "react";
 import { LockFilledIcon } from "../../icons";
 import { useLaneLocksStore } from "../../store/laneLocks";
+import { Popover } from "../shared/Popover";
 
 interface LaneLockIndicatorProps {
   /** Full ref name the lock is attached to (e.g. refs/heads/main). */
@@ -21,7 +21,6 @@ interface LaneLockIndicatorProps {
 }
 
 const MENU_W = 220;
-const MENU_H_ESTIMATE = 70;
 
 export function LaneLockIndicator({
   refName,
@@ -74,18 +73,16 @@ export function LaneLockIndicator({
         <LockFilledIcon />
       </span>
 
-      {menu &&
-        createPortal(
-          <LockMenu
-            x={menu.x}
-            y={menu.y}
-            shortRef={shortRef}
-            laneIndex={laneIndex}
-            onRemove={removeLock}
-            onClose={closeMenu}
-          />,
-          document.body,
-        )}
+      {menu && (
+        <LockMenu
+          x={menu.x}
+          y={menu.y}
+          shortRef={shortRef}
+          laneIndex={laneIndex}
+          onRemove={removeLock}
+          onClose={closeMenu}
+        />
+      )}
     </>
   );
 }
@@ -105,46 +102,19 @@ function LockMenu({
   onRemove: () => void;
   onClose: () => void;
 }) {
-  const menuRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState(false);
 
-  // Dismiss on outside click + Escape (same pattern as the other menus).
-  // Capture phase: a stopPropagation in another panel must not keep it open.
-  useEffect(() => {
-    const controller = new AbortController();
-    const onMouseDown = (e: MouseEvent) => {
-      const target = e.target as Node | null;
-      if (target && !menuRef.current?.contains(target)) onClose();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        // Consumed: closing the popover must not leak to other Escape
-        // listeners (e.g. exiting a maximized panel).
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    document.addEventListener("mousedown", onMouseDown, { capture: true, signal: controller.signal });
-    document.addEventListener("keydown", onKey, { signal: controller.signal });
-    return () => controller.abort();
-  }, [onClose]);
-
-  const left = Math.min(x, window.innerWidth - MENU_W - 4);
-  const top = Math.min(y, window.innerHeight - MENU_H_ESTIMATE - 4);
-
   return (
-    <div
-      ref={menuRef}
+    <Popover
+      x={x}
+      y={y}
+      onClose={onClose}
       style={{
-        position: "fixed",
-        left,
-        top,
         minWidth: MENU_W,
         background: "var(--panel-bg, #1e1e1e)",
         border: "1px solid var(--panel-border, rgba(255,255,255,0.12))",
         borderRadius: 4,
-        padding: "4px 0",
-        zIndex: 9999,
+        padding: "0.333em 0",
         boxShadow: "0 4px 12px var(--shadow-color)",
         fontSize: "var(--fz-lg)",
         color: "var(--panel-fg, #ccc)",
@@ -153,7 +123,7 @@ function LockMenu({
     >
       <div
         style={{
-          padding: "4px 14px",
+          padding: "0.333em 1.167em",
           fontSize: "var(--fz-sm)",
           color: "var(--subtle-fg, #a1a1a1)",
           whiteSpace: "nowrap",
@@ -167,7 +137,7 @@ function LockMenu({
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
         style={{
-          padding: "6px 14px",
+          padding: "0.5em 1.167em",
           cursor: "pointer",
           whiteSpace: "nowrap",
           color: "var(--panel-fg, #ccc)",
@@ -176,6 +146,6 @@ function LockMenu({
       >
         Remove lock
       </div>
-    </div>
+    </Popover>
   );
 }

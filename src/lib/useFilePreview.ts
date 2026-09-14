@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { repoFilePreview } from "./commands";
 import type { FilePreview } from "./types";
+import { STALE } from "./queryTiming";
 
 /** Preview query for one side. Mutable specs (worktree, index) live under
  * the "status" domain so the watcher refreshes them; committed revs are
@@ -16,6 +17,6 @@ export function useFilePreview(
     queryKey: [repoId, mutable ? "status" : "log", "preview", rev ?? "worktree", path],
     queryFn: () => repoFilePreview(repoId!, rev, path!),
     enabled: enabled && !!repoId && !!path,
-    staleTime: mutable ? 5_000 : 60_000,
+    staleTime: mutable ? STALE.live : STALE.stable,
   });
 }

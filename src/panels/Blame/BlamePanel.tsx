@@ -21,6 +21,7 @@ import {
   type SyntaxSegment,
 } from "../Diff/syntaxModel";
 import { loadParserForPath } from "../Diff/syntaxLanguages";
+import { STALE } from "../../lib/queryTiming";
 
 const UNCOMMITTED = "0".repeat(40);
 
@@ -82,7 +83,7 @@ export function BlamePanel() {
     queryKey: [repo?.id, "log", "blame", rev, path],
     queryFn: () => repoBlame(repo!.id, path!, rev),
     enabled: !!repo && !!path,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   usePanelFocusEffect(useCallback(() => { refetch(); }, [refetch]));
 
@@ -160,7 +161,7 @@ export function BlamePanel() {
   return (
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
       <PanelLoadingBar active={isFetching} />
-      <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: "0.667em" }}>
         <span
           className="legit-subtle"
           style={{
@@ -305,7 +306,7 @@ function HunkRow({
             textAlign: "left",
             background: "transparent",
             border: "none",
-            padding: "2px 8px",
+            padding: "0.167em 0.667em",
             cursor: uncommitted ? "default" : "pointer",
             overflow: "hidden",
           }}
@@ -326,7 +327,7 @@ function HunkRow({
               background: "transparent",
               border: "none",
               borderLeft: "1px solid var(--panel-border)",
-              padding: "0 5px",
+              padding: "0 0.417em",
               cursor: "pointer",
               fontSize: "var(--fz-sm)",
               color: "var(--subtle-fg)",
@@ -339,7 +340,7 @@ function HunkRow({
       <pre
         style={{
           margin: 0,
-          padding: "2px 8px",
+          padding: "0.167em 0.667em",
           fontSize: "var(--fz-md)",
           fontFamily: "monospace",
           flex: 1,

@@ -24,6 +24,7 @@ import { Button } from "../shared/buttons";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { useConfirmDestructive } from "../../store/settings";
 import { FetchIcon } from "../../icons";
+import { STALE } from "../../lib/queryTiming";
 
 // Domains to refresh after any remote change: the remotes list itself, plus
 // branches/tracking/log so the Commits sync toolbar's remote derivation and
@@ -51,7 +52,7 @@ export function RemotesSection() {
     queryKey: [repo?.id, "remotes"],
     queryFn: () => repoListRemotes(repo!.id),
     enabled: !!repo,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
 
   const reload = useCallback(() => {
@@ -185,21 +186,21 @@ export function RemotesSection() {
   return (
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
       <PanelLoadingBar active={isFetching} />
-      <div className="legit-panel__body" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div className="legit-panel__body" style={{ display: "flex", flexDirection: "column", gap: "0.833em" }}>
         {remotes.length === 0 ? (
           <span className="legit-subtle">No remotes configured.</span>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.667em" }}>
             {remotes.map((r) => (
               <div
                 key={r.name}
                 style={{
                   border: "1px solid var(--panel-border)",
                   borderRadius: 4,
-                  padding: "8px 10px",
+                  padding: "0.667em 0.833em",
                   display: "flex",
                   flexDirection: "column",
-                  gap: 6,
+                  gap: "0.5em",
                 }}
               >
                 {edit?.name === r.name && edit.mode === "rename" ? (
@@ -229,10 +230,10 @@ export function RemotesSection() {
                   </InlineEditor>
                 ) : (
                   <>
-                    <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: "0.667em", flexWrap: "wrap" }}>
                       <strong style={{ fontSize: "var(--fz-lg)" }}>{r.name}</strong>
                       {busyNet === `fetch:${r.name}` || busyNet === `prune:${r.name}` ? (
-                        <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", display: "flex", alignItems: "center", gap: 6 }}>
+                        <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", display: "flex", alignItems: "center", gap: "0.5em" }}>
                           <span className="legit-spinner" aria-hidden="true" />
                           {busyNet.startsWith("fetch") ? "Fetching…" : "Pruning…"}
                           <button onClick={cancelNet} style={linkBtnStyle}>Cancel</button>
@@ -241,7 +242,7 @@ export function RemotesSection() {
                     </div>
                     <UrlRow label="fetch" url={r.fetch_url} />
                     {r.push_url !== r.fetch_url && <UrlRow label="push" url={r.push_url} />}
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 2 }}>
+                    <div style={{ display: "flex", gap: "0.5em", flexWrap: "wrap", marginTop: "0.167em" }}>
                       <ToolbarButton
                         label="Fetch"
                         icon={<FetchIcon />}
@@ -307,16 +308,16 @@ function AddRemoteForm({
     <div
       style={{
         borderTop: "1px solid var(--panel-border)",
-        paddingTop: 10,
+        paddingTop: "0.833em",
         display: "flex",
         flexDirection: "column",
-        gap: 6,
+        gap: "0.5em",
       }}
     >
       <span style={{ fontSize: "var(--fz-sm)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)" }}>
         Add remote
       </span>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: "0.5em", flexWrap: "wrap" }}>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -343,7 +344,7 @@ function AddRemoteForm({
 
 function UrlField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return (
-    <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+    <label style={{ display: "flex", alignItems: "center", gap: "0.5em" }}>
       <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", width: 40 }}>{label}</span>
       <input value={value} onChange={(e) => onChange(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
     </label>
@@ -352,7 +353,7 @@ function UrlField({ label, value, onChange }: { label: string; value: string; on
 
 function UrlRow({ label, url }: { label: string; url: string }) {
   return (
-    <div style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
+    <div style={{ display: "flex", alignItems: "baseline", gap: "0.5em", minWidth: 0 }}>
       <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", width: 40, flexShrink: 0 }}>{label}</span>
       <span
         title={url}

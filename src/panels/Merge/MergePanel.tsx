@@ -37,6 +37,7 @@ import {
   type ParsedConflicts,
 } from "../Diff/conflictModel";
 import { MergeView, type MergeViewHandle } from "./MergeView";
+import { STALE } from "../../lib/queryTiming";
 
 /** Payload for summoning the Merge panel. */
 export interface MergeRequest {
@@ -110,7 +111,7 @@ export function MergePanel() {
     queryKey: [request?.repoId, "diff", "merge-content", request?.path],
     queryFn: () => repoReadWorktreeFile(request!.repoId, request!.path),
     enabled: !!request && request.repoId === activeRepoId,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   // The baseline the view is built from: follows the disk while the result
   // is pristine (external edits reload the conflict), frozen while dirty so
@@ -135,14 +136,14 @@ export function MergePanel() {
     queryKey: [request?.repoId, "diff", "sides", request?.path],
     queryFn: () => repoConflictFileSides(request!.repoId, request!.path),
     enabled: !!request && request.repoId === activeRepoId && !dirty && !isReadError,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
 
   const { data: branches = [] } = useQuery<Branch[]>({
     queryKey: [request?.repoId, "branches"],
     queryFn: () => repoBranches(request!.repoId),
     enabled: !!request && request.repoId === activeRepoId,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   const currentBranchName = useMemo(
     () => branches.find((b) => b.is_current)?.name ?? null,
@@ -347,7 +348,7 @@ export function MergePanel() {
       <PanelLoadingBar active={isFetching} />
       <div
         className="legit-panel__toolbar"
-        style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}
+        style={{ display: "flex", alignItems: "center", gap: "0.667em", flexWrap: "wrap" }}
       >
         <div style={{ display: "flex", flexShrink: 0 }}>
           <button
@@ -387,12 +388,12 @@ export function MergePanel() {
             : "no conflict markers"}
         </span>
         {conflictCount > 1 && (
-          <span style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+          <span style={{ display: "flex", gap: "0.167em", flexShrink: 0 }}>
             <ToolbarButton label="↑" title="Previous conflict" onClick={() => goToBlock(-1)} />
             <ToolbarButton label="↓" title="Next conflict" onClick={() => goToBlock(1)} />
           </span>
         )}
-        <span style={{ display: "flex", gap: 4, marginLeft: "auto", flexShrink: 0 }}>
+        <span style={{ display: "flex", gap: "0.333em", marginLeft: "auto", flexShrink: 0 }}>
           <ToolbarButton
             label="Mark resolved"
             title={
@@ -408,7 +409,7 @@ export function MergePanel() {
       {confirmUnresolved !== null && (
         <div
           className="legit-panel__toolbar"
-          style={{ display: "flex", alignItems: "center", gap: 8 }}
+          style={{ display: "flex", alignItems: "center", gap: "0.667em" }}
         >
           <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
             {confirmUnresolved} conflict{confirmUnresolved === 1 ? "" : "s"} still unresolved -
@@ -428,7 +429,7 @@ export function MergePanel() {
       {pending !== null && (
         <div
           className="legit-panel__toolbar"
-          style={{ display: "flex", alignItems: "center", gap: 8 }}
+          style={{ display: "flex", alignItems: "center", gap: "0.667em" }}
         >
           <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
             Unsaved result for {request.path} will be lost.
@@ -448,7 +449,7 @@ export function MergePanel() {
       {externalChange && (
         <div
           className="legit-panel__toolbar"
-          style={{ display: "flex", alignItems: "center", gap: 8 }}
+          style={{ display: "flex", alignItems: "center", gap: "0.667em" }}
         >
           <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
             The file changed on disk - reload it? The current result will be lost.
@@ -466,12 +467,12 @@ export function MergePanel() {
         // resolution here - the one place the take buttons remain.
         <div
           className="legit-panel__body"
-          style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-start" }}
+          style={{ display: "flex", flexDirection: "column", gap: "0.667em", alignItems: "flex-start" }}
         >
           <span className="legit-subtle">
             This conflicted file cannot be shown as text. Resolve it by taking one side:
           </span>
-          <span style={{ display: "flex", gap: 4 }}>
+          <span style={{ display: "flex", gap: "0.333em" }}>
             <ToolbarButton
               label={`Take ${sideLabel("current", sideNames?.ours ?? null)}`}
               title="Resolve the whole file with the current side"

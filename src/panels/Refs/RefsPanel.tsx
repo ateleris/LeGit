@@ -72,9 +72,9 @@ function PaneHeader({ api, title }: IPaneviewPanelProps) {
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 6,
+        gap: "0.5em",
         height: "100%",
-        padding: "0 8px",
+        padding: "0 0.667em",
         boxSizing: "border-box",
         cursor: "pointer",
         userSelect: "none",

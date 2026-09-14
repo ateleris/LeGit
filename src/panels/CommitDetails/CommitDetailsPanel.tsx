@@ -11,6 +11,7 @@ import { repoCommitDetails } from "../../lib/commands";
 import { formatFull, formatRelative } from "../../lib/time";
 import type { CommitDetails, CommitId, SignatureVerification } from "../../lib/types";
 import { signaturePresentation } from "../../lib/signature";
+import { STALE } from "../../lib/queryTiming";
 
 /** Commit Details panel — receives a CommitId payload from the summon mechanism. */
 export function CommitDetailsPanel() {
@@ -39,7 +40,7 @@ export function CommitDetailsPanel() {
     queryKey,
     queryFn: () => repoCommitDetails(repo!.id, selectedId!),
     enabled: !!repo && !!selectedId,
-    staleTime: 60_000,
+    staleTime: STALE.stable,
   });
 
   // Record the verification result in the session signature cache so the
@@ -131,7 +132,7 @@ function CommitView({ details }: { details: CommitDetails }) {
           {showRaw ? "Hide raw object" : "Show raw object"}
         </button>
         {showRaw && (
-          <pre style={{ marginTop: 8, fontSize: "var(--fz-xs)", whiteSpace: "pre-wrap", wordBreak: "break-all", overflowX: "auto", background: "var(--input-bg)", padding: 8, borderRadius: 4 }}>
+          <pre style={{ marginTop: "0.667em", fontSize: "var(--fz-xs)", whiteSpace: "pre-wrap", wordBreak: "break-all", overflowX: "auto", background: "var(--input-bg)", padding: "0.667em", borderRadius: 4 }}>
             {raw_object}
           </pre>
         )}
@@ -146,7 +147,7 @@ function SignatureView({ sig }: { sig: SignatureVerification }) {
   return (
     <div>
       <span style={{ color, fontWeight: 600 }} title={title}>{sig.status}</span>
-      {sig.signer && <span className="legit-subtle" style={{ marginLeft: 8 }}>{sig.signer}</span>}
+      {sig.signer && <span className="legit-subtle" style={{ marginLeft: "0.667em" }}>{sig.signer}</span>}
       {sig.key_id && <div className="legit-subtle"><code>{sig.key_id}</code></div>}
     </div>
   );
@@ -154,9 +155,9 @@ function SignatureView({ sig }: { sig: SignatureVerification }) {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ marginBottom: 14 }}>
+    <div style={{ marginBottom: "1.167em" }}>
       {title && (
-        <div style={{ fontSize: "var(--fz-xs)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: 4 }}>
+        <div style={{ fontSize: "var(--fz-xs)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: "0.333em" }}>
           {title}
         </div>
       )}

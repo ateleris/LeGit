@@ -31,6 +31,7 @@ import { matchesRefFilter } from "../../lib/refFilter";
 import { Button } from "../shared/buttons";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { isRowBackgroundClick, jumpPanelsToCommit } from "../shared/jumpToCommit";
+import { STALE } from "../../lib/queryTiming";
 
 // A stash mutation touches the working tree, the stash list, and the graph.
 const AFFECTED_DOMAINS = ["stashes", "log", "status"];
@@ -66,7 +67,7 @@ export function StashesSection() {
     queryKey: [repo?.id, "stashes"],
     queryFn: () => repoStashes(repo!.id),
     enabled: !!repo,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
 
   const [filterQuery, setFilterQuery] = useState("");
@@ -216,7 +217,7 @@ export function StashesSection() {
       <PanelLoadingBar active={isFetching} />
       <div
         className="legit-panel__body"
-        style={{ display: "flex", flexDirection: "column", gap: 10 }}
+        style={{ display: "flex", flexDirection: "column", gap: "0.833em" }}
       >
         {stashes.length > 0 && (
           <RefFilterRow query={filterQuery} onQueryChange={setFilterQuery} label="stashes" />
@@ -230,7 +231,7 @@ export function StashesSection() {
             No matches.
           </span>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.5em" }}>
             {filteredStashes.map((s) => (
               // Rows (and the per-row edit/confirm state) are keyed by the
               // stash SHA — stable across the reordering a rename/drop causes,
@@ -263,14 +264,14 @@ export function StashesSection() {
         <div
           style={{
             borderTop: "1px solid var(--panel-border)",
-            paddingTop: 10,
+            paddingTop: "0.833em",
             display: "flex",
             flexDirection: "column",
-            gap: 6,
+            gap: "0.5em",
           }}
         >
           <SectionLabel>New stash</SectionLabel>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "0.5em", flexWrap: "wrap" }}>
             <input
               value={createMsg}
               onChange={(e) => setCreateMsg(e.target.value)}
@@ -286,7 +287,7 @@ export function StashesSection() {
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 6,
+              gap: "0.5em",
               fontSize: "var(--fz-sm)",
               color: "var(--subtle-fg)",
             }}
@@ -302,7 +303,7 @@ export function StashesSection() {
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 6,
+              gap: "0.5em",
               fontSize: "var(--fz-sm)",
               color: "var(--subtle-fg)",
             }}
@@ -392,13 +393,13 @@ function StashRow({
       style={{
         border: "1px solid var(--panel-border)",
         borderRadius: 4,
-        padding: "8px 10px",
+        padding: "0.667em 0.833em",
         display: "flex",
         flexDirection: "column",
-        gap: 6,
+        gap: "0.5em",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em" }}>
         <span style={{ color: "var(--ref-stash-fg)", flexShrink: 0, display: "inline-flex" }}>
           <StashIcon />
         </span>
@@ -450,7 +451,7 @@ function StashRow({
           />
         </InlineEditor>
       ) : (
-        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "0.5em", justifyContent: "flex-end", flexWrap: "wrap" }}>
           <ToolbarButton label="View diff" disabled={busy} onClick={onViewDiff} />
           <ToolbarButton label="Apply" disabled={busy} onClick={onApply} />
           <ToolbarButton label="Pop" disabled={busy} onClick={onPop} />

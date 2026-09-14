@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useRepoStore } from "../store/repos";
 import { repoOpenInEditor } from "../lib/commands";
 import { editorActionLabel, editorOpensFolder, effectiveEditorTemplate } from "../lib/editorAction";
@@ -9,6 +9,7 @@ import { notify } from "../store/notifications";
 import { ExternalEditorIcon, FolderIcon } from "../icons";
 import { SectionLabel } from "./Commits/menu/primitives";
 import { IconButton } from "./shared/buttons";
+import { useDismissable } from "./shared/useDismissable";
 
 /** One repo entry in the dropdown. Hover feedback matches the View menu's
  * entries (`--menu-hover-bg`); the active repo is marked by the dot only,
@@ -37,8 +38,8 @@ function RepoRow({
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 6,
-        padding: "4px 8px",
+        gap: "0.5em",
+        padding: "0.333em 0.667em",
         borderRadius: 3,
         background: hover ? "var(--menu-hover-bg, rgba(255,255,255,0.08))" : "transparent",
         cursor: "pointer",
@@ -73,7 +74,7 @@ function RepoRow({
           e.stopPropagation();
           onOpenEditor();
         }}
-        style={{ color: "inherit", fontSize: "inherit", padding: "0 4px" }}
+        style={{ color: "inherit", fontSize: "inherit", padding: "0 0.333em" }}
       >
         {opensFolder ? <FolderIcon /> : <ExternalEditorIcon />}
       </IconButton>
@@ -83,7 +84,7 @@ function RepoRow({
           e.stopPropagation();
           onClose();
         }}
-        style={{ color: "inherit", fontSize: "inherit", padding: "0 4px" }}
+        style={{ color: "inherit", fontSize: "inherit", padding: "0 0.333em" }}
       >
         ×
       </IconButton>
@@ -109,16 +110,8 @@ export function RepoOverflowMenu() {
     (s) => s.settings?.external_editor_command ?? "",
   );
 
-  // Capture phase: a stopPropagation in another panel must not keep it open
-  // (same rule as the shared context menus).
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown, { capture: true });
-    return () => document.removeEventListener("mousedown", onDown, { capture: true });
-  }, [open]);
+  const close = useCallback(() => setOpen(false), []);
+  useDismissable(open, close, [ref]);
 
   if (repos.length === 0) return null;
 
@@ -148,7 +141,7 @@ export function RepoOverflowMenu() {
             borderRadius: 4,
             boxShadow: "0 4px 10px var(--shadow-color)",
             zIndex: 1000,
-            padding: 4,
+            padding: "0.333em",
           }}
         >
           <SectionLabel>Open repositories</SectionLabel>

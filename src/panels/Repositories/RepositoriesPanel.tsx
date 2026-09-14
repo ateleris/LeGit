@@ -57,7 +57,7 @@ export function RepositoriesPanel() {
 
   return (
     <div className="legit-panel">
-      <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: "0.667em" }}>
         <Button variant="primary" onClick={doDialog}>Open repository…</Button>
         <button onClick={() => { setError(null); setMode(mode === "clone" ? "none" : "clone"); }} aria-pressed={mode === "clone"}>
           Clone…
@@ -70,10 +70,10 @@ export function RepositoriesPanel() {
         </span>
       </div>
       <div className="legit-panel__body">
-        {error && <div className="legit-error" style={{ marginBottom: 8 }}>{error}</div>}
+        {error && <div className="legit-error" style={{ marginBottom: "0.667em" }}>{error}</div>}
 
         {mode === "clone" && (
-          <div style={{ marginBottom: 14 }}>
+          <div style={{ marginBottom: "1.167em" }}>
           <CloneForm
             profiles={profiles}
             onCancel={() => setMode("none")}
@@ -86,7 +86,7 @@ export function RepositoriesPanel() {
           </div>
         )}
         {mode === "init" && (
-          <div style={{ marginBottom: 14 }}>
+          <div style={{ marginBottom: "1.167em" }}>
           <InitForm
             profiles={profiles}
             onCancel={() => setMode("none")}
@@ -108,7 +108,7 @@ export function RepositoriesPanel() {
           {openRepos.map((r) => (
             <div
               key={r.id}
-              style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", borderBottom: "1px solid var(--panel-border)" }}
+              style={{ display: "flex", alignItems: "center", gap: "0.667em", padding: "0.333em 0", borderBottom: "1px solid var(--panel-border)" }}
             >
               <Button onClick={() => setActive(r.id)} style={{ minWidth: 80 }} variant={r.id === activeRepoId ? "primary" : "default"}>
                 {r.id === activeRepoId ? "Active" : "Activate"}
@@ -126,7 +126,7 @@ export function RepositoriesPanel() {
           {recents.map((p) => {
             const parsed = parseLocator(p);
             return (
-              <div key={p} style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0" }} title={p}>
+              <div key={p} style={{ display: "flex", alignItems: "center", gap: "0.667em", padding: "0.167em 0" }} title={p}>
                 <button onClick={() => doOpen(p)} style={{ minWidth: 80 }}>Open</button>
                 {parsed.host && <HostBadge distro={parsed.host.distro} />}
                 <span style={{ flex: 1 }}>{parsed.path}</span>
@@ -141,8 +141,8 @@ export function RepositoriesPanel() {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ fontSize: "var(--fz-sm)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: 6 }}>
+    <div style={{ marginBottom: "1.333em" }}>
+      <div style={{ fontSize: "var(--fz-sm)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: "0.5em" }}>
         {title}
       </div>
       {children}

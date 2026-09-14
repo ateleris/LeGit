@@ -84,22 +84,22 @@ export function NormalizeLineEndingsBlock({
   const count = preview?.files.length ?? 0;
 
   return (
-    <div style={{ marginTop: 14 }}>
+    <div style={{ marginTop: "1.167em" }}>
       <div style={{ fontWeight: 600, fontSize: "var(--fz-md)" }}>Normalize line endings</div>
-      <div className="legit-subtle" style={{ fontSize: "var(--fz-sm)", marginTop: 2 }}>
+      <div className="legit-subtle" style={{ fontSize: "var(--fz-sm)", marginTop: "0.167em" }}>
         Re-runs git's clean filter over all tracked files (git add --renormalize).
         The result is staged for review; the working tree is never rewritten.
       </div>
 
       {!view.gitattributes_covers_all && (
-        <div style={{ marginTop: 8, padding: "6px 8px", background: "var(--button-hover-bg)", borderRadius: 4, fontSize: "var(--fz-md)" }}>
+        <div style={{ marginTop: "0.667em", padding: "0.5em 0.667em", background: "var(--button-hover-bg)", borderRadius: 4, fontSize: "var(--fz-md)" }}>
           <div>
             No covers-all rule in <code>.gitattributes</code> yet - without one,
             normalization has no repo-wide policy to apply. Add:
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "0.5em", flexWrap: "wrap" }}>
             <code style={{ fontFamily: "monospace" }}>{attrLine}</code>
-            <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: "0.333em" }}>
               eol:
               <select value={eolChoice} onChange={(e) => setEolChoice(e.target.value as "" | "lf" | "crlf")}>
                 <option value="">platform default</option>
@@ -111,14 +111,14 @@ export function NormalizeLineEndingsBlock({
               Write .gitattributes
             </Button>
           </div>
-          <div className="legit-subtle" style={{ fontSize: "var(--fz-sm)", marginTop: 4 }}>
+          <div className="legit-subtle" style={{ fontSize: "var(--fz-sm)", marginTop: "0.333em" }}>
             Inserted above existing rules so specific patterns keep winning.
             The file is left unstaged for you to commit.
           </div>
         </div>
       )}
 
-      <div style={{ marginTop: 8, fontSize: "var(--fz-md)" }}>
+      <div style={{ marginTop: "0.667em", fontSize: "var(--fz-md)" }}>
         {preview === null ? (
           <span className="legit-subtle">Checking…</span>
         ) : count === 0 ? (
@@ -132,7 +132,7 @@ export function NormalizeLineEndingsBlock({
             <summary style={{ cursor: "pointer" }}>
               {count} tracked file{count === 1 ? "" : "s"} would be renormalized
             </summary>
-            <ul style={{ margin: "4px 0 0", paddingLeft: "1.4em", fontFamily: "monospace", fontSize: "var(--fz-sm)" }}>
+            <ul style={{ margin: "0.333em 0 0", paddingLeft: "1.4em", fontFamily: "monospace", fontSize: "var(--fz-sm)" }}>
               {preview.files.map((f) => (
                 <li key={f}>{f}</li>
               ))}
@@ -142,11 +142,11 @@ export function NormalizeLineEndingsBlock({
       </div>
 
       {confirming ? (
-        <div style={{ marginTop: 8, padding: "10px 12px", background: "var(--button-hover-bg)", border: "1px solid var(--panel-border)", borderRadius: 4 }}>
-          <div style={{ fontWeight: 600, marginBottom: 6 }}>
+        <div style={{ marginTop: "0.667em", padding: "0.833em 1em", background: "var(--button-hover-bg)", border: "1px solid var(--panel-border)", borderRadius: 4 }}>
+          <div style={{ fontWeight: 600, marginBottom: "0.5em" }}>
             {count === 0 ? "Renormalize tracked files?" : `Renormalize ${count} file${count === 1 ? "" : "s"}?`}
           </div>
-          <div style={{ fontSize: "var(--fz-md)", marginBottom: 8 }}>
+          <div style={{ fontSize: "var(--fz-md)", marginBottom: "0.667em" }}>
             The result will be staged for review - nothing is committed.
             {preview !== null && preview.unstaged_changes > 0 && (
               <>
@@ -155,13 +155,13 @@ export function NormalizeLineEndingsBlock({
               </>
             )}
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: "0.5em" }}>
             <Button variant="primary" disabled={busy} onClick={executeRenormalize}>Renormalize</Button>
             <button onClick={() => setConfirming(false)}>Cancel</button>
           </div>
         </div>
       ) : (
-        <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+        <div style={{ display: "flex", gap: "0.5em", marginTop: "0.667em" }}>
           <Button
             variant="primary"
             disabled={busy || preview === null}
@@ -172,8 +172,8 @@ export function NormalizeLineEndingsBlock({
         </div>
       )}
 
-      {outcome && <div className="legit-success" style={{ marginTop: 6, fontSize: "var(--fz-md)" }}>{outcome}</div>}
-      {error && <pre className="legit-error" style={{ marginTop: 6 }}>{error}</pre>}
+      {outcome && <div className="legit-success" style={{ marginTop: "0.5em", fontSize: "var(--fz-md)" }}>{outcome}</div>}
+      {error && <pre className="legit-error" style={{ marginTop: "0.5em" }}>{error}</pre>}
     </div>
   );
 }

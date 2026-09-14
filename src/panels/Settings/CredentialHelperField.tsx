@@ -122,7 +122,7 @@ export function CredentialHelperField({
 
       {selectValue === CUSTOM && (
         <input
-          style={{ marginTop: 4 }}
+          style={{ marginTop: "0.333em" }}
           value={value}
           placeholder='helper value, e.g. "cache --timeout=3600" (short name, not a full path)'
           onChange={(e) => onChange(e.target.value)}

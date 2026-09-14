@@ -104,20 +104,20 @@ export function GlobalProfilesSection() {
       </FieldNote>
 
       {profiles.length === 0 && !editing && (
-        <div className="legit-subtle" style={{ marginTop: 8, fontSize: "var(--fz-md)" }}>
+        <div className="legit-subtle" style={{ marginTop: "0.667em", fontSize: "var(--fz-md)" }}>
           No profiles yet.
         </div>
       )}
 
-      <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ marginTop: "0.667em", display: "flex", flexDirection: "column", gap: "0.5em" }}>
         {profiles.map((p) => (
           <div
             key={p.id}
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 8,
-              padding: "6px 8px",
+              gap: "0.667em",
+              padding: "0.5em 0.667em",
               background: "var(--button-hover-bg)",
               borderRadius: 4,
             }}
@@ -165,7 +165,7 @@ export function GlobalProfilesSection() {
           onCancel={() => { setEditing(null); setError(null); }}
         />
       ) : (
-        <div style={{ marginTop: 10 }}>
+        <div style={{ marginTop: "0.833em" }}>
           <Button variant="primary" data-testid="profile-new" onClick={() => setEditing(emptyProfile())}>
             New profile
           </Button>
@@ -173,7 +173,7 @@ export function GlobalProfilesSection() {
       )}
 
       {(error ?? profilesQuery.error) && (
-        <pre className="legit-error" style={{ marginTop: 6 }}>
+        <pre className="legit-error" style={{ marginTop: "0.5em" }}>
           {error ?? formatAppError(profilesQuery.error)}
         </pre>
       )}
@@ -212,13 +212,13 @@ function ProfileEditor({
   return (
     <div
       style={{
-        marginTop: 10,
-        padding: "10px 12px",
+        marginTop: "0.833em",
+        padding: "0.833em 1em",
         border: "1px solid var(--panel-border)",
         borderRadius: 4,
         display: "flex",
         flexDirection: "column",
-        gap: 8,
+        gap: "0.667em",
       }}
     >
       <Field label="Profile name">
@@ -279,7 +279,7 @@ function ProfileEditor({
         </FieldNote>
       </Field>
 
-      <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+      <div style={{ display: "flex", gap: "0.5em", marginTop: "0.333em" }}>
         <Button variant="primary" data-testid="profile-save" disabled={p.name.trim() === ""} onClick={() => onSave({ ...p, name: p.name.trim() })}>
           Save profile
         </Button>
@@ -293,7 +293,7 @@ function ProfileEditor({
 
 export function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+    <label style={{ display: "flex", flexDirection: "column", gap: "0.25em" }}>
       <span style={{ fontSize: "var(--fz-md)", fontFamily: "monospace", color: "var(--subtle-fg)" }}>{label}</span>
       {children}
     </label>
@@ -312,7 +312,7 @@ export function WithBrowse({
   placeholder?: string;
 }) {
   return (
-    <div style={{ display: "flex", gap: 6 }}>
+    <div style={{ display: "flex", gap: "0.5em" }}>
       <input style={{ flex: 1 }} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
       <button onClick={onBrowse}>Browse…</button>
     </div>
@@ -331,9 +331,9 @@ function Radio({
   onChange: (v: string | null) => void;
 }) {
   return (
-    <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+    <div style={{ display: "flex", gap: "1em", flexWrap: "wrap" }}>
       {options.map((opt) => (
-        <label key={opt.label} style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+        <label key={opt.label} style={{ display: "flex", alignItems: "center", gap: "0.333em", cursor: "pointer" }}>
           <input type="radio" name={name} checked={value === opt.value} onChange={() => onChange(opt.value)} />
           <code style={{ fontSize: "var(--fz-md)" }}>{opt.label}</code>
         </label>

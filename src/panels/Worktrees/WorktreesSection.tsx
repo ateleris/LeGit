@@ -21,6 +21,7 @@ import { usePanelRunner } from "../shared/usePanelRunner";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { worktreeBadges, worktreeLabel } from "./worktreeRows";
+import { STALE } from "../../lib/queryTiming";
 
 const normalize = (p: string) => p.replaceAll("\\", "/");
 
@@ -39,7 +40,7 @@ export function WorktreesSection() {
     queryKey: [repo?.id, "worktrees"],
     queryFn: () => repoWorktreeList(repo!.id),
     enabled: !!repo,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   // Existing local branches feed the checkout mode's picker; branches
   // checked out in some worktree are filtered out (git would refuse them).
@@ -47,7 +48,7 @@ export function WorktreesSection() {
     queryKey: [repo?.id, "branches"],
     queryFn: () => repoBranches(repo!.id),
     enabled: !!repo && adding,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
 
   const refresh = () => {
@@ -128,8 +129,8 @@ export function WorktreesSection() {
   };
 
   return (
-    <div className="legit-panel__body" style={{ padding: "4px 0", overflowY: "auto" }}>
-      <div style={{ display: "flex", gap: 6, padding: "2px 8px" }}>
+    <div className="legit-panel__body" style={{ padding: "0.333em 0", overflowY: "auto" }}>
+      <div style={{ display: "flex", gap: "0.5em", padding: "0.167em 0.667em" }}>
         <ToolbarButton label="Add…" disabled={busy} onClick={() => setAdding((a) => !a)} />
         {worktrees.some((w) => w.prunable !== null) && (
           <ToolbarButton
@@ -140,8 +141,8 @@ export function WorktreesSection() {
         )}
       </div>
       {adding && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "4px 8px" }}>
-          <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.5em", padding: "0.333em 0.667em" }}>
+          <div style={{ display: "flex", gap: "0.5em" }}>
             <input
               placeholder="Absolute path for the new worktree"
               value={addPath}
@@ -154,7 +155,7 @@ export function WorktreesSection() {
               </button>
             )}
           </div>
-          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: "0.5em", alignItems: "center" }}>
             <select
               value={addMode}
               onChange={(e) => setAddMode(e.target.value as "new_branch" | "checkout" | "detach")}
@@ -207,8 +208,8 @@ export function WorktreesSection() {
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 6,
-              padding: "2px 8px",
+              gap: "0.5em",
+              padding: "0.167em 0.667em",
               fontSize: "var(--fz-md)",
             }}
           >
@@ -236,7 +237,7 @@ export function WorktreesSection() {
                 {b}
               </span>
             ))}
-            <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+            <span style={{ marginLeft: "auto", display: "flex", gap: "0.5em" }}>
               {!isCurrent && (
                 <ToolbarButton
                   label="Open"
@@ -285,7 +286,7 @@ export function WorktreesSection() {
         );
       })}
       {worktrees.length <= 1 && !adding && (
-        <div className="legit-subtle" style={{ padding: "2px 8px", fontSize: "var(--fz-sm)" }}>
+        <div className="legit-subtle" style={{ padding: "0.167em 0.667em", fontSize: "var(--fz-sm)" }}>
           No linked worktrees.
         </div>
       )}

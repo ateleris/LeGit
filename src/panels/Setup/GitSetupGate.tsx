@@ -58,14 +58,14 @@ export function GitSetupGate({ status, children }: Props) {
 
         <InstallInstructions />
 
-        <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: "0.667em", marginTop: "1.333em", flexWrap: "wrap", alignItems: "center" }}>
           <Button onClick={recheck} variant="primary" disabled={pending}>
             {pending ? "Checking…" : "Re-check"}
           </Button>
           <button onClick={browse} disabled={pending}>Browse for git executable…</button>
         </div>
         {recheckedAndStillMissing && !pending && (
-          <p className="legit-subtle" style={{ marginTop: 10, fontSize: "var(--fz-md)" }}>
+          <p className="legit-subtle" style={{ marginTop: "0.833em", fontSize: "var(--fz-md)" }}>
             Still not found. If you installed git just now, the PATH change may
             not reach this running app — restart LeGit (on Windows, log out and
             back in if it persists), or point at the executable directly with
@@ -89,7 +89,7 @@ export function GitSetupGate({ status, children }: Props) {
 
         <InstallInstructions upgrade />
 
-        <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: "0.667em", marginTop: "1.333em", flexWrap: "wrap", alignItems: "center" }}>
           <Button onClick={recheck} disabled={pending}>
             {pending ? "Checking…" : "Re-check"}
           </Button>
@@ -121,14 +121,14 @@ function InstallInstructions({ upgrade }: { upgrade?: boolean }) {
   const verb = upgrade ? "Upgrade" : "Install";
 
   return (
-    <div style={{ marginTop: 14 }}>
+    <div style={{ marginTop: "1.167em" }}>
       {platform === "windows" && (
         <>
-          <p style={{ marginBottom: 8 }}>
+          <p style={{ marginBottom: "0.667em" }}>
             {verb} <strong>Git for Windows</strong> — its installer sets up the
             credential manager and PATH for you:
           </p>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "0.667em", alignItems: "center", flexWrap: "wrap" }}>
             <Button onClick={() => void openExternal("https://git-scm.com/download/win")}>
               Download Git for Windows
             </Button>
@@ -139,13 +139,13 @@ function InstallInstructions({ upgrade }: { upgrade?: boolean }) {
       )}
       {platform === "macos" && (
         <>
-          <p style={{ marginBottom: 8 }}>
+          <p style={{ marginBottom: "0.667em" }}>
             {verb} git via the Xcode Command Line Tools (Apple's git) or
             Homebrew:
           </p>
           <CopyableCommand command="xcode-select --install" />
           <CopyableCommand command="brew install git" />
-          <div style={{ marginTop: 8 }}>
+          <div style={{ marginTop: "0.667em" }}>
             <Button onClick={() => void openExternal("https://git-scm.com/download/mac")}>
               Other install options
             </Button>
@@ -154,7 +154,7 @@ function InstallInstructions({ upgrade }: { upgrade?: boolean }) {
       )}
       {platform === "linux" && (
         <>
-          <p style={{ marginBottom: 8 }}>{verb} git with your distribution's package manager:</p>
+          <p style={{ marginBottom: "0.667em" }}>{verb} git with your distribution's package manager:</p>
           <CopyableCommand command="sudo apt install git" note="Debian / Ubuntu" />
           <CopyableCommand command="sudo dnf install git" note="Fedora" />
           <CopyableCommand command="sudo pacman -S git" note="Arch" />
@@ -181,10 +181,10 @@ function CopyableCommand({ command, note }: { command: string; note?: string }) 
   };
 
   return (
-    <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+    <div style={{ display: "flex", gap: "0.667em", alignItems: "center", marginTop: "0.5em" }}>
       <code
         style={{
-          padding: "3px 8px",
+          padding: "0.25em 0.667em",
           border: "1px solid var(--panel-border)",
           borderRadius: 3,
           background: "var(--button-hover-bg)",
@@ -205,10 +205,10 @@ function Setup({ title, children }: { title: string; children: ReactNode }) {
     <div className="legit-splash">
       <div
         className="legit-splash__inner"
-        style={{ maxWidth: 620, padding: 24, textAlign: "left" }}
+        style={{ maxWidth: 620, padding: "2em", textAlign: "left" }}
       >
         <div className="legit-splash__title">{title}</div>
-        <div style={{ marginTop: 8, fontSize: "var(--fz-lg)", lineHeight: 1.5 }}>{children}</div>
+        <div style={{ marginTop: "0.667em", fontSize: "var(--fz-lg)", lineHeight: 1.5 }}>{children}</div>
       </div>
     </div>
   );

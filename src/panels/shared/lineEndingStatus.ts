@@ -9,6 +9,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { repoLineEndingStatus } from "../../lib/commands";
 import type { LineEndingKind, LineEndingStatusEntry } from "../../lib/types";
+import { STALE } from "../../lib/queryTiming";
 
 export function useLineEndingStatusMap(
   repoId: string | undefined,
@@ -18,7 +19,7 @@ export function useLineEndingStatusMap(
     queryKey: [repoId, "status", "line-endings"],
     queryFn: () => repoLineEndingStatus(repoId!),
     enabled: !!repoId && enabled,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   return useMemo(() => new Map((data ?? []).map((e) => [e.path, e])), [data]);
 }

@@ -127,11 +127,11 @@ function AskpassDialog({
         border: "1px solid var(--panel-border)",
         borderRadius: 6,
         boxShadow: "0 6px 24px var(--shadow-color)",
-        padding: "12px 14px",
+        padding: "1em 1.167em",
         zIndex: 10000,
         display: "flex",
         flexDirection: "column",
-        gap: 10,
+        gap: "0.833em",
         fontSize: "var(--fz-md)",
       }}
     >
@@ -167,7 +167,7 @@ function AskpassDialog({
         </div>
       )}
       {!confirmation && (
-        <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: "0.25em" }}>
           <span style={caption}>
             {request.kind === "passphrase" ? "Passphrase" : "Answer"}
             <span className="legit-subtle"> (kept in memory for this session only)</span>
@@ -181,7 +181,7 @@ function AskpassDialog({
           />
         </label>
       )}
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5em" }}>
         {confirmation ? (
           // No autofocus on Yes: verifying a host key deserves a deliberate
           // click (the app convention starts focus away from the approving

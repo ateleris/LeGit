@@ -13,6 +13,7 @@ import { CloneTabs } from "./CloneTab";
 import { HostBadge } from "./shared/HostBadge";
 import { WatchOffBadge } from "./shared/WatchOffBadge";
 import { useCloneStore } from "../store/clone";
+import { STALE } from "../lib/queryTiming";
 
 const DRAG_THRESHOLD = 4; // px before a press becomes a drag
 
@@ -170,7 +171,7 @@ export function RepoTabBar() {
     queryKey: [activeRepoId, "remotes", "web-url"],
     queryFn: () => repoRemoteWebUrl(activeRepoId!),
     enabled: !!activeRepoId,
-    staleTime: 60_000,
+    staleTime: STALE.stable,
   });
   const onOpenRemotePage = async () => {
     if (!activeRepoId) return;
@@ -189,7 +190,7 @@ export function RepoTabBar() {
     queryKey: [activeRepoId, "superproject"],
     queryFn: () => repoSuperproject(activeRepoId!),
     enabled: !!activeRepoId,
-    staleTime: 300_000,
+    staleTime: STALE.rare,
   });
   const onOpenSuperproject = async () => {
     if (!superprojectPath) return;
@@ -207,7 +208,7 @@ export function RepoTabBar() {
     <div className="legit-tabs" role="tablist">
       <div className="legit-tabs__scroll" ref={scrollerRef}>
         {openRepos.length === 0 && !hasClones && (
-          <span className="legit-subtle" style={{ padding: "0 12px", alignSelf: "center" }}>
+          <span className="legit-subtle" style={{ padding: "0 1em", alignSelf: "center" }}>
             No repositories open.
           </span>
         )}

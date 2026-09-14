@@ -27,6 +27,7 @@ import {
 } from "../lib/mergeFeedback";
 import { ToolbarButton } from "./shared/ToolbarButton";
 import { usePanelRunner } from "./shared/usePanelRunner";
+import { STALE } from "../lib/queryTiming";
 
 // The banner's ghost buttons sit on banner-op-bg, not a panel surface, so
 // their text and border must follow the banner's own foreground token.
@@ -61,7 +62,7 @@ export function OpStateStrip() {
     queryKey: [activeRepoId, "status"],
     queryFn: () => repoStatus(activeRepoId!),
     enabled: !!activeRepoId && opActive,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   const conflictCount = useMemo(
     () => status.filter((s) => s.state === "Conflicted").length,
@@ -203,8 +204,8 @@ export function OpStateBanner({
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 8,
-        padding: "4px 8px",
+        gap: "0.667em",
+        padding: "0.333em 0.667em",
         background: "var(--banner-op-bg)",
         color: "var(--banner-op-fg)",
         fontSize: "var(--fz-sm)",
@@ -218,7 +219,7 @@ export function OpStateBanner({
           <span style={{ minWidth: 0 }}>
             Abort {meta.noun}? Conflict resolutions will be discarded.
           </span>
-          <span style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+          <span style={{ display: "flex", gap: "0.333em", marginLeft: "auto" }}>
             <ToolbarButton
               label={`Abort ${meta.noun}`}
               disabled={busy}
@@ -245,7 +246,7 @@ export function OpStateBanner({
           >
             {title} · {conflictsText}
           </span>
-          <span style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+          <span style={{ display: "flex", gap: "0.333em", marginLeft: "auto" }}>
             <ToolbarButton
               label="Continue"
               title={

@@ -38,7 +38,7 @@ export function GitExecutableSection() {
         <>
           <GitStatusReadout status={status} />
           <FieldNote>writes to: global settings</FieldNote>
-          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+          <div style={{ display: "flex", gap: "0.5em", marginTop: "0.667em" }}>
             <input
               style={{ flex: 1 }}
               value={draft}

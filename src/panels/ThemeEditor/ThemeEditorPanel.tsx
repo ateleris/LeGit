@@ -311,7 +311,7 @@ export function ThemeEditorPanel() {
 
         <SettingsGroup id="theme-editor.metadata" title="Metadata">
           <div
-            style={{ display: "grid", gap: 6, gridTemplateColumns: "120px 1fr", marginBottom: 12 }}
+            style={{ display: "grid", gap: "0.5em", gridTemplateColumns: "120px 1fr", marginBottom: "1em" }}
           >
             <label>Name</label>
             <input
@@ -350,11 +350,11 @@ export function ThemeEditorPanel() {
 
         <SettingsGroup id="theme-editor.tokens" title="Tokens" defaultOpen={false}>
         {groups.map(([group, tokens]) => (
-          <div key={group} style={{ marginBottom: 12 }}>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>{group}</div>
+          <div key={group} style={{ marginBottom: "1em" }}>
+            <div style={{ fontWeight: 600, marginBottom: "0.333em" }}>{group}</div>
             {group === "Refs" && (
-              <div style={{ margin: "2px 0 8px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <div style={{ margin: "0.167em 0 0.667em" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginBottom: "0.5em" }}>
                   <input
                     type="checkbox"
                     id="theme-stash-base-lane"
@@ -366,7 +366,7 @@ export function ThemeEditorPanel() {
                     Color stashes by their base commit's lane
                   </label>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.667em" }}>
                   <input
                     type="checkbox"
                     id="theme-lane-colored-chips"
@@ -394,8 +394,8 @@ export function ThemeEditorPanel() {
                         display: "grid",
                         gridTemplateColumns: "1fr 1fr 0.6fr 20px 24px",
                         alignItems: "center",
-                        gap: 6,
-                        padding: "2px 0",
+                        gap: "0.5em",
+                        padding: "0.167em 0",
                       }}
                       title="Applied to the row's graph lane colour while the toggle is on."
                     >
@@ -458,8 +458,8 @@ export function ThemeEditorPanel() {
                     display: "grid",
                     gridTemplateColumns: "1fr 1fr 0.6fr 20px 24px",
                     alignItems: "center",
-                    gap: 6,
-                    padding: "2px 0",
+                    gap: "0.5em",
+                    padding: "0.167em 0",
                     // Dimmed while the theme has no explicit binding — the
                     // shown value is the built-in default fallback. Picking
                     // anything makes it explicit.
@@ -636,8 +636,8 @@ function ContrastSection({ working }: { working: ThemeDocument }) {
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 10,
-                padding: "2px 0",
+                gap: "0.833em",
+                padding: "0.167em 0",
               }}
             >
               {/* The sample nests inside the pair's base surface(s), deepest
@@ -657,7 +657,7 @@ function ContrastSection({ working }: { working: ThemeDocument }) {
                       display: "block",
                       background: cssVar(pair.bg),
                       color: cssVar(pair.fg),
-                      padding: "2px 8px",
+                      padding: "0.167em 0.667em",
                       borderRadius: 3,
                     }}
                   >
@@ -727,7 +727,7 @@ function ContrastGroup({
     });
 
   return (
-    <div style={{ marginBottom: 12 }}>
+    <div style={{ marginBottom: "1em" }}>
       <button
         type="button"
         onClick={toggle}
@@ -735,10 +735,10 @@ function ContrastGroup({
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 6,
+          gap: "0.5em",
           background: "transparent",
           border: "none",
-          padding: "2px 0",
+          padding: "0.167em 0",
           cursor: "pointer",
           color: "var(--panel-fg)",
           fontWeight: 600,
@@ -759,7 +759,7 @@ function ContrastGroup({
           </span>
         )}
       </button>
-      {open && <div style={{ marginTop: 4 }}>{children}</div>}
+      {open && <div style={{ marginTop: "0.333em" }}>{children}</div>}
     </div>
   );
 }
@@ -777,7 +777,7 @@ interface PaletteEditorProps {
 
 function PaletteEditor(p: PaletteEditorProps) {
   return (
-    <div style={{ marginBottom: 12 }}>
+    <div style={{ marginBottom: "1em" }}>
       {Object.entries(p.palette).map(([name, value]) => (
         <PaletteRow
           key={name}
@@ -790,7 +790,7 @@ function PaletteEditor(p: PaletteEditorProps) {
           onRemove={p.onRemove}
         />
       ))}
-      <button onClick={p.onAdd} disabled={p.disabled} style={{ marginTop: 4 }}>
+      <button onClick={p.onAdd} disabled={p.disabled} style={{ marginTop: "0.333em" }}>
         + Add palette colour
       </button>
     </div>

@@ -12,10 +12,13 @@ import { supportsRepoGitOverride } from "../../lib/locator";
 import { summonGlobalPanel } from "../GlobalDock";
 import { RepoIdentitySection } from "./RepoIdentitySection";
 import { NormalizeLineEndingsBlock } from "./NormalizeLineEndingsBlock";
+import { ConfigRow, RadioGroup, ResolvedBadge } from "./SigningSettings";
+import { AUTOCRLF_OPTIONS, EOL_OPTIONS, getChangedValues } from "./lineEndingOptions";
 import { Section, Row, FieldNote, SettingsGroup, GitConfigPill } from "./primitives";
 import { Button } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
 import { useDelayedFlag } from "../shared/useDelayedFlag";
+import { STALE } from "../../lib/queryTiming";
 
 /**
  * Repo Settings panel — edits repo-scope settings for the active repo.
@@ -100,15 +103,15 @@ export function RepoSettingsPanel() {
           style={{
             display: "flex",
             flexWrap: "wrap",
-            gap: "6px 14px",
+            gap: "0.5em 1.167em",
             alignItems: "center",
             fontSize: "var(--fz-sm)",
             color: "var(--subtle-fg)",
-            marginBottom: 18,
+            marginBottom: "1.5em",
           }}
         >
           <span>Settings here apply to this repository only.</span>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "0.5em" }}>
             <GitConfigPill /> items change this repo's Git configuration.
           </span>
         </div>
@@ -137,7 +140,7 @@ export function RepoSettingsPanel() {
                 />
               )}
               <FieldNote>writes to: repos/&lt;hash&gt;/settings.json (this repo only)</FieldNote>
-              <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+              <div style={{ display: "flex", gap: "0.5em", marginTop: "0.667em" }}>
                 <input
                   style={{ flex: 1 }}
                   value={draft}
@@ -158,9 +161,9 @@ export function RepoSettingsPanel() {
                   </button>
                 )}
               </div>
-              {error && <pre className="legit-error" style={{ marginTop: 6 }}>{error}</pre>}
+              {error && <pre className="legit-error" style={{ marginTop: "0.5em" }}>{error}</pre>}
               {successMsg && (
-                <div className="legit-success" style={{ marginTop: 6, fontSize: "var(--fz-md)" }}>
+                <div className="legit-success" style={{ marginTop: "0.5em", fontSize: "var(--fz-md)" }}>
                   {successMsg}
                 </div>
               )}
@@ -219,7 +222,7 @@ function RemoteRepoGitSection({ distro }: { distro: string }) {
       <FieldNote>
         writes to: hosts/wsl-&lt;distro&gt;.json (all repositories in this distribution)
       </FieldNote>
-      <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      <div style={{ marginTop: "0.667em", display: "flex", alignItems: "center", gap: "0.667em", flexWrap: "wrap" }}>
         <span style={{ fontSize: "var(--fz-md)", color: "var(--subtle-fg)" }}>
           Per-repository overrides aren&apos;t available for repositories inside WSL yet.
         </span>
@@ -270,7 +273,7 @@ function ExternalEditorRepoSection({
         }
       />
       <FieldNote>writes to: repos/&lt;hash&gt;/settings.json (this repo only)</FieldNote>
-      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+      <div style={{ display: "flex", gap: "0.5em", marginTop: "0.667em" }}>
         <input
           style={{ flex: 1 }}
           value={draft}
@@ -335,7 +338,7 @@ function LineEndingChangesRepoSection({
     <Section title="Line ending changes">
       <FieldNote>writes to: repos/&lt;hash&gt;/settings.json (this repo only)</FieldNote>
       {groups.map((g) => (
-        <div key={g.key} style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+        <div key={g.key} style={{ display: "flex", flexDirection: "column", gap: "0.5em", marginTop: "0.667em" }}>
           <div style={{ fontSize: "var(--fz-md)" }}>{g.label}</div>
           {(["inherit", "on", "off"] as const).map((opt) => {
             const checked =
@@ -343,7 +346,7 @@ function LineEndingChangesRepoSection({
               opt === "on" ? g.override === true :
               g.override === false;
             return (
-              <label key={opt} style={{ display: "flex", alignItems: "center", gap: 6, cursor: saving ? "default" : "pointer", opacity: saving ? 0.5 : 1 }}>
+              <label key={opt} style={{ display: "flex", alignItems: "center", gap: "0.5em", cursor: saving ? "default" : "pointer", opacity: saving ? 0.5 : 1 }}>
                 <input
                   type="radio"
                   name={`repo-${g.key}-${repoId}`}
@@ -392,8 +395,8 @@ function CommitTreeRepoSection({
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 6,
-          marginTop: 8,
+          gap: "0.5em",
+          marginTop: "0.667em",
           cursor: saving ? "default" : "pointer",
           opacity: saving ? 0.5 : 1,
           fontSize: "var(--fz-lg)",
@@ -407,7 +410,7 @@ function CommitTreeRepoSection({
         />
         Show remote branches
       </label>
-      <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: 4 }}>
+      <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: "0.333em" }}>
         Include remote-tracking branches (e.g. origin/main) in the commit tree,
         so fetched commits appear even before they are merged locally. Turn off
         to show local branch history only.
@@ -443,8 +446,8 @@ function SubmoduleAutoUpdateSection({
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 6,
-          marginTop: 8,
+          gap: "0.5em",
+          marginTop: "0.667em",
           cursor: saving ? "default" : "pointer",
           opacity: saving ? 0.5 : 1,
           fontSize: "var(--fz-lg)",
@@ -458,7 +461,7 @@ function SubmoduleAutoUpdateSection({
         />
         Auto-update submodules after switch/pull
       </label>
-      <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: 4 }}>
+      <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: "0.333em" }}>
         Dirty submodules follow the global branch-switch strategy; a conflicting
         carry-over rolls the submodule back with your changes intact.
       </div>
@@ -489,7 +492,7 @@ function AutoPushTagsRepoSection({
   return (
     <Section title="Auto-push tags">
       <FieldNote>writes to: repos/&lt;hash&gt;/settings.json (this repo only)</FieldNote>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.5em", marginTop: "0.667em" }}>
         <div style={{ fontSize: "var(--fz-md)" }}>Push tags with their commit automatically</div>
         {(["inherit", "on", "off"] as const).map((opt) => {
           const checked =
@@ -497,7 +500,7 @@ function AutoPushTagsRepoSection({
             opt === "on" ? override === true :
             override === false;
           return (
-            <label key={opt} style={{ display: "flex", alignItems: "center", gap: 6, cursor: saving ? "default" : "pointer", opacity: saving ? 0.5 : 1 }}>
+            <label key={opt} style={{ display: "flex", alignItems: "center", gap: "0.5em", cursor: saving ? "default" : "pointer", opacity: saving ? 0.5 : 1 }}>
               <input
                 type="radio"
                 name={`repo-auto-push-tags-${repoId}`}
@@ -514,7 +517,7 @@ function AutoPushTagsRepoSection({
           );
         })}
       </div>
-      <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: 4 }}>
+      <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: "0.333em" }}>
         Whether pushes take the tags on their commits along, and a tag created
         on an already-pushed commit is pushed immediately. Per-repo because
         "tags are releases" is a property of a repo — e.g. keep it off
@@ -544,7 +547,7 @@ function LfsWarningRepoSection({
   const { data: lfs, dataUpdatedAt } = useQuery<LfsStatus>({
     queryKey: [repoId, "lfs"],
     queryFn: () => repoLfsStatus(repoId),
-    staleTime: 300_000,
+    staleTime: STALE.rare,
   });
 
   // Stored as true (suppressed) or null (warn - the default); never false,
@@ -567,8 +570,8 @@ function LfsWarningRepoSection({
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 6,
-          marginTop: 8,
+          gap: "0.5em",
+          marginTop: "0.667em",
           cursor: saving ? "default" : "pointer",
           opacity: saving ? 0.5 : 1,
         }}
@@ -583,7 +586,7 @@ function LfsWarningRepoSection({
           Warn when this repository uses Git LFS but git-lfs is unavailable
         </span>
       </label>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 10, fontSize: "var(--fz-md)" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.333em", marginTop: "0.833em", fontSize: "var(--fz-md)" }}>
         <div>Repository uses LFS: {lfs ? (lfs.uses_lfs ? "yes" : "no") : "checking…"}</div>
         {lfs?.uses_lfs && (
           <>
@@ -591,7 +594,7 @@ function LfsWarningRepoSection({
             <div>Set up for this repo (git lfs install): {lfs.initialized ? "yes" : "no"}</div>
           </>
         )}
-        <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ marginTop: "0.333em", display: "flex", alignItems: "center", gap: "0.667em" }}>
           <Button onClick={() => queryClient.invalidateQueries({ queryKey: [repoId, "lfs"] })}>
             Re-check
           </Button>
@@ -620,7 +623,7 @@ function LfsPatternsBlock({ repoId }: { repoId: string }) {
   const { data: view } = useQuery<LfsPatternsView>({
     queryKey: [repoId, "status", "lfs-patterns"],
     queryFn: () => repoLfsPatterns(repoId),
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -657,7 +660,7 @@ function LfsPatternsBlock({ repoId }: { repoId: string }) {
     });
 
   return (
-    <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+    <div style={{ marginTop: "1em", display: "flex", flexDirection: "column", gap: "0.5em" }}>
       <div style={{ fontSize: "var(--fz-md)" }}>Tracked patterns (root .gitattributes)</div>
       {view && view.root_patterns.length === 0 && (
         <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
@@ -665,14 +668,14 @@ function LfsPatternsBlock({ repoId }: { repoId: string }) {
         </span>
       )}
       {view?.root_patterns.map((p) => (
-        <div key={p} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div key={p} style={{ display: "flex", alignItems: "center", gap: "0.667em" }}>
           <code style={{ fontFamily: "monospace", flex: 1 }}>{p}</code>
           <Button disabled={busy} onClick={() => untrack(p)}>
             Untrack
           </Button>
         </div>
       ))}
-      <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+      <div style={{ display: "flex", gap: "0.5em", marginTop: "0.333em" }}>
         <input
           style={{ flex: 1, fontFamily: "monospace" }}
           value={draft}
@@ -782,7 +785,7 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
       <FieldNote>writes to: .git/config (this repo only)</FieldNote>
 
       {coversAll && (
-        <div style={{ marginTop: 8, padding: "6px 8px", background: "var(--button-hover-bg)", borderRadius: 4, fontSize: "var(--fz-md)" }}>
+        <div style={{ marginTop: "0.667em", padding: "0.5em 0.667em", background: "var(--button-hover-bg)", borderRadius: 4, fontSize: "var(--fz-md)" }}>
           A <code>*</code> pattern in <code>.gitattributes</code> sets text/eol for all files —{" "}
           <code>core.autocrlf</code> and <code>core.eol</code> are overridden by it.
           Current <code>git config</code> values are shown below for reference.
@@ -790,13 +793,13 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
       )}
 
       {hasPartialRules && (
-        <div style={{ marginTop: 8, padding: "6px 8px", background: "var(--button-hover-bg)", borderRadius: 4, fontSize: "var(--fz-md)" }}>
+        <div style={{ marginTop: "0.667em", padding: "0.5em 0.667em", background: "var(--button-hover-bg)", borderRadius: 4, fontSize: "var(--fz-md)" }}>
           This repo's <code>.gitattributes</code> covers some files (see below);{" "}
           <code>core.autocrlf</code> and <code>core.eol</code> apply to the rest.
         </div>
       )}
 
-      <div style={{ marginTop: 10 }}>
+      <div style={{ marginTop: "0.833em" }}>
         <ConfigRow label="core.autocrlf">
           <RadioGroup
             name={`repo-autocrlf-${repoId}`}
@@ -825,21 +828,21 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
       </div>
 
       {confirmPending && (
-        <div style={{ marginTop: 10, padding: "10px 12px", background: "var(--button-hover-bg)", border: "1px solid var(--panel-border)", borderRadius: 4 }}>
-          <div style={{ fontWeight: 600, marginBottom: 6 }}>
+        <div style={{ marginTop: "0.833em", padding: "0.833em 1em", background: "var(--button-hover-bg)", border: "1px solid var(--panel-border)", borderRadius: 4 }}>
+          <div style={{ fontWeight: 600, marginBottom: "0.5em" }}>
             Save line-ending changes to this repo's .git/config?
           </div>
-          <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
+          <div style={{ marginBottom: "0.667em", fontSize: "var(--fz-md)" }}>
             {changes.map((c) => (
               <div key={c.key} style={{ fontFamily: "monospace" }}>
                 <code>{c.key}</code>: <code>{c.before ?? "unset"}</code> → <code>{c.after ?? "unset"}</code>
               </div>
             ))}
           </div>
-          <div style={{ fontSize: "var(--fz-md)", color: "var(--subtle-fg)", marginBottom: 10 }}>
+          <div style={{ fontSize: "var(--fz-md)", color: "var(--subtle-fg)", marginBottom: "0.833em" }}>
             These writes affect only this repo. Your global Git config and other repos are not affected.
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: "0.5em" }}>
             <Button variant="primary" onClick={handleConfirm} disabled={saving}>Save</Button>
             <button onClick={() => setConfirmPending(false)}>Cancel</button>
           </div>
@@ -847,7 +850,7 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
       )}
 
       {!confirmPending && (
-        <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+        <div style={{ display: "flex", gap: "0.5em", marginTop: "0.667em" }}>
           <Button variant="primary" disabled={!dirty || saving || coversAll} onClick={handleSave}>
             Save
           </Button>
@@ -857,18 +860,18 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
         </div>
       )}
 
-      {error && <pre className="legit-error" style={{ marginTop: 6 }}>{error}</pre>}
+      {error && <pre className="legit-error" style={{ marginTop: "0.5em" }}>{error}</pre>}
 
       {view.gitattributes.length > 0 && (
-        <div style={{ marginTop: 14 }}>
-          <div style={{ fontSize: "var(--fz-sm)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: 6 }}>
+        <div style={{ marginTop: "1.167em" }}>
+          <div style={{ fontSize: "var(--fz-sm)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: "0.5em" }}>
             .gitattributes rules
           </div>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--fz-md)" }}>
             <thead>
               <tr>
                 {["pattern", "text", "eol"].map((h) => (
-                  <th key={h} style={{ textAlign: "left", padding: "2px 8px 2px 0", color: "var(--subtle-fg)", fontWeight: "normal" }}>
+                  <th key={h} style={{ textAlign: "left", padding: "0.167em 0.667em 0.167em 0", color: "var(--subtle-fg)", fontWeight: "normal" }}>
                     {h}
                   </th>
                 ))}
@@ -900,117 +903,14 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
 function GitAttrRow({ rule }: { rule: GitAttrRule }) {
   return (
     <tr>
-      <td style={{ padding: "1px 8px 1px 0", fontFamily: "monospace" }}>{rule.pattern}</td>
-      <td style={{ padding: "1px 8px 1px 0", fontFamily: "monospace", color: rule.text ? "inherit" : "var(--subtle-fg)" }}>
+      <td style={{ padding: "0.083em 0.667em 0.083em 0", fontFamily: "monospace" }}>{rule.pattern}</td>
+      <td style={{ padding: "0.083em 0.667em 0.083em 0", fontFamily: "monospace", color: rule.text ? "inherit" : "var(--subtle-fg)" }}>
         {rule.text ?? "—"}
       </td>
-      <td style={{ padding: "1px 8px 1px 0", fontFamily: "monospace", color: rule.eol ? "inherit" : "var(--subtle-fg)" }}>
+      <td style={{ padding: "0.083em 0.667em 0.083em 0", fontFamily: "monospace", color: rule.eol ? "inherit" : "var(--subtle-fg)" }}>
         {rule.eol ?? "—"}
       </td>
     </tr>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Shared helpers
-// ---------------------------------------------------------------------------
-
-const AUTOCRLF_OPTIONS: { label: string; value: string | null }[] = [
-  { label: "true", value: "true" },
-  { label: "input", value: "input" },
-  { label: "false", value: "false" },
-  { label: "Inherit", value: null },
-];
-
-const EOL_OPTIONS: { label: string; value: string | null }[] = [
-  { label: "lf", value: "lf" },
-  { label: "crlf", value: "crlf" },
-  { label: "native", value: "native" },
-  { label: "Inherit", value: null },
-];
-
-interface ChangeItem { key: string; before: string | null; after: string | null }
-
-function getChangedValues(
-  before: { autocrlf: string | null; eol: string | null },
-  after: { autocrlf: string | null; eol: string | null }
-): ChangeItem[] {
-  const result: ChangeItem[] = [];
-  if (before.autocrlf !== after.autocrlf) {
-    result.push({ key: "core.autocrlf", before: before.autocrlf, after: after.autocrlf });
-  }
-  if (before.eol !== after.eol) {
-    result.push({ key: "core.eol", before: before.eol, after: after.eol });
-  }
-  return result;
-}
-
-function scopeLabel(scope: ConfigScope): string {
-  switch (scope) {
-    case "local": return "local";
-    case "global": return "global";
-    case "system": return "system";
-    default: return "";
-  }
-}
-
-function RadioGroup({
-  name,
-  value,
-  options,
-  onChange,
-  disabled,
-}: {
-  name: string;
-  value: string | null;
-  options: { label: string; value: string | null }[];
-  onChange: (v: string | null) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-      {options.map((opt) => (
-        <label key={opt.label} style={{ display: "flex", alignItems: "center", gap: 4, cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.5 : 1 }}>
-          <input
-            type="radio"
-            name={name}
-            checked={value === opt.value}
-            onChange={() => onChange(opt.value)}
-            disabled={disabled}
-          />
-          <code style={{ fontSize: "var(--fz-md)" }}>{opt.label}</code>
-        </label>
-      ))}
-    </div>
-  );
-}
-
-function ConfigRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: "var(--fz-md)", fontFamily: "monospace", color: "var(--subtle-fg)", marginBottom: 4 }}>{label}</div>
-      <div style={{ paddingLeft: 8 }}>{children}</div>
-    </div>
-  );
-}
-
-function ResolvedBadge({
-  label,
-  value,
-  source,
-  isResolved,
-}: {
-  label: string;
-  value: string | null;
-  source: ConfigScope;
-  isResolved?: boolean;
-}) {
-  if (!value) return null;
-  const sl = scopeLabel(source);
-  const fromLabel = sl ? ` (from ${sl})` : "";
-  return (
-    <div style={{ marginTop: 4, fontSize: "var(--fz-sm)", color: isResolved ? "var(--success-fg)" : "var(--subtle-fg)" }}>
-      {label}: <code>{value}</code>{isResolved ? fromLabel : ""}
-    </div>
-  );
-}

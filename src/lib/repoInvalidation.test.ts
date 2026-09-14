@@ -6,6 +6,7 @@
 import { describe, test, expect, vi } from "vitest";
 import { QueryClient, QueryObserver, focusManager } from "@tanstack/react-query";
 import { invalidateRepoDomains, withDerivedDomains } from "./repoInvalidation";
+import { STALE } from "./queryTiming";
 
 /** A QueryClient stub that just records the keys it was asked to invalidate. */
 function fakeClient() {
@@ -89,7 +90,7 @@ describe("invalidateRepoDomains refetchType forwarding (focus gate)", () => {
 describe("stale-while-unfocused, refetch-on-focus (real QueryClient)", () => {
   test("refetchType none defers the refetch to the next focus", async () => {
     const client = new QueryClient({
-      defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: true } },
+      defaultOptions: { queries: { staleTime: STALE.appDefault, refetchOnWindowFocus: true } },
     });
     client.mount(); // subscribes the cache to focusManager, as the Provider does
     let fetches = 0;

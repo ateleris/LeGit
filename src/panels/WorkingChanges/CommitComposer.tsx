@@ -42,10 +42,11 @@ import {
 } from "./commitButtonMode";
 import { gitmodulesFindingLabel } from "./gitmodulesWarning";
 import { formatEolChanges, type StagedEolChange } from "./lineEndingWarning";
+import { STALE } from "../../lib/queryTiming";
 
 /** Shared chrome of the composer's inline confirm banners. */
 const bannerStyle: React.CSSProperties = {
-  padding: "8px 10px",
+  padding: "0.667em 0.833em",
   border: "1px solid var(--panel-border)",
   borderRadius: 4,
   background: "var(--button-hover-bg)",
@@ -119,7 +120,7 @@ export function CommitComposer({
   const { data: headLog = [] } = useQuery<Commit[]>({
     queryKey: [repo.id, "log", "head1"],
     queryFn: () => repoLog(repo.id, 1),
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   const head = headLog[0] ?? null;
 
@@ -128,7 +129,7 @@ export function CommitComposer({
   const { data: tracking } = useQuery<TrackingStatus | null>({
     queryKey: [repo.id, "tracking"],
     queryFn: () => repoTrackingStatus(repo.id),
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   // HEAD is already published when it has an upstream and no local-only commits
   // ahead of it (ahead === 0 → the tip is on the remote). Amending then rewrites
@@ -142,12 +143,12 @@ export function CommitComposer({
   const { data: branches = [] } = useQuery<Branch[]>({
     queryKey: [repo.id, "branches"],
     queryFn: () => repoBranches(repo.id),
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   const { data: remotes = [] } = useQuery<Remote[]>({
     queryKey: [repo.id, "remotes"],
     queryFn: () => repoListRemotes(repo.id),
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   const currentBranch = branches.find((b) => b.is_current && !b.is_remote) ?? null;
   const remoteNames = remotes.map((r) => r.name);
@@ -160,7 +161,7 @@ export function CommitComposer({
   const { data: identity } = useQuery<ResolvedIdentity>({
     queryKey: [repo.id, "identity"],
     queryFn: () => repoResolvedIdentity(repo.id),
-    staleTime: 30_000,
+    staleTime: STALE.appDefault,
   });
   const identityMissing = !!identity && (!identity.user_name || !identity.user_email);
 
@@ -301,14 +302,14 @@ export function CommitComposer({
     : stagedCount > 0 && message.trim().length > 0 && !busy;
 
   return (
-    <div style={{ flexShrink: 0, borderTop: "1px solid var(--panel-border)", padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+    <div style={{ flexShrink: 0, borderTop: "1px solid var(--panel-border)", padding: "0.667em", display: "flex", flexDirection: "column", gap: "0.5em" }}>
       {identityMissing && (
         <div
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 6,
-            padding: "6px 8px",
+            gap: "0.5em",
+            padding: "0.5em 0.667em",
             border: "1px solid var(--panel-border)",
             borderRadius: 4,
             background: "var(--button-hover-bg)",
@@ -337,11 +338,11 @@ export function CommitComposer({
       />
       {confirmDetachedCommit ? (
         <div style={bannerStyle}>
-          <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
+          <div style={{ marginBottom: "0.667em", fontSize: "var(--fz-md)" }}>
             HEAD is <strong>detached</strong> — no branch points here, so once you
             switch away this commit is only reachable via the reflog. Commit anyway?
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: "0.5em" }}>
             <Button
               variant="primary"
               disabled={busy}
@@ -359,13 +360,13 @@ export function CommitComposer({
         </div>
       ) : confirmAmendPushed ? (
         <div style={bannerStyle}>
-          <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
+          <div style={{ marginBottom: "0.667em", fontSize: "var(--fz-md)" }}>
             The last commit is <strong>already pushed</strong>
             {tracking?.upstream ? <> to <code>{tracking.upstream}</code></> : null}. Amending
             rewrites it, so you'll need to force-push and it may disrupt anyone who has pulled
             it. Amend anyway?
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: "0.5em" }}>
             <Button
               variant="danger"
               disabled={busy}
@@ -383,10 +384,10 @@ export function CommitComposer({
         </div>
       ) : gitmodulesFindings.length > 0 ? (
         <div style={bannerStyle}>
-          <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
+          <div style={{ marginBottom: "0.667em", fontSize: "var(--fz-md)" }}>
             This commit records a <strong>.gitmodules</strong> that does not match its
             submodules:
-            <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+            <ul style={{ margin: "0.5em 0 0", paddingLeft: "1.5em" }}>
               {gitmodulesFindings.map((f) => (
                 <li key={`${f.kind}:${"name" in f ? f.name : ""}:${f.path}`}>
                   {gitmodulesFindingLabel(f)}
@@ -394,7 +395,7 @@ export function CommitComposer({
               ))}
             </ul>
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: "0.5em" }}>
             <Button
               variant="danger"
               disabled={busy}
@@ -412,7 +413,7 @@ export function CommitComposer({
         </div>
       ) : confirmEolCommit ? (
         <div style={bannerStyle}>
-          <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
+          <div style={{ marginBottom: "0.667em", fontSize: "var(--fz-md)" }}>
             {eolChanges.length === 1 ? (
               <>1 file changes <strong>line endings</strong>: </>
             ) : (
@@ -420,7 +421,7 @@ export function CommitComposer({
             )}
             <code>{formatEolChanges(eolChanges)}</code>. Commit anyway?
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: "0.5em" }}>
             <Button
               variant="primary"
               disabled={busy}
@@ -437,8 +438,8 @@ export function CommitComposer({
           </div>
         </div>
       ) : (
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fz-sm)", color: "var(--subtle-fg)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.667em" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: "0.5em", fontSize: "var(--fz-sm)", color: "var(--subtle-fg)" }}>
             <input type="checkbox" checked={amend} disabled={!head || busy} onChange={(e) => toggleAmend(e.target.checked)} />
             Amend last commit
           </label>
@@ -457,7 +458,7 @@ export function CommitComposer({
               title="Commit mode"
               disabled={busy}
               onClick={() => setCommitMenuOpen((o) => !o)}
-              style={{ padding: "2px 4px", marginLeft: 1 }}
+              style={{ padding: "0.167em 0.333em", marginLeft: "0.083em" }}
             >
               <ChevronDownIcon />
             </Button>

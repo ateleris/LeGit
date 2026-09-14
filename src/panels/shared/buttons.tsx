@@ -27,7 +27,7 @@ function ghostStyle(disabled: boolean): React.CSSProperties {
   return {
     display: "inline-flex",
     alignItems: "center",
-    gap: 4,
+    gap: "0.333em",
     fontSize: "var(--fz-sm)",
     // Pinned: the standard compact toolbar control is 2em of --fz-sm tall
     // (border-box) - the same height as toolbar text inputs/selects (e.g.
@@ -36,7 +36,7 @@ function ghostStyle(disabled: boolean): React.CSSProperties {
     lineHeight: 1.2,
     height: "2em",
     boxSizing: "border-box",
-    padding: "0 8px",
+    padding: "0 0.667em",
     border: "1px solid var(--panel-border)",
     borderRadius: 3,
     background: "transparent",
@@ -55,7 +55,7 @@ function iconStyle(): React.CSSProperties {
     border: "none",
     color: "var(--subtle-fg)",
     cursor: "pointer",
-    padding: "0 3px",
+    padding: "0 0.25em",
     fontSize: "var(--fz-lg)",
     lineHeight: 1,
   };

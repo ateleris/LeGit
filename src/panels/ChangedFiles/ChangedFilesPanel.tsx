@@ -24,10 +24,10 @@ import { FileTree } from "../shared/FileTree/FileTree";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
 import { PanelContextMenuProvider, useMenuConfirm } from "../Commits/menu/PanelContextMenu";
-import { MenuItem, SectionLabel } from "../Commits/menu/primitives";
-import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
-import { OpenInEditorMenuItem } from "../shared/OpenInEditorMenuItem";
+import { MenuItem } from "../Commits/menu/primitives";
+import { FileRowMenuSection } from "../shared/FileRowMenuSection";
 import type { FileViewRequest } from "../FileView/FileViewPanel";
+import { STALE } from "../../lib/queryTiming";
 
 /**
  * Changed Files panel — receives a CommitId via the summon mechanism and shows
@@ -99,7 +99,7 @@ export function ChangedFilesPanel() {
     queryKey: [repo?.id, "commit-files", selectedId],
     queryFn: () => repoCommitFiles(repo!.id, selectedId!),
     enabled: !!repo && !!selectedId,
-    staleTime: 60_000,
+    staleTime: STALE.stable,
   });
 
   // Shares React Query's cache with CommitDetailsPanel (identical key), so this
@@ -108,7 +108,7 @@ export function ChangedFilesPanel() {
     queryKey: [repo?.id, "commit-details", selectedId],
     queryFn: () => repoCommitDetails(repo!.id, selectedId!),
     enabled: !!repo && !!selectedId,
-    staleTime: 60_000,
+    staleTime: STALE.stable,
   });
 
   usePanelFocusEffect(useCallback(() => { refetch(); }, [refetch]));
@@ -120,7 +120,7 @@ export function ChangedFilesPanel() {
     queryKey: [repo?.id, "stashes"],
     queryFn: () => repoStashes(repo!.id),
     enabled: !!repo && !!selectedId,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   const isStash = useMemo(
     () => stashes.some((s) => s.stash_sha === selectedId),
@@ -235,7 +235,7 @@ export function ChangedFilesPanel() {
       {({ openMenu, closeMenu }) => (
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
       <PanelLoadingBar active={isFetching} />
-      <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: "0.667em" }}>
         <div style={{ display: "flex" }}>
           <button onClick={() => setViewMode("tree")} aria-pressed={viewMode === "tree"} style={segStyle(viewMode === "tree", "left")}>
             Tree
@@ -285,7 +285,7 @@ export function ChangedFilesPanel() {
               e,
               <FileAtCommitMenuSection
                 file={file}
-                commitShort={selectedId.slice(0, 8)}
+                commitId={selectedId}
                 stash={isStash}
                 onOpenSubmodule={() => {
                   // Select the pointer this commit recorded in the opened
@@ -322,7 +322,7 @@ export function ChangedFilesPanel() {
  */
 function FileAtCommitMenuSection({
   file,
-  commitShort,
+  commitId,
   stash,
   onOpenSubmodule,
   onView,
@@ -332,7 +332,7 @@ function FileAtCommitMenuSection({
   onClose,
 }: {
   file: FileTreeEntry;
-  commitShort: string;
+  commitId: string;
   /** The shown "commit" is a stash entry - restore reads as "apply". */
   stash: boolean;
   onOpenSubmodule: () => void;
@@ -344,6 +344,7 @@ function FileAtCommitMenuSection({
 }) {
   const confirmDestructive = useConfirmDestructive();
   const menuConfirm = useMenuConfirm();
+  const commitShort = commitId.slice(0, 8);
   const deleted = file.change === "Deleted";
   // A gitlink has no file content: view/blame/restore would error on it.
   const submodule = file.change === "SubmoduleChanged";
@@ -374,7 +375,6 @@ function FileAtCommitMenuSection({
 
   return (
     <>
-      <SectionLabel>{file.path}</SectionLabel>
       {submodule && (
         <MenuItem onClick={() => { onClose(); onOpenSubmodule(); }}>
           Open submodule
@@ -382,21 +382,18 @@ function FileAtCommitMenuSection({
       )}
       {/* Binary files are viewable too: the backend classifies content and
           the File View panel reports "binary file, N bytes" for them. */}
-      <MenuItem disabled={deleted || submodule} onClick={() => { onClose(); onView(); }}>
-        {deleted ? "View file (deleted in this commit)" : "View file at this commit"}
-      </MenuItem>
-      <MenuItem onClick={() => { onClose(); onHistory(); }}>
-        File history
-      </MenuItem>
-      <CopyPathMenuSection path={file.path} onClose={onClose} />
-      {/* Opens the current working-tree file (not the content at this
-          commit); a deleted row has no working-tree file to open. */}
-      {!deleted && !submodule && (
-        <OpenInEditorMenuItem path={file.path} onClose={onClose} />
-      )}
-      <MenuItem disabled={deleted || submodule} onClick={() => { onClose(); onBlame(); }}>
-        {deleted ? "Blame file (deleted in this commit)" : "Blame file at this commit"}
-      </MenuItem>
+      <FileRowMenuSection
+        path={file.path}
+        rev={{ value: commitId, label: "this commit" }}
+        deleted={deleted}
+        deletedIn={stash ? "in this stash" : "in this commit"}
+        submodule={submodule}
+        view
+        onView={onView}
+        onHistory={onHistory}
+        onBlame={onBlame}
+        onClose={onClose}
+      />
       <MenuItem disabled={deleted} onClick={requestRestore}>
         {deleted
           ? stash

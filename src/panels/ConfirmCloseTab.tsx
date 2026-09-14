@@ -36,7 +36,7 @@ export function ConfirmCloseTab({ api }: IDockviewPanelHeaderProps) {
     <div className="dv-default-tab">
       <div className="dv-default-tab-content">
         {api.title}
-        {isDirty && <span style={{ color: "var(--subtle-fg)", marginLeft: 4 }}>●</span>}
+        {isDirty && <span style={{ color: "var(--subtle-fg)", marginLeft: "0.333em" }}>●</span>}
       </div>
       <div className="dv-default-tab-action" onClick={handleClose} role="button" aria-label="Close panel" title="Close">
         <svg className="dv-svg" width="11" height="11" viewBox="0 0 28 28" aria-hidden="true">

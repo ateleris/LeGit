@@ -256,7 +256,7 @@ export function ConsolePanel() {
           body's so the columns align. */}
       <div
         onClick={focusUnlessSelecting}
-        style={{ display: "flex", alignItems: "baseline", gap: "0.5em", padding: "0 8px 8px" }}
+        style={{ display: "flex", alignItems: "baseline", gap: "0.5em", padding: "0 0.667em 0.667em" }}
       >
         <span style={{ color: running ? "var(--subtle-fg)" : "var(--console-prompt-fg)" }}>
           $ git

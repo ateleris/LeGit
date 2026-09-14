@@ -35,6 +35,7 @@ import { ToolbarButton } from "../shared/ToolbarButton";
 import { Button } from "../shared/buttons";
 import { useConfirmDestructive } from "../../store/settings";
 import { SubmoduleRow } from "./SubmoduleRow";
+import { STALE } from "../../lib/queryTiming";
 
 // Submodule ops touch the submodule list, the status view, and (after an
 // update moves pointers) the log decorations.
@@ -57,7 +58,7 @@ export function SubmodulesSection() {
     queryKey: [repo?.id, "submodules"],
     queryFn: () => repoSubmodules(repo!.id),
     enabled: !!repo,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   const reload = useCallback(() => { refetch(); }, [refetch]);
   usePanelFocusEffect(reload);
@@ -170,10 +171,10 @@ export function SubmodulesSection() {
       <PanelLoadingBar active={isFetching} />
       <div
         className="legit-panel__body"
-        style={{ display: "flex", flexDirection: "column", gap: 6 }}
+        style={{ display: "flex", flexDirection: "column", gap: "0.5em" }}
       >
         {subs.length > 0 && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.667em", flexWrap: "wrap" }}>
             <ToolbarButton
               label="Update all"
               title="git submodule update --init: check out the recorded commit of every submodule"
@@ -198,7 +199,7 @@ export function SubmodulesSection() {
             </select>
             <label
               className="legit-subtle"
-              style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "var(--fz-sm)" }}
+              style={{ display: "flex", alignItems: "center", gap: "0.333em", fontSize: "var(--fz-sm)" }}
               title="Recurse into nested submodules (--recursive; Update all only)"
             >
               <input
@@ -275,10 +276,10 @@ export function SubmodulesSection() {
         <div
           style={{
             borderTop: "1px solid var(--panel-border)",
-            paddingTop: 10,
+            paddingTop: "0.833em",
             display: "flex",
             flexDirection: "column",
-            gap: 6,
+            gap: "0.5em",
           }}
         >
           <span
@@ -298,7 +299,7 @@ export function SubmodulesSection() {
             placeholder="repository URL"
             style={{ fontSize: "var(--fz-md)", fontFamily: "monospace" }}
           />
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "0.5em", flexWrap: "wrap" }}>
             <input
               value={addPath}
               onChange={(e) => setAddPath(e.target.value)}

@@ -33,6 +33,7 @@ import type {
   TrackingStatus,
   WorktreeInfo,
 } from "../../lib/types";
+import { STALE } from "../../lib/queryTiming";
 
 /** Full-history search result cap (matches the removed Search panel). */
 export const SEARCH_MAX_RESULTS = 1000;
@@ -86,7 +87,7 @@ export function useCommitsQueries(
         branchFilter !== null ? true : undefined,
       ),
     enabled: !!repo,
-    staleTime: 5_000,
+    staleTime: STALE.live,
     // Keep the current (smaller) page rendered while the larger page fetches.
     // Without this, the new totalToFetch query key has no cached data, the list
     // collapses to zero height, and the scroll position jumps back to the top.
@@ -117,7 +118,7 @@ export function useCommitsQueries(
       return resolved ? [resolved, ...ids] : ids;
     },
     enabled: !!repo && search !== null,
-    staleTime: 30_000,
+    staleTime: STALE.appDefault,
     placeholderData: keepPreviousDataForRepo<CommitId[]>(repo?.id),
   });
 
@@ -128,7 +129,7 @@ export function useCommitsQueries(
     queryKey: [repo?.id, "branches"],
     queryFn: () => repoBranches(repo!.id),
     enabled: !!repo,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
 
   // Ahead/behind vs upstream — used to gate "Reword message…" (the tip commit
@@ -138,7 +139,7 @@ export function useCommitsQueries(
     queryKey: [repo?.id, "tracking"],
     queryFn: () => repoTrackingStatus(repo!.id),
     enabled: !!repo,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
 
   // Working-tree status — drives the synthetic "uncommitted changes" row.
@@ -146,7 +147,7 @@ export function useCommitsQueries(
     queryKey: [repo?.id, "status"],
     queryFn: () => repoStatus(repo!.id),
     enabled: !!repo,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
 
   // Unpushed set (all-remotes semantics): gates the bulk drop/squash menu
@@ -155,7 +156,7 @@ export function useCommitsQueries(
     queryKey: [repo?.id, "unpushed"],
     queryFn: () => repoUnpushedCommits(repo!.id, 1000),
     enabled: !!repo,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   const unpushedSet = useMemo(() => new Set<CommitId>(unpushedIds), [unpushedIds]);
 
@@ -165,7 +166,7 @@ export function useCommitsQueries(
     queryKey: [repo?.id, "worktrees"],
     queryFn: () => repoWorktreeList(repo!.id),
     enabled: !!repo,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   const worktreeBranches = useMemo(
     () => branchWorktreeMap(worktrees, repo?.path ?? null),
@@ -196,13 +197,13 @@ export function useCommitsQueries(
     queryKey: [repo?.id, "tags"],
     queryFn: () => repoTags(repo!.id),
     enabled: !!repo,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   const { data: remotesList = [] } = useQuery<Remote[]>({
     queryKey: [repo?.id, "remotes"],
     queryFn: () => repoListRemotes(repo!.id),
     enabled: !!repo,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   // Same per-repo choice + resolver as the Tags section, so the "pushed"
   // indicators agree across panels and the remote-tags query is shared.
@@ -217,7 +218,7 @@ export function useCommitsQueries(
     queryKey: [repo?.id, "remote-tags", tagRemote],
     queryFn: () => repoRemoteTags(repo!.id, tagRemote!, crypto.randomUUID()),
     enabled: !!repo && tagRemote !== null,
-    staleTime: 300_000,
+    staleTime: STALE.rare,
     retry: false,
   });
   const pushedTags = useMemo(() => pushedTagNames(tags, remoteTags), [tags, remoteTags]);
@@ -231,7 +232,7 @@ export function useCommitsQueries(
   // Signature PRESENCE for the Signed column - pay-per-view: queried only
   // while the column is visible, as a second pass so the list itself renders
   // without waiting (and without the extra subprocess when hidden). Presence
-  // is immutable per SHA, hence staleTime: Infinity and no watcher
+  // is immutable per SHA, hence staleTime: STALE.immutable and no watcher
   // invalidation; new commits change the key, and the backend's per-SHA cache
   // makes that refetch pay only for unseen SHAs. keepPreviousData stops the
   // chips from blinking out while the refetch runs.
@@ -240,7 +241,7 @@ export function useCommitsQueries(
     queryKey: [repo?.id, "sig-presence", commitIds],
     queryFn: () => repoSignaturePresence(repo!.id, commitIds),
     enabled: !!repo && signedColumnVisible && commitIds.length > 0,
-    staleTime: Infinity,
+    staleTime: STALE.immutable,
     placeholderData: keepPreviousDataForRepo<CommitId[]>(repo?.id),
   });
   const signedSet = useMemo(() => new Set(signedIds ?? []), [signedIds]);

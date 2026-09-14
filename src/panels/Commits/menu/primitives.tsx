@@ -37,7 +37,7 @@ export const menuSurfaceStyle: React.CSSProperties = {
   background: "var(--panel-bg, #1e1e1e)",
   border: "1px solid var(--panel-border, rgba(255,255,255,0.12))",
   borderRadius: 4,
-  padding: "4px 0",
+  padding: "0.333em 0",
   zIndex: 9999,
   boxShadow: "0 4px 12px var(--shadow-color)",
   fontSize: "var(--fz-lg)",
@@ -75,7 +75,7 @@ export function MenuItem({
         textAlign: "left",
         border: "none",
         borderRadius: 0,
-        padding: "6px 14px",
+        padding: "0.5em 1.167em",
         cursor: disabled ? "default" : "pointer",
         whiteSpace: "nowrap",
         color: disabled ? "var(--subtle-fg, #a1a1a1)" : "var(--panel-fg, #ccc)",
@@ -93,7 +93,7 @@ export function Separator() {
     <div
       style={{
         height: 1,
-        margin: "4px 0",
+        margin: "0.333em 0",
         background: "var(--panel-border, rgba(255,255,255,0.10))",
       }}
     />
@@ -104,7 +104,7 @@ export function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <div
       style={{
-        padding: "4px 14px",
+        padding: "0.333em 1.167em",
         fontSize: "var(--fz-sm)",
         color: "var(--subtle-fg, #a1a1a1)",
         textTransform: "uppercase",
@@ -294,7 +294,7 @@ export function Submenu({
           textAlign: "left",
           border: "none",
           borderRadius: 0,
-          padding: "6px 14px",
+          padding: "0.5em 1.167em",
           cursor: "pointer",
           whiteSpace: "nowrap",
           color: "var(--panel-fg, #ccc)",

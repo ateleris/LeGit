@@ -81,7 +81,7 @@ export function CloneForm({
         />
       </Field>
       <Field label="Into folder">
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "flex", gap: "0.5em" }}>
           <input style={{ flex: 1, fontFamily: "monospace" }} value={parentDir} onChange={(e) => setParentDir(e.target.value)} placeholder="parent directory" />
           <button onClick={browse}>Browse…</button>
         </div>
@@ -90,7 +90,7 @@ export function CloneForm({
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="target folder" style={{ width: "100%", fontFamily: "monospace" }} />
       </Field>
       <ProfileField profiles={profiles} value={profileId} onChange={setProfileId} />
-      <div style={{ display: "flex", gap: 6 }}>
+      <div style={{ display: "flex", gap: "0.5em" }}>
         <Field label="Branch (optional)">
           <input
             value={branch}
@@ -110,7 +110,7 @@ export function CloneForm({
           />
         </Field>
       </div>
-      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fz-md)" }}>
+      <label style={{ display: "flex", alignItems: "center", gap: "0.5em", fontSize: "var(--fz-md)" }}>
         <input
           type="checkbox"
           checked={recurseSubmodules}
@@ -118,7 +118,7 @@ export function CloneForm({
         />
         Clone submodules
       </label>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5em", marginTop: "0.333em" }}>
         <Button variant="primary" disabled={!url.trim() || !parentDir.trim() || !name.trim()} onClick={submit}>
           Clone
         </Button>
@@ -170,7 +170,7 @@ export function InitForm({
   return (
     <FormCard title="Initialize repository">
       <Field label="Directory">
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "flex", gap: "0.5em" }}>
           <input style={{ flex: 1, fontFamily: "monospace" }} value={dir} onChange={(e) => setDir(e.target.value)} placeholder="folder to init" />
           <button onClick={browse}>Browse…</button>
         </div>
@@ -183,12 +183,12 @@ export function InitForm({
           style={{ width: "100%", fontFamily: "monospace" }}
         />
       </Field>
-      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fz-md)" }}>
+      <label style={{ display: "flex", alignItems: "center", gap: "0.5em", fontSize: "var(--fz-md)" }}>
         <input type="checkbox" checked={bare} onChange={(e) => setBare(e.target.checked)} />
         Bare repository (created but not opened, it has no working tree)
       </label>
       <ProfileField profiles={profiles} value={profileId} onChange={setProfileId} disabled={bare} />
-      <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+      <div style={{ display: "flex", gap: "0.5em", marginTop: "0.333em" }}>
         <Button variant="primary" disabled={busy || !dir.trim()} onClick={submit}>
           {busy ? "Initializing…" : "Init"}
         </Button>
@@ -230,7 +230,7 @@ function ProfileField({
 
 function FormCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ border: "1px solid var(--panel-border)", borderRadius: 4, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+    <div style={{ border: "1px solid var(--panel-border)", borderRadius: 4, padding: "0.833em 1em", display: "flex", flexDirection: "column", gap: "0.667em" }}>
       <div style={{ fontSize: "var(--fz-sm)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)" }}>{title}</div>
       {children}
     </div>
@@ -239,7 +239,7 @@ function FormCard({ title, children }: { title: string; children: React.ReactNod
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+    <label style={{ display: "flex", flexDirection: "column", gap: "0.25em" }}>
       <span style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)" }}>{label}</span>
       {children}
     </label>

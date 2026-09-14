@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { BranchIcon, RemoteIcon, TagIcon, WorktreeIcon } from "../../../icons";
 import type { LaneLock, MergeOptions, RefDecoration } from "../../../lib/types";
 import { usePanelContextMenu } from "../menu/PanelContextMenu";
@@ -8,6 +7,7 @@ import { MenuItem, Separator } from "../menu/primitives";
 import { BranchMenuSection, RemoteBranchMenuSection } from "../menu/BranchMenuSection";
 import { TagMenuSection } from "../menu/TagMenuSection";
 import { InlineRenameInput } from "./InlineRenameInput";
+import { Popover } from "../../shared/Popover";
 import { buildChips, computeVisibleCount } from "./refChips";
 import type { WorktreeMark } from "../../Worktrees/worktreeRows";
 import { checkedOutInWorktreeMessage } from "../../../lib/switchFeedback";
@@ -224,7 +224,7 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
             title="Enter to save · Esc to cancel"
             style={{
               fontSize: textSize,
-              padding: "1px 5px",
+              padding: "0.083em 0.417em",
               borderRadius: 10,
               width: `${Math.min(Math.max(name.length + 4, 12), 28)}ch`,
               flexShrink: 0,
@@ -431,7 +431,7 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
               onCancel={() => onCreateBranchCancel?.()}
               style={{
                 fontSize: textSize,
-                padding: "1px 5px",
+                padding: "0.083em 0.417em",
                 borderRadius: 10,
                 width: "16ch",
                 flexShrink: 0,
@@ -447,7 +447,7 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
               onCancel={() => onCreateTagCancel?.()}
               style={{
                 fontSize: textSize,
-                padding: "1px 5px",
+                padding: "0.083em 0.417em",
                 borderRadius: 3, // tag chips are squarer than branch chips
                 width: "16ch",
                 flexShrink: 0,
@@ -470,19 +470,17 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
         </span>
       )}
 
-      {popover &&
-        createPortal(
-          <OverflowPopover
-            x={popover.x}
-            y={popover.y}
-            onClose={() => setPopover(null)}
-            onPointerEnter={cancelPopoverClose}
-            onPointerLeave={schedulePopoverClose}
-          >
-            {hiddenChips.map((dec, i) => renderChip(dec, i, false, true))}
-          </OverflowPopover>,
-          document.body
-        )}
+      {popover && (
+        <OverflowPopover
+          x={popover.x}
+          y={popover.y}
+          onClose={() => setPopover(null)}
+          onPointerEnter={cancelPopoverClose}
+          onPointerLeave={schedulePopoverClose}
+        >
+          {hiddenChips.map((dec, i) => renderChip(dec, i, false, true))}
+        </OverflowPopover>
+      )}
     </div>
   );
 }
@@ -743,7 +741,6 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
 // ---------------------------------------------------------------------------
 
 const POPOVER_W = 280;
-const POPOVER_H_ESTIMATE = 120;
 
 /**
  * Layout of the "+N" overflow popover. Exported for the regression test
@@ -759,7 +756,7 @@ export const OVERFLOW_POPOVER_LAYOUT: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
   alignItems: "flex-start",
-  gap: 4,
+  gap: "0.333em",
   width: "max-content",
   maxWidth: POPOVER_W,
   maxHeight: "60vh",
@@ -782,49 +779,24 @@ function OverflowPopover({
   onPointerLeave: () => void;
   children: React.ReactNode;
 }) {
-  const panelRef = useRef<HTMLDivElement>(null);
-
-  // Dismiss on outside click + Escape. Capture phase: a stopPropagation in
-  // another panel must not keep the popover open.
-  useEffect(() => {
-    const controller = new AbortController();
-    const onMouseDown = (e: MouseEvent) => {
-      const target = e.target as Node | null;
-      if (target && !panelRef.current?.contains(target)) {
-        onClose();
-      }
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("mousedown", onMouseDown, { capture: true, signal: controller.signal });
-    document.addEventListener("keydown", onKey, { signal: controller.signal });
-    return () => controller.abort();
-  }, [onClose]);
-
-  const left = Math.min(x, window.innerWidth - POPOVER_W - 4);
-  const top = Math.min(y + 8, window.innerHeight - POPOVER_H_ESTIMATE - 4);
-
   return (
-    <div
-      ref={panelRef}
+    <Popover
+      x={x}
+      y={y + 8}
+      onClose={onClose}
       onMouseEnter={onPointerEnter}
       onMouseLeave={onPointerLeave}
       style={{
-        position: "fixed",
-        left,
-        top,
         ...OVERFLOW_POPOVER_LAYOUT,
         background: "var(--panel-bg, #1e1e1e)",
         border: "1px solid var(--panel-border, rgba(255,255,255,0.12))",
         borderRadius: 4,
-        padding: 8,
-        zIndex: 9999,
+        padding: "0.667em",
         boxShadow: "0 4px 12px var(--shadow-color)",
       }}
     >
       {children}
-    </div>
+    </Popover>
   );
 }
 
@@ -837,9 +809,9 @@ function OverflowPopover({
 const BASE_CHIP: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
-  gap: 2,
+  gap: "0.167em",
   lineHeight: 1.3,
-  padding: "1px 5px",
+  padding: "0.083em 0.417em",
   borderRadius: 10,
   whiteSpace: "nowrap",
   maxWidth: 160,

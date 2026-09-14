@@ -1,12 +1,9 @@
 import type { ConflictKind, ConflictSide, DiffSource } from "../../lib/types";
 import type { FileTreeEntry } from "../shared/FileTree/buildTree";
-import { useSummonStore } from "../../store/summon";
 import { useConfirmDestructive } from "../../store/settings";
 import { MenuItem } from "../Commits/menu/primitives";
 import { useMenuConfirm } from "../Commits/menu/PanelContextMenu";
-import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
-import { OpenInEditorMenuItem } from "../shared/OpenInEditorMenuItem";
-import { AddToGitignoreMenuItem } from "../shared/AddToGitignoreMenuItem";
+import { FileRowMenuSection } from "../shared/FileRowMenuSection";
 import { takeSideLabels } from "./conflictLabels";
 import type { Section } from "./selection";
 
@@ -82,28 +79,22 @@ export function FileRowMenu({
   const unstaged = section === "unstaged";
 
   // A dirty-inside submodule (unstaged only) has no stage/discard semantics:
-  // its menu is just the submodule jump + file history.
+  // its menu is just the submodule jump + the common section.
   if (unstaged && file.change === "SubmoduleDirty" && !many) {
     return (
       <>
         <MenuItem onClick={() => { closeMenu(); onOpenSubmodule(file.path, null); }}>
           Open submodule
         </MenuItem>
-        <MenuItem
-          onClick={() => {
-            closeMenu();
-            useSummonStore.getState().summon("file-history", file.path);
-          }}
-        >
-          File history
-        </MenuItem>
+        <FileRowMenuSection
+          path={file.path}
+          submodule
+          editorPath={null}
+          onClose={closeMenu}
+        />
       </>
     );
   }
-
-  const blameHidden = unstaged
-    ? file.change === "Untracked" || file.change === "SubmoduleChanged"
-    : file.change === "Added" || file.change === "SubmoduleChanged";
 
   return (
     <>
@@ -167,32 +158,15 @@ export function FileRowMenu({
           {many ? `Stash ${stashable.length} selected` : "Stash file"}
         </MenuItem>
       )}
-      {!many && !blameHidden && (
-        <MenuItem
-          onClick={() => {
-            closeMenu();
-            useSummonStore.getState().summon("blame", file.path);
-          }}
-        >
-          Blame file
-        </MenuItem>
-      )}
       {!many && (
-        <MenuItem
-          onClick={() => {
-            closeMenu();
-            useSummonStore.getState().summon("file-history", file.path);
-          }}
-        >
-          File history
-        </MenuItem>
-      )}
-      {!many && <CopyPathMenuSection path={file.path} onClose={closeMenu} />}
-      {!many && file.change !== "Deleted" && file.change !== "SubmoduleChanged" && (
-        <OpenInEditorMenuItem path={file.path} onClose={closeMenu} />
-      )}
-      {!many && unstaged && file.change === "Untracked" && (
-        <AddToGitignoreMenuItem path={file.path} onClose={closeMenu} />
+        <FileRowMenuSection
+          path={file.path}
+          untracked={unstaged ? file.change === "Untracked" : file.change === "Added"}
+          submodule={file.change === "SubmoduleChanged"}
+          editorPath={file.change === "Deleted" ? null : file.path}
+          gitignore={unstaged && file.change === "Untracked" ? "file" : null}
+          onClose={closeMenu}
+        />
       )}
     </>
   );

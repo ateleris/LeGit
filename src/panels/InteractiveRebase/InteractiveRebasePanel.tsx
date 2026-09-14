@@ -23,6 +23,7 @@ import {
   toTodoOrder,
   type PlanRow,
 } from "./planModel";
+import { STALE } from "../../lib/queryTiming";
 
 const ACTIONS: RebaseAction[] = ["pick", "reword", "squash", "fixup", "drop"];
 
@@ -109,7 +110,7 @@ export function InteractiveRebasePanel() {
     queryKey: [repo?.id, "log", "interactive-rebase", base],
     queryFn: () => repoLog(repo!.id, PLAN_LIMIT + 1, undefined, `${base}..HEAD`),
     enabled: !!repo && !!base,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   usePanelFocusEffect(useCallback(() => { refetch(); }, [refetch]));
 
@@ -119,7 +120,7 @@ export function InteractiveRebasePanel() {
     queryKey: [repo?.id, "log", "rebase-range-info", base],
     queryFn: () => repoRebaseRangeInfo(repo!.id, base!),
     enabled: !!repo && !!base,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   const pushed = useMemo(
     () => pushedShas(rows.map((r) => r.sha), rangeInfo?.unpushed),
@@ -214,7 +215,7 @@ export function InteractiveRebasePanel() {
     queryKey: [repo?.id, "log", "rebase-base-commit", base],
     queryFn: async () => (await repoLog(repo!.id, 1, undefined, base!))[0] ?? null,
     enabled: !!repo && !!base,
-    staleTime: 60_000,
+    staleTime: STALE.stable,
   });
 
   const error = planError(toTodoOrder(rows));
@@ -301,7 +302,7 @@ export function InteractiveRebasePanel() {
   return (
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
       <PanelLoadingBar active={isFetching} />
-      <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: "0.667em" }}>
         <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
           Rebasing {rows.length} commit{rows.length === 1 ? "" : "s"} onto{" "}
           <span style={{ fontFamily: "monospace" }}>{base.slice(0, 8)}</span> · newest on top, like
@@ -318,7 +319,7 @@ export function InteractiveRebasePanel() {
           overflowY: "auto",
           display: "flex",
           flexDirection: "column",
-          gap: 4,
+          gap: "0.333em",
           // offsetTop of the rows must resolve against THIS scroll container
           // (the drag math runs in its content space).
           position: "relative",
@@ -346,7 +347,7 @@ export function InteractiveRebasePanel() {
               flexDirection: "column",
               border: "1px solid var(--panel-border)",
               borderRadius: 4,
-              padding: "4px 8px",
+              padding: "0.333em 0.667em",
               background: "var(--panel-bg)",
               // Rows are drag handles: without this, dragging selects the
               // subject text along the way (same fix as the repo tabs).
@@ -361,7 +362,7 @@ export function InteractiveRebasePanel() {
               position: "relative",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.667em" }}>
               <select
                 value={r.action}
                 disabled={busy}
@@ -401,7 +402,7 @@ export function InteractiveRebasePanel() {
                     fontSize: "var(--fz-sm)",
                     border: "1px solid var(--panel-border)",
                     borderRadius: 3,
-                    padding: "0 4px",
+                    padding: "0 0.333em",
                     flexShrink: 0,
                   }}
                 >
@@ -435,7 +436,7 @@ export function InteractiveRebasePanel() {
                 }
                 style={{
                   width: "100%",
-                  marginTop: 4,
+                  marginTop: "0.333em",
                   fontSize: "var(--fz-md)",
                   fontFamily: "monospace",
                   resize: "vertical",
@@ -456,10 +457,10 @@ export function InteractiveRebasePanel() {
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 8,
+              gap: "0.667em",
               border: "1px dashed var(--panel-border)",
               borderRadius: 4,
-              padding: "4px 8px",
+              padding: "0.333em 0.667em",
             }}
           >
             <span style={{ fontSize: "var(--fz-sm)", width: "6.5em", flexShrink: 0 }}>base</span>
@@ -489,10 +490,10 @@ export function InteractiveRebasePanel() {
         style={{
           flexShrink: 0,
           borderTop: "1px solid var(--panel-border)",
-          padding: 8,
+          padding: "0.667em",
           display: "flex",
           alignItems: "center",
-          gap: 8,
+          gap: "0.667em",
         }}
       >
         {error || rangeError ? (

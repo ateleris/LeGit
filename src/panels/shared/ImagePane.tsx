@@ -24,12 +24,12 @@ export function ImagePane({
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: 4,
+        gap: "0.333em",
         alignItems: "center",
         minWidth: 0,
         minHeight: 0,
         flex: 1,
-        padding: 8,
+        padding: "0.667em",
       }}
     >
       {label && (

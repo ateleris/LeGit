@@ -118,9 +118,10 @@ export function exitMaximizedPanel(): boolean {
 /**
  * True when a window-level Escape keydown is "unclaimed" and may exit focus
  * mode. Escape consumers keep it from ever qualifying in one of three ways:
- * preventDefault (InlineRenameInput, RevPicker), stopPropagation on their
- * document-level listeners (confirm dialog, askpass prompt, repo-add menu,
- * lane-lock popover, the Commits quick-jump overlay) - the window listener
+ * preventDefault (InlineRenameInput, RevPicker's input), stopPropagation on
+ * their document-level listeners (useDismissable does this for every
+ * dropdown, popover, and context menu; the confirm dialog, askpass prompt,
+ * and the Commits quick-jump overlay do it themselves) - the window listener
  * never sees those - or by being an editable target (inline branch/stash
  * editors, the commit search box), rejected here.
  */

@@ -22,19 +22,19 @@ const ROWS: { label: string; pick: (v: ManagedKeys) => string | null }[] = [
 export function EffectiveValuesSummary({ values }: { values: ManagedKeys }) {
   const [expanded, setExpanded] = useState(false);
   return (
-    <div style={{ marginTop: 8 }}>
+    <div style={{ marginTop: "0.667em" }}>
       <button onClick={() => setExpanded((e) => !e)} aria-expanded={expanded}>
         {expanded ? "Hide effective values" : "Show effective values"}
       </button>
       {expanded && (
-        <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 2 }}>
+        <div style={{ marginTop: "0.5em", display: "flex", flexDirection: "column", gap: "0.167em" }}>
           {ROWS.map((r) => (
             <div key={r.label} style={{ fontFamily: "monospace", fontSize: "var(--fz-sm)" }}>
               <code>{r.label}</code>:{" "}
               <code>{r.pick(values) ?? "unset"}</code>
             </div>
           ))}
-          <div style={{ marginTop: 6 }}>
+          <div style={{ marginTop: "0.5em" }}>
             <button onClick={() => summonGlobalPanel("global-settings")}>
               Edit in Global Settings
             </button>

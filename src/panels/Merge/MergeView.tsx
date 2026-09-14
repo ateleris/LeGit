@@ -202,7 +202,7 @@ const mergeTheme = EditorView.theme({
     alignItems: "center",
     boxSizing: "border-box",
     height: "calc(var(--fz-lg) * 1.5 + 16px)",
-    padding: "0 8px",
+    padding: "0 0.667em",
   },
   ".cm-merge-fold": {
     overflow: "hidden",
@@ -217,7 +217,7 @@ const mergeTheme = EditorView.theme({
     position: "absolute",
     left: "50%",
     width: "6px",
-    marginLeft: "-1px",
+    marginLeft: "-0.083em",
     borderLeft: "1.5px solid var(--diff-gutter-fg)",
     opacity: "0.45",
   },

@@ -98,7 +98,7 @@ function CredentialDialog({
     return () => document.removeEventListener("keydown", onKey);
   }, [cancel]);
 
-  const field: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 3 };
+  const field: React.CSSProperties = { display: "flex", flexDirection: "column", gap: "0.25em" };
   const caption: React.CSSProperties = { fontSize: "var(--fz-sm)", color: "var(--subtle-fg)" };
 
   return createPortal(
@@ -117,11 +117,11 @@ function CredentialDialog({
         border: "1px solid var(--panel-border)",
         borderRadius: 6,
         boxShadow: "0 6px 24px var(--shadow-color)",
-        padding: "12px 14px",
+        padding: "1em 1.167em",
         zIndex: 10000,
         display: "flex",
         flexDirection: "column",
-        gap: 10,
+        gap: "0.833em",
         fontSize: "var(--fz-md)",
       }}
     >
@@ -167,7 +167,7 @@ function CredentialDialog({
           onKeyDown={(e) => e.key === "Enter" && void submit()}
         />
       </label>
-      <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <label style={{ display: "flex", alignItems: "center", gap: "0.5em" }}>
         <input
           type="checkbox"
           checked={remember}
@@ -178,7 +178,7 @@ function CredentialDialog({
           <span className="legit-subtle"> (saved only after git accepts them)</span>
         </span>
       </label>
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5em" }}>
         <button onClick={() => void cancel()}>Cancel</button>
         <Button
           variant="primary"

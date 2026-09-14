@@ -11,6 +11,7 @@ import { SectionLabel } from "./Commits/menu/primitives";
 import { AddRepoIcon } from "../icons";
 import { CloneForm, InitForm } from "./Repositories/forms";
 import { HostBadge } from "./shared/HostBadge";
+import { useDismissable } from "./shared/useDismissable";
 
 const RECENTS_SHOWN = 5;
 
@@ -53,26 +54,7 @@ export function RepoAddMenu() {
     setError(null);
   };
 
-  // Dismiss on outside mousedown + Escape (capture phase, like every other
-  // menu).
-  useEffect(() => {
-    if (!open) return;
-    const controller = new AbortController();
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) close();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        // Consumed: closing the menu must not leak to other Escape listeners
-        // (e.g. exiting a maximized panel).
-        e.stopPropagation();
-        close();
-      }
-    };
-    document.addEventListener("mousedown", onDown, { capture: true, signal: controller.signal });
-    document.addEventListener("keydown", onKey, { signal: controller.signal });
-    return () => controller.abort();
-  }, [open]);
+  useDismissable(open, close, [ref]);
 
   const doOpenDialog = async () => {
     close();
@@ -125,7 +107,7 @@ export function RepoAddMenu() {
           }}
         >
           {error && (
-            <div className="legit-error" style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
+            <div className="legit-error" style={{ marginBottom: "0.667em", fontSize: "var(--fz-md)" }}>
               {error}
             </div>
           )}
@@ -214,8 +196,8 @@ function MenuRow({
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 5,
-        padding: "4px 8px",
+        gap: "0.417em",
+        padding: "0.333em 0.667em",
         borderRadius: 3,
         cursor: "pointer",
         background: hover ? "var(--button-hover-bg)" : "transparent",

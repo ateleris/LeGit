@@ -40,7 +40,7 @@ export function GitLogPanel() {
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
       <div
         className="legit-panel__toolbar"
-        style={{ display: "flex", alignItems: "center", gap: 8 }}
+        style={{ display: "flex", alignItems: "center", gap: "0.667em" }}
       >
         <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
           {entries.length} entr{entries.length === 1 ? "y" : "ies"}
@@ -57,7 +57,7 @@ export function GitLogPanel() {
           overflow: "auto",
           fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
           fontSize: "var(--fz-md)",
-          padding: "4px 8px",
+          padding: "0.333em 0.667em",
         }}
       >
         {entries.length === 0 ? (
@@ -67,7 +67,7 @@ export function GitLogPanel() {
         ) : (
           entries.map((e) =>
             e.kind === "watcher" ? (
-              <div key={e.id} style={{ padding: "1px 0", display: "flex", alignItems: "baseline", gap: 8 }}>
+              <div key={e.id} style={{ padding: "0.083em 0", display: "flex", alignItems: "baseline", gap: "0.667em" }}>
                 <span aria-hidden style={{ color: "var(--subtle-fg)", flexShrink: 0 }}>
                   ⟳
                 </span>
@@ -84,8 +84,8 @@ export function GitLogPanel() {
                 </span>
               </div>
             ) : (
-              <div key={e.id} style={{ padding: "1px 0" }}>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+              <div key={e.id} style={{ padding: "0.083em 0" }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: "0.667em" }}>
                   <span
                     aria-hidden
                     style={{ color: e.success ? "var(--success-fg)" : "var(--error-fg)", flexShrink: 0 }}
@@ -102,7 +102,7 @@ export function GitLogPanel() {
                 {!e.success && e.stderr.trim() && (
                   <pre
                     style={{
-                      margin: "2px 0 4px 20px",
+                      margin: "0.167em 0 0.333em 1.667em",
                       whiteSpace: "pre-wrap",
                       wordBreak: "break-word",
                       color: "var(--error-fg)",

@@ -169,12 +169,12 @@ export function RepoIdentitySection({ repoId, repoName }: { repoId: string; repo
     <Section title={TITLE} scope="git">
       <FieldNote>writes to: .git/config (this repo only)</FieldNote>
 
-      <div style={{ marginTop: 8 }}>
+      <div style={{ marginTop: "0.667em" }}>
         <StatusBadge match={m} profileName={profileName} />
         {m.kind === "inherit" && <InheritedIdentityNote identity={resolvedIdentity} />}
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "0.833em" }}>
         <span className="legit-subtle" style={{ fontSize: "var(--fz-md)" }}>Source:</span>
         {/* data-testid is a contract with e2e/specs/profiles.spec.ts */}
         <select data-testid="repo-profile-select" value={dropdown} disabled={busy} onChange={(e) => handleSelect(e.target.value)}>
@@ -231,11 +231,11 @@ export function RepoIdentitySection({ repoId, repoName }: { repoId: string; repo
             inherited={view.inherited}
             onSaved={(s) => { applyResult(s); setCustomPicked(false); }}
           />
-          <div style={{ marginTop: 10, padding: "10px 12px", background: "var(--button-hover-bg)", borderRadius: 4 }}>
-            <div style={{ fontSize: "var(--fz-md)", marginBottom: 6 }}>
+          <div style={{ marginTop: "0.833em", padding: "0.833em 1em", background: "var(--button-hover-bg)", borderRadius: 4 }}>
+            <div style={{ fontSize: "var(--fz-md)", marginBottom: "0.5em" }}>
               Save this repo's config as a reusable profile?
             </div>
-            <div style={{ display: "flex", gap: 6 }}>
+            <div style={{ display: "flex", gap: "0.5em" }}>
               <input
                 style={{ flex: 1 }}
                 value={newName}
@@ -250,7 +250,7 @@ export function RepoIdentitySection({ repoId, repoName }: { repoId: string; repo
         </>
       )}
 
-      {error && <pre className="legit-error" style={{ marginTop: 6 }}>{error}</pre>}
+      {error && <pre className="legit-error" style={{ marginTop: "0.5em" }}>{error}</pre>}
     </Section>
   );
 }
@@ -260,7 +260,7 @@ function InheritedIdentityNote({ identity }: { identity: ResolvedIdentity | null
   if (!identity) return null;
   const resolved = [identity.user_name, identity.user_email].filter(Boolean).join(" · ");
   return (
-    <div className="legit-subtle" style={{ marginTop: 4, fontSize: "var(--fz-sm)" }}>
+    <div className="legit-subtle" style={{ marginTop: "0.333em", fontSize: "var(--fz-sm)" }}>
       {resolved
         ? `Inheriting identity: ${resolved}.`
         : "No identity is set at any scope: commits will fail. Set the global identity in Global Settings, or configure this repo below."}
@@ -304,12 +304,12 @@ function ConfirmPanel({
   onCancel: () => void;
 }) {
   return (
-    <div style={{ marginTop: 10, padding: "10px 12px", background: "var(--button-hover-bg)", border: "1px solid var(--panel-border)", borderRadius: 4 }}>
-      <div style={{ fontWeight: 600, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+    <div style={{ marginTop: "0.833em", padding: "0.833em 1em", background: "var(--button-hover-bg)", border: "1px solid var(--panel-border)", borderRadius: 4 }}>
+      <div style={{ fontWeight: 600, marginBottom: "0.5em", display: "flex", alignItems: "center", gap: "0.5em" }}>
         <WarningIcon /> {title}
       </div>
       {diffs.length > 0 && (
-        <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
+        <div style={{ marginBottom: "0.667em", fontSize: "var(--fz-md)" }}>
           {diffs.map((d) => (
             <div key={d.key} style={{ fontFamily: "monospace" }}>
               <code>{d.key}</code>: <code>{d.local ?? "unset"}</code> → <code>{d.profile ?? "unset"}</code>
@@ -317,8 +317,8 @@ function ConfirmPanel({
           ))}
         </div>
       )}
-      <div style={{ fontSize: "var(--fz-md)", color: "var(--subtle-fg)", marginBottom: 10 }}>{note}</div>
-      <div style={{ display: "flex", gap: 6 }}>
+      <div style={{ fontSize: "var(--fz-md)", color: "var(--subtle-fg)", marginBottom: "0.833em" }}>{note}</div>
+      <div style={{ display: "flex", gap: "0.5em" }}>
         <Button variant="primary" onClick={onConfirm} disabled={busy}>{confirmLabel}</Button>
         <button onClick={onCancel} disabled={busy}>Cancel</button>
       </div>

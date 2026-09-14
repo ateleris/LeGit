@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { CONTRAST_PAIRS, PALETTE_CONTRACT, TOKEN_CONTRACT } from "./tokens";
 import { contrastRatio } from "./contrast";
 import { DEFAULT_THEME } from "./defaults";
-import { LANE_CHIP_DEFAULT_FILTERS, bindingRef, makeBinding, resolveBindingColor } from "./filters";
+import { LANE_CHIP_DEFAULT_FILTERS, bindingCssValue, bindingRef, makeBinding, resolveBindingColor } from "./filters";
 import type { ThemeTokenBinding, TokenFilterId } from "../lib/types";
 
 // Read as a plain file: vite's `?raw` pipeline returns an empty string for
@@ -342,4 +342,26 @@ describe("built-in themes keep branch-chip text AA over every lane wash", () => 
       ).toEqual([]);
     });
   }
+});
+
+// theme.css :root fallbacks must equal the built-in Dark theme exactly: the
+// fallbacks are the pre-theme-load frame and must never drift from defaults.
+const cssRootDecls = new Map<string, string>();
+for (const m of themeCss.matchAll(/(?:^|[\s{;])(--[a-zA-Z0-9-]+)\s*:\s*([^;]+);/gm)) {
+  cssRootDecls.set(m[1], m[2].trim());
+}
+
+describe("theme.css fallback values equal DEFAULT_THEME", () => {
+  it("every palette fallback equals the default palette hex", () => {
+    for (const [name, hex] of Object.entries(DEFAULT_THEME.palette)) {
+      expect(cssRootDecls.get(`--palette-${name}`), `--palette-${name}`).toBe(hex);
+    }
+  });
+
+  it("every token fallback equals the default binding's CSS value", () => {
+    for (const [name, binding] of Object.entries(DEFAULT_THEME.tokens)) {
+      const expected = bindingCssValue(binding, `var(--palette-${bindingRef(binding)})`);
+      expect(cssRootDecls.get(tokenVar(name)), tokenVar(name)).toBe(expected);
+    }
+  });
 });

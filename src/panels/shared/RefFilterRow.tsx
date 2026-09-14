@@ -18,7 +18,7 @@ export function RefFilterRow({
   label: string;
 }) {
   return (
-    <div className="legit-compact-controls" style={{ display: "flex", gap: 6 }}>
+    <div className="legit-compact-controls" style={{ display: "flex", gap: "0.5em" }}>
       <input
         type="search"
         value={query}

@@ -51,6 +51,7 @@ import { usePanelRunner } from "../shared/usePanelRunner";
 import { isRowBackgroundClick, jumpPanelsToCommit } from "../shared/jumpToCommit";
 import { PanelContextMenuProvider } from "../Commits/menu/PanelContextMenu";
 import { BranchMenuSection, RemoteBranchMenuSection } from "../Commits/menu/BranchMenuSection";
+import { STALE } from "../../lib/queryTiming";
 
 // Switching can create/consume an auto-stash, so "stashes" is invalidated too.
 const AFFECTED_DOMAINS = ["branches", "log", "status", "tracking", "stashes"];
@@ -86,14 +87,14 @@ export function BranchesSection() {
     queryKey: [repo?.id, "branches"],
     queryFn: () => repoBranches(repo!.id),
     enabled: !!repo,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
 
   const { data: remotes = [] } = useQuery<Remote[]>({
     queryKey: [repo?.id, "remotes"],
     queryFn: () => repoListRemotes(repo!.id),
     enabled: !!repo,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
 
   const reload = useCallback(() => { refetch(); }, [refetch]);
@@ -388,7 +389,7 @@ export function BranchesSection() {
       <PanelLoadingBar active={isFetching} />
       <div
         className="legit-panel__body"
-        style={{ display: "flex", flexDirection: "column", gap: 10 }}
+        style={{ display: "flex", flexDirection: "column", gap: "0.833em" }}
       >
         {branches.length > 0 && (
           <RefFilterRow query={filterQuery} onQueryChange={setFilterQuery} sortScope="branches" label="branches" />
@@ -436,7 +437,7 @@ export function BranchesSection() {
           );
           const localByName = new Map(localBranches.map((b) => [b.name, b]));
           return (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.5em" }}>
               {/* Header shares its row with the Tree/List toggle - the
                   toggle governs the remote groups below too. */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -489,7 +490,7 @@ export function BranchesSection() {
         {remoteGroups.map((group) => {
           const collapsed = !!collapsedRemotes[group.remote];
           return (
-            <div key={group.remote} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div key={group.remote} style={{ display: "flex", flexDirection: "column", gap: "0.5em" }}>
               <RemoteGroupHeader
                 remote={group.remote}
                 count={group.branches.length}
@@ -559,14 +560,14 @@ export function BranchesSection() {
         <div
           style={{
             borderTop: "1px solid var(--panel-border)",
-            paddingTop: 10,
+            paddingTop: "0.833em",
             display: "flex",
             flexDirection: "column",
-            gap: 6,
+            gap: "0.5em",
           }}
         >
           <SectionLabel>New branch</SectionLabel>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "0.5em", flexWrap: "wrap" }}>
             <input
               value={createName}
               onChange={(e) => setCreateName(e.target.value)}
@@ -638,7 +639,7 @@ function RemoteGroupHeader({
         padding: 0,
         display: "flex",
         alignItems: "center",
-        gap: 4,
+        gap: "0.333em",
         cursor: "pointer",
         color: "var(--subtle-fg)",
         alignSelf: "flex-start",
@@ -711,7 +712,7 @@ function BranchFolderRow({
         marginLeft: `${depth * 1.25}em`,
         display: "flex",
         alignItems: "center",
-        gap: 4,
+        gap: "0.333em",
         cursor: "pointer",
         fontSize: "var(--fz-lg)",
         fontFamily: "monospace",
@@ -776,10 +777,10 @@ function LocalBranchRow({
       style={{
         border: "1px solid var(--panel-border)",
         borderRadius: 4,
-        padding: "8px 10px",
+        padding: "0.667em 0.833em",
         display: "flex",
         flexDirection: "column",
-        gap: 6,
+        gap: "0.5em",
       }}
     >
       {isEditing && edit?.mode === "rename" ? (
@@ -801,7 +802,7 @@ function LocalBranchRow({
           />
         </InlineEditor>
       ) : (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.667em", flexWrap: "wrap" }}>
           <ShrinkingPathText
             {...splitRefName(displayName ?? branch.name)}
             style={{ fontSize: "var(--fz-lg)", fontFamily: "monospace", flex: 1 }}
@@ -811,11 +812,11 @@ function LocalBranchRow({
               // Same token as the commit graph's checked-out branch chip
               // (RefsCell chipStyle), so "this is the current branch" reads
               // as one colour across the app.
-              <span style={{ color: "var(--ref-branch-current-fg, rgb(130, 220, 130))", marginRight: 6, flexShrink: 0 }}>●</span>
+              <span style={{ color: "var(--ref-branch-current-fg, rgb(130, 220, 130))", marginRight: "0.5em", flexShrink: 0 }}>●</span>
             )}
           </ShrinkingPathText>
           <DivergenceBadge branch={branch} />
-          <div style={{ display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "0.5em", flexShrink: 0, flexWrap: "wrap" }}>
             {!branch.is_current && (
               <ToolbarButton label="Checkout" disabled={busy} onClick={onCheckout} />
             )}
@@ -855,10 +856,10 @@ function RemoteBranchRow({
       style={{
         border: "1px solid var(--panel-border)",
         borderRadius: 4,
-        padding: "8px 10px",
+        padding: "0.667em 0.833em",
         display: "flex",
         alignItems: "center",
-        gap: 8,
+        gap: "0.667em",
         flexWrap: "wrap",
       }}
     >

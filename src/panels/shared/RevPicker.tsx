@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { repoBranches, repoTags } from "../../lib/commands";
 import type { Branch, TagInfo } from "../../lib/types";
+import { STALE } from "../../lib/queryTiming";
+import { Popover } from "./Popover";
 
 /** Per-group cap so a giant repo can't turn the dropdown into a wall. */
 const GROUP_LIMIT = 50;
@@ -71,13 +72,13 @@ export function RevPicker({
     queryKey: [repoId, "branches"],
     queryFn: () => repoBranches(repoId!),
     enabled: !!repoId,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   const { data: tags = [] } = useQuery<TagInfo[]>({
     queryKey: [repoId, "tags"],
     queryFn: () => repoTags(repoId!),
     enabled: !!repoId,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
 
   const groups = useMemo(
@@ -112,18 +113,10 @@ export function RevPicker({
     inputRef.current?.focus();
   };
 
-  // Dismiss on outside mousedown; the dropdown itself uses onMouseDown so
-  // picking wins over this (and over the input losing focus). Capture phase:
-  // a stopPropagation in another panel must not keep the dropdown open.
+  // The anchor snapshot goes stale if the window resizes while open.
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
-    const onMouseDown = (e: MouseEvent) => {
-      const t = e.target as Node | null;
-      if (t && (inputRef.current?.contains(t) || listRef.current?.contains(t))) return;
-      close();
-    };
-    document.addEventListener("mousedown", onMouseDown, { capture: true, signal: controller.signal });
     window.addEventListener("resize", close, { signal: controller.signal });
     return () => controller.abort();
   }, [open, close]);
@@ -182,35 +175,34 @@ export function RevPicker({
         spellCheck={false}
         style={{ fontSize: "var(--fz-md)", fontFamily: "monospace", ...style }}
       />
-      {open && anchor && flat.length > 0 &&
-        createPortal(
-          <div
-            ref={listRef}
-            style={{
-              position: "fixed",
-              left: anchor.left,
-              top: anchor.top,
-              width: anchor.width,
-              minWidth: "16em",
-              maxHeight: "40vh",
-              overflowY: "auto",
-              background: "var(--panel-bg)",
-              color: "var(--panel-fg)",
-              border: "1px solid var(--panel-border)",
-              borderRadius: 4,
-              boxShadow: "0 4px 12px var(--shadow-color)",
-              padding: "3px 0",
-              zIndex: 9999,
-              fontSize: "var(--fz-md)",
-              userSelect: "none",
-            }}
-          >
+      {open && anchor && flat.length > 0 && (
+        <Popover
+          x={anchor.left}
+          y={anchor.top}
+          onClose={close}
+          insideRefs={[inputRef]}
+          style={{
+            width: anchor.width,
+            minWidth: "16em",
+            maxHeight: "40vh",
+            overflowY: "auto",
+            background: "var(--panel-bg)",
+            color: "var(--panel-fg)",
+            border: "1px solid var(--panel-border)",
+            borderRadius: 4,
+            boxShadow: "0 4px 12px var(--shadow-color)",
+            padding: "0.25em 0",
+            fontSize: "var(--fz-md)",
+            userSelect: "none",
+          }}
+        >
+          <div ref={listRef}>
             {groups.map((group) => (
               <div key={group.label ?? "top"}>
                 {group.label && (
                   <div
                     style={{
-                      padding: "3px 8px 1px",
+                      padding: "0.25em 0.667em 0.083em",
                       fontSize: "var(--fz-sm)",
                       textTransform: "uppercase",
                       letterSpacing: 0.5,
@@ -234,7 +226,7 @@ export function RevPicker({
                       }}
                       onMouseEnter={() => setActive(index)}
                       style={{
-                        padding: "2px 8px",
+                        padding: "0.167em 0.667em",
                         fontFamily: "monospace",
                         whiteSpace: "nowrap",
                         overflow: "hidden",
@@ -250,9 +242,9 @@ export function RevPicker({
                 })}
               </div>
             ))}
-          </div>,
-          document.body,
-        )}
+          </div>
+        </Popover>
+      )}
     </>
   );
 }

@@ -91,10 +91,10 @@ export function LaneLockSection({ refName, locks, repoId }: LaneLockSectionProps
     <>
       <div
         style={{
-          padding: "8px 14px",
+          padding: "0.667em 1.167em",
           display: "flex",
           flexWrap: "wrap",
-          gap: 6,
+          gap: "0.5em",
           alignItems: "center",
         }}
       >
@@ -115,7 +115,7 @@ export function LaneLockSection({ refName, locks, repoId }: LaneLockSectionProps
           style={{
             width: 64,
             fontSize: "var(--fz-md)",
-            padding: "2px 6px",
+            padding: "0.167em 0.5em",
             background: "var(--input-bg, #2a2a2a)",
             border: "1px solid var(--input-border, rgba(255,255,255,0.2))",
             borderRadius: 3,
@@ -126,14 +126,14 @@ export function LaneLockSection({ refName, locks, repoId }: LaneLockSectionProps
           // clicking the input.
           onMouseDown={(e) => e.stopPropagation()}
         />
-        <button onClick={handleCustomLock} style={{ fontSize: "var(--fz-md)", padding: "2px 8px" }}>
+        <button onClick={handleCustomLock} style={{ fontSize: "var(--fz-md)", padding: "0.167em 0.667em" }}>
           Lock
         </button>
       </div>
       {customError && (
         <div
           style={{
-            padding: "2px 14px 6px",
+            padding: "0.167em 1.167em 0.5em",
             fontSize: "var(--fz-sm)",
             color: "var(--error-fg, #e87060)",
           }}

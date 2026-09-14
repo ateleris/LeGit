@@ -42,9 +42,9 @@ export function RadioGroup({
   disabled?: boolean;
 }) {
   return (
-    <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+    <div style={{ display: "flex", gap: "1em", flexWrap: "wrap" }}>
       {options.map((opt) => (
-        <label key={opt.label} style={{ display: "flex", alignItems: "center", gap: 4, cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.5 : 1 }}>
+        <label key={opt.label} style={{ display: "flex", alignItems: "center", gap: "0.333em", cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.5 : 1 }}>
           <input
             type="radio"
             name={name}
@@ -61,9 +61,9 @@ export function RadioGroup({
 
 export function ConfigRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: "var(--fz-md)", fontFamily: "monospace", color: "var(--subtle-fg)", marginBottom: 4 }}>{label}</div>
-      <div style={{ paddingLeft: 8 }}>{children}</div>
+    <div style={{ marginBottom: "0.833em" }}>
+      <div style={{ fontSize: "var(--fz-md)", fontFamily: "monospace", color: "var(--subtle-fg)", marginBottom: "0.333em" }}>{label}</div>
+      <div style={{ paddingLeft: "0.667em" }}>{children}</div>
     </div>
   );
 }
@@ -83,7 +83,7 @@ export function ResolvedBadge({
   const sl = scopeLabel(source);
   const fromLabel = sl ? ` (from ${sl})` : "";
   return (
-    <div style={{ marginTop: 4, fontSize: "var(--fz-sm)", color: isResolved ? "var(--success-fg)" : "var(--subtle-fg)" }}>
+    <div style={{ marginTop: "0.333em", fontSize: "var(--fz-sm)", color: isResolved ? "var(--success-fg)" : "var(--subtle-fg)" }}>
       {label}: <code>{value}</code>{isResolved ? fromLabel : ""}
     </div>
   );

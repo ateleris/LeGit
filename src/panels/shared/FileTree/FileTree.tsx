@@ -331,9 +331,9 @@ export function FileTree({
                 transform: `translateY(${vItem.start}px)`,
                 display: "flex",
                 alignItems: "center",
-                gap: 6,
-                paddingLeft: 8 + row.depth * 14,
-                paddingRight: 8,
+                gap: "0.5em",
+                paddingLeft: "0.667em" + row.depth * 14,
+                paddingRight: "0.667em",
                 cursor: "pointer",
                 fontSize: "var(--fz-md)",
                 whiteSpace: "nowrap",
@@ -415,8 +415,8 @@ function DirRowView({
             flexShrink: 0,
             display: "flex",
             alignItems: "center",
-            gap: 2,
-            paddingLeft: 4,
+            gap: "0.167em",
+            paddingLeft: "0.333em",
             visibility: actionsVisible ? "visible" : "hidden",
           }}
         >
@@ -437,7 +437,7 @@ function RowBadge({ children }: { children: ReactNode }) {
     <span
       onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
       onClick={(e) => e.stopPropagation()}
-      style={{ marginLeft: 6, flexShrink: 0, display: "flex", alignItems: "center" }}
+      style={{ marginLeft: "0.5em", flexShrink: 0, display: "flex", alignItems: "center" }}
     >
       {children}
     </span>
@@ -494,7 +494,7 @@ function FileRowView({
           <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
             {name}
             {file.old_path && (
-              <span className="legit-subtle" style={{ marginLeft: 6, fontSize: "var(--fz-sm)" }}>
+              <span className="legit-subtle" style={{ marginLeft: "0.5em", fontSize: "var(--fz-sm)" }}>
                 ← {baseName(file.old_path)}
               </span>
             )}
@@ -533,7 +533,7 @@ function FileRowView({
         <span
           onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
           onClick={(e) => e.stopPropagation()}
-          style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 2, paddingLeft: 4 }}
+          style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: "0.167em", paddingLeft: "0.333em" }}
         >
           {actions}
         </span>

@@ -1,6 +1,7 @@
 import { useQuery, type QueryClient } from "@tanstack/react-query";
 import { listGitProfiles } from "./commands";
 import type { GitProfile } from "./types";
+import { STALE } from "./queryTiming";
 
 /**
  * Single shared cache entry for the global profile list. Every consumer
@@ -15,7 +16,7 @@ export function useGitProfiles() {
   return useQuery<GitProfile[]>({
     queryKey: GIT_PROFILES_KEY,
     queryFn: listGitProfiles,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
 }
 

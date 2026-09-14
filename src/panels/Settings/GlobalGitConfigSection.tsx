@@ -247,13 +247,13 @@ export function GlobalGitConfigSection({
       {/* Same panel as the profile editor: one border, Field rows, one Save. */}
       <div
         style={{
-          marginTop: 10,
-          padding: "10px 12px",
+          marginTop: "0.833em",
+          padding: "0.833em 1em",
           border: "1px solid var(--panel-border)",
           borderRadius: 4,
           display: "flex",
           flexDirection: "column",
-          gap: 8,
+          gap: "0.667em",
         }}
       >
         <Field label="user.name">
@@ -349,21 +349,21 @@ export function GlobalGitConfigSection({
         )}
 
         {confirmPending && (
-          <div style={{ padding: "10px 12px", background: "var(--button-hover-bg)", border: "1px solid var(--panel-border)", borderRadius: 4 }}>
-            <div style={{ fontWeight: 600, marginBottom: 6, color: "var(--error-fg)", display: "flex", alignItems: "center", gap: 6 }}>
+          <div style={{ padding: "0.833em 1em", background: "var(--button-hover-bg)", border: "1px solid var(--panel-border)", borderRadius: 4 }}>
+            <div style={{ fontWeight: 600, marginBottom: "0.5em", color: "var(--error-fg)", display: "flex", alignItems: "center", gap: "0.5em" }}>
               <WarningIcon /> Save these changes to {scope.configFileLabel}?
             </div>
-            <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
+            <div style={{ marginBottom: "0.667em", fontSize: "var(--fz-md)" }}>
               {changes.map((c) => (
                 <div key={c.key} style={{ fontFamily: "monospace" }}>
                   <code>{c.key}</code>: <code>{c.before ?? "unset"}</code> → <code>{c.after ?? "unset"}</code>
                 </div>
               ))}
             </div>
-            <div style={{ fontSize: "var(--fz-md)", color: "var(--subtle-fg)", marginBottom: 10 }}>
+            <div style={{ fontSize: "var(--fz-md)", color: "var(--subtle-fg)", marginBottom: "0.833em" }}>
               {scope.confirmBlurb}
             </div>
-            <div style={{ display: "flex", gap: 6 }}>
+            <div style={{ display: "flex", gap: "0.5em" }}>
               <Button variant="primary" onClick={handleConfirm} disabled={saving}>Save</Button>
               <button onClick={() => setConfirmPending(false)}>Cancel</button>
             </div>
@@ -371,7 +371,7 @@ export function GlobalGitConfigSection({
         )}
 
         {!confirmPending && (
-          <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+          <div style={{ display: "flex", gap: "0.5em", marginTop: "0.333em" }}>
             <Button variant="primary" disabled={!dirty || saving} onClick={() => setConfirmPending(true)}>
               Save
             </Button>

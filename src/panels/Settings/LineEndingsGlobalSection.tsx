@@ -131,7 +131,7 @@ export function LineEndingsGlobalSection({
         writes to: {scope.configFileLabel} — affects all repos that don&apos;t override these values
       </FieldNote>
 
-      <div style={{ marginTop: 10 }}>
+      <div style={{ marginTop: "0.833em" }}>
         <ConfigRow label="core.autocrlf">
           <RadioGroup
             name={`${scope.id}-autocrlf`}
@@ -158,22 +158,22 @@ export function LineEndingsGlobalSection({
       </div>
 
       {confirmPending && (
-        <div style={{ marginTop: 10, padding: "10px 12px", background: "var(--button-hover-bg)", border: "1px solid var(--panel-border)", borderRadius: 4 }}>
-          <div style={{ fontWeight: 600, marginBottom: 6, color: "var(--error-fg)", display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ marginTop: "0.833em", padding: "0.833em 1em", background: "var(--button-hover-bg)", border: "1px solid var(--panel-border)", borderRadius: 4 }}>
+          <div style={{ fontWeight: 600, marginBottom: "0.5em", color: "var(--error-fg)", display: "flex", alignItems: "center", gap: "0.5em" }}>
             <WarningIcon /> Save line-ending changes to {scope.configFileLabel}?
           </div>
-          <div style={{ marginBottom: 8, fontSize: "var(--fz-md)" }}>
+          <div style={{ marginBottom: "0.667em", fontSize: "var(--fz-md)" }}>
             {changes.map((c) => (
               <div key={c.key} style={{ fontFamily: "monospace" }}>
                 <code>{c.key}</code>: <code>{c.before ?? "unset"}</code> → <code>{c.after ?? "unset"}</code>
               </div>
             ))}
           </div>
-          <div style={{ fontSize: "var(--fz-md)", color: "var(--subtle-fg)", marginBottom: 10 }}>
+          <div style={{ fontSize: "var(--fz-md)", color: "var(--subtle-fg)", marginBottom: "0.833em" }}>
             {scope.confirmBlurb} If you only want this for one repo, cancel and edit that
             repo&apos;s settings instead.
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: "0.5em" }}>
             <Button variant="primary" onClick={handleConfirm} disabled={busy}>Save</Button>
             <button onClick={() => setConfirmPending(false)}>Cancel</button>
           </div>
@@ -181,7 +181,7 @@ export function LineEndingsGlobalSection({
       )}
 
       {!confirmPending && (
-        <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+        <div style={{ display: "flex", gap: "0.5em", marginTop: "0.833em" }}>
           <Button variant="primary" disabled={!dirty || busy} onClick={handleSave}>
             Save
           </Button>
@@ -215,7 +215,7 @@ function ScopeBadge({
   if (!value) return null;
   const fromLabel = source !== "unset" ? ` (from ${source})` : "";
   return (
-    <div style={{ marginTop: 4, fontSize: "var(--fz-sm)", color: isResolved ? "var(--success-fg)" : "var(--subtle-fg)" }}>
+    <div style={{ marginTop: "0.333em", fontSize: "var(--fz-sm)", color: isResolved ? "var(--success-fg)" : "var(--subtle-fg)" }}>
       {label}: <code>{value}</code>{fromLabel}
     </div>
   );

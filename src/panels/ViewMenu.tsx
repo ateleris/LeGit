@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckIcon } from "../icons";
 import { formatAppError } from "../lib/types";
 import { confirmDialog } from "../store/confirm";
@@ -9,8 +9,8 @@ import { useConfirmDestructive } from "../store/settings";
 import { GLOBAL_PANELS, REPO_PANELS } from "./registry";
 import { summonGlobalPanel } from "./GlobalDock";
 import { openRepoPanel } from "./RepoDock";
+import { useDismissable } from "./shared/useDismissable";
 import {
-  MENU_LAYER_ATTR,
   MenuItem,
   MenuLevelProvider,
   SectionLabel,
@@ -35,19 +35,8 @@ export function ViewMenu() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (ref.current && ref.current.contains(target)) return;
-      // Submenu flyouts portal to document.body — anything inside a marked
-      // menu layer counts as inside this menu.
-      if (target.closest?.(`[${MENU_LAYER_ATTR}]`)) return;
-      setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
+  const close = useCallback(() => setOpen(false), []);
+  useDismissable(open, close, [ref]);
 
   // The Layouts panel (or another window) may have changed the saved set —
   // re-list every time the menu opens.
@@ -120,7 +109,7 @@ export function ViewMenu() {
             borderRadius: 4,
             boxShadow: "0 4px 10px var(--shadow-color)",
             zIndex: 1000,
-            padding: 4,
+            padding: "0.333em",
           }}
         >
           <MenuLevelProvider>

@@ -27,7 +27,7 @@ function MenuNote({ children }: { children: React.ReactNode }) {
   return (
     <div
       style={{
-        padding: "4px 14px 6px",
+        padding: "0.333em 1.167em 0.5em",
         fontSize: "var(--fz-sm)",
         color: "var(--subtle-fg)",
         maxWidth: 280,

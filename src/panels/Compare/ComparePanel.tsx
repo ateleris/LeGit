@@ -16,12 +16,10 @@ import { FileTree } from "../shared/FileTree/FileTree";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
 import { PanelContextMenuProvider } from "../Commits/menu/PanelContextMenu";
-import { MenuItem, SectionLabel } from "../Commits/menu/primitives";
-import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
-import { OpenInEditorMenuItem } from "../shared/OpenInEditorMenuItem";
+import { FileRowMenuSection } from "../shared/FileRowMenuSection";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { RevPicker } from "../shared/RevPicker";
-import type { FileViewRequest } from "../FileView/FileViewPanel";
+import { STALE } from "../../lib/queryTiming";
 
 /** Payload for summoning the Compare panel with a prefilled range. */
 export interface CompareRequest {
@@ -112,7 +110,7 @@ export function ComparePanel() {
     queryKey: [repo?.id, "log", "compare", range],
     queryFn: () => repoDiffFiles(repo!.id, range!.from, range!.to),
     enabled: !!repo && !!range,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   usePanelFocusEffect(useCallback(() => { refetch(); }, [refetch]));
 
@@ -214,7 +212,7 @@ export function ComparePanel() {
       {({ openMenu, closeMenu }) => (
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
       <PanelLoadingBar active={isFetching} />
-      <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: "0.5em" }}>
         <RevPicker
           repoId={repo.id}
           value={from}
@@ -258,7 +256,7 @@ export function ComparePanel() {
       </div>
 
       {range && files.length > 0 && (
-        <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: "0.667em" }}>
           <div style={{ display: "flex" }}>
             <button onClick={() => setViewMode("tree")} aria-pressed={viewMode === "tree"} style={segStyle(viewMode === "tree", "left")}>
               Tree
@@ -361,43 +359,14 @@ function CompareFileMenuSection({
   const revLabel = /^[0-9a-f]{40}$/.test(toRev) ? toRev.slice(0, 8) : toRev;
 
   return (
-    <>
-      <SectionLabel>{file.path}</SectionLabel>
-      <MenuItem
-        disabled={deleted || submodule}
-        onClick={() => {
-          onClose();
-          useSummonStore.getState().summon("file-view", {
-            path: file.path,
-            rev: toRev,
-          } satisfies FileViewRequest);
-        }}
-      >
-        {deleted ? `View file (deleted in this range)` : `View file at ${revLabel}`}
-      </MenuItem>
-      <MenuItem
-        onClick={() => {
-          onClose();
-          useSummonStore.getState().summon("file-history", file.path);
-        }}
-      >
-        File history
-      </MenuItem>
-      <CopyPathMenuSection path={file.path} onClose={onClose} />
-      {/* Opens the current working-tree file (not the content at the rev);
-          a deleted row has no working-tree file to open. */}
-      {!deleted && !submodule && (
-        <OpenInEditorMenuItem path={file.path} onClose={onClose} />
-      )}
-      <MenuItem
-        disabled={deleted || submodule}
-        onClick={() => {
-          onClose();
-          useSummonStore.getState().summon("blame", { path: file.path, rev: toRev });
-        }}
-      >
-        {deleted ? "Blame file (deleted in this range)" : `Blame file at ${revLabel}`}
-      </MenuItem>
-    </>
+    <FileRowMenuSection
+      path={file.path}
+      rev={{ value: toRev, label: revLabel }}
+      deleted={deleted}
+      deletedIn="in this range"
+      submodule={submodule}
+      view
+      onClose={onClose}
+    />
   );
 }

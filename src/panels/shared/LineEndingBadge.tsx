@@ -28,6 +28,7 @@ import { useConfirmDestructive } from "../../store/settings";
 import { useMenuConfirm, usePanelContextMenu } from "../Commits/menu/PanelContextMenu";
 import { MenuItem, SectionLabel } from "../Commits/menu/primitives";
 import { eolLabel, rowChipContent, useLineEndingStatusMap } from "./lineEndingStatus";
+import { STALE } from "../../lib/queryTiming";
 
 /** Only a concrete uniform kind can be a conversion target. */
 function isConcrete(kind: LineEndingKind | undefined): kind is "lf" | "crlf" | "cr" {
@@ -57,7 +58,7 @@ function useLineEndingChip({ repoId, path, rev, oldRev }: BadgeProps) {
   const { data: newKind } = useQuery<LineEndingKind>({
     queryKey: [repoId, newRev === null ? "status" : "log", "line-ending", path, newRev],
     queryFn: () => repoLineEndingKind(repoId, path, newRev),
-    staleTime: 10_000,
+    staleTime: STALE.relaxed,
     enabled: !workingVsIndex,
   });
 
@@ -67,7 +68,7 @@ function useLineEndingChip({ repoId, path, rev, oldRev }: BadgeProps) {
     queryKey: [repoId, oldSide === null ? "status" : "log", "line-ending-old", path, oldSide],
     queryFn: () => repoLineEndingKind(repoId, path, oldSide),
     enabled: hasOld && !workingVsIndex,
-    staleTime: 10_000,
+    staleTime: STALE.relaxed,
   });
 
   if (workingVsIndex) {
@@ -133,7 +134,7 @@ function chipStyle(attention: boolean): React.CSSProperties {
     fontFamily: "monospace",
     letterSpacing: "0.02em",
     lineHeight: 1.3,
-    padding: "1px 5px",
+    padding: "0.083em 0.417em",
     borderRadius: 10,
     whiteSpace: "nowrap",
     color: attention ? "var(--status-modified)" : "var(--subtle-fg)",

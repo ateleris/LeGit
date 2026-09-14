@@ -52,6 +52,7 @@ import { spliceEdits, splitLines } from "./editModel";
 import { lineActionLabel } from "./selectionModel";
 import { expandDiff, type HunkExpansion } from "./expandModel";
 import { EXPAND_STEP } from "./hunkExpanders";
+import { STALE } from "../../lib/queryTiming";
 
 const ACTION_TITLE: Record<HunkAction, string> = {
   stage: "Stage chunk",
@@ -169,7 +170,7 @@ export function DiffPanel() {
     // silently discard the user's unsaved edits (React Query keeps the cached
     // data, and pending invalidations run when re-enabled after save/discard).
     enabled: !!request && request.repoId === activeRepoId && !dirty,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   // GitHub-style per-hunk context expansion (chunked view only; the full
   // view already shows everything). Keyed by hunk index of the CURRENT
@@ -209,7 +210,7 @@ export function DiffPanel() {
       !!data &&
       "Text" in data &&
       request.repoId === activeRepoId,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
 
   // What the editor renders (and the save path splices against): the raw
@@ -402,7 +403,7 @@ export function DiffPanel() {
       <PanelLoadingBar active={isFetching} />
       <div
         className="legit-panel__toolbar"
-        style={{ display: "flex", alignItems: "center", gap: 8 }}
+        style={{ display: "flex", alignItems: "center", gap: "0.667em" }}
       >
         <div style={{ display: "flex" }}>
           <button onClick={() => chooseMode("inline")} aria-pressed={mode === "inline"} style={segStyle(mode === "inline", "left")}>
@@ -450,7 +451,7 @@ export function DiffPanel() {
           );
         })()}
         {dirty && (
-          <span style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+          <span style={{ display: "flex", gap: "0.333em", marginLeft: "auto" }}>
             <ToolbarButton
               label="Save"
               title="Write changes to the file (Ctrl+S)"
@@ -468,7 +469,7 @@ export function DiffPanel() {
       {pending !== null && (
         <div
           className="legit-panel__toolbar"
-          style={{ display: "flex", alignItems: "center", gap: 8 }}
+          style={{ display: "flex", alignItems: "center", gap: "0.667em" }}
         >
           <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
             Unsaved edits in {request.path} will be lost.

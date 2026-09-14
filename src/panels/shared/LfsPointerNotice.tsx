@@ -22,7 +22,7 @@ export function LfsPointerNotice({
   oldInfo?: LfsPointerInfo | null;
   newInfo?: LfsPointerInfo | null;
 }) {
-  const style: React.CSSProperties = { display: "block", padding: 8, fontSize: "var(--fz-md)" };
+  const style: React.CSSProperties = { display: "block", padding: "0.667em", fontSize: "var(--fz-md)" };
   if (info) {
     return (
       <span className="legit-subtle" style={style}>

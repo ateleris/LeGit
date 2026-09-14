@@ -40,8 +40,8 @@ export const SSH_PLATFORMS = [
 const TOOL_GRID: React.CSSProperties = {
   display: "grid",
   gridTemplateColumns: "max-content max-content minmax(0, 1fr)",
-  columnGap: 8,
-  rowGap: 6,
+  columnGap: "0.667em",
+  rowGap: "0.5em",
   alignItems: "center",
 };
 
@@ -62,7 +62,7 @@ function RowContent({ children }: { children: React.ReactNode }) {
         gridColumn: "2 / -1",
         display: "flex",
         alignItems: "center",
-        gap: 6,
+        gap: "0.5em",
         flexWrap: "wrap",
         minWidth: 0,
       }}
@@ -188,7 +188,7 @@ function SshTestRow({ privateKeyPath }: { privateKeyPath: string | null }) {
       <div style={{ fontSize: "var(--fz-sm)", gridColumn: "2 / -1", minWidth: 0 }}>
         <span style={{ color, fontWeight: 600 }}>{text}</span>
         {firstLine && (
-          <span className="legit-subtle" style={{ marginLeft: 6 }}>{firstLine}</span>
+          <span className="legit-subtle" style={{ marginLeft: "0.5em" }}>{firstLine}</span>
         )}
       </div>
     );
@@ -271,7 +271,7 @@ export function SshKeyActions({ privateKeyPath }: { privateKeyPath: string }) {
     );
   }
   return (
-    <div style={{ ...TOOL_GRID, marginTop: 4 }}>
+    <div style={{ ...TOOL_GRID, marginTop: "0.333em" }}>
       {status.public_key ? (
         <>
           <RowLabel>Public key:</RowLabel>
@@ -339,29 +339,29 @@ export function GenerateSshKeyForm({
   return (
     <div
       style={{
-        marginTop: 6,
-        padding: "8px 10px",
+        marginTop: "0.5em",
+        padding: "0.667em 0.833em",
         border: "1px solid var(--panel-border)",
         borderRadius: 4,
         display: "flex",
         flexDirection: "column",
-        gap: 6,
+        gap: "0.5em",
       }}
     >
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: "1em", flexWrap: "wrap" }}>
         {(
           [
             ["ed25519", "Ed25519 (GitHub, GitLab)"],
             ["rsa", "RSA 4096 (required by Azure DevOps)"],
           ] as const
         ).map(([t, label]) => (
-          <label key={t} style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+          <label key={t} style={{ display: "flex", alignItems: "center", gap: "0.333em", cursor: "pointer" }}>
             <input type="radio" checked={keyType === t} onChange={() => selectType(t)} disabled={busy} />
             <code style={{ fontSize: "var(--fz-md)" }}>{label}</code>
           </label>
         ))}
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5em" }}>
         <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", whiteSpace: "nowrap" }}>~/.ssh/</span>
         <input
           style={{ flex: 1 }}
@@ -380,7 +380,7 @@ export function GenerateSshKeyForm({
         Created without a passphrase. To add one later, run `ssh-keygen -p` -
         LeGit prompts for protected keys when they are used.
       </FieldNote>
-      <div style={{ display: "flex", gap: 6 }}>
+      <div style={{ display: "flex", gap: "0.5em" }}>
         <Button variant="primary" disabled={busy || fileName.trim() === ""} onClick={generate}>
           {busy ? "Generating…" : "Generate key"}
         </Button>
@@ -441,7 +441,7 @@ export function DefaultSshKeysField() {
             <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", whiteSpace: "nowrap" }}>
               {DEFAULT_KEY_LABELS[base] ?? ""}
             </span>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5em", minWidth: 0 }}>
               {k.exists && k.public_key ? (
                 <>
                   <CopyPublicKeyButton publicKey={k.public_key} />

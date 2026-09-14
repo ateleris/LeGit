@@ -16,6 +16,7 @@ import { formatRelative } from "../../lib/time";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { ToolbarButton } from "../shared/ToolbarButton";
+import { STALE } from "../../lib/queryTiming";
 
 const MAX_ENTRIES = 200;
 
@@ -39,7 +40,7 @@ export function ReflogSection() {
     queryKey: [repo?.id, "log", "reflog"],
     queryFn: () => repoReflog(repo!.id, MAX_ENTRIES),
     enabled: !!repo,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
 
   const reload = useCallback(() => { refetch(); }, [refetch]);
@@ -109,7 +110,7 @@ export function ReflogSection() {
       <PanelLoadingBar active={isFetching} />
       <div
         className="legit-panel__body"
-        style={{ display: "flex", flexDirection: "column", gap: 4 }}
+        style={{ display: "flex", flexDirection: "column", gap: "0.333em" }}
       >
         {entries.length === 0 ? (
           <span className="legit-subtle" style={{ fontSize: "var(--fz-md)" }}>
@@ -147,13 +148,13 @@ function ReflogRow({
       style={{
         border: "1px solid var(--panel-border)",
         borderRadius: 4,
-        padding: "4px 8px",
+        padding: "0.333em 0.667em",
         display: "flex",
         flexDirection: "column",
-        gap: 4,
+        gap: "0.333em",
       }}
     >
-      <div style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: "0.5em", minWidth: 0 }}>
         <span
           className="legit-subtle"
           style={{ fontSize: "var(--fz-sm)", fontFamily: "monospace", flexShrink: 0 }}
@@ -183,7 +184,7 @@ function ReflogRow({
         </span>
       </div>
 
-      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: "0.5em", justifyContent: "flex-end", flexWrap: "wrap" }}>
           <ToolbarButton
             label="Checkout"
             title="Check out this commit (detached HEAD)"

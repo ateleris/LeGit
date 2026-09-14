@@ -468,11 +468,11 @@ export const baseTheme = EditorView.theme({
   ".cm-conflict-side-label": {
     fontSize: "var(--fz-xs)",
     fontStyle: "italic",
-    padding: "1px 8px",
+    padding: "0.083em 0.667em",
     opacity: "0.9",
     display: "flex",
     alignItems: "center",
-    gap: "6px",
+    gap: "0.5em",
     cursor: "default",
   },
   ".cm-conflict-side-label input": {
@@ -514,7 +514,7 @@ export const baseTheme = EditorView.theme({
     alignItems: "center",
     boxSizing: "border-box",
     height: "calc(var(--fz-lg) * 1.5 + 16px)",
-    padding: "0 8px",
+    padding: "0 0.667em",
   },
   ".cm-diff-filler": {
     backgroundColor: "color-mix(in srgb, var(--panel-fg) 7%, transparent)",
@@ -538,7 +538,7 @@ export const baseTheme = EditorView.theme({
     border: "none",
   },
   ".cm-diff-gutter .cm-gutterElement": {
-    padding: "0 4px",
+    padding: "0 0.333em",
     minWidth: "2.5ch",
     textAlign: "right",
     // The hunk expander overlay positions against its cell and reaches
@@ -593,7 +593,7 @@ export const baseTheme = EditorView.theme({
   ".cm-diff-hunk-actions": {
     marginLeft: "auto",
     display: "inline-flex",
-    gap: "4px",
+    gap: "0.333em",
     position: "sticky",
     right: "8px",
   },

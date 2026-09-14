@@ -34,11 +34,11 @@ export class ErrorBoundary extends Component<Props, State> {
           alignItems: "center",
           justifyContent: "center",
           height: "100%",
-          padding: 32,
+          padding: "2.667em",
           fontFamily: "monospace",
           color: "var(--error-fg, #f87171)",
         }}>
-          <div style={{ fontSize: "var(--fz-xl)", fontWeight: 600, marginBottom: 12 }}>
+          <div style={{ fontSize: "var(--fz-xl)", fontWeight: 600, marginBottom: "1em" }}>
             Something went wrong
           </div>
           <pre style={{
@@ -51,7 +51,7 @@ export class ErrorBoundary extends Component<Props, State> {
             {this.state.error.message}
           </pre>
           <button
-            style={{ marginTop: 20 }}
+            style={{ marginTop: "1.667em" }}
             onClick={() => this.setState({ error: null })}
           >
             Try again

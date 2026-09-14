@@ -29,7 +29,8 @@ import { PanelContextMenuProvider, useMenuConfirm } from "../Commits/menu/PanelC
 import { MenuItem, SectionLabel } from "../Commits/menu/primitives";
 import { AddToGitignoreMenuItem } from "../shared/AddToGitignoreMenuItem";
 import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
-import { OpenInEditorMenuItem } from "../shared/OpenInEditorMenuItem";
+import { FileRowMenuSection } from "../shared/FileRowMenuSection";
+import { STALE } from "../../lib/queryTiming";
 
 /** Summon payload for browse-at-commit mode: `{ rev }` lists that commit's
  * tree; `{ rev: null }` returns to the working tree. */
@@ -90,7 +91,7 @@ export function FilesPanel() {
     queryKey: [repo?.id, "status", "repo-files", showIgnored],
     queryFn: () => repoListFiles(repo!.id, showIgnored),
     enabled: !!repo && rev === null,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
 
   // A commit's tree is immutable: own key outside the "status" domain (no
@@ -99,7 +100,7 @@ export function FilesPanel() {
     queryKey: [repo?.id, "files-at", rev],
     queryFn: () => repoFilesAtRevision(repo!.id, rev!),
     enabled: !!repo && rev !== null,
-    staleTime: Infinity,
+    staleTime: STALE.immutable,
   });
 
   // Shares [repoId, "lfs"] with LfsWarningBanner: one probe per repo.
@@ -107,7 +108,7 @@ export function FilesPanel() {
     queryKey: [repo?.id, "lfs"],
     queryFn: () => repoLfsStatus(repo!.id),
     enabled: !!repo,
-    staleTime: 300_000,
+    staleTime: STALE.rare,
   });
   const usesLfs = lfsStatus.data?.uses_lfs === true;
 
@@ -122,7 +123,7 @@ export function FilesPanel() {
     queryKey: [repo?.id, "status", "lfs-files", showIgnored],
     queryFn: () => repoLfsFiles(repo!.id, showIgnored),
     enabled: !!repo && rev === null && usesLfs,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   const lfsPaths = useMemo(() => new Set(lfsFiles.data ?? []), [lfsFiles.data]);
 
@@ -274,7 +275,7 @@ export function FilesPanel() {
           <PanelLoadingBar active={isFetching} />
           <div
             className="legit-panel__toolbar"
-            style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}
+            style={{ display: "flex", alignItems: "center", gap: "0.667em", flexWrap: "wrap" }}
           >
             <div style={{ display: "flex" }}>
               <button onClick={() => setViewMode("tree")} aria-pressed={viewMode === "tree"} style={segStyle(viewMode === "tree", "left")}>
@@ -285,7 +286,7 @@ export function FilesPanel() {
               </button>
             </div>
             {rev !== null && (
-              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: "0.5em" }}>
                 <span
                   className="legit-subtle"
                   style={{ fontSize: "var(--fz-sm)", fontFamily: "monospace" }}
@@ -299,7 +300,7 @@ export function FilesPanel() {
               </span>
             )}
             <label
-              style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "var(--fz-sm)" }}
+              style={{ display: "flex", alignItems: "center", gap: "0.333em", fontSize: "var(--fz-sm)" }}
               title={rev !== null ? "Ignored files do not exist at a commit" : undefined}
             >
               <input
@@ -319,7 +320,7 @@ export function FilesPanel() {
                 flex: 1,
                 minWidth: 80,
                 fontSize: "var(--fz-sm)",
-                padding: "2px 6px",
+                padding: "0.167em 0.5em",
                 border: "1px solid var(--panel-border)",
                 borderRadius: 3,
                 background: "var(--input-bg)",
@@ -459,28 +460,26 @@ function FileMenuSection({
 
   return (
     <>
-      <SectionLabel>{path}</SectionLabel>
-      <MenuItem disabled={!tracked} onClick={() => { onClose(); onHistory(); }}>
-        {tracked ? "File history" : "File history (untracked)"}
-      </MenuItem>
-      <MenuItem disabled={!tracked || submodule} onClick={() => { onClose(); onBlame(); }}>
-        {submodule ? "Blame (submodule)" : tracked ? "Blame" : "Blame (untracked)"}
-      </MenuItem>
-      <MenuItem disabled={submodule} onClick={() => { onClose(); onView(); }}>
-        {submodule ? "View file (submodule)" : "View file"}
-      </MenuItem>
-      <CopyPathMenuSection path={path} onClose={onClose} />
+      <FileRowMenuSection
+        path={path}
+        untracked={!tracked}
+        submodule={submodule}
+        view
+        onView={onView}
+        onHistory={onHistory}
+        onBlame={onBlame}
+        editorPath={atRev || submodule ? null : path}
+        gitignore={!atRev && kind === "untracked" ? "file" : null}
+        onClose={onClose}
+      />
       {!atRev && (
         <>
-          {!submodule && <OpenInEditorMenuItem path={path} onClose={onClose} />}
           <MenuItem onClick={() => { onClose(); onReveal(); }}>Reveal in file manager</MenuItem>
-          {tracked && !submodule ? (
+          {tracked && !submodule && (
             <MenuItem onClick={requestUntrack}>
               {confirmDestructive ? "Stop tracking & ignore…" : "Stop tracking & ignore"}
             </MenuItem>
-          ) : kind === "untracked" ? (
-            <AddToGitignoreMenuItem path={path} onClose={onClose} />
-          ) : null}
+          )}
         </>
       )}
     </>

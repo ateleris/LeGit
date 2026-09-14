@@ -9,6 +9,7 @@ import {
   shouldShowLfsWarning,
 } from "../lib/lfsWarning";
 import { ToolbarButton } from "./shared/ToolbarButton";
+import { STALE } from "../lib/queryTiming";
 
 // Ghost buttons sit on banner-warning-bg, not a panel surface, so their
 // text and border must follow the banner's own foreground token (same
@@ -45,7 +46,7 @@ export function LfsWarningBanner() {
     queryKey: [activeRepoId, "lfs"],
     queryFn: () => repoLfsStatus(activeRepoId!),
     enabled: !!activeRepoId,
-    staleTime: 300_000,
+    staleTime: STALE.rare,
   });
 
   if (
@@ -63,8 +64,8 @@ export function LfsWarningBanner() {
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 8,
-        padding: "4px 8px",
+        gap: "0.667em",
+        padding: "0.333em 0.667em",
         background: "var(--banner-warning-bg)",
         color: "var(--banner-warning-fg)",
         fontSize: "var(--fz-sm)",
@@ -84,7 +85,7 @@ export function LfsWarningBanner() {
       >
         {lfsWarningMessage(kind)}
       </span>
-      <span style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+      <span style={{ display: "flex", gap: "0.333em", marginLeft: "auto" }}>
         <ToolbarButton
           label="Re-check"
           title="Probe git-lfs again"

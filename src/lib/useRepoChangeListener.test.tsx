@@ -14,6 +14,7 @@ import {
 } from "@tanstack/react-query";
 import { useRepoChangeListener } from "./useRepoChangeListener";
 import type { RepoChangedPayload } from "./types";
+import { STALE } from "./queryTiming";
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -38,7 +39,7 @@ function Harness() {
 describe("useRepoChangeListener focus gate", () => {
   test("unfocused watcher event defers the refetch until focus returns", async () => {
     const client = new QueryClient({
-      defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: true } },
+      defaultOptions: { queries: { staleTime: STALE.appDefault, refetchOnWindowFocus: true } },
     });
     const host = document.createElement("div");
     document.body.appendChild(host);
@@ -91,7 +92,7 @@ describe("useRepoChangeListener focus gate", () => {
 
   test("focused watcher event refetches immediately", async () => {
     const client = new QueryClient({
-      defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: true } },
+      defaultOptions: { queries: { staleTime: STALE.appDefault, refetchOnWindowFocus: true } },
     });
     const host = document.createElement("div");
     document.body.appendChild(host);

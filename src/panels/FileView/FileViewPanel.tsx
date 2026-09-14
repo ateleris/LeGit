@@ -19,6 +19,7 @@ import { formatByteSize } from "../../lib/formatBytes";
 import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
 import { baseTheme, readOnly } from "../Diff/DiffEditor";
 import { loadLanguageForPath, syntaxColorTheme } from "../Diff/syntaxLanguages";
+import { STALE } from "../../lib/queryTiming";
 
 /**
  * Summon payload: which file, at which tree-ish. Omit `rev` (or pass null) to
@@ -118,7 +119,7 @@ export function FileViewPanel() {
         ? repoFileWorktree(repo!.id, request!.path)
         : repoFileAtRevision(repo!.id, request!.rev!, request!.path),
     enabled: !!repo && !!request,
-    staleTime: worktree ? 5_000 : 60_000,
+    staleTime: worktree ? STALE.live : STALE.stable,
   });
   const content = data && "Text" in data ? data.Text : null;
   // Committed blobs are never smudged (and a working-tree stub from a broken
@@ -151,7 +152,7 @@ export function FileViewPanel() {
   return (
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
       <PanelLoadingBar active={isFetching} />
-      <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: "0.667em" }}>
         <span
           className="legit-subtle"
           style={{
@@ -175,7 +176,7 @@ export function FileViewPanel() {
           preview?.kind === "image" ? (
             <ImagePane preview={preview} />
           ) : (
-            <span className="legit-subtle" style={{ display: "block", padding: 8, fontSize: "var(--fz-md)" }}>
+            <span className="legit-subtle" style={{ display: "block", padding: "0.667em", fontSize: "var(--fz-md)" }}>
               Binary file, {formatByteSize(data.Binary.size_bytes)}. No text content to show.
             </span>
           )

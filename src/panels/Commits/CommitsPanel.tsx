@@ -1137,7 +1137,7 @@ export function CommitsPanel() {
               display: "flex",
               alignItems: "center",
               justifyContent: "flex-end",
-              gap: 6,
+              gap: "0.5em",
             }}
           >
             {branchFilter !== null && (
@@ -1194,7 +1194,7 @@ export function CommitsPanel() {
                     top: "50%",
                     transform: "translateY(-50%)",
                     height: "auto",
-                    padding: "0 4px",
+                    padding: "0 0.333em",
                     border: "none",
                     background: "transparent",
                     cursor: "pointer",
@@ -1240,7 +1240,7 @@ export function CommitsPanel() {
           display: "grid",
           gridTemplateColumns: GRID_COLUMNS,
           gap: `0 ${COLUMN_GAP}px`,
-          padding: "3px 12px",
+          padding: "0.25em 1em",
           borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.10))",
           background: "var(--panel-bg, transparent)",
           minWidth: minRowWidth,
@@ -1336,7 +1336,7 @@ export function CommitsPanel() {
           // Same-value updates bail out, so vertical scrolling is free.
           setHeaderShift(e.currentTarget.scrollLeft);
         }}
-        style={{ flex: 1, overflow: "auto", position: "relative", paddingTop: 4, outline: "none" }}
+        style={{ flex: 1, overflow: "auto", position: "relative", paddingTop: "0.333em", outline: "none" }}
       >
         {/* Quick-search indicator: what's been typed, while the buffer is
             live. Sticky so it stays put as the list scrolls under it. */}
@@ -1354,8 +1354,8 @@ export function CommitsPanel() {
           >
             <span
               style={{
-                margin: "2px 12px 0 0",
-                padding: "2px 8px",
+                margin: "0.167em 1em 0 0",
+                padding: "0.167em 0.667em",
                 fontSize: "var(--fz-sm)",
                 fontFamily: "monospace",
                 background: "var(--panel-bg)",
@@ -1540,8 +1540,8 @@ export function CommitsPanel() {
                   left: 0,
                   width: "100%",
                   transform: `translateY(${vItem.start}px)`,
-                  paddingLeft: 12,
-                  paddingRight: 12,
+                  paddingLeft: "1em",
+                  paddingRight: "1em",
                   cursor: "pointer",
                   display: "grid",
                   gridTemplateColumns: GRID_COLUMNS,
@@ -1693,7 +1693,7 @@ export function CommitsPanel() {
                             style={{
                               width: "100%",
                               fontSize: TEXT_SIZE,
-                              padding: "0 4px",
+                              padding: "0 0.333em",
                             }}
                           />
                         );
@@ -1705,7 +1705,7 @@ export function CommitsPanel() {
                           style={{
                             display: "flex",
                             alignItems: "center",
-                            gap: 5,
+                            gap: "0.417em",
                             fontSize: TEXT_SIZE,
                             fontStyle: isWorkingDir ? "italic" : undefined,
                             fontWeight: isHeadRow ? 700 : undefined,
@@ -1806,8 +1806,8 @@ export function CommitsPanel() {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            gap: 8,
-            padding: "8px 12px",
+            gap: "0.667em",
+            padding: "0.667em 1em",
             borderTop: "1px solid var(--panel-border)",
           }}
         >
@@ -1852,12 +1852,12 @@ function FilterChip({
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: 4,
+        gap: "0.333em",
         fontSize: "var(--fz-sm)",
         fontFamily: "monospace",
         border: "1px solid var(--panel-border)",
         borderRadius: 3,
-        padding: "0 4px",
+        padding: "0 0.333em",
         height: "2em",
         boxSizing: "border-box",
         whiteSpace: "nowrap",

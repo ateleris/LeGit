@@ -31,6 +31,7 @@ import { Button } from "../shared/buttons";
 import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
 import { useTagRemoteChoice, useTagRemoteStore } from "../../store/tagRemote";
 import { resolveTagsSortMode, sortRefs } from "../../lib/refSort";
+import { STALE } from "../../lib/queryTiming";
 
 // A tag mutation touches the tag list and the graph decorations.
 const AFFECTED_DOMAINS = ["tags", "log"];
@@ -50,13 +51,13 @@ export function TagsSection() {
     queryKey: [repo?.id, "tags"],
     queryFn: () => repoTags(repo!.id),
     enabled: !!repo,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   const { data: remotes = [] } = useQuery<Remote[]>({
     queryKey: [repo?.id, "remotes"],
     queryFn: () => repoListRemotes(repo!.id),
     enabled: !!repo,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   // Remote targeted by push / delete-on-remote / the pushed indicator.
   // Default is `pickTagRemote` (origin, else first); with multiple remotes a
@@ -73,7 +74,7 @@ export function TagsSection() {
     queryKey: [repo?.id, "remote-tags", tagRemote],
     queryFn: () => repoRemoteTags(repo!.id, tagRemote!, crypto.randomUUID()),
     enabled: !!repo && tagRemote !== null,
-    staleTime: 300_000,
+    staleTime: STALE.rare,
     retry: false,
   });
   const pushed = useMemo(() => pushedTagNames(tags, remoteTags), [tags, remoteTags]);
@@ -165,11 +166,11 @@ export function TagsSection() {
       <PanelLoadingBar active={isFetching} />
       <div
         className="legit-panel__body"
-        style={{ display: "flex", flexDirection: "column", gap: 10 }}
+        style={{ display: "flex", flexDirection: "column", gap: "0.833em" }}
       >
         {remotes.length > 1 && (
           <label
-            style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fz-md)" }}
+            style={{ display: "flex", alignItems: "center", gap: "0.5em", fontSize: "var(--fz-md)" }}
           >
             <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
               Remote
@@ -201,7 +202,7 @@ export function TagsSection() {
             No matches.
           </span>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.5em" }}>
             {filteredTags.map((t) => (
               <TagRow
                 key={t.name}
@@ -219,10 +220,10 @@ export function TagsSection() {
         <div
           style={{
             borderTop: "1px solid var(--panel-border)",
-            paddingTop: 10,
+            paddingTop: "0.833em",
             display: "flex",
             flexDirection: "column",
-            gap: 6,
+            gap: "0.5em",
           }}
         >
           <span
@@ -235,7 +236,7 @@ export function TagsSection() {
           >
             New tag at HEAD
           </span>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "0.5em", flexWrap: "wrap" }}>
             <input
               value={createName}
               onChange={(e) => setCreateName(e.target.value)}
@@ -287,7 +288,7 @@ function TagRow({
       style={{
         border: "1px solid var(--panel-border)",
         borderRadius: 4,
-        padding: "8px 10px",
+        padding: "0.667em 0.833em",
         // One line when it fits: the info group and the action strip are
         // siblings in a wrapping row, so the actions drop to their own line
         // only when the pane is too narrow (the info group's minWidth is the
@@ -295,14 +296,14 @@ function TagRow({
         display: "flex",
         flexWrap: "wrap",
         alignItems: "center",
-        gap: "6px 8px",
+        gap: "0.5em 0.667em",
       }}
     >
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 8,
+          gap: "0.667em",
           flex: "1 1 auto",
           minWidth: "min(100%, 14em)",
         }}
@@ -347,7 +348,7 @@ function TagRow({
         </span>
       </div>
 
-      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap", marginLeft: "auto" }}>
+      <div style={{ display: "flex", gap: "0.5em", justifyContent: "flex-end", flexWrap: "wrap", marginLeft: "auto" }}>
           <ToolbarButton
             label={pushed ? "Pushed" : remote ? `Push to ${remote}` : "Push"}
             title={

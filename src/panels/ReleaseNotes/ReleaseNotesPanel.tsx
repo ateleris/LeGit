@@ -10,6 +10,7 @@ import { PanelError } from "../shared/PanelError";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { Button } from "../shared/buttons";
 import { formatReleaseNotes, latestTagName } from "./releaseNotes";
+import { STALE } from "../../lib/queryTiming";
 
 /** Explicit walk cap - a release range can exceed repoLog's 500 default.
  *  Hitting it shows a truncation notice; never a silently shortened list. */
@@ -39,7 +40,7 @@ export function ReleaseNotesPanel() {
     queryKey: [repo?.id, "tags"],
     queryFn: () => repoTags(repo!.id),
     enabled: !!repo,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
 
   // Default From once tags arrive; null means "not yet chosen" so a repo
@@ -61,7 +62,7 @@ export function ReleaseNotesPanel() {
     queryKey: [repo?.id, "log", "release-notes", range],
     queryFn: () => repoLog(repo!.id, MAX_COMMITS, 0, range!),
     enabled: !!repo && range !== null,
-    staleTime: 5_000,
+    staleTime: STALE.live,
     placeholderData: keepPreviousData,
   });
   usePanelFocusEffect(() => { refetch(); });
@@ -98,9 +99,9 @@ export function ReleaseNotesPanel() {
   return (
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
       <PanelLoadingBar active={isFetching} />
-      <div className="legit-panel__body" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 4, flex: 1, minWidth: "10em" }}>
+      <div className="legit-panel__body" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: "0.667em" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5em", flexWrap: "wrap" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: "0.333em", flex: 1, minWidth: "10em" }}>
             <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>From</span>
             <input
               value={from ?? ""}
@@ -109,7 +110,7 @@ export function ReleaseNotesPanel() {
               style={inputStyle}
             />
           </label>
-          <label style={{ display: "flex", alignItems: "center", gap: 4, flex: 1, minWidth: "10em" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: "0.333em", flex: 1, minWidth: "10em" }}>
             <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>To</span>
             <input
               value={to}

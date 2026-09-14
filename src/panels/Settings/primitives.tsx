@@ -49,7 +49,7 @@ export function SettingsGroup({
     });
 
   return (
-    <div style={{ marginBottom: 18 }}>
+    <div style={{ marginBottom: "1.5em" }}>
       <button
         type="button"
         onClick={toggle}
@@ -57,12 +57,12 @@ export function SettingsGroup({
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 8,
+          gap: "0.667em",
           width: "100%",
           background: "transparent",
           border: "none",
           borderBottom: "1px solid var(--panel-border)",
-          padding: "6px 0",
+          padding: "0.5em 0",
           cursor: "pointer",
           color: "var(--subtle-fg)",
           textAlign: "left",
@@ -83,7 +83,7 @@ export function SettingsGroup({
           <span style={{ fontSize: "var(--fz-sm)", textTransform: "none", letterSpacing: 0 }}>{caption}</span>
         )}
       </button>
-      {open && <div style={{ marginTop: 12 }}>{children}</div>}
+      {open && <div style={{ marginTop: "1em" }}>{children}</div>}
     </div>
   );
 }
@@ -151,7 +151,7 @@ export function Section({
   );
 
   return (
-    <div style={{ marginBottom: 16 }}>
+    <div style={{ marginBottom: "1.333em" }}>
       {id ? (
         <button
           type="button"
@@ -160,11 +160,11 @@ export function Section({
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 8,
+            gap: "0.667em",
             width: "100%",
             background: "transparent",
             border: "none",
-            padding: "0 0 6px",
+            padding: "0 0 0.5em",
             cursor: "pointer",
             color: "inherit",
             textAlign: "left",
@@ -182,7 +182,7 @@ export function Section({
           {heading}
         </button>
       ) : (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>{heading}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginBottom: "0.5em" }}>{heading}</div>
       )}
       {open && children}
     </div>
@@ -202,7 +202,7 @@ export function GitConfigPill() {
         color: "var(--status-modified)",
         border: "1px solid var(--status-modified)",
         borderRadius: 999,
-        padding: "0 6px",
+        padding: "0 0.5em",
         lineHeight: 1.6,
         whiteSpace: "nowrap",
       }}
@@ -214,7 +214,7 @@ export function GitConfigPill() {
 
 export function Row({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 6, padding: "2px 0" }}>
+    <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: "0.5em", padding: "0.167em 0" }}>
       <div className="legit-subtle">{label}</div>
       <div>{value}</div>
     </div>
@@ -223,6 +223,6 @@ export function Row({ label, value }: { label: string; value: ReactNode }) {
 
 export function FieldNote({ children }: { children: ReactNode }) {
   return (
-    <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: 4 }}>{children}</div>
+    <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: "0.333em" }}>{children}</div>
   );
 }

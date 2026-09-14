@@ -12,6 +12,18 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Changed
+
+- File context menus now share one common section (view, history, blame,
+  copy path, open in editor) with consistent wording and order across panels.
+- More UI spacing (paddings, margins, gaps) now scales with the global UI
+  font size.
+
+### Fixed
+
+- Every dropdown menu and popover now closes with Escape and dismisses
+  consistently on outside clicks.
+
 ## [1.2.2] - 2026-09-11
 
 ### Added

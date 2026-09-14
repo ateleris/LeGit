@@ -52,15 +52,15 @@ export function SubmoduleRow({
       style={{
         border: "1px solid var(--panel-border)",
         borderRadius: 4,
-        padding: "6px 10px",
+        padding: "0.5em 0.833em",
         display: "flex",
         flexDirection: "column",
-        gap: 6,
+        gap: "0.5em",
       }}
       title={info.url ?? info.gitmodules_url ?? undefined}
       onDoubleClick={onOpen}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em" }}>
         <span
           style={{
             fontSize: "var(--fz-md)",
@@ -107,7 +107,7 @@ export function SubmoduleRow({
       </div>
 
       {editing === "url" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5em" }}>
           <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", flexShrink: 0 }}>
             URL
           </span>
@@ -126,7 +126,7 @@ export function SubmoduleRow({
         </div>
       )}
       {editing === "branch" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5em" }}>
           <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", flexShrink: 0 }}>
             Branch
           </span>
@@ -146,7 +146,7 @@ export function SubmoduleRow({
       )}
 
       {editing === "new-branch" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5em" }}>
           <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", flexShrink: 0 }}>
             New branch
           </span>
@@ -166,7 +166,7 @@ export function SubmoduleRow({
       )}
 
       {editing === "path" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5em" }}>
           <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)", flexShrink: 0 }}>
             Move to
           </span>
@@ -186,7 +186,7 @@ export function SubmoduleRow({
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: "0.5em", justifyContent: "flex-end", flexWrap: "wrap" }}>
           {uninitialized ? (
             <ToolbarButton
               label={"Init & update"}

@@ -20,9 +20,9 @@ import {
   usePanelContextMenu,
   useMenuConfirm,
 } from "../Commits/menu/PanelContextMenu";
-import { MenuItem, SectionLabel, Separator } from "../Commits/menu/primitives";
-import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
-import { OpenInEditorMenuItem } from "../shared/OpenInEditorMenuItem";
+import { MenuItem, Separator } from "../Commits/menu/primitives";
+import { FileRowMenuSection } from "../shared/FileRowMenuSection";
+import { STALE } from "../../lib/queryTiming";
 
 /** Page size for the history walk; a "Load more" footer fetches the next page. */
 const PAGE_SIZE = 200;
@@ -95,7 +95,7 @@ function FileHistoryBody() {
     queryKey: [repo?.id, "log", "file-history", path, rev, pageCount],
     queryFn: () => repoFileHistory(repo!.id, path!, PAGE_SIZE * pageCount, 0, rev ?? undefined),
     enabled: !!repo && !!path,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   usePanelFocusEffect(useCallback(() => { refetch(); }, [refetch]));
 
@@ -154,7 +154,7 @@ function FileHistoryBody() {
   return (
     <div className="legit-panel" style={{ display: "flex", flexDirection: "column" }}>
       <PanelLoadingBar active={isFetching} />
-      <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: "0.667em" }}>
         <span
           className="legit-subtle"
           style={{
@@ -184,7 +184,7 @@ function FileHistoryBody() {
         {isError ? (
           <PanelError error={error} margin={8} />
         ) : entries.length === 0 && !isFetching ? (
-          <span className="legit-subtle" style={{ display: "block", padding: 8, fontSize: "var(--fz-md)" }}>
+          <span className="legit-subtle" style={{ display: "block", padding: "0.667em", fontSize: "var(--fz-md)" }}>
             No history for this file.
           </span>
         ) : (
@@ -199,7 +199,7 @@ function FileHistoryBody() {
               />
             ))}
             {maybeMore && (
-              <div style={{ padding: 8, textAlign: "center" }}>
+              <div style={{ padding: "0.667em", textAlign: "center" }}>
                 <Button disabled={isFetching} onClick={() => setPageCount((n) => n + 1)}>
                   Load more
                 </Button>
@@ -233,25 +233,16 @@ function HistoryRow({
   const menu = useMemo(
     () => (
       <>
-        <SectionLabel>
-          {sha.slice(0, 8)} · {entry.path}
-        </SectionLabel>
-        <MenuItem
-          onClick={() => {
-            summon().summon("file-view", { path: entry.path, rev: sha });
-            closeMenu();
-          }}
-        >
-          View file at this commit
-        </MenuItem>
-        <MenuItem
-          onClick={() => {
-            summon().summon("blame", { path: entry.path, rev: sha });
-            closeMenu();
-          }}
-        >
-          Blame at this commit
-        </MenuItem>
+        {/* The editor entry opens the current working-tree file (not the
+            content at this commit); for pre-rename entries the path may no
+            longer exist - the launch failure surfaces as a toast. */}
+        <FileRowMenuSection
+          path={entry.path}
+          header={`${sha.slice(0, 8)} · ${entry.path}`}
+          rev={{ value: sha, label: "this commit" }}
+          view
+          onClose={closeMenu}
+        />
         <MenuItem
           onClick={() => {
             summon().summon("diff", {
@@ -265,11 +256,6 @@ function HistoryRow({
         >
           Diff in this commit
         </MenuItem>
-        <CopyPathMenuSection path={entry.path} onClose={closeMenu} />
-        {/* Opens the current working-tree file (not the content at this
-            commit); uses the entry's path, which for pre-rename entries may
-            no longer exist - the launch failure surfaces as a toast. */}
-        <OpenInEditorMenuItem path={entry.path} onClose={closeMenu} />
         <Separator />
         <MenuItem
           onClick={() => {
@@ -303,7 +289,7 @@ function HistoryRow({
         background: "transparent",
         border: "none",
         borderBottom: "1px solid var(--panel-border)",
-        padding: "4px 8px",
+        padding: "0.333em 0.667em",
         cursor: "pointer",
       }}
     >

@@ -13,10 +13,10 @@ function PreviewSide({ label, preview }: { label: string; preview?: FilePreview 
         flex: 1,
         display: "flex",
         flexDirection: "column",
-        gap: 4,
+        gap: "0.333em",
         alignItems: "center",
         justifyContent: "center",
-        padding: 8,
+        padding: "0.667em",
       }}
     >
       <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
@@ -61,7 +61,7 @@ export function ImageDiffView({
   return (
     <div
       className="legit-panel__body"
-      style={{ display: "flex", gap: 12, minHeight: 0, overflow: "auto", justifyContent: "center" }}
+      style={{ display: "flex", gap: "1em", minHeight: 0, overflow: "auto", justifyContent: "center" }}
     >
       {oldShown && <PreviewSide label={newShown ? "Old" : "Old (deleted)"} preview={oldP} />}
       {newShown && <PreviewSide label={oldShown ? "New" : "New (added)"} preview={newP} />}

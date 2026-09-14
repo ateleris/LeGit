@@ -73,7 +73,7 @@ button {
   background: var(--button-bg);
   border: 1px solid var(--panel-border);
   border-radius: 4px;
-  padding: 4px 10px;
+  padding: calc(var(--ui-font-size) * 0.333) calc(var(--ui-font-size) * 0.833);
   cursor: pointer;
   /* Labels never wrap inside a button - narrow containers wrap whole
      buttons onto the next line (flex-wrap) instead. */
@@ -118,7 +118,7 @@ select {
   color: var(--input-fg);
   border: 1px solid var(--input-border);
   border-radius: 4px;
-  padding: 4px 6px;
+  padding: calc(var(--ui-font-size) * 0.333) calc(var(--ui-font-size) * 0.5);
 }
 input:focus,
 textarea:focus,
@@ -195,7 +195,7 @@ input[type="radio"]:disabled {
   flex-shrink: 0;
   position: relative;
   user-select: none;
-  gap: 2px;
+  gap: calc(var(--ui-font-size) * 0.167);
 }
 .legit-region-divider--vertical {
   flex-direction: column;
@@ -203,7 +203,7 @@ input[type="radio"]:disabled {
   height: auto;
   width: 12px;
   cursor: col-resize;
-  gap: 2px;
+  gap: calc(var(--ui-font-size) * 0.167);
 }
 .legit-region-divider:hover,
 .legit-region-divider--vertical:hover {
@@ -221,8 +221,8 @@ input[type="radio"]:disabled {
   background: transparent;
   border: none;
   color: var(--subtle-fg);
-  font-size: 9px;
-  padding: 0 4px;
+  font-size: calc(var(--ui-font-size) * 0.75);
+  padding: 0 calc(var(--ui-font-size) * 0.333);
   cursor: pointer;
   border-radius: 2px;
   line-height: 1;
@@ -253,18 +253,18 @@ button.legit-region-divider__toggle:hover {
 .legit-splash__logo {
   width: 96px;
   height: 96px;
-  margin-bottom: 12px;
+  margin-bottom: calc(var(--ui-font-size) * 1);
 }
 .legit-splash__title {
-  font-size: 28px;
+  font-size: calc(var(--ui-font-size) * 2.333);
   font-weight: 600;
 }
 .legit-splash__subtitle {
-  margin-top: 8px;
+  margin-top: calc(var(--ui-font-size) * 0.667);
   color: var(--subtle-fg);
 }
 .legit-splash__version {
-  margin-top: 4px;
+  margin-top: calc(var(--ui-font-size) * 0.333);
   font-size: var(--fz-sm);
   color: var(--subtle-fg);
   opacity: 0.8;
@@ -284,7 +284,7 @@ button.legit-region-divider__toggle:hover {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 8px;
+  padding: calc(var(--ui-font-size) * 0.667);
 }
 /* Merge panes scroll in lockstep; only the rightmost shows the vertical
    bar. overflow-y: hidden removes the bar WITHOUT switching Chromium into
@@ -297,9 +297,9 @@ button.legit-region-divider__toggle:hover {
 
 .legit-panel__toolbar {
   display: flex;
-  gap: 6px;
+  gap: calc(var(--ui-font-size) * 0.5);
   align-items: center;
-  padding: 6px 8px;
+  padding: calc(var(--ui-font-size) * 0.5) calc(var(--ui-font-size) * 0.667);
   border-bottom: 1px solid var(--panel-border);
   background: var(--panel-header-bg);
   color: var(--panel-header-fg);
@@ -317,7 +317,7 @@ button.legit-region-divider__toggle:hover {
    segmented toggles already use inline (the 2em control height above). */
 .legit-panel__toolbar button,
 .legit-compact-controls button {
-  padding: 0 8px;
+  padding: 0 calc(var(--ui-font-size) * 0.667);
   font-size: var(--fz-sm);
   line-height: 1.2;
   height: calc(var(--fz-sm) * 2);
@@ -373,8 +373,8 @@ button.legit-region-divider__toggle:hover {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 6px;
+  gap: calc(var(--ui-font-size) * 0.5);
+  padding: 0 calc(var(--ui-font-size) * 0.5);
   border-left: 1px solid var(--panel-border);
   background: var(--tab-strip-bg);
 }
@@ -384,7 +384,7 @@ button.legit-region-divider__toggle:hover {
   color: var(--subtle-fg);
   font-size: calc(var(--ui-font-size) + 6px);
   line-height: 1;
-  padding: 0 8px;
+  padding: 0 calc(var(--ui-font-size) * 0.667);
   cursor: pointer;
 }
 .legit-tabs__icon:hover {
@@ -416,8 +416,8 @@ button.legit-region-divider__toggle:hover {
 .legit-tab {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 12px;
+  gap: calc(var(--ui-font-size) * 0.667);
+  padding: calc(var(--ui-font-size) * 0.333) calc(var(--ui-font-size) * 1);
   max-width: 220px;
   min-width: 80px;
   color: var(--tab-fg);
@@ -446,7 +446,7 @@ button.legit-region-divider__toggle:hover {
   background: transparent;
   border: none;
   color: inherit;
-  padding: 0 2px;
+  padding: 0 calc(var(--ui-font-size) * 0.167);
   cursor: pointer;
   opacity: 0.7;
 }
@@ -514,7 +514,7 @@ button.legit-tab__close:hover {
 /* Centre tab content (title + close action stay together, centred as a pair). */
 .dv-dockview .dv-tab.dv-default-tab {
   justify-content: center;
-  padding: 0 12px;
+  padding: 0 calc(var(--ui-font-size) * 1);
 }
 .dv-dockview .dv-default-tab .dv-default-tab-content {
   flex: 0 1 auto;
@@ -602,9 +602,9 @@ button.legit-tab__close:hover {
 .palette-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 110px 36px 28px;
-  gap: 6px;
+  gap: calc(var(--ui-font-size) * 0.5);
   align-items: center;
-  padding: 2px 0;
+  padding: calc(var(--ui-font-size) * 0.167) 0;
 }
 .palette-row > * {
   min-width: 0;
@@ -614,7 +614,7 @@ button.legit-tab__close:hover {
 }
 .palette-row__hex {
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-  font-size: 12px;
+  font-size: var(--fz-md);
   width: 100%;
 }
 .palette-row__picker {
@@ -666,7 +666,7 @@ button.legit-tab__close:hover {
   z-index: 10000;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: calc(var(--ui-font-size) * 0.667);
   max-width: 380px;
 }
 .legit-toast {
@@ -696,7 +696,7 @@ button.legit-tab__close:hover {
   color: inherit;
   font: inherit;
   cursor: pointer;
-  padding: 8px 10px;
+  padding: calc(var(--ui-font-size) * 0.667) calc(var(--ui-font-size) * 0.833);
 }
 /* Clamp long stderr; full detail lives in the Git Log. The clamp sits on an
    inner element WITHOUT padding: on a padded box, overflow:hidden clips at
@@ -719,7 +719,7 @@ button.legit-tab__close:hover {
   border: none;
   color: var(--subtle-fg);
   cursor: pointer;
-  padding: 6px 8px;
+  padding: calc(var(--ui-font-size) * 0.5) calc(var(--ui-font-size) * 0.667);
   font-size: var(--fz-lg);
   line-height: 1;
 }

@@ -14,22 +14,18 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
-  useLayoutEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
 import { confirmDialog } from "../../../store/confirm";
 import {
-  MENU_LAYER_ATTR,
   MenuItem,
   MenuLevelProvider,
   SectionLabel,
   Separator,
   menuSurfaceStyle,
 } from "./primitives";
+import { Popover } from "../../shared/Popover";
 
 export interface BaselineEntry {
   label: string;
@@ -109,9 +105,8 @@ export function PanelContextMenuProvider({ baseline, children }: ProviderProps) 
   return (
     <Ctx.Provider value={api}>
       {typeof children === "function" ? children(api) : children}
-      {menu &&
-        createPortal(
-          <MenuShell x={menu.x} y={menu.y} onClose={closeMenu}>
+      {menu && (
+        <MenuShell x={menu.x} y={menu.y} onClose={closeMenu}>
             {confirm != null ? (
               // Takeover: the confirmation is the entire menu.
               confirm
@@ -133,8 +128,7 @@ export function PanelContextMenuProvider({ baseline, children }: ProviderProps) 
                 ))}
               </>
             )}
-          </MenuShell>,
-          document.body
+          </MenuShell>
         )}
     </Ctx.Provider>
   );
@@ -199,50 +193,9 @@ function MenuShell({
   onClose: () => void;
   children: React.ReactNode;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState({ left: x, top: y });
-
-  // Clamp into the viewport after the menu has rendered (so we know its real
-  // size). useLayoutEffect runs before paint, avoiding a visible jump.
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const left = Math.max(4, Math.min(x, window.innerWidth - r.width - 4));
-    const top = Math.max(4, Math.min(y, window.innerHeight - r.height - 4));
-    setPos({ left, top });
-  }, [x, y]);
-
-  // Dismiss on outside mousedown + Escape. Capture phase: a stopPropagation
-  // in another panel (e.g. FileTree action buttons) must not keep the menu open.
-  // "Inside" is any marked menu layer, not just this shell's subtree: submenu
-  // flyouts portal to document.body, so a DOM containment check would treat a
-  // click inside a flyout as outside and unmount it before its click fires.
-  useEffect(() => {
-    const controller = new AbortController();
-    const onMouseDown = (e: MouseEvent) => {
-      const target = e.target instanceof Element ? e.target : null;
-      if (!target?.closest(`[${MENU_LAYER_ATTR}]`)) onClose();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("mousedown", onMouseDown, { capture: true, signal: controller.signal });
-    document.addEventListener("keydown", onKey, { signal: controller.signal });
-    return () => controller.abort();
-  }, [onClose]);
-
   return (
-    <div
-      ref={ref}
-      {...{ [MENU_LAYER_ATTR]: "" }}
-      style={{
-        ...menuSurfaceStyle,
-        left: pos.left,
-        top: pos.top,
-      }}
-    >
+    <Popover x={x} y={y} onClose={onClose} style={menuSurfaceStyle}>
       <MenuLevelProvider>{children}</MenuLevelProvider>
-    </div>
+    </Popover>
   );
 }

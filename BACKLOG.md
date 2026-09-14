@@ -17,20 +17,6 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
 
 ### v1.3.0
 
-- **Frontend consolidation batch** (parked 2026-07-11, promoted to blocker
-  2026-08-24; details in `design/2026-07-11-hardening-review.md` §D):
-  shared `Popover`/`useDismissable` for the hand-rolled dropdowns, shared
-  composite file-row menu section, `STALE` query-time constants, fixed-px
-  padding sweep, theme.css value-equality test, `GlobalSettingsPanel`
-  split. (The seventh review item, GitBackend naming normalization, stays
-  a non-blocker - batch it with the next big backend feature.)
-  The Git slice of the `GlobalSettingsPanel` split landed 2026-09-01 with
-  the Git (WSL) group: the git-executable, line-endings and WSL sections
-  moved to their own files, and the duplicated `RadioGroup` / `ConfigRow` /
-  `ResolvedBadge` were deduped to `SigningSettings.tsx` with the
-  line-ending value tables in `lineEndingOptions.ts`. `RepoSettingsPanel`
-  still carries its own copies of those three helpers - the rest of the
-  split.
 - **Keyboard shortcuts system** - full plan in
   `design/2026-08-24-keyboard-shortcuts-system.md` (command registry +
   keymap-as-data + one dispatcher with a context/dismissable stack + input
@@ -247,11 +233,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   conventional breadcrumb when porting fixes across long-lived/release
   branches. Per-invocation choice (e.g. a second menu entry or a caret),
   not a persisted setting.
-- **Branch list: filter box** (2026-08-20 review; table stakes in every
-  surveyed tool). A small text filter above the Branches section narrowing
-  local + remote lists (substring on the short name, keep folder groups),
-  Esc clears. The grouped/folder view helps but doesn't replace typing
-  "fix/".
 - **Issue / PR templates** - deferred 2026-08-21 ("we'll do them if
   needed"): add GitHub issue forms + a PR template once real issue traffic
   shows the need. The bug form should ask for version, OS, git version, and

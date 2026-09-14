@@ -84,7 +84,7 @@ function WslGitGroupBody() {
       <Row
         label="Distribution"
         value={
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.667em", flexWrap: "wrap" }}>
             <select value={distro} onChange={(e) => setDistro(e.target.value)}>
               {distros.map((d) => (
                 <option key={d.name} value={d.name}>
@@ -106,7 +106,7 @@ function WslGitGroupBody() {
       </FieldNote>
       {error && <pre className="legit-error">{error}</pre>}
 
-      <div style={{ marginTop: 14 }}>
+      <div style={{ marginTop: "1.167em" }}>
         <WslGitExecutableSection />
         {/* `key={distro}` remounts the forms on a distro switch, so a draft
             typed for one distribution can never be saved into another. */}
@@ -209,7 +209,7 @@ function WslGitExecutableSection() {
         />
       )}
       <FieldNote>writes to: hosts settings (all repositories in {distro})</FieldNote>
-      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+      <div style={{ display: "flex", gap: "0.5em", marginTop: "0.667em" }}>
         <input
           style={{ flex: 1, fontFamily: "monospace" }}
           value={draft}

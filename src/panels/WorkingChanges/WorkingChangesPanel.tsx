@@ -34,8 +34,7 @@ import {
   orderedWorkingChangesSections,
   type WorkingChangesSection,
 } from "./sectionOrder";
-import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
-import { OpenInEditorMenuItem } from "../shared/OpenInEditorMenuItem";
+import { FileRowMenuSection } from "../shared/FileRowMenuSection";
 import {
   caseDriftByPath,
   caseDriftTitle,
@@ -52,6 +51,7 @@ import {
   type Selection,
 } from "./selection";
 import { expandUnstagePaths } from "./unstagePaths";
+import { STALE } from "../../lib/queryTiming";
 
 /** Persisted unstaged/staged height split (fraction of the first file
  *  section in render order) + its clamp, so neither list can be squeezed
@@ -205,7 +205,7 @@ export function WorkingChangesPanel() {
     queryKey: [repo?.id, "status"],
     queryFn: () => repoStatus(repo!.id),
     enabled: !!repo,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
 
   // Known submodule paths (gitlinked, or declared in .gitmodules but never
@@ -215,7 +215,7 @@ export function WorkingChangesPanel() {
     queryKey: [repo?.id, "submodules"],
     queryFn: () => repoSubmodules(repo!.id),
     enabled: !!repo,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   const submodulePaths = useMemo(() => submodulePathSet(submodules), [submodules]);
   const submoduleFileIcon = useCallback(
@@ -258,7 +258,7 @@ export function WorkingChangesPanel() {
     queryKey: [repo?.id, "case_drift"],
     queryFn: () => repoCaseDrift(repo!.id),
     enabled: !!repo && detectCaseRenames,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   // Only entries that actually became synthetic rows get row overrides - a
   // path collision with a real status row must not restyle that row.
@@ -314,14 +314,14 @@ export function WorkingChangesPanel() {
     queryKey: [repo?.id, "status", "staged-markers"],
     queryFn: () => repoStagedMarkerPaths(repo!.id),
     enabled: !!repo && opActive,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   const stagedMarkerSet = useMemo(() => new Set(stagedMarkerPaths), [stagedMarkerPaths]);
   const { data: unstagedMarkerPaths = [] } = useQuery<string[]>({
     queryKey: [repo?.id, "status", "unstaged-markers"],
     queryFn: () => repoUnstagedMarkerPaths(repo!.id),
     enabled: !!repo && opActive,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   const unstagedMarkerSet = useMemo(() => new Set(unstagedMarkerPaths), [unstagedMarkerPaths]);
 
@@ -331,7 +331,7 @@ export function WorkingChangesPanel() {
     queryKey: [repo?.id, "op_state", "resolve-undo"],
     queryFn: () => repoResolveUndoPaths(repo!.id),
     enabled: !!repo && opActive,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   const reopenable = useMemo(() => new Set(undoPaths), [undoPaths]);
 
@@ -341,7 +341,7 @@ export function WorkingChangesPanel() {
     queryKey: [repo?.id, "op_state", "conflicts"],
     queryFn: () => repoConflictEntries(repo!.id),
     enabled: !!repo && conflictCount > 0,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
   const conflictKinds = useMemo(
     () => new Map(conflictEntries.map((e) => [e.path, e.kind])),
@@ -662,7 +662,7 @@ export function WorkingChangesPanel() {
           onContextMenu={(e) => openMenu(e)}
         >
       <PanelLoadingBar active={isFetching} />
-      <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: "0.667em" }}>
         <div style={{ display: "flex" }}>
           <button onClick={() => setViewMode("tree")} aria-pressed={viewMode === "tree"} style={segStyle(viewMode === "tree", "left")}>
             Tree
@@ -687,7 +687,7 @@ export function WorkingChangesPanel() {
       </div>
 
       {isError && (
-        <pre className="legit-error" style={{ margin: "8px 12px", fontSize: "var(--fz-md)" }}>
+        <pre className="legit-error" style={{ margin: "0.667em 1em", fontSize: "var(--fz-md)" }}>
           {formatAppError(error)}
         </pre>
       )}
@@ -771,28 +771,14 @@ export function WorkingChangesPanel() {
                       <MenuItem onClick={() => { void requestDiscardCaseRename(d); closeMenu(); }}>
                         Discard rename
                       </MenuItem>
-                      {!d.is_dir && (
-                        <MenuItem
-                          onClick={() => {
-                            closeMenu();
-                            useSummonStore.getState().summon("blame", d.index_path);
-                          }}
-                        >
-                          Blame file
-                        </MenuItem>
-                      )}
-                      {!d.is_dir && (
-                        <MenuItem
-                          onClick={() => {
-                            closeMenu();
-                            useSummonStore.getState().summon("file-history", d.index_path);
-                          }}
-                        >
-                          File history
-                        </MenuItem>
-                      )}
-                      <CopyPathMenuSection path={f.path} onClose={closeMenu} />
-                      {!d.is_dir && <OpenInEditorMenuItem path={d.disk_path} onClose={closeMenu} />}
+                      <FileRowMenuSection
+                        path={f.path}
+                        untracked={d.is_dir}
+                        onHistory={() => useSummonStore.getState().summon("file-history", d.index_path)}
+                        onBlame={() => useSummonStore.getState().summon("blame", d.index_path)}
+                        editorPath={d.is_dir ? null : d.disk_path}
+                        onClose={closeMenu}
+                      />
                     </>,
                   );
                   return;
@@ -1092,8 +1078,8 @@ function Section({
           flexShrink: 0,
           display: "flex",
           alignItems: "center",
-          gap: 8,
-          padding: "4px 8px",
+          gap: "0.667em",
+          padding: "0.333em 0.667em",
           fontSize: "var(--fz-sm)",
           textTransform: "uppercase",
           letterSpacing: 0.5,
@@ -1104,7 +1090,7 @@ function Section({
         <span>{title}</span>
         <span>{count}</span>
         <CountsSummary add={additions} del={deletions} />
-        <span style={{ marginLeft: "auto", display: "flex", gap: 8, textTransform: "none", letterSpacing: 0 }}>
+        <span style={{ marginLeft: "auto", display: "flex", gap: "0.667em", textTransform: "none", letterSpacing: 0 }}>
           {actions}
         </span>
       </div>

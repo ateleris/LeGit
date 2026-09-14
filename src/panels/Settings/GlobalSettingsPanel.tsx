@@ -55,15 +55,15 @@ export function GlobalSettingsPanel() {
           style={{
             display: "flex",
             flexWrap: "wrap",
-            gap: "6px 14px",
+            gap: "0.5em 1.167em",
             alignItems: "center",
             fontSize: "var(--fz-sm)",
             color: "var(--subtle-fg)",
-            marginBottom: 18,
+            marginBottom: "1.5em",
           }}
         >
           <span>Most settings apply instantly.</span>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "0.5em" }}>
             <GitConfigPill /> items change your Git configuration.
           </span>
         </div>
@@ -156,7 +156,7 @@ function AboutSection() {
       <Row
         label="Logs"
         value={
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.667em" }}>
             <Button
               onClick={() => openLogDir().catch((e) => notify.error(formatAppError(e)))}
               title="Open the folder holding LeGit's log files (attach the newest one to a bug report)"
@@ -169,7 +169,7 @@ function AboutSection() {
       <Row
         label="Updates"
         value={
-          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.667em", minWidth: 0 }}>
             <Button onClick={checkForUpdates} disabled={busy}>
               {busy ? "Checking…" : "Check for updates"}
             </Button>
@@ -189,7 +189,7 @@ function AboutSection() {
           </div>
         }
       />
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "0.667em" }}>
         <input
           type="checkbox"
           id="global-check-updates-on-startup"
@@ -239,15 +239,15 @@ function GeneralSection() {
           // label · gutter · control · range — shared shape/widths with Commits
           // graph so the control column aligns across the two sections.
           gridTemplateColumns: SETTINGS_GRID_COLS,
-          gap: "6px 10px",
+          gap: "0.5em 0.833em",
           alignItems: "center",
-          marginTop: 8,
+          marginTop: "0.667em",
           width: "fit-content",
           fontSize: "var(--fz-lg)",
         }}
       >
         <span className="legit-subtle" style={{ gridColumn: 1, gridRow: 1, whiteSpace: "nowrap" }}>Layout orientation</span>
-        <div style={{ gridColumn: "3 / -1", gridRow: 1, display: "flex", gap: 8 }}>
+        <div style={{ gridColumn: "3 / -1", gridRow: 1, display: "flex", gap: "0.667em" }}>
           <Button variant={placement === "top" ? "primary" : "default"} disabled={saving} onClick={() => selectPlacement("top")}>
             Top / Bottom
           </Button>
@@ -267,7 +267,7 @@ function GeneralSection() {
         />
       </div>
       {fontSize !== UI_FONT_SIZE_DEFAULT && (
-        <div style={{ marginTop: 10 }}>
+        <div style={{ marginTop: "0.833em" }}>
           <button disabled={saving} onClick={() => saveFont(UI_FONT_SIZE_DEFAULT)}>
             Reset font size to default
           </button>
@@ -377,9 +377,9 @@ function CommitsGraphSection() {
           // label · link-gutter · input · range — shared widths with General
           // (see SETTINGS_GRID_COLS) so the input column aligns across sections.
           gridTemplateColumns: SETTINGS_GRID_COLS,
-          gap: "6px 10px",
+          gap: "0.5em 0.833em",
           alignItems: "center",
-          marginTop: 8,
+          marginTop: "0.667em",
           width: "fit-content",
           fontSize: "var(--fz-lg)",
         }}
@@ -454,7 +454,7 @@ function CommitsGraphSection() {
           onCommit={(v) => save(effectiveRowHeight, effectiveLaneWidth, dotRadius, v)}
         />
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "1em" }}>
         <input
           type="checkbox"
           id="global-commit-date-absolute"
@@ -466,7 +466,7 @@ function CommitsGraphSection() {
           Show the full date in the Date column instead of relative time
         </label>
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "0.667em" }}>
         <label htmlFor="global-commit-date-format" style={{ fontSize: "var(--fz-lg)" }}>
           Date format
         </label>
@@ -487,13 +487,13 @@ function CommitsGraphSection() {
           checked={dateShowTime}
           onChange={toggleDateShowTime}
           disabled={savingDate || !dateAbsolute}
-          style={{ marginLeft: 8 }}
+          style={{ marginLeft: "0.667em" }}
         />
         <label htmlFor="global-commit-date-show-time" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
           Include the time of day
         </label>
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "1em" }}>
         <input
           type="checkbox"
           id="global-commit-avatars"
@@ -617,7 +617,7 @@ function NumberField({
   }
 
   return (
-    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fz-lg)" }}>
+    <label style={{ display: "flex", alignItems: "center", gap: "0.5em", fontSize: "var(--fz-lg)" }}>
       <span className="legit-subtle">{label}</span>
       {input}
       {range}
@@ -635,7 +635,7 @@ function DiffViewerSection() {
   return (
     <Section title="Diff viewer">
       <FieldNote>writes to: global settings — applies to all repos</FieldNote>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "0.667em" }}>
         <input
           type="checkbox"
           id="global-diff-syntax"
@@ -686,13 +686,13 @@ function AutoOpenPanelsSection() {
         panel. Uncheck one to stop it popping open — it still updates live when
         you already have it open.
       </FieldNote>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.333em", marginTop: "0.667em" }}>
         {SUPPRESSIBLE_SUMMON_PANELS.map((id) => {
           const autoOpen = !suppressed.includes(id);
           return (
             <label
               key={id}
-              style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fz-lg)", cursor: "pointer" }}
+              style={{ display: "flex", alignItems: "center", gap: "0.5em", fontSize: "var(--fz-lg)", cursor: "pointer" }}
             >
               <input
                 type="checkbox"
@@ -752,8 +752,8 @@ function WorkingChangesLayoutSection() {
         style={{
           display: "flex",
           flexDirection: "column",
-          gap: 4,
-          marginTop: 8,
+          gap: "0.333em",
+          marginTop: "0.667em",
           // Row offsets resolve against this container (drag math).
           position: "relative",
         }}
@@ -766,7 +766,7 @@ function WorkingChangesLayoutSection() {
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 8,
+              gap: "0.667em",
               // Same metrics as the global `button` base (settings-body
               // buttons like Top/Bottom - Left/Right): --fz-lg text,
               // line-height 1.4, 4px vertical padding, radius 4 - so the
@@ -775,7 +775,7 @@ function WorkingChangesLayoutSection() {
               lineHeight: 1.4,
               border: "1px solid var(--panel-border)",
               borderRadius: 4,
-              padding: "4px 8px",
+              padding: "0.333em 0.667em",
               background: "var(--panel-bg)",
               // Rows are drag handles (same fix as the repo tabs).
               userSelect: "none",
@@ -786,7 +786,7 @@ function WorkingChangesLayoutSection() {
               position: "relative",
             }}
           >
-            <span style={{ display: "flex", gap: 2 }}>
+            <span style={{ display: "flex", gap: "0.167em" }}>
               <IconButton title="Move up" disabled={saving || i === 0} onClick={() => move(i, -1)}>
                 ↑
               </IconButton>
@@ -813,7 +813,7 @@ function AutoRefreshSection() {
   return (
     <Section title="Auto-refresh">
       <FieldNote>writes to: global settings — applies to all open repos immediately</FieldNote>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "0.667em" }}>
         <input
           type="checkbox"
           id="global-watcher-enabled"
@@ -861,7 +861,7 @@ function AutoFetchSection() {
   return (
     <Section title="Background auto-fetch">
       <FieldNote>writes to: global settings — fetch-only, never pulls or merges</FieldNote>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "0.667em" }}>
         <input
           type="checkbox"
           id="global-auto-fetch"
@@ -873,7 +873,7 @@ function AutoFetchSection() {
           Periodically fetch the active repository's remotes
         </label>
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "0.667em" }}>
         <label htmlFor="global-auto-fetch-interval" style={{ fontSize: "var(--fz-lg)" }}>
           Interval (minutes)
         </label>
@@ -924,7 +924,7 @@ function ExternalEditorSection() {
   return (
     <Section title="External editor">
       <FieldNote>writes to: global settings</FieldNote>
-      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+      <div style={{ display: "flex", gap: "0.5em", marginTop: "0.667em" }}>
         <input
           style={{ flex: 1 }}
           value={draft}
@@ -958,7 +958,7 @@ function BranchCreationSection() {
   return (
     <Section title="Branch creation">
       <FieldNote>writes to: global settings — applies to all repos</FieldNote>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "0.667em" }}>
         <input
           type="checkbox"
           id="global-checkout-new-branch"
@@ -990,7 +990,7 @@ function ConfirmDiscardSection() {
   return (
     <Section title="Destructive action confirmation">
       <FieldNote>writes to: global settings — applies to all repos</FieldNote>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "0.667em" }}>
         <input
           type="checkbox"
           id="global-confirm-discard"
@@ -1021,7 +1021,7 @@ function DetectCaseRenamesSection() {
   return (
     <Section title="Case-only renames">
       <FieldNote>writes to: global settings — applies to all repos</FieldNote>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "0.667em" }}>
         <input
           type="checkbox"
           id="global-detect-case-renames"
@@ -1053,7 +1053,7 @@ function CheckoutRemoteFastForwardSection() {
   return (
     <Section title="Remote branch checkout">
       <FieldNote>writes to: global settings (applies to all repos)</FieldNote>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "0.667em" }}>
         <input
           type="checkbox"
           id="global-checkout-remote-ff"
@@ -1086,7 +1086,7 @@ function SubmoduleAttachSection() {
   return (
     <Section title="Submodule branch attach">
       <FieldNote>writes to: global settings (applies to all repos)</FieldNote>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "0.667em" }}>
         <input
           type="checkbox"
           id="global-submodule-attach"
@@ -1122,22 +1122,22 @@ function PushGuardSection() {
   return (
     <Section title="Submodule push guard">
       <FieldNote>writes to: global settings — applies to all repos</FieldNote>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: saving ? "default" : "pointer" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.667em", marginTop: "0.667em" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.667em", cursor: saving ? "default" : "pointer" }}>
           <input type="radio" checked={mode === null} onChange={() => select(null)} disabled={saving} />
           <span style={{ fontSize: "var(--fz-lg)" }}>Off</span>
           <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
             — pushes never look at submodules (git default)
           </span>
         </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: saving ? "default" : "pointer" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.667em", cursor: saving ? "default" : "pointer" }}>
           <input type="radio" checked={mode === "check"} onChange={() => select("check")} disabled={saving} />
           <span style={{ fontSize: "var(--fz-lg)" }}>Check</span>
           <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
             — block the push when it references submodule commits that exist on no remote
           </span>
         </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: saving ? "default" : "pointer" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.667em", cursor: saving ? "default" : "pointer" }}>
           <input type="radio" checked={mode === "on_demand"} onChange={() => select("on_demand")} disabled={saving} />
           <span style={{ fontSize: "var(--fz-lg)" }}>On demand</span>
           <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
@@ -1159,7 +1159,7 @@ function AutoPushTagsSection() {
   return (
     <Section title="Auto-push tags">
       <FieldNote>writes to: global settings — applies to all repos (repo-overridable)</FieldNote>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "0.667em" }}>
         <input
           type="checkbox"
           id="global-auto-push-tags"
@@ -1198,12 +1198,12 @@ function BranchSwitchingSection() {
   return (
     <Section title="Branch switching">
       <FieldNote>writes to: global settings — applies to all repos</FieldNote>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.667em", marginTop: "0.667em" }}>
         <label
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 8,
+            gap: "0.667em",
             cursor: saving ? "default" : "pointer",
           }}
         >
@@ -1222,7 +1222,7 @@ function BranchSwitchingSection() {
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 8,
+            gap: "0.667em",
             cursor: saving ? "default" : "pointer",
           }}
         >
@@ -1241,7 +1241,7 @@ function BranchSwitchingSection() {
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 8,
+            gap: "0.667em",
             cursor: saving ? "default" : "pointer",
           }}
         >
@@ -1284,7 +1284,7 @@ function LineEndingChangesSection() {
   return (
     <Section title="Line ending changes">
       <FieldNote>writes to: global settings — default for all repos</FieldNote>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "0.667em" }}>
         <input
           type="checkbox"
           id="global-eol-chips"
@@ -1296,7 +1296,7 @@ function LineEndingChangesSection() {
           Show line-ending change chips on Working Changes files
         </label>
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "0.667em" }}>
         <input
           type="checkbox"
           id="global-eol-warn"

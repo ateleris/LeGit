@@ -15,6 +15,7 @@ import { notifyLfsStubs } from "../../lib/lfsFeedback";
 import { notify } from "../../store/notifications";
 import { BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon, StashIcon } from "../../icons";
 import { MenuItem, Separator } from "./menu/primitives";
+import { STALE } from "../../lib/queryTiming";
 
 // ---------------------------------------------------------------------------
 // Remote sync toolbar
@@ -71,7 +72,7 @@ export function RemoteSyncToolbar({
     queryKey: [repoId, "tracking"],
     queryFn: () => repoTrackingStatus(repoId),
     enabled: !!repoId,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
 
   // Configured remotes (not just fetched ones) — so Publish works the moment a
@@ -80,7 +81,7 @@ export function RemoteSyncToolbar({
     queryKey: [repoId, "remotes"],
     queryFn: () => repoListRemotes(repoId),
     enabled: !!repoId,
-    staleTime: 5_000,
+    staleTime: STALE.live,
   });
 
   const [busyOp, setBusyOp] = useState<SyncOp | null>(null);
@@ -218,7 +219,7 @@ export function RemoteSyncToolbar({
       // padding stays the class default (6px): with the 2em controls that
       // lands exactly on the toolbar min-height, so the spacing around the
       // controls is identical whether or not the row wraps.
-      style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}
+      style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "0.5em" }}
     >
       {/* While an op runs, ITS button becomes the Cancel button (spinner +
           "Cancel", still enabled) — the cancel affordance sits exactly where
@@ -255,7 +256,7 @@ export function RemoteSyncToolbar({
           title="Pull strategy"
           disabled={busy || !hasUpstream}
           onClick={() => setPullMenuOpen((o) => !o)}
-          style={{ padding: "2px 4px", marginLeft: -1 }}
+          style={{ padding: "0.167em 0.333em", marginLeft: -1 }}
         >
           <ChevronDownIcon />
         </Button>
@@ -306,7 +307,7 @@ export function RemoteSyncToolbar({
           title="More push options"
           disabled={busy || !currentBranch || !remoteName}
           onClick={() => setMenuOpen((o) => !o)}
-          style={{ padding: "2px 4px", marginLeft: -1 }}
+          style={{ padding: "0.167em 0.333em", marginLeft: -1 }}
         >
           <ChevronDownIcon />
         </Button>
@@ -370,7 +371,7 @@ export function RemoteSyncToolbar({
           title="Stash mode"
           disabled={!hasUncommittedChanges}
           onClick={() => setStashMenuOpen((o) => !o)}
-          style={{ padding: "2px 4px", marginLeft: -1 }}
+          style={{ padding: "0.167em 0.333em", marginLeft: -1 }}
         >
           <ChevronDownIcon />
         </Button>
@@ -409,7 +410,7 @@ export function RemoteSyncToolbar({
             fontFamily: "monospace",
             display: "flex",
             alignItems: "center",
-            gap: 6,
+            gap: "0.5em",
           }}
         >
           {tracking.ahead === 0 && tracking.behind === 0 ? (
@@ -431,7 +432,7 @@ export function RemoteSyncToolbar({
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 6,
+            gap: "0.5em",
             fontSize: "var(--fz-sm)",
             color: "var(--subtle-fg)",
             minWidth: 0,
