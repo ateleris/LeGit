@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { DockviewApi, DockviewGroupPanel } from "dockview-react";
+import { useLayersStore } from "./layers";
 
 /** Panel min width/height as multiples of the base UI font size — so they scale
  * with it. At the default 12px base these give 300×96, overriding dockview's
@@ -109,34 +110,31 @@ export function exitMaximized(
   return false;
 }
 
-/** Exit focus mode in whichever dock is maximized (the Escape path). */
-export function exitMaximizedPanel(): boolean {
-  const { globalApi, repoApi } = useDockviewStore.getState();
-  return exitMaximized(repoApi, globalApi);
+/** Structural subset of `DockviewApi` used by the mode-layer wiring - kept
+ * minimal so it is unit-testable with fakes (maximize.test.ts). */
+export interface MaximizeSource {
+  hasMaximizedGroup(): boolean;
+  exitMaximizedGroup(): void;
+  onDidMaximizedGroupChange(cb: () => void): unknown;
 }
 
 /**
- * True when a window-level Escape keydown is "unclaimed" and may exit focus
- * mode. Escape consumers keep it from ever qualifying in one of three ways:
- * preventDefault (InlineRenameInput, RevPicker's input), stopPropagation on
- * their document-level listeners (useDismissable does this for every
- * dropdown, popover, and context menu; the confirm dialog, askpass prompt,
- * and the Commits quick-jump overlay do it themselves) - the window listener
- * never sees those - or by being an editable target (inline branch/stash
- * editors, the commit search box), rejected here.
+ * Keep a "mode" layer on the stack while this dock has a maximized group, so
+ * Escape exits focus mode through the key dispatcher (topmost layer first: a
+ * menu opened over a maximized panel is popped before the maximize). Covers
+ * every exit path - dockview fires the change event also when maximize ends
+ * implicitly (activating another group, closing the panel).
  */
-export function isUnclaimedEscape(e: {
-  key: string;
-  defaultPrevented: boolean;
-  target: unknown;
-}): boolean {
-  if (e.key !== "Escape" || e.defaultPrevented) return false;
-  const el = e.target as { tagName?: unknown; isContentEditable?: unknown } | null;
-  if (el && typeof el.tagName === "string") {
-    if (["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName)) return false;
-    if (el.isContentEditable === true) return false;
-  }
-  return true;
+export function wireMaximizeModeLayer(api: MaximizeSource, dockId: "global" | "repo"): void {
+  const layerId = `maximize:${dockId}`;
+  api.onDidMaximizedGroupChange(() => {
+    const { push, remove } = useLayersStore.getState();
+    if (api.hasMaximizedGroup()) {
+      push({ id: layerId, kind: "mode", onDismiss: () => api.exitMaximizedGroup() });
+    } else {
+      remove(layerId);
+    }
+  });
 }
 
 /** Whether either dock currently has a maximized group (View menu label). */

@@ -21,6 +21,7 @@ import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { TOOLBAR_FIELD_STYLE } from "../shared/fields";
 import { useDelayedFlag } from "../shared/useDelayedFlag";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
+import { useLayer } from "../../store/layers";
 import { repoCreateBranch, repoStashBranch } from "../../lib/commands";
 import { notifySwitchError } from "../../lib/switchFeedback";
 import { useOpState } from "../../lib/useOpState";
@@ -916,6 +917,16 @@ export function CommitsPanel() {
   const lastQuickQueryRef = useRef("");
   const quickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [quickOverlay, setQuickOverlay] = useState<string | null>(null);
+  const clearQuickJump = () => {
+    quickBufferRef.current = "";
+    lastQuickQueryRef.current = "";
+    if (quickTimerRef.current) clearTimeout(quickTimerRef.current);
+    setQuickOverlay(null);
+  };
+  // While visible the overlay is a popover layer: the key dispatcher pops it
+  // on Escape (topmost layer first), so dismissing it can never also exit a
+  // maximized panel.
+  useLayer(quickOverlay !== null, "popover", clearQuickJump);
 
   if (!repo) {
     return (
@@ -1028,15 +1039,10 @@ export function CommitsPanel() {
       return;
     }
     if (e.key === "Escape") {
-      // Consumed only while the overlay is visibly up - dismissing it must
-      // not also trigger other Escape actions (e.g. exiting a maximized
-      // panel). Clearing the invisible leftover query is a free side effect
-      // that shouldn't swallow anyone's Esc.
-      if (quickOverlay !== null) e.stopPropagation();
-      quickBufferRef.current = "";
-      lastQuickQueryRef.current = "";
-      if (quickTimerRef.current) clearTimeout(quickTimerRef.current);
-      setQuickOverlay(null);
+      // A visible overlay is popped by the key dispatcher before this handler
+      // ever sees Escape; reached only to clear the invisible leftover query,
+      // which must not swallow anyone's Esc.
+      clearQuickJump();
       return;
     }
     if (e.key === "Backspace" && quickBufferRef.current) {

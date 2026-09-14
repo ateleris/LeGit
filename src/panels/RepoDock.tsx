@@ -4,7 +4,7 @@ import {
   type DockviewApi,
   type DockviewReadyEvent,
 } from "dockview-react";
-import { applyPanelConstraints, useDockviewStore } from "../store/dockview";
+import { applyPanelConstraints, useDockviewStore, wireMaximizeModeLayer } from "../store/dockview";
 import { useLayoutsStore } from "../store/layouts";
 import { notify } from "../store/notifications";
 import { useThemeStore } from "../store/themes";
@@ -38,6 +38,7 @@ export function RepoDock() {
     (event: DockviewReadyEvent) => {
       apiRef.current = event.api;
       setRepoApi(event.api);
+      wireMaximizeModeLayer(event.api, "repo");
 
       // Envelope format: { dockview: <layout>, placements: <map>, fallbacks: <map> }
       const envelope = parseRepoLayoutEnvelope(localStorage.getItem(LAYOUT_KEY));

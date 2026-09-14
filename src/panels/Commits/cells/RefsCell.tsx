@@ -784,6 +784,7 @@ function OverflowPopover({
       x={x}
       y={y + 8}
       onClose={onClose}
+      kind="popover"
       onMouseEnter={onPointerEnter}
       onMouseLeave={onPointerLeave}
       style={{

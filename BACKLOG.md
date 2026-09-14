@@ -18,12 +18,19 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
 ### v1.3.0
 
 - **Keyboard shortcuts system** - full plan in
-  `design/2026-08-24-keyboard-shortcuts-system.md` (command registry +
-  keymap-as-data + one dispatcher with a context/dismissable stack + input
-  guard; seed bindings incl. Mod+Enter commit, fetch/pull/push, F5, tab
-  switching, Commits arrow-nav, and issue #21's Ctrl+A select-all in
-  Working Changes; generated help overlay; phases 2/3 = focus management,
-  then user keymap + palette). Phase 1 is roughly one focused session.
+  `design/2026-08-24-keyboard-shortcuts-system.md` (revised 2026-09-14:
+  full user rebinding is a product goal, so the phases are reordered).
+  Command registry + keymap-as-data + one capture-phase dispatcher with a
+  layer/dismissable stack + input guard. **Phase 1 landed 2026-09-14**
+  (infrastructure only, no new shortcuts): `src/keys/` (chord, keymap,
+  registry, resolve, Dispatcher) + `store/layers.ts`;
+  `useDismissable`/`Popover`, the dialog/prompt Escape handlers, the
+  Commits quick-jump overlay and maximize (mode layer) all migrated onto
+  the layer stack; `isUnclaimedEscape` deleted. Phase 2 is the global
+  Keyboard Shortcuts panel (press-a-key capture, conflicts, reset,
+  import/export, F1) plus the seed bindings. Phase 3 is focus management
+  (unblocks issue #21's Ctrl+A select-all) and the per-panel command
+  sweep; the command palette comes after.
   Also seed shortcuts for applying saved layouts (2026-09-07, with the
   named-layouts feature): e.g. Ctrl+Alt+1..9 for the first N layouts in
   list order (digits, QWERTZ-safe) via `useLayoutsStore.apply`.

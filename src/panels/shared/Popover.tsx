@@ -1,5 +1,6 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import type { LayerKind } from "../../store/layers";
 import { MENU_LAYER_ATTR } from "../Commits/menu/primitives";
 import { useDismissable } from "./useDismissable";
 import { clampToViewport } from "./popoverPosition";
@@ -14,6 +15,7 @@ export function Popover({
   y,
   onClose,
   insideRefs = [],
+  kind = "menu",
   style,
   children,
   ...divProps
@@ -23,6 +25,8 @@ export function Popover({
   onClose: () => void;
   /** Extra elements that count as inside (e.g. a combobox's input). */
   insideRefs?: readonly React.RefObject<HTMLElement | null>[];
+  /** Layer kind: "menu" blocks shortcuts while open; hover flyouts pass "popover". */
+  kind?: LayerKind;
   style?: React.CSSProperties;
   children: React.ReactNode;
 } & Omit<React.HTMLAttributes<HTMLDivElement>, "style">) {
@@ -45,7 +49,7 @@ export function Popover({
     );
   }, [x, y]);
 
-  useDismissable(true, onClose, [ref, ...insideRefs]);
+  useDismissable(true, onClose, [ref, ...insideRefs], kind);
 
   return createPortal(
     <div

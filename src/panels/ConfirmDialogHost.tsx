@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useConfirmStore, type PendingConfirm } from "../store/confirm";
+import { useLayer } from "../store/layers";
 import { placeDialogNearPointer, type Point } from "./dialogPlacement";
 import { Button } from "./shared/buttons";
 
@@ -81,16 +82,9 @@ function ConfirmDialog({ request }: { request: PendingConfirm }) {
         // the dialog never flashes at a wrong position.
         { top: 0, left: 0, visibility: "hidden" };
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        cancel();
-      }
-    };
-    document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
-  }, [cancel]);
+  // A "dialog" layer: Escape cancels through the key dispatcher (even from
+  // the input textarea), and shortcuts are blocked while the dialog is up.
+  useLayer(true, "dialog", cancel);
 
   return createPortal(
     <>

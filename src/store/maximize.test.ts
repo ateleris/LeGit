@@ -2,8 +2,9 @@
 // which dock gets exited or maximized, and when the toggle must do nothing.
 // The dockview APIs are faked structurally so the rules are pinned without a
 // live dock.
-import { describe, it, expect } from "vitest";
-import { exitMaximized, isUnclaimedEscape, toggleMaximize, type MaximizeTarget } from "./dockview";
+import { beforeEach, describe, it, expect } from "vitest";
+import { exitMaximized, toggleMaximize, wireMaximizeModeLayer, type MaximizeTarget } from "./dockview";
+import { useLayersStore } from "./layers";
 
 function fakeDock(opts: {
   maximized?: boolean;
@@ -84,34 +85,53 @@ describe("exitMaximized", () => {
   });
 });
 
-describe("isUnclaimedEscape", () => {
-  const esc = (over: Partial<{ key: string; defaultPrevented: boolean; target: unknown }> = {}) => ({
-    key: "Escape",
-    defaultPrevented: false,
-    target: null as unknown,
-    ...over,
+describe("wireMaximizeModeLayer", () => {
+  beforeEach(() => {
+    useLayersStore.setState({ layers: [] });
   });
 
-  it("accepts a plain Escape outside any editable target", () => {
-    expect(isUnclaimedEscape(esc())).toBe(true);
-    expect(isUnclaimedEscape(esc({ target: { tagName: "DIV", isContentEditable: false } }))).toBe(true);
+  function fakeMaximizeSource() {
+    let maximized = false;
+    let cb: (() => void) | null = null;
+    const calls: string[] = [];
+    return {
+      dock: {
+        hasMaximizedGroup: () => maximized,
+        exitMaximizedGroup: () => {
+          calls.push("exit");
+          maximized = false;
+          cb?.();
+        },
+        onDidMaximizedGroupChange: (fn: () => void) => {
+          cb = fn;
+        },
+      },
+      maximize: () => {
+        maximized = true;
+        cb?.();
+      },
+      calls,
+    };
+  }
+
+  it("keeps a mode layer on the stack while the dock is maximized", () => {
+    const src = fakeMaximizeSource();
+    wireMaximizeModeLayer(src.dock, "repo");
+    expect(useLayersStore.getState().layers).toHaveLength(0);
+    src.maximize();
+    expect(useLayersStore.getState().layers.map((l) => `${l.id}/${l.kind}`)).toEqual([
+      "maximize:repo/mode",
+    ]);
+    src.dock.exitMaximizedGroup();
+    expect(useLayersStore.getState().layers).toHaveLength(0);
   });
 
-  it("rejects other keys", () => {
-    expect(isUnclaimedEscape(esc({ key: "Enter" }))).toBe(false);
-  });
-
-  it("rejects an Escape a local handler already claimed via preventDefault", () => {
-    // InlineRenameInput and RevPicker preventDefault their Esc.
-    expect(isUnclaimedEscape(esc({ defaultPrevented: true }))).toBe(false);
-  });
-
-  it("rejects Escape originating from editable targets", () => {
-    // Inline branch/stash editors and the commit search box handle their own
-    // Esc without stopping propagation - the target guard covers them all.
-    for (const tagName of ["INPUT", "TEXTAREA", "SELECT"]) {
-      expect(isUnclaimedEscape(esc({ target: { tagName, isContentEditable: false } }))).toBe(false);
-    }
-    expect(isUnclaimedEscape(esc({ target: { tagName: "DIV", isContentEditable: true } }))).toBe(false);
+  it("dismissing the layer exits the maximized group (the Escape path)", () => {
+    const src = fakeMaximizeSource();
+    wireMaximizeModeLayer(src.dock, "global");
+    src.maximize();
+    useLayersStore.getState().layers[0].onDismiss();
+    expect(src.calls).toEqual(["exit"]);
+    expect(useLayersStore.getState().layers).toHaveLength(0);
   });
 });

@@ -4,7 +4,7 @@ import {
   type DockviewApi,
   type DockviewReadyEvent,
 } from "dockview-react";
-import { applyPanelConstraints, useDockviewStore } from "../store/dockview";
+import { applyPanelConstraints, useDockviewStore, wireMaximizeModeLayer } from "../store/dockview";
 import { useGlobalRegionStore } from "../store/globalRegion";
 import { useLayoutsStore } from "../store/layouts";
 import { GLOBAL_DOCKVIEW_COMPONENTS, GLOBAL_DOCKVIEW_TAB_COMPONENTS, GLOBAL_PANELS, PANEL_TITLES } from "./registry";
@@ -33,6 +33,7 @@ export function GlobalDock() {
     (event: DockviewReadyEvent) => {
       apiRef.current = event.api;
       readyGlobalDock(event.api);
+      wireMaximizeModeLayer(event.api, "global");
     },
     []
   );

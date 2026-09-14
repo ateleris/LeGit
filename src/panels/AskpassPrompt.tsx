@@ -6,6 +6,7 @@ import {
   type AskpassRequestPayload,
 } from "../lib/events";
 import { askpassRespond, askpassCancel } from "../lib/commands";
+import { useLayer } from "../store/layers";
 import { Button } from "./shared/buttons";
 
 /**
@@ -89,18 +90,9 @@ function AskpassDialog({
     }
   }, [request.request_id, onDone]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        // Consumed: cancelling the prompt must not leak to other Escape
-        // listeners (e.g. exiting a maximized panel).
-        e.stopPropagation();
-        void cancel();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [cancel]);
+  // A "dialog" layer: Escape cancels through the key dispatcher and cannot
+  // leak to other Escape consumers (e.g. exiting a maximized panel).
+  useLayer(true, "dialog", () => void cancel());
 
   const caption: React.CSSProperties = { fontSize: "var(--fz-sm)", color: "var(--subtle-fg)" };
   const confirmation = request.kind === "confirmation";

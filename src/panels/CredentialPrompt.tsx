@@ -6,6 +6,7 @@ import {
   type CredentialRequestPayload,
 } from "../lib/events";
 import { credentialRespond, credentialCancel } from "../lib/commands";
+import { useLayer } from "../store/layers";
 import { Button } from "./shared/buttons";
 
 /**
@@ -90,13 +91,8 @@ function CredentialDialog({
     }
   }, [request.request_id, onDone]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") void cancel();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [cancel]);
+  // A "dialog" layer: Escape cancels through the key dispatcher.
+  useLayer(true, "dialog", () => void cancel());
 
   const field: React.CSSProperties = { display: "flex", flexDirection: "column", gap: "0.25em" };
   const caption: React.CSSProperties = { fontSize: "var(--fz-sm)", color: "var(--subtle-fg)" };
