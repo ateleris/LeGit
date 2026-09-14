@@ -9,7 +9,7 @@ name: PR build
 # published — artifacts expire after the retention period.
 on:
   pull_request:
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:
 
 permissions:

@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 # Least privilege for the default GITHUB_TOKEN: every job only checks out the
 # repo (artifact upload uses the runtime token, not this one).
