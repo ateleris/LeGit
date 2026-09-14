@@ -13,3 +13,11 @@ export function useFileRowMetrics(): { rowHeight: number; iconSize: number } {
     iconSize: Math.round(14 * fontScale),
   };
 }
+
+/** Row gutter (8px at the 12px base) + per-depth tree indent (14px), as one
+ * em length so it scales with the font. Rows set `fontSize: var(--fz-md)`,
+ * which equals `--ui-font-size`, so em here tracks the global size. */
+export function fileRowIndent(depth: number): string {
+  const em = (8 + depth * 14) / UI_FONT_SIZE_DEFAULT;
+  return `${parseFloat(em.toFixed(3))}em`;
+}

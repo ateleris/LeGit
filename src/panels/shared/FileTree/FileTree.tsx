@@ -26,6 +26,7 @@ import type { LucideIcon } from "lucide-react";
 import type { FileState } from "../../../lib/types";
 import { useRestoreVirtualizerScroll } from "../../PanelApiContext";
 import { baseName, flatten, type FileTreeEntry, type Row, type ViewMode } from "./buildTree";
+import { fileRowIndent } from "./useFileRowMetrics";
 import { ShrinkingPathText } from "../ShrinkingPathText";
 
 interface FileTreeProps {
@@ -332,7 +333,7 @@ export function FileTree({
                 display: "flex",
                 alignItems: "center",
                 gap: "0.5em",
-                paddingLeft: "0.667em" + row.depth * 14,
+                paddingLeft: fileRowIndent(row.depth),
                 paddingRight: "0.667em",
                 cursor: "pointer",
                 fontSize: "var(--fz-md)",
