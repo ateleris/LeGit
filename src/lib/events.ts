@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   ConsoleEventPayload,
   GitInvocation,
+  RemoteHostGitPayload,
   RemoteHostStatusPayload,
   RemoteProgressPayload,
   RepoChangedPayload,
@@ -78,6 +79,16 @@ export async function onRemoteHostStatus(
   return listen<RemoteHostStatusPayload>(REMOTE_HOST_STATUS_EVENT, (event) =>
     handler(event.payload)
   );
+}
+
+/** Tauri event channel for a connected host's unusable git. Matches
+ *  `REMOTE_HOST_GIT_EVENT` in `src-tauri/src/remote/connection.rs`. */
+export const REMOTE_HOST_GIT_EVENT = "legit://remote-host-git";
+
+export async function onRemoteHostGit(
+  handler: (payload: RemoteHostGitPayload) => void
+): Promise<() => void> {
+  return listen<RemoteHostGitPayload>(REMOTE_HOST_GIT_EVENT, (event) => handler(event.payload));
 }
 
 /** Tauri event channel carrying a repo locator a second app invocation asked

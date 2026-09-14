@@ -920,6 +920,19 @@ enum ProbedEntry {
     Keep(String),
 }
 
+/// What a restored LOCAL entry becomes from its `rev-parse` probe, with
+/// `probe` = `None` when git could not be spawned at all. That case is
+/// "unavailable, not gone" - exactly like a WSL distro that is down: the app
+/// machine may have no git (WSL-only setups run without one), so the tab is
+/// kept for the next launch instead of being forgotten. Pure.
+fn local_probe_entry(probe: Option<&legit_core::RunOutput>, raw: &str) -> Option<ProbedEntry> {
+    match probe {
+        None => Some(ProbedEntry::Keep(raw.to_string())),
+        Some(out) if out.success => Some(ProbedEntry::Open(RepoLocator::local(out.stdout.trim()))),
+        Some(_) => None,
+    }
+}
+
 /// Compute the post-restore `currently_open` list and the persisted active
 /// locator. Pure so the bookkeeping rules are pinned by unit tests:
 /// - opened repos persist their session LOCATOR, never the bare host path
@@ -1001,15 +1014,13 @@ pub async fn restore_open_repos(
                             &HostPath::from_path(&git_path),
                             Some(&HostPath::from_path(&path)),
                         );
-                        let Ok(out) = probe.run(&["rev-parse", "--show-toplevel"]).await else {
-                            tracing::warn!(path = %raw, "restore: rev-parse spawn failed");
-                            return None;
-                        };
-                        if !out.success {
-                            tracing::info!(path = %raw, stderr = %out.stderr.trim(), "restore: not a repo");
-                            return None;
+                        let out = probe.run(&["rev-parse", "--show-toplevel"]).await;
+                        match &out {
+                            Err(e) => tracing::warn!(path = %raw, err = %e, "restore: rev-parse spawn failed — keeping the entry for next launch"),
+                            Ok(o) if !o.success => tracing::info!(path = %raw, stderr = %o.stderr.trim(), "restore: not a repo"),
+                            Ok(_) => {}
                         }
-                        Some(ProbedEntry::Open(RepoLocator::local(out.stdout.trim())))
+                        local_probe_entry(out.as_ref().ok(), &raw)
                     }
                     RepoLocator::Wsl { distro, path } => {
                         // Connecting is serialized per distro inside
@@ -1302,7 +1313,35 @@ mod tests {
         }
     }
 
-    use super::{restore_bookkeeping, ProbedEntry, RepoLocator};
+    use super::{local_probe_entry, restore_bookkeeping, ProbedEntry, RepoLocator};
+
+    fn probe_output(success: bool, stdout: &str) -> legit_core::RunOutput {
+        legit_core::RunOutput {
+            stdout: stdout.to_string(),
+            stderr: String::new(),
+            exit_code: Some(if success { 0 } else { 128 }),
+            success,
+            duration_ms: 1,
+        }
+    }
+
+    // A local entry whose git could not be SPAWNED says nothing about the
+    // repo: the app machine may have no git at all (a WSL-only setup runs
+    // without one), and dropping the tab over that is not recoverable. Only a
+    // probe that actually ran and answered "not a repo" drops it.
+    #[test]
+    fn restore_keeps_local_entries_when_git_cannot_be_spawned() {
+        let raw = "C:/code/repo";
+        assert_eq!(
+            local_probe_entry(None, raw),
+            Some(ProbedEntry::Keep(raw.to_string()))
+        );
+        assert_eq!(local_probe_entry(Some(&probe_output(false, "")), raw), None);
+        assert_eq!(
+            local_probe_entry(Some(&probe_output(true, "C:/code/repo\n")), raw),
+            Some(ProbedEntry::Open(RepoLocator::local("C:/code/repo")))
+        );
+    }
 
     // Regression: the persisted active pointer must be the session LOCATOR —
     // persisting the bare host path meant a WSL active tab never matched

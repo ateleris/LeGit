@@ -3,12 +3,15 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import type { GitStatus } from "../../lib/types";
 import { useGitStatusStore } from "../../store/git-status";
+import { gateDecision } from "./gateDecision";
 import { copyText } from "../../lib/clipboard";
 import { Button } from "../shared/buttons";
 import { formatVersionTriple } from "../Settings/GitStatusReadout";
 
 interface Props {
   status: GitStatus;
+  /** Whether a remote host (a WSL distribution) could run git instead. */
+  remoteHostsAvailable: boolean;
   children: ReactNode;
 }
 
@@ -21,8 +24,13 @@ interface Props {
  * design/2026-07-07-bundled-git-trade-study.md), so the no-git state doubles
  * as install onboarding: per-platform install actions, a copyable package
  * manager command, and an explicit re-check.
+ *
+ * The block is conditional on there being no other host to run git
+ * (`gateDecision`): a WSL repo runs the distro's binary, so a Windows machine
+ * without Git for Windows is a usable WSL-only setup
+ * (design/2026-09-14-wsl-only-without-local-git.md).
  */
-export function GitSetupGate({ status, children }: Props) {
+export function GitSetupGate({ status, remoteHostsAvailable, children }: Props) {
   const setPath = useGitStatusStore((s) => s.setPath);
   const refresh = useGitStatusStore((s) => s.refresh);
   const pending = useGitStatusStore((s) => s.pending);
@@ -41,7 +49,9 @@ export function GitSetupGate({ status, children }: Props) {
     setRecheckedAndStillMissing(true);
   };
 
-  if (!status.version || status.error) {
+  const decision = gateDecision(status, remoteHostsAvailable);
+
+  if (decision === "install-git") {
     return (
       <Setup title="Git is not installed (or was not found)">
         <p>
@@ -76,7 +86,7 @@ export function GitSetupGate({ status, children }: Props) {
     );
   }
 
-  if (!status.meets_minimum && !continueAnyway) {
+  if (decision === "old-git" && !continueAnyway && status.version) {
     return (
       <Setup title="Git is older than recommended">
         <p>

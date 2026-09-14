@@ -53,6 +53,13 @@ export interface RemoteHostStatusPayload {
   status: "connecting" | "connected" | "disconnected" | "gone" | "connect_failed";
 }
 
+/** A connected host whose git is unusable (missing, or below the floor).
+ *  Emitted once per connect, and only when there is a problem. */
+export interface RemoteHostGitPayload {
+  distro: string;
+  status: GitStatus;
+}
+
 /** repo_clone's result: the opened repo plus any LFS pointer stubs the
  * clone's checkout left behind. */
 export interface CloneOutcome {

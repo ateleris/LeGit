@@ -15,12 +15,17 @@ use specta::Type;
 use tauri::{Emitter, Manager as _};
 use tokio::sync::oneshot;
 
+use crate::commands::git_setup::GitStatus;
 use crate::error::AppError;
 use crate::remote::RepoLocator;
 use crate::state::AppState;
 
 /// Event carrying host connectivity changes to the frontend.
 pub const REMOTE_HOST_STATUS_EVENT: &str = "legit://remote-host-status";
+
+/// Event carrying a connected host's UNUSABLE git to the frontend (missing,
+/// or below the supported floor). Only emitted when there is a problem.
+pub const REMOTE_HOST_GIT_EVENT: &str = "legit://remote-host-git";
 
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -31,6 +36,36 @@ pub struct RemoteHostStatusPayload {
     /// running) | "gone" (lost, no reconnect coming) | "connect_failed"
     /// (an attempt failed; the caller surfaces the error itself)
     pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct RemoteHostGitPayload {
+    pub distro: String,
+    pub status: GitStatus,
+}
+
+/// Whether a host's git probe is worth reporting. Pure.
+fn git_needs_attention(status: &GitStatus) -> bool {
+    status.version.is_none() || !status.meets_minimum
+}
+
+/// Probe the distro's git once per connect and report an unusable one. The
+/// startup gate (DESIGN.md §7.6) only ever probes the APP machine's binary,
+/// so for a repo on a WSL host this is the only place the user hears that its
+/// git is missing or too old.
+async fn report_host_git(app: &tauri::AppHandle, state: &AppState, distro: &str, host: &RemoteHost) {
+    let user_override = state.host_git_override(distro).await;
+    let status = crate::commands::wsl::probe_host(host, user_override).await;
+    if !git_needs_attention(&status) {
+        return;
+    }
+    let _ = app.emit(
+        REMOTE_HOST_GIT_EVENT,
+        RemoteHostGitPayload {
+            distro: distro.to_string(),
+            status,
+        },
+    );
 }
 
 fn emit_status(app: &tauri::AppHandle, distro: &str, status: &str) {
@@ -126,7 +161,10 @@ pub async fn ensure_wsl_host(
     emit_status(app, distro, "connecting");
     let result = connect(app, state, distro).await;
     match &result {
-        Ok(_) => emit_status(app, distro, "connected"),
+        Ok(host) => {
+            emit_status(app, distro, "connected");
+            report_host_git(app, state, distro, host).await;
+        }
         // Not "disconnected": no reconnect loop follows a failed attempt, and
         // the caller (open flow / Settings) reports the error itself.
         Err(_) => emit_status(app, distro, "connect_failed"),
@@ -454,8 +492,36 @@ async fn reconnect_with_backoff(app: tauri::AppHandle, distro: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use legit_core::HostPath;
+    use legit_core::{GitVersion, HostPath, MIN_SUPPORTED_GIT_VERSION};
     use std::path::PathBuf;
+
+    fn status(version: Option<(u32, u32, u32)>) -> GitStatus {
+        let meets = version.is_some_and(|v| v >= MIN_SUPPORTED_GIT_VERSION);
+        GitStatus {
+            resolved_path: "git".into(),
+            version: version.map(|(major, minor, patch)| GitVersion {
+                raw: format!("git version {major}.{minor}.{patch}"),
+                major,
+                minor,
+                patch,
+            }),
+            meets_minimum: meets,
+            minimum_required: MIN_SUPPORTED_GIT_VERSION,
+            user_override: None,
+            error: version.is_none().then(|| "not found".to_string()),
+        }
+    }
+
+    // The app-machine gate never sees a distro's git, so a connected host is
+    // the only place a WSL-only user can learn that its binary is missing or
+    // too old - but a healthy one must stay silent.
+    #[test]
+    fn only_a_broken_or_old_host_git_is_reported() {
+        assert!(git_needs_attention(&status(None)));
+        assert!(git_needs_attention(&status(Some((2, 20, 1)))));
+        assert!(!git_needs_attention(&status(Some(MIN_SUPPORTED_GIT_VERSION))));
+        assert!(!git_needs_attention(&status(Some((2, 51, 0)))));
+    }
 
     fn wsl(distro: &str) -> RepoLocator {
         RepoLocator::Wsl {

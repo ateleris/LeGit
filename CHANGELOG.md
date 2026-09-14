@@ -14,6 +14,9 @@ lives in the git log and the GitHub release notes.
 
 ### Changed
 
+- LeGit no longer demands a locally installed git when the machine has a WSL
+  distribution: the startup screen only blocks when nothing can run git. WSL
+  repositories use their distribution's binary.
 - File context menus now share one common section (view, history, blame,
   copy path, open in editor) with consistent wording and order across panels.
 - More UI spacing (paddings, margins, gaps) now scales with the global UI
@@ -21,6 +24,14 @@ lives in the git log and the GitHub release notes.
 
 ### Fixed
 
+- Opening, cloning or initializing a repository on a machine without git now
+  explains that git is missing and how to install it, instead of showing a raw
+  error.
+- A WSL distribution whose git is missing or older than LeGit supports is now
+  reported when connecting to it, rather than failing later without a reason.
+- Repository tabs are no longer forgotten at startup when git cannot be run on
+  the app machine; they are kept for the next launch, as they already were for
+  an unavailable WSL distribution.
 - Every dropdown menu and popover now closes with Escape and dismisses
   consistently on outside clicks.
 - The uncommitted-changes row no longer draws on top of a locked branch's
