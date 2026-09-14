@@ -120,12 +120,29 @@ function computeOwnership(
   // lane reservation. Owner lookups only hit real commits (a synthetic
   // node is never another synthetic node's parent), so a single pass over
   // the fully-built map suffices regardless of input order.
+  //
+  // Inheritance requires the parent to be the lane's NEWEST owned commit in
+  // the window: only then does the node CONTINUE the line. When the locked
+  // ref is ahead of the parent on the same first-parent chain (HEAD on a
+  // branch behind the locked one), the node hangs off the middle of the
+  // line - inheriting would overdraw the segment above it, rendering the
+  // working-dir row as if it sat on top of the locked ref's tip.
+  const newestOwnedByLane = new Map<LaneIndex, string>();
+  for (const c of commits) {
+    if (c.inheritsParentLane) continue;
+    const lane = owner.get(c.id);
+    if (lane !== undefined && !newestOwnedByLane.has(lane)) {
+      newestOwnedByLane.set(lane, c.id);
+    }
+  }
   for (const c of commits) {
     if (!c.inheritsParentLane || owner.has(c.id)) continue;
     const firstParent = c.parentIds[0];
     if (firstParent === undefined) continue;
     const lane = owner.get(firstParent);
-    if (lane !== undefined) owner.set(c.id, lane);
+    if (lane !== undefined && newestOwnedByLane.get(lane) === firstParent) {
+      owner.set(c.id, lane);
+    }
   }
   return owner;
 }

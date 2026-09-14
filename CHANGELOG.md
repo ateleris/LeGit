@@ -23,6 +23,9 @@ lives in the git log and the GitHub release notes.
 
 - Every dropdown menu and popover now closes with Escape and dismisses
   consistently on outside clicks.
+- The uncommitted-changes row no longer draws on top of a locked branch's
+  lane when HEAD is behind that branch on the same line (e.g. main locked,
+  dev checked out); it now branches out of HEAD on its own lane.
 
 ## [1.2.2] - 2026-09-11
 

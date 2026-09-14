@@ -846,4 +846,37 @@ describe("computeLanes — synthetic nodes vs locked lanes", () => {
     const r = computeLanes(commits, LOCKS, refs);
     expect(r.assignments.get("FT")).not.toBe(0);
   });
+
+  test("working-dir row off a HEAD behind the locked tip takes a side lane", () => {
+    // Screenshot bug 2026-09-14: main locked to lane 0 and AHEAD of the
+    // checked-out dev on the same first-parent chain. Ownership propagation
+    // owns dev's tip (D), so unconditional inheritance put WD on lane 0 too -
+    // its edge then overdrew main's newer commits and the working changes
+    // read as sitting on top of main. WD continues the line only when its
+    // parent is the lane's newest commit; here it must branch out on a side
+    // lane instead, leaving dev itself on the locked lane.
+    const commits: CommitForGraph[] = [
+      { id: "WD", parentIds: ["D"], inheritsParentLane: true },
+      ...makeCommits([
+        ["T", "B"], // main tip
+        ["B", "D"],
+        ["D", "R"], // dev tip (HEAD), on main's first-parent chain
+        ["R"],
+      ]),
+    ];
+    const r = computeLanes(
+      commits,
+      LOCKS,
+      new Map([
+        ["T", ["refs/heads/main"]],
+        ["D", ["refs/heads/dev"]],
+      ]),
+    );
+    expect(r.assignments.get("WD")).not.toBe(0);
+    expect(r.assignments.get("D")).toBe(0);
+    expect(r.assignments.get("T")).toBe(0);
+    // The WD edge terminates in a jog into D's dot, like any branch-off.
+    const wdEdge = r.edges.find((e) => e.fromCommitId === "WD" && e.toCommitId === "D");
+    expect(wdEdge?.fromLane).toBe(r.assignments.get("WD"));
+  });
 });
