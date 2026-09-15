@@ -147,16 +147,22 @@ pub async fn repo_reveal_path(
 // gitignore line composition (pure)
 // ---------------------------------------------------------------------------
 
-/// The `.gitignore` line for a path, anchored to the repo root with a leading
-/// `/` so it matches exactly this path and not a same-named file elsewhere in
-/// the tree. Directories get a trailing `/`. The leading `/` also neutralises
-/// a leading `#`/`!` (comment/negation), which are only special at line start.
+/// The `.gitignore` line for a path. Directories get a trailing `/`. A
+/// leading `/` anchor is added only where it changes matching: single-segment
+/// names (unanchored, they'd match at any depth; a slash-containing pattern
+/// is root-anchored by git already) and names starting with `#`/`!`
+/// (comment/negation, special at line start only).
 fn gitignore_line(rel: &str, is_dir: bool) -> String {
     let trimmed = rel.trim_end_matches('/');
-    if is_dir {
-        format!("/{trimmed}/")
+    let anchor = if !trimmed.contains('/') || trimmed.starts_with('#') || trimmed.starts_with('!') {
+        "/"
     } else {
-        format!("/{trimmed}")
+        ""
+    };
+    if is_dir {
+        format!("{anchor}{trimmed}/")
+    } else {
+        format!("{anchor}{trimmed}")
     }
 }
 
@@ -354,17 +360,67 @@ mod tests {
     }
 
     #[test]
-    fn gitignore_line_anchors_files_to_root() {
+    fn gitignore_line_anchors_single_segment_names() {
+        // Without the anchor, "secret.env" would match at any depth.
         assert_eq!(gitignore_line("secret.env", false), "/secret.env");
-        assert_eq!(gitignore_line("src/gen.rs", false), "/src/gen.rs");
+        assert_eq!(gitignore_line("build", true), "/build/");
+        // An incoming trailing slash is not doubled.
+        assert_eq!(gitignore_line("build/", true), "/build/");
     }
 
     #[test]
-    fn gitignore_line_marks_directories_with_trailing_slash() {
-        assert_eq!(gitignore_line("build", true), "/build/");
-        assert_eq!(gitignore_line("src/out", true), "/src/out/");
-        // An incoming trailing slash is not doubled.
-        assert_eq!(gitignore_line("build/", true), "/build/");
+    fn gitignore_line_leaves_nested_paths_unanchored() {
+        // A pattern containing a slash is root-anchored by git already.
+        assert_eq!(gitignore_line("src/gen.rs", false), "src/gen.rs");
+        assert_eq!(gitignore_line("src/out", true), "src/out/");
+    }
+
+    #[test]
+    fn gitignore_line_anchors_comment_and_negation_leaders() {
+        // `#`/`!` are special at line start even in a slash-containing line.
+        assert_eq!(gitignore_line("#tags.md", false), "/#tags.md");
+        assert_eq!(gitignore_line("!important/notes.md", true), "/!important/notes.md/");
+    }
+
+    /// Validates the pattern-semantics assumptions behind `gitignore_line`
+    /// against the real binary: a slash-containing pattern is root-anchored
+    /// without a leading `/`, a trailing slash alone does NOT anchor (so
+    /// single-segment names need the `/`), and the `/` neutralises a leading
+    /// `#` that would otherwise make the line a comment.
+    #[test]
+    fn gitignore_lines_match_only_the_intended_paths_in_a_real_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .current_dir(dir.path())
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_SYSTEM", "/dev/null")
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        assert!(git(&["init", "-q"]).status.success());
+
+        let lines = [
+            gitignore_line("src/gen.rs", false),
+            gitignore_line("build", true),
+            gitignore_line("#tags.md", false),
+        ];
+        std::fs::write(dir.path().join(".gitignore"), lines.join("\n") + "\n").unwrap();
+
+        let ignored = |path: &str| {
+            let out = git(&["check-ignore", "-q", "--", path]);
+            match out.status.code() {
+                Some(0) => true,
+                Some(1) => false,
+                c => panic!("check-ignore {path}: exit {c:?}"),
+            }
+        };
+        assert!(ignored("src/gen.rs"));
+        assert!(!ignored("a/src/gen.rs"), "middle slash must root-anchor");
+        assert!(ignored("build/out.o"));
+        assert!(!ignored("nested/build/out.o"), "anchor must stop any-depth matching");
+        assert!(ignored("#tags.md"), "leading / must keep the line from parsing as a comment");
     }
 
     #[test]

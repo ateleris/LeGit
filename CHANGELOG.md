@@ -12,7 +12,18 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- "Add folder to .gitignore" in the Working Changes tree view's folder
+  context menu (shown when the folder holds only untracked files).
+- "Add to .gitignore" on a nested file is now a submenu offering the file
+  itself (also the click action) or any folder layer above it.
+
 ### Changed
+
+- "Add to .gitignore" no longer prefixes nested paths with `/` - a pattern
+  containing a slash is root-anchored already; top-level names keep the
+  prefix, where it prevents matching at any depth.
 
 - File context menus now share one common section (view, history, blame,
   copy path, open in editor) with consistent wording and order across panels.

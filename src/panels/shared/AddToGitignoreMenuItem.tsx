@@ -4,14 +4,18 @@
 // StashMenuSection lesson). Untracked files/folders only: the tracked-file
 // variant ("Stop tracking & ignore", `git rm --cached`) is destructive,
 // confirm-gated, and stays a Files-panel concern.
+//
+// A nested file renders as a submenu: the trigger click ignores the file
+// itself, the flyout offers the file plus each folder layer above it.
 
 import { useQueryClient } from "@tanstack/react-query";
-import { MenuItem } from "../Commits/menu/primitives";
+import { MenuItem, Submenu } from "../Commits/menu/primitives";
 import { repoAddToGitignore } from "../../lib/commands";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { useActiveRepo } from "../../store/repos";
 import { notify } from "../../store/notifications";
 import { formatAppError } from "../../lib/types";
+import { ancestorDirs } from "./ancestorDirs";
 
 export function AddToGitignoreMenuItem({
   path,
@@ -28,19 +32,37 @@ export function AddToGitignoreMenuItem({
   const queryClient = useQueryClient();
   if (repo === null) return null;
 
+  const add = (target: string, targetIsDir: boolean) => {
+    onClose();
+    repoAddToGitignore(repo.id, target, targetIsDir)
+      .then(() => {
+        invalidateRepoDomains(queryClient, repo.id, ["status"]);
+        notify.success(targetIsDir ? `Ignored ${target}/` : `Ignored ${target}`);
+      })
+      .catch((e) => notify.error(formatAppError(e)));
+  };
+
+  const dirs = isDir ? [] : ancestorDirs(path);
+  if (dirs.length === 0) {
+    return (
+      <MenuItem onClick={() => add(path, isDir)}>
+        {isDir ? "Add folder to .gitignore" : "Add to .gitignore"}
+      </MenuItem>
+    );
+  }
+
   return (
-    <MenuItem
-      onClick={() => {
-        onClose();
-        repoAddToGitignore(repo.id, path, isDir)
-          .then(() => {
-            invalidateRepoDomains(queryClient, repo.id, ["status"]);
-            notify.success(isDir ? `Ignored ${path}/` : `Ignored ${path}`);
-          })
-          .catch((e) => notify.error(formatAppError(e)));
-      }}
+    <Submenu
+      testId="menu-gitignore-submenu"
+      label="Add to .gitignore"
+      onClickActivate={() => add(path, false)}
     >
-      {isDir ? "Add folder to .gitignore" : "Add to .gitignore"}
-    </MenuItem>
+      <MenuItem onClick={() => add(path, false)}>{path}</MenuItem>
+      {dirs.map((dir) => (
+        <MenuItem key={dir} onClick={() => add(dir, true)}>
+          {`${dir}/`}
+        </MenuItem>
+      ))}
+    </Submenu>
   );
 }

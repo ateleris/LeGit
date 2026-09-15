@@ -35,6 +35,8 @@ import {
   type WorkingChangesSection,
 } from "./sectionOrder";
 import { FileRowMenuSection } from "../shared/FileRowMenuSection";
+import { AddToGitignoreMenuItem } from "../shared/AddToGitignoreMenuItem";
+import { allUntracked } from "./dirGitignore";
 import {
   caseDriftByPath,
   caseDriftTitle,
@@ -878,6 +880,9 @@ export function WorkingChangesPanel() {
                     <MenuItem onClick={() => { void requestDiscard(paths, dir); closeMenu(); }}>
                       Discard folder ({fileCountLabel(paths.length)})
                     </MenuItem>
+                    {allUntracked(paths, unstagedWithDrift) && (
+                      <AddToGitignoreMenuItem path={dir} isDir onClose={closeMenu} />
+                    )}
                   </>,
                 )
               }
