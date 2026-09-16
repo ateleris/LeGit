@@ -12,6 +12,8 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-16
+
 ### Added
 
 - "Add folder to .gitignore" in the Working Changes tree view's folder
