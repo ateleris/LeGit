@@ -25,7 +25,10 @@ import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import type { FileState } from "../../../lib/types";
 import { useRestoreVirtualizerScroll } from "../../PanelApiContext";
-import { baseName, flatten, type FileTreeEntry, type Row, type ViewMode } from "./buildTree";
+import { baseName, flatten, fullyDimmedDirs, type FileTreeEntry, type Row, type ViewMode } from "./buildTree";
+import { eventToChord } from "../../../keys/chord";
+import { nextCursorPath, spaceStageTargets } from "./stageTargets";
+import { horizontalKeyAction, verticalMoveTarget } from "./treeKeyNav";
 import { fileRowIndent } from "./useFileRowMetrics";
 import { ShrinkingPathText } from "../ShrinkingPathText";
 
@@ -45,6 +48,31 @@ interface FileTreeProps {
   selectedPaths?: ReadonlySet<string>;
   /** Reports the full new selection (multi-select mode only). */
   onSelectionChange?: (paths: string[]) => void;
+  /**
+   * When provided, the stage-toggle binding (default Space) stages instead
+   * of activating the cursor row: a folder acts on every file beneath it, a
+   * file inside the selection on the whole selection, a file outside it on
+   * itself (spaceStageTargets). Folder open/close stays on
+   * ArrowLeft/ArrowRight. `nextCursor` is the surviving file row the cursor
+   * advances to (triage flow: repeated presses walk the list) - the caller
+   * selects it so the selection stays in this pane; null when nothing
+   * survives.
+   */
+  onToggleStage?: (paths: string[], nextCursor: string | null) => void;
+  /**
+   * Chords that trigger `onToggleStage` - the effective binding of the
+   * widget-handled `workingChanges.toggleStage` command, so rebinds apply
+   * live. Matched here (not by the dispatcher) so the key only ever fires
+   * while this tree has focus. Checked before the built-in Enter/arrow
+   * handling: binding Enter deliberately beats Enter-activates.
+   */
+  toggleStageChords?: readonly string[];
+  /**
+   * Paths already in flight from queued stage/unstage ops: the post-toggle
+   * cursor advance skips them (their rows are leaving), so rapid presses
+   * never land the selection on a file that is about to disappear.
+   */
+  stagePendingPaths?: ReadonlySet<string>;
   /** Optional per-file action buttons, revealed on row hover/focus (right edge). */
   renderActions?: (file: FileTreeEntry) => ReactNode;
   /**
@@ -115,6 +143,9 @@ export function FileTree({
   multiSelect = false,
   selectedPaths,
   onSelectionChange,
+  onToggleStage,
+  toggleStageChords = ["Space"],
+  stagePendingPaths,
   renderActions,
   renderBadge,
   renderFileIcon,
@@ -148,6 +179,16 @@ export function FileTree({
     () => (focusedPath == null ? -1 : rows.findIndex((r) => r.path === focusedPath)),
     [rows, focusedPath],
   );
+
+  // Dir rows whose files are all dimmed render dimmed as a unit (a whole
+  // folder being staged fades together, nested folders included).
+  const dimmedDirs = useMemo(() => fullyDimmedDirs(rows, files), [rows, files]);
+
+  // The folder acting as the highlighted unit (stageable trees only): the
+  // cursor sits on a dir row while this tree holds focus.
+  const cursorRow = focusedIndex >= 0 ? rows[focusedIndex] : undefined;
+  const actorDirPath =
+    onToggleStage && hasFocus && cursorRow?.kind === "dir" ? cursorRow.path : null;
 
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -222,39 +263,87 @@ export function FileTree({
       const row = focusedIndex >= 0 ? rows[focusedIndex] : undefined;
       // With no cursor yet (-1), the first key lands on row 0; otherwise step
       // from the current row. Cursor is stored by path so it survives mutation.
-      const from = focusedIndex < 0 ? -1 : focusedIndex;
-      const move = (idx: number) => {
-        const clamped = Math.max(0, Math.min(rows.length - 1, idx));
-        setFocusedPath(rows[clamped]?.path ?? null);
-        rowVirtualizer.scrollToIndex(clamped);
+      // Up/Down move the SELECTION with the cursor (Shift extends the range);
+      // a dir row moves only the cursor.
+      const move = (delta: 1 | -1, extend: boolean) => {
+        const target = verticalMoveTarget(rows, focusedIndex, delta);
+        if (!target) return;
+        setFocusedPath(rows[target.index].path);
+        rowVirtualizer.scrollToIndex(target.index);
+        const landed = rows[target.index];
+        if (!target.selectPath || landed.kind !== "file") {
+          // A folder becomes the highlighted actor in a stageable tree: the
+          // file selection is cleared so the highlight never lies about what
+          // Space (or Del) acts on.
+          if (landed.kind === "dir" && onToggleStage && multiSelect) onSelectionChange?.([]);
+          return;
+        }
+        if (multiSelect) selectFile(target.selectPath, { toggle: false, range: extend });
+        else onSelect?.(landed.file);
       };
+      if (onToggleStage) {
+        const chord = eventToChord(e);
+        if (chord && toggleStageChords.includes(chord)) {
+          e.preventDefault();
+          const targets = spaceStageTargets(row, selectedPaths ?? new Set(), files);
+          if (targets.length > 0) {
+            const next = nextCursorPath(
+              rows,
+              focusedIndex,
+              new Set([...targets, ...(stagePendingPaths ?? [])]),
+            );
+            setFocusedPath(next);
+            if (next) {
+              const idx = rows.findIndex((r) => r.path === next);
+              if (idx >= 0) rowVirtualizer.scrollToIndex(idx);
+            }
+            onToggleStage(targets, next);
+          }
+          return;
+        }
+      }
       switch (e.key) {
         case "ArrowDown":
           e.preventDefault();
-          move(from + 1);
+          move(1, e.shiftKey);
           break;
         case "ArrowUp":
           e.preventDefault();
-          move(from - 1);
+          move(-1, e.shiftKey);
           break;
         case "ArrowRight":
-          e.preventDefault();
-          if (row?.kind === "dir" && row.collapsed) toggleDir(row.path);
-          else move(from + 1);
-          break;
         case "ArrowLeft":
           e.preventDefault();
-          if (row?.kind === "dir" && !row.collapsed) toggleDir(row.path);
-          else move(from - 1);
+          if (horizontalKeyAction(e.key, row)) toggleDir(row!.path);
           break;
         case "Enter":
-        case " ":
           e.preventDefault();
           if (row) activateRow(row);
           break;
+        case " ":
+          // Prevented even when unbound in a stageable tree, so Space never
+          // page-scrolls the list; non-stageable trees keep Space = activate.
+          e.preventDefault();
+          if (!onToggleStage && row) activateRow(row);
+          break;
       }
     },
-    [rows, focusedIndex, rowVirtualizer, toggleDir, activateRow],
+    [
+      rows,
+      focusedIndex,
+      rowVirtualizer,
+      toggleDir,
+      activateRow,
+      onToggleStage,
+      selectedPaths,
+      files,
+      multiSelect,
+      selectFile,
+      onSelect,
+      onSelectionChange,
+      toggleStageChords,
+      stagePendingPaths,
+    ],
   );
 
   return (
@@ -272,13 +361,18 @@ export function FileTree({
           // Focus tint only while this tree holds focus; actions appear on hover
           // or on the focused row — both must clear when focus/hover moves away
           // (incl. to the other tree in a multi-tree panel).
-          // Folders aren't selectable, so they never get the selection/focus
-          // tint — only file rows do.
+          // In a stageable tree a folder under the cursor is the ACTOR: it
+          // carries the full selection highlight (Space acts on it) and its
+          // visible children get the faint focus wash to show the scope. In
+          // other trees folders stay tint-less as before.
           const isFocused = hasFocus && row.kind === "file" && row.path === focusedPath;
           const isHovered = vItem.index === hoveredIndex;
           const isSelected =
             row.kind === "file" &&
             (multiSelect ? !!selectedPaths?.has(row.path) : row.path === selectedPath);
+          const isDirActor = row.kind === "dir" && row.path === actorDirPath;
+          const inActorScope =
+            actorDirPath !== null && row.path.startsWith(`${actorDirPath}/`);
           return (
             <div
               key={vItem.key}
@@ -297,6 +391,10 @@ export function FileTree({
                     range: e.shiftKey,
                   });
                 } else {
+                  // Clicking a folder in a stageable tree makes it the
+                  // highlighted actor (same as arriving by arrow key): clear
+                  // the file selection so the highlight never lies.
+                  if (row.kind === "dir" && onToggleStage && multiSelect) onSelectionChange?.([]);
                   activateRow(row);
                 }
               }}
@@ -338,16 +436,19 @@ export function FileTree({
                 cursor: "pointer",
                 fontSize: "var(--fz-md)",
                 whiteSpace: "nowrap",
-                // Ignored files (Files tree) render dimmed to set them apart.
-                opacity: row.kind === "file" && row.file.dimmed ? 0.55 : 1,
+                // Ignored files (Files tree) render dimmed to set them apart;
+                // a dir row dims when everything beneath it is dimmed.
+                opacity:
+                  (row.kind === "file" ? row.file.dimmed : dimmedDirs.has(row.path)) ? 0.55 : 1,
                 // Fallbacks mirror the built-in Dark theme values (pre-theme-load
                 // safety nets only): selected = row-selected-bg, focused = its
                 // "faded" (45% alpha) variant.
-                background: isSelected
-                  ? "var(--graph-row-selected-bg, #4a9eff33)"
-                  : isFocused
-                  ? "var(--graph-row-focused-bg, #4a9eff17)"
-                  : "transparent",
+                background:
+                  isSelected || isDirActor
+                    ? "var(--graph-row-selected-bg, #4a9eff33)"
+                    : isFocused || inActorScope
+                    ? "var(--graph-row-focused-bg, #4a9eff17)"
+                    : "transparent",
               }}
             >
               {row.kind === "dir" ? (

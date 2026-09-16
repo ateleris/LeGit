@@ -108,6 +108,23 @@ describe("input guard", () => {
     expect(resolve("Mod+A", input({ editableTarget: true }))).toBeNull();
     expect(resolve("Mod+A", input({ editableTarget: false }))?.id).toBe("evil.selectAll");
   });
+
+  it("the reservation also covers the Ctrl spelling of a text-editing chord", () => {
+    const ctrlBound: Command[] = [
+      {
+        id: "evil.ctrlSelectAll",
+        title: "Ctrl select all",
+        scope: "global",
+        defaultBinding: ["Ctrl+A"],
+        allowInInput: true,
+        run: noop,
+      },
+    ];
+    const km = { "evil.ctrlSelectAll": ["Ctrl+A"] };
+    expect(
+      resolve("Ctrl+A", input({ commands: ctrlBound, byChord: reverseIndex(km), editableTarget: true })),
+    ).toBeNull();
+  });
 });
 
 describe("unbound vs absent", () => {

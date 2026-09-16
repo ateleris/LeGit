@@ -10,7 +10,8 @@
 use serde::Deserialize;
 use std::time::Duration;
 
-/// The three supported platforms (chosen 2026-07-13: the ones Simon uses).
+/// The three supported platforms: deliberately only the forges the app's
+/// users actually host on, not an open-ended provider list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
     GitHub,

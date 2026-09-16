@@ -236,8 +236,9 @@ no concept of today:
 
 - While armed, capture **swallows every keydown**, including Escape (which
   cancels capture rather than dismissing anything), F5, F12 and the
-  WebView's own chords. Implemented as a `"mode"` layer that the
-  dispatcher checks before resolution.
+  WebView's own chords. Implemented as a dedicated `"capture"` layer kind:
+  while it is topmost the dispatcher stands down entirely and the capture
+  UI's own listener owns every keydown.
 - Modifier-only presses do not complete a capture; they render as a live
   preview ("Ctrl+Shift+...").
 - Exits on: a complete chord, Escape (cancel), blur, or click elsewhere.
@@ -312,17 +313,17 @@ reported and ignored rather than silently reset.
 
 | Chord | Command | Rationale |
 | --- | --- | --- |
-| Mod+Enter | Commit | universal composer convention; `allowInInput` (works from the message box) |
-| Mod+Shift+F | Fetch | Fork/Tower convention |
-| Mod+Shift+L | Pull | pu**ll** |
-| Mod+Shift+P | Push | SourceTree/Tower convention - see open question below |
+| Mod+Enter | Commit | universal composer convention; `allowInInput` (works from the message box) DEFAULT REMOVED 2026-09-16: ships unbound, user-bindable in the panel |
+| Mod+Shift+F | Fetch | Fork/Tower convention DEFAULT REMOVED 2026-09-16: ships unbound, user-bindable in the panel |
+| Mod+Shift+L | Pull | pu**ll** DEFAULT REMOVED 2026-09-16: ships unbound, user-bindable in the panel |
+| Mod+Shift+P | Push | SourceTree/Tower convention - see open question below DEFAULT REMOVED 2026-09-16: ships unbound, user-bindable in the panel |
 | F5 | Refresh repo data | platform convention (block the WebView's own reload in prod builds) |
 | Mod+1..9 | Activate repo tab N | browser convention |
-| Ctrl+Tab / Ctrl+Shift+Tab | Next / previous repo tab | browser convention |
+| Ctrl+Tab / Ctrl+Shift+Tab | Recently used repo tab (reverse) | Firefox-style MRU cycling, requested in issue #21's comments: a quick press = previously selected tab; the recent order freezes while Ctrl is held (deeper presses walk it) and commits on Ctrl release (`src/keys/repoTabCycle.ts`). Deliberately Ctrl, not Mod: Cmd+Tab belongs to macOS |
 | Mod+Shift+M | Maximize panel | already shipped; migrates into the registry unchanged |
-| Mod+, | Global Settings | desktop convention |
-| Mod+F | Find in focused panel | diff/file view: enable CodeMirror `searchKeymap`; Commits: focus the search bar |
-| F1 | Keyboard Shortcuts panel | discoverability; generated from the registry; layout-independent (Mod+/ rejected, see key-choice guidelines); verify in a debug build that WebView2 passes F1 through, like the F5 check |
+| Mod+, | Global Settings | desktop convention DEFAULT REMOVED 2026-09-16: ships unbound, user-bindable in the panel |
+| Mod+F | Find in focused panel | diff/file view: enable CodeMirror `searchKeymap`; Commits: focus the search bar. Deferred to phase 3: needs the focused-panel concept |
+| F1 | Keyboard Shortcuts panel | discoverability; generated from the registry; layout-independent (Mod+/ rejected, see key-choice guidelines); verify in a debug build that WebView2 passes F1 through, like the F5 check DEFAULT REMOVED 2026-09-16: ships unbound, user-bindable in the panel |
 | Esc | Dismiss topmost layer | the layer stack, not a binding |
 
 ### Panel scope
@@ -340,11 +341,11 @@ Working Changes:
 
 | Chord | Command |
 | --- | --- |
-| ArrowUp/ArrowDown | Navigate file rows |
-| Space | Stage/unstage the selected files |
-| Mod+A | Select all files in the focused list (issue #21, see below) |
-| Del | Discard selected (through the central confirm dialog, respecting the confirm-destructive setting) |
-| Enter | Open the diff for the selected file |
+| ArrowUp/ArrowDown | Navigate file rows - resolved 2026-09-14: stays FileTree-local (the "What stays OUT" rule wins over this row; the tree already owns full arrow-nav). 2026-09-15: Left/Right became FOLD-ONLY (`horizontalKeyAction`) - their old fallback of stepping the cursor duplicated Up/Down and broke the Space rhythm; only Up/Down move. Also 2026-09-15: Up/Down move the SELECTION directly like a native list (`verticalMoveTarget`; the diff follows, dir rows are cursor-only, edge bumps never re-select), Shift+Up/Down extends the range - the detached browse-cursor model is gone. Folder-actor rule (2026-09-15): in a stageable tree, the cursor landing on a dir row (arrow or click) CLEARS the file selection and the dir row carries the full selection highlight, its visible children the faint focus wash - the highlight never lies about what Space/Del act on (Del is inert on a folder; collapsed folders communicate scope via their file-count badge). Non-stageable trees keep tint-less dirs |
+| Space | Stage/unstage - `workingChanges.toggleStage`, the first WIDGET-HANDLED command (2026-09-16: rebindable in the panel, e.g. to Enter; the dispatcher stands down and the focused FileTree matches the effective binding itself via `toggleStageChords`, checked before Enter-activates so a rebound Enter stages): Space toggles staging on EVERY row incl. folders (a folder acts on all files beneath it, `spaceStageTargets`); a file inside the selection acts on the whole selection (Ctrl+A then Space), outside it on itself. Folder open/close moved fully to ArrowLeft/ArrowRight (decided 2026-09-14: one meaning per key, no user confusion). Triage advance (2026-09-15): after Space the cursor AND selection land on the next surviving file in the SAME pane (`nextCursorPath`; dir rows skipped so the next Space never silently acts on a folder), so repeated Space walks the list - the panel selects the successor eagerly and suppresses the stage-completion selection-follow (`follow: false`) to avoid the async clobber; with nothing left, the selection follows into the other pane as before. Trees without staging (Changed Files) keep Space = activate |
+| Mod+A | Select all files in the focused list (issue #21, see below) - landed 2026-09-14 |
+| Del | Discard selected (through the central confirm dialog, respecting the confirm-destructive setting) - landed 2026-09-14 |
+| Enter | Open the diff for the selected file - FileTree's Enter activates the cursor row (select, which syncs/opens the diff per the selection rules), covering most of this; a force-open command remains open |
 
 Refs:
 
@@ -359,8 +360,22 @@ Diff:
 | --- | --- |
 | Alt+ArrowDown/ArrowUp | Next / previous hunk |
 
-Deferred but already decided (2026-09-07, with named layouts): Ctrl+Alt+1..9
-applies the first N saved layouts in list order via `useLayoutsStore.apply`.
+Landed 2026-09-16 (decided 2026-09-07, with named layouts):
+`app.applyLayout1..9` applies the first N saved layouts in list order via
+`useLayoutsStore.apply`; `when` gates on that many layouts existing. Ships
+UNBOUND. Both attempted defaults failed on a real machine and settled two
+durable rules:
+- Ctrl+Alt+1..9 was dead (Ctrl+Alt IS AltGr on Windows: unreliable
+  delivery, composed-character collisions) -> shipped defaults never
+  combine Mod/Ctrl with Alt, contract-test enforced.
+- Mod+Shift+1..9 was dead too: Shift+digit composes per layout (German
+  "!", Swiss "+"), and a matching-side fallback inferring the physical
+  digit from `code` was rejected on principle - NO HIDDEN FALLBACKS
+  between the key pressed and the command fired. Matching is exactly what
+  capture records (`eventChordCandidates` = event chord + Mod/Ctrl fold,
+  nothing else), so modifier+digit chords are not shippable defaults at
+  all; users bind their own key and capture stores their layout's
+  spelling.
 
 Rules of thumb encoded above: single letters only in focused-list contexts
 (and even then v1 sticks to Space/arrows/F-keys); F2/F5/Del/Menu-key follow
@@ -369,7 +384,7 @@ platform conventions; nothing overrides OS text editing.
 ### Key-choice guidelines (layout independence)
 
 **These constrain shipped defaults, not user bindings.** Defaults must work
-on non-US layouts; German QWERTZ is the reference check (Simon's layout).
+on non-US layouts; German QWERTZ is the reference check (the layout the app is developed on).
 
 - Allowed chord keys: letters, digits, F-keys, arrows, Enter, Space,
   Tab, Escape, Delete, Backspace, comma, period, plus/minus.
@@ -379,8 +394,12 @@ on non-US layouts; German QWERTZ is the reference check (Simon's layout).
 - Never use AltGr (right Alt) in a chord: on Windows it reports as
   Ctrl+Alt, so an AltGr character chord is ambiguous with Ctrl+Alt
   bindings.
-- The contract test enforces the allowed-key list, so a layout-hostile
-  default cannot land unnoticed.
+- The inverse holds too: never combine Mod/Ctrl with Alt in a shipped
+  default. Windows treats Ctrl+Alt as AltGr - delivery is unreliable and
+  the chord collides with typed characters (this killed Ctrl+Alt+1..9 for
+  layouts on a real QWERTZ machine).
+- The contract test enforces the allowed-key list and the no-Ctrl+Alt
+  rule, so a layout-hostile default cannot land unnoticed.
 
 ### Issue #21: Ctrl+A in Working Changes
 
@@ -466,12 +485,88 @@ proven against existing behaviour, then the panel, then breadth.
    reporting, reset, persistence, import/export; F1 summons it. The seed
    bindings above land alongside it, since the panel is what makes them
    discoverable and changeable.
+   **Landed 2026-09-14** with one scoping refinement: the global/repo seeds
+   shipped; Mod+F and the panel-scope seeds moved to phase 3 (both need the
+   focused-panel concept). Commands whose behaviour lives in a mounted
+   surface (fetch/pull/push from the sync toolbar, commit from the
+   composer) delegate through a command-action registry
+   (`src/keys/actions.ts`): the surface registers its handler while
+   mounted, the command's `when` gates on registration, and the surface's
+   tooltip renders the binding reactively (`useBindingLabel`). Manual
+   checks still open: WebView2 passes F1 / F5 / Ctrl+Tab through in a
+   debug build; F5's fall-through must not reload a prod build when no
+   repo is active.
 3. **Phase 3 - focus management and breadth.** Roving tabindex on panel
    lists (unblocks issue #21's Ctrl+A), keyboard hunk staging in the diff
    (needs a focused-hunk concept), Interactive Rebase coverage, and the
    per-panel command sweep.
+   Started 2026-09-14: `focusPanel` is live (`focusedDockPanelId` - the
+   active panel of the dock owning DOM focus), and the Working Changes
+   slice landed: `workingChanges.selectAll` (Mod+A, full issue-#21
+   semantics via `selectAllSection` - focused list, else the selection's
+   section, else UNSTAGED; the section wrappers answer "which list has
+   focus" from the DOM) and `workingChanges.discardSelected` (Del, central
+   confirm). Space landed FileTree-native (see the seed table); the rule
+   this settles: PLAIN KEYS belong to the focused widget, dispatcher
+   commands to chords - a capture-phase plain-key command would steal
+   Space/Enter from focused buttons and trees. Commits/Refs/Diff seeds,
+   Mod+F remains (Ctrl+Alt+1..9 layouts landed 2026-09-16).
 4. **Later - command palette.** Nearly free once commands are data; kept
    out of scope so it does not double phase 2's UI work.
+
+## How to add a shortcut (the recipe)
+
+Everything below is enforced by `src/keys/registry.test.ts` where it can be;
+the panel, conflict detection, capture and persistence are all generated
+from the registry, so a new command needs NO panel work.
+
+**1. Pick the command kind** - this is the only real decision:
+
+- **Direct**: `run` resolves stores/summons itself (e.g.
+  `panel.toggleMaximize`, the tab commands). For actions whose logic is
+  reachable from a store at any time.
+- **Delegated**: the action lives in a mounted surface. The surface
+  registers a handler with `useCommandAction(id, fn | null)`
+  (`src/keys/actions.ts`) - `null` while unavailable - and the registry
+  entry is `delegated(...)`, whose `when` gates on registration. Use for
+  toolbar/composer actions (fetch/pull/push/commit are the models).
+- **Widget-handled** (`handledBy: "widget"`): for PLAIN KEYS a focused
+  widget must own (Space, Enter, single letters). The dispatcher stands
+  down; the widget matches the chord itself against the command's
+  effective binding from `useKeymapStore` (model:
+  `workingChanges.toggleStage` -> FileTree's `toggleStageChords` prop).
+  Rule of thumb: chords go through the dispatcher, plain keys through the
+  owning widget - a capture-phase plain-key command steals Space/Enter
+  from every focused button.
+
+**2. Register it** in `src/keys/registry.ts`: id (dot-separated,
+lowerCamel segments; a USER-FACING CONTRACT - renaming later needs an
+entry in `COMMAND_ID_ALIASES`, never a silent rename), `title` (panel /
+tooltip text), `scope` (`global` | `repo` | `panel:<panel-id>`; `repo`
+needs an active repo, `panel:` resolves only while that panel has DOM
+focus or is the focused dock's active panel), `defaultBinding` (`[]` is
+fine: listed, bindable, no key).
+
+**3. Choose the default chord** by the key-choice guidelines above
+(letters/digits/F-keys/arrows/Enter/Space/Tab/Del/Backspace/,/./+/-;
+QWERTZ-safe; never AltGr, never Escape, never OS text-editing chords).
+The contract test rejects layout-hostile keys and same-scope collisions.
+`Mod` = Ctrl/Cmd per platform; spell a chord `Ctrl+...` only when it must
+stay on physical Ctrl on macOS too (the Ctrl+Tab case). Set
+`allowInInput: true` only if it must fire while typing (then it must be a
+modified chord or F-key - plain keys never fire in inputs regardless).
+
+**4. Render the binding** where the action already has a button or menu
+entry: `useBindingLabel(id)` + `withBinding(text, key)` on the tooltip, so
+rebinds show up live (guard rail: a command lands together with its
+surface rendering its binding).
+
+**5. Pin it**: add the id to `SEEDS` in `registry.test.ts` (scope +
+default), and a CHANGELOG bullet if the default binding is user-visible.
+
+**Never**: bind Escape (dismissal primitive), rebind text-editing
+vocabulary, make a command whose availability cannot be expressed as a
+scope, or remove/rename an id without an alias.
 
 ## Open question
 

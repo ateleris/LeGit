@@ -19,6 +19,7 @@ import { ReleaseNotesPanel } from "./ReleaseNotes/ReleaseNotesPanel";
 import { RepositoriesPanel } from "./Repositories/RepositoriesPanel";
 import { ThemeEditorPanel } from "./ThemeEditor/ThemeEditorPanel";
 import { LayoutsPanel } from "./Layouts/LayoutsPanel";
+import { KeyboardShortcutsPanel } from "./Shortcuts/KeyboardShortcutsPanel";
 import { GlobalSettingsPanel } from "./Settings/GlobalSettingsPanel";
 import { RepoSettingsPanel } from "./Settings/RepoSettingsPanel";
 import { PanelApiProvider } from "./PanelApiContext";
@@ -54,6 +55,7 @@ export const GLOBAL_PANELS: PanelDescriptor[] = [
   { id: "repositories", title: "Repositories", scope: "global" },
   { id: "theme-editor", title: "Theme Editor", scope: "global" },
   { id: "layouts", title: "Layouts", scope: "global" },
+  { id: "keyboard-shortcuts", title: "Keyboard Shortcuts", scope: "global" },
 ];
 
 // Menu order: Repo Settings first, then the default layout's main views,
@@ -201,9 +203,13 @@ export const REPO_DOCKVIEW_TAB_COMPONENTS = TAB_COMPONENTS;
 const wrap = (
   Inner: FunctionComponent
 ): FunctionComponent<IDockviewPanelProps> => {
+  // data-panel-id lets focus-dependent logic map DOM focus back to the panel
+  // (focusedDockPanelId in store/dockview.ts).
   const Wrapped: FunctionComponent<IDockviewPanelProps> = ({ api }) => (
     <PanelApiProvider api={api}>
-      <Inner />
+      <div data-panel-id={api.id} style={{ height: "100%" }}>
+        <Inner />
+      </div>
     </PanelApiProvider>
   );
   Wrapped.displayName = `Dockable(${Inner.displayName ?? Inner.name ?? "Panel"})`;
@@ -218,6 +224,7 @@ export const GLOBAL_DOCKVIEW_COMPONENTS: Record<
   "theme-editor": wrap(ThemeEditorPanel),
   "global-settings": wrap(GlobalSettingsPanel),
   layouts: wrap(LayoutsPanel),
+  "keyboard-shortcuts": wrap(KeyboardShortcutsPanel),
 };
 
 export const REPO_DOCKVIEW_COMPONENTS: Record<

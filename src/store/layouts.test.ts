@@ -18,14 +18,13 @@ vi.mock(import("../lib/commands"), async (importOriginal) => ({
 vi.mock("../panels/GlobalDock", () => ({
   buildDefaultGlobalLayout: vi.fn(),
   summonGlobalPanel: vi.fn(),
-  restoreGlobalPanelInactive: vi.fn(),
 }));
 vi.mock("../panels/RepoDock", () => ({
   buildDefaultRepoLayout: vi.fn(),
 }));
 
 import { loadLayout } from "../lib/commands";
-import { restoreGlobalPanelInactive, summonGlobalPanel } from "../panels/GlobalDock";
+import { summonGlobalPanel } from "../panels/GlobalDock";
 import { buildLayoutDocument } from "../panels/namedLayouts";
 import { useDockviewStore } from "./dockview";
 import { useLayoutsStore } from "./layouts";
@@ -68,41 +67,28 @@ describe("layouts store: lastApplied invalidation", () => {
   });
 });
 
-describe("layouts store: Layouts panel restore on apply", () => {
-  const doc = buildLayoutDocument("Reviewing", null, {
-    dockview: {},
-    placements: {},
-    fallbacks: {},
-  });
-  // Only getPanel matters here: the document's global part is null, so the
-  // fake api is never mutated.
-  const fakeGlobalApi = (getPanel: () => unknown) =>
-    ({ getPanel } as unknown as NonNullable<ReturnType<typeof useDockviewStore.getState>["globalApi"]>);
+describe("layouts store: applies never touch the global dock", () => {
+  // A legacy document may still carry a global part; applying must ignore it
+  // (layouts arrange the repository section only - the global section is app
+  // chrome with its own state).
+  const doc = buildLayoutDocument(
+    "Reviewing",
+    { grid: { root: {} } },
+    { dockview: {}, placements: {}, fallbacks: {} },
+  );
 
-  it("never focus-summons the panel, and leaves it alone when the apply kept it", async () => {
-    // Applying must not move focus to the Layouts panel (it applied a layout,
-    // it didn't ask for the manager) - the focusing summon path is off-limits
-    // here, and a panel the apply did not remove needs no restore either.
+  it("does not read, mutate, or summon into the global dock", async () => {
     vi.mocked(loadLayout).mockResolvedValue(doc);
-    useDockviewStore.setState({ globalApi: fakeGlobalApi(() => ({})) });
+    const globalApi = new Proxy(
+      {},
+      {
+        get() {
+          throw new Error("apply must not touch the global dock");
+        },
+      },
+    ) as unknown as NonNullable<ReturnType<typeof useDockviewStore.getState>["globalApi"]>;
+    useDockviewStore.setState({ globalApi });
     await useLayoutsStore.getState().apply("Reviewing");
     expect(summonGlobalPanel).not.toHaveBeenCalled();
-    expect(restoreGlobalPanelInactive).not.toHaveBeenCalled();
-  });
-
-  it("restores the panel (inactive) when the apply removed it", async () => {
-    vi.mocked(loadLayout).mockResolvedValue(doc);
-    const getPanel = vi.fn().mockReturnValueOnce({}).mockReturnValue(undefined);
-    useDockviewStore.setState({ globalApi: fakeGlobalApi(getPanel) });
-    await useLayoutsStore.getState().apply("Reviewing");
-    expect(summonGlobalPanel).not.toHaveBeenCalled();
-    expect(restoreGlobalPanelInactive).toHaveBeenCalledWith("layouts");
-  });
-
-  it("does not restore a panel that was closed before the apply", async () => {
-    vi.mocked(loadLayout).mockResolvedValue(doc);
-    useDockviewStore.setState({ globalApi: fakeGlobalApi(() => undefined) });
-    await useLayoutsStore.getState().apply("Reviewing");
-    expect(restoreGlobalPanelInactive).not.toHaveBeenCalled();
   });
 });

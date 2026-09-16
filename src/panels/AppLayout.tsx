@@ -5,6 +5,7 @@ import { useRepoStore } from "../store/repos";
 import { useSummonStore } from "../store/summon";
 import { useGlobalRegionStore } from "../store/globalRegion";
 import { KeyDispatcher } from "../keys/Dispatcher";
+import { useCommandAction } from "../keys/actions";
 import { useGitLogStore } from "../store/gitLog";
 import { useConsoleStore } from "../store/console";
 import { useRemoteProgressStore } from "../store/remoteProgress";
@@ -138,6 +139,17 @@ export function AppLayout() {
   // panels (Changed Files, Commit Details, Diff) clear their stale state.
   const activeRepoId = useRepoStore((s) => s.activeRepoId);
   const prevActiveRepo = useRef<string | null>(null);
+
+  // F5: refetch everything the active repo shows (same full invalidation as a
+  // finished console command).
+  useCommandAction(
+    "repo.refresh",
+    activeRepoId
+      ? () => {
+          void queryClient.invalidateQueries({ queryKey: [activeRepoId] });
+        }
+      : null,
+  );
   useEffect(() => {
     if (
       prevActiveRepo.current !== null &&

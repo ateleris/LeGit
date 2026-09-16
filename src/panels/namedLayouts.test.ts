@@ -1,57 +1,19 @@
 // @vitest-environment happy-dom
 //
-// Named-layout document rules: capture must never bake the Layouts panel into
-// a snapshot, imported files are validated structurally, and the legacy
-// "saved default" localStorage snapshot migrates into a well-formed document.
+// Named-layout document rules: layouts arrange the repository section only,
+// imported files are validated structurally, and the legacy "saved default"
+// localStorage snapshot migrates into a well-formed document.
 import { describe, it, expect } from "vitest";
 import {
+  applyLayoutDocument,
   asLayoutBundle,
   asLayoutDocument,
   buildLayoutBundle,
   buildLayoutDocument,
+  captureLayoutDocument,
   chooseUniqueName,
   migrateLegacyDefaultLayout,
-  stripGlobalForCapture,
-  LAYOUTS_PANEL_ID,
 } from "./namedLayouts";
-import { GLOBAL_DOCKVIEW_COMPONENTS } from "./registry";
-
-const leaf = (id: string, views: string[]) => ({
-  type: "leaf",
-  data: { views, activeView: views[0], id },
-  size: 100,
-});
-const panel = (id: string) => ({ id, contentComponent: id, title: id });
-
-describe("stripGlobalForCapture", () => {
-  it("registry knows the layouts panel (precondition for the strip test)", () => {
-    expect(Object.keys(GLOBAL_DOCKVIEW_COMPONENTS)).toContain(LAYOUTS_PANEL_ID);
-  });
-
-  it("removes the Layouts panel but keeps other global panels", () => {
-    const json = {
-      grid: {
-        root: {
-          type: "branch",
-          data: [leaf("1", ["theme-editor"]), leaf("2", [LAYOUTS_PANEL_ID])],
-          size: 200,
-        },
-      },
-      panels: { "theme-editor": panel("theme-editor"), [LAYOUTS_PANEL_ID]: panel(LAYOUTS_PANEL_ID) },
-    };
-    const out = stripGlobalForCapture(json) as { panels: Record<string, unknown> };
-    expect(Object.keys(out.panels)).toEqual(["theme-editor"]);
-  });
-
-  it("returns null when the Layouts panel was the only open panel", () => {
-    const json = {
-      grid: { root: leaf("1", [LAYOUTS_PANEL_ID]) },
-      panels: { [LAYOUTS_PANEL_ID]: panel(LAYOUTS_PANEL_ID) },
-    };
-    expect(stripGlobalForCapture(json)).toBeNull();
-  });
-});
-
 describe("asLayoutDocument", () => {
   const good = () =>
     buildLayoutDocument("X", { grid: {}, panels: {} }, { dockview: {}, placements: {}, fallbacks: {} });
@@ -147,5 +109,32 @@ describe("migrateLegacyDefaultLayout", () => {
   it("returns null when nothing parses", () => {
     expect(migrateLegacyDefaultLayout(null, null, new Set())).toBeNull();
     expect(migrateLegacyDefaultLayout("not json {", '"a string"', new Set())).toBeNull();
+  });
+});
+
+// Layouts arrange the REPOSITORY section only: capture never snapshots the
+// global dock, and apply ignores a (legacy) global part outright.
+describe("repo-only capture and apply", () => {
+  const fakeRepoApi = { toJSON: () => ({ grid: {} }) } as unknown as Parameters<
+    typeof captureLayoutDocument
+  >[1];
+
+  it("capture snapshots only the repo dock (global always null)", () => {
+    const doc = captureLayoutDocument("Reviewing", fakeRepoApi);
+    expect(doc).not.toBeNull();
+    expect(doc!.global).toBeNull();
+    expect(doc!.repo).not.toBeNull();
+  });
+
+  it("capture without a repo dock has nothing to capture", () => {
+    expect(captureLayoutDocument("Reviewing", null)).toBeNull();
+  });
+
+  it("apply ignores a legacy global part and succeeds on the repo part alone", () => {
+    const doc = buildLayoutDocument("Old", { grid: { root: {} } }, null);
+    // Repo part null -> nothing to do; the global part must not make this
+    // fail (or touch anything - the signature no longer accepts a global
+    // dock at all).
+    expect(applyLayoutDocument(doc, null)).toBe(true);
   });
 });

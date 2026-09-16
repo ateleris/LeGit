@@ -734,6 +734,8 @@ pub struct AppState {
     pub hosts_data_dir: PathBuf,
     /// On-disk location for saved panel layouts: `layouts/<name>.legit-layout.json`.
     pub layouts_dir: PathBuf,
+    /// On-disk location of the single user keymap: `keybindings.json`.
+    pub keybindings_path: PathBuf,
     /// Cached per-host settings, keyed by distro (lazily loaded).
     pub host_settings: RwLock<HashMap<String, HostSettings>>,
 }
@@ -768,6 +770,10 @@ impl AppState {
             .parent()
             .map(|p| p.join("layouts"))
             .unwrap_or_else(|| repos_data_dir.join("layouts"));
+        let keybindings_path = repos_data_dir
+            .parent()
+            .map(|p| p.join("keybindings.json"))
+            .unwrap_or_else(|| repos_data_dir.join("keybindings.json"));
         Self {
             repos: RwLock::new(HashMap::new()),
             hosts: Mutex::new(hosts),
@@ -783,6 +789,7 @@ impl AppState {
             wsl_hosts: crate::remote::connection::WslHosts::default(),
             hosts_data_dir,
             layouts_dir,
+            keybindings_path,
             host_settings: RwLock::new(HashMap::new()),
         }
     }

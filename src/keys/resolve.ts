@@ -68,7 +68,9 @@ function scopeRank(cmd: Command, input: ResolveInput): number | null {
  * is never claimable.
  */
 function allowedInInput(chord: string): boolean {
-  if (TEXT_EDITING_CHORDS.has(chord)) return false;
+  // The reserved set is Mod-spelled; fold a Ctrl spelling onto it so
+  // "Ctrl+A" is just as unclaimable as "Mod+A".
+  if (TEXT_EDITING_CHORDS.has(chord.replace(/^Ctrl\+/, "Mod+"))) return false;
   const p = parseChord(chord);
   if (!p) return false;
   if (p.mod || p.ctrl || p.alt) return true;

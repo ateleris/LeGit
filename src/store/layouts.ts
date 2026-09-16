@@ -13,7 +13,6 @@ import {
   captureLayoutDocument,
   chooseUniqueName,
   migrateLegacyDefaultLayout,
-  LAYOUTS_PANEL_ID,
 } from "../panels/namedLayouts";
 import {
   SAVED_GLOBAL_LAYOUT_KEY,
@@ -21,7 +20,7 @@ import {
   applyBakedGlobalLayout,
   applyBakedRepoLayout,
 } from "../panels/layoutSnapshot";
-import { buildDefaultGlobalLayout, restoreGlobalPanelInactive } from "../panels/GlobalDock";
+import { buildDefaultGlobalLayout } from "../panels/GlobalDock";
 import { buildDefaultRepoLayout } from "../panels/RepoDock";
 import { useDockviewStore } from "./dockview";
 
@@ -75,9 +74,9 @@ export const useLayoutsStore = create<LayoutsStore>((set, get) => ({
   },
 
   async saveCurrent(name) {
-    const { globalApi, repoApi } = useDockviewStore.getState();
-    const doc = captureLayoutDocument(name, globalApi, repoApi);
-    if (!doc) throw new Error("Nothing to capture - open a repository or a global panel first.");
+    const { repoApi } = useDockviewStore.getState();
+    const doc = captureLayoutDocument(name, repoApi);
+    if (!doc) throw new Error("Nothing to capture - open a repository first.");
     const entry = await saveLayoutCmd(name, doc);
     set({ lastApplied: entry.name });
     await get().refreshList();
@@ -87,19 +86,11 @@ export const useLayoutsStore = create<LayoutsStore>((set, get) => ({
     const raw = await loadLayout(name);
     const doc = asLayoutDocument(raw);
     if (!doc) throw new Error(`Layout file for "${name}" is not a valid layout.`);
-    const { globalApi, repoApi } = useDockviewStore.getState();
-    const layoutsPanelWasOpen = !!globalApi?.getPanel(LAYOUTS_PANEL_ID);
+    const { repoApi } = useDockviewStore.getState();
     suppressDirty = true;
     let ok: boolean;
     try {
-      ok = applyLayoutDocument(doc, globalApi, repoApi);
-      // If applying replaced the global dock (captures never contain the
-      // Layouts panel), restore the panel the user is acting from — as an
-      // INACTIVE background tab: applying a layout must never move focus to
-      // the Layouts panel.
-      if (layoutsPanelWasOpen && globalApi && !globalApi.getPanel(LAYOUTS_PANEL_ID)) {
-        restoreGlobalPanelInactive(LAYOUTS_PANEL_ID);
-      }
+      ok = applyLayoutDocument(doc, repoApi);
     } finally {
       setTimeout(() => {
         suppressDirty = false;

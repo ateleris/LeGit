@@ -1,9 +1,12 @@
 import { useEffect } from "react";
+import { focusedDockPanelId } from "../store/dockview";
 import { useLayersStore, layerToDismiss, type Layer } from "../store/layers";
 import { useRepoStore } from "../store/repos";
-import { eventToChord, isEditableTarget, PLATFORM, type Platform } from "./chord";
+import { eventChordCandidates, isEditableTarget, PLATFORM, type Platform } from "./chord";
 import { useKeymapStore } from "./keymap";
-import { COMMANDS, defaultKeymap, type Command, type KeyContext } from "./registry";
+import { initKeymap } from "./persistence";
+import { trackRepoActivations } from "./repoTabCycle";
+import { COMMANDS, type Command, type KeyContext } from "./registry";
 import { resolve } from "./resolve";
 
 /**
@@ -27,6 +30,9 @@ export interface DispatcherDeps {
 
 export function createKeydownHandler(deps: DispatcherDeps): (e: KeyboardEvent) => void {
   return (e: KeyboardEvent) => {
+    const layers = deps.getLayers();
+    if (layers[layers.length - 1]?.kind === "capture") return;
+
     const editable = isEditableTarget(e.target);
 
     if (e.key === "Escape") {
@@ -39,22 +45,29 @@ export function createKeydownHandler(deps: DispatcherDeps): (e: KeyboardEvent) =
       return;
     }
 
-    const chord = eventToChord(e, deps.platform);
-    if (!chord) return;
     const ctx = deps.getContext();
-    const cmd = resolve(chord, {
-      commands: deps.commands,
-      byChord: deps.getByChord(),
-      layers: deps.getLayers(),
-      focusPanel: ctx.focusPanel,
-      repoActive: ctx.repoActive,
-      editableTarget: editable,
-    });
-    if (!cmd) return;
-    if (cmd.when && !cmd.when(ctx)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    cmd.run(ctx);
+    // A keydown may match several stored spellings ("Mod+Tab" matches a
+    // "Ctrl+Tab" binding; Windows AltGr composition maps back to the
+    // physical key); the first spelling that resolves wins.
+    for (const candidate of eventChordCandidates(e, deps.platform)) {
+      const cmd = resolve(candidate, {
+        commands: deps.commands,
+        byChord: deps.getByChord(),
+        layers: deps.getLayers(),
+        focusPanel: ctx.focusPanel,
+        repoActive: ctx.repoActive,
+        editableTarget: editable,
+      });
+      if (!cmd) continue;
+      // Widget-handled: the chord belongs to a focused widget's own listener
+      // (e.g. the stage toggle in a file list) - stand down entirely.
+      if (cmd.handledBy === "widget") return;
+      if (cmd.when && !cmd.when(ctx)) continue;
+      e.preventDefault();
+      e.stopPropagation();
+      cmd.run(ctx);
+      return;
+    }
   };
 }
 
@@ -66,9 +79,7 @@ function productionDeps(): DispatcherDeps {
     removeLayer: (id) => useLayersStore.getState().remove(id),
     getContext: () => ({
       repoActive: useRepoStore.getState().activeRepoId !== null,
-      // Panel-scoped commands need focus tracking (phase 3); until then no
-      // command declares a panel scope, so null is never consulted.
-      focusPanel: null,
+      focusPanel: focusedDockPanelId(),
     }),
     platform: PLATFORM,
   };
@@ -77,10 +88,17 @@ function productionDeps(): DispatcherDeps {
 /** Mounted once in AppLayout. */
 export function KeyDispatcher() {
   useEffect(() => {
-    useKeymapStore.getState().reset(defaultKeymap());
+    void initKeymap();
+    const untrack = trackRepoActivations();
     const handler = createKeydownHandler(productionDeps());
     window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
-  }, []);
+    return () => {
+      window.removeEventListener("keydown", handler, true);
+      untrack();
+    };
+    // COMMANDS is constant in production; as a dep it makes dev hot reloads
+    // of the registry rewire the live listener (a stale mount effect
+    // otherwise keeps dispatching the old command set until a full reload).
+  }, [COMMANDS]);
   return null;
 }

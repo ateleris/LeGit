@@ -7,6 +7,8 @@ import type { Command } from "./registry";
 
 const run = vi.fn();
 const gated = vi.fn();
+const nextTab = vi.fn();
+const widgetRun = vi.fn();
 
 const COMMANDS: Command[] = [
   {
@@ -24,12 +26,33 @@ const COMMANDS: Command[] = [
     when: () => false,
     run: gated,
   },
+  {
+    id: "app.nextRepoTab",
+    title: "Next repository tab",
+    scope: "global",
+    defaultBinding: ["Ctrl+Tab"],
+    run: nextTab,
+  },
+  {
+    id: "widget.cmd",
+    title: "Widget-handled",
+    scope: "global",
+    defaultBinding: ["F7"],
+    handledBy: "widget",
+    run: widgetRun,
+  },
 ];
 
 function deps(): DispatcherDeps {
   return {
     commands: COMMANDS,
-    getByChord: () => reverseIndex({ "panel.toggleMaximize": ["Mod+Shift+M"], "gated.cmd": ["F6"] }),
+    getByChord: () =>
+      reverseIndex({
+        "panel.toggleMaximize": ["Mod+Shift+M"],
+        "gated.cmd": ["F6"],
+        "app.nextRepoTab": ["Ctrl+Tab"],
+        "widget.cmd": ["F7"],
+      }),
     getLayers: () => useLayersStore.getState().layers,
     removeLayer: (id) => useLayersStore.getState().remove(id),
     getContext: () => ({ repoActive: true, focusPanel: null }),
@@ -45,6 +68,8 @@ beforeEach(() => {
   useLayersStore.setState({ layers: [] });
   run.mockClear();
   gated.mockClear();
+  nextTab.mockClear();
+  widgetRun.mockClear();
   handler = createKeydownHandler(deps());
   window.addEventListener("keydown", handler, true);
   bubbleSpy = vi.fn<(e: KeyboardEvent) => void>();
@@ -126,6 +151,20 @@ describe("command dispatch", () => {
     expect(bubbleSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("a Ctrl-spelled binding matches the physical Ctrl press on Windows/Linux (regression)", () => {
+    // eventToChord maps ctrlKey to Mod there, so "Ctrl+Tab" must still match.
+    const e = press({ key: "Tab", ctrlKey: true });
+    expect(nextTab).toHaveBeenCalledTimes(1);
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  it("a widget-handled command is never dispatched and the event stays untouched", () => {
+    const e = press({ key: "F7" });
+    expect(widgetRun).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+    expect(bubbleSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("an unmatched chord passes through completely untouched (the load-bearing rule)", () => {
     const e = press({ key: "Enter", ctrlKey: true });
     expect(e.defaultPrevented).toBe(false);
@@ -144,5 +183,21 @@ describe("command dispatch", () => {
     const e = press({ key: "m", ctrlKey: true, shiftKey: true });
     expect(run).not.toHaveBeenCalled();
     expect(e.defaultPrevented).toBe(false);
+  });
+});
+
+describe("key capture mode", () => {
+  it("a topmost capture layer makes the dispatcher stand down entirely", () => {
+    const dismiss = vi.fn();
+    useLayersStore.getState().push(layer("recording", "capture", dismiss));
+
+    const esc = press({ key: "Escape" });
+    expect(dismiss).not.toHaveBeenCalled();
+    expect(esc.defaultPrevented).toBe(false);
+    expect(useLayersStore.getState().layers).toHaveLength(1);
+
+    const chord = press({ key: "m", ctrlKey: true, shiftKey: true });
+    expect(run).not.toHaveBeenCalled();
+    expect(chord.defaultPrevented).toBe(false);
   });
 });

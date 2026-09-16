@@ -49,9 +49,21 @@ import { FileRowMenu } from "./FileRowMenu";
 import {
   dropSelection,
   moveSelection,
+  selectAllSection,
   type Section as ListSection,
   type Selection,
 } from "./selection";
+import { useCommandAction } from "../../keys/actions";
+import { useKeymapStore } from "../../keys/keymap";
+import { createOpQueue } from "../../lib/opQueue";
+import {
+  NO_PENDING,
+  dimPending,
+  mergePending,
+  prunePending,
+  removePending,
+  type PendingSections,
+} from "./pendingDim";
 import { expandUnstagePaths } from "./unstagePaths";
 import { STALE } from "../../lib/queryTiming";
 
@@ -70,6 +82,8 @@ const toEntry = (s: FileStatus): FileTreeEntry => ({
   deletions: s.deletions ?? undefined,
   binary: s.binary,
 });
+
+const EMPTY_PATHS: ReadonlySet<string> = new Set();
 
 /** Sum a section's per-file line counts (entries without counts add 0). */
 const sumCounts = (files: FileTreeEntry[]) => {
@@ -418,6 +432,16 @@ export function WorkingChangesPanel() {
   // Track the selection and, when exactly one file is selected, show its diff.
   const onSelectSection = useCallback(
     (section: ListSection, paths: string[]) => {
+      // Empty = the cursor moved onto a folder (the folder is the highlighted
+      // actor): drop the file selection and clear the detail views, so no
+      // stale highlight or diff suggests Space/Del act on a file.
+      if (paths.length === 0) {
+        setSelected(null);
+        const store = useSummonStore.getState();
+        store.notifyIfOpen("diff", null);
+        store.notifyIfOpen("merge", null);
+        return;
+      }
       setSelected({ section, paths });
       switch (selectionDiffAction(section, paths, driftByPath)) {
         case "open":
@@ -514,34 +538,91 @@ export function WorkingChangesPanel() {
     onError: (e) => notify.error(formatAppError(e)),
   });
 
+  // In-flight stage/unstage/discard targets render dimmed IN PLACE, so the
+  // gap between the instant selection advance and the row actually moving
+  // (git op + status refetch) is visible instead of confusing. Delayed 150ms
+  // like every busy indicator; cleared when the rows leave the section (the
+  // refetch landing) or immediately when the op fails (the rows stay).
+  const [pending, setPending] = useState<PendingSections>(NO_PENDING);
+  const [pendingVisible, setPendingVisible] = useState(false);
+  const pendingEmpty = pending.unstaged.size === 0 && pending.staged.size === 0;
+  // One timer from the FIRST pending op (merges don't restart it), reset when
+  // everything confirmed.
+  useEffect(() => {
+    if (pendingEmpty) {
+      setPendingVisible(false);
+      return;
+    }
+    if (pendingVisible) return;
+    const t = setTimeout(() => setPendingVisible(true), 150);
+    return () => clearTimeout(t);
+  }, [pendingEmpty, pendingVisible]);
+  // Each file's dim clears as git confirms its move (the row leaves its
+  // section); identity-preserving, so this never loops.
+  useEffect(() => {
+    setPending((p) =>
+      prunePending(
+        prunePending(p, "unstaged", new Set(unstagedWithDrift.map((f) => f.path))),
+        "staged",
+        new Set(staged.map((f) => f.path)),
+      ),
+    );
+  }, [staged, unstagedWithDrift]);
+  const trackPending = (
+    section: ListSection,
+    paths: string[],
+    op: Promise<boolean>,
+  ): Promise<boolean> => {
+    setPending((p) => mergePending(p, section, paths));
+    void op.then((ok) => {
+      // Failure: the rows stay, so the prune above never clears them.
+      if (!ok) setPending((p) => removePending(p, section, paths));
+    });
+    return op;
+  };
+  // Rapid keyboard staging must QUEUE (usePanelRunner's re-entry guard would
+  // silently drop presses landing mid-op); buttons keep the guard so
+  // double-clicks stay blocked.
+  const enqueueOp = useRef(createOpQueue()).current;
+
   // Staging/unstaging moves files between the two lists; the selection follows
-  // them (see moveSelection). Discarding removes them outright, so they're
-  // dropped from the selection.
-  const stage = (paths: string[]) =>
-    run(async () => {
-      // Drift rows route through the rename command - `git add` on a path
-      // git considers clean would silently do nothing.
-      const { drift, rest } = splitDriftTargets(paths, driftByPath);
-      if (rest.length > 0) await repoStage(repo!.id, rest);
-      for (const d of drift) {
-        await repoStageCaseRename(repo!.id, d.index_path, d.disk_path);
-      }
-      if (drift.length > 0) {
-        invalidateRepoDomains(queryClient, repo!.id, ["case_drift"]);
-      }
-      const next = moveSelection(selected, "unstaged", "staged", paths);
-      setSelected(next);
-      syncOpenDiff(selected, next);
-    });
-  const unstage = (paths: string[]) =>
-    run(async () => {
-      // A rename must restore BOTH its paths, or the source's deletion
-      // stays staged (see expandUnstagePaths).
-      await repoUnstage(repo!.id, expandUnstagePaths(paths, staged));
-      const next = moveSelection(selected, "staged", "unstaged", paths);
-      setSelected(next);
-      syncOpenDiff(selected, next);
-    });
+  // them (see moveSelection) - except when the caller already placed it
+  // (Space triage advances to the next file in the SAME pane; following would
+  // clobber that when the git op completes). Discarding removes files
+  // outright, so they're dropped from the selection.
+  const stage = (paths: string[], opts?: { follow?: boolean; queued?: boolean }) => {
+    const exec = () =>
+      run(async () => {
+        // Drift rows route through the rename command - `git add` on a path
+        // git considers clean would silently do nothing.
+        const { drift, rest } = splitDriftTargets(paths, driftByPath);
+        if (rest.length > 0) await repoStage(repo!.id, rest);
+        for (const d of drift) {
+          await repoStageCaseRename(repo!.id, d.index_path, d.disk_path);
+        }
+        if (drift.length > 0) {
+          invalidateRepoDomains(queryClient, repo!.id, ["case_drift"]);
+        }
+        if (opts?.follow === false) return;
+        const next = moveSelection(selected, "unstaged", "staged", paths);
+        setSelected(next);
+        syncOpenDiff(selected, next);
+      });
+    return trackPending("unstaged", paths, opts?.queued ? enqueueOp(exec) : exec());
+  };
+  const unstage = (paths: string[], opts?: { follow?: boolean; queued?: boolean }) => {
+    const exec = () =>
+      run(async () => {
+        // A rename must restore BOTH its paths, or the source's deletion
+        // stays staged (see expandUnstagePaths).
+        await repoUnstage(repo!.id, expandUnstagePaths(paths, staged));
+        if (opts?.follow === false) return;
+        const next = moveSelection(selected, "staged", "unstaged", paths);
+        setSelected(next);
+        syncOpenDiff(selected, next);
+      });
+    return trackPending("staged", paths, opts?.queued ? enqueueOp(exec) : exec());
+  };
   // Reopen a resolved-and-staged conflict (restores the unmerged stages and
   // regenerates the markers), then bring the Merge panel up for the file.
   const reopenConflict = (path: string) =>
@@ -596,21 +677,25 @@ export function WorkingChangesPanel() {
   };
 
   const doDiscard = (paths: string[]) =>
-    run(async () => {
-      // Drift rows route through the rename-back command - a plain discard
-      // pathspec would not match anything git considers changed.
-      const { drift, rest } = splitDriftTargets(paths, driftByPath);
-      if (rest.length > 0) await repoDiscard(repo!.id, rest);
-      for (const d of drift) {
-        await repoDiscardCaseRename(repo!.id, d.index_path, d.disk_path);
-      }
-      if (drift.length > 0) {
-        invalidateRepoDomains(queryClient, repo!.id, ["case_drift"]);
-      }
-      const next = dropSelection(selected, paths);
-      setSelected(next);
-      syncOpenDiff(selected, next);
-    });
+    trackPending(
+      "unstaged",
+      paths,
+      run(async () => {
+        // Drift rows route through the rename-back command - a plain discard
+        // pathspec would not match anything git considers changed.
+        const { drift, rest } = splitDriftTargets(paths, driftByPath);
+        if (rest.length > 0) await repoDiscard(repo!.id, rest);
+        for (const d of drift) {
+          await repoDiscardCaseRename(repo!.id, d.index_path, d.disk_path);
+        }
+        if (drift.length > 0) {
+          invalidateRepoDomains(queryClient, repo!.id, ["case_drift"]);
+        }
+        const next = dropSelection(selected, paths);
+        setSelected(next);
+        syncOpenDiff(selected, next);
+      }),
+    );
 
   // Confirm before discarding (destructive) via the central dialog; then run
   // it. The label defaults to the lone path, or "N files" for a bulk
@@ -642,6 +727,59 @@ export function WorkingChangesPanel() {
     }
     doDiscard([d.disk_path]);
   };
+
+  // The stage-toggle key, live from the keymap (widget-handled command: the
+  // trees match it themselves, the dispatcher stands down).
+  const toggleStageChords = useKeymapStore((s) => s.effective["workingChanges.toggleStage"]);
+
+  // What the two trees render: the section entries, with in-flight targets
+  // dimmed while a stage/unstage/discard is pending (see trackPending).
+  const unstagedPendingPaths = pendingVisible ? pending.unstaged : EMPTY_PATHS;
+  const stagedPendingPaths = pendingVisible ? pending.staged : EMPTY_PATHS;
+  const displayUnstaged = useMemo(
+    () => dimPending(unstagedWithDrift, unstagedPendingPaths),
+    [unstagedWithDrift, unstagedPendingPaths],
+  );
+  const displayStaged = useMemo(
+    () => dimPending(staged, stagedPendingPaths),
+    [staged, stagedPendingPaths],
+  );
+
+  // Panel-scoped commands, dispatched only while this panel is the focused
+  // dock's active panel. Which list "has focus" is answered from the DOM at
+  // action time - the section wrappers carry the wc-* testids (the refs are
+  // assigned by render ORDER, so the id comes from the node, not the ref).
+  const sectionWithFocus = (): ListSection | null => {
+    const el = document.activeElement;
+    for (const ref of [firstFileRef, secondFileRef]) {
+      const node = ref.current;
+      if (node && el && node.contains(el)) {
+        return node.dataset.testid === "wc-staged" ? "staged" : "unstaged";
+      }
+    }
+    return null;
+  };
+  useCommandAction(
+    "workingChanges.selectAll",
+    staged.length + unstagedWithDrift.length > 0
+      ? () => {
+          const section = selectAllSection(sectionWithFocus(), selected);
+          const entries = section === "staged" ? staged : unstagedWithDrift;
+          if (entries.length > 0) {
+            onSelectSection(
+              section,
+              entries.map((f) => f.path),
+            );
+          }
+        }
+      : null,
+  );
+  useCommandAction(
+    "workingChanges.discardSelected",
+    !busy && selected?.section === "unstaged" && selected.paths.length > 0
+      ? () => void requestDiscard(selected.paths)
+      : null,
+  );
 
   if (!repo) {
     return (
@@ -750,12 +888,23 @@ export function WorkingChangesPanel() {
             }
           >
             <FileTree
-              files={unstagedWithDrift}
+              files={displayUnstaged}
               viewMode={viewMode}
               selectedPath={null}
               multiSelect
               selectedPaths={unstagedSelected}
               onSelectionChange={(paths) => onSelectSection("unstaged", paths)}
+              toggleStageChords={toggleStageChords}
+              stagePendingPaths={pending.unstaged}
+              onToggleStage={(paths, next) => {
+                // Triage: keep working in this pane - select the next
+                // surviving file now, and tell stage() not to move the
+                // selection when the git op completes. With nothing left
+                // here, the selection follows into Staged as usual. Queued:
+                // rapid presses each stage (never dropped by the busy guard).
+                stage(paths, { follow: next === null, queued: true });
+                if (next) onSelectSection("unstaged", [next]);
+              }}
               rowHeight={rowHeight}
               iconSize={iconSize}
               onContextMenu={(f, e) => {
@@ -910,12 +1059,18 @@ export function WorkingChangesPanel() {
             }
           >
             <FileTree
-              files={staged}
+              files={displayStaged}
               viewMode={viewMode}
               selectedPath={null}
               multiSelect
               selectedPaths={stagedSelected}
               onSelectionChange={(paths) => onSelectSection("staged", paths)}
+              toggleStageChords={toggleStageChords}
+              stagePendingPaths={pending.staged}
+              onToggleStage={(paths, next) => {
+                unstage(paths, { follow: next === null, queued: true });
+                if (next) onSelectSection("staged", [next]);
+              }}
               rowHeight={rowHeight}
               iconSize={iconSize}
               onContextMenu={(f, e) => {

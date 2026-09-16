@@ -160,3 +160,21 @@ export function flatten(
   emitChildren(root, "", 0, collapsed, out);
   return out;
 }
+
+/**
+ * The dir rows whose files are ALL dimmed (e.g. a whole folder being staged
+ * renders dimmed as a unit, nested dir rows included). A dir with no files
+ * beneath it, or any undimmed file, stays undimmed.
+ */
+export function fullyDimmedDirs(
+  rows: readonly Row[],
+  files: readonly FileTreeEntry[],
+): Set<string> {
+  const out = new Set<string>();
+  for (const row of rows) {
+    if (row.kind !== "dir") continue;
+    const under = files.filter((f) => f.path.startsWith(`${row.path}/`));
+    if (under.length > 0 && under.every((f) => f.dimmed)) out.add(row.path);
+  }
+  return out;
+}

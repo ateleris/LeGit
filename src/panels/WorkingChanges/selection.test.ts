@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dropSelection, moveSelection, type Selection } from "./selection";
+import { dropSelection, moveSelection, selectAllSection, type Selection } from "./selection";
 
 const sel = (section: "staged" | "unstaged", ...paths: string[]): Selection => ({
   section,
@@ -52,5 +52,23 @@ describe("dropSelection", () => {
 
   it("passes a null selection through", () => {
     expect(dropSelection(null, ["a.txt"])).toBeNull();
+  });
+});
+
+// Issue #21: Ctrl+A picks its list by focus first, existing selection second,
+// and defaults to UNSTAGED (staging is the dominant flow).
+describe("selectAllSection", () => {
+  it("a focused list always wins", () => {
+    expect(selectAllSection("staged", sel("unstaged", "a.txt"))).toBe("staged");
+    expect(selectAllSection("unstaged", null)).toBe("unstaged");
+  });
+
+  it("falls back to the section holding the current selection", () => {
+    expect(selectAllSection(null, sel("staged", "a.txt"))).toBe("staged");
+    expect(selectAllSection(null, sel("unstaged", "a.txt"))).toBe("unstaged");
+  });
+
+  it("defaults to unstaged with no focus and no selection", () => {
+    expect(selectAllSection(null, null)).toBe("unstaged");
   });
 });

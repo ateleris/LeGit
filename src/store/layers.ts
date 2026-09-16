@@ -6,9 +6,11 @@ import { create } from "zustand";
  * Every dismissable surface pushes a layer while open; the key dispatcher pops
  * exactly the topmost one on Escape. "dialog" and "menu" layers block command
  * resolution below them; "popover" (incl. hover flyouts) and "mode" (e.g. a
- * maximized panel) do not.
+ * maximized panel) do not. "capture" (the Shortcuts panel recording a
+ * binding) makes the dispatcher stand down entirely - the capture UI owns
+ * every keydown, including Escape.
  */
-export type LayerKind = "dialog" | "menu" | "popover" | "mode";
+export type LayerKind = "dialog" | "menu" | "popover" | "mode" | "capture";
 
 export interface Layer {
   id: string;

@@ -3,7 +3,7 @@
 // every file list in the app renders through flatten().
 
 import { describe, test, expect } from "vitest";
-import { baseName, flatten, type FileTreeEntry, type Row } from "./buildTree";
+import { baseName, flatten, fullyDimmedDirs, type FileTreeEntry, type Row } from "./buildTree";
 
 const files = (...paths: string[]): FileTreeEntry[] => paths.map((path) => ({ path }));
 const none = new Set<string>();
@@ -87,5 +87,43 @@ describe("flatten (tree mode)", () => {
     const collapsed = new Set(["a/b"]);
     const rows = flatten(files("a/b/c.txt"), "tree", collapsed);
     expect(shape(rows)).toEqual(["dir:0:a/b(1)"]);
+  });
+});
+
+// A dir row renders dimmed only when EVERY file beneath it is dimmed (e.g.
+// the whole folder is being staged) - nested dir rows included; a partially
+// dimmed folder keeps full opacity.
+describe("fullyDimmedDirs", () => {
+  const entries: FileTreeEntry[] = [
+    { path: "kitchen/pans/pan1.txt", dimmed: true },
+    { path: "kitchen/pots/pot1.txt", dimmed: true },
+    { path: "kitchen/pots/lids/lid1.txt", dimmed: true },
+    { path: "src/app.js" },
+    { path: "src/deep/x.js", dimmed: true },
+  ];
+  const dirRow = (path: string): Row => ({
+    kind: "dir",
+    path,
+    label: path,
+    depth: 0,
+    fileCount: 0,
+    collapsed: false,
+  });
+  const rows = ["kitchen", "kitchen/pans", "kitchen/pots", "kitchen/pots/lids", "src", "src/deep"].map(dirRow);
+
+  test("marks dirs (incl. nested ones) whose files are all dimmed", () => {
+    const dimmed = fullyDimmedDirs(rows, entries);
+    expect([...dimmed].sort()).toEqual([
+      "kitchen",
+      "kitchen/pans",
+      "kitchen/pots",
+      "kitchen/pots/lids",
+      "src/deep",
+    ]);
+  });
+
+  test("a partially dimmed dir and an empty dir stay undimmed", () => {
+    const dimmed = fullyDimmedDirs([dirRow("src"), dirRow("ghost")], entries);
+    expect(dimmed.size).toBe(0);
   });
 });

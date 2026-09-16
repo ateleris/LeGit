@@ -16,6 +16,8 @@ import { notify } from "../../store/notifications";
 import { BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon, StashIcon } from "../../icons";
 import { MenuItem, Separator } from "./menu/primitives";
 import { STALE } from "../../lib/queryTiming";
+import { useCommandAction } from "../../keys/actions";
+import { useBindingLabel, withBinding } from "../../keys/useBindingLabel";
 
 // ---------------------------------------------------------------------------
 // Remote sync toolbar
@@ -211,6 +213,18 @@ export function RemoteSyncToolbar({
   const busy = busyOp !== null;
   const pushLabel = hasUpstream ? "Push" : "Publish";
 
+  // Keyboard commands delegate to the same handlers as the buttons; inert
+  // while an op runs or (push) nothing is publishable.
+  useCommandAction("repo.fetch", busy ? null : doFetch);
+  useCommandAction("repo.pull", busy ? null : doPull);
+  useCommandAction(
+    "repo.push",
+    busy || !currentBranch || !remoteName ? null : () => void doPush(false),
+  );
+  const fetchKey = useBindingLabel("repo.fetch");
+  const pullKey = useBindingLabel("repo.pull");
+  const pushKey = useBindingLabel("repo.push");
+
   return (
     <div
       className="legit-panel__toolbar"
@@ -225,7 +239,7 @@ export function RemoteSyncToolbar({
           "Cancel", still enabled) — the cancel affordance sits exactly where
           the user just clicked. The other buttons disable as before. */}
       <ToolbarButton
-        title={busyOp === "fetch" ? "Cancel fetch" : "Fetch all remotes (prune)"}
+        title={busyOp === "fetch" ? "Cancel fetch" : withBinding("Fetch all remotes (prune)", fetchKey)}
         disabled={busyOp === "fetch" ? false : busy || !remoteName}
         loading={busyOp === "fetch"}
         icon={<FetchIcon />}
@@ -239,8 +253,11 @@ export function RemoteSyncToolbar({
             busyOp === "pull"
               ? "Cancel pull"
               : hasUpstream
-                ? `Pull from ${tracking?.upstream ?? "upstream"}` +
-                  (pullStrategy !== "Default" ? ` (${PULL_STRATEGY_LABELS[pullStrategy]})` : "")
+                ? withBinding(
+                    `Pull from ${tracking?.upstream ?? "upstream"}` +
+                      (pullStrategy !== "Default" ? ` (${PULL_STRATEGY_LABELS[pullStrategy]})` : ""),
+                    pullKey,
+                  )
                 : "No upstream for the current branch"
           }
           disabled={busyOp === "pull" ? false : busy || !hasUpstream}
@@ -291,8 +308,8 @@ export function RemoteSyncToolbar({
               : !remoteName
               ? "No remote configured"
               : hasUpstream
-              ? `Push to ${remoteName}`
-              : `Publish branch to ${remoteName} (sets upstream)`
+              ? withBinding(`Push to ${remoteName}`, pushKey)
+              : withBinding(`Publish branch to ${remoteName} (sets upstream)`, pushKey)
           }
           disabled={busyOp === "push" ? false : busy || !currentBranch || !remoteName}
           loading={busyOp === "push"}

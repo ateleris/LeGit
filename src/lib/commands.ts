@@ -29,6 +29,7 @@ import type {
   RestoreResult,
   ThemeEntry,
   ThemeDocument,
+  KeybindingsFile,
   LayoutEntry,
   LayoutDocument,
   LineEndingsView,
@@ -451,6 +452,13 @@ export const renameLayout = (oldName: string, newName: string) =>
 
 export const deleteLayout = (name: string) =>
   invoke<null>("delete_layout", { name });
+
+// --- keybindings ---
+
+export const loadKeybindings = () => invoke<KeybindingsFile>("load_keybindings");
+
+export const saveKeybindings = (file: KeybindingsFile) =>
+  invoke<null>("save_keybindings", { file });
 
 // --- line endings ---
 

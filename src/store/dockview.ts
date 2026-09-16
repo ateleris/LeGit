@@ -137,6 +137,25 @@ export function wireMaximizeModeLayer(api: MaximizeSource, dockId: "global" | "r
   });
 }
 
+/**
+ * The panel that panel-scoped shortcuts target. DOM focus wins: when focus
+ * sits inside a panel's content (the registry wrapper carries
+ * `data-panel-id`), that panel is the target even if a summon made another
+ * panel the dock's active one (selecting a file summons Diff, but Ctrl+A
+ * must keep addressing the focused file list). With focus nowhere specific
+ * (body), fall back to the active panel of the dock owning the focus region
+ * (the global dock while focus sits in its region, else the repo dock -
+ * same rule as toggleMaximizeActivePanel).
+ */
+export function focusedDockPanelId(): string | null {
+  const holder = document.activeElement?.closest("[data-panel-id]");
+  const focusedId = holder?.getAttribute("data-panel-id");
+  if (focusedId) return focusedId;
+  const { globalApi, repoApi } = useDockviewStore.getState();
+  const focusInGlobal = !!document.activeElement?.closest(".legit-global-region");
+  return (focusInGlobal ? globalApi : repoApi)?.activePanel?.id ?? null;
+}
+
 /** Whether either dock currently has a maximized group (View menu label). */
 export function hasMaximizedPanel(): boolean {
   const { globalApi, repoApi } = useDockviewStore.getState();

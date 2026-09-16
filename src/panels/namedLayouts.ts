@@ -1,43 +1,22 @@
-// Named layouts: user-saved snapshots of both docks, stored as backend files
-// (`layouts/<name>.legit-layout.json`). The View menu applies them; the
-// Layouts panel manages them (save/override/rename/delete/import/export).
-// This module owns the document format plus the capture/apply glue; the
-// store (store/layouts.ts) owns persistence and the dockview APIs.
+// Named layouts: user-saved snapshots of the REPOSITORY dock, stored as
+// backend files (`layouts/<name>.legit-layout.json`). The View menu applies
+// them; the Layouts panel manages them (save/override/rename/delete/
+// import/export). The global section is app chrome with its own state -
+// layouts never capture or rearrange it (a legacy document's `global` part
+// is kept for round-tripping but ignored on apply). This module owns the
+// document format plus the capture/apply glue; the store (store/layouts.ts)
+// owns persistence and the dockview APIs.
 
 import type { DockviewApi } from "dockview-react";
 import type { LayoutDocument } from "../lib/types";
 import {
-  applyGlobalLayoutJson,
   applyRepoLayoutEnvelope,
   captureRepoLayoutEnvelope,
   coerceRepoLayoutEnvelope,
-  sanitizeDockviewLayout,
 } from "./layoutSnapshot";
-import { GLOBAL_DOCKVIEW_COMPONENTS, PANEL_TITLES } from "./registry";
 
 export const LAYOUT_FORMAT = "legit-layout";
 export const LAYOUT_FORMAT_VERSION = 1;
-
-/** The Layouts panel's own id. It is stripped from every capture (a saved
- *  layout must not bake in the manager that saved it) and re-summoned after
- *  an apply when it was open (fromJSON replaces the whole dock, which would
- *  otherwise close the panel under the user's pointer). */
-export const LAYOUTS_PANEL_ID = "layouts";
-
-// Lazy, matching layoutSnapshot.ts: this module sits inside the registry's
-// import cycle, so the registry consts must not be read at module init.
-const globalComponentIdsWithoutLayoutsPanel = (): ReadonlySet<string> => {
-  const ids = new Set(Object.keys(GLOBAL_DOCKVIEW_COMPONENTS));
-  ids.delete(LAYOUTS_PANEL_ID);
-  return ids;
-};
-
-/** The global dock's layout as captured into a named layout: the Layouts
- *  panel pruned. Null when nothing (else) is open in the global dock — the
- *  document then leaves the global dock alone on apply. */
-export function stripGlobalForCapture(json: unknown): unknown {
-  return sanitizeDockviewLayout(json, globalComponentIdsWithoutLayoutsPanel(), PANEL_TITLES);
-}
 
 export function buildLayoutDocument(
   name: string,
@@ -53,18 +32,15 @@ export function buildLayoutDocument(
   };
 }
 
-/** Snapshot both docks into a layout document. Null when neither dock has
- *  anything to capture (both APIs missing, or the global dock holds only the
- *  Layouts panel and no repo is open). */
+/** Snapshot the repo dock into a layout document (`global` is always null).
+ *  Null when there is no repo dock to capture. */
 export function captureLayoutDocument(
   name: string,
-  globalApi: DockviewApi | null,
   repoApi: DockviewApi | null,
 ): LayoutDocument | null {
-  const global = globalApi ? stripGlobalForCapture(globalApi.toJSON()) : null;
   const repo = repoApi ? captureRepoLayoutEnvelope(repoApi) : null;
-  if (global === null && repo === null) return null;
-  return buildLayoutDocument(name, global, repo);
+  if (repo === null) return null;
+  return buildLayoutDocument(name, null, repo);
 }
 
 /** Validate an untrusted value (an imported file, a loaded document) into a
@@ -152,22 +128,15 @@ function coerceParsed<T>(raw: string, coerce: (parsed: unknown) => T | null): T 
 }
 
 /**
- * Apply a layout document to the available docks. A null part (or a missing
- * API — collapsed global region, no open repo) leaves that dock unchanged.
- * Returns false when a present part failed to apply to its available dock.
+ * Apply a layout document to the repo dock. A null repo part (or no open
+ * repo) is a no-op; a legacy `global` part is ignored entirely. Returns
+ * false when a present repo part failed to apply.
  */
 export function applyLayoutDocument(
   doc: LayoutDocument,
-  globalApi: DockviewApi | null,
   repoApi: DockviewApi | null,
 ): boolean {
-  let ok = true;
-  if (doc.global !== null && globalApi) {
-    ok = applyGlobalLayoutJson(globalApi, doc.global) && ok;
-  }
-  if (doc.repo !== null && repoApi) {
-    const envelope = coerceRepoLayoutEnvelope(doc.repo);
-    ok = (envelope !== null && applyRepoLayoutEnvelope(repoApi, envelope)) && ok;
-  }
-  return ok;
+  if (doc.repo === null || !repoApi) return true;
+  const envelope = coerceRepoLayoutEnvelope(doc.repo);
+  return envelope !== null && applyRepoLayoutEnvelope(repoApi, envelope);
 }

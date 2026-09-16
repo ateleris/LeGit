@@ -292,6 +292,14 @@ export interface LayoutEntry {
   path: string;
 }
 
+/** The persisted user keymap (`keybindings.json`): a DIFF from the shipped
+ *  defaults. `[]` = explicitly unbound; an absent command id inherits the
+ *  default. Unknown ids are preserved across save/load. */
+export interface KeybindingsFile {
+  version: number;
+  bindings: Record<string, string[]>;
+}
+
 /** A saved panel layout (`.legit-layout.json`): a named snapshot of both
  *  docks. `global` is the global dock's plain dockview JSON; `repo` is the
  *  repo dock's envelope ({ dockview, placements, fallbacks }). Either may be

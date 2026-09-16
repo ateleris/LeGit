@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
 import {
+  chordMatchCandidates,
+  eventChordCandidates,
   eventToChord,
   formatChord,
   isEditableTarget,
@@ -94,6 +96,58 @@ describe("eventToChord", () => {
 
   it("Meta on Windows/Linux never becomes Mod", () => {
     expect(eventToChord(ev({ key: "f", metaKey: true }), WIN)).toBe("Meta+F");
+  });
+});
+
+describe("chordMatchCandidates", () => {
+  it("on Windows/Linux a Mod chord also matches its Ctrl spelling (Mod IS Ctrl there)", () => {
+    expect(chordMatchCandidates("Mod+Tab", WIN)).toEqual(["Mod+Tab", "Ctrl+Tab"]);
+    expect(chordMatchCandidates("Mod+Shift+Tab", WIN)).toEqual([
+      "Mod+Shift+Tab",
+      "Ctrl+Shift+Tab",
+    ]);
+  });
+
+  it("on macOS Mod (Cmd) and Ctrl are distinct keys", () => {
+    expect(chordMatchCandidates("Mod+Tab", MAC)).toEqual(["Mod+Tab"]);
+    expect(chordMatchCandidates("Ctrl+Tab", MAC)).toEqual(["Ctrl+Tab"]);
+  });
+
+  it("chords without Mod are returned as-is", () => {
+    expect(chordMatchCandidates("F5", WIN)).toEqual(["F5"]);
+    expect(chordMatchCandidates("Alt+ArrowDown", WIN)).toEqual(["Alt+ArrowDown"]);
+  });
+});
+
+describe("eventChordCandidates", () => {
+  const ev = (init: Partial<KeyboardEvent> & { key: string }) =>
+    ({
+      code: "",
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+      metaKey: false,
+      ...init,
+    }) as KeyboardEvent;
+
+  it("is the event's chord plus the Ctrl-spelling fold, nothing else", () => {
+    expect(eventChordCandidates(ev({ key: "Tab", ctrlKey: true }), WIN)).toEqual([
+      "Mod+Tab",
+      "Ctrl+Tab",
+    ]);
+    expect(eventChordCandidates(ev({ key: "Control", ctrlKey: true }), WIN)).toEqual([]);
+  });
+
+  it("NEVER infers the physical key from code - what capture showed is what matches", () => {
+    // Swiss QWERTZ Ctrl+Shift+1 reports "+": it matches a binding captured
+    // as Mod+Shift+Plus, and deliberately NOT a hand-written Mod+Shift+1.
+    const plus = ev({ key: "+", code: "Digit1", ctrlKey: true, shiftKey: true });
+    expect(eventChordCandidates(plus, WIN)).toEqual(["Mod+Shift+Plus", "Ctrl+Shift+Plus"]);
+  });
+
+  it("works on a REAL KeyboardEvent (properties live on prototype getters)", () => {
+    const e = new KeyboardEvent("keydown", { key: "Tab", ctrlKey: true });
+    expect(eventChordCandidates(e, WIN)).toEqual(["Mod+Tab", "Ctrl+Tab"]);
   });
 });
 

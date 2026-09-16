@@ -162,22 +162,6 @@ export function summonGlobalPanel(id: string) {
   pendingSummon = id;
 }
 
-/**
- * Re-add a global panel WITHOUT activating it (a background tab in the
- * active group). For restoring presence where focus must stay put — e.g. the
- * Layouts panel after applying a layout replaced the dock; the summon path
- * would steal focus. No-op when the panel is already open or the dock is
- * unmounted.
- */
-export function restoreGlobalPanelInactive(id: string) {
-  const api = useDockviewStore.getState().globalApi;
-  if (!api) return;
-  const desc = GLOBAL_PANELS.find((p) => p.id === id);
-  if (!desc) return;
-  if (api.getPanel(id)) return;
-  api.addPanel({ id: desc.id, component: desc.id, title: desc.title, inactive: true });
-}
-
 /** Open or focus a global panel by id. */
 export function openGlobalPanel(api: DockviewApi | null, id: string) {
   if (!api) return;

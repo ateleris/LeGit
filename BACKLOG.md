@@ -26,14 +26,31 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
   registry, resolve, Dispatcher) + `store/layers.ts`;
   `useDismissable`/`Popover`, the dialog/prompt Escape handlers, the
   Commits quick-jump overlay and maximize (mode layer) all migrated onto
-  the layer stack; `isUnclaimedEscape` deleted. Phase 2 is the global
-  Keyboard Shortcuts panel (press-a-key capture, conflicts, reset,
-  import/export, F1) plus the seed bindings. Phase 3 is focus management
-  (unblocks issue #21's Ctrl+A select-all) and the per-panel command
-  sweep; the command palette comes after.
-  Also seed shortcuts for applying saved layouts (2026-09-07, with the
-  named-layouts feature): e.g. Ctrl+Alt+1..9 for the first N layouts in
-  list order (digits, QWERTZ-safe) via `useLayoutsStore.apply`.
+  the layer stack; `isUnclaimedEscape` deleted. **Phase 2 landed
+  2026-09-14**: Keyboard Shortcuts panel (press-a-key capture, conflicts,
+  reset, import/export, View menu), `keybindings.json` persistence, the
+  command-action registry, and the seed set (git actions + panel summons
+  later unbound by default; F5/tab-switching/maximize stay bound).
+  **Phase 3 Working Changes slice landed 2026-09-14/16**: focused-panel
+  resolution (DOM focus first), issue #21's Ctrl+A, Del discard,
+  arrows-select with Shift-range, the rebindable widget-handled
+  stage-toggle (default Space) with folder-actor highlight, triage
+  advance, queued rapid presses and pending dimming. "How to add a
+  shortcut (the recipe)" is in the design doc. Remaining:
+  - Commits panel: row navigation (arrows/Enter, list-local like
+    FileTree), Mod+C copy selected SHA, Menu-key/Shift+F10 context menu.
+  - Refs panel: F2 inline rename, Del delete (central confirm).
+  - Diff: Alt+ArrowUp/Down hunk navigation; later keyboard hunk staging
+    (needs a focused-hunk concept).
+  - Mod+F find in focused panel (CodeMirror searchKeymap / Commits search).
+  - Working Changes Enter = force-open diff (mostly covered by
+    arrows-select; low priority).
+  - Interactive Rebase coverage; then the per-panel command sweep; the
+    command palette comes after (out of v1 scope).
+  - Manual checks: WebView2 passes F5/Ctrl+Tab through; prod F5
+    fall-through must not reload; rebind persists across restart; capture
+    rejects AltGr on QWERTZ; click-then-Ctrl+A in Working Changes (the
+    summon-focus fix) behaves in the live app.
   Related deferred note: a shortcut to open the commits context menu
   (`design/2026-06-16-commits-context-menu-design.md`).
 
@@ -58,7 +75,7 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   `crates/legit-providers` + `commands/accounts.rs` / `ssh_keys.rs`):
   - **OAuth device flows** (GitHub client-id-only, GitLab device grant,
     Entra device code for ADO) - blocked on registering app client IDs
-    (Simon's account/org); the code seam is
+    (needs the maintainer's forge account/org); the code seam is
     `legit_providers::validate_token`.
   - **Self-hosted GitLab hosts** (gitlab.com fixed for now).
   - `ssh -T` connection test could surface WHICH account authenticated

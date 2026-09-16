@@ -32,6 +32,18 @@ export function moveSelection(
   return { section: from, paths: remaining };
 }
 
+/**
+ * Which list Ctrl+A selects all in (issue #21): the focused list wins; with
+ * neither list focused, the section already holding a selection; otherwise
+ * UNSTAGED (staging is the dominant flow - "Ctrl+A then Space" stages all).
+ */
+export function selectAllSection(
+  focused: Section | null,
+  sel: Selection | null,
+): Section {
+  return focused ?? sel?.section ?? "unstaged";
+}
+
 /** Drop discarded `paths` from an unstaged selection; empty clears it. */
 export function dropSelection(sel: Selection | null, paths: string[]): Selection | null {
   if (sel?.section !== "unstaged") return sel;

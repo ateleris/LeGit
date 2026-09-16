@@ -18,9 +18,26 @@ lives in the git log and the GitHub release notes.
   context menu (shown when the folder holds only untracked files).
 - "Add to .gitignore" on a nested file is now a submenu offering the file
   itself (also the click action) or any folder layer above it.
+- Keyboard Shortcuts panel (View menu): rebind any command with
+  press-a-key capture, conflict detection, per-command or full reset, and
+  import/export. Commit, fetch, pull, push, the panel summons and
+  apply-saved-layout ship unbound - bind them here.
+- Default shortcuts: F5 refreshes, Ctrl+1..9 jump to a repository tab,
+  Ctrl+Tab/Ctrl+Shift+Tab switch tabs in recently-used order like Firefox
+  (hold Ctrl to cycle deeper).
+- Keyboard staging in Working Changes: Up/Down move the selection (the
+  diff follows, Shift extends), Space (rebindable) stages/unstages the
+  file, selection, or highlighted folder and advances to the next file,
+  Ctrl+A selects all in the focused list (#21), Del discards with
+  confirmation, and Left/Right fold folders. Files in flight dim until git
+  confirms the move.
 
 ### Changed
 
+- Named layouts now capture and apply only the repository section; the
+  global section (Repositories, Theme Editor, Settings) keeps its own
+  arrangement. Existing layout files still work - their global part is
+  ignored.
 - "Add to .gitignore" no longer prefixes nested paths with `/` - a pattern
   containing a slash is root-anchored already; top-level names keep the
   prefix, where it prevents matching at any depth.

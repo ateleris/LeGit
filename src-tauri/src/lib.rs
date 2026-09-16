@@ -143,6 +143,8 @@ pub fn run() {
         commands::save_layout,
         commands::rename_layout,
         commands::delete_layout,
+        commands::load_keybindings,
+        commands::save_keybindings,
         commands::repo_line_endings_view,
         commands::repo_line_ending_kind,
         commands::repo_revert_line_endings,

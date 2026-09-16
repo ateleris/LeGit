@@ -43,6 +43,8 @@ import {
 import { gitmodulesFindingLabel } from "./gitmodulesWarning";
 import { formatEolChanges, type StagedEolChange } from "./lineEndingWarning";
 import { STALE } from "../../lib/queryTiming";
+import { useCommandAction } from "../../keys/actions";
+import { useBindingLabel, withBinding } from "../../keys/useBindingLabel";
 
 /** Shared chrome of the composer's inline confirm banners. */
 const bannerStyle: React.CSSProperties = {
@@ -301,6 +303,11 @@ export function CommitComposer({
     ? !!head && message.trim().length > 0 && !busy
     : stagedCount > 0 && message.trim().length > 0 && !busy;
 
+  // Mod+Enter commits from anywhere in the app (incl. the message box); same
+  // request path as the button, so all confirm banners still apply.
+  useCommandAction("repo.commit", canCommit ? requestCommit : null);
+  const commitKey = useBindingLabel("repo.commit");
+
   return (
     <div style={{ flexShrink: 0, borderTop: "1px solid var(--panel-border)", padding: "0.667em", display: "flex", flexDirection: "column", gap: "0.5em" }}>
       {identityMissing && (
@@ -449,7 +456,14 @@ export function CommitComposer({
               (amend/detached/no target), so it never promises a push that
               will not happen. */}
           <div style={{ position: "relative", display: "flex", marginLeft: "auto" }}>
-            <Button variant="primary" rounded="left" data-testid="commit-button" disabled={!canCommit} onClick={requestCommit}>
+            <Button
+              variant="primary"
+              rounded="left"
+              data-testid="commit-button"
+              disabled={!canCommit}
+              onClick={requestCommit}
+              title={withBinding(commitPlan.label, commitKey)}
+            >
               {commitPlan.label} {!amend && stagedCount > 0 ? `(${stagedCount})` : ""}
             </Button>
             <Button
