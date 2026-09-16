@@ -9,7 +9,12 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-export const E2E_HOME = path.resolve(import.meta.dirname, ".e2e-home");
+// Overridable so a WSL run can point it at the Linux filesystem: fixture
+// repos on /mnt/c (drvfs) get no inotify events, which silently kills every
+// watcher-dependent assertion that works on CI's ext4.
+export const E2E_HOME = process.env.LEGIT_E2E_HOME
+  ? path.resolve(process.env.LEGIT_E2E_HOME)
+  : path.resolve(import.meta.dirname, ".e2e-home");
 export const SCREENSHOT_DIR = path.resolve(import.meta.dirname, "screenshots");
 
 // Linux app-data dir for the production identifier (a debug build still uses

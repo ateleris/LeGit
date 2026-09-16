@@ -94,7 +94,29 @@ describe("smoke: stage and commit", () => {
 
     const rowSel =
       `[data-testid="wc-staged"] [data-testid="file-row"][data-path="${longName}"]`;
-    await $(rowSel).waitForDisplayed({ timeout: 15_000 });
+    // Watcher-first: the row should appear from the inotify event alone. The
+    // watcher gates refetches on WINDOW FOCUS (unfocused = mark stale only),
+    // and under xvfb/WebDriver whether a Tauri focus-lost event ever fired is
+    // a timing lottery - so after a real grace period, fall back to the F5
+    // refresh shortcut (a synthetic keydown reaches the window-capture
+    // dispatcher) and WARN loudly: the geometry regression below stays pinned
+    // either way, and a fallback firing every run is its own signal that
+    // watcher delivery broke.
+    const viaWatcher = await $(rowSel)
+      .waitForDisplayed({ timeout: 8_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!viaWatcher) {
+      console.warn(
+        "smoke: watcher did not surface the staged file within 8s (focus-gated?) - falling back to F5",
+      );
+      await browser.execute(() => {
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "F5", bubbles: true, cancelable: true }),
+        );
+      });
+      await $(rowSel).waitForDisplayed({ timeout: 10_000 });
+    }
     const rects = await browser.execute((sel: string) => {
       const row = document.querySelector(sel)!;
       const name = row.querySelector('[data-testid="file-row-name"]')!.getBoundingClientRect();
