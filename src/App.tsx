@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import logoUrl from "./assets/legit-logo.png";
 import { useAppVersion } from "./lib/appVersion";
+import { revealAndSignal } from "./lib/windowReveal";
 import { useThemeStore } from "./store/themes";
 import { useLayoutsStore } from "./store/layouts";
 import { useSettingsStore } from "./store/settings";
@@ -37,9 +38,7 @@ async function revealWindowOnceThemed() {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
   );
   try {
-    const win = getCurrentWindow();
-    await win.show();
-    await win.setFocus();
+    await revealAndSignal(getCurrentWindow());
   } catch (e) {
     // Not running under Tauri (tests) - nothing to reveal.
     console.warn("failed to show the main window", e);

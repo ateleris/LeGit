@@ -12,6 +12,13 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- The window now appears as soon as the theme has painted instead of after
+  a 4-second fallback delay (the startup reveal was blocked by missing
+  window permissions), and if it opens behind the app you are working in,
+  the taskbar button flashes instead of staying silent.
+
 ## [1.3.0] - 2026-09-16
 
 ### Added
