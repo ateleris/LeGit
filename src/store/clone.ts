@@ -2,7 +2,8 @@ import { create } from "zustand";
 import { cancelClone } from "../lib/commands";
 import type { CloneOptions } from "../lib/commands";
 import { lfsDownloadErrorMessage } from "../lib/lfsFeedback";
-import { cloneCancelCleanupFailure, formatAppError, gitErrorKind } from "../lib/types";
+import { cloneCancelCleanupFailure, gitErrorKind } from "../lib/types";
+import { formatRepoError } from "../lib/repoErrorFeedback";
 import { notify } from "./notifications";
 import { useRemoteProgressStore } from "./remoteProgress";
 import { useRepoStore } from "./repos";
@@ -101,7 +102,7 @@ export const useCloneStore = create<CloneStore>((set, get) => ({
           );
         } else {
           notify.error(
-            `Could not clone ${name}: ${lfsDownloadErrorMessage(e, "clone") ?? formatAppError(e)}`,
+            `Could not clone ${name}: ${lfsDownloadErrorMessage(e, "clone") ?? formatRepoError(e, parentDir)}`,
           );
         }
       } finally {

@@ -7,15 +7,20 @@
 //   (after the store restored tabs).
 
 import { useEffect } from "react";
-import { onOpenLocator, onRemoteHostStatus } from "./events";
+import { onOpenLocator, onRemoteHostGit, onRemoteHostStatus } from "./events";
 import { takePendingOpen } from "./commands";
-import { formatAppError } from "./types";
-import type { RemoteHostStatusPayload } from "./types";
+import { formatRepoError } from "./repoErrorFeedback";
+import type { RemoteHostGitPayload, RemoteHostStatusPayload } from "./types";
+import { remoteHostGitMessage } from "./remoteHostGit";
 import { notify, useNotificationsStore } from "../store/notifications";
 import { useRepoStore } from "../store/repos";
 
 /** Live sticky-toast ids, one per disconnected distro. */
 const disconnectToasts = new Map<string, number>();
+
+/** Distros already reported as having an unusable git: the backend probes on
+ *  every connect, and a reconnect loop must not repeat the toast. */
+const gitWarnedDistros = new Set<string>();
 
 /** Toast policy per status. "disconnected" promises a reconnect (the backend
  *  loop is running) so it may be sticky; "gone" means no reconnect is coming
@@ -47,6 +52,16 @@ export function handleRemoteHostStatus(p: RemoteHostStatusPayload) {
   }
 }
 
+/** A connected host whose git is missing or below the floor: the startup gate
+ *  never probes it, so this toast is the only word the user gets. Once per
+ *  distro per app run. Exported for tests. */
+export function handleRemoteHostGit(p: RemoteHostGitPayload) {
+  const message = remoteHostGitMessage(p);
+  if (!message || gitWarnedDistros.has(p.distro)) return;
+  gitWarnedDistros.add(p.distro);
+  notify.error(message);
+}
+
 export function useRemoteHostEvents() {
   const openRepo = useRepoStore((s) => s.openRepo);
 
@@ -57,9 +72,10 @@ export function useRemoteHostEvents() {
     void onRemoteHostStatus(handleRemoteHostStatus).then((u) =>
       disposed ? u() : unsubs.push(u),
     );
+    void onRemoteHostGit(handleRemoteHostGit).then((u) => (disposed ? u() : unsubs.push(u)));
 
     const doOpen = (locator: string) => {
-      openRepo(locator).catch((e) => notify.error(formatAppError(e)));
+      openRepo(locator).catch((e) => notify.error(formatRepoError(e, locator)));
     };
     void onOpenLocator(doOpen).then((u) => (disposed ? u() : unsubs.push(u)));
     takePendingOpen()

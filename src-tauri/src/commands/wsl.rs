@@ -112,7 +112,7 @@ pub async fn set_wsl_host_git_path(
     Ok(status)
 }
 
-async fn probe_host(host: &dyn Host, user_override: Option<String>) -> GitStatus {
+pub(crate) async fn probe_host(host: &dyn Host, user_override: Option<String>) -> GitStatus {
     let effective = user_override.clone().unwrap_or_else(|| "git".into());
     match host.probe_git(&HostPath(effective.clone())).await {
         Ok(v) => GitStatus {

@@ -2,7 +2,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import { recentRepos } from "../lib/commands";
 import { parseLocator } from "../lib/locator";
-import { formatAppError } from "../lib/types";
+import { formatRepoError } from "../lib/repoErrorFeedback";
 import { useGitProfiles } from "../lib/useGitProfiles";
 import { useCloneStore } from "../store/clone";
 import { useRepoStore } from "../store/repos";
@@ -58,11 +58,12 @@ export function RepoAddMenu() {
 
   const doOpenDialog = async () => {
     close();
+    let selected: string | string[] | null = null;
     try {
-      const selected = await openDialog({ directory: true, multiple: false });
+      selected = await openDialog({ directory: true, multiple: false });
       if (typeof selected === "string") await openRepo(selected);
     } catch (e) {
-      notify.error(formatAppError(e));
+      notify.error(formatRepoError(e, typeof selected === "string" ? selected : ""));
     }
   };
 
@@ -71,7 +72,7 @@ export function RepoAddMenu() {
     try {
       await openRepo(path);
     } catch (e) {
-      notify.error(formatAppError(e));
+      notify.error(formatRepoError(e, path));
     }
   };
 

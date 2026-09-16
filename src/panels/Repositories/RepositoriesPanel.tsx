@@ -2,7 +2,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
 import { recentRepos } from "../../lib/commands";
 import { parseLocator } from "../../lib/locator";
-import { formatAppError } from "../../lib/types";
+import { formatRepoError } from "../../lib/repoErrorFeedback";
 import { useGitProfiles } from "../../lib/useGitProfiles";
 import { useCloneStore } from "../../store/clone";
 import { useRepoStore } from "../../store/repos";
@@ -46,7 +46,7 @@ export function RepositoriesPanel() {
       await openRepo(path);
       refreshRecents();
     } catch (e) {
-      setError(formatAppError(e));
+      setError(formatRepoError(e, path));
     }
   };
 

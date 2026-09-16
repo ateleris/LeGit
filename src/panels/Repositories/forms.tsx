@@ -5,7 +5,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
 import type { CloneOptions, InitOptions } from "../../lib/commands";
 import type { GitProfile } from "../../lib/types";
-import { formatAppError } from "../../lib/types";
+import { formatRepoError } from "../../lib/repoErrorFeedback";
 import { useSettingsStore } from "../../store/settings";
 import { Button } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
@@ -162,7 +162,7 @@ export function InitForm({
           initialBranch: initialBranch.trim() || null,
         });
       } catch (e) {
-        onError(formatAppError(e));
+        onError(formatRepoError(e, dir.trim()));
       }
     });
   };

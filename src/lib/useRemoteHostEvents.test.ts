@@ -4,7 +4,7 @@
 // host lost, or the host was released mid-reconnect) - promising a reconnect
 // there leaves a false sticky toast for the rest of the session.
 import { describe, it, expect, beforeEach } from "vitest";
-import { handleRemoteHostStatus } from "./useRemoteHostEvents";
+import { handleRemoteHostGit, handleRemoteHostStatus } from "./useRemoteHostEvents";
 import { useNotificationsStore } from "../store/notifications";
 
 const toasts = () => useNotificationsStore.getState().toasts;
@@ -14,6 +14,31 @@ beforeEach(() => {
   // own terminal transition, then clear the store.
   handleRemoteHostStatus({ distro: "Ubuntu", status: "gone" });
   useNotificationsStore.setState({ toasts: [] });
+});
+
+describe("handleRemoteHostGit", () => {
+  const missing = {
+    distro: "Ubuntu",
+    status: {
+      resolved_path: "git",
+      version: null,
+      meets_minimum: false,
+      minimum_required: [2, 34, 0] as [number, number, number],
+      user_override: null,
+      error: "not found",
+    },
+  };
+
+  it("reports an unusable host git once per distro, not once per reconnect", () => {
+    handleRemoteHostGit(missing);
+    handleRemoteHostGit(missing);
+    expect(toasts()).toHaveLength(1);
+    expect(toasts()[0].kind).toBe("error");
+    expect(toasts()[0].message).toContain("Ubuntu");
+
+    handleRemoteHostGit({ ...missing, distro: "Debian" });
+    expect(toasts()).toHaveLength(2);
+  });
 });
 
 describe("handleRemoteHostStatus", () => {

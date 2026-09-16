@@ -53,6 +53,7 @@ export function App() {
   const initRepos = useRepoStore((s) => s.init);
   const initLayouts = useLayoutsStore((s) => s.init);
   const gitStatus = useGitStatusStore((s) => s.status);
+  const remoteHostsAvailable = useGitStatusStore((s) => s.remoteHostsAvailable);
   const [bootPhase, setBootPhase] = useState<BootPhase>("git");
 
   useEffect(() => {
@@ -86,14 +87,15 @@ export function App() {
   // the persisted repos + theme are restored, so the first real paint shows a
   // fully populated layout instead of an empty repo list. Panel contents still
   // stream in afterwards via their own (delayed) loading indicators.
-  // The Gate renders a setup screen if git is unavailable or below the floor.
+  // The Gate renders a setup screen when the app machine has no usable git and
+  // no WSL host that could run one instead.
   if (!gitStatus || bootPhase !== "done") {
     return <SplashScreen subtitle={BOOT_SUBTITLE[bootPhase]} />;
   }
 
   return (
     <ErrorBoundary>
-      <GitSetupGate status={gitStatus}>
+      <GitSetupGate status={gitStatus} remoteHostsAvailable={remoteHostsAvailable}>
         <AppLayout />
       </GitSetupGate>
       <Toasts />
