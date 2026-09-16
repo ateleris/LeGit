@@ -15,58 +15,13 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
 
 ## Release blockers
 
-### v1.3.0
-
-- **Keyboard shortcuts system** - full plan in
-  `design/2026-08-24-keyboard-shortcuts-system.md` (revised 2026-09-14:
-  full user rebinding is a product goal, so the phases are reordered).
-  Command registry + keymap-as-data + one capture-phase dispatcher with a
-  layer/dismissable stack + input guard. **Phase 1 landed 2026-09-14**
-  (infrastructure only, no new shortcuts): `src/keys/` (chord, keymap,
-  registry, resolve, Dispatcher) + `store/layers.ts`;
-  `useDismissable`/`Popover`, the dialog/prompt Escape handlers, the
-  Commits quick-jump overlay and maximize (mode layer) all migrated onto
-  the layer stack; `isUnclaimedEscape` deleted. **Phase 2 landed
-  2026-09-14**: Keyboard Shortcuts panel (press-a-key capture, conflicts,
-  reset, import/export, View menu), `keybindings.json` persistence, the
-  command-action registry, and the seed set (git actions + panel summons
-  later unbound by default; F5/tab-switching/maximize stay bound).
-  **Phase 3 Working Changes slice landed 2026-09-14/16**: focused-panel
-  resolution (DOM focus first), issue #21's Ctrl+A, Del discard,
-  arrows-select with Shift-range, the rebindable widget-handled
-  stage-toggle (default Space) with folder-actor highlight, triage
-  advance, queued rapid presses and pending dimming. "How to add a
-  shortcut (the recipe)" is in the design doc. Remaining:
-  - Commits panel remainder (arrows landed 2026-09-16): Enter = open
-    Commit Details, Mod+C copy selected SHA, Menu-key/Shift+F10 context
-    menu.
-  - Refs panel: F2 inline rename, Del delete (central confirm).
-  - Diff: Alt+ArrowUp/Down hunk navigation; later keyboard hunk staging
-    (needs a focused-hunk concept).
-  - Mod+F find in focused panel (CodeMirror searchKeymap / Commits search).
-  - Working Changes Enter = force-open diff (mostly covered by
-    arrows-select; low priority).
-  - Interactive Rebase coverage; then the per-panel command sweep; the
-    command palette comes after (out of v1 scope).
-  - Manual checks: WebView2 passes F5/Ctrl+Tab through; prod F5
-    fall-through must not reload; rebind persists across restart; capture
-    rejects AltGr on QWERTZ; click-then-Ctrl+A in Working Changes (the
-    summon-focus fix) behaves in the live app.
-  Related deferred note: a shortcut to open the commits context menu
-  (`design/2026-06-16-commits-context-menu-design.md`).
+(none currently)
 
 ---
 
 ## Known bugs
 
-- **Commit button's caret dropdown renders behind a panel below Working
-  Changes.** `CaretDropdown` renders in place (`position: absolute` inside
-  the panel DOM), so a dockview group stacked below can paint over it.
-  Approach: portal it to `document.body` like `Popover` (which already
-  solves this for context menus/flyouts), keeping the anchor-rect
-  positioning and the flip-up-near-viewport-bottom logic. Affects every
-  split-button caret (commit mode, pull strategy, push options, stash
-  mode) near a panel edge.
+(none currently)
 
 ## Git features (missing vs a normal client)
 

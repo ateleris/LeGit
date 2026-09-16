@@ -56,6 +56,8 @@ lives in the git log and the GitHub release notes.
 
 ### Fixed
 
+- The split buttons' caret menus (commit mode, pull strategy, push
+  options, stash mode) no longer render behind a neighboring panel.
 - Every dropdown menu and popover now closes with Escape and dismisses
   consistently on outside clicks.
 - The uncommitted-changes row no longer draws on top of a locked branch's

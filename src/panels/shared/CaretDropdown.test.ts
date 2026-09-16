@@ -4,7 +4,7 @@
 // vanished behind the window edge). Regression: 2026-08-20.
 
 import { describe, expect, it } from "vitest";
-import { caretDropDirection } from "./CaretDropdown";
+import { caretDropDirection, caretMenuPosition } from "./CaretDropdown";
 
 const args = (over: Partial<Parameters<typeof caretDropDirection>[0]> = {}) => ({
   anchorTop: 100,
@@ -39,5 +39,41 @@ describe("caretDropDirection", () => {
         args({ anchorTop: 30, anchorBottom: 50, menuHeight: 500, viewportHeight: 400 }),
       ),
     ).toBe("down");
+  });
+});
+
+// The menu's fixed-position coordinates: right-aligned to the anchor, below
+// it (or above when flipped), clamped to the viewport's left edge.
+describe("caretMenuPosition", () => {
+  const anchorRect = { top: 100, bottom: 120, right: 300 };
+
+  it("places the menu under the anchor, right-aligned", () => {
+    expect(
+      caretMenuPosition({ anchorRect, menuWidth: 120, menuHeight: 50, viewportHeight: 600, gap: 2 }),
+    ).toEqual({ left: 180, top: 122 });
+  });
+
+  it("flips above the anchor near the viewport bottom", () => {
+    expect(
+      caretMenuPosition({
+        anchorRect: { top: 560, bottom: 580, right: 300 },
+        menuWidth: 120,
+        menuHeight: 50,
+        viewportHeight: 600,
+        gap: 2,
+      }),
+    ).toEqual({ left: 180, top: 508 });
+  });
+
+  it("never leaves the viewport on the left", () => {
+    expect(
+      caretMenuPosition({
+        anchorRect: { top: 100, bottom: 120, right: 80 },
+        menuWidth: 120,
+        menuHeight: 50,
+        viewportHeight: 600,
+        gap: 2,
+      }).left,
+    ).toBe(0);
   });
 });
