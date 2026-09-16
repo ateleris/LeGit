@@ -35,6 +35,9 @@ lives in the git log and the GitHub release notes.
   (the file view follows), Left/Right fold folders, and a folder under
   the cursor takes the highlight - one highlight at a time in every file
   list.
+- The commit graph gets Up/Down keyboard navigation: the selection moves
+  like a native list with the details panels following, and Shift+Up/Down
+  grows or shrinks a multi-commit selection for the bulk actions.
 
 ### Changed
 

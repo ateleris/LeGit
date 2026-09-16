@@ -3,7 +3,7 @@
 // resulting set (ordering for cherry-pick vs revert, the compare pair, the
 // merge-commit guard). Pure data-in/data-out, like the other Commits helpers.
 import { describe, it, expect } from "vitest";
-import { applyRowClickSelection, bulkActionPlan, bulkRebasePlan, selectionContiguous, type SelectionState } from "./multiSelect";
+import { applyRowClickSelection, arrowSelection, bulkActionPlan, bulkRebasePlan, selectionContiguous, type SelectionState } from "./multiSelect";
 
 const ROWS = ["e", "d", "c", "b", "a"]; // display order: newest first
 const selectable = (id: string) => id !== "wd" && id !== "stash1";
@@ -154,5 +154,65 @@ describe("selectionContiguous", () => {
     expect(selectionContiguous(new Set(["c3", "c2"]), rows)).toBe(true);
     expect(selectionContiguous(new Set(["c3", "c1"]), rows)).toBe(false);
     expect(selectionContiguous(new Set(["c2"]), rows)).toBe(true);
+  });
+});
+
+// Up/Down keyboard navigation: plain arrows move a single selection like a
+// native list (details follow via the caller); Shift+arrows extend/shrink a
+// range from the anchor like shift-clicks, skipping rows that can never join
+// a multi-selection (workdir/stash).
+describe("arrowSelection", () => {
+  const rows = ["wd", "a", "b", "stash1", "c", "d"];
+  const selectable = (id: string) => id !== "wd" && id !== "stash1";
+  const single = (id: string) => ({ lead: id, ids: new Set([id]) });
+
+  it("plain arrows move the selection one row, any row kind", () => {
+    expect(arrowSelection(single("b"), rows, 1, false, selectable)).toEqual({
+      selection: single("stash1"),
+      cursorId: "stash1",
+    });
+    expect(arrowSelection(single("a"), rows, -1, false, selectable)).toEqual({
+      selection: single("wd"),
+      cursorId: "wd",
+    });
+  });
+
+  it("with no selection, the first press lands on the top row", () => {
+    expect(arrowSelection({ lead: null, ids: new Set() }, rows, 1, false, selectable)).toEqual({
+      selection: single("wd"),
+      cursorId: "wd",
+    });
+  });
+
+  it("edges and an empty list are no-ops", () => {
+    expect(arrowSelection(single("d"), rows, 1, false, selectable)).toBeNull();
+    expect(arrowSelection(single("wd"), rows, -1, false, selectable)).toBeNull();
+    expect(arrowSelection(single("a"), [], 1, false, selectable)).toBeNull();
+  });
+
+  it("shift extends the range from the anchor, skipping non-selectable rows", () => {
+    const out = arrowSelection(single("b"), rows, 1, true, selectable);
+    expect(out).not.toBeNull();
+    expect(out!.selection.lead).toBe("b");
+    expect([...out!.selection.ids].sort()).toEqual(["b", "c"]);
+    expect(out!.cursorId).toBe("c");
+  });
+
+  it("shift shrinks back toward the anchor", () => {
+    const extended = { lead: "b", ids: new Set(["b", "c"]) };
+    const out = arrowSelection(extended, rows, -1, true, selectable);
+    expect([...out!.selection.ids]).toEqual(["b"]);
+    expect(out!.cursorId).toBe("b");
+  });
+
+  it("shift from a non-selectable single selection starts a fresh range on the next selectable row", () => {
+    const out = arrowSelection(single("stash1"), rows, 1, true, selectable);
+    expect(out!.selection.lead).toBe("c");
+    expect([...out!.selection.ids]).toEqual(["c"]);
+  });
+
+  it("shift at the selectable edge is a no-op", () => {
+    const extended = { lead: "c", ids: new Set(["c", "d"]) };
+    expect(arrowSelection(extended, rows, 1, true, selectable)).toBeNull();
   });
 });

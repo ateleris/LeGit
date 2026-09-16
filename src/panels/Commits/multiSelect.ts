@@ -160,3 +160,60 @@ export function selectionContiguous(
   if (indices.length <= 1) return true;
   return indices[indices.length - 1] - indices[0] === indices.length - 1;
 }
+
+/**
+ * The next selection after ArrowUp/ArrowDown (`delta` -1/+1). Plain arrows
+ * move a single selection one row - any row kind, exactly like a plain click
+ * (the caller mirrors the click's summon behaviour). Shift+arrows extend or
+ * shrink a contiguous range from the anchor (`lead`) by moving the range's
+ * far end, skipping rows that can never join a multi-selection; the caller
+ * scrolls `cursorId` into view. Null = no-op (edge, empty list).
+ */
+export function arrowSelection(
+  state: SelectionState,
+  rowIds: readonly CommitId[],
+  delta: 1 | -1,
+  shift: boolean,
+  isMultiSelectable: (id: CommitId) => boolean,
+): { selection: SelectionState; cursorId: CommitId } | null {
+  if (rowIds.length === 0) return null;
+  const leadIdx = state.lead !== null ? rowIds.indexOf(state.lead) : -1;
+  if (leadIdx < 0) {
+    const first = rowIds[0];
+    return { selection: { lead: first, ids: new Set([first]) }, cursorId: first };
+  }
+
+  if (!shift) {
+    const idx = Math.max(0, Math.min(rowIds.length - 1, leadIdx + delta));
+    if (idx === leadIdx) return null;
+    const id = rowIds[idx];
+    return { selection: { lead: id, ids: new Set([id]) }, cursorId: id };
+  }
+
+  // The next selectable index in a direction; never-selectable rows
+  // (workdir/stash) are transparent - a range spans over them.
+  const step = (from: number, d: 1 | -1): number => {
+    let i = from + d;
+    while (i >= 0 && i < rowIds.length && !isMultiSelectable(rowIds[i])) i += d;
+    return i;
+  };
+
+  // The range's moving end: the far end of the contiguous selected run
+  // around the lead (the lead itself for a single row or a scattered set).
+  let runStart = leadIdx;
+  for (let i = step(runStart, -1); i >= 0 && state.ids.has(rowIds[i]); i = step(i, -1)) {
+    runStart = i;
+  }
+  let runEnd = leadIdx;
+  for (let i = step(runEnd, 1); i < rowIds.length && state.ids.has(rowIds[i]); i = step(i, 1)) {
+    runEnd = i;
+  }
+  const movingEnd = runEnd > leadIdx ? runEnd : runStart < leadIdx ? runStart : leadIdx;
+
+  const target = step(movingEnd, delta);
+  if (target < 0 || target >= rowIds.length) return null;
+  const targetId = rowIds[target];
+  const next = applyRowClickSelection(state, rowIds, targetId, { ctrl: false, shift: true }, isMultiSelectable);
+  if (next === state) return null;
+  return { selection: next, cursorId: targetId };
+}

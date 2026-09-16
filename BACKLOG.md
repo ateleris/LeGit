@@ -37,8 +37,9 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
   stage-toggle (default Space) with folder-actor highlight, triage
   advance, queued rapid presses and pending dimming. "How to add a
   shortcut (the recipe)" is in the design doc. Remaining:
-  - Commits panel: row navigation (arrows/Enter, list-local like
-    FileTree), Mod+C copy selected SHA, Menu-key/Shift+F10 context menu.
+  - Commits panel remainder (arrows landed 2026-09-16): Enter = open
+    Commit Details, Mod+C copy selected SHA, Menu-key/Shift+F10 context
+    menu.
   - Refs panel: F2 inline rename, Del delete (central confirm).
   - Diff: Alt+ArrowUp/Down hunk navigation; later keyboard hunk staging
     (needs a focused-hunk concept).
@@ -127,12 +128,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   this is only a second surface for it. Decide placement (Unstaged header
   vs the panel toolbar) and whether it reuses the persisted stash-mode
   caret.
-- **Commit graph: Up/Down row navigation** - part of the keyboard
-  shortcuts phase 3 "Commits panel" slice above (list-local arrows/Enter
-  like FileTree); re-requested 2026-09-16, so it is the next slice to
-  build. Must coexist with type-to-jump and Alt+arrows, follow the
-  selection like the file lists do (details view syncs), and handle
-  multi-select (Shift+arrows extends, like FileTree).
 
 - **Classify an untracked nested git repo as a submodule candidate.** Git
   reports a nested repo as one trailing-slash `? dir/` entry; the parser now

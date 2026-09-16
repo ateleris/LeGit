@@ -43,7 +43,7 @@ import { computeEdgeSpans } from "./graph/spans";
 import { pickHeadCommitId } from "./headId";
 import { growJumpWindow, pendingJumpAction, shouldCenterScroll } from "./scrollToRow";
 import { quickSearchMatch } from "./commitSearch";
-import { applyRowClickSelection, bulkActionPlan, type SelectionState , selectionContiguous } from "./multiSelect";
+import { applyRowClickSelection, arrowSelection, bulkActionPlan, type SelectionState , selectionContiguous } from "./multiSelect";
 import type { LaneEdge, LaneIndex, LaneResult, LockMap, RefsAtCommit } from "./graph/types";
 import { buildLockMap, buildRefsAt, buildStashSelectorById } from "./commitRows";
 import { BRANCH_DOMAINS, useCommitActions } from "./useCommitActions";
@@ -893,21 +893,27 @@ export function CommitsPanel() {
       }
       // Modifier clicks build a bulk selection - they never summon panels.
       if (modifiers.ctrl || modifiers.shift) return;
-      const summon = useSummonStore.getState();
-      if (commit.id === WORKING_DIR_ID) {
-        // Working-dir row → show the staging/commit panel in the shared side
-        // slot (swapping out Changed Files). No commit-details for the index.
-        // The `null` payload tells the panel to sync the Diff/Merge slot to
-        // its own selection (clearing a stale commit diff).
-        summon.swapSummon("working-changes", "changed-files", null);
-        return;
-      }
-      summon.summon("commit-details", commit.id);
-      // Show Changed Files in the shared slot (swapping out Working Changes).
-      summon.swapSummon("changed-files", "working-changes", commit.id);
+      summonForRow(commit);
     },
     [isMultiSelectable]
   );
+
+  // The detail panels a single-selection lands on (plain click or plain
+  // arrow step share this).
+  const summonForRow = useCallback((commit: Commit) => {
+    const summon = useSummonStore.getState();
+    if (commit.id === WORKING_DIR_ID) {
+      // Working-dir row → show the staging/commit panel in the shared side
+      // slot (swapping out Changed Files). No commit-details for the index.
+      // The `null` payload tells the panel to sync the Diff/Merge slot to
+      // its own selection (clearing a stale commit diff).
+      summon.swapSummon("working-changes", "changed-files", null);
+      return;
+    }
+    summon.summon("commit-details", commit.id);
+    // Show Changed Files in the shared slot (swapping out Working Changes).
+    summon.swapSummon("changed-files", "working-changes", commit.id);
+  }, []);
 
   // Type-to-jump quick search state (used further below): declared BEFORE the
   // no-repo early return - the panel stays mounted when the last repo closes,
@@ -1036,6 +1042,30 @@ export function CommitsPanel() {
       const dir = e.key === "ArrowDown" ? 1 : -1;
       quickJump(selectedIdx + dir, dir, lastQuickQueryRef.current);
       showQuickOverlay(lastQuickQueryRef.current);
+      return;
+    }
+    // Plain arrows move the selection like a native list (details follow, as
+    // on a click); Shift+arrows extend/shrink a bulk range (no summon, like
+    // modifier clicks). Alt+arrows above (quick-jump repeat) win when a
+    // quick-jump query is live.
+    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !e.altKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      const delta = e.key === "ArrowDown" ? 1 : -1;
+      const moved = arrowSelection(
+        selectionRef.current,
+        rowsRef.current.map((r) => r.id),
+        delta,
+        e.shiftKey,
+        isMultiSelectable,
+      );
+      if (!moved) return;
+      setSelectedId(moved.selection.lead);
+      setSelectedIds(moved.selection.ids);
+      const idx = rowsRef.current.findIndex((r) => r.id === moved.cursorId);
+      if (idx >= 0) {
+        virtualizerRef.current.scrollToIndex(idx);
+        if (!e.shiftKey) summonForRow(rowsRef.current[idx]);
+      }
       return;
     }
     if (e.key === "Escape") {
