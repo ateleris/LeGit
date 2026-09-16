@@ -3,6 +3,7 @@ import { CheckIcon } from "../icons";
 import { formatAppError } from "../lib/types";
 import { confirmDialog } from "../store/confirm";
 import { hasMaximizedPanel, toggleMaximizeActivePanel, useDockviewStore } from "../store/dockview";
+import { useBindingLabel } from "../keys/useBindingLabel";
 import { useLayoutsStore } from "../store/layouts";
 import { notify } from "../store/notifications";
 import { useConfirmDestructive } from "../store/settings";
@@ -33,6 +34,8 @@ export function ViewMenu() {
   const saveCurrent = useLayoutsStore((s) => s.saveCurrent);
   const refreshList = useLayoutsStore((s) => s.refreshList);
   const [open, setOpen] = useState(false);
+  // Rendered from the live keymap, so a rebind shows up here immediately.
+  const maximizeKey = useBindingLabel("panel.toggleMaximize");
   const ref = useRef<HTMLDivElement>(null);
 
   const close = useCallback(() => setOpen(false), []);
@@ -166,7 +169,7 @@ export function ViewMenu() {
             <MenuItem testId="view-menu-maximize" onClick={() => { toggleMaximizeActivePanel(); setOpen(false); }}>
               <span style={{ display: "flex", justifyContent: "space-between", gap: "2em" }}>
                 <span>{hasMaximizedPanel() ? "Exit maximized panel" : "Maximize panel"}</span>
-                <span style={{ color: "var(--subtle-fg)" }}>Ctrl+Shift+M</span>
+                {maximizeKey && <span style={{ color: "var(--subtle-fg)" }}>{maximizeKey}</span>}
               </span>
             </MenuItem>
           </MenuLevelProvider>

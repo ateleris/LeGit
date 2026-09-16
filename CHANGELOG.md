@@ -12,6 +12,17 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- Panel spacing and panel corner radius settings (Appearance): put a gap
+  between the panels and round their corners; 0/0 keeps the classic flush
+  look. The gap shows the theme's window background.
+
+### Fixed
+
+- The View menu's "Maximize panel" entry now shows the actual configured
+  shortcut instead of always claiming Ctrl+Shift+M.
+
 ## [1.3.0] - 2026-09-16
 
 ### Added

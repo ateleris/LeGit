@@ -10,6 +10,7 @@ import { useLayoutsStore } from "../store/layouts";
 import { GLOBAL_DOCKVIEW_COMPONENTS, GLOBAL_DOCKVIEW_TAB_COMPONENTS, GLOBAL_PANELS, PANEL_TITLES } from "./registry";
 import { applyBakedGlobalLayout, applyGlobalLayoutJson } from "./layoutSnapshot";
 import { DockWatermark } from "./shared/DockWatermark";
+import { useDockTheme } from "./shared/useDockTheme";
 
 const LAYOUT_KEY = "legit.global-dock-layout";
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -45,14 +46,15 @@ export function GlobalDock() {
     [setGlobalApi]
   );
 
+  const dockTheme = useDockTheme();
   return (
-    <div style={{ height: "100%", position: "relative" }}>
+    <div className="legit-dock" style={{ height: "100%", position: "relative" }}>
       <DockviewReact
         components={GLOBAL_DOCKVIEW_COMPONENTS}
         tabComponents={GLOBAL_DOCKVIEW_TAB_COMPONENTS}
         watermarkComponent={DockWatermark}
         onReady={onReady}
-        className="dockview-theme-abyss"
+        theme={dockTheme}
       />
     </div>
   );

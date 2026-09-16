@@ -1254,6 +1254,9 @@ export const saveTagsSortMode = (mode: string) =>
 export const saveUiFontSize = (size: number) =>
   invoke<number>("save_ui_font_size", { size });
 
+export const savePanelChrome = (gap: number, radius: number) =>
+  invoke<{ gap: number; radius: number }>("save_panel_chrome", { gap, radius });
+
 // --- commits graph metrics ---
 
 export const saveCommitsGraphMetrics = (

@@ -76,6 +76,20 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 
 ## Smaller follow-ups
 
+- **Named layouts: stable, reorderable order + shortcut visibility**
+  (2026-09-16). The `app.applyLayout1..9` shortcuts target "the Nth layout
+  in list order", but the list is sorted alphabetically by NAME - renaming
+  a layout silently changes which layout a shortcut applies. Three parts:
+  - Order must be identity-stable: keep an explicit user-controlled order
+    (ids/order list persisted with the layouts) that renames never change.
+  - Reorderable in the Layouts panel via drag-and-drop - reuse the row
+    drag-reorder from Interactive Rebase (`useRowDragReorder`, already
+    shared - Working Changes section order uses it too).
+  - Show a layout's configured shortcut: as a chip on its Layouts-panel
+    row and next to its View-menu entry (both rendered live from the
+    keymap via `useBindingLabel("app.applyLayoutN")`, the maximize-entry
+    pattern).
+
 - **Stash-all button in Working Changes?** (open question, 2026-09-16) The
   sections have "Stage all" / "Unstage all" / "Discard all"; a "Stash all"
   alongside them would complete the set. The action already exists (the

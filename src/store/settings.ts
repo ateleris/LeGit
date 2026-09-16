@@ -8,6 +8,7 @@ import {
   saveTagsSortMode,
   saveCommitsGraphMetrics,
   saveUiFontSize,
+  savePanelChrome,
   setWatcherEnabled,
   setConfirmDiscard,
   setDetectCaseRenames,
@@ -68,6 +69,27 @@ export function applyUiFontSize(size: number, root: HTMLElement = document.docum
   root.style.setProperty("--ui-font-size", `${size}px`);
 }
 
+/** Mirror the backend clamps in `save_panel_chrome`. */
+export const PANEL_GAP_MAX = 16;
+export const PANEL_RADIUS_MAX = 16;
+
+/** Write the panel chrome to its CSS vars and arm the `.legit-panel-chrome`
+ * styles (per-group borders replacing the between-group separators, outer
+ * dock padding). The radius maps onto dockview's `--dv-border-radius`; the
+ * BETWEEN-groups gap additionally flows into dockview's `theme.gap`
+ * (useDockTheme) - the CSS var covers the dock-edge padding, which dockview's
+ * gap does not. With 0/0 the class is absent and the flush look stays
+ * untouched. */
+export function applyPanelChrome(
+  gap: number,
+  radius: number,
+  root: HTMLElement = document.documentElement,
+) {
+  root.style.setProperty("--legit-panel-gap", `${gap}px`);
+  root.style.setProperty("--legit-panel-radius", `${radius}px`);
+  root.classList.toggle("legit-panel-chrome", gap > 0 || radius > 0);
+}
+
 /** Largest dot radius that fits a cell of the given height/width without
  * overflowing vertically or overlapping the neighbouring lane. Mirrors the
  * backend `max_commits_dot_radius`. */
@@ -114,6 +136,7 @@ interface SettingsStore {
   setRefsSortMode: (mode: RefsSortMode) => Promise<void>;
   setTagsSortMode: (mode: RefsSortMode) => Promise<void>;
   setUiFontSize: (size: number) => Promise<void>;
+  setPanelChrome: (gap: number, radius: number) => Promise<void>;
   setWatcherEnabled: (enabled: boolean) => Promise<void>;
   setConfirmDiscard: (confirm: boolean) => Promise<void>;
   setDetectCaseRenames: (enabled: boolean) => Promise<void>;
@@ -145,6 +168,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     if (get().settings) return;
     const settings = await getGlobalSettings();
     applyUiFontSize(settings.ui_font_size ?? UI_FONT_SIZE_DEFAULT);
+    applyPanelChrome(settings.panel_gap ?? 0, settings.panel_corner_radius ?? 0);
     set({ settings });
   },
 
@@ -371,6 +395,21 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const s = get().settings;
     if (s) {
       set({ settings: { ...s, ui_font_size: stored } });
+    }
+  },
+
+  async setPanelChrome(gap, radius) {
+    // Apply immediately for a live preview, then persist (backend re-clamps).
+    // The gap reaches the docks reactively via the settings state (theme prop).
+    applyPanelChrome(clamp(gap, 0, PANEL_GAP_MAX), clamp(radius, 0, PANEL_RADIUS_MAX));
+    const stored = await savePanelChrome(
+      clamp(gap, 0, PANEL_GAP_MAX),
+      clamp(radius, 0, PANEL_RADIUS_MAX),
+    );
+    applyPanelChrome(stored.gap, stored.radius);
+    const s = get().settings;
+    if (s) {
+      set({ settings: { ...s, panel_gap: stored.gap, panel_corner_radius: stored.radius } });
     }
   },
 }));
