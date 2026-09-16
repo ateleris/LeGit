@@ -88,6 +88,25 @@ describe("FileTree keyboard selection", () => {
   });
 });
 
+// Non-stageable single-select trees (Files panel) keep the same folder
+// semantics: arrows select the file they land on (the tint rule itself is
+// pinned in treeKeyNav.test.ts rowTint).
+describe("single-select tree arrow selection", () => {
+  it("arrows select the file they land on", async () => {
+    const onSelect = vi.fn();
+    await act(async () =>
+      root.render(
+        <FileTree files={FILES} viewMode="tree" selectedPath={null} onSelect={onSelect} />,
+      ),
+    );
+    await act(async () => tree().focus());
+    await press("ArrowDown"); // dir src
+    await press("ArrowDown"); // src/one.ts
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect.mock.calls[0][0].path).toBe("src/one.ts");
+  });
+});
+
 describe("stage-toggle binding (widget-handled command)", () => {
   it("the default Space binding stages the cursor row", async () => {
     const onToggleStage = vi.fn();

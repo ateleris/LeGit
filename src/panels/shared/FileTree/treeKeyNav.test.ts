@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Row } from "./buildTree";
-import { horizontalKeyAction, verticalMoveTarget } from "./treeKeyNav";
+import { horizontalKeyAction, rowTint, verticalMoveTarget } from "./treeKeyNav";
 
 const file: Row = { kind: "file", path: "a.txt", depth: 0, file: { path: "a.txt" } };
 const dir = (collapsed: boolean): Row => ({
@@ -60,5 +60,35 @@ describe("verticalMoveTarget", () => {
     expect(verticalMoveTarget(rows, 2, 1)).toBeNull();
     expect(verticalMoveTarget(rows, 0, -1)).toBeNull();
     expect(verticalMoveTarget([], -1, 1)).toBeNull();
+  });
+});
+
+// One highlight at a time: a folder under the cursor is the ACTOR (full
+// selection tint, its subtree washed) and the file-selection tint yields -
+// in every tree, so the Files panel behaves like Working Changes.
+describe("rowTint", () => {
+  const fileRow = (path: string): Row => ({ kind: "file", path, depth: 0, file: { path } });
+
+  it("a selected file is tinted only while no folder is the actor", () => {
+    expect(rowTint({ row: fileRow("a.txt"), selected: true, focusedFile: false, actorDirPath: null })).toBe("selected");
+    expect(rowTint({ row: fileRow("a.txt"), selected: true, focusedFile: false, actorDirPath: "src" })).toBe("none");
+  });
+
+  it("the actor folder gets the selection tint, its subtree the wash", () => {
+    expect(rowTint({ row: dir(false), selected: false, focusedFile: false, actorDirPath: "src" })).toBe("selected");
+    expect(
+      rowTint({ row: fileRow("src/one.ts"), selected: false, focusedFile: false, actorDirPath: "src" }),
+    ).toBe("focused");
+    expect(rowTint({ row: dir(false), selected: false, focusedFile: false, actorDirPath: null })).toBe("none");
+  });
+
+  it("a lookalike sibling is not in the actor's scope", () => {
+    expect(
+      rowTint({ row: fileRow("srcish/x.ts"), selected: false, focusedFile: false, actorDirPath: "src" }),
+    ).toBe("none");
+  });
+
+  it("the keyboard cursor on an unselected file shows the focus wash", () => {
+    expect(rowTint({ row: fileRow("a.txt"), selected: false, focusedFile: true, actorDirPath: null })).toBe("focused");
   });
 });

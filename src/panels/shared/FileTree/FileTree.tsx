@@ -28,7 +28,7 @@ import { useRestoreVirtualizerScroll } from "../../PanelApiContext";
 import { baseName, flatten, fullyDimmedDirs, type FileTreeEntry, type Row, type ViewMode } from "./buildTree";
 import { eventToChord } from "../../../keys/chord";
 import { nextCursorPath, spaceStageTargets } from "./stageTargets";
-import { horizontalKeyAction, verticalMoveTarget } from "./treeKeyNav";
+import { horizontalKeyAction, rowTint, verticalMoveTarget } from "./treeKeyNav";
 import { fileRowIndent } from "./useFileRowMetrics";
 import { ShrinkingPathText } from "../ShrinkingPathText";
 
@@ -184,11 +184,13 @@ export function FileTree({
   // folder being staged fades together, nested folders included).
   const dimmedDirs = useMemo(() => fullyDimmedDirs(rows, files), [rows, files]);
 
-  // The folder acting as the highlighted unit (stageable trees only): the
-  // cursor sits on a dir row while this tree holds focus.
+  // The folder acting as the highlighted unit (every tree): the cursor sits
+  // on a dir row while this tree holds focus. One highlight at a time - the
+  // file-selection tint yields while a folder is the actor (stageable trees
+  // also clear the selection itself; single-select trees keep theirs, since
+  // the open detail view still shows that file).
   const cursorRow = focusedIndex >= 0 ? rows[focusedIndex] : undefined;
-  const actorDirPath =
-    onToggleStage && hasFocus && cursorRow?.kind === "dir" ? cursorRow.path : null;
+  const actorDirPath = hasFocus && cursorRow?.kind === "dir" ? cursorRow.path : null;
 
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -361,18 +363,19 @@ export function FileTree({
           // Focus tint only while this tree holds focus; actions appear on hover
           // or on the focused row — both must clear when focus/hover moves away
           // (incl. to the other tree in a multi-tree panel).
-          // In a stageable tree a folder under the cursor is the ACTOR: it
-          // carries the full selection highlight (Space acts on it) and its
-          // visible children get the faint focus wash to show the scope. In
-          // other trees folders stay tint-less as before.
-          const isFocused = hasFocus && row.kind === "file" && row.path === focusedPath;
+          // A folder under the cursor is the ACTOR in every tree: it carries
+          // the full selection highlight (in stageable trees Space acts on
+          // it) and its visible children get the faint focus wash to show
+          // the scope; the decision lives in rowTint (treeKeyNav.ts).
+          const tint = rowTint({
+            row,
+            selected:
+              row.kind === "file" &&
+              (multiSelect ? !!selectedPaths?.has(row.path) : row.path === selectedPath),
+            focusedFile: hasFocus && row.kind === "file" && row.path === focusedPath,
+            actorDirPath,
+          });
           const isHovered = vItem.index === hoveredIndex;
-          const isSelected =
-            row.kind === "file" &&
-            (multiSelect ? !!selectedPaths?.has(row.path) : row.path === selectedPath);
-          const isDirActor = row.kind === "dir" && row.path === actorDirPath;
-          const inActorScope =
-            actorDirPath !== null && row.path.startsWith(`${actorDirPath}/`);
           return (
             <div
               key={vItem.key}
@@ -444,9 +447,9 @@ export function FileTree({
                 // safety nets only): selected = row-selected-bg, focused = its
                 // "faded" (45% alpha) variant.
                 background:
-                  isSelected || isDirActor
+                  tint === "selected"
                     ? "var(--graph-row-selected-bg, #4a9eff33)"
-                    : isFocused || inActorScope
+                    : tint === "focused"
                     ? "var(--graph-row-focused-bg, #4a9eff17)"
                     : "transparent",
               }}
@@ -475,7 +478,12 @@ export function FileTree({
                   iconSize={iconSize}
                   icon={renderFileIcon ? renderFileIcon(row.file) : null}
                   badge={renderBadge ? renderBadge(row.file) : null}
-                  actions={renderActions && (isHovered || isFocused) ? renderActions(row.file) : null}
+                  actions={
+                    renderActions &&
+                    (isHovered || (hasFocus && row.path === focusedPath))
+                      ? renderActions(row.file)
+                      : null
+                  }
                 />
               )}
             </div>

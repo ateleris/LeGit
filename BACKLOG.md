@@ -58,7 +58,14 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
 
 ## Known bugs
 
-(none currently)
+- **Commit button's caret dropdown renders behind a panel below Working
+  Changes.** `CaretDropdown` renders in place (`position: absolute` inside
+  the panel DOM), so a dockview group stacked below can paint over it.
+  Approach: portal it to `document.body` like `Popover` (which already
+  solves this for context menus/flyouts), keeping the anchor-rect
+  positioning and the flip-up-near-viewport-bottom logic. Affects every
+  split-button caret (commit mode, pull strategy, push options, stash
+  mode) near a panel edge.
 
 ## Git features (missing vs a normal client)
 
@@ -112,6 +119,20 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   dialog plumbing.
 
 ## Smaller follow-ups
+
+- **Stash-all button in Working Changes?** (open question, 2026-09-16) The
+  sections have "Stage all" / "Unstage all" / "Discard all"; a "Stash all"
+  alongside them would complete the set. The action already exists (the
+  Commits toolbar's Stash split button, incl. the include-untracked mode) -
+  this is only a second surface for it. Decide placement (Unstaged header
+  vs the panel toolbar) and whether it reuses the persisted stash-mode
+  caret.
+- **Commit graph: Up/Down row navigation** - part of the keyboard
+  shortcuts phase 3 "Commits panel" slice above (list-local arrows/Enter
+  like FileTree); re-requested 2026-09-16, so it is the next slice to
+  build. Must coexist with type-to-jump and Alt+arrows, follow the
+  selection like the file lists do (details view syncs), and handle
+  multi-select (Shift+arrows extends, like FileTree).
 
 - **Classify an untracked nested git repo as a submodule candidate.** Git
   reports a nested repo as one trailing-slash `? dir/` entry; the parser now

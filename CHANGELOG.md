@@ -31,6 +31,10 @@ lives in the git log and the GitHub release notes.
   Ctrl+A selects all in the focused list (#21), Del discards with
   confirmation, and Left/Right fold folders. Files in flight dim until git
   confirms the move.
+- The Files panel gets the same list keyboard: Up/Down move the selection
+  (the file view follows), Left/Right fold folders, and a folder under
+  the cursor takes the highlight - one highlight at a time in every file
+  list.
 
 ### Changed
 
