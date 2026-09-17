@@ -453,6 +453,9 @@ export const renameLayout = (oldName: string, newName: string) =>
 export const deleteLayout = (name: string) =>
   invoke<null>("delete_layout", { name });
 
+export const setLayoutsOrder = (order: string[]) =>
+  invoke<null>("set_layouts_order", { order });
+
 // --- keybindings ---
 
 export const loadKeybindings = () => invoke<KeybindingsFile>("load_keybindings");

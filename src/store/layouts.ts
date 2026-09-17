@@ -5,6 +5,7 @@ import {
   loadLayout,
   renameLayout as renameLayoutCmd,
   saveLayout as saveLayoutCmd,
+  setLayoutsOrder,
 } from "../lib/commands";
 import type { LayoutDocument, LayoutEntry } from "../lib/types";
 import {
@@ -41,6 +42,9 @@ interface LayoutsStore {
   remove: (name: string) => Promise<void>;
   /** Store a validated imported document; returns the entry name used. */
   importDocument: (doc: LayoutDocument, suggestedName?: string) => Promise<string>;
+  /** Persist the user's layout order (`app.applyLayoutN` addresses layouts
+   *  by position, so the order is a decision, not a sort). */
+  setOrder: (names: string[]) => Promise<void>;
   /** Rebuild both docks' built-in default layout. */
   resetToDefault: () => void;
   /** Called by the docks' onDidLayoutChange handlers: any layout change
@@ -118,6 +122,18 @@ export const useLayoutsStore = create<LayoutsStore>((set, get) => ({
     const entry = await saveLayoutCmd(name, doc);
     await get().refreshList();
     return entry.name;
+  },
+
+  async setOrder(names) {
+    // Optimistic: the dragged rows must not snap back to the old order while
+    // the write is in flight.
+    const byName = new Map(get().layouts.map((l) => [l.name, l]));
+    const reordered = names
+      .map((n) => byName.get(n))
+      .filter((l): l is LayoutEntry => l !== undefined);
+    set({ layouts: reordered });
+    await setLayoutsOrder(names);
+    await get().refreshList();
   },
 
   resetToDefault() {

@@ -377,6 +377,12 @@ durable rules:
   all; users bind their own key and capture stores their layout's
   spelling.
 
+"List order" is a user decision, not a sort of the names: the Layouts panel
+reorders by drag and persists it (`layouts/order.json`, applied by
+`list_layouts`), so a rename can never re-target a slot. Each Layouts-panel
+row and View-menu layout entry shows the chord its slot is bound to, live
+from the keymap (`useBindingLabel`).
+
 Rules of thumb encoded above: single letters only in focused-list contexts
 (and even then v1 sticks to Space/arrows/F-keys); F2/F5/Del/Menu-key follow
 platform conventions; nothing overrides OS text editing.
