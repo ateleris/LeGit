@@ -485,6 +485,30 @@ pub async fn save_stash_include_untracked(
     .await
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn save_lane_colored_branch_chips(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state.mutate_global(|s| {
+        s.lane_colored_branch_chips = enabled;
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn save_stash_base_lane_color(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state.mutate_global(|s| {
+        s.stash_base_lane_color = enabled;
+    })
+    .await
+}
+
 /// Persist the `push --recurse-submodules` guard mode (None = off).
 #[tauri::command]
 #[specta::specta]

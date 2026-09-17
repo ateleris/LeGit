@@ -39,7 +39,7 @@ import { InlineRenameInput } from "./cells/InlineRenameInput";
 import { SignatureBadge } from "./cells/SignatureBadge";
 import { GraphCellWithAvatar, laneColor } from "./cells/GraphCell";
 import { computeLanes } from "./graph/lanes";
-import { computeEdgeSpans } from "./graph/spans";
+import { computeEdgeSpans, computeStashConnectorSpans } from "./graph/spans";
 import { pickHeadCommitId } from "./headId";
 import { growJumpWindow, pendingJumpAction, shouldCenterScroll } from "./scrollToRow";
 import { quickSearchMatch } from "./commitSearch";
@@ -302,17 +302,20 @@ export function CommitsPanel() {
   const opState = useOpState(repo?.id);
   const opInProgress = !!opState && opState.kind !== "none";
 
-  // Lane-coloured branch chips (per-theme toggle + per-part filters).
-  // Reading draft-first gives the Theme Editor live preview while editing.
+  // Lane-coloured branch chips: the on/off toggles are GLOBAL settings; the
+  // theme contributes only the per-part filters. Reading the theme draft-first
+  // gives the Theme Editor live preview while editing.
+  const laneChipsEnabled = useSettingsStore(
+    (s) => s.settings?.lane_colored_branch_chips ?? false,
+  );
   const themeDoc = useThemeStore((s) => s.draft ?? s.activeDocument);
   const laneChipFilters = useMemo(
-    () =>
-      themeDoc?.laneColoredBranchChips
-        ? effectiveLaneChipFilters(themeDoc.laneChipFilters)
-        : null,
-    [themeDoc],
+    () => (laneChipsEnabled ? effectiveLaneChipFilters(themeDoc?.laneChipFilters) : null),
+    [laneChipsEnabled, themeDoc],
   );
-  const stashBaseLaneColor = themeDoc?.stashBaseLaneColor ?? false;
+  const stashBaseLaneColor = useSettingsStore(
+    (s) => s.settings?.stash_base_lane_color ?? false,
+  );
 
   // Open a detached worktree (from its HEAD chip) as its own repo tab.
   const handleOpenWorktree = useCallback(
@@ -777,6 +780,22 @@ export function CommitsPanel() {
   const edgeSpans = useMemo(
     () => computeEdgeSpans(allEdges, commitIndexById, rows.length),
     [allEdges, commitIndexById, rows.length],
+  );
+
+  // Stash-connector spans (stash_base_lane_color): the stash's dying lane
+  // paints in the base's colour across the rows it spans — the pass-throughs
+  // in between and the jog arc at the base row (GraphCell laneColorOverrides).
+  const stashConnectorSpans = useMemo(
+    () =>
+      stashBaseLaneColor
+        ? computeStashConnectorSpans(
+            rows,
+            new Set(stashSelectorById.keys()),
+            assignments,
+            commitIndexById,
+          )
+        : [],
+    [stashBaseLaneColor, rows, stashSelectorById, assignments, commitIndexById],
   );
 
   // Dynamic column width. getVirtualItems() always returns a new array
@@ -1439,6 +1458,15 @@ export function CommitsPanel() {
                 if (span.lane === commitLane) ownLanePassThrough = true;
               }
             }
+
+            // Stash connectors covering this row (pass-through rows AND the
+            // base row itself, whose jog arc finishes the line).
+            let laneColorOverrides: Map<LaneIndex, string> | undefined;
+            for (const span of stashConnectorSpans) {
+              if (span.fromRow < rowIndex && rowIndex <= span.toRow) {
+                (laneColorOverrides ??= new Map()).set(span.lane, laneColor(span.baseLane));
+              }
+            }
             return (
               <div
                 key={vItem.key}
@@ -1659,6 +1687,7 @@ export function CommitsPanel() {
                             dotRadius={DOT_RADIUS}
                             lineWidth={LINE_WIDTH}
                             ownLanePassThrough={ownLanePassThrough}
+                            laneColorOverrides={laneColorOverrides}
                             hollow={isWorkingDir}
                             isStash={stashSelectorById.has(commit.id)}
                             stashNodeColor={

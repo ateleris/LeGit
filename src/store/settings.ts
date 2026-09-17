@@ -29,6 +29,8 @@ import {
   setWorkingChangesSectionOrder,
   saveSwitchDirtyBehavior,
   savePullStrategy,
+  saveLaneColoredBranchChips,
+  saveStashBaseLaneColor,
   saveStashIncludeUntracked,
   savePushRecurseSubmodules,
 } from "../lib/commands";
@@ -170,6 +172,8 @@ interface SettingsStore {
   setSwitchDirtyBehavior: (behavior: SwitchDirtyBehavior) => Promise<void>;
   setPullStrategy: (strategy: PullStrategy) => Promise<void>;
   setStashIncludeUntracked: (include: boolean) => Promise<void>;
+  setLaneColoredBranchChips: (enabled: boolean) => Promise<void>;
+  setStashBaseLaneColor: (enabled: boolean) => Promise<void>;
   setPushRecurseSubmodules: (mode: PushRecurseMode | null) => Promise<void>;
 }
 
@@ -392,6 +396,18 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     await saveStashIncludeUntracked(include);
     const s = get().settings;
     if (s) set({ settings: { ...s, stash_include_untracked: include } });
+  },
+
+  async setLaneColoredBranchChips(enabled) {
+    await saveLaneColoredBranchChips(enabled);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, lane_colored_branch_chips: enabled } });
+  },
+
+  async setStashBaseLaneColor(enabled) {
+    await saveStashBaseLaneColor(enabled);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, stash_base_lane_color: enabled } });
   },
 
   async setPushRecurseSubmodules(mode) {

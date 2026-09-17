@@ -20,12 +20,23 @@ lives in the git log and the GitHub release notes.
   sets the panel-group border width; any value other than 1 switches to the
   spaced-chrome per-panel borders even without a gap or radius.
 
+### Changed
+
+- "Color branch chips by graph lane" and "Color stashes by their base
+  commit's lane" are now global settings (Global Settings → Commits graph)
+  instead of per-theme toggles, so they survive theme switches. Themes keep
+  the branch-chip shade tuning; a theme that previously enabled the toggles
+  needs them re-enabled once in Global Settings.
+
 ### Fixed
 
 - Saving a theme that uses the "Lighter (40%)" or "Darker (40%)" filters no
   longer fails validation.
 - A theme's per-panel `panel.border` override now also colours the panel's
   outer border (the spaced-chrome group border), following the visible tab.
+- With "Color stashes by their base commit's lane" on, the line connecting a
+  stash to its base commit is drawn solid in the base's lane colour instead
+  of fading into the stash row's lane.
 
 ## [1.3.1] - 2026-09-17
 

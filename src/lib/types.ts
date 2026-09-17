@@ -106,6 +106,8 @@ export interface GlobalSettings {
   /** Gap between dockview panel groups (px); 0/absent = flush. */
   panel_gap?: number;
   panel_border_width?: number;
+  lane_colored_branch_chips?: boolean;
+  stash_base_lane_color?: boolean;
   /** Corner radius of dockview panel groups (px); 0/absent = square. */
   panel_corner_radius?: number;
   /** Whether the filesystem watcher auto-refreshes the UI on disk changes. */
@@ -1341,9 +1343,9 @@ export interface ThemeDocument {
   description?: string;
   palette: Record<string, string>;
   tokens: Record<string, ThemeTokenBinding>;
-  /** Colour branch chips from their graph lane instead of the static
-   * ref.branch/ref.remote tokens. Optional and additive: absent = off, and
-   * both validators ignore unknown keys, so older files stay valid. */
+  /** @deprecated Inert: lane-coloured chips are a GLOBAL setting
+   * (`lane_colored_branch_chips`), no longer per-theme. Still accepted and
+   * preserved so older theme files round-trip unchanged. */
   laneColoredBranchChips?: boolean;
   /** Per-part filters applied to the LANE colour while
    * `laneColoredBranchChips` is on; a null/absent part uses the raw lane
@@ -1354,9 +1356,9 @@ export interface ThemeDocument {
     border?: TokenFilterId | null;
     bg?: TokenFilterId | null;
   };
-  /** Colour a stash node with the lane of its BASE commit instead of the
-   * lane the stash row itself occupies, so it reads as belonging to the
-   * branch it was taken from. Optional and additive; absent = off. */
+  /** @deprecated Inert: stash-base lane colouring is a GLOBAL setting
+   * (`stash_base_lane_color`), no longer per-theme. Still accepted and
+   * preserved so older theme files round-trip unchanged. */
   stashBaseLaneColor?: boolean;
   /** Per-panel rebindings of the surface tokens in PANEL_OVERRIDE_TOKENS,
    * keyed by panel id (see panels/descriptors). Optional and additive:

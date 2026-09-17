@@ -62,13 +62,20 @@ interface GraphCellProps {
    */
   isStash?: boolean;
   /**
-   * Stash-node fill override: the BASE commit's lane colour (per-theme
-   * `stashBaseLaneColor` toggle), so a stash reads as belonging to the
-   * branch it was taken from. Null/absent = the row's own lane colour. Only
-   * the node square recolours - the connector stubs are edge geometry and
-   * keep the row lane.
+   * Stash-node fill override: the BASE commit's lane colour (the global
+   * `stash_base_lane_color` setting), so a stash reads as belonging to the
+   * branch it was taken from. Null/absent = the row's own lane colour.
+   * Recolours the node square AND the row's outgoing connector to the base
+   * (solid, replacing the cross-lane fade) so node and edge read as one.
    */
   stashNodeColor?: string | null;
+  /**
+   * Lane -> colour overrides for stash connectors (see
+   * computeStashConnectorSpans): a stash's dying lane paints solid in its
+   * base's colour across the rows it spans — pass-through lines on that lane
+   * and the jog arc into the base's dot (replacing the cross-lane fade).
+   */
+  laneColorOverrides?: ReadonlyMap<LaneIndex, string>;
   /**
    * Resolved avatar image URL (opt-in `commit_avatars` setting): when set,
    * the dot renders as the avatar clipped to a circle with a lane-coloured
@@ -173,6 +180,7 @@ export function GraphCell({
   hollow = false,
   isStash = false,
   stashNodeColor = null,
+  laneColorOverrides,
   avatarUrl = null,
 }: GraphCellProps) {
   const halfRow = rowHeight / 2;
@@ -218,6 +226,12 @@ export function GraphCell({
 
   const dotX = laneX(commitLane);
   const dotColor = laneColor(commitLane);
+
+  // With the base-lane override, the stash's outgoing connector is painted
+  // solid in the base's colour instead of fading between lanes - the rows
+  // below already run in the base lane's colour (pass-throughs and the base's
+  // own top stub), so the whole link reads as one line.
+  const stashConnectorColor = isStash ? stashNodeColor : null;
 
   // Short commit ID prefix used in gradient IDs — unique enough for the DOM.
   const idPrefix = commitId.slice(0, 12);
@@ -268,7 +282,7 @@ export function GraphCell({
           key={`pt-${lane}`}
           x1={laneX(lane)} y1={0}
           x2={laneX(lane)} y2={rowHeight}
-          stroke={laneColor(lane)}
+          stroke={laneColorOverrides?.get(lane) ?? laneColor(lane)}
           strokeWidth={lineWidth}
         />
       ))}
@@ -282,21 +296,25 @@ export function GraphCell({
           strokeWidth={lineWidth}
         />
       )}
+      {/* A stash's first-parent edge is emitted SAME-LANE (lanes.ts) — this
+          stub is the connector's first segment, so it carries the base's
+          colour when the override is on. */}
       {(hasFirstParentContinuation || ownLanePassThrough) && (
         <line
           x1={dotX} y1={halfRow}
           x2={dotX} y2={rowHeight}
-          stroke={dotColor}
+          stroke={stashConnectorColor ?? dotColor}
           strokeWidth={lineWidth}
         />
       )}
 
-      {/* 3a. Jog arcs (background) — dot up to the dying lane at the row top. */}
+      {/* 3a. Jog arcs (background) — dot up to the dying lane at the row top.
+          A stash-connector lane's jog is solid in the base's colour. */}
       {jogEdges.map((edge, i) => {
         const d = arcPath(laneX(edge.toLane), laneX(edge.fromLane), halfRow, 0, cornerRadius);
         return (
           <path key={`in-${i}`} d={d}
-            stroke={`url(#gin-${idPrefix}-${i})`}
+            stroke={laneColorOverrides?.get(edge.fromLane) ?? `url(#gin-${idPrefix}-${i})`}
             strokeWidth={lineWidth} fill="none" />
         );
       })}
@@ -306,7 +324,7 @@ export function GraphCell({
         const d = arcPath(laneX(edge.fromLane), laneX(edge.toLane), halfRow, rowHeight, cornerRadius);
         return (
           <path key={`out-${i}`} d={d}
-            stroke={`url(#gout-${idPrefix}-${i})`}
+            stroke={stashConnectorColor ?? `url(#gout-${idPrefix}-${i})`}
             strokeWidth={lineWidth} fill="none" />
         );
       })}

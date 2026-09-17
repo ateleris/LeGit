@@ -108,7 +108,7 @@ export function ThemeEditorPanel() {
     );
   }
 
-  const setMeta = (patch: { name?: string; author?: string; description?: string; laneColoredBranchChips?: boolean; laneChipFilters?: ThemeDocument["laneChipFilters"]; stashBaseLaneColor?: boolean }) => {
+  const setMeta = (patch: { name?: string; author?: string; description?: string; laneChipFilters?: ThemeDocument["laneChipFilters"] }) => {
     if (readOnly) return;
     if (!draft) startEditing();
     updateDraftMeta(patch);
@@ -392,38 +392,20 @@ export function ThemeEditorPanel() {
             <div style={{ fontWeight: 600, marginBottom: "0.333em" }}>{group}</div>
             {group === "Refs" && (
               <div style={{ margin: "0.167em 0 0.667em" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginBottom: "0.5em" }}>
-                  <input
-                    type="checkbox"
-                    id="theme-stash-base-lane"
-                    checked={working.stashBaseLaneColor ?? false}
-                    onChange={(e) => setMeta({ stashBaseLaneColor: e.target.checked })}
-                    disabled={readOnly}
-                  />
-                  <label htmlFor="theme-stash-base-lane" style={{ cursor: "pointer" }}>
-                    Color stashes by their base commit's lane
-                  </label>
+                {/* The on/off toggle is a GLOBAL setting (Global Settings →
+                    Commits graph); the theme owns only how the chip parts
+                    derive from the lane colour. */}
+                <div style={{ color: "var(--subtle-fg)", marginBottom: "0.5em" }}>
+                  Used while "Color branch chips by graph lane" is enabled in
+                  Global Settings → Commits graph.
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.667em" }}>
-                  <input
-                    type="checkbox"
-                    id="theme-lane-colored-chips"
-                    checked={working.laneColoredBranchChips ?? false}
-                    onChange={(e) => setMeta({ laneColoredBranchChips: e.target.checked })}
-                    disabled={readOnly}
-                  />
-                  <label htmlFor="theme-lane-colored-chips" style={{ cursor: "pointer" }}>
-                    Color branch chips by graph lane
-                  </label>
-                </div>
-                {(working.laneColoredBranchChips ?? false) &&
-                  (
-                    [
-                      ["fg", "branch chip foreground"],
-                      ["border", "branch chip border"],
-                      ["bg", "branch chip background"],
-                    ] as const
-                  ).map(([part, partLabel]) => (
+                {(
+                  [
+                    ["fg", "branch chip foreground"],
+                    ["border", "branch chip border"],
+                    ["bg", "branch chip background"],
+                  ] as const
+                ).map(([part, partLabel]) => (
                     // Same grid/height/spacing as the token rows below, with
                     // the filter dropdown in the token rows' filter column.
                     <div
@@ -483,12 +465,6 @@ export function ThemeEditorPanel() {
               const color = current
                 ? resolveBindingColor(current, { ...DEFAULT_THEME.palette, ...working.palette })
                 : undefined;
-              // Lane-coloured chips derive every branch/remote chip part
-              // from the graph lane at render time - those tokens are unused
-              // while the toggle is on.
-              const laneOverridden =
-                (working.laneColoredBranchChips ?? false) &&
-                (t.name.startsWith("ref.branch.") || t.name.startsWith("ref.remote."));
               return (
                 <div
                   key={t.name}
@@ -501,14 +477,12 @@ export function ThemeEditorPanel() {
                     // Dimmed while the theme has no explicit binding — the
                     // shown value is the built-in default fallback. Picking
                     // anything makes it explicit.
-                    opacity: laneOverridden || isFallback ? 0.65 : 1,
+                    opacity: isFallback ? 0.65 : 1,
                   }}
                   title={
-                    laneOverridden
-                      ? `${t.documentation}\n\nUnused while "Color branch chips by graph lane" is on - the chip derives this from the lane colour.`
-                      : isFallback
-                        ? `${t.documentation}\n\nNot set in this theme — showing the built-in default. Selecting a value binds it explicitly.`
-                        : t.documentation
+                    isFallback
+                      ? `${t.documentation}\n\nNot set in this theme — showing the built-in default. Selecting a value binds it explicitly.`
+                      : t.documentation
                   }
                 >
                   <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "var(--fz-md)" }}>
@@ -517,7 +491,7 @@ export function ThemeEditorPanel() {
                   <select
                     value={currentRef}
                     onChange={(e) => setTokenBinding(t.name, e.target.value, currentFilter)}
-                    disabled={readOnly || laneOverridden}
+                    disabled={readOnly}
                   >
                     {!working.palette[currentRef] && (
                       // The default binding references a palette entry this
@@ -542,7 +516,7 @@ export function ThemeEditorPanel() {
                         (e.target.value || null) as TokenFilterId | null,
                       )
                     }
-                    disabled={readOnly || laneOverridden || !currentRef}
+                    disabled={readOnly || !currentRef}
                   >
                     <option value="">No filter</option>
                     {TOKEN_FILTERS.map((f) => (

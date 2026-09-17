@@ -301,3 +301,92 @@ describe("stash node colour", () => {
     expect(findStashNodeColor(stashCell(null))).toBe("var(--graph-lane-1)");
   });
 });
+
+describe("stash connector colour", () => {
+  const stashCell = (stashNodeColor: string | null, edges: LaneEdge[]) =>
+    GraphCell({
+      commitId: "stash",
+      commitLane: 1,
+      totalLanes: 3,
+      activeLanes: new Set(),
+      edges,
+      incomingEdges: [],
+      rowHeight: 40,
+      laneSpacing: 40,
+      dotRadius: 5,
+      lineWidth: 1.5,
+      isStash: true,
+      stashNodeColor,
+    });
+
+  it("draws the arc to the base solid in the base lane's colour (no fade)", () => {
+    const cell = stashCell("var(--graph-lane-0)", [edge("stash", "base", 1, 0)]);
+    const paths = collect(cell, "path");
+    expect(paths).toHaveLength(1);
+    expect(paths[0].props.stroke).toBe("var(--graph-lane-0)");
+  });
+
+  it("keeps the lane-fade gradient while the override is off", () => {
+    const cell = stashCell(null, [edge("stash", "base", 1, 0)]);
+    const paths = collect(cell, "path");
+    expect(paths).toHaveLength(1);
+    expect(paths[0].props.stroke).toMatch(/^url\(#gout-/);
+  });
+
+  // lanes.ts emits the stash's first-parent edge SAME-LANE (the stash lane
+  // rides down and dies at the base row as a jog), so the bottom stub is the
+  // first visible segment of the connector and must carry the base's colour.
+  it("draws the same-lane bottom stub in the override colour", () => {
+    const cell = stashCell("var(--graph-lane-0)", [edge("stash", "base", 1, 1)]);
+    const stub = bottomStubAt(collect(cell, "line"), 60);
+    expect(stub).toHaveLength(1);
+    expect(stub[0].props.stroke).toBe("var(--graph-lane-0)");
+  });
+});
+
+// The stash connector's remaining segments render in OTHER rows' cells: the
+// pass-through rows between stash and base, and the jog arc on the base's
+// row. `laneColorOverrides` (from computeStashConnectorSpans) recolours both.
+describe("stash connector lane overrides in other rows", () => {
+  const overrides = new Map([[2 as LaneIndex, "var(--graph-lane-0)"]]);
+
+  const cell = (args: CellArgs & { laneColorOverrides?: ReadonlyMap<LaneIndex, string> }) =>
+    GraphCell({
+      commitId: "self",
+      commitLane: args.commitLane,
+      totalLanes: 3,
+      activeLanes: args.activeLanes ?? new Set(),
+      edges: args.edges ?? [],
+      incomingEdges: args.incomingEdges ?? [],
+      rowHeight: 40,
+      laneSpacing: 40,
+      dotRadius: 5,
+      lineWidth: 1.5,
+      laneColorOverrides: args.laneColorOverrides,
+    });
+
+  it("paints pass-through lines on an overridden lane in the override colour", () => {
+    const el = cell({ commitLane: 0, activeLanes: new Set([0, 2]), laneColorOverrides: overrides });
+    const passThrough = collect(el, "line").filter((l) => l.props.x1 === 100);
+    expect(passThrough).toHaveLength(1);
+    expect(passThrough[0].props.stroke).toBe("var(--graph-lane-0)");
+  });
+
+  it("draws the jog arc from an overridden lane solid instead of the fade", () => {
+    const el = cell({
+      commitLane: 0,
+      incomingEdges: [edge("self", "self", 2, 0)],
+      laneColorOverrides: overrides,
+    });
+    const paths = collect(el, "path");
+    expect(paths).toHaveLength(1);
+    expect(paths[0].props.stroke).toBe("var(--graph-lane-0)");
+  });
+
+  it("keeps the jog fade for lanes without an override", () => {
+    const el = cell({ commitLane: 0, incomingEdges: [edge("self", "self", 2, 0)] });
+    const paths = collect(el, "path");
+    expect(paths).toHaveLength(1);
+    expect(paths[0].props.stroke).toMatch(/^url\(#gin-/);
+  });
+});

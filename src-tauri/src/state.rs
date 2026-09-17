@@ -330,6 +330,15 @@ pub struct GlobalSettings {
     /// the chrome even at 0 gap/radius.
     #[serde(default = "default_panel_border_width")]
     pub panel_border_width: f64,
+    /// Colour branch chips in the Commits graph from their row's lane instead
+    /// of the theme's static ref tokens (the theme contributes the per-part
+    /// filters via `laneChipFilters`).
+    #[serde(default)]
+    pub lane_colored_branch_chips: bool,
+    /// Colour a stash node with the lane of its BASE commit instead of the
+    /// lane the stash row occupies.
+    #[serde(default)]
+    pub stash_base_lane_color: bool,
     /// Whether the filesystem watcher auto-refreshes the UI on disk changes.
     /// When off, refresh falls back to window/panel focus only.
     #[serde(default = "default_true")]
@@ -479,6 +488,8 @@ impl Default for GlobalSettings {
             panel_gap: 0.0,
             panel_corner_radius: 0.0,
             panel_border_width: default_panel_border_width(),
+            lane_colored_branch_chips: false,
+            stash_base_lane_color: false,
             watcher_enabled: true,
             confirm_discard: true,
             detect_case_renames: true,

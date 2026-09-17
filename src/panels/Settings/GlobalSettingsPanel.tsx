@@ -401,6 +401,16 @@ function CommitsGraphSection() {
   const { busy: savingAvatars, run: runAvatars } = useDelayedBusy();
   const toggleAvatars = () => runAvatars(() => setCommitAvatars(!avatars));
 
+  // Lane colouring: on/off is a viewing preference here; the per-part chip
+  // filters stay in the theme (Theme Editor → Refs).
+  const laneChips = useSettingsStore((s) => s.settings?.lane_colored_branch_chips ?? false);
+  const stashBaseLane = useSettingsStore((s) => s.settings?.stash_base_lane_color ?? false);
+  const setLaneColoredBranchChips = useSettingsStore((s) => s.setLaneColoredBranchChips);
+  const setStashBaseLaneColor = useSettingsStore((s) => s.setStashBaseLaneColor);
+  const { busy: savingLanes, run: runLanes } = useDelayedBusy();
+  const toggleLaneChips = () => runLanes(() => setLaneColoredBranchChips(!laneChips));
+  const toggleStashBaseLane = () => runLanes(() => setStashBaseLaneColor(!stashBaseLane));
+
   // Date column: relative ("2d ago", the default) vs the full author datetime,
   // in a user-picked format.
   const dateAbsolute = useSettingsStore((s) => s.settings?.commit_date_absolute ?? false);
@@ -582,6 +592,30 @@ function CommitsGraphSection() {
         />
         <label htmlFor="global-commit-date-show-time" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
           Include the time of day
+        </label>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "1em" }}>
+        <input
+          type="checkbox"
+          id="global-lane-colored-chips"
+          checked={laneChips}
+          onChange={toggleLaneChips}
+          disabled={savingLanes}
+        />
+        <label htmlFor="global-lane-colored-chips" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
+          Color branch chips by graph lane (chip shades come from the theme)
+        </label>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "0.667em" }}>
+        <input
+          type="checkbox"
+          id="global-stash-base-lane"
+          checked={stashBaseLane}
+          onChange={toggleStashBaseLane}
+          disabled={savingLanes}
+        />
+        <label htmlFor="global-stash-base-lane" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
+          Color stashes by their base commit's lane
         </label>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "1em" }}>
