@@ -10,6 +10,7 @@ import { GLOBAL_PANELS, REPO_PANELS } from "./registry";
 import { summonGlobalPanel } from "./GlobalDock";
 import { openRepoPanel } from "./RepoDock";
 import { useDismissable } from "./shared/useDismissable";
+import { LayoutShortcutChip } from "./Layouts/LayoutShortcutChip";
 import {
   MenuItem,
   MenuLevelProvider,
@@ -136,7 +137,7 @@ export function ViewMenu() {
               <>
                 <Separator />
                 <SectionLabel>Layouts</SectionLabel>
-                {layouts.map((l) => (
+                {layouts.map((l, i) => (
                   <Submenu
                     key={l.name}
                     testId={`view-menu-layout-${l.name}`}
@@ -144,6 +145,7 @@ export function ViewMenu() {
                       <>
                         {checkSlot(lastApplied === l.name)}
                         {l.name}
+                        <LayoutShortcutChip index={i} />
                       </>
                     }
                     onClickActivate={() => void onApplyLayout(l.name)}

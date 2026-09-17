@@ -14,6 +14,7 @@ vi.mock(import("../lib/commands"), async (importOriginal) => ({
   saveLayout: vi.fn(async (name: string) => ({ name, path: "" })),
   renameLayout: vi.fn(async (_old: string, name: string) => ({ name, path: "" })),
   deleteLayout: vi.fn(async () => null),
+  setLayoutsOrder: vi.fn(async () => null),
 }));
 vi.mock("../panels/GlobalDock", () => ({
   buildDefaultGlobalLayout: vi.fn(),
@@ -23,7 +24,7 @@ vi.mock("../panels/RepoDock", () => ({
   buildDefaultRepoLayout: vi.fn(),
 }));
 
-import { loadLayout } from "../lib/commands";
+import { listLayouts, loadLayout, setLayoutsOrder } from "../lib/commands";
 import { summonGlobalPanel } from "../panels/GlobalDock";
 import { buildLayoutDocument } from "../panels/namedLayouts";
 import { useDockviewStore } from "./dockview";
@@ -90,5 +91,45 @@ describe("layouts store: applies never touch the global dock", () => {
     useDockviewStore.setState({ globalApi });
     await useLayoutsStore.getState().apply("Reviewing");
     expect(summonGlobalPanel).not.toHaveBeenCalled();
+  });
+});
+
+// The `app.applyLayoutN` shortcuts apply "the Nth layout in list order", so
+// the order is a persisted user decision, not a sort of the current names.
+describe("layouts store: user-controlled order", () => {
+  const entry = (name: string) => ({ name, path: `${name}.legit-layout.json` });
+
+  // The backend is the source of truth: the reordered list only comes back
+  // from `listLayouts` if `setOrder` actually persisted it.
+  const persistToBackend = () => {
+    let persisted: string[] = [];
+    vi.mocked(setLayoutsOrder).mockImplementation(async (order: string[]) => {
+      persisted = order;
+      return null;
+    });
+    vi.mocked(listLayouts).mockImplementation(async () => persisted.map(entry));
+  };
+
+  it("persists the new order", async () => {
+    persistToBackend();
+    useLayoutsStore.setState({ layouts: [entry("Reviewing"), entry("Wide diff")] });
+    await useLayoutsStore.getState().setOrder(["Wide diff", "Reviewing"]);
+    expect(useLayoutsStore.getState().layouts.map((l) => l.name)).toEqual([
+      "Wide diff",
+      "Reviewing",
+    ]);
+  });
+
+  // Dropped rows must not snap back to the old order for a frame while the
+  // write is in flight.
+  it("shows the new order before the write completes", async () => {
+    persistToBackend();
+    useLayoutsStore.setState({ layouts: [entry("Reviewing"), entry("Wide diff")] });
+    const pending = useLayoutsStore.getState().setOrder(["Wide diff", "Reviewing"]);
+    expect(useLayoutsStore.getState().layouts.map((l) => l.name)).toEqual([
+      "Wide diff",
+      "Reviewing",
+    ]);
+    await pending;
   });
 });

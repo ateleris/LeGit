@@ -76,10 +76,12 @@ function activateRepoTab(index: number): void {
   if (repo) setActive(repo.id);
 }
 
+export const LAYOUT_SHORTCUT_SLOTS = 9;
+
 // Deliberately unbound: every modifier+digit default composes differently
 // per layout (Shift+1 is "!" on German, "+" on Swiss; Ctrl+Alt is AltGr) -
 // users bind their own key, and capture records their layout's spelling.
-const layoutCommands: Command[] = Array.from({ length: 9 }, (_, i) => ({
+const layoutCommands: Command[] = Array.from({ length: LAYOUT_SHORTCUT_SLOTS }, (_, i) => ({
   id: `app.applyLayout${i + 1}`,
   title: `Apply saved layout ${i + 1}`,
   scope: "global" as const,

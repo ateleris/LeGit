@@ -1,9 +1,9 @@
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { loadLayout } from "../../lib/commands";
 import { formatAppError } from "../../lib/types";
-import { DeleteIcon, RenameIcon } from "../../icons";
+import { DeleteIcon, DragHandleIcon, RenameIcon } from "../../icons";
 import { confirmDialog } from "../../store/confirm";
 import { useLayoutsStore } from "../../store/layouts";
 import { notify } from "../../store/notifications";
@@ -12,6 +12,8 @@ import { InlineRenameInput } from "../Commits/cells/InlineRenameInput";
 import { asLayoutBundle, asLayoutDocument, buildLayoutBundle } from "../namedLayouts";
 import type { LayoutDocument } from "../../lib/types";
 import { Button, IconButton } from "../shared/buttons";
+import { useRowDragReorder } from "../shared/useRowDragReorder";
+import { LayoutShortcutChip } from "./LayoutShortcutChip";
 
 /**
  * Manage saved panel layouts (the View menu is the fast switch path): save
@@ -29,6 +31,7 @@ export function LayoutsPanel() {
   const remove = useLayoutsStore((s) => s.remove);
   const importDocument = useLayoutsStore((s) => s.importDocument);
   const resetToDefault = useLayoutsStore((s) => s.resetToDefault);
+  const setOrder = useLayoutsStore((s) => s.setOrder);
 
   const [newName, setNewName] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -40,6 +43,22 @@ export function LayoutsPanel() {
       notify.error(formatAppError(e));
     }
   };
+
+  // Live order during a drag; null = the saved order from the store.
+  const [liveOrder, setLiveOrder] = useState<string[] | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const order = liveOrder ?? layouts.map((l) => l.name);
+  const { draggingKey, dragY, registerItem, beginDrag } = useRowDragReorder({
+    container: listRef,
+    order,
+    onReorder: setLiveOrder,
+    onDrop: (next, changed) => {
+      setLiveOrder(null);
+      if (changed) void run(() => setOrder(next));
+    },
+    // The hook lets presses through to inputs, so a rename would start a drag.
+    disabled: renaming !== null,
+  });
 
   const nameTaken = (name: string) => layouts.some((l) => l.name === name);
 
@@ -202,28 +221,49 @@ export function LayoutsPanel() {
           Reset to default layout
         </button>
       </div>
-      <div className="legit-panel__body">
+      <div className="legit-panel__body" ref={listRef} style={{ position: "relative" }}>
+        {layouts.length > 1 && (
+          <p className="legit-subtle" style={{ margin: "0 0 0.5em" }}>
+            Drag rows to reorder - the "Apply saved layout N" shortcuts follow this order.
+          </p>
+        )}
         {layouts.length === 0 ? (
           <p className="legit-subtle">
             No saved layouts yet. Arrange the panels the way you like, then save the arrangement
             under a name - it becomes a one-click switch in the View menu.
           </p>
         ) : (
-          layouts.map((l) => (
+          order.map((name, i) => (
             <div
-              key={l.name}
-              data-testid={`layouts-row-${l.name}`}
+              key={name}
+              ref={registerItem(name)}
+              onPointerDown={(e) => beginDrag(e, name)}
+              data-testid={`layouts-row-${name}`}
               style={{
                 display: "flex",
                 alignItems: "center",
                 gap: "0.5em",
-                padding: "0.25em 0",
+                padding: "0.25em 0.5em",
+                marginBottom: "0.25em",
+                border: "1px solid var(--panel-border)",
+                borderRadius: "0.25em",
+                // The row is the drag handle (RepoTabBar pattern).
+                userSelect: "none",
+                cursor: renaming ? undefined : draggingKey === name ? "grabbing" : "grab",
+                transform: draggingKey === name ? `translateY(${dragY}px)` : undefined,
+                zIndex: draggingKey === name ? 1 : undefined,
+                background: draggingKey === name ? "var(--panel-bg)" : undefined,
+                boxShadow: draggingKey === name ? "0 2px 8px var(--shadow-color)" : undefined,
+                position: "relative",
               }}
             >
-              {renaming === l.name ? (
+              <span className="legit-subtle" style={{ display: "flex" }}>
+                <DragHandleIcon />
+              </span>
+              {renaming === name ? (
                 <InlineRenameInput
-                  initialValue={l.name}
-                  onSave={(next) => void onRename(l.name, next)}
+                  initialValue={name}
+                  onSave={(next) => void onRename(name, next)}
                   onCancel={() => setRenaming(null)}
                   style={{ flex: 1, minWidth: 0 }}
                 />
@@ -236,35 +276,36 @@ export function LayoutsPanel() {
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
                   }}
-                  title={l.name}
+                  title={name}
                 >
-                  {l.name}
-                  {lastApplied === l.name && (
+                  {name}
+                  {lastApplied === name && (
                     <span className="legit-subtle" style={{ marginLeft: "0.5em" }}>
                       (active)
                     </span>
                   )}
                 </span>
               )}
-              <button onClick={() => void run(() => apply(l.name))}>Apply</button>
+              <LayoutShortcutChip index={i} />
+              <button onClick={() => void run(() => apply(name))}>Apply</button>
               <button
-                onClick={() => void onOverride(l.name)}
+                onClick={() => void onOverride(name)}
                 title="Replace this layout with the current arrangement"
               >
                 Override
               </button>
-              <button onClick={() => void onExport(l.name)}>Export…</button>
+              <button onClick={() => void onExport(name)}>Export…</button>
               <IconButton
-                onClick={() => setRenaming(renaming === l.name ? null : l.name)}
+                onClick={() => setRenaming(renaming === name ? null : name)}
                 title="Rename layout"
-                aria-label={`Rename layout ${l.name}`}
+                aria-label={`Rename layout ${name}`}
               >
                 <RenameIcon />
               </IconButton>
               <IconButton
-                onClick={() => void onDelete(l.name)}
+                onClick={() => void onDelete(name)}
                 title="Delete layout"
-                aria-label={`Delete layout ${l.name}`}
+                aria-label={`Delete layout ${name}`}
               >
                 <DeleteIcon />
               </IconButton>

@@ -143,6 +143,7 @@ pub fn run() {
         commands::save_layout,
         commands::rename_layout,
         commands::delete_layout,
+        commands::set_layouts_order,
         commands::load_keybindings,
         commands::save_keybindings,
         commands::repo_line_endings_view,

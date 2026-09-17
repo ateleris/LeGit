@@ -12,6 +12,22 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- Saved layouts are reorderable: drag the rows in the Layouts panel. The
+  "Apply saved layout N" shortcuts follow that order.
+- The Layouts panel and the View menu show which shortcut applies each
+  saved layout.
+
+### Fixed
+
+- Renaming a saved layout no longer moves it in the list, so it keeps the
+  shortcut that applied it.
+- The window now appears as soon as the theme has painted instead of after
+  a 4-second fallback delay (the startup reveal was blocked by missing
+  window permissions), and if it opens behind the app you are working in,
+  the taskbar button flashes instead of staying silent.
+
 ## [1.3.0] - 2026-09-16
 
 ### Added
