@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { create } from "zustand";
+import type { DockviewApi } from "dockview-react";
 import { useDockviewStore } from "./dockview";
 import { useSettingsStore } from "./settings";
 import { REPO_PANELS, SUPPRESSIBLE_SUMMON_PANELS } from "../panels/registry";
@@ -24,11 +25,111 @@ function isSuppressed(panelId: string): boolean {
 /**
  * The file-inspection panels. When one of these opens with no remembered
  * placement, it lands in an already-open companion's group (so the three share
- * one tabbed group); if none are open, it uses the group Diff opens into by
- * default. A panel the user has deliberately moved keeps its spot (that memory
- * is honoured before this).
+ * one tabbed group); if none are open, the placement walk starts from Diff's
+ * default reference so all three gravitate to one spot. A panel the user has
+ * deliberately moved keeps its spot (that memory is honoured before this).
  */
 const FILE_INSPECTION_GROUP = ["diff", "file-view", "blame"];
+
+/** Where a summoned (closed) panel goes. A summon NEVER splits the layout:
+ *  every outcome joins an existing group as a tab — splitting is reserved for
+ *  building the default layout. */
+export type SummonPlacement =
+  | { kind: "group"; groupId: string }
+  /** Join this open panel's group. */
+  | { kind: "join"; panelId: string }
+  /** Nothing resolvable — add to the active group (dockview default). */
+  | { kind: "default" };
+
+/**
+ * Placement cascade for a summoned panel, in priority order: the remembered
+ * group while it still exists; the fallback reference's group (the remembered
+ * group was destroyed); an open file-inspection companion's group; the
+ * defaultPlacement reference's group, walking closed references transitively
+ * (they chain toward `log`, which is always open) — for a file-inspection
+ * panel with no companion the walk starts at diff's reference so all three
+ * land in one spot; else the active group. Pure: the api-facing `summon`
+ * resolves the outcome against dockview.
+ */
+export function resolveSummonPlacement(
+  targetId: string,
+  placements: Record<string, string>,
+  fallbacks: Record<string, FallbackPosition>,
+  isPanelOpen: (panelId: string) => boolean,
+  groupExists: (groupId: string) => boolean,
+): SummonPlacement {
+  const savedGroupId = placements[targetId];
+  if (savedGroupId !== undefined && groupExists(savedGroupId)) {
+    return { kind: "group", groupId: savedGroupId };
+  }
+
+  const fallback = fallbacks[targetId];
+  if (fallback && isPanelOpen(fallback.referencePanel)) {
+    return { kind: "join", panelId: fallback.referencePanel };
+  }
+
+  const isInspection = FILE_INSPECTION_GROUP.includes(targetId);
+  if (isInspection) {
+    const companion = FILE_INSPECTION_GROUP.find((id) => id !== targetId && isPanelOpen(id));
+    if (companion) return { kind: "join", panelId: companion };
+  }
+
+  // Transitive defaultPlacement walk (visited set guards against a future
+  // reference cycle in the descriptors).
+  const referenceOf = (id: string): string | undefined =>
+    REPO_PANELS.find((p) => p.id === id)?.defaultPlacement?.referencePanel;
+  const visited = new Set<string>();
+  let ref = referenceOf(isInspection ? "diff" : targetId);
+  while (ref !== undefined && !visited.has(ref)) {
+    if (isPanelOpen(ref)) return { kind: "join", panelId: ref };
+    visited.add(ref);
+    ref = referenceOf(ref);
+  }
+
+  return { kind: "default" };
+}
+
+/**
+ * Add a currently-closed repo panel, joining an existing group per
+ * `resolveSummonPlacement` (a summon or menu open NEVER splits the layout),
+ * then unhide the group it landed in — the console group starts collapsed
+ * (`setVisible(false)`), and a panel added to a hidden group would open
+ * invisibly. The single "open a closed panel" primitive behind `summon()`
+ * and the View menu's `openRepoPanel`.
+ */
+export function addRepoPanelWithoutSplitting(api: DockviewApi, targetId: string) {
+  const desc = REPO_PANELS.find((p) => p.id === targetId);
+  if (!desc) return;
+  const { placements, fallbackPositions } = useSummonStore.getState();
+  const placement = resolveSummonPlacement(
+    targetId,
+    placements,
+    fallbackPositions,
+    (panelId) => !!api.getPanel(panelId),
+    (groupId) => api.groups.some((g) => g.id === groupId),
+  );
+  if (placement.kind === "group") {
+    api.addPanel({
+      id: targetId,
+      component: targetId,
+      title: desc.title,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      position: { referenceGroup: placement.groupId as any, direction: "within" },
+    });
+  } else if (placement.kind === "join") {
+    api.addPanel({
+      id: targetId,
+      component: targetId,
+      title: desc.title,
+      position: { referencePanel: placement.panelId, direction: "within" },
+    });
+  } else {
+    // Active group (dockview's default for a position-less add).
+    api.addPanel({ id: targetId, component: targetId, title: desc.title });
+  }
+  const panel = api.getPanel(targetId);
+  if (panel && !panel.group.api.isVisible) panel.group.api.setVisible(true);
+}
 
 type Callback = (payload: unknown) => void;
 
@@ -121,7 +222,7 @@ export const useSummonStore = create<SummonStore>((set, get) => ({
     const desc = REPO_PANELS.find((p) => p.id === targetId);
     if (!desc) return;
 
-    const { placements, fallbackPositions, callbacks } = get();
+    const { callbacks } = get();
     const existing = api.getPanel(targetId);
 
     if (existing) {
@@ -150,81 +251,9 @@ export const useSummonStore = create<SummonStore>((set, get) => ({
       set((s) => ({ payloadQueue: { ...s.payloadQueue, [targetId]: payload } }));
     }
 
-    // Case 2a: panel was previously placed — restore to that group if it still exists.
-    const savedGroupId = placements[targetId];
-    if (savedGroupId && api.groups.some((g) => g.id === savedGroupId)) {
-      api.addPanel({
-        id: targetId,
-        component: targetId,
-        title: desc.title,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        position: { referenceGroup: savedGroupId as any, direction: "within" },
-      });
-      return;
-    }
-
-    // Case 2b: group was destroyed but we have a fallback position (near where the panel was).
-    const fallback = fallbackPositions[targetId];
-    if (fallback && api.getPanel(fallback.referencePanel)) {
-      api.addPanel({
-        id: targetId,
-        component: targetId,
-        title: desc.title,
-        position: { referencePanel: fallback.referencePanel, direction: fallback.direction },
-      });
-      return;
-    }
-
-    // Case 2c: file-inspection panels (Diff / File View / Blame) collocate —
-    // land in an already-open companion's group, otherwise in the group Diff
-    // opens into by default (so wherever the first of the three opens, the
-    // other two join it as tabs).
-    if (FILE_INSPECTION_GROUP.includes(targetId)) {
-      const companionId = FILE_INSPECTION_GROUP.find(
-        (cid) => cid !== targetId && api.getPanel(cid),
-      );
-      const companionGroup = companionId ? api.getPanel(companionId)?.group : undefined;
-      if (companionGroup) {
-        api.addPanel({
-          id: targetId,
-          component: targetId,
-          title: desc.title,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          position: { referenceGroup: companionGroup.id as any, direction: "within" },
-        });
-        return;
-      }
-      // None of the three open yet — use Diff's default placement for all of
-      // them, guarding against its reference panel being closed.
-      const diffPlacement = REPO_PANELS.find((p) => p.id === "diff")?.defaultPlacement;
-      if (diffPlacement) {
-        const refOpen = diffPlacement.referencePanel
-          ? !!api.getPanel(diffPlacement.referencePanel)
-          : false;
-        api.addPanel({
-          id: targetId,
-          component: targetId,
-          title: desc.title,
-          position: refOpen
-            ? { referencePanel: diffPlacement.referencePanel!, direction: diffPlacement.direction }
-            : { direction: diffPlacement.direction },
-        });
-        return;
-      }
-    }
-
-    // Case 3: first time or no usable position — use descriptor's default placement.
-    if (desc.defaultPlacement) {
-      const { direction, referencePanel } = desc.defaultPlacement;
-      api.addPanel({
-        id: targetId,
-        component: targetId,
-        title: desc.title,
-        position: referencePanel ? { referencePanel, direction } : { direction },
-      });
-    } else {
-      api.addPanel({ id: targetId, component: targetId, title: desc.title });
-    }
+    // Case 2: closed panel — join an existing group (never split the layout;
+    // see resolveSummonPlacement for the priority cascade).
+    addRepoPanelWithoutSplitting(api, targetId);
   },
 
   swapSummon(showId, hideId, payload) {

@@ -31,6 +31,9 @@ lives in the git log and the GitHub release notes.
 - The Working Changes layout rows (Global Settings) and the Interactive
   Rebase plan rows are drag-only now, with a drag handle matching the Layouts
   panel; the arrow buttons (and the layout rows' numbering) are gone.
+- Summoning a panel never splits the layout anymore: a panel without a
+  remembered spot joins an existing group as a tab (a related panel's group,
+  or the active group) instead of carving out a new slot.
 
 ### Fixed
 

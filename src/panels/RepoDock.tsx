@@ -8,7 +8,7 @@ import { applyPanelConstraints, useDockviewStore, wireMaximizeModeLayer } from "
 import { useLayoutsStore } from "../store/layouts";
 import { notify } from "../store/notifications";
 import { useThemeStore } from "../store/themes";
-import { useSummonStore } from "../store/summon";
+import { addRepoPanelWithoutSplitting, useSummonStore } from "../store/summon";
 import { validateTheme } from "../theme/validate";
 import { PANEL_TITLES, REPO_DOCKVIEW_COMPONENTS, REPO_DOCKVIEW_TAB_COMPONENTS, REPO_PANELS } from "./registry";
 import { applyBakedRepoLayout, applyRepoLayoutEnvelope, capturePlacements, parseRepoLayoutEnvelope } from "./layoutSnapshot";
@@ -182,20 +182,7 @@ export function openRepoPanel(api: DockviewApi | null, id: string) {
     existing.focus();
     return;
   }
-  // Without an explicit position dockview adds to the ACTIVE group, which on
-  // a fresh layout can be the hidden console group — the panel would open
-  // invisibly. Use the descriptor's default placement (guarding against its
-  // reference panel being closed), mirroring summon()'s fallback.
-  const placement = desc.defaultPlacement;
-  const refOpen = placement?.referencePanel ? !!api.getPanel(placement.referencePanel) : false;
-  api.addPanel({
-    id: desc.id,
-    component: desc.id,
-    title: desc.title,
-    position: placement
-      ? refOpen
-        ? { referencePanel: placement.referencePanel!, direction: placement.direction }
-        : { direction: placement.direction }
-      : undefined,
-  });
+  // Same never-split placement as summon(): join an existing group (memory
+  // first, then a related panel's group) and unhide it if it was collapsed.
+  addRepoPanelWithoutSplitting(api, id);
 }
