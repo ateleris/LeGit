@@ -314,6 +314,12 @@ pub struct GlobalSettings {
     /// panel min-size constraints.
     #[serde(default = "default_ui_font_size")]
     pub ui_font_size: f64,
+    /// Gap between dockview panel groups (px); 0 = the compact flush look.
+    #[serde(default)]
+    pub panel_gap: f64,
+    /// Corner radius of dockview panel groups (px); 0 = square.
+    #[serde(default)]
+    pub panel_corner_radius: f64,
     /// Whether the filesystem watcher auto-refreshes the UI on disk changes.
     /// When off, refresh falls back to window/panel focus only.
     #[serde(default = "default_true")]
@@ -460,6 +466,8 @@ impl Default for GlobalSettings {
             refs_sort_mode: None,
             tags_sort_mode: None,
             ui_font_size: default_ui_font_size(),
+            panel_gap: 0.0,
+            panel_corner_radius: 0.0,
             watcher_enabled: true,
             confirm_discard: true,
             detect_case_renames: true,

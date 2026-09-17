@@ -18,6 +18,9 @@ lives in the git log and the GitHub release notes.
   "Apply saved layout N" shortcuts follow that order.
 - The Layouts panel and the View menu show which shortcut applies each
   saved layout.
+- Panel spacing and panel corner radius settings (Appearance): put a gap
+  between the panels and round their corners; 0/0 keeps the classic flush
+  look. The gap shows the theme's window background.
 
 ### Fixed
 
@@ -27,6 +30,8 @@ lives in the git log and the GitHub release notes.
   a 4-second fallback delay (the startup reveal was blocked by missing
   window permissions), and if it opens behind the app you are working in,
   the taskbar button flashes instead of staying silent.
+- The View menu's "Maximize panel" entry now shows the actual configured
+  shortcut instead of always claiming Ctrl+Shift+M.
 
 ## [1.3.0] - 2026-09-16
 

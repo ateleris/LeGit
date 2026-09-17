@@ -103,6 +103,10 @@ export interface GlobalSettings {
   tags_sort_mode?: string | null;
   /** Global UI font size (px) — base for the panel text scale and min sizes. */
   ui_font_size?: number;
+  /** Gap between dockview panel groups (px); 0/absent = flush. */
+  panel_gap?: number;
+  /** Corner radius of dockview panel groups (px); 0/absent = square. */
+  panel_corner_radius?: number;
   /** Whether the filesystem watcher auto-refreshes the UI on disk changes. */
   watcher_enabled?: boolean;
   /** Whether discarding changes asks for confirmation first (default true). */

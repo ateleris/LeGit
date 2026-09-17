@@ -13,6 +13,7 @@ import { validateTheme } from "../theme/validate";
 import { PANEL_TITLES, REPO_DOCKVIEW_COMPONENTS, REPO_DOCKVIEW_TAB_COMPONENTS, REPO_PANELS } from "./registry";
 import { applyBakedRepoLayout, applyRepoLayoutEnvelope, capturePlacements, parseRepoLayoutEnvelope } from "./layoutSnapshot";
 import { DockWatermark } from "./shared/DockWatermark";
+import { useDockTheme } from "./shared/useDockTheme";
 
 const LAYOUT_KEY = "legit.repo-dock-layout";
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -125,14 +126,15 @@ export function RepoDock() {
     };
   }, []);
 
+  const dockTheme = useDockTheme();
   return (
-    <div style={{ height: "100%", position: "relative" }}>
+    <div className="legit-dock" style={{ height: "100%", position: "relative" }}>
       <DockviewReact
         components={REPO_DOCKVIEW_COMPONENTS}
         tabComponents={REPO_DOCKVIEW_TAB_COMPONENTS}
         watermarkComponent={DockWatermark}
         onReady={onReady}
-        className="dockview-theme-abyss"
+        theme={dockTheme}
       />
     </div>
   );

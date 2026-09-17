@@ -37,6 +37,10 @@
    base too (see src/store/dockview.ts, AppLayout.tsx). */
 :root {
   --ui-font-size: 12px;
+  /* Panel chrome (settings store overwrites both): gap between/around dock
+     panel groups and their corner radius. 0/0 = the flush square look. */
+  --legit-panel-gap: 0px;
+  --legit-panel-radius: 0px;
   --fz-xs: calc(var(--ui-font-size) - 2px);
   --fz-sm: calc(var(--ui-font-size) - 1px);
   --fz-md: var(--ui-font-size);
@@ -509,6 +513,40 @@ button.legit-tab__close:hover {
   --dv-sash-color: transparent;
   --dv-active-sash-color: var(--panel-border-drag);
   --dv-floating-box-shadow: 0 4px 12px var(--shadow-color);
+
+  /* User-set panel corner radius (settings store writes --legit-panel-radius;
+     0 = today's square look). The gap between groups is dockview's own
+     theme.gap (useDockTheme) and reveals --app-bg behind the groups. */
+  --dv-border-radius: var(--legit-panel-radius);
+  background: var(--app-bg);
+}
+
+/* Round the panel groups by the user-set radius. overflow: hidden clips the
+   group's content (tabs, drop overlays) to the rounded corners. */
+.dv-dockview .dv-groupview {
+  border-radius: var(--dv-border-radius);
+  overflow: hidden;
+}
+
+/* Spaced/rounded panel chrome, armed by the settings store only when gap or
+   radius is non-zero - the default look must stay pixel-identical. Groups
+   float on --app-bg, so each carries its own border (the between-group
+   separator lines don't exist across gaps and would ignore the radius), and
+   the docks pad their outer edge by the same gap dockview puts between
+   groups (dockview's theme.gap covers between-groups only). */
+.legit-panel-chrome .legit-dock {
+  padding: var(--legit-panel-gap);
+}
+.legit-panel-chrome .dv-dockview .dv-groupview {
+  border: 1px solid var(--panel-border);
+}
+/* Kill dockview's between-group separator lines (a ::before on each view's
+   leading edge): with gaps/radius they float through the gaps and run
+   straight past the rounded corners; the per-group border above replaces
+   them. Dockview's own spaced themes do the same. */
+.legit-panel-chrome .dv-dockview,
+.legit-panel-chrome .dockview-theme-abyss {
+  --dv-separator-border: transparent;
 }
 
 /* Centre tab content (title + close action stay together, centred as a pair). */

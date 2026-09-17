@@ -154,6 +154,31 @@ pub async fn save_ui_font_size(
     Ok(clamped)
 }
 
+/// Persist the dock chrome dimensions: the gap between panel groups and the
+/// groups' corner radius (px, clamped; 0/0 = the flush square default).
+#[tauri::command]
+#[specta::specta]
+pub async fn save_panel_chrome(
+    state: tauri::State<'_, AppState>,
+    gap: f64,
+    radius: f64,
+) -> Result<PanelChrome, AppError> {
+    let chrome = PanelChrome { gap: gap.clamp(0.0, 16.0), radius: radius.clamp(0.0, 16.0) };
+    state
+        .mutate_global(|s| {
+            s.panel_gap = chrome.gap;
+            s.panel_corner_radius = chrome.radius;
+        })
+        .await?;
+    Ok(chrome)
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct PanelChrome {
+    pub gap: f64,
+    pub radius: f64,
+}
+
 /// Persist the Commits-panel graph metrics (row/line height, per-lane width,
 /// commit-dot radius, and connector line width). Clamps each value to sane px
 /// bounds before storing; the dot radius and line width are capped to half the
