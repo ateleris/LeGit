@@ -16,6 +16,9 @@ lives in the git log and the GitHub release notes.
 
 - Themes can give individual panels their own surface colours (Theme Editor →
   Panel overrides): e.g. a different background just for the Commits panel.
+- macOS: a native menu bar (File / Edit / View / Window). View mirrors the
+  in-app View menu (panels, saved layouts, maximize toggle), File opens
+  repositories, and the Edit menu makes Cmd+C/V/X work in text fields.
 - Panel border thickness setting (Appearance, under Panel corner radius):
   sets the panel-group border width; any value other than 1 switches to the
   spaced-chrome per-panel borders even without a gap or radius.
