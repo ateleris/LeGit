@@ -12,6 +12,8 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-09-17
+
 ### Added
 
 - Saved layouts are reorderable: drag the rows in the Layouts panel. The
