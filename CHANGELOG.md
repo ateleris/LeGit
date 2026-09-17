@@ -28,6 +28,10 @@ lives in the git log and the GitHub release notes.
   the branch-chip shade tuning; a theme that previously enabled the toggles
   needs them re-enabled once in Global Settings.
 
+- The Working Changes layout rows (Global Settings) and the Interactive
+  Rebase plan rows are drag-only now, with a drag handle matching the Layouts
+  panel; the arrow buttons (and the layout rows' numbering) are gone.
+
 ### Fixed
 
 - Saving a theme that uses the "Lighter (40%)" or "Darker (40%)" filters no

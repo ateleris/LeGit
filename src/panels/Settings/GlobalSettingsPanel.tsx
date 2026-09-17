@@ -1,7 +1,7 @@
 import { checkForUpdate, promptAndInstall } from "../../lib/updateFlow";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
-import { LinkIcon, UnlinkIcon, WarningIcon } from "../../icons";
+import { DragHandleIcon, LinkIcon, UnlinkIcon, WarningIcon } from "../../icons";
 import { Button, IconButton } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
 import { useRowDragReorder } from "../shared/useRowDragReorder";
@@ -856,21 +856,12 @@ function WorkingChangesLayoutSection() {
     disabled: saving,
   });
 
-  const move = (i: number, delta: number) => {
-    const j = i + delta;
-    if (j < 0 || j >= order.length) return;
-    const next = [...order];
-    [next[i], next[j]] = [next[j], next[i]];
-    return run(() => setOrder(next));
-  };
-
   return (
     <Section title="Working Changes layout">
       <FieldNote>writes to: global settings — applies to all repos</FieldNote>
       <FieldNote>
         Top-to-bottom order of the three Working Changes sections. Drag rows
-        (or use the arrows) to put Staged first, or move the commit box to
-        the top.
+        to put Staged first, or move the commit box to the top.
       </FieldNote>
       <div
         ref={listRef}
@@ -883,7 +874,7 @@ function WorkingChangesLayoutSection() {
           position: "relative",
         }}
       >
-        {order.map((id, i) => (
+        {order.map((id) => (
           <div
             key={id}
             ref={registerItem(id)}
@@ -911,15 +902,9 @@ function WorkingChangesLayoutSection() {
               position: "relative",
             }}
           >
-            <span style={{ display: "flex", gap: "0.167em" }}>
-              <IconButton title="Move up" disabled={saving || i === 0} onClick={() => move(i, -1)}>
-                ↑
-              </IconButton>
-              <IconButton title="Move down" disabled={saving || i === order.length - 1} onClick={() => move(i, 1)}>
-                ↓
-              </IconButton>
+            <span className="legit-subtle" style={{ display: "flex" }}>
+              <DragHandleIcon />
             </span>
-            <span style={{ width: "1.5em", textAlign: "right", color: "var(--subtle-fg)" }}>{i + 1}.</span>
             <span>{WORKING_CHANGES_SECTION_LABELS[id]}</span>
           </div>
         ))}
