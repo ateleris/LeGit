@@ -280,6 +280,22 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "status.conflicted", group: "File Status", documentation: "Conflicted-file icon." },
 ] as const;
 
+/**
+ * The tokens a theme's `panelOverrides` may rebind per panel. Part of the
+ * user-facing contract (removing an entry breaks themes that override it).
+ * Deliberately limited to the panel surface: the dockview tab strip and
+ * portal surfaces (menus, dialogs, toasts) render outside the panel subtree
+ * and always keep the global colours.
+ */
+export const PANEL_OVERRIDE_TOKENS: readonly string[] = [
+  "panel.bg",
+  "panel.fg",
+  "panel.border",
+  "panel.header.bg",
+  "panel.header.fg",
+  "subtle.fg",
+] as const;
+
 export interface ContrastPair {
   fg: string;
   bg: string;

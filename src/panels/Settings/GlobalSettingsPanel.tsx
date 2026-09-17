@@ -42,6 +42,8 @@ import {
   COMMITS_LINE_WIDTH_MIN,
   UI_FONT_SIZE_DEFAULT,
   UI_FONT_SIZE_MIN,
+  PANEL_BORDER_WIDTH_DEFAULT,
+  PANEL_BORDER_WIDTH_MAX,
   PANEL_GAP_MAX,
   PANEL_RADIUS_MAX,
   UI_FONT_SIZE_MAX,
@@ -227,6 +229,9 @@ function GeneralSection() {
   const setUiFontSize = useSettingsStore((s) => s.setUiFontSize);
   const panelGap = useSettingsStore((s) => s.settings?.panel_gap ?? 0);
   const panelRadius = useSettingsStore((s) => s.settings?.panel_corner_radius ?? 0);
+  const panelBorder = useSettingsStore(
+    (s) => s.settings?.panel_border_width ?? PANEL_BORDER_WIDTH_DEFAULT,
+  );
   const setPanelChrome = useSettingsStore((s) => s.setPanelChrome);
   const { busy: saving, run } = useDelayedBusy();
 
@@ -244,7 +249,7 @@ function GeneralSection() {
     try { localStorage.setItem(PANEL_CHROME_LINK_KEY, next ? "1" : "0"); } catch { /* quota */ }
     // Re-linking applies the constraint immediately.
     if (next && panelRadius !== linkedRadius(panelGap)) {
-      void run(() => setPanelChrome(panelGap, linkedRadius(panelGap)));
+      void run(() => setPanelChrome(panelGap, linkedRadius(panelGap), panelBorder));
     }
   };
   const shownRadius = chromeLinked ? linkedRadius(panelGap) : panelRadius;
@@ -299,7 +304,9 @@ function GeneralSection() {
           min={0}
           max={PANEL_GAP_MAX}
           disabled={saving}
-          onCommit={(v) => run(() => setPanelChrome(v, chromeLinked ? linkedRadius(v) : panelRadius))}
+          onCommit={(v) =>
+            run(() => setPanelChrome(v, chromeLinked ? linkedRadius(v) : panelRadius, panelBorder))
+          }
         />
         {/* Chain-link spanning the two inputs it governs (rows 3-4), in the
             gutter column just left of the inputs - same pattern as the
@@ -337,7 +344,17 @@ function GeneralSection() {
           min={0}
           max={PANEL_RADIUS_MAX}
           disabled={saving || chromeLinked}
-          onCommit={(v) => run(() => setPanelChrome(panelGap, v))}
+          onCommit={(v) => run(() => setPanelChrome(panelGap, v, panelBorder))}
+        />
+        <NumberField
+          grid
+          row={5}
+          label="Panel border thickness"
+          value={panelBorder}
+          min={0}
+          max={PANEL_BORDER_WIDTH_MAX}
+          disabled={saving}
+          onCommit={(v) => run(() => setPanelChrome(panelGap, shownRadius, v))}
         />
       </div>
       {fontSize !== UI_FONT_SIZE_DEFAULT && (

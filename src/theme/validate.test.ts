@@ -114,6 +114,53 @@ describe("validateTheme", () => {
   });
 });
 
+describe("panelOverrides field", () => {
+  const withOverrides = (panelOverrides: unknown) => ({ ...valid(), panelOverrides });
+
+  test("accepts valid overrides (bare and filtered bindings)", () => {
+    const r = validateTheme(
+      withOverrides({ log: { "panel.bg": "base", "panel.fg": { ref: "accent", filter: "lighter" } } }),
+    );
+    expect(r.errors).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  test("rejects a non-object panelOverrides", () => {
+    const r = validateTheme(withOverrides([]));
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.field === "panelOverrides")).toBe(true);
+  });
+
+  test("rejects a non-object panel entry", () => {
+    const r = validateTheme(withOverrides({ log: "base" }));
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.field === "panelOverrides.log")).toBe(true);
+  });
+
+  test("rejects an override referencing an undefined palette name", () => {
+    const r = validateTheme(withOverrides({ log: { "panel.bg": "ghost" } }));
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.field === "panelOverrides.log.panel.bg")).toBe(true);
+  });
+
+  test("rejects an unknown filter id in an override", () => {
+    const r = validateTheme(withOverrides({ log: { "panel.bg": { ref: "base", filter: "sparkle" } } }));
+    expect(r.ok).toBe(false);
+  });
+
+  test("a token outside the allowlist warns but imports", () => {
+    const r = validateTheme(withOverrides({ log: { "app.bg": "base" } }));
+    expect(r.ok).toBe(true);
+    expect(r.warnings.some((e) => e.field === "panelOverrides.log.app.bg")).toBe(true);
+  });
+
+  test("a malformed panel id warns but imports", () => {
+    const r = validateTheme(withOverrides({ "bad id!": { "panel.bg": "base" } }));
+    expect(r.ok).toBe(true);
+    expect(r.warnings.some((e) => e.field === 'panelOverrides.bad id!')).toBe(true);
+  });
+});
+
 describe("laneColoredBranchChips field", () => {
   test("a theme carrying the toggle validates and keeps the field", () => {
     const doc = {

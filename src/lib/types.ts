@@ -105,6 +105,7 @@ export interface GlobalSettings {
   ui_font_size?: number;
   /** Gap between dockview panel groups (px); 0/absent = flush. */
   panel_gap?: number;
+  panel_border_width?: number;
   /** Corner radius of dockview panel groups (px); 0/absent = square. */
   panel_corner_radius?: number;
   /** Whether the filesystem watcher auto-refreshes the UI on disk changes. */
@@ -1357,4 +1358,9 @@ export interface ThemeDocument {
    * lane the stash row itself occupies, so it reads as belonging to the
    * branch it was taken from. Optional and additive; absent = off. */
   stashBaseLaneColor?: boolean;
+  /** Per-panel rebindings of the surface tokens in PANEL_OVERRIDE_TOKENS,
+   * keyed by panel id (see panels/descriptors). Optional and additive:
+   * absent = no overrides; tokens outside the allowlist and malformed panel
+   * ids are preserved but never applied. */
+  panelOverrides?: Record<string, Record<string, ThemeTokenBinding>>;
 }

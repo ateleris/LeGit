@@ -12,6 +12,21 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- Themes can give individual panels their own surface colours (Theme Editor →
+  Panel overrides): e.g. a different background just for the Commits panel.
+- Panel border thickness setting (Appearance, under Panel corner radius):
+  sets the panel-group border width; any value other than 1 switches to the
+  spaced-chrome per-panel borders even without a gap or radius.
+
+### Fixed
+
+- Saving a theme that uses the "Lighter (40%)" or "Darker (40%)" filters no
+  longer fails validation.
+- A theme's per-panel `panel.border` override now also colours the panel's
+  outer border (the spaced-chrome group border), following the visible tab.
+
 ## [1.3.1] - 2026-09-17
 
 ### Added

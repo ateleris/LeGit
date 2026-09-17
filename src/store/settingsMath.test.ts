@@ -8,6 +8,7 @@ import {
   maxCommitsDotRadius,
   maxCommitsLineWidth,
   minCommitsRowHeight,
+  panelChromeArmed,
   useSettingsStore,
 } from "./settings";
 
@@ -37,5 +38,21 @@ describe("confirm-destructive default", () => {
     // selector against raw store state (no React needed).
     useSettingsStore.setState({ settings: null });
     expect(useSettingsStore.getState().settings?.confirm_discard ?? true).toBe(true);
+  });
+});
+
+describe("panel chrome arming", () => {
+  test("flush defaults (0 gap, 0 radius, 1px border) leave the chrome off", () => {
+    expect(panelChromeArmed(0, 0, 1)).toBe(false);
+  });
+
+  test("any gap or radius arms it", () => {
+    expect(panelChromeArmed(4, 0, 1)).toBe(true);
+    expect(panelChromeArmed(0, 6, 1)).toBe(true);
+  });
+
+  test("a non-default border width arms it (borders replace the separators)", () => {
+    expect(panelChromeArmed(0, 0, 2)).toBe(true);
+    expect(panelChromeArmed(0, 0, 0)).toBe(true);
   });
 });

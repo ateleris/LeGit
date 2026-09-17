@@ -162,12 +162,18 @@ pub async fn save_panel_chrome(
     state: tauri::State<'_, AppState>,
     gap: f64,
     radius: f64,
+    border: f64,
 ) -> Result<PanelChrome, AppError> {
-    let chrome = PanelChrome { gap: gap.clamp(0.0, 16.0), radius: radius.clamp(0.0, 16.0) };
+    let chrome = PanelChrome {
+        gap: gap.clamp(0.0, 16.0),
+        radius: radius.clamp(0.0, 16.0),
+        border: border.clamp(0.0, 8.0),
+    };
     state
         .mutate_global(|s| {
             s.panel_gap = chrome.gap;
             s.panel_corner_radius = chrome.radius;
+            s.panel_border_width = chrome.border;
         })
         .await?;
     Ok(chrome)
@@ -177,6 +183,7 @@ pub async fn save_panel_chrome(
 pub struct PanelChrome {
     pub gap: f64,
     pub radius: f64,
+    pub border: f64,
 }
 
 /// Persist the Commits-panel graph metrics (row/line height, per-lane width,
@@ -629,8 +636,16 @@ fn validate_theme(value: &serde_json::Value) -> Result<(), AppError> {
         .ok_or_else(|| AppError::InvalidTheme("missing `tokens` object".into()))?;
     // Filter ids for derived-colour bindings — mirror `TOKEN_FILTERS` in
     // `src/theme/filters.ts`.
-    const KNOWN_FILTERS: [&str; 6] =
-        ["lighter-soft", "lighter", "darker-soft", "darker", "faded", "subtle"];
+    const KNOWN_FILTERS: [&str; 8] = [
+        "lighter-soft",
+        "lighter",
+        "lighter-strong",
+        "darker-soft",
+        "darker",
+        "darker-strong",
+        "faded",
+        "subtle",
+    ];
     for (k, v) in tokens {
         // A binding is a bare palette name, or { ref, filter } for derived colours.
         let reference = if let Some(s) = v.as_str() {
@@ -773,6 +788,30 @@ mod tests {
         let mut v = good();
         v["format"] = json!("not-legit");
         assert!(validate_theme(&v).is_err());
+    }
+
+    // The filter list must mirror TOKEN_FILTERS in src/theme/filters.ts:
+    // a filter the editor offers but this list omits makes save_theme reject
+    // a theme the frontend validated.
+    #[test]
+    fn accepts_every_frontend_filter() {
+        for filter in [
+            "lighter-soft",
+            "lighter",
+            "lighter-strong",
+            "darker-soft",
+            "darker",
+            "darker-strong",
+            "faded",
+            "subtle",
+        ] {
+            let mut v = good();
+            v["tokens"]["panel.bg"] = json!({ "ref": "bg", "filter": filter });
+            assert!(
+                validate_theme(&v).is_ok(),
+                "filter {filter:?} rejected by validate_theme"
+            );
+        }
     }
 
     #[test]
