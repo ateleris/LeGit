@@ -11,7 +11,12 @@ import { useRepoStore } from "../../store/repos";
  * for the new repo; a blind clear-on-repo-change would then clobber the
  * just-delivered selection back to null. Also deliberately NOT run on first
  * mount: under StrictMode the second effect pass would likewise clobber an
- * already-delivered payload (original rationale in ChangedFilesPanel).
+ * already-delivered payload.
+ *
+ * Panels whose viewing context moved to the per-repo view-state store
+ * (store/panelViewState.ts) no longer need this - per-repo keying subsumes
+ * the clear. It remains for state that must NOT survive a repo switch, e.g.
+ * Interactive Rebase's plan.
  *
  * Returns `markDelivered`: call it whenever a summon payload is adopted. It
  * records the repo the payload targets (the active repo at delivery time -

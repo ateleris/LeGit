@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRepoStore } from "../../store/repos";
+import { usePanelViewState } from "../../store/panelViewState";
 import { useSettingsStore } from "../../store/settings";
 import { useSummonTarget } from "../../store/summon";
 import {
@@ -48,7 +49,11 @@ export interface MergeRequest {
 
 export function MergePanel() {
   const queryClient = useQueryClient();
-  const [request, setRequest] = useState<MergeRequest | null>(null);
+  // Per-repo view state (store/panelViewState.ts): the shown conflict
+  // survives a layout apply's dock rebuild and the slot swap with Diff, and
+  // each repo keeps its own across tab switches (the content query below
+  // only ever runs for the active repo's request).
+  const [request, setRequest] = usePanelViewState<MergeRequest | null>("merge.request", null);
   const [dirty, setDirty] = useState(false);
   // Conflicts view folds the common stretches; Full file shows everything.
   const [viewMode, setViewMode] = useState<"conflicts" | "full">(
@@ -87,17 +92,13 @@ export function MergePanel() {
   }, []);
   useSummonTarget<MergeRequest | null>("merge", onReceive);
 
-  // Drop state that belongs to a repo the user switched away from.
+  // On a repo switch the per-repo request key changes underneath us; an
+  // in-progress resolution and a pending switch belong to the previous
+  // repo's file, so drop them.
   const activeRepoId = useRepoStore((s) => s.activeRepoId);
   useEffect(() => {
-    setRequest((req) => {
-      if (req && req.repoId !== activeRepoId) {
-        setDirty(false);
-        setPending(null);
-        return null;
-      }
-      return req;
-    });
+    setDirty(false);
+    setPending(null);
   }, [activeRepoId]);
 
   const {

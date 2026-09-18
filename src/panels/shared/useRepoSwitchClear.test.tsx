@@ -1,8 +1,7 @@
 // @vitest-environment happy-dom
 //
-// Regression tests for the clear-on-repo-switch policy shared by Commit
-// Details and Changed Files (useRepoSwitchClear), under React.StrictMode
-// like the dev build.
+// Regression tests for the clear-on-repo-switch policy (useRepoSwitchClear,
+// used by Interactive Rebase), under React.StrictMode like the dev build.
 //
 // The key case (2026-08-06): "open submodule at this commit" summons the
 // commit to the panels right after openRepo, BEFORE they re-render for the

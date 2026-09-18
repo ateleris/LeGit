@@ -5,7 +5,12 @@
 // tolerance rules are pinned here - envelope format, bare-layout backward
 // compatibility, and never throwing on garbage.
 import { describe, it, expect } from "vitest";
-import { parseRepoLayoutEnvelope, sanitizeDockviewLayout } from "./layoutSnapshot";
+import {
+  parseRepoLayoutEnvelope,
+  sanitizeDockviewLayout,
+  substituteSlotPanels,
+  SLOT_PAIRS,
+} from "./layoutSnapshot";
 
 describe("parseRepoLayoutEnvelope", () => {
   it("parses the envelope format", () => {
@@ -157,5 +162,100 @@ describe("sanitizeDockviewLayout", () => {
     expect(sanitizeDockviewLayout(layout, KNOWN)).toBeNull();
     expect(sanitizeDockviewLayout(null, KNOWN)).toBeNull();
     expect(sanitizeDockviewLayout({ garbage: true }, KNOWN)).toBeNull();
+  });
+});
+
+describe("substituteSlotPanels", () => {
+  // Working Changes / Changed Files (and Diff / Merge) share one dock slot:
+  // a layout naming one member means "the slot", and applying it must keep
+  // the member currently showing - a selected commit's Changed Files stays
+  // when the layout was saved with Working Changes, and vice versa.
+  const leaf = (id: string, views: string[], activeView = views[0]) => ({
+    type: "leaf",
+    data: { views, activeView, id },
+    size: 100,
+  });
+  const panel = (id: string) => ({ id, contentComponent: id, title: id });
+  const wcLayout = () => ({
+    grid: {
+      root: {
+        type: "branch",
+        data: [leaf("1", ["log"]), leaf("2", ["working-changes", "diff"], "working-changes")],
+        size: 200,
+      },
+    },
+    panels: { log: panel("log"), "working-changes": panel("working-changes"), diff: panel("diff") },
+    activeGroup: "2",
+  });
+  const open = (...ids: string[]) => (id: string) => ids.includes(id);
+
+  it("declares the two slot pairs", () => {
+    expect(SLOT_PAIRS).toContainEqual(["working-changes", "changed-files"]);
+    expect(SLOT_PAIRS.some(([a, b]) =>
+      (a === "diff" && b === "merge") || (a === "merge" && b === "diff"),
+    )).toBe(true);
+  });
+
+  it("substitutes the saved member with the currently-showing one", () => {
+    const out = substituteSlotPanels(wcLayout(), open("changed-files", "log")) as {
+      grid: { root: { data: { data: { views: string[]; activeView: string } }[] } };
+      panels: Record<string, { id: string; contentComponent: string; title?: string }>;
+    };
+    expect(Object.keys(out.panels).sort()).toEqual(["changed-files", "diff", "log"]);
+    expect(out.panels["changed-files"].id).toBe("changed-files");
+    expect(out.panels["changed-files"].contentComponent).toBe("changed-files");
+    // The persisted title belongs to the replaced panel; sanitize (always run
+    // after) injects the registry title.
+    expect(out.panels["changed-files"].title).toBeUndefined();
+    expect(out.grid.root.data[1].data.views).toEqual(["changed-files", "diff"]);
+    expect(out.grid.root.data[1].data.activeView).toBe("changed-files");
+  });
+
+  it("substitutes in the other direction too", () => {
+    const layout = {
+      grid: { root: leaf("1", ["changed-files"]) },
+      panels: { "changed-files": panel("changed-files") },
+    };
+    const out = substituteSlotPanels(layout, open("working-changes")) as {
+      panels: Record<string, unknown>;
+    };
+    expect(Object.keys(out.panels)).toEqual(["working-changes"]);
+  });
+
+  it("keeps the saved member when it is itself the one showing", () => {
+    const layout = wcLayout();
+    expect(substituteSlotPanels(layout, open("working-changes", "log"))).toBe(layout);
+  });
+
+  it("does not substitute when the layout names both members", () => {
+    const layout = {
+      grid: { root: leaf("1", ["working-changes", "changed-files"]) },
+      panels: {
+        "working-changes": panel("working-changes"),
+        "changed-files": panel("changed-files"),
+      },
+    };
+    expect(substituteSlotPanels(layout, open("changed-files"))).toBe(layout);
+  });
+
+  it("does not substitute when neither or both members are currently open", () => {
+    const layout = wcLayout();
+    expect(substituteSlotPanels(layout, open("log"))).toBe(layout);
+    expect(substituteSlotPanels(layout, open("working-changes", "changed-files"))).toBe(layout);
+  });
+
+  it("handles the Diff/Merge pair the same way", () => {
+    const out = substituteSlotPanels(wcLayout(), open("working-changes", "merge")) as {
+      grid: { root: { data: { data: { views: string[] } }[] } };
+      panels: Record<string, unknown>;
+    };
+    expect(Object.keys(out.panels).sort()).toEqual(["log", "merge", "working-changes"]);
+    expect(out.grid.root.data[1].data.views).toEqual(["working-changes", "merge"]);
+  });
+
+  it("passes foreign shapes through untouched", () => {
+    expect(substituteSlotPanels(null, open("changed-files"))).toBeNull();
+    const garbage = { garbage: true };
+    expect(substituteSlotPanels(garbage, open("changed-files"))).toBe(garbage);
   });
 });

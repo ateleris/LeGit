@@ -40,6 +40,15 @@ lives in the git log and the GitHub release notes.
 
 ### Fixed
 
+- Panels no longer lose what they were showing when a layout is applied or a
+  panel is closed and reopened: selections (Working Changes, Log, Changed
+  Files), the open diff/merge/file view, log search and filters, and the
+  Compare range now survive - and each repo remembers its own across tab
+  switches.
+- Applying a layout keeps the slot-sharing panel you are currently using:
+  with a commit selected, Changed Files stays in place of a layout's Working
+  Changes (and vice versa), and an in-progress Merge stays where the layout
+  has Diff.
 - Saving a theme that uses the "Lighter (40%)" or "Darker (40%)" filters no
   longer fails validation.
 - A theme's per-panel `panel.border` override now also colours the panel's

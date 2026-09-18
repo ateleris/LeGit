@@ -6,7 +6,7 @@ import { useSignatureStore } from "../../store/signatures";
 import { useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
-import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
+import { usePanelViewState } from "../../store/panelViewState";
 import { repoCommitDetails } from "../../lib/commands";
 import { formatFull, formatRelative } from "../../lib/time";
 import type { CommitDetails, CommitId, SignatureVerification } from "../../lib/types";
@@ -16,21 +16,20 @@ import { STALE } from "../../lib/queryTiming";
 /** Commit Details panel — receives a CommitId payload from the summon mechanism. */
 export function CommitDetailsPanel() {
   const repo = useActiveRepo();
-  const [selectedId, setSelectedId] = useState<CommitId | null>(null);
-
-  // Reset on an actual repo change - except when the selection was summoned
-  // for the repo being switched to (open-submodule-at-commit), and not on
-  // first mount (StrictMode). Full rationale in useRepoSwitchClear.
-  const markDelivered = useRepoSwitchClear(
-    repo?.id,
-    useCallback(() => setSelectedId(null), []),
+  // Per-repo view state (store/panelViewState.ts): survives a layout apply's
+  // dock rebuild and panel close/reopen, and each repo keeps its own
+  // selection across tab switches - it also covers the summoned-for-the-new-
+  // repo delivery race that useRepoSwitchClear used to handle (writes key by
+  // the active repo at call time).
+  const [selectedId, setSelectedId] = usePanelViewState<CommitId | null>(
+    "commit-details.selectedId",
+    null,
   );
 
   const onReceive = useCallback((id: unknown) => {
     if (typeof id !== "string") return;
     setSelectedId(id as CommitId);
-    markDelivered();
-  }, [markDelivered]);
+  }, [setSelectedId]);
 
   useSummonTarget("commit-details", onReceive);
 

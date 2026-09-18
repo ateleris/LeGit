@@ -3,6 +3,7 @@ import { PanelError } from "../shared/PanelError";
 import { segStyle } from "../shared/segmented";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRepoStore } from "../../store/repos";
+import { usePanelViewState } from "../../store/panelViewState";
 import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
 import { useSummonTarget } from "../../store/summon";
 import {
@@ -100,7 +101,11 @@ function sameTarget(a: DiffRequest | null, b: DiffRequest | null): boolean {
  */
 export function DiffPanel() {
   const queryClient = useQueryClient();
-  const [request, setRequest] = useState<DiffRequest | null>(null);
+  // Per-repo view state (store/panelViewState.ts): the shown diff survives a
+  // layout apply's dock rebuild and the slot swap with Merge, and each repo
+  // keeps its own across tab switches (the query below only ever runs for
+  // the active repo's request).
+  const [request, setRequest] = usePanelViewState<DiffRequest | null>("diff.request", null);
   const [mode, setMode] = useState<DiffViewMode>(() => loadPref(MODE_KEY, "inline"));
   const [contextMode, setContextMode] = useState<ContextMode>(() =>
     loadPref(CONTEXT_KEY, "chunked")
@@ -134,20 +139,14 @@ export function DiffPanel() {
   }, []);
   useSummonTarget<DiffRequest | null>("diff", onReceive);
 
-  // Drop a diff that belongs to a repository the user has switched away from —
-  // its content (and any stage/unstage actions) no longer apply. Unsaved edits
-  // are dropped too: they belong to the other repo's file, which is untouched
-  // on disk.
+  // On a repo switch the per-repo request key changes underneath us: the
+  // panel shows the new repo's own diff (or the placeholder). Unsaved edits
+  // and a pending switch belong to the previous repo's file - which is
+  // untouched on disk - so drop them.
   const activeRepoId = useRepoStore((s) => s.activeRepoId);
   useEffect(() => {
-    setRequest((req) => {
-      if (req && req.repoId !== activeRepoId) {
-        setDirty(false);
-        setPending(null);
-        return null;
-      }
-      return req;
-    });
+    setDirty(false);
+    setPending(null);
   }, [activeRepoId]);
 
   const context = contextMode === "full" ? FULL_FILE_CONTEXT : CHUNKED_CONTEXT;
@@ -163,9 +162,9 @@ export function DiffPanel() {
     queryKey: [request?.repoId, "diff", request?.source, request?.path, request?.oldPath, context],
     queryFn: () =>
       repoDiff(request!.repoId, request!.source, request!.path, request!.oldPath ?? null, context),
-    // Only diff the ACTIVE repo: a request left over from the previous repo must
-    // never query (its path doesn't exist in the new repo). The effect above
-    // also clears it; this guards the render before that runs. While dirty,
+    // Only diff the ACTIVE repo: the per-repo request key makes a mismatch
+    // impossible after the switch renders, but this guards the render where
+    // the store subscriptions have not caught up yet. While dirty,
     // refetches are deferred entirely: a refetch rebuilds the editor and would
     // silently discard the user's unsaved edits (React Query keeps the cached
     // data, and pending invalidations run when re-enabled after save/discard).

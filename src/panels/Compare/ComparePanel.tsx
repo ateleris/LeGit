@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { PanelError } from "../shared/PanelError";
-import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
+import { usePanelViewState } from "../../store/panelViewState";
 import { useQuery } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
@@ -51,20 +51,33 @@ interface SubmittedRange {
 export function ComparePanel() {
   const repo = useActiveRepo();
 
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("HEAD");
-  const [mode, setMode] = useState<CompareMode>("two-dot");
+  // Per-repo view state (store/panelViewState.ts): the compared range and
+  // file selection survive a layout apply's dock rebuild and panel
+  // close/reopen, and each repo keeps its own across tab switches - it also
+  // covers the summoned-for-the-new-repo delivery race that
+  // useRepoSwitchClear used to handle (writes key by the active repo at call
+  // time).
+  const [from, setFrom] = usePanelViewState("compare.from", "");
+  const [to, setTo] = usePanelViewState("compare.to", "HEAD");
+  const [mode, setMode] = usePanelViewState<CompareMode>("compare.mode", "two-dot");
   // The submitted range — compare runs on demand, not per keystroke.
-  const [range, setRange] = useState<SubmittedRange | null>(null);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  // Merge-base resolution failure (three-dot only) - shown in place of results.
+  const [range, setRange] = usePanelViewState<SubmittedRange | null>("compare.range", null);
+  const [selectedPath, setSelectedPath] = usePanelViewState<string | null>(
+    "compare.selectedPath",
+    null,
+  );
+  // Merge-base resolution failure (three-dot only) - shown in place of
+  // results. Deliberately not per-repo state: it belongs to the submit that
+  // produced it, so a repo switch discards it.
   const [resolveError, setResolveError] = useState<string | null>(null);
+  useEffect(() => setResolveError(null), [repo?.id]);
 
-  // Deliberately LOCAL, unlike Changed Files / Working Changes: those two
-  // share a panel slot, so their toggles flipping together reads as one
-  // view - Compare is its own surface and keeps its own mode (seeded from
-  // the shared preference on mount, not persisted).
-  const [viewMode, setViewMode] = useState<ViewMode>(() =>
+  // Deliberately its OWN mode, unlike Changed Files / Working Changes: those
+  // two share a panel slot, so their toggles flipping together reads as one
+  // view - Compare is its own surface (seeded from the shared preference,
+  // session-remembered per repo, not persisted).
+  const [viewMode, setViewMode] = usePanelViewState<ViewMode>(
+    "compare.viewMode",
     useSettingsStore.getState().settings?.changed_files_view_mode === "tree" ? "tree" : "flat",
   );
   const { rowHeight, iconSize } = useFileRowMetrics();
@@ -75,22 +88,7 @@ export function ComparePanel() {
     setRange(next);
     setSelectedPath(null);
     useSummonStore.getState().notifyIfOpen("diff", null);
-  }, []);
-
-  // Reset when the repo changes - the revs (and any resolved merge base)
-  // belong to the previous repo; the repo-keyed query would otherwise re-run
-  // them against the new one. Except when the range was summoned FOR the
-  // repo being switched to, and not on first mount (useRepoSwitchClear).
-  const markDelivered = useRepoSwitchClear(
-    repo?.id,
-    useCallback(() => {
-      setFrom("");
-      setTo("HEAD");
-      setRange(null);
-      setSelectedPath(null);
-      setResolveError(null);
-    }, []),
-  );
+  }, [setRange, setSelectedPath]);
 
   const onReceive = useCallback((payload: unknown) => {
     const p = payload as Partial<CompareRequest> | null;
@@ -101,9 +99,8 @@ export function ComparePanel() {
       setMode("two-dot"); // a summoned range is a direct snapshot compare
       setResolveError(null);
       applyRange({ ...next, displayFrom: next.from });
-      markDelivered();
     }
-  }, [applyRange, markDelivered]);
+  }, [applyRange, setFrom, setTo, setMode]);
   useSummonTarget("compare", onReceive);
 
   const { data: files = [], isFetching, isError, error, refetch } = useQuery<CommitFileChange[]>({

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { PanelError } from "../shared/PanelError";
 import { useQuery } from "@tanstack/react-query";
 import { EditorState, StateEffect } from "@codemirror/state";
@@ -16,7 +16,7 @@ import { ImagePane } from "../shared/ImagePane";
 import { useFilePreview } from "../../lib/useFilePreview";
 import { parseLfsPointer } from "../../lib/lfsPointer";
 import { formatByteSize } from "../../lib/formatBytes";
-import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
+import { usePanelViewState } from "../../store/panelViewState";
 import { baseTheme, readOnly } from "../Diff/DiffEditor";
 import { loadLanguageForPath, syntaxColorTheme } from "../Diff/syntaxLanguages";
 import { STALE } from "../../lib/queryTiming";
@@ -88,22 +88,21 @@ function FileContentView({
  */
 export function FileViewPanel() {
   const repo = useActiveRepo();
-  const [request, setRequest] = useState<FileViewRequest | null>(null);
-
-  // Reset when the repo changes (the request belongs to the previous repo) -
-  // except when the request was summoned FOR the repo being switched to, and
-  // not on first mount. Full rationale in useRepoSwitchClear.
-  const markDelivered = useRepoSwitchClear(
-    repo?.id,
-    useCallback(() => setRequest(null), []),
+  // Per-repo view state (store/panelViewState.ts): the shown file survives a
+  // layout apply's dock rebuild and panel close/reopen, and each repo keeps
+  // its own across tab switches - it also covers the summoned-for-the-new-
+  // repo delivery race that useRepoSwitchClear used to handle (writes key by
+  // the active repo at call time).
+  const [request, setRequest] = usePanelViewState<FileViewRequest | null>(
+    "file-view.request",
+    null,
   );
 
   const onReceive = useCallback((payload: unknown) => {
     if (isFileViewRequest(payload)) {
       setRequest(payload);
-      markDelivered();
     }
-  }, [markDelivered]);
+  }, [setRequest]);
   useSummonTarget("file-view", onReceive);
 
   // Working-tree mode when no rev is given: read the file from disk (works for
