@@ -1172,6 +1172,12 @@ export const savePullStrategy = (strategy: PullStrategy) =>
 export const saveStashIncludeUntracked = (includeUntracked: boolean) =>
   invoke<void>("save_stash_include_untracked", { includeUntracked });
 
+export const saveLaneColoredBranchChips = (enabled: boolean) =>
+  invoke<void>("save_lane_colored_branch_chips", { enabled });
+
+export const saveStashBaseLaneColor = (enabled: boolean) =>
+  invoke<void>("save_stash_base_lane_color", { enabled });
+
 // --- remote sync (fetch / pull / push) ---
 //
 // fetch/pull/push take a frontend-generated `opId` so the op can be cancelled
@@ -1257,8 +1263,12 @@ export const saveTagsSortMode = (mode: string) =>
 export const saveUiFontSize = (size: number) =>
   invoke<number>("save_ui_font_size", { size });
 
-export const savePanelChrome = (gap: number, radius: number) =>
-  invoke<{ gap: number; radius: number }>("save_panel_chrome", { gap, radius });
+export const savePanelChrome = (gap: number, radius: number, border: number) =>
+  invoke<{ gap: number; radius: number; border: number }>("save_panel_chrome", {
+    gap,
+    radius,
+    border,
+  });
 
 // --- commits graph metrics ---
 

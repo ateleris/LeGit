@@ -8,6 +8,7 @@ import { useLayoutsStore } from "./store/layouts";
 import { useSettingsStore } from "./store/settings";
 import { useGitStatusStore } from "./store/git-status";
 import { useRepoStore } from "./store/repos";
+import { installMacAppMenu } from "./menu/macAppMenu";
 import { GitSetupGate } from "./panels/Setup/GitSetupGate";
 import { AppLayout } from "./panels/AppLayout";
 import { ErrorBoundary } from "./panels/ErrorBoundary";
@@ -73,7 +74,11 @@ export function App() {
         await initRepos();
         // Not boot-critical (the View menu re-lists on open) — after repos so
         // it never delays the first paint; failures degrade to an empty list.
-        initLayouts().catch((e) => console.warn("failed to load layouts", e));
+        // The macOS menu bar installs after layouts so its View section lists
+        // them (it also self-rebuilds on later layout changes).
+        initLayouts()
+          .catch((e) => console.warn("failed to load layouts", e))
+          .finally(() => void installMacAppMenu());
       } finally {
         // Each init is non-throwing internally, but a failure here must never
         // strand the user on the splash.

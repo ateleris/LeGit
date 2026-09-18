@@ -29,6 +29,8 @@ import {
   setWorkingChangesSectionOrder,
   saveSwitchDirtyBehavior,
   savePullStrategy,
+  saveLaneColoredBranchChips,
+  saveStashBaseLaneColor,
   saveStashIncludeUntracked,
   savePushRecurseSubmodules,
 } from "../lib/commands";
@@ -72,22 +74,34 @@ export function applyUiFontSize(size: number, root: HTMLElement = document.docum
 /** Mirror the backend clamps in `save_panel_chrome`. */
 export const PANEL_GAP_MAX = 16;
 export const PANEL_RADIUS_MAX = 16;
+export const PANEL_BORDER_WIDTH_MAX = 8;
+export const PANEL_BORDER_WIDTH_DEFAULT = 1;
+
+/** Whether the `.legit-panel-chrome` styles are armed: any non-default value
+ * switches from the flush look (shared separator lines) to per-group chrome.
+ * A non-default border width alone counts - the thickness only exists on the
+ * per-group borders, so setting it must arm them. */
+export function panelChromeArmed(gap: number, radius: number, borderWidth: number): boolean {
+  return gap > 0 || radius > 0 || borderWidth !== PANEL_BORDER_WIDTH_DEFAULT;
+}
 
 /** Write the panel chrome to its CSS vars and arm the `.legit-panel-chrome`
  * styles (per-group borders replacing the between-group separators, outer
  * dock padding). The radius maps onto dockview's `--dv-border-radius`; the
  * BETWEEN-groups gap additionally flows into dockview's `theme.gap`
  * (useDockTheme) - the CSS var covers the dock-edge padding, which dockview's
- * gap does not. With 0/0 the class is absent and the flush look stays
- * untouched. */
+ * gap does not. With every value at its default the class is absent and the
+ * flush look stays untouched. */
 export function applyPanelChrome(
   gap: number,
   radius: number,
+  borderWidth: number,
   root: HTMLElement = document.documentElement,
 ) {
   root.style.setProperty("--legit-panel-gap", `${gap}px`);
   root.style.setProperty("--legit-panel-radius", `${radius}px`);
-  root.classList.toggle("legit-panel-chrome", gap > 0 || radius > 0);
+  root.style.setProperty("--legit-panel-border-width", `${borderWidth}px`);
+  root.classList.toggle("legit-panel-chrome", panelChromeArmed(gap, radius, borderWidth));
 }
 
 /** Largest dot radius that fits a cell of the given height/width without
@@ -136,7 +150,7 @@ interface SettingsStore {
   setRefsSortMode: (mode: RefsSortMode) => Promise<void>;
   setTagsSortMode: (mode: RefsSortMode) => Promise<void>;
   setUiFontSize: (size: number) => Promise<void>;
-  setPanelChrome: (gap: number, radius: number) => Promise<void>;
+  setPanelChrome: (gap: number, radius: number, borderWidth: number) => Promise<void>;
   setWatcherEnabled: (enabled: boolean) => Promise<void>;
   setConfirmDiscard: (confirm: boolean) => Promise<void>;
   setDetectCaseRenames: (enabled: boolean) => Promise<void>;
@@ -158,6 +172,8 @@ interface SettingsStore {
   setSwitchDirtyBehavior: (behavior: SwitchDirtyBehavior) => Promise<void>;
   setPullStrategy: (strategy: PullStrategy) => Promise<void>;
   setStashIncludeUntracked: (include: boolean) => Promise<void>;
+  setLaneColoredBranchChips: (enabled: boolean) => Promise<void>;
+  setStashBaseLaneColor: (enabled: boolean) => Promise<void>;
   setPushRecurseSubmodules: (mode: PushRecurseMode | null) => Promise<void>;
 }
 
@@ -168,7 +184,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     if (get().settings) return;
     const settings = await getGlobalSettings();
     applyUiFontSize(settings.ui_font_size ?? UI_FONT_SIZE_DEFAULT);
-    applyPanelChrome(settings.panel_gap ?? 0, settings.panel_corner_radius ?? 0);
+    applyPanelChrome(
+      settings.panel_gap ?? 0,
+      settings.panel_corner_radius ?? 0,
+      settings.panel_border_width ?? PANEL_BORDER_WIDTH_DEFAULT,
+    );
     set({ settings });
   },
 
@@ -378,6 +398,18 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     if (s) set({ settings: { ...s, stash_include_untracked: include } });
   },
 
+  async setLaneColoredBranchChips(enabled) {
+    await saveLaneColoredBranchChips(enabled);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, lane_colored_branch_chips: enabled } });
+  },
+
+  async setStashBaseLaneColor(enabled) {
+    await saveStashBaseLaneColor(enabled);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, stash_base_lane_color: enabled } });
+  },
+
   async setPushRecurseSubmodules(mode) {
     await savePushRecurseSubmodules(mode);
     const s = get().settings;
@@ -398,18 +430,27 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
   },
 
-  async setPanelChrome(gap, radius) {
+  async setPanelChrome(gap, radius, borderWidth) {
     // Apply immediately for a live preview, then persist (backend re-clamps).
     // The gap reaches the docks reactively via the settings state (theme prop).
-    applyPanelChrome(clamp(gap, 0, PANEL_GAP_MAX), clamp(radius, 0, PANEL_RADIUS_MAX));
-    const stored = await savePanelChrome(
+    const clamped = [
       clamp(gap, 0, PANEL_GAP_MAX),
       clamp(radius, 0, PANEL_RADIUS_MAX),
-    );
-    applyPanelChrome(stored.gap, stored.radius);
+      clamp(borderWidth, 0, PANEL_BORDER_WIDTH_MAX),
+    ] as const;
+    applyPanelChrome(...clamped);
+    const stored = await savePanelChrome(...clamped);
+    applyPanelChrome(stored.gap, stored.radius, stored.border);
     const s = get().settings;
     if (s) {
-      set({ settings: { ...s, panel_gap: stored.gap, panel_corner_radius: stored.radius } });
+      set({
+        settings: {
+          ...s,
+          panel_gap: stored.gap,
+          panel_corner_radius: stored.radius,
+          panel_border_width: stored.border,
+        },
+      });
     }
   },
 }));

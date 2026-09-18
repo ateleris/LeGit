@@ -8,16 +8,20 @@ import { confirmDialog } from "../../store/confirm";
 import { useConfirmDestructive } from "../../store/settings";
 import { contrastRatio, wcagBadge, type WcagBadge } from "../../theme/contrast";
 import { DEFAULT_THEME } from "../../theme/defaults";
-import { CONTRAST_PAIRS, TOKEN_CONTRACT, type ContrastPair } from "../../theme/tokens";
+import { CONTRAST_PAIRS, PANEL_OVERRIDE_TOKENS, TOKEN_CONTRACT, type ContrastPair } from "../../theme/tokens";
 import {
   bindingFilter,
   bindingRef,
   makeBinding,
+  overridePaletteRefs,
+  renamePaletteRefInOverrides,
   resolveBindingColor,
+  setPanelOverrideBinding,
   TOKEN_FILTERS,
   effectiveLaneChipFilters,
   withRef,
 } from "../../theme/filters";
+import { GLOBAL_PANELS, REPO_PANELS } from "../descriptors";
 import { validateTheme } from "../../theme/validate";
 import type { ThemeDocument, ThemeTokenBinding, TokenFilterId } from "../../lib/types";
 import { Button } from "../shared/buttons";
@@ -54,6 +58,7 @@ export function ThemeEditorPanel() {
   const cancelEditing = useThemeStore((s) => s.cancelEditing);
   const updateDraftPalette = useThemeStore((s) => s.updateDraftPalette);
   const updateDraftTokens = useThemeStore((s) => s.updateDraftTokens);
+  const updateDraftPanelOverrides = useThemeStore((s) => s.updateDraftPanelOverrides);
   const updateDraftMeta = useThemeStore((s) => s.updateDraftMeta);
   const saveDraftAs = useThemeStore((s) => s.saveDraftAs);
   const deleteUserTheme = useThemeStore((s) => s.deleteUserTheme);
@@ -103,7 +108,7 @@ export function ThemeEditorPanel() {
     );
   }
 
-  const setMeta = (patch: { name?: string; author?: string; description?: string; laneColoredBranchChips?: boolean; laneChipFilters?: ThemeDocument["laneChipFilters"]; stashBaseLaneColor?: boolean }) => {
+  const setMeta = (patch: { name?: string; author?: string; description?: string; laneChipFilters?: ThemeDocument["laneChipFilters"] }) => {
     if (readOnly) return;
     if (!draft) startEditing();
     updateDraftMeta(patch);
@@ -128,13 +133,21 @@ export function ThemeEditorPanel() {
     }
     updateDraftPalette(palette);
     updateDraftTokens(tokens);
+    if (current.panelOverrides) {
+      updateDraftPanelOverrides(renamePaletteRefInOverrides(current.panelOverrides, oldName, newName));
+    }
   };
 
   const removePaletteEntry = (name: string) => {
     const current = (draft ?? activeDoc)!;
-    // Guard: never remove a palette entry a token still references (it would
-    // leave the binding dangling). The UI also disables the button.
-    if (Object.values(current.tokens).some((b) => bindingRef(b) === name)) return;
+    // Guard: never remove a palette entry a token or panel override still
+    // references (it would leave the binding dangling). The UI also disables
+    // the button.
+    if (
+      Object.values(current.tokens).some((b) => bindingRef(b) === name) ||
+      overridePaletteRefs(current.panelOverrides).has(name)
+    )
+      return;
     if (!draft) startEditing();
     const palette = { ...(draft ?? activeDoc)!.palette };
     delete palette[name];
@@ -154,6 +167,26 @@ export function ThemeEditorPanel() {
     if (!draft) startEditing();
     const current = (draft ?? activeDoc)!;
     updateDraftTokens({ ...current.tokens, [token]: makeBinding(paletteRef, filter) });
+  };
+
+  // ref null = back to "inherit" (the override is removed).
+  const setPanelOverride = (
+    panelId: string,
+    token: string,
+    paletteRef: string | null,
+    filter: TokenFilterId | null,
+  ) => {
+    if (readOnly) return;
+    if (!draft) startEditing();
+    const current = (draft ?? activeDoc)!;
+    updateDraftPanelOverrides(
+      setPanelOverrideBinding(
+        current.panelOverrides,
+        panelId,
+        token,
+        paletteRef ? makeBinding(paletteRef, filter) : null,
+      ),
+    );
   };
 
   // Reset a token to its built-in default by dropping the theme's override, so
@@ -339,7 +372,12 @@ export function ThemeEditorPanel() {
         <SettingsGroup id="theme-editor.palette" title="Palette">
           <PaletteEditor
             palette={working.palette}
-            usedNames={new Set(Object.values(working.tokens).map(bindingRef))}
+            usedNames={
+              new Set([
+                ...Object.values(working.tokens).map(bindingRef),
+                ...overridePaletteRefs(working.panelOverrides),
+              ])
+            }
             disabled={readOnly}
             onChange={setPaletteValue}
             onRename={renamePaletteEntry}
@@ -354,38 +392,20 @@ export function ThemeEditorPanel() {
             <div style={{ fontWeight: 600, marginBottom: "0.333em" }}>{group}</div>
             {group === "Refs" && (
               <div style={{ margin: "0.167em 0 0.667em" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginBottom: "0.5em" }}>
-                  <input
-                    type="checkbox"
-                    id="theme-stash-base-lane"
-                    checked={working.stashBaseLaneColor ?? false}
-                    onChange={(e) => setMeta({ stashBaseLaneColor: e.target.checked })}
-                    disabled={readOnly}
-                  />
-                  <label htmlFor="theme-stash-base-lane" style={{ cursor: "pointer" }}>
-                    Color stashes by their base commit's lane
-                  </label>
+                {/* The on/off toggle is a GLOBAL setting (Global Settings →
+                    Commits graph); the theme owns only how the chip parts
+                    derive from the lane colour. */}
+                <div style={{ color: "var(--subtle-fg)", marginBottom: "0.5em" }}>
+                  Used while "Color branch chips by graph lane" is enabled in
+                  Global Settings → Commits graph.
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.667em" }}>
-                  <input
-                    type="checkbox"
-                    id="theme-lane-colored-chips"
-                    checked={working.laneColoredBranchChips ?? false}
-                    onChange={(e) => setMeta({ laneColoredBranchChips: e.target.checked })}
-                    disabled={readOnly}
-                  />
-                  <label htmlFor="theme-lane-colored-chips" style={{ cursor: "pointer" }}>
-                    Color branch chips by graph lane
-                  </label>
-                </div>
-                {(working.laneColoredBranchChips ?? false) &&
-                  (
-                    [
-                      ["fg", "branch chip foreground"],
-                      ["border", "branch chip border"],
-                      ["bg", "branch chip background"],
-                    ] as const
-                  ).map(([part, partLabel]) => (
+                {(
+                  [
+                    ["fg", "branch chip foreground"],
+                    ["border", "branch chip border"],
+                    ["bg", "branch chip background"],
+                  ] as const
+                ).map(([part, partLabel]) => (
                     // Same grid/height/spacing as the token rows below, with
                     // the filter dropdown in the token rows' filter column.
                     <div
@@ -445,12 +465,6 @@ export function ThemeEditorPanel() {
               const color = current
                 ? resolveBindingColor(current, { ...DEFAULT_THEME.palette, ...working.palette })
                 : undefined;
-              // Lane-coloured chips derive every branch/remote chip part
-              // from the graph lane at render time - those tokens are unused
-              // while the toggle is on.
-              const laneOverridden =
-                (working.laneColoredBranchChips ?? false) &&
-                (t.name.startsWith("ref.branch.") || t.name.startsWith("ref.remote."));
               return (
                 <div
                   key={t.name}
@@ -463,14 +477,12 @@ export function ThemeEditorPanel() {
                     // Dimmed while the theme has no explicit binding — the
                     // shown value is the built-in default fallback. Picking
                     // anything makes it explicit.
-                    opacity: laneOverridden || isFallback ? 0.65 : 1,
+                    opacity: isFallback ? 0.65 : 1,
                   }}
                   title={
-                    laneOverridden
-                      ? `${t.documentation}\n\nUnused while "Color branch chips by graph lane" is on - the chip derives this from the lane colour.`
-                      : isFallback
-                        ? `${t.documentation}\n\nNot set in this theme — showing the built-in default. Selecting a value binds it explicitly.`
-                        : t.documentation
+                    isFallback
+                      ? `${t.documentation}\n\nNot set in this theme — showing the built-in default. Selecting a value binds it explicitly.`
+                      : t.documentation
                   }
                 >
                   <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "var(--fz-md)" }}>
@@ -479,7 +491,7 @@ export function ThemeEditorPanel() {
                   <select
                     value={currentRef}
                     onChange={(e) => setTokenBinding(t.name, e.target.value, currentFilter)}
-                    disabled={readOnly || laneOverridden}
+                    disabled={readOnly}
                   >
                     {!working.palette[currentRef] && (
                       // The default binding references a palette entry this
@@ -504,7 +516,7 @@ export function ThemeEditorPanel() {
                         (e.target.value || null) as TokenFilterId | null,
                       )
                     }
-                    disabled={readOnly || laneOverridden || !currentRef}
+                    disabled={readOnly || !currentRef}
                   >
                     <option value="">No filter</option>
                     {TOKEN_FILTERS.map((f) => (
@@ -556,8 +568,171 @@ export function ThemeEditorPanel() {
           </div>
         ))}
         </SettingsGroup>
+
+        <PanelOverridesSection working={working} readOnly={readOnly} onSet={setPanelOverride} />
       </div>
     </div>
+  );
+}
+
+/**
+ * Per-panel token overrides: rebind the PANEL_OVERRIDE_TOKENS for one panel
+ * (e.g. give the Commits panel its own background). Only the panel's own
+ * subtree is affected — the tab strip, menus, dialogs, and toasts keep the
+ * global colours.
+ */
+function PanelOverridesSection({
+  working,
+  readOnly,
+  onSet,
+}: {
+  working: ThemeDocument;
+  readOnly: boolean;
+  onSet: (panelId: string, token: string, paletteRef: string | null, filter: TokenFilterId | null) => void;
+}) {
+  const [panelId, setPanelId] = useState("log");
+  const overriddenPanels = new Set(Object.keys(working.panelOverrides ?? {}));
+  const mergedPalette = { ...DEFAULT_THEME.palette, ...working.palette };
+  const entry = working.panelOverrides?.[panelId] ?? {};
+  const caption =
+    overriddenPanels.size > 0
+      ? `${overriddenPanels.size} panel${overriddenPanels.size === 1 ? "" : "s"} overridden`
+      : undefined;
+  // Overridden panels render bold (font-weight is one of the few styles the
+  // WebView applies to native <option>s).
+  const optionStyle = (id: string) =>
+    overriddenPanels.has(id) ? { fontWeight: 600 } : undefined;
+
+  return (
+    <SettingsGroup
+      id="theme-editor.panel-overrides"
+      title="Panel overrides"
+      caption={caption}
+      defaultOpen={false}
+    >
+      <div style={{ color: "var(--subtle-fg)", marginBottom: "0.667em" }}>
+        Give a single panel its own surface colours. Panel tabs, menus, and dialogs
+        keep the theme's global colours.
+      </div>
+      <label
+        style={{ display: "inline-flex", alignItems: "center", gap: "0.5em", marginBottom: "0.667em" }}
+      >
+        Panel:
+        <select value={panelId} onChange={(e) => setPanelId(e.target.value)}>
+          <optgroup label="Repository">
+            {REPO_PANELS.map((p) => (
+              <option key={p.id} value={p.id} style={optionStyle(p.id)}>
+                {p.title}
+              </option>
+            ))}
+          </optgroup>
+          <optgroup label="Global">
+            {GLOBAL_PANELS.map((p) => (
+              <option key={p.id} value={p.id} style={optionStyle(p.id)}>
+                {p.title}
+              </option>
+            ))}
+          </optgroup>
+        </select>
+      </label>
+      {PANEL_OVERRIDE_TOKENS.map((token) => {
+        const desc = TOKEN_CONTRACT.find((t) => t.name === token);
+        const bound = entry[token];
+        const boundValid = bound !== undefined && mergedPalette[bindingRef(bound)] !== undefined;
+        // Inheriting rows show (dimmed) what the panel actually renders with:
+        // the theme-wide effective binding.
+        const current = boundValid ? bound : effectiveBinding(working, token);
+        const currentRef = boundValid ? bindingRef(bound!) : "";
+        const currentFilter = current ? bindingFilter(current) : null;
+        const color = current ? resolveBindingColor(current, mergedPalette) : undefined;
+        return (
+          <div
+            key={token}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr 0.6fr 20px 24px",
+              alignItems: "center",
+              gap: "0.5em",
+              padding: "0.167em 0",
+              opacity: boundValid ? 1 : 0.65,
+            }}
+            title={
+              boundValid
+                ? `${desc?.documentation ?? token}\n\nOverridden for this panel.`
+                : `${desc?.documentation ?? token}\n\nInheriting the theme-wide value. Picking a palette colour overrides it for this panel only.`
+            }
+          >
+            <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "var(--fz-md)" }}>
+              {token}
+            </span>
+            <select
+              value={currentRef}
+              onChange={(e) =>
+                onSet(panelId, token, e.target.value || null, boundValid ? currentFilter : null)
+              }
+              disabled={readOnly}
+            >
+              <option value="">Inherit</option>
+              {Object.keys(working.palette).map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+            <select
+              value={boundValid ? (currentFilter ?? "") : ""}
+              title="Derive a variant of the palette colour instead of adding another palette entry"
+              onChange={(e) =>
+                onSet(panelId, token, currentRef, (e.target.value || null) as TokenFilterId | null)
+              }
+              disabled={readOnly || !boundValid}
+            >
+              <option value="">No filter</option>
+              {TOKEN_FILTERS.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+            {bound !== undefined ? (
+              <button
+                onClick={() => onSet(panelId, token, null, null)}
+                disabled={readOnly}
+                title="Remove the override (inherit the theme-wide value)"
+                aria-label={`Remove ${token} override for this panel`}
+                style={{
+                  width: 20,
+                  height: 20,
+                  padding: 0,
+                  lineHeight: 1,
+                  fontSize: "var(--fz-md)",
+                  background: "transparent",
+                  border: "1px solid var(--panel-border)",
+                  borderRadius: 3,
+                  color: "var(--subtle-fg)",
+                  cursor: readOnly ? "default" : "pointer",
+                }}
+              >
+                ↺
+              </button>
+            ) : (
+              <span />
+            )}
+            <span
+              aria-hidden
+              style={{
+                display: "inline-block",
+                width: 16,
+                height: 16,
+                borderRadius: 3,
+                border: "1px solid var(--panel-border)",
+                background: color ?? "transparent",
+              }}
+            />
+          </div>
+        );
+      })}
+    </SettingsGroup>
   );
 }
 

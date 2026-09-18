@@ -38,3 +38,45 @@ export function computeEdgeSpans(
   }
   return spans;
 }
+
+export interface StashConnectorSpan {
+  /** The stash's row. */
+  fromRow: number;
+  /** The base commit's row. */
+  toRow: number;
+  /** The stash's lane — the lane the connector rides down and dies on. */
+  lane: LaneIndex;
+  /** The base commit's lane — the colour the connector paints in. */
+  baseLane: LaneIndex;
+}
+
+/**
+ * Stash-connector spans for the `stash_base_lane_color` setting: a stash's
+ * first-parent edge rides the stash's OWN lane down to the base and dies
+ * there as a jog (lanes.ts emits it same-lane), so painting the connector in
+ * the base's colour touches rows the stash's own cell never draws — the
+ * pass-through rows in between and the jog arc on the base's row. Stashes
+ * whose base is outside the window, or already on the same lane, need no
+ * recolouring and emit nothing.
+ */
+export function computeStashConnectorSpans(
+  rows: readonly { id: string; parents: readonly string[] }[],
+  stashIds: ReadonlySet<string>,
+  assignments: Map<string, LaneIndex>,
+  rowIndexById: Map<string, number>,
+): StashConnectorSpan[] {
+  const spans: StashConnectorSpan[] = [];
+  for (const row of rows) {
+    if (!stashIds.has(row.id)) continue;
+    const base = row.parents[0];
+    if (base === undefined) continue;
+    const fromRow = rowIndexById.get(row.id);
+    const toRow = rowIndexById.get(base);
+    const lane = assignments.get(row.id);
+    const baseLane = assignments.get(base);
+    if (fromRow === undefined || toRow === undefined) continue;
+    if (lane === undefined || baseLane === undefined || lane === baseLane) continue;
+    spans.push({ fromRow, toRow, lane, baseLane });
+  }
+  return spans;
+}

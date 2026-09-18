@@ -15,7 +15,7 @@ import {
 } from "../../lib/commands";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { openSubmoduleRepo } from "../../lib/submodules";
-import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
+import { usePanelViewState } from "../../store/panelViewState";
 import { notify } from "../../store/notifications";
 import type { CommitDetails, CommitFileChange, CommitId, DiffRequest, StashEntry } from "../../lib/types";
 import { formatAppError } from "../../lib/types";
@@ -37,8 +37,19 @@ import { STALE } from "../../lib/queryTiming";
 export function ChangedFilesPanel() {
   const repo = useActiveRepo();
   const queryClient = useQueryClient();
-  const [selectedId, setSelectedId] = useState<CommitId | null>(null);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  // Per-repo view state (store/panelViewState.ts): survives a layout apply's
+  // dock rebuild and the slot swap with Working Changes, and each repo keeps
+  // its own selection across tab switches - it also covers the summoned-for-
+  // the-new-repo delivery race that useRepoSwitchClear used to handle (writes
+  // key by the active repo at call time).
+  const [selectedId, setSelectedId] = usePanelViewState<CommitId | null>(
+    "changed-files.selectedId",
+    null,
+  );
+  const [selectedPath, setSelectedPath] = usePanelViewState<string | null>(
+    "changed-files.selectedPath",
+    null,
+  );
   // A path the summoner asked us to pre-select once this commit's files load
   // (File History → "select this file's row and open its diff").
   const [pendingSelectPath, setPendingSelectPath] = useState<string | null>(null);
@@ -51,18 +62,6 @@ export function ChangedFilesPanel() {
 
   // Row height and icons scale with the global UI font size.
   const { rowHeight, iconSize } = useFileRowMetrics();
-
-  // Clear the selection only when the repo actually changes — NOT on first
-  // mount (StrictMode would clobber a queued summon payload), and NOT when
-  // the selection was summoned for the repo being switched to
-  // (open-submodule-at-commit). Full rationale in useRepoSwitchClear.
-  const markDelivered = useRepoSwitchClear(
-    repo?.id,
-    useCallback(() => {
-      setSelectedId(null);
-      setSelectedPath(null);
-    }, []),
-  );
 
   const onReceive = useCallback((payload: unknown) => {
     // Payload is either a bare commit SHA (most callers) or
@@ -80,13 +79,12 @@ export function ChangedFilesPanel() {
     setSelectedId(id as CommitId);
     setSelectedPath(null);
     setPendingSelectPath(selectPath);
-    markDelivered();
     // No file is selected for the new commit yet — clear the Diff and Merge
     // panels (only if open). Both are always tied to a file selection.
     // (When `selectPath` is set, the effect below opens the diff once files load.)
     useSummonStore.getState().notifyIfOpen("diff", null);
     useSummonStore.getState().notifyIfOpen("merge", null);
-  }, [markDelivered]);
+  }, [setSelectedId, setSelectedPath]);
   useSummonTarget("changed-files", onReceive);
 
   const {

@@ -352,6 +352,8 @@ pub fn run() {
         commands::set_checkout_new_branch,
         commands::save_ui_font_size,
         commands::save_panel_chrome,
+        commands::save_lane_colored_branch_chips,
+        commands::save_stash_base_lane_color,
         commands::save_commits_graph_metrics,
     ]);
 

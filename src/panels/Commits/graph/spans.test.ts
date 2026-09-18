@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeEdgeSpans } from "./spans";
+import { computeEdgeSpans, computeStashConnectorSpans } from "./spans";
 import type { LaneEdge } from "./types";
 
 function edge(
@@ -39,5 +39,65 @@ describe("computeEdgeSpans", () => {
 
   it("ignores edges whose child is not in the window", () => {
     expect(computeEdgeSpans([edge("ghost", "c", 0, 0)], rowIndex, 4)).toEqual([]);
+  });
+});
+
+describe("computeStashConnectorSpans", () => {
+  const rows = [
+    { id: "stash", parents: ["base"] },
+    { id: "x", parents: ["base"] },
+    { id: "base", parents: [] },
+  ];
+  const rowIndexById = new Map(rows.map((r, i) => [r.id, i]));
+
+  it("spans from the stash row to the base row on the stash's lane, carrying the base lane", () => {
+    const assignments = new Map([
+      ["stash", 2],
+      ["x", 1],
+      ["base", 0],
+    ]);
+    expect(
+      computeStashConnectorSpans(rows, new Set(["stash"]), assignments, rowIndexById),
+    ).toEqual([{ fromRow: 0, toRow: 2, lane: 2, baseLane: 0 }]);
+  });
+
+  it("skips stashes whose base shares the lane (nothing to recolour)", () => {
+    const assignments = new Map([
+      ["stash", 0],
+      ["x", 1],
+      ["base", 0],
+    ]);
+    expect(
+      computeStashConnectorSpans(rows, new Set(["stash"]), assignments, rowIndexById),
+    ).toEqual([]);
+  });
+
+  it("skips stashes whose base is outside the loaded window", () => {
+    const orphanRows = [{ id: "stash", parents: ["unloaded"] }];
+    expect(
+      computeStashConnectorSpans(
+        orphanRows,
+        new Set(["stash"]),
+        new Map([["stash", 2]]),
+        new Map([["stash", 0]]),
+      ),
+    ).toEqual([]);
+  });
+
+  it("skips parentless stash rows and non-stash rows", () => {
+    const assignments = new Map([
+      ["stash", 2],
+      ["x", 1],
+      ["base", 0],
+    ]);
+    expect(
+      computeStashConnectorSpans(
+        [{ id: "stash", parents: [] }],
+        new Set(["stash"]),
+        assignments,
+        new Map([["stash", 0]]),
+      ),
+    ).toEqual([]);
+    expect(computeStashConnectorSpans(rows, new Set(), assignments, rowIndexById)).toEqual([]);
   });
 });

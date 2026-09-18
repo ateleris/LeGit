@@ -6,8 +6,11 @@ import {
   bindingRef,
   effectiveLaneChipFilters,
   makeBinding,
+  overridePaletteRefs,
   parseHexColor,
+  renamePaletteRefInOverrides,
   resolveBindingColor,
+  setPanelOverrideBinding,
   withRef,
 } from "./filters";
 
@@ -133,5 +136,51 @@ describe("effectiveLaneChipFilters", () => {
       border: null,
       bg: null,
     });
+  });
+});
+
+describe("panel-override palette helpers", () => {
+  const overrides = {
+    log: { "panel.bg": "accent", "panel.fg": { ref: "main-fg", filter: "lighter" } },
+    refs: { "panel.border": "accent" },
+  } as const;
+
+  it("overridePaletteRefs collects every referenced palette name", () => {
+    expect(overridePaletteRefs(overrides)).toEqual(new Set(["accent", "main-fg"]));
+    expect(overridePaletteRefs(undefined)).toEqual(new Set());
+  });
+
+  it("renamePaletteRefInOverrides rewrites refs keeping filters, untouched entries intact", () => {
+    expect(renamePaletteRefInOverrides(overrides, "accent", "brand")).toEqual({
+      log: { "panel.bg": "brand", "panel.fg": { ref: "main-fg", filter: "lighter" } },
+      refs: { "panel.border": "brand" },
+    });
+    expect(renamePaletteRefInOverrides(undefined, "a", "b")).toBeUndefined();
+  });
+});
+
+describe("setPanelOverrideBinding", () => {
+  it("adds a binding, creating the panel entry", () => {
+    expect(setPanelOverrideBinding(undefined, "log", "panel.bg", "accent")).toEqual({
+      log: { "panel.bg": "accent" },
+    });
+  });
+
+  it("replaces an existing binding without touching other panels", () => {
+    const prev = { log: { "panel.bg": "accent" }, refs: { "panel.fg": "main-fg" } };
+    expect(setPanelOverrideBinding(prev, "log", "panel.bg", { ref: "accent", filter: "darker" })).toEqual({
+      log: { "panel.bg": { ref: "accent", filter: "darker" } },
+      refs: { "panel.fg": "main-fg" },
+    });
+    expect(prev.log["panel.bg"]).toBe("accent");
+  });
+
+  it("null removes the binding, pruning empty panels and the empty map", () => {
+    const prev = { log: { "panel.bg": "accent", "panel.fg": "main-fg" } };
+    expect(setPanelOverrideBinding(prev, "log", "panel.bg", null)).toEqual({
+      log: { "panel.fg": "main-fg" },
+    });
+    expect(setPanelOverrideBinding({ log: { "panel.bg": "accent" } }, "log", "panel.bg", null)).toBeUndefined();
+    expect(setPanelOverrideBinding(undefined, "log", "panel.bg", null)).toBeUndefined();
   });
 });

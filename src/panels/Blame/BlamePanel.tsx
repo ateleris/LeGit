@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PanelError } from "../shared/PanelError";
-import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
+import { usePanelViewState } from "../../store/panelViewState";
 import { useQuery } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
@@ -44,38 +44,30 @@ export interface BlameRequest {
  */
 export function BlamePanel() {
   const repo = useActiveRepo();
-  const [path, setPath] = useState<string | null>(null);
-  const [rev, setRev] = useState<string | null>(null);
+  // Per-repo view state (store/panelViewState.ts): the blamed file survives a
+  // layout apply's dock rebuild and panel close/reopen, and each repo keeps
+  // its own across tab switches - it also covers the summoned-for-the-new-
+  // repo delivery race that useRepoSwitchClear used to handle (writes key by
+  // the active repo at call time).
+  const [path, setPath] = usePanelViewState<string | null>("blame.path", null);
+  const [rev, setRev] = usePanelViewState<string | null>("blame.rev", null);
   // Toolbar rev input draft - applied on Enter, kept in sync when the rev
   // changes through other paths (summon payload, per-hunk time travel).
   const [revDraft, setRevDraft] = useState("");
   useEffect(() => setRevDraft(rev ?? ""), [rev]);
 
-  // Reset when the repo changes (the path belongs to the previous repo) -
-  // except when the selection was summoned FOR the repo being switched to,
-  // and not on first mount. Full rationale in useRepoSwitchClear.
-  const markDelivered = useRepoSwitchClear(
-    repo?.id,
-    useCallback(() => {
-      setPath(null);
-      setRev(null);
-    }, []),
-  );
-
   const onReceive = useCallback((payload: unknown) => {
     if (typeof payload === "string") {
       setPath(payload);
       setRev(null);
-      markDelivered();
       return;
     }
     const p = payload as Partial<BlameRequest> | null;
     if (p && typeof p.path === "string") {
       setPath(p.path);
       setRev(typeof p.rev === "string" ? p.rev : null);
-      markDelivered();
     }
-  }, [markDelivered]);
+  }, [setPath, setRev]);
   useSummonTarget("blame", onReceive);
 
   const { data: hunks = [], isFetching, isError, error, refetch } = useQuery<BlameHunk[]>({

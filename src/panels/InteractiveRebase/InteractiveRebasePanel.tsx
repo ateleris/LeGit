@@ -9,7 +9,8 @@ import type { Commit, RebaseAction, RebaseRangeInfo, RebaseStep } from "../../li
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { OP_DOMAINS, useOpState } from "../../lib/useOpState";
 import { notifyOpError, notifyRebaseOutcome } from "../../lib/mergeFeedback";
-import { Button, IconButton } from "../shared/buttons";
+import { DragHandleIcon } from "../../icons";
+import { Button } from "../shared/buttons";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
@@ -168,16 +169,6 @@ export function InteractiveRebasePanel() {
     armedRef.current = next.armed;
     if (next.close) closePanel();
   }, [inProgress, opState, closePanel]);
-
-  const move = (index: number, delta: -1 | 1) => {
-    setRows((rs) => {
-      const next = [...rs];
-      const target = index + delta;
-      if (target < 0 || target >= next.length) return rs;
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
-    });
-  };
 
   const { draggingKey: draggingSha, dragY, registerItem, beginDrag } = useRowDragReorder({
     container: bodyRef,
@@ -363,6 +354,9 @@ export function InteractiveRebasePanel() {
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: "0.667em" }}>
+              <span className="legit-subtle" style={{ display: "flex" }}>
+                <DragHandleIcon />
+              </span>
               <select
                 value={r.action}
                 disabled={busy}
@@ -409,20 +403,6 @@ export function InteractiveRebasePanel() {
                   pushed
                 </span>
               )}
-              <IconButton
-                title="Move up (applied later)"
-                disabled={busy || i === 0}
-                onClick={() => move(i, -1)}
-              >
-                ↑
-              </IconButton>
-              <IconButton
-                title="Move down (applied earlier)"
-                disabled={busy || i === rows.length - 1}
-                onClick={() => move(i, 1)}
-              >
-                ↓
-              </IconButton>
             </div>
             {r.action === "reword" && (
               <textarea

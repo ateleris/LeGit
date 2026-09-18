@@ -179,6 +179,11 @@ pub fn default_ui_font_size() -> f64 {
     12.0
 }
 
+/// Default panel-group border thickness (px): the classic hairline.
+pub fn default_panel_border_width() -> f64 {
+    1.0
+}
+
 /// Minimum Commits-panel row height for a given UI font size. A ref chip is
 /// `font * 1.3` (line-height) + 2px padding + 2px border tall; rows must be
 /// 2px taller so chips on adjacent rows never touch. Mirrors the frontend
@@ -320,6 +325,20 @@ pub struct GlobalSettings {
     /// Corner radius of dockview panel groups (px); 0 = square.
     #[serde(default)]
     pub panel_corner_radius: f64,
+    /// Border thickness of dockview panel groups (px) while the spaced/rounded
+    /// chrome is armed; 1 = the classic hairline. Any non-default value arms
+    /// the chrome even at 0 gap/radius.
+    #[serde(default = "default_panel_border_width")]
+    pub panel_border_width: f64,
+    /// Colour branch chips in the Commits graph from their row's lane instead
+    /// of the theme's static ref tokens (the theme contributes the per-part
+    /// filters via `laneChipFilters`).
+    #[serde(default)]
+    pub lane_colored_branch_chips: bool,
+    /// Colour a stash node with the lane of its BASE commit instead of the
+    /// lane the stash row occupies.
+    #[serde(default)]
+    pub stash_base_lane_color: bool,
     /// Whether the filesystem watcher auto-refreshes the UI on disk changes.
     /// When off, refresh falls back to window/panel focus only.
     #[serde(default = "default_true")]
@@ -468,6 +487,9 @@ impl Default for GlobalSettings {
             ui_font_size: default_ui_font_size(),
             panel_gap: 0.0,
             panel_corner_radius: 0.0,
+            panel_border_width: default_panel_border_width(),
+            lane_colored_branch_chips: false,
+            stash_base_lane_color: false,
             watcher_enabled: true,
             confirm_discard: true,
             detect_case_renames: true,

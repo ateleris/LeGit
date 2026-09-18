@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { PanelError } from "../shared/PanelError";
-import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
+import { usePanelViewState } from "../../store/panelViewState";
 import { useQuery } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useConfirmDestructive } from "../../store/settings";
@@ -54,30 +54,22 @@ export function FileHistoryPanel() {
 function FileHistoryBody() {
   const repo = useActiveRepo();
   const queryClient = useQueryClient();
-  const [path, setPath] = useState<string | null>(null);
+  // Per-repo view state (store/panelViewState.ts): the shown file survives a
+  // layout apply's dock rebuild and panel close/reopen, and each repo keeps
+  // its own across tab switches - it also covers the summoned-for-the-new-
+  // repo delivery race that useRepoSwitchClear used to handle (writes key by
+  // the active repo at call time).
+  const [path, setPath] = usePanelViewState<string | null>("file-history.path", null);
   // Non-null: walk from this rev instead of HEAD (browse-at-commit mode).
-  const [rev, setRev] = useState<string | null>(null);
+  const [rev, setRev] = usePanelViewState<string | null>("file-history.rev", null);
   // How many pages to request; "Load more" bumps it, a new file resets it.
-  const [pageCount, setPageCount] = useState(1);
-
-  // Reset when the repo changes (the path belongs to the previous repo) -
-  // except when the selection was summoned FOR the repo being switched to,
-  // and not on first mount. Full rationale in useRepoSwitchClear.
-  const markDelivered = useRepoSwitchClear(
-    repo?.id,
-    useCallback(() => {
-      setPath(null);
-      setRev(null);
-      setPageCount(1);
-    }, []),
-  );
+  const [pageCount, setPageCount] = usePanelViewState("file-history.pageCount", 1);
 
   const onReceive = useCallback((payload: unknown) => {
     if (typeof payload === "string") {
       setPath(payload);
       setRev(null);
       setPageCount(1);
-      markDelivered();
       return;
     }
     const p = payload as Partial<FileHistoryRequest> | null;
@@ -85,9 +77,8 @@ function FileHistoryBody() {
       setPath(p.path);
       setRev(typeof p.rev === "string" ? p.rev : null);
       setPageCount(1);
-      markDelivered();
     }
-  }, [markDelivered]);
+  }, [setPath, setRev, setPageCount]);
   useSummonTarget("file-history", onReceive);
 
   const { data: entries = [], isFetching, isError, error, refetch } = useQuery<FileHistoryEntry[]>({

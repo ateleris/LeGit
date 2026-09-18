@@ -1,7 +1,7 @@
 import { checkForUpdate, promptAndInstall } from "../../lib/updateFlow";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
-import { LinkIcon, UnlinkIcon, WarningIcon } from "../../icons";
+import { DragHandleIcon, LinkIcon, UnlinkIcon, WarningIcon } from "../../icons";
 import { Button, IconButton } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
 import { useRowDragReorder } from "../shared/useRowDragReorder";
@@ -42,6 +42,8 @@ import {
   COMMITS_LINE_WIDTH_MIN,
   UI_FONT_SIZE_DEFAULT,
   UI_FONT_SIZE_MIN,
+  PANEL_BORDER_WIDTH_DEFAULT,
+  PANEL_BORDER_WIDTH_MAX,
   PANEL_GAP_MAX,
   PANEL_RADIUS_MAX,
   UI_FONT_SIZE_MAX,
@@ -227,6 +229,9 @@ function GeneralSection() {
   const setUiFontSize = useSettingsStore((s) => s.setUiFontSize);
   const panelGap = useSettingsStore((s) => s.settings?.panel_gap ?? 0);
   const panelRadius = useSettingsStore((s) => s.settings?.panel_corner_radius ?? 0);
+  const panelBorder = useSettingsStore(
+    (s) => s.settings?.panel_border_width ?? PANEL_BORDER_WIDTH_DEFAULT,
+  );
   const setPanelChrome = useSettingsStore((s) => s.setPanelChrome);
   const { busy: saving, run } = useDelayedBusy();
 
@@ -244,7 +249,7 @@ function GeneralSection() {
     try { localStorage.setItem(PANEL_CHROME_LINK_KEY, next ? "1" : "0"); } catch { /* quota */ }
     // Re-linking applies the constraint immediately.
     if (next && panelRadius !== linkedRadius(panelGap)) {
-      void run(() => setPanelChrome(panelGap, linkedRadius(panelGap)));
+      void run(() => setPanelChrome(panelGap, linkedRadius(panelGap), panelBorder));
     }
   };
   const shownRadius = chromeLinked ? linkedRadius(panelGap) : panelRadius;
@@ -299,7 +304,9 @@ function GeneralSection() {
           min={0}
           max={PANEL_GAP_MAX}
           disabled={saving}
-          onCommit={(v) => run(() => setPanelChrome(v, chromeLinked ? linkedRadius(v) : panelRadius))}
+          onCommit={(v) =>
+            run(() => setPanelChrome(v, chromeLinked ? linkedRadius(v) : panelRadius, panelBorder))
+          }
         />
         {/* Chain-link spanning the two inputs it governs (rows 3-4), in the
             gutter column just left of the inputs - same pattern as the
@@ -337,7 +344,17 @@ function GeneralSection() {
           min={0}
           max={PANEL_RADIUS_MAX}
           disabled={saving || chromeLinked}
-          onCommit={(v) => run(() => setPanelChrome(panelGap, v))}
+          onCommit={(v) => run(() => setPanelChrome(panelGap, v, panelBorder))}
+        />
+        <NumberField
+          grid
+          row={5}
+          label="Panel border thickness"
+          value={panelBorder}
+          min={0}
+          max={PANEL_BORDER_WIDTH_MAX}
+          disabled={saving}
+          onCommit={(v) => run(() => setPanelChrome(panelGap, shownRadius, v))}
         />
       </div>
       {fontSize !== UI_FONT_SIZE_DEFAULT && (
@@ -383,6 +400,16 @@ function CommitsGraphSection() {
   const setCommitAvatars = useSettingsStore((s) => s.setCommitAvatars);
   const { busy: savingAvatars, run: runAvatars } = useDelayedBusy();
   const toggleAvatars = () => runAvatars(() => setCommitAvatars(!avatars));
+
+  // Lane colouring: on/off is a viewing preference here; the per-part chip
+  // filters stay in the theme (Theme Editor → Refs).
+  const laneChips = useSettingsStore((s) => s.settings?.lane_colored_branch_chips ?? false);
+  const stashBaseLane = useSettingsStore((s) => s.settings?.stash_base_lane_color ?? false);
+  const setLaneColoredBranchChips = useSettingsStore((s) => s.setLaneColoredBranchChips);
+  const setStashBaseLaneColor = useSettingsStore((s) => s.setStashBaseLaneColor);
+  const { busy: savingLanes, run: runLanes } = useDelayedBusy();
+  const toggleLaneChips = () => runLanes(() => setLaneColoredBranchChips(!laneChips));
+  const toggleStashBaseLane = () => runLanes(() => setStashBaseLaneColor(!stashBaseLane));
 
   // Date column: relative ("2d ago", the default) vs the full author datetime,
   // in a user-picked format.
@@ -565,6 +592,30 @@ function CommitsGraphSection() {
         />
         <label htmlFor="global-commit-date-show-time" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
           Include the time of day
+        </label>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "1em" }}>
+        <input
+          type="checkbox"
+          id="global-lane-colored-chips"
+          checked={laneChips}
+          onChange={toggleLaneChips}
+          disabled={savingLanes}
+        />
+        <label htmlFor="global-lane-colored-chips" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
+          Color branch chips by graph lane (chip shades come from the theme)
+        </label>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "0.667em" }}>
+        <input
+          type="checkbox"
+          id="global-stash-base-lane"
+          checked={stashBaseLane}
+          onChange={toggleStashBaseLane}
+          disabled={savingLanes}
+        />
+        <label htmlFor="global-stash-base-lane" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
+          Color stashes by their base commit's lane
         </label>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "1em" }}>
@@ -805,21 +856,12 @@ function WorkingChangesLayoutSection() {
     disabled: saving,
   });
 
-  const move = (i: number, delta: number) => {
-    const j = i + delta;
-    if (j < 0 || j >= order.length) return;
-    const next = [...order];
-    [next[i], next[j]] = [next[j], next[i]];
-    return run(() => setOrder(next));
-  };
-
   return (
     <Section title="Working Changes layout">
       <FieldNote>writes to: global settings — applies to all repos</FieldNote>
       <FieldNote>
         Top-to-bottom order of the three Working Changes sections. Drag rows
-        (or use the arrows) to put Staged first, or move the commit box to
-        the top.
+        to put Staged first, or move the commit box to the top.
       </FieldNote>
       <div
         ref={listRef}
@@ -832,7 +874,7 @@ function WorkingChangesLayoutSection() {
           position: "relative",
         }}
       >
-        {order.map((id, i) => (
+        {order.map((id) => (
           <div
             key={id}
             ref={registerItem(id)}
@@ -860,15 +902,9 @@ function WorkingChangesLayoutSection() {
               position: "relative",
             }}
           >
-            <span style={{ display: "flex", gap: "0.167em" }}>
-              <IconButton title="Move up" disabled={saving || i === 0} onClick={() => move(i, -1)}>
-                ↑
-              </IconButton>
-              <IconButton title="Move down" disabled={saving || i === order.length - 1} onClick={() => move(i, 1)}>
-                ↓
-              </IconButton>
+            <span className="legit-subtle" style={{ display: "flex" }}>
+              <DragHandleIcon />
             </span>
-            <span style={{ width: "1.5em", textAlign: "right", color: "var(--subtle-fg)" }}>{i + 1}.</span>
             <span>{WORKING_CHANGES_SECTION_LABELS[id]}</span>
           </div>
         ))}

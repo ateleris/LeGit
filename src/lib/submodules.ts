@@ -84,7 +84,8 @@ export async function openSubmoduleRepo(
     // beyond the loaded window. Mirror the full row-click chain
     // (CommitsPanel.handleRowClick) so details + changed files follow the
     // selection. The receiving panels keep these payloads across the repo
-    // switch via useRepoSwitchClear's delivered-for marker.
+    // switch: their view state writes key by the active repo at call time
+    // (usePanelViewState), which is already the submodule here.
     const summon = useSummonStore.getState();
     summon.summon("log", target);
     summon.summon("commit-details", target);

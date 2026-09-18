@@ -12,6 +12,51 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- Themes can give individual panels their own surface colours (Theme Editor →
+  Panel overrides): e.g. a different background just for the Commits panel.
+- macOS: a native menu bar (File / Edit / View / Window). View mirrors the
+  in-app View menu (panels, saved layouts, maximize toggle), File opens
+  repositories, and the Edit menu makes Cmd+C/V/X work in text fields.
+- Panel border thickness setting (Appearance, under Panel corner radius):
+  sets the panel-group border width; any value other than 1 switches to the
+  spaced-chrome per-panel borders even without a gap or radius.
+
+### Changed
+
+- "Color branch chips by graph lane" and "Color stashes by their base
+  commit's lane" are now global settings (Global Settings → Commits graph)
+  instead of per-theme toggles, so they survive theme switches. Themes keep
+  the branch-chip shade tuning; a theme that previously enabled the toggles
+  needs them re-enabled once in Global Settings.
+
+- The Working Changes layout rows (Global Settings) and the Interactive
+  Rebase plan rows are drag-only now, with a drag handle matching the Layouts
+  panel; the arrow buttons (and the layout rows' numbering) are gone.
+- Summoning a panel never splits the layout anymore: a panel without a
+  remembered spot joins an existing group as a tab (a related panel's group,
+  or the active group) instead of carving out a new slot.
+
+### Fixed
+
+- Panels no longer lose what they were showing when a layout is applied or a
+  panel is closed and reopened: selections (Working Changes, Log, Changed
+  Files), the open diff/merge/file view, log search and filters, and the
+  Compare range now survive - and each repo remembers its own across tab
+  switches.
+- Applying a layout keeps the slot-sharing panel you are currently using:
+  with a commit selected, Changed Files stays in place of a layout's Working
+  Changes (and vice versa), and an in-progress Merge stays where the layout
+  has Diff.
+- Saving a theme that uses the "Lighter (40%)" or "Darker (40%)" filters no
+  longer fails validation.
+- A theme's per-panel `panel.border` override now also colours the panel's
+  outer border (the spaced-chrome group border), following the visible tab.
+- With "Color stashes by their base commit's lane" on, the line connecting a
+  stash to its base commit is drawn solid in the base's lane colour instead
+  of fading into the stash row's lane.
+
 ## [1.3.1] - 2026-09-17
 
 ### Added

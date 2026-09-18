@@ -5,6 +5,7 @@
 
 import type { ThemeDocument } from "../lib/types";
 import { isTokenFilterId, TOKEN_FILTER_IDS } from "./filters";
+import { PANEL_OVERRIDE_TOKENS } from "./tokens";
 
 export interface ValidationError {
   field: string;
@@ -76,8 +77,8 @@ export function validateTheme(value: unknown, knownFormatVersion = 1): Validatio
     return { ok: errors.length === 0, errors, warnings };
   }
   const paletteKeys = new Set(Object.keys(palette as Record<string, unknown>));
-  for (const [token, binding] of Object.entries(tokens as Record<string, unknown>)) {
-    // A binding is a bare palette name, or { ref, filter } for derived colours.
+  // A binding is a bare palette name, or { ref, filter } for derived colours.
+  const checkBinding = (field: string, binding: unknown) => {
     let ref: unknown;
     if (typeof binding === "string") {
       ref = binding;
@@ -85,22 +86,54 @@ export function validateTheme(value: unknown, knownFormatVersion = 1): Validatio
       const b = binding as Record<string, unknown>;
       ref = b.ref;
       if (typeof b.ref !== "string") {
-        push(`tokens.${token}`, "`ref` must be a palette name (string)");
-        continue;
+        push(field, "`ref` must be a palette name (string)");
+        return;
       }
       if (!isTokenFilterId(b.filter)) {
         push(
-          `tokens.${token}`,
+          field,
           `Unknown filter ${JSON.stringify(b.filter)} (expected one of: ${TOKEN_FILTER_IDS.join(", ")})`,
         );
-        continue;
+        return;
       }
     } else {
-      push(`tokens.${token}`, "Token must be a palette name or { ref, filter }");
-      continue;
+      push(field, "Token must be a palette name or { ref, filter }");
+      return;
     }
     if (!paletteKeys.has(ref as string)) {
-      push(`tokens.${token}`, `References undefined palette name '${ref}'`);
+      push(field, `References undefined palette name '${ref}'`);
+    }
+  };
+  for (const [token, binding] of Object.entries(tokens as Record<string, unknown>)) {
+    checkBinding(`tokens.${token}`, binding);
+  }
+
+  const panelOverrides = obj.panelOverrides;
+  if (panelOverrides !== undefined) {
+    if (panelOverrides === null || typeof panelOverrides !== "object" || Array.isArray(panelOverrides)) {
+      push("panelOverrides", "`panelOverrides` must be an object of panel-id -> token -> binding");
+      return { ok: errors.length === 0, errors, warnings };
+    }
+    for (const [panelId, entry] of Object.entries(panelOverrides as Record<string, unknown>)) {
+      if (!/^[A-Za-z0-9_-]+$/.test(panelId)) {
+        warnings.push({
+          field: `panelOverrides.${panelId}`,
+          message: "Panel id contains characters LeGit never uses — this override will not apply.",
+        });
+      }
+      if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+        push(`panelOverrides.${panelId}`, "Panel entry must be an object of token -> binding");
+        continue;
+      }
+      for (const [token, binding] of Object.entries(entry as Record<string, unknown>)) {
+        if (!PANEL_OVERRIDE_TOKENS.includes(token)) {
+          warnings.push({
+            field: `panelOverrides.${panelId}.${token}`,
+            message: `Not an overridable token (expected one of: ${PANEL_OVERRIDE_TOKENS.join(", ")}) — ignored.`,
+          });
+        }
+        checkBinding(`panelOverrides.${panelId}.${token}`, binding);
+      }
     }
   }
 

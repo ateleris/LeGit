@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
+import { usePanelViewState } from "../../store/panelViewState";
 import { useSettingsStore } from "../../store/settings";
 import { usePanelActiveEffect, usePanelFocusEffect } from "../PanelApiContext";
 import { repoCaseDrift, repoConflictEntries, repoConflictReopen, repoCreateStashPaths, repoDiscard, repoDiscardCaseRename, repoResolveTakeSide, repoResolveUndoPaths, repoStage, repoStageCaseRename, repoStagedMarkerPaths, repoStatus, repoSubmodules, repoUnstage, repoUnstagedMarkerPaths } from "../../lib/commands";
@@ -199,17 +200,13 @@ export function WorkingChangesPanel() {
 
   // The selected files, scoped to one section so the two lists never highlight
   // at once (a partially-staged file shares its path across both). Drives both
-  // row highlighting and the bulk context-menu actions.
-  const [selected, setSelected] = useState<Selection | null>(null);
-
-  // Clear the selection when the repo changes — a stale path from the previous
-  // repo must not leak into actions or a diff summon for the new repo.
-  const prevRepoId = useRef(repo?.id);
-  useEffect(() => {
-    if (prevRepoId.current === repo?.id) return;
-    prevRepoId.current = repo?.id;
-    setSelected(null);
-  }, [repo?.id]);
+  // row highlighting and the bulk context-menu actions. Per-repo view state:
+  // survives the slot swap with Changed Files and a layout apply's dock
+  // rebuild, and cannot leak across repos.
+  const [selected, setSelected] = usePanelViewState<Selection | null>(
+    "working-changes.selected",
+    null,
+  );
 
   const {
     data: status = [],

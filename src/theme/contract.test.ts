@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { CONTRAST_PAIRS, PALETTE_CONTRACT, TOKEN_CONTRACT } from "./tokens";
+import { CONTRAST_PAIRS, PALETTE_CONTRACT, PANEL_OVERRIDE_TOKENS, TOKEN_CONTRACT } from "./tokens";
 import { contrastRatio } from "./contrast";
 import { DEFAULT_THEME } from "./defaults";
 import { LANE_CHIP_DEFAULT_FILTERS, bindingCssValue, bindingRef, makeBinding, resolveBindingColor } from "./filters";
@@ -24,6 +24,7 @@ interface ThemeJson {
   name?: string;
   palette: Record<string, string>;
   tokens: Record<string, string | { ref: string; filter: string }>;
+  panelOverrides?: Record<string, Record<string, string | { ref: string; filter: string }>>;
 }
 
 // Every theme in themes/ ships as a built-in (tauri.conf.json bundles the
@@ -170,6 +171,80 @@ describe("built-in themes meet every contrast pair's floor", () => {
       expect(
         failures,
         `${label} theme pairs below their contrast floor:\n${failures.join("\n")}`,
+      ).toEqual([]);
+    });
+  }
+});
+
+// Panel overrides rebind PANEL_OVERRIDE_TOKENS per panel; a name outside the
+// token contract could never be consumed (the applier writes the token's var).
+describe("panel-override allowlist", () => {
+  it("every PANEL_OVERRIDE_TOKENS entry is a TOKEN_CONTRACT name", () => {
+    const names = new Set(TOKEN_CONTRACT.map((t) => t.name));
+    for (const token of PANEL_OVERRIDE_TOKENS) {
+      expect(names.has(token), `unknown override token "${token}"`).toBe(true);
+    }
+  });
+});
+
+// Inside an overridden panel the CONTRAST_PAIRS floors still apply: a pair
+// touching an overridden token renders with the override, so it is re-checked
+// with the override merged over the theme's tokens. Built-ins currently ship
+// no overrides; this arms the floor for the first one that does.
+describe("built-in theme panel overrides meet the contrast floors", () => {
+  const baseList = (base: string | readonly string[] | undefined): readonly string[] =>
+    base === undefined ? [] : typeof base === "string" ? [base] : base;
+
+  function overrideContrastFailures(theme: ThemeJson): string[] {
+    const failures: string[] = [];
+    for (const [panelId, entry] of Object.entries(theme.panelOverrides ?? {})) {
+      const allowed = Object.fromEntries(
+        Object.entries(entry).filter(([token]) => PANEL_OVERRIDE_TOKENS.includes(token)),
+      );
+      const effective = { ...theme.tokens, ...allowed };
+      const resolve = (token: string): string | undefined =>
+        effective[token] !== undefined
+          ? resolveBindingColor(effective[token] as ThemeTokenBinding, theme.palette)
+          : undefined;
+      for (const pair of CONTRAST_PAIRS) {
+        if (pair.advisory) continue;
+        const involved = [pair.fg, pair.bg, ...baseList(pair.base)];
+        if (!involved.some((t) => allowed[t] !== undefined)) continue;
+        const colors = involved.map(resolve);
+        if (colors.some((c) => c === undefined)) {
+          failures.push(`${panelId}: ${pair.label}: unresolvable token`);
+          continue;
+        }
+        const [fg, bg, ...bases] = colors as string[];
+        const ratio = contrastRatio(fg, bg, bases);
+        const floor = pair.minRatio ?? 4.5;
+        if (ratio === null || ratio < floor) {
+          failures.push(
+            `${panelId}: ${pair.label}: ${ratio === null ? "n/a" : ratio.toFixed(2)} (floor ${floor})`,
+          );
+        }
+      }
+    }
+    return failures;
+  }
+
+  // The checker must actually catch a bad override — guard the guard.
+  it("flags an override that drops a pair below its floor", () => {
+    expect(darkTheme).toBeDefined();
+    const bad: ThemeJson = {
+      ...darkTheme!,
+      palette: { ...darkTheme!.palette, "near-bg": "#20242a" },
+      panelOverrides: { log: { "panel.fg": "near-bg" } },
+    };
+    expect(overrideContrastFailures(bad).length).toBeGreaterThan(0);
+  });
+
+  for (const [label, theme] of bundledThemes) {
+    it(`${label} overrides keep every touched pair above its floor`, () => {
+      const failures = overrideContrastFailures(theme);
+      expect(
+        failures,
+        `${label} theme panel overrides below their contrast floor:\n${failures.join("\n")}`,
       ).toEqual([]);
     });
   }

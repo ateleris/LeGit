@@ -35,7 +35,8 @@ interface ThemeStore {
   cancelEditing: () => void;
   updateDraftPalette: (palette: Record<string, string>) => void;
   updateDraftTokens: (tokens: ThemeDocument["tokens"]) => void;
-  updateDraftMeta: (patch: Partial<Pick<ThemeDocument, "name" | "description" | "author" | "laneColoredBranchChips" | "laneChipFilters" | "stashBaseLaneColor">>) => void;
+  updateDraftPanelOverrides: (overrides: ThemeDocument["panelOverrides"]) => void;
+  updateDraftMeta: (patch: Partial<Pick<ThemeDocument, "name" | "description" | "author" | "laneChipFilters">>) => void;
   saveDraftAs: (name: string) => Promise<void>;
   deleteUserTheme: (name: string) => Promise<void>;
   importThemeFromJson: (json: unknown, suggestedName?: string) => Promise<ThemeEntry>;
@@ -65,6 +66,14 @@ export function partitionThemes(themes: ThemeEntry[]): {
     builtin: themes.filter((t) => t.source === "builtin"),
     user: themes.filter((t) => t.source === "user"),
   };
+}
+
+/** Copy per-panel override maps so draft edits never alias the source. */
+function copyOverrides(
+  overrides: ThemeDocument["panelOverrides"],
+): ThemeDocument["panelOverrides"] {
+  if (!overrides) return overrides;
+  return Object.fromEntries(Object.entries(overrides).map(([id, entry]) => [id, { ...entry }]));
 }
 
 export const useThemeStore = create<ThemeStore>((set, get) => ({
@@ -117,7 +126,12 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
     const active = get().activeDocument;
     if (!active) return;
     set({
-      draft: { ...active, palette: { ...active.palette }, tokens: { ...active.tokens } },
+      draft: {
+        ...active,
+        palette: { ...active.palette },
+        tokens: { ...active.tokens },
+        panelOverrides: copyOverrides(active.panelOverrides),
+      },
       draftDirty: false,
       draftOrigin: get().activeThemeName,
     });
@@ -130,7 +144,13 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
     let i = 1;
     while (taken.has(name)) name = `New Theme ${++i}`;
     set({
-      draft: { ...base, name, palette: { ...base.palette }, tokens: { ...base.tokens } },
+      draft: {
+        ...base,
+        name,
+        palette: { ...base.palette },
+        tokens: { ...base.tokens },
+        panelOverrides: copyOverrides(base.panelOverrides),
+      },
       draftDirty: true,
       draftOrigin: null,
     });
@@ -154,6 +174,14 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
     const draft = get().draft;
     if (!draft) return;
     const next: ThemeDocument = { ...draft, tokens };
+    applyTheme(next);
+    set({ draft: next, draftDirty: true });
+  },
+
+  updateDraftPanelOverrides(overrides) {
+    const draft = get().draft;
+    if (!draft) return;
+    const next: ThemeDocument = { ...draft, panelOverrides: overrides };
     applyTheme(next);
     set({ draft: next, draftDirty: true });
   },

@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { PanelError } from "../shared/PanelError";
 import { segStyle } from "../shared/segmented";
-import { useRepoSwitchClear } from "../shared/useRepoSwitchClear";
+import { usePanelViewState } from "../../store/panelViewState";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileBox, FileCheck, FilePlus, FileX, GitFork } from "lucide-react";
 import type { ReactNode } from "react";
@@ -53,35 +53,31 @@ export interface FilesAtRevRequest {
 export function FilesPanel() {
   const repo = useActiveRepo();
   const queryClient = useQueryClient();
-  // Ephemeral UI state (not a persisted setting): tree by default, ignored off.
-  const [viewMode, setViewMode] = useState<ViewMode>("tree");
-  const [showIgnored, setShowIgnored] = useState(false);
-  const [filter, setFilter] = useState("");
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  // Per-repo view state (store/panelViewState.ts), not a persisted setting:
+  // the browsed rev, selection, and view toggles survive a layout apply's
+  // dock rebuild and panel close/reopen, and each repo keeps its own across
+  // tab switches - it also covers the summoned-for-the-new-repo delivery
+  // race that useRepoSwitchClear used to handle (writes key by the active
+  // repo at call time).
+  const [viewMode, setViewMode] = usePanelViewState<ViewMode>("files.viewMode", "tree");
+  const [showIgnored, setShowIgnored] = usePanelViewState("files.showIgnored", false);
+  const [filter, setFilter] = usePanelViewState("files.filter", "");
+  const [selectedPath, setSelectedPath] = usePanelViewState<string | null>(
+    "files.selectedPath",
+    null,
+  );
   // Browse-at-commit mode; null = the live working tree.
-  const [rev, setRev] = useState<string | null>(null);
+  const [rev, setRev] = usePanelViewState<string | null>("files.rev", null);
 
   const { rowHeight, iconSize } = useFileRowMetrics();
-
-  // Reset when the repo changes (the rev belongs to the previous repo) -
-  // except when the mode was summoned FOR the repo being switched to, and
-  // not on first mount. Full rationale in useRepoSwitchClear.
-  const markDelivered = useRepoSwitchClear(
-    repo?.id,
-    useCallback(() => {
-      setRev(null);
-      setSelectedPath(null);
-    }, []),
-  );
 
   const onReceive = useCallback((payload: unknown) => {
     const p = payload as Partial<FilesAtRevRequest> | null;
     if (p && typeof p === "object" && "rev" in p) {
       setRev(typeof p.rev === "string" ? p.rev : null);
       setSelectedPath(null);
-      markDelivered();
     }
-  }, [markDelivered]);
+  }, [setRev, setSelectedPath]);
   useSummonTarget("files", onReceive);
 
   // Keyed under the "status" domain: the watcher emits Status on any worktree

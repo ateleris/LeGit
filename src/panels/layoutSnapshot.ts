@@ -15,6 +15,9 @@ import {
 // Only the RepoLayoutEnvelope TYPE flows back into defaultLayouts - no
 // runtime cycle.
 import { DEFAULT_GLOBAL_LAYOUT, DEFAULT_REPO_LAYOUT } from "./defaultLayouts";
+// descriptors.ts is pure data with no imports, so unlike the registry consts
+// below it is safe to read at module init.
+import { REPO_PANELS } from "./descriptors";
 import {
   GLOBAL_DOCKVIEW_COMPONENTS,
   PANEL_TITLES,
@@ -165,6 +168,93 @@ export function sanitizeDockviewLayout(
   return result;
 }
 
+/**
+ * Panels sharing one dock slot, shown one at a time. A layout naming one
+ * member means "the slot": on apply, the member CURRENTLY showing keeps it -
+ * with a commit selected, Changed Files stays even though the layout was
+ * saved with Working Changes (and vice versa); an in-progress Merge stays
+ * where the layout has Diff. Diff/Merge derive from the descriptors'
+ * `swapsWith`; Working Changes / Changed Files swap per selection at their
+ * `swapSummon` call sites (not via `swapsWith`, which would make a plain
+ * summon of one close the other), so that pair is declared here.
+ */
+export const SLOT_PAIRS: ReadonlyArray<readonly [string, string]> = [
+  ["working-changes", "changed-files"],
+  ...REPO_PANELS.flatMap((p) =>
+    p.swapsWith && p.id < p.swapsWith ? [[p.id, p.swapsWith] as const] : [],
+  ),
+];
+
+/**
+ * Rewrite a persisted dockview layout so each slot pair shows the member
+ * that is currently open (see SLOT_PAIRS). Substitutes only when the layout
+ * names exactly one member and the dock currently shows exactly the other;
+ * a layout naming both, or a dock showing both/neither, is left as saved.
+ * Returns the input unchanged when there is nothing to do, and never throws
+ * on foreign shapes (sanitizeDockviewLayout deals with those). The renamed
+ * panel's persisted title is dropped - sanitize re-titles from the registry.
+ */
+export function substituteSlotPanels(
+  json: unknown,
+  isOpen: (panelId: string) => boolean,
+  pairs: ReadonlyArray<readonly [string, string]> = SLOT_PAIRS,
+): unknown {
+  const layout = json as {
+    grid?: { root?: unknown };
+    panels?: Record<string, unknown>;
+  } | null;
+  if (!layout || typeof layout !== "object" || !layout.grid || !layout.panels) return json;
+
+  const renames = new Map<string, string>();
+  for (const [a, b] of pairs) {
+    const hasA = a in layout.panels;
+    const hasB = b in layout.panels;
+    if (hasA === hasB) continue;
+    const from = hasA ? a : b;
+    const to = hasA ? b : a;
+    if (isOpen(to) && !isOpen(from)) renames.set(from, to);
+  }
+  if (renames.size === 0) return json;
+
+  const panels: Record<string, unknown> = {};
+  for (const [id, p] of Object.entries(layout.panels)) {
+    const to = renames.get(id);
+    if (to === undefined) {
+      panels[id] = p;
+      continue;
+    }
+    const entry = { ...(p as object), id: to, contentComponent: to } as Record<string, unknown>;
+    delete entry.title;
+    panels[to] = entry;
+  }
+
+  type Node = { type?: unknown; data?: unknown };
+  const renameNode = (node: Node | null | undefined): unknown => {
+    if (!node || typeof node !== "object") return node;
+    if (node.type === "leaf") {
+      const data = (node.data ?? {}) as { views?: unknown; activeView?: unknown };
+      const views = Array.isArray(data.views)
+        ? data.views.map((v) => (typeof v === "string" ? (renames.get(v) ?? v) : v))
+        : data.views;
+      const activeView =
+        typeof data.activeView === "string"
+          ? (renames.get(data.activeView) ?? data.activeView)
+          : data.activeView;
+      return { ...node, data: { ...data, views, activeView } };
+    }
+    if (node.type === "branch" && Array.isArray(node.data)) {
+      return { ...node, data: node.data.map((c) => renameNode(c as Node)) };
+    }
+    return node;
+  };
+
+  return {
+    ...layout,
+    grid: { ...layout.grid, root: renameNode(layout.grid.root as Node) },
+    panels,
+  };
+}
+
 // Computed lazily, NOT at module init: this module sits inside the
 // registry's import cycle (registry -> panels -> GlobalDock -> here ->
 // registry), so the registry consts are still undefined when a panel's
@@ -207,9 +297,13 @@ export function captureRepoLayoutEnvelope(api: DockviewApi): RepoLayoutEnvelope 
  * threw - the caller falls back to the default layout.
  */
 export function applyRepoLayoutEnvelope(api: DockviewApi, envelope: RepoLayoutEnvelope): boolean {
-  // Retired panels are pruned first - a stale reference would make fromJSON
+  // Slot pairs first: keep the member currently showing (a selected commit's
+  // Changed Files survives a layout saved with Working Changes). A no-op on
+  // the startup restore, where nothing is open yet.
+  const swapped = substituteSlotPanels(envelope.dockview, (id) => !!api.getPanel(id));
+  // Retired panels are pruned next - a stale reference would make fromJSON
   // throw and nuke the whole layout.
-  const dockview = sanitizeDockviewLayout(envelope.dockview, repoComponentIds(), PANEL_TITLES);
+  const dockview = sanitizeDockviewLayout(swapped, repoComponentIds(), PANEL_TITLES);
   if (dockview === null) return false;
   const { capturePlacement, captureFallback } = useSummonStore.getState();
   for (const [panelId, groupId] of Object.entries(envelope.placements)) {

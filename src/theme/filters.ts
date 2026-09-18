@@ -122,6 +122,56 @@ export function withRef(binding: ThemeTokenBinding, ref: string): ThemeTokenBind
   return makeBinding(ref, bindingFilter(binding));
 }
 
+type PanelOverrides = Record<string, Record<string, ThemeTokenBinding>>;
+
+/** Every palette name a theme's panel overrides reference (delete guard). */
+export function overridePaletteRefs(overrides: PanelOverrides | undefined): Set<string> {
+  const refs = new Set<string>();
+  for (const entry of Object.values(overrides ?? {})) {
+    for (const binding of Object.values(entry)) refs.add(bindingRef(binding));
+  }
+  return refs;
+}
+
+/** Overrides with every reference to `oldName` rebound to `newName`, filters
+ *  kept (palette rename auto-update). */
+export function renamePaletteRefInOverrides(
+  overrides: PanelOverrides | undefined,
+  oldName: string,
+  newName: string,
+): PanelOverrides | undefined {
+  if (!overrides) return overrides;
+  return Object.fromEntries(
+    Object.entries(overrides).map(([panelId, entry]) => [
+      panelId,
+      Object.fromEntries(
+        Object.entries(entry).map(([token, binding]) => [
+          token,
+          bindingRef(binding) === oldName ? withRef(binding, newName) : binding,
+        ]),
+      ),
+    ]),
+  );
+}
+
+/** Overrides with `token` in `panelId` set to `binding` (null = remove),
+ *  pruning empty panel entries and collapsing an empty map to undefined so
+ *  exported themes stay clean. Never mutates the input. */
+export function setPanelOverrideBinding(
+  overrides: PanelOverrides | undefined,
+  panelId: string,
+  token: string,
+  binding: ThemeTokenBinding | null,
+): PanelOverrides | undefined {
+  const next = { ...(overrides ?? {}) };
+  const entry = { ...(next[panelId] ?? {}) };
+  if (binding === null) delete entry[token];
+  else entry[token] = binding;
+  if (Object.keys(entry).length === 0) delete next[panelId];
+  else next[panelId] = entry;
+  return Object.keys(next).length === 0 ? undefined : next;
+}
+
 /** A filter's CSS recipe applied to an arbitrary colour expression (used by
  * the lane-coloured chips, whose input is the lane var, not a palette var);
  * null = the expression unchanged. */

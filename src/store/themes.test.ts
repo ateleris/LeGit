@@ -109,3 +109,29 @@ describe("importThemeFromJson", () => {
     expect(useThemeStore.getState().activeThemeName).toBeNull();
   });
 });
+
+describe("panel overrides in the editor draft", () => {
+  test("updateDraftPanelOverrides sets the draft and live-applies it", () => {
+    useThemeStore.setState({ activeDocument: { ...DEFAULT_THEME }, activeThemeName: "Dark" });
+    useThemeStore.getState().startEditing();
+    const overrides = { log: { "panel.bg": "accent" } };
+    useThemeStore.getState().updateDraftPanelOverrides(overrides);
+    const s = useThemeStore.getState();
+    expect(s.draft?.panelOverrides).toEqual(overrides);
+    expect(s.draftDirty).toBe(true);
+    expect(applyTheme).toHaveBeenCalledWith(expect.objectContaining({ panelOverrides: overrides }));
+  });
+
+  test("startEditing deep-copies panelOverrides so draft edits never touch the active document", () => {
+    const active: ThemeDocument = {
+      ...DEFAULT_THEME,
+      panelOverrides: { log: { "panel.bg": "accent" } },
+    };
+    useThemeStore.setState({ activeDocument: active, activeThemeName: "Dark" });
+    useThemeStore.getState().startEditing();
+    const draft = useThemeStore.getState().draft!;
+    expect(draft.panelOverrides).toEqual(active.panelOverrides);
+    expect(draft.panelOverrides).not.toBe(active.panelOverrides);
+    expect(draft.panelOverrides!.log).not.toBe(active.panelOverrides!.log);
+  });
+});

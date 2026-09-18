@@ -37,10 +37,12 @@
    base too (see src/store/dockview.ts, AppLayout.tsx). */
 :root {
   --ui-font-size: 12px;
-  /* Panel chrome (settings store overwrites both): gap between/around dock
-     panel groups and their corner radius. 0/0 = the flush square look. */
+  /* Panel chrome (settings store overwrites all three): gap between/around
+     dock panel groups, their corner radius, and their border thickness.
+     0/0/1px = the flush square look. */
   --legit-panel-gap: 0px;
   --legit-panel-radius: 0px;
+  --legit-panel-border-width: 1px;
   --fz-xs: calc(var(--ui-font-size) - 2px);
   --fz-sm: calc(var(--ui-font-size) - 1px);
   --fz-md: var(--ui-font-size);
@@ -538,7 +540,7 @@ button.legit-tab__close:hover {
   padding: var(--legit-panel-gap);
 }
 .legit-panel-chrome .dv-dockview .dv-groupview {
-  border: 1px solid var(--panel-border);
+  border: var(--legit-panel-border-width) solid var(--panel-border);
 }
 /* Kill dockview's between-group separator lines (a ::before on each view's
    leading edge): with gaps/radius they float through the gaps and run

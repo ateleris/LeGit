@@ -3,6 +3,7 @@ import { PanelError } from "../shared/PanelError";
 import { useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
+import { usePanelViewState } from "../../store/panelViewState";
 import { useThemeStore } from "../../store/themes";
 import { effectiveLaneChipFilters } from "../../theme/filters";
 import {
@@ -39,7 +40,7 @@ import { InlineRenameInput } from "./cells/InlineRenameInput";
 import { SignatureBadge } from "./cells/SignatureBadge";
 import { GraphCellWithAvatar, laneColor } from "./cells/GraphCell";
 import { computeLanes } from "./graph/lanes";
-import { computeEdgeSpans } from "./graph/spans";
+import { computeEdgeSpans, computeStashConnectorSpans } from "./graph/spans";
 import { pickHeadCommitId } from "./headId";
 import { growJumpWindow, pendingJumpAction, shouldCenterScroll } from "./scrollToRow";
 import { quickSearchMatch } from "./commitSearch";
@@ -163,16 +164,27 @@ export function CommitsPanel() {
   const ROW_HEIGHT = Math.max(storedRowHeight, metricsFloor);
   const LANE_SPACING = Math.max(storedLaneWidth, metricsFloor);
 
-  const [selectedId, setSelectedId] = useState<CommitId | null>(null);
+  // Selection, filters, and the fetch window are per-repo view state
+  // (store/panelViewState.ts): they survive a layout apply's dock rebuild
+  // and panel close/reopen, and each repo keeps its own across tab switches.
+  const [selectedId, setSelectedId] = usePanelViewState<CommitId | null>(
+    "commits.selectedId",
+    null,
+  );
   // Multi-selection (Ctrl/Shift click; see multiSelect.ts for the rules).
   // Contains the lead when set; single-select paths (summon, search,
   // quick-jump) collapse it via selectSingle.
-  const [selectedIds, setSelectedIds] = useState<ReadonlySet<CommitId>>(new Set());
+  const [selectedIds, setSelectedIds] = usePanelViewState<ReadonlySet<CommitId>>(
+    "commits.selectedIds",
+    new Set(),
+  );
   const selectSingle = useCallback((id: CommitId) => {
     setSelectedId(id);
     setSelectedIds(new Set([id]));
   }, []);
-  const [extraPages, setExtraPages] = useState(0);
+  // Kept with the selection: a restored selection deep in the log needs its
+  // fetch window, or the highlighted row would not be loaded.
+  const [extraPages, setExtraPages] = usePanelViewState("commits.extraPages", 0);
   // A jump target (adoptSelection) not yet in the loaded window; the seek
   // effect below keeps growing the fetch window until it loads, then scrolls.
   const [pendingJump, setPendingJump] = useState<CommitId | null>(null);
@@ -183,19 +195,27 @@ export function CommitsPanel() {
   // (Shift+Enter goes back). The query is also tried as a rev-parse
   // expression (SHA, branch, tag, HEAD~2, ...); a resolving one becomes the
   // FIRST hit, so pasting a sha or ref name jumps straight to it.
-  const [searchDraft, setSearchDraft] = useState("");
-  const [search, setSearch] = useState<{ query: string } | null>(null);
+  const [searchDraft, setSearchDraft] = usePanelViewState("commits.searchDraft", "");
+  const [search, setSearch] = usePanelViewState<{ query: string } | null>(
+    "commits.search",
+    null,
+  );
   // Which hit the selection sits on; Enter advances it (wrapping).
-  const [searchHit, setSearchHit] = useState(0);
+  const [searchHit, setSearchHit] = usePanelViewState("commits.searchHit", 0);
   // Branch filter (ref menus' "Show only this branch"): restricts the log
   // WALK to commits reachable from the ref (`repoLog` revision_range). The
   // graph stays - a ref's history is connected, unlike text-search results.
-  const [branchFilter, setBranchFilter] = useState<string | null>(null);
+  const [branchFilter, setBranchFilter] = usePanelViewState<string | null>(
+    "commits.branchFilter",
+    null,
+  );
   // Author filter (row menu "Show only commits by …"): restricts the walk to
   // one author (`--author`, matched by email; the name labels the chip).
   // Unlike a branch, an author's commits are an arbitrary subset, so the
   // graph column hides while this is active. Combines with the branch filter.
-  const [authorFilter, setAuthorFilter] = useState<{ name: string; email: string } | null>(null);
+  const [authorFilter, setAuthorFilter] = usePanelViewState<
+    { name: string; email: string } | null
+  >("commits.authorFilter", null);
   const parentRef = useRef<HTMLDivElement>(null);
   // The list's horizontal scroll offset, mirrored onto the header grid as a
   // translateX. A transform (not wrapper scrollLeft) because the header
@@ -245,18 +265,14 @@ export function CommitsPanel() {
   }, [repo?.id, loadLocks]);
 
   // Discard any in-place edit when the active repo changes — the edited
-  // commit/stash/branch belongs to the previous repo.
+  // commit/stash/branch belongs to the previous repo. Selection, search, and
+  // filters need no reset: they are keyed per repo (usePanelViewState).
   useEffect(() => {
     setSubjectEdit(null);
     setRenamingBranch(null);
     setBranchCreation(null);
     setTagCreation(null);
     setPendingJump(null);
-    setSearch(null);
-    setSearchDraft("");
-    setSearchHit(0);
-    setBranchFilter(null);
-    setAuthorFilter(null);
   }, [repo?.id]);
 
   // Raw lock list from the store; used by the Refs context menu UI.
@@ -302,17 +318,20 @@ export function CommitsPanel() {
   const opState = useOpState(repo?.id);
   const opInProgress = !!opState && opState.kind !== "none";
 
-  // Lane-coloured branch chips (per-theme toggle + per-part filters).
-  // Reading draft-first gives the Theme Editor live preview while editing.
+  // Lane-coloured branch chips: the on/off toggles are GLOBAL settings; the
+  // theme contributes only the per-part filters. Reading the theme draft-first
+  // gives the Theme Editor live preview while editing.
+  const laneChipsEnabled = useSettingsStore(
+    (s) => s.settings?.lane_colored_branch_chips ?? false,
+  );
   const themeDoc = useThemeStore((s) => s.draft ?? s.activeDocument);
   const laneChipFilters = useMemo(
-    () =>
-      themeDoc?.laneColoredBranchChips
-        ? effectiveLaneChipFilters(themeDoc.laneChipFilters)
-        : null,
-    [themeDoc],
+    () => (laneChipsEnabled ? effectiveLaneChipFilters(themeDoc?.laneChipFilters) : null),
+    [laneChipsEnabled, themeDoc],
   );
-  const stashBaseLaneColor = themeDoc?.stashBaseLaneColor ?? false;
+  const stashBaseLaneColor = useSettingsStore(
+    (s) => s.settings?.stash_base_lane_color ?? false,
+  );
 
   // Open a detached worktree (from its HEAD chip) as its own repo tab.
   const handleOpenWorktree = useCallback(
@@ -777,6 +796,22 @@ export function CommitsPanel() {
   const edgeSpans = useMemo(
     () => computeEdgeSpans(allEdges, commitIndexById, rows.length),
     [allEdges, commitIndexById, rows.length],
+  );
+
+  // Stash-connector spans (stash_base_lane_color): the stash's dying lane
+  // paints in the base's colour across the rows it spans — the pass-throughs
+  // in between and the jog arc at the base row (GraphCell laneColorOverrides).
+  const stashConnectorSpans = useMemo(
+    () =>
+      stashBaseLaneColor
+        ? computeStashConnectorSpans(
+            rows,
+            new Set(stashSelectorById.keys()),
+            assignments,
+            commitIndexById,
+          )
+        : [],
+    [stashBaseLaneColor, rows, stashSelectorById, assignments, commitIndexById],
   );
 
   // Dynamic column width. getVirtualItems() always returns a new array
@@ -1439,6 +1474,15 @@ export function CommitsPanel() {
                 if (span.lane === commitLane) ownLanePassThrough = true;
               }
             }
+
+            // Stash connectors covering this row (pass-through rows AND the
+            // base row itself, whose jog arc finishes the line).
+            let laneColorOverrides: Map<LaneIndex, string> | undefined;
+            for (const span of stashConnectorSpans) {
+              if (span.fromRow < rowIndex && rowIndex <= span.toRow) {
+                (laneColorOverrides ??= new Map()).set(span.lane, laneColor(span.baseLane));
+              }
+            }
             return (
               <div
                 key={vItem.key}
@@ -1659,6 +1703,7 @@ export function CommitsPanel() {
                             dotRadius={DOT_RADIUS}
                             lineWidth={LINE_WIDTH}
                             ownLanePassThrough={ownLanePassThrough}
+                            laneColorOverrides={laneColorOverrides}
                             hollow={isWorkingDir}
                             isStash={stashSelectorById.has(commit.id)}
                             stashNodeColor={
