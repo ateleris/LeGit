@@ -12,6 +12,12 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Changed
+
+- The merge/rebase-in-progress and warning banners now use solid accent /
+  warning colours in the built-in themes, so they clearly stand out when
+  something needs attention.
+
 ## [1.3.2] - 2026-09-21
 
 ### Added
