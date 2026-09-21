@@ -41,6 +41,8 @@ import {
   type CommitPushTarget,
 } from "./commitButtonMode";
 import { gitmodulesFindingLabel } from "./gitmodulesWarning";
+import { applyMergePrefill } from "./mergePrefill";
+import { useOpState } from "../../lib/useOpState";
 import { formatEolChanges, type StagedEolChange } from "./lineEndingWarning";
 import { STALE } from "../../lib/queryTiming";
 import { useCommandAction } from "../../keys/actions";
@@ -97,6 +99,16 @@ export function CommitComposer({
     if (m.length === 0) clearDraft(repo.id);
     else setDraft(repo.id, m);
   };
+  // Prefill the box with git's prepared merge message while a merge is in
+  // progress, so concluding a conflicted merge from the composer (instead of
+  // the banner's Continue) keeps the standard message. mergePrefill.ts owns
+  // the never-clobber-typed-text / clear-when-the-merge-ends rules.
+  const opState = useOpState(repo.id);
+  const mergeMessage = opState?.kind === "merge" ? opState.message : null;
+  useEffect(() => {
+    applyMergePrefill(repo.id, mergeMessage);
+  }, [repo.id, mergeMessage]);
+
   // When set, the commit rewrites HEAD (`git commit --amend`) instead of
   // creating a new commit. Reset after each successful commit.
   const [amend, setAmend] = useState(false);

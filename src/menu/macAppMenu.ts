@@ -47,6 +47,9 @@ export async function handleMacMenuAction(actionId: string): Promise<void> {
     case "maximize":
       toggleMaximizeActivePanel();
       return;
+    case "settings":
+      summonGlobalPanel("global-settings");
+      return;
     case "open-repo": {
       const selected = await openFolderDialog({ directory: true, multiple: false });
       if (typeof selected !== "string") return;
@@ -75,6 +78,10 @@ async function buildAndSetMenu(): Promise<void> {
     text: "LeGit",
     items: [
       await PredefinedMenuItem.new({ item: { About: null } }),
+      await separator(),
+      // Distinct id (not global:global-settings): the View menu lists the
+      // same panel, and duplicate item ids in one menu are undefined ground.
+      await actionItem({ actionId: "settings", label: "Settings…" }),
       await separator(),
       await PredefinedMenuItem.new({ item: "Services" }),
       await separator(),

@@ -49,6 +49,31 @@ pub fn merge_msg_branch(msg: &str) -> Option<String> {
     (end > 0).then(|| rest[..end].to_string())
 }
 
+/// MERGE_MSG cleaned for commit prefill, mirroring git's `strip` cleanup:
+/// comment lines and leading/trailing blank lines removed, blank-line runs
+/// collapsed. Needed because the app commits with `-m`, whose `whitespace`
+/// cleanup would keep the appended "# Conflicts:" block verbatim.
+pub fn merge_msg_for_prefill(msg: &str) -> Option<String> {
+    let mut out: Vec<&str> = Vec::new();
+    for line in msg.lines() {
+        if line.starts_with('#') {
+            continue;
+        }
+        let line = line.trim_end();
+        if line.is_empty() {
+            if out.last().is_some_and(|l| !l.is_empty()) {
+                out.push("");
+            }
+        } else {
+            out.push(line);
+        }
+    }
+    while out.last().is_some_and(|l| l.is_empty()) {
+        out.pop();
+    }
+    (!out.is_empty()).then(|| out.join("\n"))
+}
+
 fn short_branch(full: &str) -> String {
     full.trim()
         .strip_prefix("refs/heads/")
@@ -88,10 +113,7 @@ pub fn op_state_from_probe(probe: OpStateProbe) -> RepoOpState {
     if probe.merge_head {
         return RepoOpState::Merge {
             branch: probe.merge_msg.as_deref().and_then(merge_msg_branch),
-            message: probe
-                .merge_msg
-                .map(|m| m.trim_end().to_string())
-                .filter(|m| !m.is_empty()),
+            message: probe.merge_msg.as_deref().and_then(merge_msg_for_prefill),
         };
     }
     if let Some(sha) = probe.cherry_pick_head {
@@ -130,6 +152,35 @@ mod tests {
                 message: Some("Merge branch 'feature/x' into main".into()),
             }
         );
+    }
+
+    #[test]
+    fn merge_message_prefill_strips_conflicts_block() {
+        let st = op_state_from_probe(OpStateProbe {
+            merge_head: true,
+            merge_msg: Some(
+                "Merge branch 'feature/x' into main\n\n# Conflicts:\n#\ta.txt\n#\tb.txt\n".into(),
+            ),
+            ..Default::default()
+        });
+        assert_eq!(
+            st,
+            RepoOpState::Merge {
+                branch: Some("feature/x".into()),
+                message: Some("Merge branch 'feature/x' into main".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn merge_msg_prefill_cleanup() {
+        assert_eq!(
+            merge_msg_for_prefill("subject\n\n\nbody kept\n# comment\ntail\n\n"),
+            Some("subject\n\nbody kept\ntail".into())
+        );
+        assert_eq!(merge_msg_for_prefill("# Conflicts:\n#\ta.txt\n"), None);
+        assert_eq!(merge_msg_for_prefill("\n\n"), None);
+        assert_eq!(merge_msg_for_prefill(""), None);
     }
 
     #[test]

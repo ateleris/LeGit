@@ -160,11 +160,15 @@ async fn merge_conflict_resolve_continue() {
     let outcome = repo.backend.merge("feature", MergeOptions::default()).await.unwrap();
     assert!(matches!(outcome, MergeOutcome::Conflicts { .. }), "{outcome:?}");
 
-    // Real MERGE_HEAD / MERGE_MSG drive the op-state detection.
+    // Real MERGE_HEAD / MERGE_MSG drive the op-state detection. Git appends
+    // a "# Conflicts:" comment block to MERGE_MSG on a conflicted merge; the
+    // prefill message must carry the subject but never those comment lines.
     match repo.backend.op_state().await.unwrap() {
         RepoOpState::Merge { branch, message } => {
             assert_eq!(branch.as_deref(), Some("feature"));
-            assert!(message.unwrap().contains("feature"));
+            let message = message.unwrap();
+            assert!(message.starts_with("Merge branch 'feature'"), "{message}");
+            assert!(!message.contains('#'), "{message}");
         }
         other => panic!("expected Merge op state, got {other:?}"),
     }
