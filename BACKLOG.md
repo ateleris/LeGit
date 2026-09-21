@@ -76,33 +76,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 
 ## Smaller follow-ups
 
-- **macOS menu bar: accelerators + state marks** (2026-09-17, after the
-  first native menu ships and the mac tester confirms the basics). Two
-  refinements deliberately left out of v1: show keyboard accelerators on
-  the native View entries sourced from LeGit's own keymap (never hardcoded,
-  or the labels lie after a rebind), and reflect state in the menu
-  (checkmarks for open panels / the last-applied layout, "Exit maximized
-  panel" label). Both need menu rebuilds on more triggers than the current
-  layouts-list subscription (`src/menu/macAppMenu.ts`); tauri has no
-  menu-will-open hook, so state marks mean rebuilding on dock layout
-  changes. Also consider File > Clone/Init deep-links (the forms live
-  inside the Repositories panel; a summon payload could preselect the
-  mode).
-
-- **Named layouts: stable, reorderable order + shortcut visibility**
-  (2026-09-16). The `app.applyLayout1..9` shortcuts target "the Nth layout
-  in list order", but the list is sorted alphabetically by NAME - renaming
-  a layout silently changes which layout a shortcut applies. Three parts:
-  - Order must be identity-stable: keep an explicit user-controlled order
-    (ids/order list persisted with the layouts) that renames never change.
-  - Reorderable in the Layouts panel via drag-and-drop - reuse the row
-    drag-reorder from Interactive Rebase (`useRowDragReorder`, already
-    shared - Working Changes section order uses it too).
-  - Show a layout's configured shortcut: as a chip on its Layouts-panel
-    row and next to its View-menu entry (both rendered live from the
-    keymap via `useBindingLabel("app.applyLayoutN")`, the maximize-entry
-    pattern).
-
 - **Stash-all button in Working Changes?** (open question, 2026-09-16) The
   sections have "Stage all" / "Unstage all" / "Discard all"; a "Stash all"
   alongside them would complete the set. The action already exists (the

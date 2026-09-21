@@ -128,12 +128,21 @@ export function RefsPanel() {
   // measurement).
   const containerRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<PaneviewApi | null>(null);
+  // Default-size distribution still owed because the container was unmeasured
+  // (or header-only tall) in onReady; retried after every real measurement
+  // below. Returns true once it distributed. Deliberately not a timer: how
+  // long the first real measurement takes is unbounded (slow CI runners
+  // exceeded a 5s cap, leaving the panes zero-height forever).
+  const pendingDefaultSizesRef = useRef<(() => boolean) | null>(null);
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
       const rect = entries[entries.length - 1]?.contentRect;
-      if (rect && rect.height > 0) apiRef.current?.layout(rect.width, rect.height);
+      if (rect && rect.height > 0) {
+        apiRef.current?.layout(rect.width, rect.height);
+        if (pendingDefaultSizesRef.current?.()) pendingDefaultSizesRef.current = null;
+      }
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -142,6 +151,9 @@ export function RefsPanel() {
   const onReady = useCallback((event: PaneviewReadyEvent) => {
     const api = event.api;
     apiRef.current = api;
+    // A pending distribution from a previous instance (font-size re-key)
+    // closes over a dead api; the restore below decides afresh for this one.
+    pendingDefaultSizesRef.current = null;
 
     let restored = false;
     const raw = localStorage.getItem(LAYOUT_KEY);
@@ -197,11 +209,12 @@ export function RefsPanel() {
       // measured height explicitly; the sizes are only a starting point,
       // user drags persist via the layout snapshot as before.
       //
-      // Bounded poll, NOT api.onDidLayoutChange: dockview does not emit
-      // layout-change for the initial programmatic layout()/measure (that is
-      // also why a never-touched paneview persists no snapshot), so an
-      // event-based fixup never runs. Polling the height is the reliable
-      // "container is measured now" signal; it self-terminates.
+      // Retried from the ResizeObserver, NOT api.onDidLayoutChange (dockview
+      // does not emit layout-change for the initial programmatic
+      // layout()/measure - that is also why a never-touched paneview
+      // persists no snapshot) and NOT a time-capped poll (the first real
+      // measurement can take arbitrarily long on a cold slow machine, and
+      // giving up leaves the panes zero-height until a manual sash drag).
       const applyDefaultSizes = () => {
         const sizes = defaultPaneSizes(
           api.height,
@@ -211,12 +224,7 @@ export function RefsPanel() {
         for (const [id, size] of sizes) api.getPanel(id)?.api.setSize({ size });
         return sizes.size > 0;
       };
-      if (!applyDefaultSizes()) {
-        const started = Date.now();
-        const poll = setInterval(() => {
-          if (applyDefaultSizes() || Date.now() - started > 5000) clearInterval(poll);
-        }, 50);
-      }
+      if (!applyDefaultSizes()) pendingDefaultSizesRef.current = applyDefaultSizes;
     } else {
       // Layouts saved before a section existed (e.g. Tags) restore without
       // it — append any missing default panes so new sections always appear.

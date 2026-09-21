@@ -44,6 +44,10 @@ lives in the git log and the GitHub release notes.
 
 ### Fixed
 
+- The Refs panel's sections no longer stay collapsed to zero height when the
+  first launch is slow (all space went to the last section until a divider
+  was dragged); the initial size distribution now waits for the panel's
+  first real measurement instead of giving up after 5 seconds.
 - Panels no longer lose what they were showing when a layout is applied or a
   panel is closed and reopened: selections (Working Changes, Log, Changed
   Files), the open diff/merge/file view, log search and filters, and the
