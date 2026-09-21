@@ -12,6 +12,8 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-09-21
+
 ### Added
 
 - Themes can give individual panels their own surface colours (Theme Editor →
