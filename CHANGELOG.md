@@ -12,6 +12,8 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-09-23
+
 ### Added
 
 - New global setting to show author initials in the commit graph dots;
