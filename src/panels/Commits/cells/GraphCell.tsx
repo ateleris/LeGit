@@ -91,6 +91,12 @@ interface GraphCellProps {
    * dot. Computed from the author name by `GraphCellWithAvatar`.
    */
   initials?: string | null;
+  /**
+   * Native hover tooltip (SVG <title>) on the commit node — the author
+   * signature. Only regular commit dots (plain/avatar/initials) get it;
+   * empty/null = no tooltip.
+   */
+  dotTitle?: string | null;
 }
 
 /**
@@ -190,6 +196,7 @@ export function GraphCell({
   laneColorOverrides,
   avatarUrl = null,
   initials = null,
+  dotTitle = null,
 }: GraphCellProps) {
   const halfRow = rowHeight / 2;
   const width = (totalLanes + 1) * laneSpacing;
@@ -243,6 +250,9 @@ export function GraphCell({
 
   // Short commit ID prefix used in gradient IDs — unique enough for the DOM.
   const idPrefix = commitId.slice(0, 12);
+
+  // Native hover tooltip on the commit node (plain/avatar/initials only).
+  const titleEl = dotTitle ? <title>{dotTitle}</title> : null;
 
   return (
     <svg
@@ -359,6 +369,7 @@ export function GraphCell({
         // is inset by half its width to keep the node's outer edge at
         // dotRadius, the plain dot's visual size.
         <g>
+          {titleEl}
           <clipPath id={`av-${idPrefix}`}>
             <circle cx={dotX} cy={halfRow} r={dotRadius} />
           </clipPath>
@@ -385,6 +396,7 @@ export function GraphCell({
         // derives from the dot radius so it scales with the configured dot
         // size; two letters get a slightly smaller size to fit the circle.
         <g>
+          {titleEl}
           <circle cx={dotX} cy={halfRow} r={dotRadius} fill={dotColor} />
           <text
             x={dotX}
@@ -400,7 +412,9 @@ export function GraphCell({
           </text>
         </g>
       ) : (
-        <circle cx={dotX} cy={halfRow} r={dotRadius} fill={dotColor} />
+        <circle cx={dotX} cy={halfRow} r={dotRadius} fill={dotColor}>
+          {titleEl}
+        </circle>
       )}
     </svg>
   );

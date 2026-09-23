@@ -39,6 +39,7 @@ import { RefsCell } from "./cells/RefsCell";
 import { InlineRenameInput } from "./cells/InlineRenameInput";
 import { SignatureBadge } from "./cells/SignatureBadge";
 import { GraphCellWithAvatar, laneColor } from "./cells/GraphCell";
+import { dotHoverTitle, subjectHoverTitle } from "./hoverTitles";
 import { computeLanes } from "./graph/lanes";
 import { computeEdgeSpans, computeStashConnectorSpans } from "./graph/spans";
 import { pickHeadCommitId } from "./headId";
@@ -1736,6 +1737,11 @@ export function CommitsPanel() {
                                 ? commit.author.name
                                 : null
                             }
+                            dotTitle={
+                              !isWorkingDir && !stashSelectorById.has(commit.id)
+                                ? dotHoverTitle(commit.author.name, commit.author.email)
+                                : null
+                            }
                           />
                         </div>
                       );
@@ -1806,6 +1812,17 @@ export function CommitsPanel() {
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                               whiteSpace: "nowrap",
+                            }}
+                            // Full message on hover, but only when the cell
+                            // hides something (clipped subject or a body).
+                            // Clipping depends on the live column width, so
+                            // it's measured per hover, not per render.
+                            onMouseEnter={(e) => {
+                              const el = e.currentTarget;
+                              el.title = subjectHoverTitle(
+                                commit.message,
+                                el.scrollWidth > el.clientWidth,
+                              );
                             }}
                           >
                             {subjectOf(commit.message)}

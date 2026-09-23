@@ -402,6 +402,7 @@ describe("commit node initials", () => {
     hollow?: boolean;
     isStash?: boolean;
     dotRadius?: number;
+    dotTitle?: string | null;
   }) =>
     GraphCell({
       commitId: "self",
@@ -418,6 +419,7 @@ describe("commit node initials", () => {
       avatarUrl: args.avatarUrl,
       hollow: args.hollow,
       isStash: args.isStash,
+      dotTitle: args.dotTitle,
     });
 
   it("renders the initials centered on the dot, over a lane-coloured fill", () => {
@@ -458,5 +460,61 @@ describe("commit node initials", () => {
   it("hollow and stash nodes never render initials", () => {
     expect(collect(nodeCell({ initials: "SB", hollow: true }), "text")).toHaveLength(0);
     expect(collect(nodeCell({ initials: "SB", isStash: true }), "text")).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Author tooltip on the commit node (`dotTitle` → SVG <title>)
+// ---------------------------------------------------------------------------
+
+describe("commit node hover title", () => {
+  const nodeCell = (args: {
+    initials?: string | null;
+    avatarUrl?: string | null;
+    hollow?: boolean;
+    isStash?: boolean;
+    dotTitle?: string | null;
+  }) =>
+    GraphCell({
+      commitId: "self",
+      commitLane: 1,
+      totalLanes: 3,
+      activeLanes: new Set(),
+      edges: [],
+      incomingEdges: [],
+      rowHeight: 40,
+      laneSpacing: 40,
+      dotRadius: 8,
+      lineWidth: 1.5,
+      initials: args.initials,
+      avatarUrl: args.avatarUrl,
+      hollow: args.hollow,
+      isStash: args.isStash,
+      dotTitle: args.dotTitle,
+    });
+
+  const author = "Simon Beck <simon@example.com>";
+
+  it("attaches the author title to the plain dot", () => {
+    const titles = collect(nodeCell({ dotTitle: author }), "title");
+    expect(titles).toHaveLength(1);
+    expect(titles[0].props.children).toBe(author);
+  });
+
+  it("attaches the author title to avatar and initials nodes too", () => {
+    expect(
+      collect(nodeCell({ dotTitle: author, avatarUrl: "https://example.test/av.png" }), "title"),
+    ).toHaveLength(1);
+    expect(collect(nodeCell({ dotTitle: author, initials: "SB" }), "title")).toHaveLength(1);
+  });
+
+  it("renders no title element without a dotTitle", () => {
+    expect(collect(nodeCell({}), "title")).toHaveLength(0);
+    expect(collect(nodeCell({ dotTitle: "" }), "title")).toHaveLength(0);
+  });
+
+  it("hollow and stash nodes never get the author title", () => {
+    expect(collect(nodeCell({ dotTitle: author, hollow: true }), "title")).toHaveLength(0);
+    expect(collect(nodeCell({ dotTitle: author, isStash: true }), "title")).toHaveLength(0);
   });
 });

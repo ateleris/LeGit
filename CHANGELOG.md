@@ -17,6 +17,9 @@ lives in the git log and the GitHub release notes.
 - New global setting to show author initials in the commit graph dots;
   with Gravatar avatars also enabled, initials appear only for authors
   without a Gravatar.
+- Hovering a commit's subject shows the full message (including the body)
+  when the cell can't show everything; hovering a commit dot shows the
+  author.
 
 ### Changed
 
