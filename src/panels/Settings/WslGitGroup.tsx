@@ -13,7 +13,7 @@
 // "GIT (WSL)" heading).
 
 import { useEffect, useRef, useState } from "react";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import type { WslDistro } from "../../lib/types";
 import { setWslHostGitPath, wslHostGitOverride, wslListDistros } from "../../lib/commands";
 import { Button } from "../shared/buttons";

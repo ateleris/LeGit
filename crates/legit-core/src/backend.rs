@@ -187,9 +187,21 @@ pub trait GitBackend: Send + Sync {
     /// simulating the run on a throwaway index (`GIT_INDEX_FILE`); the real
     /// index is untouched. NOT `add -n`: the dry run lists every tracked
     /// file, not the ones that would change. Leaves a temp file next to the
-    /// real index (`RENORMALIZE_PREVIEW_INDEX_SUFFIX`) for the caller to
-    /// remove best-effort.
+    /// real index, removed (with any stale `.lock`) before and after the run.
     async fn renormalize_preview(&self) -> Result<Vec<String>, GitError>;
+
+    /// Line-ending summary for changed files whose working-tree content the
+    /// caller has read (see `line_ending_candidates` for which files).
+    /// The tracked `.gitattributes` files declaring `filter=lfs`.
+    async fn lfs_attribute_files(&self) -> Result<Vec<String>, GitError>;
+
+    /// The repository's git directory as an absolute host path.
+    async fn absolute_git_dir(&self) -> Result<crate::fs::HostPath, GitError>;
+
+    async fn line_ending_entries(
+        &self,
+        inputs: Vec<crate::cli_impl::LineEndingInput>,
+    ) -> Result<Vec<crate::types::LineEndingStatusEntry>, GitError>;
 
     /// Re-run the clean filter over all tracked files
     /// (`git add --renormalize -- .`) and report which files were restaged.

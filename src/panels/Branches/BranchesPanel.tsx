@@ -1,46 +1,34 @@
-import { useCallback, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useMemo, useState } from "react";
+import {
+  checkoutBranch,
+  checkoutRemoteBranch,
+  createBranch,
+  deleteBranch,
+  deleteRemoteBranch,
+  mergeInto,
+  pushBranch,
+  rebaseOnto,
+  renameBranch,
+  setUpstream,
+  type RefActionContext,
+} from "../../lib/refActions";
+import { confirmDestructiveAction } from "../../store/confirm";
+import { useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
-import { invalidateRepoDomains } from "../../lib/repoInvalidation";
-import { autoUpdateSubmodules } from "../../lib/submodules";
-import {
-  repoBranches,
-  repoListRemotes,
-  repoSwitchBranch,
-  repoDeleteBranch,
-  repoRenameBranch,
-  repoCreateBranch,
-  repoCheckoutRemoteBranch,
-  repoDeleteRemoteBranch,
-  repoMerge,
-  repoRebase,
-  repoSetUpstream,
-} from "../../lib/commands";
-import { deleteBranchGuided } from "../../lib/branchDelete";
-import { notifyLfsStubs } from "../../lib/lfsFeedback";
-import { groupRemoteBranches, shortRemoteBranchName, splitRemoteRef } from "../../lib/branchGroups";
+import { groupRemoteBranches, shortRemoteBranchName } from "../../lib/branchGroups";
 import { ChevronDownIcon, ChevronRightIcon } from "../../icons";
 import { Button } from "../shared/buttons";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { segStyle } from "../shared/segmented";
 import { branchTreeRows, folderHoldsCurrent, leafName } from "./branchTree";
-import {
-  notifySwitchOutcome,
-  notifyRemoteCheckoutOutcome,
-  formatSwitchError,
-} from "../../lib/switchFeedback";
-import { remoteOpErrorMessage } from "../../lib/pushFeedback";
-import { PUSH_DOMAINS } from "../Commits/useCommitActions";
-import { pushWithTagFollowUp } from "../../lib/autoPushTags";
-import { notifyMergeOutcome, notifyOpError, notifyRebaseOutcome } from "../../lib/mergeFeedback";
 import { notify } from "../../store/notifications";
-import { confirmDialog } from "../../store/confirm";
-import { OP_DOMAINS, useOpState } from "../../lib/useOpState";
-import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
+import { useOpState } from "../../lib/useOpState";
+import { useBranches, useRemotes } from "../../lib/queries/useRepoQueries";
+import { useSettingsStore } from "../../store/settings";
 import { coerceRefsSortMode, sortRefs } from "../../lib/refSort";
-import type { Branch, MergeOptions, Remote } from "../../lib/types";
-import { formatAppError } from "../../lib/types";
+import type { Branch, MergeOptions } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { InlineEditor } from "../shared/InlineEditor";
 import { ShrinkingPathText } from "../shared/ShrinkingPathText";
@@ -51,10 +39,6 @@ import { usePanelRunner } from "../shared/usePanelRunner";
 import { isRowBackgroundClick, jumpPanelsToCommit } from "../shared/jumpToCommit";
 import { PanelContextMenuProvider } from "../Commits/menu/PanelContextMenu";
 import { BranchMenuSection, RemoteBranchMenuSection } from "../Commits/menu/BranchMenuSection";
-import { STALE } from "../../lib/queryTiming";
-
-// Switching can create/consume an auto-stash, so "stashes" is invalidated too.
-const AFFECTED_DOMAINS = ["branches", "log", "status", "tracking", "stashes"];
 
 type EditState = { name: string; mode: "rename" } | null;
 
@@ -83,19 +67,8 @@ export function BranchesSection() {
   const repo = useActiveRepo();
   const queryClient = useQueryClient();
 
-  const { data: branches = [], isFetching, refetch } = useQuery<Branch[]>({
-    queryKey: [repo?.id, "branches"],
-    queryFn: () => repoBranches(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.live,
-  });
-
-  const { data: remotes = [] } = useQuery<Remote[]>({
-    queryKey: [repo?.id, "remotes"],
-    queryFn: () => repoListRemotes(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.live,
-  });
+  const { data: branches = [], isFetching, refetch } = useBranches(repo?.id);
+  const { data: remotes = [] } = useRemotes(repo?.id);
 
   const reload = useCallback(() => { refetch(); }, [refetch]);
   usePanelFocusEffect(reload);
@@ -105,46 +78,35 @@ export function BranchesSection() {
   const [createName, setCreateName] = useState("");
   const [createFrom, setCreateFrom] = useState("");
 
-  const invalidate = useCallback(() => {
-    if (!repo) return;
-    invalidateRepoDomains(queryClient, repo.id, AFFECTED_DOMAINS);
-  }, [queryClient, repo]);
-
-  // Rename/delete/create/set-upstream are near-instant local git calls.
-  // Errors surface as toasts (never panel-embedded banners: those scroll out
-  // of view and reflow the pane); full detail is in the Git Command Log.
-  const { busy: mutBusy, run: runMut } = usePanelRunner({
+  const actionCtx = useMemo<RefActionContext | null>(
+    () => (repo ? { queryClient, repo, remoteNames: remotes.map((r) => r.name) } : null),
+    [queryClient, repo, remotes],
+  );
+  // The shared actions report their own errors and refresh their domains;
+  // the runners add only the re-entry guard and delayed busy state. Network
+  // ops (push, remote delete) may show busy immediately.
+  const { busy: localBusy, run: runLocal } = usePanelRunner({
     enabled: !!repo,
-    onSuccess: invalidate,
     onError: (e) => notify.error(formatAppError(e)),
   });
-  // Checkouts get their own runner: same delayed-busy/guard, but switch
-  // failures classify through formatSwitchError (WouldOverwrite... etc.).
-  const { busy: switchBusy, run: runSwitch } = usePanelRunner({
-    enabled: !!repo,
-    onSuccess: invalidate,
-    onError: (e) => notify.error(formatSwitchError(e)),
-  });
-  // Merge/rebase: notify-based feedback, and a failed attempt can still
-  // leave op state behind - domains refresh on settle either way. "stashes"
-  // too: rebase runs --autostash, which creates and reapplies (or keeps) a
-  // stash entry.
-  const { busy: opBusy, run: runOp } = usePanelRunner({
-    enabled: !!repo,
-    onSettled: () => {
-      if (repo) invalidateRepoDomains(queryClient, repo.id, [...OP_DOMAINS, "stashes"]);
-    },
-    onError: notifyOpError,
-  });
-  // Remote-branch deletion / push are genuine network ops: busy may show
-  // immediately per convention (delayMs 0), guard still applies. Failures
-  // get the classified remote wording (auth, rejected push, …).
   const { busy: netBusy, run: runNet } = usePanelRunner({
     enabled: !!repo,
     delayMs: 0,
-    onError: (e) => notify.error(remoteOpErrorMessage(e)),
+    onError: (e) => notify.error(formatAppError(e)),
   });
-  const busy = mutBusy || switchBusy || opBusy || netBusy;
+  const busy = localBusy || netBusy;
+  /** Run a shared action under `run`'s guard; resolves the action's result. */
+  const guarded = useCallback(
+    async (run: typeof runLocal, action: (c: RefActionContext) => Promise<boolean>) => {
+      if (!actionCtx) return false;
+      let ok = false;
+      await run(async () => {
+        ok = await action(actionCtx);
+      });
+      return ok;
+    },
+    [actionCtx],
+  );
 
   // User-selected sort order (global setting) applied to the local list and
   // within each remote group; group order itself stays the remotes' order.
@@ -246,57 +208,34 @@ export function BranchesSection() {
   const saveRename = async (name: string) => {
     const next = draftName.trim();
     if (!next || next === name) { setEdit(null); return; }
-    if (await runMut(() => repoRenameBranch(repo!.id, name, next))) setEdit(null);
+    if (await guarded(runLocal, (c) => renameBranch(c, name, next))) setEdit(null);
   };
 
-  // The row's Delete button runs a SAFE delete (confirmed via the central
-  // dialog when the destructive-confirm setting is on); force delete stays
-  // reachable via the ref-chip / row context menu, which keeps its own
-  // inline confirm section.
-  const confirmDestructive = useConfirmDestructive();
+  // The row's Delete button runs a SAFE delete; force delete stays reachable
+  // via the ref-chip / row context menu.
   const openDelete = async (b: Branch) => {
-    if (confirmDestructive) {
-      const ok = await confirmDialog({
-        title: "Delete branch",
-        message: "Deletes the local branch (safe delete: a not fully merged branch prompts with guidance first).",
-        detail: b.name,
-        confirmLabel: "Delete branch",
-      });
-      if (!ok) return;
-    }
-    void doDelete(b.name, false);
+    const ok = await confirmDestructiveAction({
+      title: "Delete branch",
+      message: "Deletes the local branch (safe delete: a not fully merged branch prompts with guidance first).",
+      detail: b.name,
+      confirmLabel: "Delete branch",
+    });
+    if (ok) void doDelete(b.name, false);
   };
 
-  // Safe deletes go through the guided flow: a "not fully merged" refusal
-  // raises the central dialog with a case-specific force-delete offer.
   const doDelete = async (name: string, force: boolean) => {
-    const action = force
-      ? () => repoDeleteBranch(repo!.id, name, true)
-      : () => deleteBranchGuided(repo!.id, name);
-    if (await runMut(action)) setEdit(null);
+    if (await guarded(runLocal, (c) => deleteBranch(c, name, force))) setEdit(null);
   };
 
-  const doCheckout = async (name: string) => {
-    await runSwitch(async () => {
-      const result = await repoSwitchBranch(repo!.id, name);
-      notifySwitchOutcome(result.outcome, name);
-      notifyLfsStubs(result.lfs_stubs, "switch");
-      void autoUpdateSubmodules(queryClient, repo!.id);
-    });
-  };
+  const doCheckout = (name: string) => guarded(runLocal, (c) => checkoutBranch(c, name));
 
-  const doRemoteCheckout = useCallback(async (fullRef: string) => {
-    await runSwitch(async () => {
-      const outcome = await repoCheckoutRemoteBranch(repo!.id, fullRef);
-      notifyRemoteCheckoutOutcome(outcome, fullRef.replace(/^refs\/remotes\//, ""));
-      notifyLfsStubs(outcome.lfs_stubs, "checkout");
-      void autoUpdateSubmodules(queryClient, repo!.id);
-    });
-  }, [repo, runSwitch, queryClient]);
+  const doRemoteCheckout = useCallback(
+    (fullRef: string) => guarded(runLocal, (c) => checkoutRemoteBranch(c, fullRef)),
+    [guarded, runLocal],
+  );
 
-  const doSetUpstream = async (name: string, upstream: string | null) => {
-    await runMut(() => repoSetUpstream(repo!.id, name, upstream));
-  };
+  const doSetUpstream = (name: string, upstream: string | null) =>
+    guarded(runLocal, (c) => setUpstream(c, name, upstream));
 
   // Existing same-name remote-tracking branches a local branch could track.
   const upstreamCandidatesFor = (name: string) =>
@@ -306,12 +245,13 @@ export function BranchesSection() {
     const name = createName.trim();
     if (!name) return;
     const from = createFrom.trim() || undefined;
-    if (await runMut(() => repoCreateBranch(repo!.id, name, from))) {
+    // Global setting (default on): a new branch is checked out right away.
+    const created = await guarded(runLocal, (c) =>
+      createBranch(c, name, from, { checkout: checkoutNewBranch }),
+    );
+    if (created) {
       setCreateName("");
       setCreateFrom("");
-      // Global setting (default on): a new branch is checked out right away.
-      // The switch flow handles dirty-tree behavior and its own feedback.
-      if (checkoutNewBranch) await doCheckout(name);
     }
   };
 
@@ -321,56 +261,26 @@ export function BranchesSection() {
   const opState = useOpState(repo?.id);
   const opInProgress = !!opState && opState.kind !== "none";
 
-  // Deletes the branch ON THE REMOTE only (`git push --delete`) — any local
-  // counterpart is untouched, mirroring remote tag deletion.
-  const handleDeleteRemoteBranch = useCallback(async (remoteRef: string) => {
-    if (!repo) return;
-    const split = splitRemoteRef(remoteRef, remotes.map((r) => r.name));
-    if (!split) return;
-    await runNet(async () => {
-      await repoDeleteRemoteBranch(repo.id, split.remote, split.branch, crypto.randomUUID());
-      notify.success(`Deleted '${split.branch}' on ${split.remote}`);
-      invalidateRepoDomains(queryClient, repo.id, AFFECTED_DOMAINS);
-    });
-  }, [repo, remotes, queryClient, runNet]);
+  const handleDeleteRemoteBranch = useCallback(
+    (remoteRef: string) => guarded(runNet, (c) => deleteRemoteBranch(c, remoteRef)),
+    [guarded, runNet],
+  );
 
-  // Pushes a branch - checked out or not (the backend addresses the full
-  // refs/heads/ refspec). `setUpstream` publishes: the target remote becomes
-  // the branch's upstream.
-  const handleBranchPush = useCallback(async (branch: string, remote: string, setUpstream: boolean) => {
-    if (!repo) return;
-    await runNet(async () => {
-      await pushWithTagFollowUp(
-        queryClient,
-        repo.id,
-        {
-          remote,
-          branch,
-          set_upstream: setUpstream,
-          force_with_lease: false,
-          recurse_submodules:
-            useSettingsStore.getState().settings?.push_recurse_submodules ?? null,
-        },
-        crypto.randomUUID(),
-      );
-      notify.success(`Pushed '${branch}' to ${remote}`);
-      invalidateRepoDomains(queryClient, repo.id, PUSH_DOMAINS);
-    });
-  }, [repo, queryClient, runNet]);
+  const handleBranchPush = useCallback(
+    (branch: string, remote: string, setUpstream: boolean) =>
+      guarded(runNet, (c) => pushBranch(c, branch, remote, setUpstream)),
+    [guarded, runNet],
+  );
 
-  const handleMerge = useCallback(async (target: string, options: MergeOptions) => {
-    await runOp(async () => {
-      const outcome = await repoMerge(repo!.id, target, options);
-      notifyMergeOutcome(outcome, target);
-    });
-  }, [repo, runOp]);
+  const handleMerge = useCallback(
+    (target: string, options: MergeOptions) => guarded(runLocal, (c) => mergeInto(c, target, options)),
+    [guarded, runLocal],
+  );
 
-  const handleRebaseOnto = useCallback(async (onto: string) => {
-    await runOp(async () => {
-      const outcome = await repoRebase(repo!.id, onto);
-      notifyRebaseOutcome(outcome, onto);
-    });
-  }, [repo, runOp]);
+  const handleRebaseOnto = useCallback(
+    (onto: string) => guarded(runLocal, (c) => rebaseOnto(c, onto)),
+    [guarded, runLocal],
+  );
 
   if (!repo) {
     return (

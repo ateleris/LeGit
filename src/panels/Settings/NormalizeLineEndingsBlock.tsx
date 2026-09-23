@@ -5,7 +5,7 @@ import {
   repoRenormalizePreview,
   repoWriteGitattributesEol,
 } from "../../lib/commands";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import type { LineEndingsView, RenormalizePreview } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { useConfirmDestructive } from "../../store/settings";

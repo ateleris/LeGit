@@ -21,7 +21,8 @@ mod relay;
 mod shim;
 
 use legit_core::{
-    set_global_base_env, set_invocation_observer, set_progress_observer, GitRunner, GitVersion,
+    set_global_base_env, set_invocation_observer, set_progress_observer, GitExecutor, GitRequest,
+    GitRunner, GitVersion,
     HostPath, LocalFs, OperationId, RepoFs, RunnerError,
 };
 use legit_proto::{
@@ -524,54 +525,35 @@ async fn git_run(agent: &Arc<Agent>, p: GitRunParams) -> Result<serde_json::Valu
     result
 }
 
-/// Mirror of the `GitExecutor` surface: each trait method maps to one flag
-/// combination, dispatched here (the client sets exactly one shape).
+/// Execute the request with every option it carries (they all combine).
 async fn run_shape(
     runner: &GitRunner,
     p: &GitRunParams,
     args: &[&str],
 ) -> Result<serde_json::Value, WireError> {
-    if let Some(stdin) = &p.stdin {
-        if p.want_stdout_bytes {
-            let out = runner
-                .run_with_stdin_bytes(args, stdin)
-                .await
-                .map_err(|e| we2(&e))?;
-            return Ok(to_value(&GitRunResult {
-                stdout: String::new(),
-                stdout_b64: Some(b64_encode(&out.stdout)),
-                stderr: out.stderr,
-                exit_code: out.exit_code,
-                success: out.success,
-                duration_ms: out.duration_ms,
-            }));
+    let env: Vec<(&str, &str)> = p.extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let out = runner.execute(request_from(p, args, &env)).await.map_err(|e| we2(&e))?;
+    Ok(to_value(&if p.want_stdout_bytes {
+        GitRunResult {
+            stdout: String::new(),
+            stdout_b64: Some(b64_encode(&out.stdout)),
+            stderr: out.stderr,
+            exit_code: out.exit_code,
+            success: out.success,
+            duration_ms: out.duration_ms,
         }
-        let out = runner
-            .run_with_stdin(args, stdin)
-            .await
-            .map_err(|e| we2(&e))?;
-        return Ok(to_value(&from_run_output(out)));
-    }
-    let out = if let Some(op_id) = &p.op_id {
-        if p.progress {
-            runner.run_with_op_progress(args, op_id.clone()).await
-        } else {
-            runner.run_with_op(args, op_id.clone()).await
-        }
-    } else if !p.extra_env.is_empty() {
-        let env: Vec<(&str, &str)> = p
-            .extra_env
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
-        runner.run_with_env(args, &env).await
-    } else if !p.ok_exit_codes.is_empty() {
-        runner.run_expecting(args, &p.ok_exit_codes).await
     } else {
-        runner.run(args).await
-    }
-    .map_err(|e| we2(&e))?;
-    Ok(to_value(&from_run_output(out)))
+        from_run_output(out.into_text())
+    }))
+}
+
+fn request_from<'a>(p: &'a GitRunParams, args: &'a [&'a str], env: &'a [(&'a str, &'a str)]) -> GitRequest<'a> {
+    let mut req = GitRequest::new(args).env(env).expect_exit_codes(&p.ok_exit_codes);
+    req.stdin = p.stdin.as_deref();
+    req.op_id = p.op_id.clone();
+    req.progress = p.progress;
+    req.raw_stdout = p.want_stdout_bytes;
+    req
 }
 
 fn from_run_output(out: legit_core::RunOutput) -> GitRunResult {
@@ -640,6 +622,33 @@ async fn git_stream(
 mod tests {
     use super::Credits;
     use std::sync::Arc;
+
+    /// The dispatcher used to honour exactly one option per request (env OR
+    /// expected exit codes OR ...), silently dropping the rest.
+    #[test]
+    fn request_keeps_every_option_of_the_params() {
+        let p = legit_proto::GitRunParams {
+            git_path: legit_core::HostPath("git".into()),
+            cwd: None,
+            args: vec!["config".into(), "--get".into(), "x.y".into()],
+            extra_env: vec![("GIT_EDITOR".into(), "true".into())],
+            ok_exit_codes: vec![1],
+            op_id: Some(legit_core::OperationId("op-1".into())),
+            stdin: Some("in".into()),
+            want_stdout_bytes: true,
+            progress: true,
+        };
+        let args: Vec<&str> = p.args.iter().map(String::as_str).collect();
+        let env: Vec<(&str, &str)> = p.extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let req = super::request_from(&p, &args, &env);
+        assert_eq!(req.args, ["config", "--get", "x.y"]);
+        assert_eq!(req.env, [("GIT_EDITOR", "true")]);
+        assert_eq!(req.ok_exit_codes, [1]);
+        assert_eq!(req.op_id.as_ref().map(|o| o.0.as_str()), Some("op-1"));
+        assert_eq!(req.stdin, Some("in"));
+        assert!(req.progress);
+        assert!(req.raw_stdout);
+    }
 
     /// `take()`/`add()` must never lose a wakeup. The adder grants exactly one
     /// credit per completed take (never a second one that could paper over a

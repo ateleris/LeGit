@@ -2,7 +2,7 @@ import type { ConflictKind, ConflictSide, DiffSource } from "../../lib/types";
 import type { FileTreeEntry } from "../shared/FileTree/buildTree";
 import { useConfirmDestructive } from "../../store/settings";
 import { MenuItem } from "../Commits/menu/primitives";
-import { useMenuConfirm } from "../Commits/menu/PanelContextMenu";
+import { useDestructiveMenuConfirm } from "../Commits/menu/PanelContextMenu";
 import { FileRowMenuSection } from "../shared/FileRowMenuSection";
 import { takeSideLabels } from "./conflictLabels";
 import type { Section } from "./selection";
@@ -16,14 +16,9 @@ import type { Section } from "./selection";
  */
 function ReopenConflictMenuItem({ onReopen }: { onReopen: () => void }) {
   const confirmDestructive = useConfirmDestructive();
-  const menuConfirm = useMenuConfirm();
-  const request = () => {
-    if (!confirmDestructive) {
-      onReopen();
-      return;
-    }
-    menuConfirm("Reopen conflict? The current resolution will be discarded.", onReopen);
-  };
+  const destructiveMenuConfirm = useDestructiveMenuConfirm();
+  const request = () =>
+    destructiveMenuConfirm("Reopen conflict? The current resolution will be discarded.", onReopen);
   return (
     <MenuItem onClick={request}>
       {confirmDestructive ? "Reopen conflict…" : "Reopen conflict"}

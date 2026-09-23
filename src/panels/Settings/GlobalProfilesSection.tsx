@@ -2,7 +2,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePanelFocusEffect } from "../PanelApiContext";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import type { GitProfile } from "../../lib/types";
 import {
   createGitProfile,

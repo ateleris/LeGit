@@ -10,8 +10,9 @@ import { notify } from "../store/notifications";
 import { useThemeStore } from "../store/themes";
 import { addRepoPanelWithoutSplitting, useSummonStore } from "../store/summon";
 import { validateTheme } from "../theme/validate";
-import { PANEL_TITLES, REPO_DOCKVIEW_COMPONENTS, REPO_DOCKVIEW_TAB_COMPONENTS, REPO_PANELS } from "./registry";
-import { applyBakedRepoLayout, applyRepoLayoutEnvelope, capturePlacements, parseRepoLayoutEnvelope } from "./layoutSnapshot";
+import { REPO_DOCKVIEW_COMPONENTS, REPO_DOCKVIEW_TAB_COMPONENTS, REPO_PANELS } from "./registry";
+import { applyBakedRepoLayout, applyRepoLayoutEnvelope, capturePlacements, parseRepoLayoutEnvelope } from "../layout/layoutSnapshot";
+import { buildDefaultRepoLayout } from "../layout/defaultLayouts";
 import { DockWatermark } from "./shared/DockWatermark";
 import { useDockTheme } from "./shared/useDockTheme";
 
@@ -138,35 +139,6 @@ export function RepoDock() {
       />
     </div>
   );
-}
-
-/** First-launch repo layout; also the fallback for "Reset to default layout"
- * when no saved snapshot exists (ViewMenu). */
-export function buildDefaultRepoLayout(api: DockviewApi) {
-  api.addPanel({ id: "log", component: "log", title: PANEL_TITLES["log"] });
-  api.addPanel({
-    id: "commit-details",
-    component: "commit-details",
-    title: PANEL_TITLES["commit-details"],
-    position: { referencePanel: "log", direction: "right" },
-  });
-  const consolePanel = api.addPanel({
-    id: "console",
-    component: "console",
-    title: PANEL_TITLES["console"],
-    position: { referencePanel: "log", direction: "below" },
-  });
-  api.addPanel({
-    id: "repo-settings",
-    component: "repo-settings",
-    tabComponent: "confirm-close",
-    title: PANEL_TITLES["repo-settings"],
-    position: { referencePanel: "console", direction: "within" },
-  });
-  // Collapse the bottom group (console + repo-settings) on first launch.
-  // Users can expand it by dragging the sash or opening a panel via the menu.
-  // Existing saved layouts are NOT affected — they restore from localStorage.
-  consolePanel.group.api.setVisible(false);
 }
 
 /** Open or focus a repo panel by id. */

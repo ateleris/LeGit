@@ -7,7 +7,7 @@
 //! first (with no subscriber) caches `Interest::never` and the capture below
 //! silently sees nothing. A dedicated process has no competing threads.
 
-use legit_core::GitRunner;
+use legit_core::{GitExecutor, GitRunner};
 use tracing::instrument::WithSubscriber;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;

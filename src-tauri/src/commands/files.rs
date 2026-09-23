@@ -63,8 +63,8 @@ pub async fn repo_add_to_gitignore(
     let session = state.get_session(&repo_id).await?;
     // Defence in depth: reject absolute / traversal paths even though these
     // come from our own `ls-files` output.
-    resolve_repo_relative(session.host.fs().as_ref(), &session.path, &path).await?;
-    write_gitignore_line(session.host.fs().as_ref(), &session.path, &path, is_dir).await
+    resolve_repo_relative(session.host.fs().as_ref(), &session.root, &path).await?;
+    write_gitignore_line(session.host.fs().as_ref(), &session.root, &path, is_dir).await
 }
 
 /// Stop tracking a file (`git rm --cached`, keeps it on disk) and add it to
@@ -79,13 +79,13 @@ pub async fn repo_untrack_path(
     is_dir: bool,
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
-    resolve_repo_relative(session.host.fs().as_ref(), &session.path, &path).await?;
+    resolve_repo_relative(session.host.fs().as_ref(), &session.root, &path).await?;
     session
         .backend
         .rm_cached(&[PathBuf::from(&path)])
         .await
         .map_err(AppError::Git)?;
-    write_gitignore_line(session.host.fs().as_ref(), &session.path, &path, is_dir)
+    write_gitignore_line(session.host.fs().as_ref(), &session.root, &path, is_dir)
         .await
         .map_err(|e| {
             AppError::Io(format!(
@@ -107,11 +107,11 @@ pub async fn repo_file_worktree(
 ) -> Result<FileAtRevision, AppError> {
     let session = state.get_session(&repo_id).await?;
     let fs = session.host.fs();
-    let abs = resolve_repo_relative(fs.as_ref(), &session.path, &path).await?;
+    let abs = resolve_repo_relative(fs.as_ref(), &session.root, &path).await?;
     let bytes = fs
-        .read(&HostPath::from_path(&abs), None)
+        .read(&abs.clone(), None)
         .await
-        .map_err(|e| AppError::Io(format!("read {}: {e}", abs.display())))?;
+        .map_err(|e| AppError::Io(format!("read {}: {e}", abs)))?;
     Ok(classify_worktree_bytes(&bytes))
 }
 
@@ -136,11 +136,11 @@ pub async fn repo_reveal_path(
     path: String,
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
-    let abs = resolve_repo_relative(session.host.fs().as_ref(), &session.path, &path).await?;
+    let abs = resolve_repo_relative(session.host.fs().as_ref(), &session.root, &path).await?;
     if let crate::remote::RepoLocator::Wsl { .. } = &session.locator {
         return reveal_remote_in_explorer(&session, &abs);
     }
-    reveal_in_file_manager(&abs)
+    reveal_in_file_manager(&abs.as_local())
 }
 
 // ---------------------------------------------------------------------------
@@ -191,11 +191,11 @@ fn append_gitignore(existing: &[u8], line: &str) -> Option<Vec<u8>> {
 /// line is already there.
 async fn write_gitignore_line(
     fs: &dyn RepoFs,
-    root: &std::path::Path,
+    root: &HostPath,
     rel: &str,
     is_dir: bool,
 ) -> Result<(), AppError> {
-    let gitignore = HostPath::from_path(root).join(".gitignore");
+    let gitignore = root.join(".gitignore");
     let existing = match fs.read(&gitignore, None).await {
         Ok(bytes) => bytes,
         Err(legit_core::FsError::NotFound { .. }) => Vec::new(),
@@ -223,12 +223,12 @@ async fn write_gitignore_line(
 /// nature; other app OSes report it unsupported.
 pub(crate) fn reveal_remote_in_explorer(
     session: &crate::state::RepoSession,
-    abs: &std::path::Path,
+    abs: &HostPath,
 ) -> Result<(), AppError> {
     let crate::remote::RepoLocator::Wsl { distro, .. } = &session.locator else {
-        return reveal_in_file_manager(abs);
+        return reveal_in_file_manager(&abs.as_local());
     };
-    let unc = wsl_unc_path(distro, &abs.to_string_lossy());
+    let unc = wsl_unc_path(distro, abs.as_str());
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;

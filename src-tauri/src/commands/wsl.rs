@@ -106,7 +106,7 @@ pub async fn set_wsl_host_git_path(
         }
         *session.runner.write().await = session.host.executor_for(
             &HostPath(effective.clone()),
-            Some(&HostPath::from_path(&session.path)),
+            Some(&session.root.clone()),
         );
     }
     Ok(status)

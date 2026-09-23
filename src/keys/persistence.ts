@@ -1,5 +1,5 @@
 import { loadKeybindings, saveKeybindings } from "../lib/commands";
-import { formatAppError } from "../lib/types";
+import { formatAppError } from "../lib/errors";
 import { notify } from "../store/notifications";
 import { normalizeChord } from "./chord";
 import { useKeymapStore, type Keymap } from "./keymap";
@@ -17,11 +17,12 @@ export const KEYBINDINGS_VERSION = 1;
 /** Rename aliased command ids in a loaded diff. An entry already present
  * under the new id wins over the aliased old one. */
 export function applyCommandAliases(
-  diff: Keymap,
+  diff: Partial<Keymap>,
   aliases: Readonly<Record<string, string>>,
 ): Keymap {
   const out: Record<string, readonly string[]> = {};
   for (const [id, chords] of Object.entries(diff)) {
+    if (chords === undefined) continue;
     const target = aliases[id] ?? id;
     if (target !== id && target in diff) continue;
     out[target] = chords;

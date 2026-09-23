@@ -1,5 +1,5 @@
-import { gitErrorKind } from "./types";
-import type { AppError, LfsStubs } from "./types";
+import { gitErrorDetails } from "./errors";
+import type { LfsStubs } from "./types";
 import { lfsCauseSentence } from "./lfsMessages";
 import { notify } from "../store/notifications";
 
@@ -23,12 +23,9 @@ const STATE_NOTES: Record<LfsFailureContext, string> = {
 /** Friendly wording for a `GitError::LfsDownloadFailed`, or null when `e` is
  * anything else. */
 export function lfsDownloadErrorMessage(e: unknown, context: LfsFailureContext): string | null {
-  if (gitErrorKind(e) !== "LfsDownloadFailed") return null;
-  const inner = ((e as AppError).details as { details?: unknown }).details as {
-    files?: string[];
-    missing_on_remote?: boolean;
-  };
-  const cause = lfsCauseSentence(inner.files ?? [], inner.missing_on_remote ?? false);
+  const lfs = gitErrorDetails(e, "LfsDownloadFailed");
+  if (!lfs) return null;
+  const cause = lfsCauseSentence(lfs.files, lfs.missing_on_remote);
   const note = STATE_NOTES[context];
   return note ? `${cause} ${note}` : cause;
 }

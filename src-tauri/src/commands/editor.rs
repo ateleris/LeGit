@@ -9,13 +9,13 @@
 //! appended as the final argument. With no editor configured, the commands
 //! fall back to the OS file manager (open the folder / reveal the file).
 //!
-//! The template parsing and PATH resolution are pure functions with unit
-//! tests below — the spawn itself is fire-and-forget (editors are long-lived;
-//! only a failure to spawn is reported).
+//! The template parsing is pure and unit-tested below; the spawn runs on the
+//! repo's host (`Host::spawn_detached`) and is fire-and-forget (editors are
+//! long-lived; only a failure to spawn is reported).
 
 use crate::error::AppError;
 use crate::state::AppState;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 /// Split a command template into tokens. Double quotes group words (so paths
@@ -62,18 +62,17 @@ fn tokenize_template(template: &str) -> Result<Vec<String>, String> {
 /// tokenize first, then substitute `$ROOT` inside tokens — so a root path
 /// containing spaces can never re-split a token. Templates without `$ROOT`
 /// get the root appended as the final argument.
-fn build_editor_invocation(template: &str, root: &Path) -> Result<Vec<String>, String> {
-    let root_str = root.to_string_lossy();
+fn build_editor_invocation(template: &str, root: &str) -> Result<Vec<String>, String> {
     let mut tokens = tokenize_template(template)?;
     let mut substituted = false;
     for t in tokens.iter_mut() {
         if t.contains("$ROOT") {
-            *t = t.replace("$ROOT", &root_str);
+            *t = t.replace("$ROOT", root);
             substituted = true;
         }
     }
     if !substituted {
-        tokens.push(root_str.into_owned());
+        tokens.push(root.to_string());
     }
     Ok(tokens)
 }
@@ -85,177 +84,31 @@ fn build_editor_invocation(template: &str, root: &Path) -> Result<Vec<String>, S
 /// file (folder + file in one window).
 fn build_editor_file_invocation(
     template: &str,
-    root: &Path,
-    file: &Path,
+    root: &str,
+    file: &str,
 ) -> Result<Vec<String>, String> {
-    let root_str = root.to_string_lossy();
-    let file_str = file.to_string_lossy();
     let mut tokens = tokenize_template(template)?;
     let mut file_substituted = false;
     for t in tokens.iter_mut() {
         if t.contains("$ROOT") {
-            *t = t.replace("$ROOT", &root_str);
+            *t = t.replace("$ROOT", root);
         }
         if t.contains("$FILE") {
-            *t = t.replace("$FILE", &file_str);
+            *t = t.replace("$FILE", file);
             file_substituted = true;
         }
     }
     if !file_substituted {
-        tokens.push(file_str.into_owned());
+        tokens.push(file.to_string());
     }
     Ok(tokens)
 }
 
-/// Resolve a program name against a PATH directory list. A name containing a
-/// path separator is used as-is. Otherwise each directory is tried with the
-/// name verbatim and with each extension in `exts` appended (Windows PATHEXT;
-/// empty elsewhere). `exists` is injected so the search logic is testable.
-fn find_in_path(
-    prog: &str,
-    dirs: &[PathBuf],
-    exts: &[String],
-    exists: &dyn Fn(&Path) -> bool,
-) -> Option<PathBuf> {
-    if prog.contains('/') || prog.contains('\\') {
-        let p = PathBuf::from(prog);
-        return exists(&p).then_some(p);
-    }
-    for dir in dirs {
-        let candidate = dir.join(prog);
-        if exists(&candidate) {
-            return Some(candidate);
-        }
-        for ext in exts {
-            let with_ext = dir.join(format!("{prog}{ext}"));
-            if exists(&with_ext) {
-                return Some(with_ext);
-            }
-        }
-    }
-    None
-}
 
-/// The OS-specific extension list for PATH lookups: PATHEXT on Windows
-/// (lower-cased, e.g. `.com;.exe;.bat;.cmd`), empty elsewhere.
-fn path_extensions() -> Vec<String> {
-    #[cfg(target_os = "windows")]
-    {
-        std::env::var("PATHEXT")
-            .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string())
-            .split(';')
-            .filter(|e| !e.is_empty())
-            .map(|e| e.to_lowercase())
-            .collect()
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        Vec::new()
-    }
-}
 
-/// Resolve the template's program against the real PATH, giving a clear
-/// "not found" error instead of a raw spawn failure.
-fn resolve_program(prog: &str) -> Result<PathBuf, AppError> {
-    let dirs: Vec<PathBuf> = std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).collect())
-        .unwrap_or_default();
-    find_in_path(prog, &dirs, &path_extensions(), &|p| p.is_file()).ok_or_else(|| {
-        AppError::Io(format!(
-            "Editor command not found: {prog} — check Settings → External editor"
-        ))
-    })
-}
 
-/// Quote one argument for `cmd.exe`'s command line.
-///
-/// `cmd` is a shell: it re-parses `&`, `|`, `<`, `>`, `^`, `(`, `)` in the
-/// command line it is handed. Rust's `Command` quotes an argument only when it
-/// contains a space, a tab or a quote (MSVCRT rules), so `C:\r\a&calc.txt`
-/// would reach `cmd` unquoted and the `&` would start a second command. Rust's
-/// own batch-file escaping (1.77.2, CVE-2024-24576) does not help here: it
-/// applies when the PROGRAM is the `.bat`/`.cmd` file, not when `cmd` is
-/// invoked explicitly.
-///
-/// Wrapping in double quotes is what neutralizes the metacharacters - `cmd`
-/// does not interpret them inside quotes. An argument that itself contains a
-/// double quote cannot be quoted safely, so it is refused; Windows forbids `"`
-/// in path names, so no real file hits that. `%VAR%` still expands (quotes do
-/// not stop `cmd`'s variable expansion) - that can pick the wrong path for a
-/// file literally named `%…%`, but it cannot start a command.
-/// (Windows-only in effect, but compiled everywhere so its unit tests run on
-/// every platform - CI is Linux.)
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn quote_for_cmd(arg: &str) -> Result<String, AppError> {
-    if arg.contains('"') || arg.contains('\n') || arg.contains('\r') {
-        return Err(AppError::Io(format!(
-            "cannot pass {arg:?} to a .cmd/.bat editor: it contains a quote or newline"
-        )));
-    }
-    Ok(format!("\"{arg}\""))
-}
 
-/// The full `cmd /S /C "…"` command line for a batch-shim editor.
-///
-/// `/S` makes `cmd` strip exactly the outer pair of quotes and take the rest
-/// verbatim, which is the documented way to hand it an already-quoted command
-/// line. Every token (the shim path included) is quoted by `quote_for_cmd`.
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn build_cmd_command_line(program: &Path, args: &[String]) -> Result<String, AppError> {
-    let mut line = quote_for_cmd(&program.to_string_lossy())?;
-    for a in args {
-        line.push(' ');
-        line.push_str(&quote_for_cmd(a)?);
-    }
-    Ok(format!("\"{line}\""))
-}
 
-/// Spawn the editor invocation detached, with the repo root as working
-/// directory. On Windows, `.cmd`/`.bat` shims (VS Code's `code`, etc.) cannot
-/// be spawned directly by CreateProcess — they run through `cmd /S /C`, whose
-/// command line is built and quoted by hand (see `quote_for_cmd`: the paths
-/// come from the working tree, so a file name can carry shell metacharacters).
-fn spawn_editor(tokens: &[String], root: &Path) -> Result<(), AppError> {
-    let program = resolve_program(&tokens[0])?;
-    let args = &tokens[1..];
-
-    #[allow(unused_mut)]
-    let mut cmd;
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        let is_batch = program
-            .extension()
-            .map(|e| {
-                let e = e.to_string_lossy().to_lowercase();
-                e == "cmd" || e == "bat"
-            })
-            .unwrap_or(false);
-        if is_batch {
-            cmd = Command::new("cmd");
-            // raw_arg: the line is already quoted for `cmd`; letting Rust
-            // re-quote it would break the `/S` contract.
-            cmd.arg("/S")
-                .arg("/C")
-                .raw_arg(build_cmd_command_line(&program, args)?);
-        } else {
-            cmd = Command::new(&program);
-            cmd.args(args);
-        }
-        // No console flash for the wrapper; the editor's own window still shows.
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        cmd = Command::new(&program);
-        cmd.args(args);
-    }
-
-    cmd.current_dir(root);
-    cmd.spawn()
-        .map(|_| ())
-        .map_err(|e| AppError::Io(format!("launch editor: {e}")))
-}
 
 /// Open a directory in the OS file manager — the fallback when no external
 /// editor is configured. (Distinct from `repo_reveal_path`, which *selects* a
@@ -322,24 +175,22 @@ pub async fn repo_open_in_editor(
     let session = state.get_session(&repo_id).await?;
     let template = effective_editor_template(&state, &session).await;
 
-    if let crate::remote::RepoLocator::Wsl { .. } = &session.locator {
-        if template.trim().is_empty() {
-            return crate::commands::files::reveal_remote_in_explorer(&session, &session.path);
-        }
-        let tokens = build_editor_invocation(&template, &session.path).map_err(AppError::Io)?;
-        return spawn_remote(&session, &tokens).await;
-    }
-
     if template.trim().is_empty() {
-        return open_directory(&session.path);
+        return match &session.locator {
+            crate::remote::RepoLocator::Wsl { .. } => {
+                crate::commands::files::reveal_remote_in_explorer(&session, &session.root)
+            }
+            crate::remote::RepoLocator::Local { .. } => open_directory(&session.root.as_local()),
+        };
     }
-    let tokens = build_editor_invocation(&template, &session.path).map_err(AppError::Io)?;
-    spawn_editor(&tokens, &session.path)
+    let tokens = build_editor_invocation(&template, session.root.as_str()).map_err(AppError::Io)?;
+    spawn_on_host(&session, &tokens).await
 }
 
-/// Fire-and-forget a template invocation on the repo's host (remote repos).
-/// PATH resolution happens there (the agent inherits the login-shell env).
-async fn spawn_remote(
+/// Fire-and-forget a template invocation on the repo's host, in the repo
+/// root. PATH resolution happens on that host (a WSL agent inherits the
+/// login-shell env; `code .` there does the VS Code Remote thing).
+async fn spawn_on_host(
     session: &crate::state::RepoSession,
     tokens: &[String],
 ) -> Result<(), AppError> {
@@ -348,10 +199,15 @@ async fn spawn_remote(
         .spawn_detached(
             &tokens[0],
             &tokens[1..],
-            Some(&legit_core::HostPath::from_path(&session.path)),
+            Some(&session.root.clone()),
         )
         .await
-        .map_err(|e| AppError::Io(e.to_string()))
+        .map_err(|e| match e {
+            legit_host::HostError::ProgramNotFound(p) => AppError::Io(format!(
+                "Editor command not found: {p} - check Settings > External editor"
+            )),
+            e => AppError::Io(format!("launch editor: {e}")),
+        })
 }
 
 /// Open one working-tree file in the configured external editor (same
@@ -368,9 +224,9 @@ pub async fn repo_open_file_in_editor(
     let session = state.get_session(&repo_id).await?;
     let fs = session.host.fs();
     let abs =
-        crate::commands::working::resolve_repo_relative(fs.as_ref(), &session.path, &path).await?;
+        crate::commands::working::resolve_repo_relative(fs.as_ref(), &session.root, &path).await?;
     let is_file = matches!(
-        fs.stat(&legit_core::HostPath::from_path(&abs)).await,
+        fs.stat(&abs.clone()).await,
         Ok(Some(st)) if !st.is_dir
     );
     if !is_file {
@@ -380,20 +236,19 @@ pub async fn repo_open_file_in_editor(
     }
 
     let template = effective_editor_template(&state, &session).await;
-    if let crate::remote::RepoLocator::Wsl { .. } = &session.locator {
-        if template.trim().is_empty() {
-            return crate::commands::files::reveal_remote_in_explorer(&session, &abs);
-        }
-        let tokens =
-            build_editor_file_invocation(&template, &session.path, &abs).map_err(AppError::Io)?;
-        return spawn_remote(&session, &tokens).await;
-    }
     if template.trim().is_empty() {
-        return crate::commands::files::reveal_in_file_manager(&abs);
+        return match &session.locator {
+            crate::remote::RepoLocator::Wsl { .. } => {
+                crate::commands::files::reveal_remote_in_explorer(&session, &abs)
+            }
+            crate::remote::RepoLocator::Local { .. } => {
+                crate::commands::files::reveal_in_file_manager(&abs.as_local())
+            }
+        };
     }
     let tokens =
-        build_editor_file_invocation(&template, &session.path, &abs).map_err(AppError::Io)?;
-    spawn_editor(&tokens, &session.path)
+        build_editor_file_invocation(&template, session.root.as_str(), abs.as_str()).map_err(AppError::Io)?;
+    spawn_on_host(&session, &tokens).await
 }
 
 #[cfg(test)]
@@ -423,19 +278,19 @@ mod tests {
     #[test]
     fn substitutes_root_inside_tokens() {
         let tokens =
-            build_editor_invocation(r#"ed --folder="$ROOT""#, Path::new("/repo dir")).unwrap();
+            build_editor_invocation(r#"ed --folder="$ROOT""#, "/repo dir").unwrap();
         assert_eq!(tokens, vec!["ed", "--folder=/repo dir"]);
     }
 
     #[test]
     fn appends_root_when_template_has_no_placeholder() {
-        let tokens = build_editor_invocation("code -n", Path::new("/repo")).unwrap();
+        let tokens = build_editor_invocation("code -n", "/repo").unwrap();
         assert_eq!(tokens, vec!["code", "-n", "/repo"]);
     }
 
     #[test]
     fn quoted_root_with_spaces_stays_one_token() {
-        let tokens = build_editor_invocation(r#"code "$ROOT""#, Path::new("/a b/c")).unwrap();
+        let tokens = build_editor_invocation(r#"code "$ROOT""#, "/a b/c").unwrap();
         assert_eq!(tokens, vec!["code", "/a b/c"]);
     }
 
@@ -443,8 +298,8 @@ mod tests {
     fn file_invocation_substitutes_file_inside_tokens() {
         let tokens = build_editor_file_invocation(
             r#"ed --goto="$FILE""#,
-            Path::new("/repo"),
-            Path::new("/repo/src/a.ts"),
+            "/repo",
+            "/repo/src/a.ts",
         )
         .unwrap();
         assert_eq!(tokens, vec!["ed", "--goto=/repo/src/a.ts"]);
@@ -454,8 +309,8 @@ mod tests {
     fn file_invocation_appends_file_when_no_placeholder() {
         let tokens = build_editor_file_invocation(
             "code -n",
-            Path::new("/repo"),
-            Path::new("/repo/src/a.ts"),
+            "/repo",
+            "/repo/src/a.ts",
         )
         .unwrap();
         assert_eq!(tokens, vec!["code", "-n", "/repo/src/a.ts"]);
@@ -465,8 +320,8 @@ mod tests {
     fn file_invocation_substitutes_root_and_file() {
         let tokens = build_editor_file_invocation(
             r#"ed "$ROOT" "$FILE""#,
-            Path::new("/repo"),
-            Path::new("/repo/src/a.ts"),
+            "/repo",
+            "/repo/src/a.ts",
         )
         .unwrap();
         assert_eq!(tokens, vec!["ed", "/repo", "/repo/src/a.ts"]);
@@ -478,8 +333,8 @@ mod tests {
         // must still deliver the file (folder + file in one window).
         let tokens = build_editor_file_invocation(
             r#"code "$ROOT""#,
-            Path::new("/repo"),
-            Path::new("/repo/src/a.ts"),
+            "/repo",
+            "/repo/src/a.ts",
         )
         .unwrap();
         assert_eq!(tokens, vec!["code", "/repo", "/repo/src/a.ts"]);
@@ -489,93 +344,19 @@ mod tests {
     fn file_invocation_path_with_spaces_stays_one_token() {
         let tokens = build_editor_file_invocation(
             r#"ed "$FILE""#,
-            Path::new("/a b"),
-            Path::new("/a b/c d.txt"),
+            "/a b",
+            "/a b/c d.txt",
         )
         .unwrap();
         assert_eq!(tokens, vec!["ed", "/a b/c d.txt"]);
     }
 
-    #[test]
-    fn find_in_path_tries_extensions_in_order() {
-        let dirs = vec![PathBuf::from("/bin"), PathBuf::from("/usr/bin")];
-        let exts = vec![".exe".to_string(), ".cmd".to_string()];
-        let existing = PathBuf::from("/usr/bin/code.cmd");
-        let found = find_in_path("code", &dirs, &exts, &|p| p == existing);
-        assert_eq!(found, Some(existing));
-    }
 
-    #[test]
-    fn find_in_path_prefers_verbatim_name() {
-        let dirs = vec![PathBuf::from("/bin")];
-        let found = find_in_path("ed", &dirs, &[], &|p| p == Path::new("/bin/ed"));
-        assert_eq!(found, Some(PathBuf::from("/bin/ed")));
-    }
 
-    #[test]
-    fn find_in_path_uses_explicit_paths_verbatim() {
-        // A name with a separator is not searched, just checked.
-        assert_eq!(
-            find_in_path("/opt/ed", &[PathBuf::from("/bin")], &[], &|p| p
-                == Path::new("/opt/ed")),
-            Some(PathBuf::from("/opt/ed"))
-        );
-        assert_eq!(
-            find_in_path("/missing/ed", &[PathBuf::from("/bin")], &[], &|_| false),
-            None
-        );
-    }
 
-    #[test]
-    fn find_in_path_misses_cleanly() {
-        assert_eq!(find_in_path("nope", &[PathBuf::from("/bin")], &[], &|_| false), None);
-    }
 
     // --- cmd.exe quoting (Windows batch-shim editors) ---
 
-    /// The injection this guards: working-tree file names reach the editor as
-    /// arguments, `&` is legal in a Windows file name, and Rust quotes an
-    /// argument only if it contains a space/tab/quote - so `a&calc.txt` used
-    /// to arrive at `cmd` unquoted, where `&` starts a second command. Every
-    /// argument must come back wrapped in quotes, metacharacters or not.
-    #[test]
-    fn cmd_quoting_neutralizes_shell_metacharacters() {
-        for evil in [
-            r"C:\repo\a&calc.txt",
-            r"C:\repo\a|calc.txt",
-            r"C:\repo\a^calc.txt",
-            r"C:\repo\a>out.txt",
-            r"C:\repo\a<in.txt",
-            r"C:\repo\(a).txt",
-            // No metacharacter and no space: the case Rust leaves unquoted.
-            r"C:\repo\plain.txt",
-        ] {
-            let quoted = quote_for_cmd(evil).expect("quotable");
-            assert_eq!(quoted, format!("\"{evil}\""), "must be wrapped in quotes");
-        }
-    }
 
-    /// A quote cannot be escaped for `cmd` safely, so it is refused rather
-    /// than passed through (Windows forbids `"` in path names anyway).
-    #[test]
-    fn cmd_quoting_refuses_unquotable_arguments() {
-        assert!(quote_for_cmd(r#"a"b"#).is_err());
-        assert!(quote_for_cmd("a\nb").is_err());
-        assert!(quote_for_cmd("a\rb").is_err());
-    }
 
-    /// `/S` strips exactly the OUTER quote pair, so the whole line is wrapped
-    /// once and every token inside it is quoted individually.
-    #[test]
-    fn cmd_command_line_wraps_program_and_args() {
-        let line = build_cmd_command_line(
-            Path::new(r"C:\Program Files\Microsoft VS Code\bin\code.cmd"),
-            &[r"C:\repo".to_string(), r"C:\repo\a&calc.txt".to_string()],
-        )
-        .expect("line");
-        assert_eq!(
-            line,
-            r#"""C:\Program Files\Microsoft VS Code\bin\code.cmd" "C:\repo" "C:\repo\a&calc.txt"""#
-        );
-    }
 }

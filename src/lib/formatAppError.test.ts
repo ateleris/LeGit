@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cloneCancelCleanupFailure, formatAppError, gitErrorKind } from "./types";
+import { cloneCancelCleanupFailure, formatAppError, gitErrorKind } from "./errors";
 
 // Regression tests for error display: nested GitErrors must surface git's own
 // message, never the serialized JSON envelope

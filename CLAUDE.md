@@ -13,7 +13,11 @@ LeGit is a desktop **git GUI**: a **Tauri 2.x** app with a **Rust** backend and 
 - `src-tauri/` — the Tauri app: `commands/` (IPC commands), `state.rs`
   (`AppState`, per-repo `RepoSession`), `watcher.rs` (filesystem watcher).
 - `src/` — React frontend: `panels/` (UI), `store/` (zustand), `lib/`
-  (command wrappers + types), `theme/`, `icons/`, `styles/`.
+  (command wrappers + types), `layout/` (panel descriptors, default and
+  named layouts, snapshots, global-panel summon: dockview logic without
+  React components), `theme/`, `icons/`, `styles/`. `store/`, `keys/`,
+  `lib/` and `layout/` never import from `panels/` (enforced by
+  `src/layering.test.ts`).
 - Remote-repo crates: `crates/legit-watch` (extracted watcher core),
   `crates/legit-proto` (agent wire protocol), `crates/legit-host` (`Host`
   trait: Local + Remote impls), `crates/legit-agent` (the binary deployed
@@ -24,8 +28,12 @@ LeGit is a desktop **git GUI**: a **Tauri 2.x** app with a **Rust** backend and 
 
 **Git is run via the CLI, not a library.** Every git invocation goes through
 `GitRunner` (hardened env: `GIT_EDITOR=false`, `GIT_TERMINAL_PROMPT=0`,
-`LANG/LC_ALL=C.UTF-8`; cancellable via `OperationId`). `run` / `run_with_op` /
-`run_with_stdin` / `run_with_env` / `stream`. Parsers are **pure** `text -> type`
+`LANG/LC_ALL=C.UTF-8`; cancellable via `OperationId`). One run method,
+`execute(GitRequest)`: a request combines args, env overrides, stdin, op id,
+expected exit codes, progress and raw stdout freely; `run` / `run_with_op` /
+`run_with_stdin` / `run_with_env` / ... are conveniences over it (executors
+implement only `execute`, `stream`, `cancel`, so fakes and the remote agent see
+every option). Parsers are **pure** `text -> type`
 functions in `cli_impl/parsers/`, and each command's format string is a constant
 next to its parser so the contract lives in one place.
 
@@ -39,10 +47,12 @@ it wins) - the continue/skip commands run with `GIT_EDITOR=true` to accept the
 prepared message unchanged.
 
 **Remote repositories run through a Host seam (WSL v1).** A repo lives on a
-`Host` (`legit-host`): every repo-side action — git spawn (`GitExecutor`,
-which now also carries `stream`/`cancel`), file access (`RepoFs` +
-`HostPath`, never raw `std::fs` on repo paths), the watcher, helper spawns —
-goes through the session's host, so a WSL repo behaves like a local one. The
+`Host` (`legit-host`), and every repo-side action goes through the session's
+host, so a WSL repo behaves like a local one: git spawn (`GitExecutor`, which
+also carries `stream`/`cancel`), file access (`RepoFs` + `HostPath`, never raw
+`std::fs` on repo paths; `RepoSession.root` is a `HostPath`, converted with
+`as_local()` only for app-machine work), the watcher, and helper spawns
+(`Host::spawn_detached`, incl. the external editor). The
 cut is at the EXECUTOR level: the `legit-agent` deployed into the distro is a
 dumb git-runner + fs + watcher host over an NDJSON stdio protocol
 (`legit-proto`, bidirectional — credentials relay agent→app), and ALL
@@ -58,22 +68,45 @@ pinned byte-identical by test). Reconnect swaps the connection inside
 generic over the `GitExecutor` trait (`executor.rs`; default `GitRunner`, so
 production code never names it). Composed flows are tested at two levels, and a
 new composed flow or output-classification assumption needs both:
-`cli_impl/flow_tests.rs` scripts a `FakeExecutor` that asserts the exact git
-command sequence (incl. what must NOT run, e.g. no `stash pop` after a
-clean-tree auto-stash); `crates/legit-core/tests/git_flows.rs` validates the
-encoded assumptions against the real binary in tempdir repos (pins local
-config: identity, no signing, no autocrlf). Both run in
-`cargo test -p legit-core`.
+`cli_impl/flow_tests/` (one file per domain) scripts the shared `FakeExecutor`
+(`legit_core::test_support`; other crates' tests enable the `test-support`
+feature) that asserts the exact git command sequence, env overrides and stdin
+of every invocation (incl. what must NOT run, e.g. no `stash pop` after a
+clean-tree auto-stash; stdin-fed commands are scripted with `expect_stdin`);
+`crates/legit-core/tests/git_flows.rs` validates the encoded assumptions
+against the real binary in tempdir repos (`PINNED_CONFIG`: identity, no
+signing, no autocrlf). Both run in `cargo test -p legit-core`.
+
+**`cli_impl/` is split by domain.** `mod.rs` holds the struct, the shared exec
+helpers (`run_checked`, `run_classified`, `ensure_success`, ...) and the
+`GitBackend` impl as one-line delegations; each method's body lives as an
+inherent method in its domain file (`history`, `changes`, `commits`,
+`branch`, `remote`, `tags`, `stash`, `sequencer`, `conflicts`, `lfs`,
+`submodules`, `worktrees`, `case_drift`, `line_endings`), with the domain's
+helpers and unit tests; failure classification lives in `classify.rs`.
+
+**Commands never compose git flows.** A command resolves its session and
+calls a backend method (or `legit_core::config` for git-config views on an
+unbound executor), so every git sequence is covered by both test gates. What
+stays in `src-tauri` is host-side work: reading working-tree files through
+the host fs with the repo-escape check (`resolve_repo_relative`), session
+setup probes, and the session-less `init`/`clone`.
 
 **Commands & bindings.** Backend commands are `#[tauri::command] #[specta::specta]`,
-registered in `src-tauri/src/lib.rs` (`collect_commands!`). specta regenerates
-`src/lib/bindings.ts` **when the app runs** (debug), not at `cargo build`. The
-frontend actually calls **hand-written wrappers** in `src/lib/commands.ts`
-(`invoke(...)`), with types **hand-mirrored** in `src/lib/types.ts` (bindings.ts
-is the generated reference). Add new commands in both places.
+registered in `src-tauri/src/lib.rs` (`collect_commands!`). The generated
+`src/lib/bindings.ts` is **committed**; `cargo test -p legit-app` fails when it
+is stale - regenerate with `LEGIT_UPDATE_BINDINGS=1 cargo test -p legit-app
+bindings` (a debug app run also rewrites it). The frontend calls
+**hand-written wrappers** in `src/lib/commands.ts` (`invoke(...)`), with types
+**hand-mirrored** in `src/lib/types.ts`; `src/lib/bindingsParity.ts` makes tsc
+fail when a mirrored type differs from its binding (add new mirrored types
+there - `bindingsParity.test.ts` enforces it). Output-only Rust types must not
+carry field-level `#[serde(default)]`: specta turns it into an optional `?`
+field although the value is always sent. Add new commands in both places.
 
-**Panels are dockview-based.** `src/panels/registry.tsx` declares every panel
-(`PanelDescriptor`: id, scope global/repo, `summons`, `defaultPlacement`).
+**Panels are dockview-based.** `src/layout/descriptors.ts` declares every panel
+(`PanelDescriptor`: id, scope global/repo, `summons`, `defaultPlacement`);
+`src/panels/registry.tsx` maps those ids to components.
 Panels open/focus each other through the **summon** mechanism
 (`src/store/summon.ts`): `summon(id, payload)` opens-or-focuses and delivers a
 payload (queued until mount); `notifyIfOpen(id, payload)` updates a panel only if
@@ -114,9 +147,11 @@ repo opens, persisted eagerly on each change. Fields follow the convention
 `Option<T>` + `#[serde(default)]` where `None` means "inherit global / use the
 default" (so old settings files keep parsing). Frontend: `useRepoStore` caches
 `repoSettings[repoId]` (filled by `loadRepoSettings`, triggered on activate);
-mutations send the whole struct via
-`updateRepoSettings(repoId, { ...repoSettings, field: value })`, then
-`loadRepoSettings` refreshes the cache. Adding a setting touches 3 places: the
+mutations go through `updateRepoSetting(repoId, field, value)`, which sends
+ONLY that field (`patch_repo_settings`, merged server-side) and caches the
+merged settings it returns. Never send a whole cached struct back: fields
+written by their own commands (lane locks, profile, git path) would be
+overwritten with stale values, which is why the patch refuses them. Adding a setting touches 3 places: the
 Rust struct, the hand-mirrored `RepoSettings` in `src/lib/types.ts`, and a
 section in `RepoSettingsPanel.tsx`; consumers read
 `repoSettings?.field ?? default`.
@@ -135,7 +170,11 @@ repos). Signatures are verified lazily in `commit_details` (`git verify-commit`)
 **Stash addressing & auto-stash correctness.** `git stash push` exits **0**
 with "No local changes to save" (on *stdout*) for a clean tree — never infer
 "something was stashed" from the exit code or stderr; compare the `refs/stash`
-tip before/after (`stash_tip` / `stash_created` in `cli_impl`). Positional
+tip before/after (`stash_tip` / `stash_created` in `cli_impl`). Flows that
+auto-stash and later pop go through `auto_stash_push` (`cli_impl/stash.rs`):
+it identifies OUR entry by a marker-matched stash-list diff (never adopts a
+concurrently created one) and reports "may have been stashed" when the push
+ran but could not be verified; callers keep their own rollback policy. Positional
 `stash@{N}` selectors are **display-only**: they shift on every
 create/drop/pop, including ones made outside the app, so every stash mutation
 addresses the entry by its **commit SHA**, resolved to the current selector at
@@ -280,7 +319,7 @@ project memory for details.
   that a solved issue can never be re-introduced silently. Every bugfix
   lands with a test that fails on the pre-fix behavior, at the most precise
   seam available: pure-function unit test (parsers, decision logic),
-  `flow_tests.rs` command-sequence test, `tests/git_flows.rs` real-git case,
+  `flow_tests/` command-sequence test, `tests/git_flows.rs` real-git case,
   the theme contract suites, or - only when the bug lives in UI wiring that
   no unit seam can express - an E2E spec. If genuinely no automated seam can
   express it (interactive-only behavior), record the repro and root cause in

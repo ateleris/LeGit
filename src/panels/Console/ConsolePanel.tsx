@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { consoleCancel, consoleExec, consoleFeed } from "../../lib/commands";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { useActiveRepo } from "../../store/repos";
 import { EMPTY_CONSOLE_SESSION, useConsoleStore, type ConsoleLine } from "../../store/console";
 import { parseAnsiLine, type AnsiSpan } from "./ansi";

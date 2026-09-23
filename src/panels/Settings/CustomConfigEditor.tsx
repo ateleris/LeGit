@@ -7,7 +7,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
 import { usePanelDirty } from "../PanelApiContext";
 import { WarningIcon } from "../../icons";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import type { ManagedKeys, ProfileStatus } from "../../lib/types";
 import { writeRepoManagedConfig } from "../../lib/commands";
 import { Button } from "../shared/buttons";

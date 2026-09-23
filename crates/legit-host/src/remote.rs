@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use legit_core::{
     FsDirEntry, FsError, FsProbe, FsStat, GitExecutor, GitInvocation, GitVersion, HostPath,
-    OperationId, RemoteProgress, RepoFs, RunOutput, RunOutputBytes, RunnerError, RunnerEvent,
+    GitRequest, OperationId, RemoteProgress, RepoFs, RunOutputBytes, RunnerError, RunnerEvent,
 };
 use legit_proto::{
     b64_decode, b64_encode, decode_frame, encode_frame, from_value, parse_ready_line, to_value,
@@ -393,7 +393,7 @@ impl RemoteExecutor {
         }
     }
 
-    async fn run_params(&self, params: GitRunParams) -> Result<RunOutput, RunnerError> {
+    async fn run_params(&self, params: GitRunParams) -> Result<GitRunResult, RunnerError> {
         let conn = self.conn.get();
         let tracked_op = params.op_id.clone();
         if let Some(op) = &tracked_op {
@@ -409,14 +409,7 @@ impl RemoteExecutor {
                 .expect("ops poisoned")
                 .remove(op);
         }
-        let r = result.map_err(wire_to_runner)?;
-        Ok(RunOutput {
-            stdout: r.stdout,
-            stderr: r.stderr,
-            exit_code: r.exit_code,
-            success: r.success,
-            duration_ms: r.duration_ms,
-        })
+        result.map_err(wire_to_runner)
     }
 }
 
@@ -434,54 +427,15 @@ fn wire_to_runner(e: WireError) -> RunnerError {
 
 #[async_trait]
 impl GitExecutor for RemoteExecutor {
-    async fn run(&self, args: &[&str]) -> Result<RunOutput, RunnerError> {
-        self.run_params(self.params(args)).await
-    }
-
-    async fn run_expecting(
-        &self,
-        args: &[&str],
-        ok_exit_codes: &[i32],
-    ) -> Result<RunOutput, RunnerError> {
-        let mut p = self.params(args);
-        p.ok_exit_codes = ok_exit_codes.to_vec();
-        self.run_params(p).await
-    }
-
-    async fn run_with_op(
-        &self,
-        args: &[&str],
-        op_id: OperationId,
-    ) -> Result<RunOutput, RunnerError> {
-        let mut p = self.params(args);
-        p.op_id = Some(op_id);
-        self.run_params(p).await
-    }
-
-    async fn run_with_stdin(
-        &self,
-        args: &[&str],
-        stdin_data: &str,
-    ) -> Result<RunOutput, RunnerError> {
-        let mut p = self.params(args);
-        p.stdin = Some(stdin_data.to_string());
-        self.run_params(p).await
-    }
-
-    async fn run_with_stdin_bytes(
-        &self,
-        args: &[&str],
-        stdin_data: &str,
-    ) -> Result<RunOutputBytes, RunnerError> {
-        let mut p = self.params(args);
-        p.stdin = Some(stdin_data.to_string());
-        p.want_stdout_bytes = true;
-        let r: GitRunResult = self
-            .conn
-            .get()
-            .call(Method::GitRun(p))
-            .await
-            .map_err(wire_to_runner)?;
+    async fn execute(&self, req: GitRequest<'_>) -> Result<RunOutputBytes, RunnerError> {
+        let mut p = self.params(req.args);
+        p.extra_env = req.env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        p.ok_exit_codes = req.ok_exit_codes.to_vec();
+        p.op_id = req.op_id;
+        p.stdin = req.stdin.map(str::to_string);
+        p.want_stdout_bytes = req.raw_stdout;
+        p.progress = req.progress;
+        let r = self.run_params(p).await?;
         let stdout = match r.stdout_b64 {
             Some(b64) => b64_decode(&b64)
                 .map_err(|e| RunnerError::Io(std::io::Error::other(e.to_string())))?,
@@ -494,30 +448,6 @@ impl GitExecutor for RemoteExecutor {
             success: r.success,
             duration_ms: r.duration_ms,
         })
-    }
-
-    async fn run_with_env(
-        &self,
-        args: &[&str],
-        extra_env: &[(&str, &str)],
-    ) -> Result<RunOutput, RunnerError> {
-        let mut p = self.params(args);
-        p.extra_env = extra_env
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        self.run_params(p).await
-    }
-
-    async fn run_with_op_progress(
-        &self,
-        args: &[&str],
-        op_id: OperationId,
-    ) -> Result<RunOutput, RunnerError> {
-        let mut p = self.params(args);
-        p.op_id = Some(op_id);
-        p.progress = true;
-        self.run_params(p).await
     }
 
     async fn stream(

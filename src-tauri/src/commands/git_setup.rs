@@ -68,7 +68,7 @@ pub async fn set_git_path(
         };
         *session.runner.write().await = session.host.executor_for(
             &legit_core::HostPath::from_path(&effective),
-            Some(&legit_core::HostPath::from_path(&session.path)),
+            Some(&session.root.clone()),
         );
     }
 
@@ -99,7 +99,7 @@ pub async fn set_repo_git_path(
             "setting a per-repo git binary is not supported for remote repositories yet".into(),
         ));
     }
-    let repo_path = session.path.clone();
+    let repo_path = session.root.as_local();
 
     // Resolve and probe the candidate binary before touching anything.
     let global_git_path = state.git_path.read().await.clone();
@@ -124,8 +124,7 @@ pub async fn set_repo_git_path(
     // session picks up the persisted settings and builds runner + backend from
     // them; open_session starts a new watcher for it.
     state.repos.write().await.remove(&repo_id);
-    state.watchers.lock().unwrap().remove(&repo_id);
-    state.watch_errors.lock().unwrap().remove(&repo_id);
+    state.forget_watch(&repo_id);
     let summary = open_session(
         &state,
         &app,

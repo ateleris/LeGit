@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ManagedKeys } from "../../lib/types";
-import { summonGlobalPanel } from "../GlobalDock";
+import { summonGlobalPanel } from "../../layout/globalSummon";
 
 const ROWS: { label: string; pick: (v: ManagedKeys) => string | null }[] = [
   { label: "user.name", pick: (v) => v.user_name },

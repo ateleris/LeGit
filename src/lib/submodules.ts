@@ -4,6 +4,7 @@ import type { DiffEntry, DiffSource, SubmoduleAutoUpdateResult, SubmoduleInfo } 
 import { repoDiff, repoSubmoduleAutoUpdate } from "./commands";
 import { lfsStubWarning } from "./lfsFeedback";
 import { invalidateRepoDomains } from "./repoInvalidation";
+import { SUBMODULE_DOMAINS } from "./queries/domains";
 import { notify } from "../store/notifications";
 import { useRepoStore } from "../store/repos";
 import { useSummonStore } from "../store/summon";
@@ -16,7 +17,7 @@ export async function autoUpdateSubmodules(qc: QueryClient, repoId: string) {
   try {
     const results = await repoSubmoduleAutoUpdate(repoId);
     if (results.length > 0) {
-      invalidateRepoDomains(qc, repoId, ["submodules", "status", "log"]);
+      invalidateRepoDomains(qc, repoId, SUBMODULE_DOMAINS);
     }
     notifySubmoduleUpdateResults(results);
   } catch (e) {

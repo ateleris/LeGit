@@ -15,6 +15,7 @@
 use std::sync::Arc;
 
 pub mod remote;
+mod spawn;
 pub use remote::{
     AgentConnection, AgentPipes, HostConn, HostConnectOpts, HostSinks,
     RemoteExecutor, RemoteFs, RemoteHost,
@@ -53,6 +54,9 @@ pub enum HostError {
 
     #[error("failed to spawn {program}: {message}")]
     Spawn { program: String, message: String },
+
+    #[error("{0} was not found on PATH")]
+    ProgramNotFound(String),
 
     #[error("git probe failed: {0}")]
     GitProbe(String),
@@ -146,22 +150,7 @@ impl Host for LocalHost {
         args: &[String],
         cwd: Option<&HostPath>,
     ) -> Result<(), HostError> {
-        let mut cmd = std::process::Command::new(program);
-        cmd.args(args);
-        if let Some(cwd) = cwd {
-            cmd.current_dir(cwd.as_local());
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-        }
-        cmd.spawn()
-            .map(|_| ())
-            .map_err(|e| HostError::Spawn {
-                program: program.to_string(),
-                message: e.to_string(),
-            })
+        spawn::spawn_detached(program, args, cwd.map(HostPath::as_local).as_deref())
     }
 
     async fn probe_git(&self, git_path: &HostPath) -> Result<GitVersion, HostError> {

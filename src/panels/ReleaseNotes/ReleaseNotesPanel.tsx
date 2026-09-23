@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
-import { repoLog, repoTags } from "../../lib/commands";
-import type { Commit, TagInfo } from "../../lib/types";
+import { repoLog } from "../../lib/commands";
+import type { Commit } from "../../lib/types";
 import { copyText } from "../../lib/clipboard";
 import { notify } from "../../store/notifications";
 import { PanelError } from "../shared/PanelError";
@@ -11,6 +11,7 @@ import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { Button } from "../shared/buttons";
 import { formatReleaseNotes, latestTagName } from "./releaseNotes";
 import { STALE } from "../../lib/queryTiming";
+import { useTags } from "../../lib/queries/useRepoQueries";
 
 /** Explicit walk cap - a release range can exceed repoLog's 500 default.
  *  Hitting it shows a truncation notice; never a silently shortened list. */
@@ -36,12 +37,7 @@ export function ReleaseNotesPanel() {
     setTo("HEAD");
   }, [repo?.id]);
 
-  const { data: tags = [] } = useQuery<TagInfo[]>({
-    queryKey: [repo?.id, "tags"],
-    queryFn: () => repoTags(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.live,
-  });
+  const { data: tags = [] } = useTags(repo?.id);
 
   // Default From once tags arrive; null means "not yet chosen" so a repo
   // without tags still lets the user type a rev by hand.

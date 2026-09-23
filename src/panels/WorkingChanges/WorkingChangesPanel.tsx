@@ -5,12 +5,12 @@ import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { usePanelViewState } from "../../store/panelViewState";
 import { useSettingsStore } from "../../store/settings";
 import { usePanelActiveEffect, usePanelFocusEffect } from "../PanelApiContext";
-import { repoCaseDrift, repoConflictEntries, repoConflictReopen, repoCreateStashPaths, repoDiscard, repoDiscardCaseRename, repoResolveTakeSide, repoResolveUndoPaths, repoStage, repoStageCaseRename, repoStagedMarkerPaths, repoStatus, repoSubmodules, repoUnstage, repoUnstagedMarkerPaths } from "../../lib/commands";
-import type { CaseDriftEntry, ConflictEntry, ConflictSide, DiffRequest, DiffSource, FileStatus, SubmoduleInfo } from "../../lib/types";
-import { formatAppError } from "../../lib/types";
+import { repoCaseDrift, repoConflictEntries, repoConflictReopen, repoCreateStashPaths, repoDiscard, repoDiscardCaseRename, repoResolveTakeSide, repoResolveUndoPaths, repoStage, repoStageCaseRename, repoStagedMarkerPaths, repoUnstage, repoUnstagedMarkerPaths } from "../../lib/commands";
+import type { CaseDriftEntry, ConflictEntry, ConflictSide, DiffRequest, DiffSource, FileStatus } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { notify } from "../../store/notifications";
-import { confirmDialog } from "../../store/confirm";
+import { confirmDestructiveAction } from "../../store/confirm";
 import { segStyle } from "../shared/segmented";
 import { FileTree, STATUS_META } from "../shared/FileTree/FileTree";
 import { GitFork } from "lucide-react";
@@ -67,6 +67,7 @@ import {
 } from "./pendingDim";
 import { expandUnstagePaths } from "./unstagePaths";
 import { STALE } from "../../lib/queryTiming";
+import { useStatus, useSubmodules } from "../../lib/queries/useRepoQueries";
 
 /** Persisted unstaged/staged height split (fraction of the first file
  *  section in render order) + its clamp, so neither list can be squeezed
@@ -127,8 +128,6 @@ export function WorkingChangesPanel() {
   const sectionOrder = orderedWorkingChangesSections(
     useSettingsStore((s) => s.settings?.working_changes_section_order),
   );
-  // Whether discard actions prompt first (global setting, default on).
-  const confirmDiscardEnabled = useSettingsStore((s) => s.settings?.confirm_discard ?? true);
   // Case-only rename detection (global setting, default on). Off = the scan
   // query never runs.
   const detectCaseRenames = useSettingsStore((s) => s.settings?.detect_case_renames ?? true);
@@ -214,22 +213,12 @@ export function WorkingChangesPanel() {
     isError,
     error,
     refetch,
-  } = useQuery<FileStatus[]>({
-    queryKey: [repo?.id, "status"],
-    queryFn: () => repoStatus(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.live,
-  });
+  } = useStatus(repo?.id);
 
   // Known submodule paths (gitlinked, or declared in .gitmodules but never
   // added) drive the fork-glyph icon override below, so a to-be-added
   // submodule never reads as a plain new file.
-  const { data: submodules = [] } = useQuery<SubmoduleInfo[]>({
-    queryKey: [repo?.id, "submodules"],
-    queryFn: () => repoSubmodules(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.live,
-  });
+  const { data: submodules = [] } = useSubmodules(repo?.id);
   const submodulePaths = useMemo(() => submodulePathSet(submodules), [submodules]);
   const submoduleFileIcon = useCallback(
     (file: FileTreeEntry): ReactNode => {
@@ -698,30 +687,26 @@ export function WorkingChangesPanel() {
   // it. The label defaults to the lone path, or "N files" for a bulk
   // discard. When the confirmation setting is off, discard runs immediately.
   const requestDiscard = async (paths: string[], label?: string) => {
-    if (confirmDiscardEnabled) {
-      const ok = await confirmDialog({
-        title: "Discard changes",
-        message: "Discards the working-tree changes. This cannot be undone.",
-        detail: label ?? (paths.length === 1 ? paths[0] : `${paths.length} files`),
-        confirmLabel: "Discard",
-      });
-      if (!ok) return;
-    }
+    const ok = await confirmDestructiveAction({
+      title: "Discard changes",
+      message: "Discards the working-tree changes. This cannot be undone.",
+      detail: label ?? (paths.length === 1 ? paths[0] : `${paths.length} files`),
+      confirmLabel: "Discard",
+    });
+    if (!ok) return;
     doDiscard(paths);
   };
 
   // Discard confirm for a lone drift row, with wording that doesn't overstate:
   // renaming back loses nothing (unlike a content discard).
   const requestDiscardCaseRename = async (d: CaseDriftEntry) => {
-    if (confirmDiscardEnabled) {
-      const ok = await confirmDialog({
-        title: "Discard rename",
-        message: `Renames the ${d.is_dir ? "folder" : "file"} back to its tracked spelling.`,
-        detail: `${d.disk_path} → ${d.index_path}`,
-        confirmLabel: "Discard",
-      });
-      if (!ok) return;
-    }
+    const ok = await confirmDestructiveAction({
+      title: "Discard rename",
+      message: `Renames the ${d.is_dir ? "folder" : "file"} back to its tracked spelling.`,
+      detail: `${d.disk_path} → ${d.index_path}`,
+      confirmLabel: "Discard",
+    });
+    if (!ok) return;
     doDiscard([d.disk_path]);
   };
 

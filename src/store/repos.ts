@@ -9,12 +9,12 @@ import {
   setActiveRepo as setActiveRepoCmd,
   setOpenReposOrder as setOpenReposOrderCmd,
   getRepoSettings as getRepoSettingsCmd,
-  updateRepoSettings as updateRepoSettingsCmd,
+  patchRepoSettings as patchRepoSettingsCmd,
 } from "../lib/commands";
 import { consoleCancel } from "../lib/commands";
 import type { CloneOptions, InitOptions } from "../lib/commands";
 import { notifyLfsStubs } from "../lib/lfsFeedback";
-import type { RepoId, RepoSettings, RepoSummary } from "../lib/types";
+import type { RepoId, RepoSettings, RepoSettingsPatch, RepoSummary } from "../lib/types";
 import { pickNextActive, pushActivation } from "./repoActivation";
 import { useConsoleStore } from "./console";
 import { useSettingsStore } from "./settings";
@@ -62,11 +62,12 @@ interface RepoStore {
 
   /** Fetch and cache repo settings for the given repo. */
   loadRepoSettings: (id: RepoId) => Promise<void>;
-  /** Update a single field of repo settings, persist, and refresh cache. */
-  updateRepoSetting: <K extends keyof RepoSettings>(
+  /** Change one repo setting (only that field is sent), persist, and cache
+   *  the merged settings the backend returns. */
+  updateRepoSetting: <K extends keyof RepoSettingsPatch>(
     id: RepoId,
     key: K,
-    value: RepoSettings[K]
+    value: RepoSettingsPatch[K]
   ) => Promise<void>;
 }
 
@@ -234,14 +235,11 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
   },
 
   async updateRepoSetting(id, key, value) {
-    // On a cold cache, fetch the real settings first: the backend replaces
-    // the WHOLE settings doc on write, so building the update from a bare
-    // fallback literal would wipe every field the TS type doesn't spell out
-    // (lane locks, selected profile).
-    const current = get().repoSettings[id] ?? (await getRepoSettingsCmd(id));
-    const updated = { ...current, [key]: value };
-    set((s) => ({ repoSettings: { ...s.repoSettings, [id]: updated } }));
-    await updateRepoSettingsCmd(id, updated);
+    const patch: RepoSettingsPatch = { [key]: value };
+    const cached = get().repoSettings[id];
+    if (cached) set((s) => ({ repoSettings: { ...s.repoSettings, [id]: { ...cached, ...patch } } }));
+    const merged = await patchRepoSettingsCmd(id, patch);
+    set((s) => ({ repoSettings: { ...s.repoSettings, [id]: merged } }));
   },
 }));
 

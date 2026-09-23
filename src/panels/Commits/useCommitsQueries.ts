@@ -4,18 +4,11 @@ import { useRepoStore } from "../../store/repos";
 import { useTagRemoteChoice } from "../../store/tagRemote";
 import { keepPreviousDataForRepo } from "../../lib/repoScopedPlaceholder";
 import {
-  repoBranches,
-  repoListRemotes,
   repoLog,
-  repoRemoteTags,
   repoResolveCommit,
   repoSearchCommits,
   repoSignaturePresence,
-  repoStatus,
-  repoTags,
-  repoTrackingStatus,
   repoUnpushedCommits,
-  repoWorktreeList,
 } from "../../lib/commands";
 import { pushedTagNames, resolveTagRemote } from "../../lib/tags";
 import { buildUpstreamMap } from "./commitRows";
@@ -25,15 +18,18 @@ import type {
   Branch,
   Commit,
   CommitId,
-  FileStatus,
-  Remote,
-  RemoteTag,
   RepoSummary,
-  TagInfo,
-  TrackingStatus,
-  WorktreeInfo,
 } from "../../lib/types";
 import { STALE } from "../../lib/queryTiming";
+import {
+  useBranches,
+  useRemoteTags,
+  useRemotes,
+  useStatus,
+  useTags,
+  useTracking,
+  useWorktrees,
+} from "../../lib/queries/useRepoQueries";
 
 /** Full-history search result cap (matches the removed Search panel). */
 export const SEARCH_MAX_RESULTS = 1000;
@@ -125,30 +121,15 @@ export function useCommitsQueries(
   // Branch list (for upstream tracking). Drives chip fusion: a local branch
   // and its configured upstream remote collapse into one chip when both sit on
   // the same commit.
-  const { data: branches = [] } = useQuery<Branch[]>({
-    queryKey: [repo?.id, "branches"],
-    queryFn: () => repoBranches(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.live,
-  });
+  const { data: branches = [] } = useBranches(repo?.id);
 
   // Ahead/behind vs upstream — used to gate "Reword message…" (the tip commit
   // is only rewordable while it is local / not yet pushed). `null` when HEAD is
   // detached or the branch has no upstream.
-  const { data: tracking } = useQuery<TrackingStatus | null>({
-    queryKey: [repo?.id, "tracking"],
-    queryFn: () => repoTrackingStatus(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.live,
-  });
+  const { data: tracking } = useTracking(repo?.id);
 
   // Working-tree status — drives the synthetic "uncommitted changes" row.
-  const { data: status = [] } = useQuery<FileStatus[]>({
-    queryKey: [repo?.id, "status"],
-    queryFn: () => repoStatus(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.live,
-  });
+  const { data: status = [] } = useStatus(repo?.id);
 
   // Unpushed set (all-remotes semantics): gates the bulk drop/squash menu
   // entries - history rewrites must only ever see unpublished commits.
@@ -162,12 +143,7 @@ export function useCommitsQueries(
 
   // Worktree list — drives the branch chips' "checked out in another
   // worktree" indicator (kept fresh by the watcher's worktrees domain).
-  const { data: worktrees = [] } = useQuery<WorktreeInfo[]>({
-    queryKey: [repo?.id, "worktrees"],
-    queryFn: () => repoWorktreeList(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.live,
-  });
+  const { data: worktrees = [] } = useWorktrees(repo?.id);
   const worktreeBranches = useMemo(
     () => branchWorktreeMap(worktrees, repo?.path ?? null),
     [worktrees, repo?.path],
@@ -193,18 +169,8 @@ export function useCommitsQueries(
   // Tags: the local list (drives the row menus), the configured remotes (to
   // pick the tag-push target). ls-remote (below) is a network call — long
   // staleTime, no retry.
-  const { data: tags = [] } = useQuery<TagInfo[]>({
-    queryKey: [repo?.id, "tags"],
-    queryFn: () => repoTags(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.live,
-  });
-  const { data: remotesList = [] } = useQuery<Remote[]>({
-    queryKey: [repo?.id, "remotes"],
-    queryFn: () => repoListRemotes(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.live,
-  });
+  const { data: tags = [] } = useTags(repo?.id);
+  const { data: remotesList = [] } = useRemotes(repo?.id);
   // Same per-repo choice + resolver as the Tags section, so the "pushed"
   // indicators agree across panels and the remote-tags query is shared.
   const tagRemoteChoice = useTagRemoteChoice(repo?.id);
@@ -214,13 +180,7 @@ export function useCommitsQueries(
   );
   const remoteNames = useMemo(() => remotesList.map((r) => r.name), [remotesList]);
 
-  const { data: remoteTags = [] } = useQuery<RemoteTag[]>({
-    queryKey: [repo?.id, "remote-tags", tagRemote],
-    queryFn: () => repoRemoteTags(repo!.id, tagRemote!, crypto.randomUUID()),
-    enabled: !!repo && tagRemote !== null,
-    staleTime: STALE.rare,
-    retry: false,
-  });
+  const { data: remoteTags = [] } = useRemoteTags(repo?.id, tagRemote);
   const pushedTags = useMemo(() => pushedTagNames(tags, remoteTags), [tags, remoteTags]);
   // Tags whose target commit is on the remote; pushing the others is disabled
   // (it would upload commits no remote branch references).

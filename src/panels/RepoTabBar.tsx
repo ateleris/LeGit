@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRepoStore } from "../store/repos";
-import { formatAppError } from "../lib/types";
+import { formatAppError } from "../lib/errors";
 import { repoOpenInEditor, repoOpenRemotePage, repoRemoteWebUrl, repoSuperproject } from "../lib/commands";
 import { useEditorAction } from "../lib/editorAction";
 import { notify } from "../store/notifications";

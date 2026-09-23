@@ -14,7 +14,7 @@ import { repoAddToGitignore } from "../../lib/commands";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { useActiveRepo } from "../../store/repos";
 import { notify } from "../../store/notifications";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { ancestorDirs } from "./ancestorDirs";
 
 export function AddToGitignoreMenuItem({

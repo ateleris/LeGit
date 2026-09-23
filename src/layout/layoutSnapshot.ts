@@ -15,14 +15,7 @@ import {
 // Only the RepoLayoutEnvelope TYPE flows back into defaultLayouts - no
 // runtime cycle.
 import { DEFAULT_GLOBAL_LAYOUT, DEFAULT_REPO_LAYOUT } from "./defaultLayouts";
-// descriptors.ts is pure data with no imports, so unlike the registry consts
-// below it is safe to read at module init.
-import { REPO_PANELS } from "./descriptors";
-import {
-  GLOBAL_DOCKVIEW_COMPONENTS,
-  PANEL_TITLES,
-  REPO_DOCKVIEW_COMPONENTS,
-} from "./registry";
+import { GLOBAL_PANELS, PANEL_TITLES, REPO_PANELS } from "./descriptors";
 
 // Legacy "saved default" snapshot keys - written by the retired
 // "Save as default layout" menu entry, read only by the one-time migration
@@ -255,14 +248,8 @@ export function substituteSlotPanels(
   };
 }
 
-// Computed lazily, NOT at module init: this module sits inside the
-// registry's import cycle (registry -> panels -> GlobalDock -> here ->
-// registry), so the registry consts are still undefined when a panel's
-// import triggers this module first. Reading them inside the functions
-// (like store/summon does) makes the cycle harmless.
-const repoComponentIds = (): ReadonlySet<string> => new Set(Object.keys(REPO_DOCKVIEW_COMPONENTS));
-const globalComponentIds = (): ReadonlySet<string> =>
-  new Set(Object.keys(GLOBAL_DOCKVIEW_COMPONENTS));
+const REPO_COMPONENT_IDS: ReadonlySet<string> = new Set(REPO_PANELS.map((p) => p.id));
+const GLOBAL_COMPONENT_IDS: ReadonlySet<string> = new Set(GLOBAL_PANELS.map((p) => p.id));
 
 /**
  * Snapshot the current group ID and fallback position for every open panel
@@ -303,7 +290,7 @@ export function applyRepoLayoutEnvelope(api: DockviewApi, envelope: RepoLayoutEn
   const swapped = substituteSlotPanels(envelope.dockview, (id) => !!api.getPanel(id));
   // Retired panels are pruned next - a stale reference would make fromJSON
   // throw and nuke the whole layout.
-  const dockview = sanitizeDockviewLayout(swapped, repoComponentIds(), PANEL_TITLES);
+  const dockview = sanitizeDockviewLayout(swapped, REPO_COMPONENT_IDS, PANEL_TITLES);
   if (dockview === null) return false;
   const { capturePlacement, captureFallback } = useSummonStore.getState();
   for (const [panelId, groupId] of Object.entries(envelope.placements)) {
@@ -330,7 +317,7 @@ export function applyRepoLayoutEnvelope(api: DockviewApi, envelope: RepoLayoutEn
  * Shared by the startup restore, the saved default, and the baked default.
  */
 export function applyGlobalLayoutJson(api: DockviewApi, json: unknown): boolean {
-  const layout = sanitizeDockviewLayout(json, globalComponentIds(), PANEL_TITLES);
+  const layout = sanitizeDockviewLayout(json, GLOBAL_COMPONENT_IDS, PANEL_TITLES);
   if (layout === null) return false;
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

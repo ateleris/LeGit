@@ -13,8 +13,9 @@ import { describe, test, expect, vi, beforeEach } from "vitest";
 import type { DockviewApi } from "dockview-react";
 import { useDockviewStore } from "../store/dockview";
 import { useGlobalRegionStore } from "../store/globalRegion";
-import { readyGlobalDock, summonGlobalPanel } from "./GlobalDock";
-import { DEFAULT_GLOBAL_LAYOUT } from "./defaultLayouts";
+import { readyGlobalDock } from "./GlobalDock";
+import { summonGlobalPanel } from "../layout/globalSummon";
+import { DEFAULT_GLOBAL_LAYOUT } from "../layout/defaultLayouts";
 
 /** Minimal api fake for the expanded path (no restore involved). */
 function fakeApi(openPanels: Record<string, { focus: () => void }> = {}) {

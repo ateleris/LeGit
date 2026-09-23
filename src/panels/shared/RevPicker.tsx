@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { repoBranches, repoTags } from "../../lib/commands";
-import type { Branch, TagInfo } from "../../lib/types";
-import { STALE } from "../../lib/queryTiming";
 import { Popover } from "./Popover";
+import { useBranches, useTags } from "../../lib/queries/useRepoQueries";
 
 /** Per-group cap so a giant repo can't turn the dropdown into a wall. */
 const GROUP_LIMIT = 50;
@@ -68,18 +65,8 @@ export function RevPicker({
   const [active, setActive] = useState(0);
   const [anchor, setAnchor] = useState<{ left: number; top: number; width: number } | null>(null);
 
-  const { data: branches = [] } = useQuery<Branch[]>({
-    queryKey: [repoId, "branches"],
-    queryFn: () => repoBranches(repoId!),
-    enabled: !!repoId,
-    staleTime: STALE.live,
-  });
-  const { data: tags = [] } = useQuery<TagInfo[]>({
-    queryKey: [repoId, "tags"],
-    queryFn: () => repoTags(repoId!),
-    enabled: !!repoId,
-    staleTime: STALE.live,
-  });
+  const { data: branches = [] } = useBranches(repoId);
+  const { data: tags = [] } = useTags(repoId);
 
   const groups = useMemo(
     () =>

@@ -8,7 +8,7 @@ import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { repoDiffFiles, repoMergeBase } from "../../lib/commands";
 import type { CommitFileChange, DiffRequest } from "../../lib/types";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { Button } from "../shared/buttons";
 import { segStyle } from "../shared/segmented";
 import { TOOLBAR_FIELD_STYLE } from "../shared/fields";

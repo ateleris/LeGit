@@ -12,7 +12,7 @@ import { useAppVersion, useAppVersionDisplay } from "../../lib/appVersion";
 const LANE_LINK_KEY = "legit.commits-lane-link";
 /** localStorage key for the panel spacing ↔ corner radius link (default on). */
 const PANEL_CHROME_LINK_KEY = "legit.panel-chrome-link";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import type { PushRecurseMode, RegionPlacement, SwitchDirtyBehavior } from "../../lib/types";
 import type { CommitDateFormat } from "../../lib/time";
 import { openLogDir, setLineEndingChipsInChanges, setWarnOnLineEndingCommit } from "../../lib/commands";

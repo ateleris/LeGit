@@ -24,7 +24,9 @@
 // from there. When re-capturing these layouts from a live dockview, strip
 // the `title` fields again - defaultLayouts.test.ts enforces this.
 
+import type { DockviewApi } from "dockview-react";
 import type { RepoLayoutEnvelope } from "./layoutSnapshot";
+import { PANEL_TITLES } from "./descriptors";
 
 export const DEFAULT_REPO_LAYOUT: RepoLayoutEnvelope = {
   dockview: {
@@ -155,3 +157,55 @@ export const DEFAULT_GLOBAL_LAYOUT: unknown = {
   },
   activeGroup: "3",
 };
+
+/** First-launch global layout; also the fallback for "Reset to default layout"
+ * when no saved snapshot exists (ViewMenu). */
+export function buildDefaultGlobalLayout(api: DockviewApi) {
+  api.addPanel({
+    id: "repositories",
+    component: "repositories",
+    title: PANEL_TITLES["repositories"],
+  });
+  api.addPanel({
+    id: "theme-editor",
+    component: "theme-editor",
+    title: PANEL_TITLES["theme-editor"],
+    position: { referencePanel: "repositories", direction: "right" },
+  });
+  api.addPanel({
+    id: "global-settings",
+    component: "global-settings",
+    tabComponent: "confirm-close",
+    title: PANEL_TITLES["global-settings"],
+    position: { referencePanel: "theme-editor", direction: "within" },
+  });
+}
+
+/** First-launch repo layout; also the fallback for "Reset to default layout"
+ * when no saved snapshot exists (ViewMenu). */
+export function buildDefaultRepoLayout(api: DockviewApi) {
+  api.addPanel({ id: "log", component: "log", title: PANEL_TITLES["log"] });
+  api.addPanel({
+    id: "commit-details",
+    component: "commit-details",
+    title: PANEL_TITLES["commit-details"],
+    position: { referencePanel: "log", direction: "right" },
+  });
+  const consolePanel = api.addPanel({
+    id: "console",
+    component: "console",
+    title: PANEL_TITLES["console"],
+    position: { referencePanel: "log", direction: "below" },
+  });
+  api.addPanel({
+    id: "repo-settings",
+    component: "repo-settings",
+    tabComponent: "confirm-close",
+    title: PANEL_TITLES["repo-settings"],
+    position: { referencePanel: "console", direction: "within" },
+  });
+  // Collapse the bottom group (console + repo-settings) on first launch.
+  // Users can expand it by dragging the sash or opening a panel via the menu.
+  // Existing saved layouts are NOT affected — they restore from localStorage.
+  consolePanel.group.api.setVisible(false);
+}

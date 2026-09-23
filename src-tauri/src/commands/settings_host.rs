@@ -12,7 +12,7 @@
 //! optional `host` parameter on the `global_*` commands would have been
 //! fail-OPEN instead (a missing argument silently means "this machine").
 //!
-//! Two invariants ride along, both encoded in `config_util`:
+//! Two invariants ride along, both encoded in `legit_core::config`:
 //! - reads use `--global` / `--system` only. An UNBOUND executor inherits its
 //!   process's cwd, and for the agent that cwd is the translated Windows
 //!   directory - possibly inside some repo under `/mnt/c`, whose local config

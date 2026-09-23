@@ -3,7 +3,7 @@ import { useSettingsStore } from "../store/settings";
 import { notify, useNotificationsStore } from "../store/notifications";
 import { useAppVersion } from "./appVersion";
 import { checkForUpdate, promptAndInstall } from "./updateFlow";
-import { formatAppError } from "./types";
+import { formatAppError } from "./errors";
 
 /** Grace period before the check, so app startup (repo restore, first
  *  queries) never competes with an update HTTP request. */

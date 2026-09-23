@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "LeGit core: GitBackend trait, GitRunner, and the GitCliBackend implementation."
 
+[features]
+# Exposes `test_support` (the scripted FakeExecutor) to other crates' tests.
+test-support = []
+
 [dependencies]
 tokio = { workspace = true }
 serde = { workspace = true }

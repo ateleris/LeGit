@@ -9,6 +9,7 @@ mod credentials;
 mod error;
 mod git_resolve;
 mod logging;
+mod persist;
 mod remote;
 mod state;
 mod watcher;
@@ -90,7 +91,137 @@ pub fn run() {
     let pending_open: Vec<String> = std::env::args().collect();
     let pending_open = parse_open_arg(&pending_open);
 
-    let specta_builder = Builder::<tauri::Wry>::new().commands(collect_commands![
+    let specta_builder = specta_builder();
+
+    #[cfg(debug_assertions)]
+    let _ = export_bindings(&specta_builder, "../src/lib/bindings.ts")
+        .map_err(|e| eprintln!("specta export failed: {e}"));
+
+    tauri::Builder::default()
+        // MUST be the first plugin (its docs' contract): a second invocation
+        // (`legit .` in WSL execs `LeGit.exe --open wsl://…`) lands here and
+        // is forwarded to the frontend instead of starting a second app.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            use tauri::{Emitter as _, Manager as _};
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+            if let Some(locator) = parse_open_arg(&argv) {
+                let _ = app.emit(OPEN_LOCATOR_EVENT, locator);
+            }
+        }))
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
+        .manage(PendingOpen(std::sync::Mutex::new(pending_open)))
+        .invoke_handler(specta_builder.invoke_handler())
+        .setup(move |app| {
+            specta_builder.mount_events(app);
+
+            let (global_settings_path, repos_data_dir, user_themes_dir, builtin_themes_dir) =
+                commands::resolve_dirs(&app.handle());
+
+            let global_settings = load_global_settings_sync(&global_settings_path);
+            let git_override = global_settings.git_path_override.as_deref().map(PathBuf::from);
+            let resolved_git_path = git_resolve::resolve_git_path(git_override.as_ref());
+
+            tracing::info!(
+                resolved_git_path = %resolved_git_path.display(),
+                global_settings_path = %global_settings_path.display(),
+                repos_data_dir = %repos_data_dir.display(),
+                user_themes_dir = %user_themes_dir.display(),
+                builtin_themes_dir = %builtin_themes_dir.display(),
+                "legit startup",
+            );
+
+            let state = AppState::new(
+                resolved_git_path,
+                global_settings,
+                global_settings_path,
+                repos_data_dir,
+                user_themes_dir,
+                builtin_themes_dir,
+            );
+            app.manage(state);
+
+            // Dev builds are visually distinct from the installed release:
+            // "LeGit DEV" window title (the Windows taskbar label follows the
+            // window title) and a DEV-ribbon icon. Release bundles keep the
+            // product name and icons from tauri.conf.json untouched.
+            #[cfg(debug_assertions)]
+            if let Some(win) = app.get_webview_window("main") {
+                if let Err(e) = win.set_title("LeGit DEV") {
+                    tracing::warn!(err = %e, "failed to set dev window title");
+                }
+                match tauri::image::Image::from_bytes(include_bytes!("../icons/icon-dev.png")) {
+                    Ok(icon) => {
+                        if let Err(e) = win.set_icon(icon) {
+                            tracing::warn!(err = %e, "failed to set dev window icon");
+                        }
+                    }
+                    Err(e) => tracing::warn!(err = %e, "failed to decode the dev icon"),
+                }
+            }
+
+            // The main window is created hidden (`visible: false` in
+            // tauri.conf.json): the frontend shows it once the persisted
+            // theme has painted, so the first visible frame - splash
+            // included - is already themed (App.tsx). If the frontend never
+            // boots (bundle error, crashed webview) it can never call
+            // show(), so reveal the window after a grace period rather than
+            // leaving the app running invisibly.
+            if let Some(win) = app.get_webview_window("main") {
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(4));
+                    if !win.is_visible().unwrap_or(true) {
+                        tracing::warn!(
+                            "frontend did not reveal the main window in time - failsafe show"
+                        );
+                        let _ = win.show();
+                    }
+                });
+            }
+
+            // In-app credential prompt: start the broker and point every git
+            // invocation's credential machinery at it. Registered BEFORE any
+            // RepoSession/GitRunner exists so every runner snapshot includes
+            // it. Failure is non-fatal - auth then behaves as before (config-
+            // driven helpers only, interactive prompts disabled).
+            match credentials::start_broker(app.handle().clone()) {
+                Ok(env) => legit_core::runner::set_global_base_env(env),
+                Err(e) => {
+                    tracing::warn!(err = %e, "credential broker failed to start - in-app credential prompts disabled");
+                }
+            }
+
+            // Forward every git invocation to the UI as a live command log.
+            let handle = app.handle().clone();
+            legit_core::runner::set_invocation_observer(std::sync::Arc::new(move |inv| {
+                let _ = handle.emit("git_invocation", inv);
+            }));
+
+            // Forward parsed --progress meter updates (fetch/pull/push/clone)
+            // to the UI, keyed by the frontend-minted operation id.
+            let handle = app.handle().clone();
+            legit_core::runner::set_progress_observer(std::sync::Arc::new(
+                move |op_id, progress| {
+                    let _ = handle.emit(
+                        REMOTE_PROGRESS_EVENT,
+                        RemoteProgressPayload { op_id: op_id.0.clone(), progress },
+                    );
+                },
+            ));
+            Ok(())
+        })
+        .run(context)
+        .expect("error while running tauri application");
+}
+
+fn specta_builder() -> Builder<tauri::Wry> {
+    Builder::<tauri::Wry>::new().commands(collect_commands![
         logging::frontend_log,
         logging::open_log_dir,
         take_pending_open,
@@ -131,7 +262,7 @@ pub fn run() {
         commands::set_repo_git_path,
         commands::get_global_settings,
         commands::get_repo_settings,
-        commands::update_repo_settings,
+        commands::patch_repo_settings,
         commands::set_active_theme,
         commands::save_region_state,
         commands::list_themes,
@@ -356,158 +487,45 @@ pub fn run() {
         commands::save_lane_colored_branch_chips,
         commands::save_stash_base_lane_color,
         commands::save_commits_graph_metrics,
-    ]);
+    ])
+}
 
-    #[cfg(debug_assertions)]
-    {
-        use specta_typescript::{BigIntExportBehavior, Typescript};
-        let _ = specta_builder
-            .export(
-                // i64 timestamps (Unix seconds) are safe as JS `number` —
-                // MAX_SAFE_INTEGER covers timestamps until the year 285,428,751.
-                Typescript::default().bigint(BigIntExportBehavior::Number),
-                "../src/lib/bindings.ts",
-            )
-            .map_err(|e| eprintln!("specta export failed: {e}"));
-    }
-
-    tauri::Builder::default()
-        // MUST be the first plugin (its docs' contract): a second invocation
-        // (`legit .` in WSL execs `LeGit.exe --open wsl://…`) lands here and
-        // is forwarded to the frontend instead of starting a second app.
-        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            use tauri::{Emitter as _, Manager as _};
-            if let Some(win) = app.get_webview_window("main") {
-                let _ = win.show();
-                let _ = win.set_focus();
-            }
-            if let Some(locator) = parse_open_arg(&argv) {
-                let _ = app.emit(OPEN_LOCATOR_EVENT, locator);
-            }
-        }))
-        .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
-        .manage(PendingOpen(std::sync::Mutex::new(pending_open)))
-        .invoke_handler(specta_builder.invoke_handler())
-        .setup(move |app| {
-            specta_builder.mount_events(app);
-
-            let (global_settings_path, repos_data_dir, user_themes_dir, builtin_themes_dir) =
-                commands::resolve_dirs(&app.handle());
-
-            let global_settings = load_global_settings_sync(&global_settings_path);
-            let git_override = global_settings.git_path_override.as_deref().map(PathBuf::from);
-            let resolved_git_path = git_resolve::resolve_git_path(git_override.as_ref());
-
-            tracing::info!(
-                resolved_git_path = %resolved_git_path.display(),
-                global_settings_path = %global_settings_path.display(),
-                repos_data_dir = %repos_data_dir.display(),
-                user_themes_dir = %user_themes_dir.display(),
-                builtin_themes_dir = %builtin_themes_dir.display(),
-                "legit startup",
-            );
-
-            let state = AppState::new(
-                resolved_git_path,
-                global_settings,
-                global_settings_path,
-                repos_data_dir,
-                user_themes_dir,
-                builtin_themes_dir,
-            );
-            app.manage(state);
-
-            // Dev builds are visually distinct from the installed release:
-            // "LeGit DEV" window title (the Windows taskbar label follows the
-            // window title) and a DEV-ribbon icon. Release bundles keep the
-            // product name and icons from tauri.conf.json untouched.
-            #[cfg(debug_assertions)]
-            if let Some(win) = app.get_webview_window("main") {
-                if let Err(e) = win.set_title("LeGit DEV") {
-                    tracing::warn!(err = %e, "failed to set dev window title");
-                }
-                match tauri::image::Image::from_bytes(include_bytes!("../icons/icon-dev.png")) {
-                    Ok(icon) => {
-                        if let Err(e) = win.set_icon(icon) {
-                            tracing::warn!(err = %e, "failed to set dev window icon");
-                        }
-                    }
-                    Err(e) => tracing::warn!(err = %e, "failed to decode the dev icon"),
-                }
-            }
-
-            // The main window is created hidden (`visible: false` in
-            // tauri.conf.json): the frontend shows it once the persisted
-            // theme has painted, so the first visible frame - splash
-            // included - is already themed (App.tsx). If the frontend never
-            // boots (bundle error, crashed webview) it can never call
-            // show(), so reveal the window after a grace period rather than
-            // leaving the app running invisibly.
-            if let Some(win) = app.get_webview_window("main") {
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_secs(4));
-                    if !win.is_visible().unwrap_or(true) {
-                        tracing::warn!(
-                            "frontend did not reveal the main window in time - failsafe show"
-                        );
-                        let _ = win.show();
-                    }
-                });
-            }
-
-            // In-app credential prompt: start the broker and point every git
-            // invocation's credential machinery at it. Registered BEFORE any
-            // RepoSession/GitRunner exists so every runner snapshot includes
-            // it. Failure is non-fatal - auth then behaves as before (config-
-            // driven helpers only, interactive prompts disabled).
-            match credentials::start_broker(app.handle().clone()) {
-                Ok(env) => legit_core::runner::set_global_base_env(env),
-                Err(e) => {
-                    tracing::warn!(err = %e, "credential broker failed to start - in-app credential prompts disabled");
-                }
-            }
-
-            // Forward every git invocation to the UI as a live command log.
-            let handle = app.handle().clone();
-            legit_core::runner::set_invocation_observer(std::sync::Arc::new(move |inv| {
-                let _ = handle.emit("git_invocation", inv);
-            }));
-
-            // Forward parsed --progress meter updates (fetch/pull/push/clone)
-            // to the UI, keyed by the frontend-minted operation id.
-            let handle = app.handle().clone();
-            legit_core::runner::set_progress_observer(std::sync::Arc::new(
-                move |op_id, progress| {
-                    let _ = handle.emit(
-                        REMOTE_PROGRESS_EVENT,
-                        RemoteProgressPayload { op_id: op_id.0.clone(), progress },
-                    );
-                },
-            ));
-            Ok(())
-        })
-        .run(context)
-        .expect("error while running tauri application");
+fn export_bindings(builder: &Builder<tauri::Wry>, path: &str) -> Result<(), String> {
+    use specta_typescript::{BigIntExportBehavior, Typescript};
+    builder
+        .export(
+            // i64 timestamps (Unix seconds) are safe as JS `number`:
+            // MAX_SAFE_INTEGER covers timestamps until the year 285,428,751.
+            Typescript::default().bigint(BigIntExportBehavior::Number),
+            path,
+        )
+        .map_err(|e| e.to_string())
 }
 
 fn load_global_settings_sync(path: &std::path::Path) -> GlobalSettings {
-    match std::fs::read(path) {
-        Ok(bytes) => match serde_json::from_slice::<GlobalSettings>(&bytes) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!(
-                    err = %e,
-                    path = %path.display(),
-                    "global-settings.json is malformed — starting with defaults",
-                );
-                GlobalSettings::default()
-            }
-        },
-        Err(_) => GlobalSettings::default(),
-    }
+    persist::load_json_or_default(path)
 }
 
+
+#[cfg(test)]
+mod bindings_tests {
+    /// The committed `src/lib/bindings.ts` must match the registered commands
+    /// and types. Regenerate with `LEGIT_UPDATE_BINDINGS=1 cargo test -p legit-app bindings`.
+    #[test]
+    fn committed_bindings_are_up_to_date() {
+        let committed = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/lib/bindings.ts");
+        let dir = tempfile::tempdir().unwrap();
+        let fresh = dir.path().join("bindings.ts");
+        super::export_bindings(&super::specta_builder(), fresh.to_str().unwrap()).unwrap();
+        let fresh = std::fs::read_to_string(&fresh).unwrap();
+        if std::env::var_os("LEGIT_UPDATE_BINDINGS").is_some() {
+            std::fs::write(&committed, &fresh).unwrap();
+            return;
+        }
+        let current = std::fs::read_to_string(&committed).unwrap_or_default();
+        assert!(
+            current.replace("\r\n", "\n") == fresh.replace("\r\n", "\n"),
+            "src/lib/bindings.ts is stale: run `LEGIT_UPDATE_BINDINGS=1 cargo test -p legit-app bindings`"
+        );
+    }
+}

@@ -3,7 +3,7 @@
 // switchFeedback.ts).
 
 import type { MergeOutcome, RebaseOutcome, SequenceOutcome } from "./types";
-import { formatAppError, gitErrorKind } from "./types";
+import { formatAppError, gitErrorKind } from "./errors";
 import { notify } from "../store/notifications";
 import { repoStatus } from "./commands";
 

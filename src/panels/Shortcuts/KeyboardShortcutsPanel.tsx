@@ -11,10 +11,9 @@ import {
   setAndPersistDiff,
 } from "../../keys/persistence";
 import { COMMANDS, COMMAND_ID_ALIASES, type Command, type Scope } from "../../keys/registry";
-import { confirmDialog } from "../../store/confirm";
+import { confirmDestructiveAction, confirmDialog } from "../../store/confirm";
 import { useLayer } from "../../store/layers";
 import { notify } from "../../store/notifications";
-import { useConfirmDestructive } from "../../store/settings";
 
 /**
  * The Keyboard Shortcuts panel (design/2026-08-24-keyboard-shortcuts-system.md):
@@ -57,7 +56,6 @@ export function KeyboardShortcutsPanel() {
   const defaults = useKeymapStore((s) => s.defaults);
   const diff = useKeymapStore((s) => s.diff);
   const effective = useKeymapStore((s) => s.effective);
-  const confirmDestructive = useConfirmDestructive();
   const [query, setQuery] = useState("");
   /** Command id currently recording a new key, if any. */
   const [capturing, setCapturing] = useState<string | null>(null);
@@ -104,15 +102,13 @@ export function KeyboardShortcutsPanel() {
   };
 
   const onResetAll = async () => {
-    if (confirmDestructive) {
-      const ok = await confirmDialog({
-        title: "Reset all shortcuts",
-        message: "Reset every shortcut to its default binding?",
-        detail: "This also removes bindings saved for unknown commands.",
-        confirmLabel: "Reset all",
-      });
-      if (!ok) return;
-    }
+    const ok = await confirmDestructiveAction({
+      title: "Reset all shortcuts",
+      message: "Reset every shortcut to its default binding?",
+      detail: "This also removes bindings saved for unknown commands.",
+      confirmLabel: "Reset all",
+    });
+    if (!ok) return;
     await setAndPersistDiff({});
   };
 

@@ -4,9 +4,17 @@ import { useActiveRepo } from "../store/repos";
 import { useSettingsStore } from "../store/settings";
 import { useRemoteProgressStore } from "../store/remoteProgress";
 import { repoFetch } from "./commands";
-import { gitErrorKind } from "./types";
+import { gitErrorKind } from "./errors";
 import { invalidateRepoDomains } from "./repoInvalidation";
 import { useOpState } from "./useOpState";
+import { SYNC_DOMAINS, type QueryDomain } from "./queries/domains";
+
+/** What to invalidate after a background fetch. With the watcher on, real
+ *  remote-ref updates arrive as filesystem events and a no-op fetch stays
+ *  invisible. */
+export function domainsAfterAutoFetch(watcherOn: boolean): readonly QueryDomain[] {
+  return watcherOn ? [] : SYNC_DOMAINS;
+}
 
 /** How often the schedule is checked; the actual fetch cadence is the user's
  * configured interval (minutes). A coarse tick keeps the timer logic trivial
@@ -93,17 +101,10 @@ export function useAutoFetch() {
           crypto.randomUUID(),
         );
         entry.backoff = 1;
-        // With the watcher on, real remote-ref updates arrive as filesystem
-        // events and a no-op fetch stays invisible. Watcher off: fall back to
-        // one coalesced invalidation.
-        if (useSettingsStore.getState().settings?.watcher_enabled === false) {
-          invalidateRepoDomains(
-            queryClient,
-            repoId,
-            ["log", "branches", "status", "tracking"],
-            { coalesce: true },
-          );
-        }
+        const watcherOn = useSettingsStore.getState().settings?.watcher_enabled !== false;
+        invalidateRepoDomains(queryClient, repoId, domainsAfterAutoFetch(watcherOn), {
+          coalesce: true,
+        });
       } catch (e) {
         if (gitErrorKind(e) === "AuthFailed") {
           entry.authFailed = true;

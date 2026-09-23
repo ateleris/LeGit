@@ -12,25 +12,25 @@ import { usePanelFocusEffect } from "../PanelApiContext";
 import {
   repoFilesAtRevision,
   repoLfsFiles,
-  repoLfsStatus,
   repoListFiles,
   repoUntrackPath,
   repoRevealPath,
 } from "../../lib/commands";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notify } from "../../store/notifications";
-import type { LfsStatus, RepoFileEntry, RepoFileKind } from "../../lib/types";
-import { formatAppError } from "../../lib/types";
+import type { RepoFileEntry, RepoFileKind } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { FileTree } from "../shared/FileTree/FileTree";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
-import { PanelContextMenuProvider, useMenuConfirm } from "../Commits/menu/PanelContextMenu";
+import { PanelContextMenuProvider, useDestructiveMenuConfirm } from "../Commits/menu/PanelContextMenu";
 import { MenuItem, SectionLabel } from "../Commits/menu/primitives";
 import { AddToGitignoreMenuItem } from "../shared/AddToGitignoreMenuItem";
 import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
 import { FileRowMenuSection } from "../shared/FileRowMenuSection";
 import { STALE } from "../../lib/queryTiming";
+import { useLfsStatus } from "../../lib/queries/useRepoQueries";
 
 /** Summon payload for browse-at-commit mode: `{ rev }` lists that commit's
  * tree; `{ rev: null }` returns to the working tree. */
@@ -100,12 +100,7 @@ export function FilesPanel() {
   });
 
   // Shares [repoId, "lfs"] with LfsWarningBanner: one probe per repo.
-  const lfsStatus = useQuery<LfsStatus>({
-    queryKey: [repo?.id, "lfs"],
-    queryFn: () => repoLfsStatus(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.rare,
-  });
+  const lfsStatus = useLfsStatus(repo?.id);
   const usesLfs = lfsStatus.data?.uses_lfs === true;
 
   // LFS-tracked paths for the icon override. Working-tree view only: the
@@ -445,13 +440,12 @@ function FileMenuSection({
   onClose: () => void;
 }) {
   const confirmDestructive = useConfirmDestructive();
-  const menuConfirm = useMenuConfirm();
+  const destructiveMenuConfirm = useDestructiveMenuConfirm();
   const tracked = kind === "tracked";
 
   const requestUntrack = () => {
     const run = () => { onClose(); onUntrack(); };
-    if (!confirmDestructive) return run();
-    menuConfirm(`Stop tracking ${path} (kept on disk) and ignore it?`, run);
+    destructiveMenuConfirm(`Stop tracking ${path} (kept on disk) and ignore it?`, run);
   };
 
   return (

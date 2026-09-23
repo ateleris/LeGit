@@ -1,5 +1,5 @@
 import { parseLocator } from "./locator";
-import { formatAppError, gitErrorKind } from "./types";
+import { formatAppError, gitErrorKind } from "./errors";
 
 const LOCAL_GIT_MISSING =
   "Git is not installed on this machine, so local repositories cannot be used. " +

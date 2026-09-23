@@ -282,6 +282,20 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   hide-the-Refs-pane-when-no-gitlinks (paneview layouts persist panes);
   `--shallow-submodules` on clone when depth + submodules are both set
   (skipped: fails on servers without reachable-sha1 fetch support).
+- **Show unstaged moves as renames: decide want/need.** Open product
+  question. A moved file that is not staged shows in Working Changes as a
+  deletion plus an untracked file: `git status` only pairs a rename when
+  the new path is in the index (`git add -N` turns it into `.R`), and
+  LeGit reports git's status as-is. Once both sides are staged it shows as
+  a rename. Check first: how GitKraken renders an unstaged move (it is
+  libgit2-based, and libgit2 can pair index-to-workdir renames with
+  `GIT_STATUS_OPT_RENAMES_INDEX_TO_WORKDIR`, which the git CLI's status
+  cannot). If wanted, approach: pair `.D` entries with untracked entries
+  by content similarity in legit-core (same shape as case-drift
+  detection: display-only, never touches the index), render the pair as
+  one "moved" row, and map stage/unstage/discard on it to both paths.
+  Other option: running `git add -N` on untracked files (cheap, but it
+  silently changes the user's index).
 
 ## Only if it hurts in practice
 

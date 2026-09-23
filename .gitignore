@@ -20,11 +20,6 @@ node_modules
 dist
 dist-ssr
 
-# Generated specta bindings (regenerated on cargo build; kept out of VCS so
-# the manual wrappers in src/lib/commands.ts are the source of truth until
-# bindings stabilize).
-src/lib/bindings.ts
-
 # Machine-local Claude instructions
 CLAUDE.local.md
 

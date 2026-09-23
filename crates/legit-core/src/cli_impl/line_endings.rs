@@ -2,10 +2,12 @@
 //! attribute/blob parsers, and EOL conversion. Everything here is pure
 //! `text -> type`; the IPC commands in `src-tauri` do the IO around it.
 
-use crate::types::{LineEndingKind, LineEndingStatusEntry, LineEndingTransition};
+use crate::error::GitError;
+use crate::executor::GitExecutor;
+use crate::types::{FileState, FileStatus, LineEndingKind, LineEndingStatusEntry, LineEndingTransition};
 use std::collections::{HashMap, HashSet};
 
-use super::BINARY_SNIFF_WINDOW;
+use super::{GitCliBackend, BINARY_SNIFF_WINDOW};
 
 /// Whether a file's bytes hold MIXED (CRLF + bare-LF) line endings:
 /// `Some(true)` mixed, `Some(false)` uniform (incl. no newlines at all),
@@ -354,9 +356,142 @@ pub fn convert_line_endings(bytes: &[u8], target: LineEndingKind) -> Option<Vec<
     Some(out)
 }
 
+/// Size cap for line-ending classification: above it a side is skipped (no
+/// indicator) rather than read and scanned.
+pub const MAX_LINE_ENDING_BYTES: usize = 2 * 1024 * 1024;
+
+/// A changed file to classify. `working` is the working-tree content, read by
+/// the caller through the host filesystem (`None` when missing, unreadable or
+/// over `MAX_LINE_ENDING_BYTES`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineEndingInput {
+    pub path: String,
+    pub untracked: bool,
+    pub working: Option<Vec<u8>>,
+}
+
+/// The changed files whose line endings are classified, once each (a
+/// partially staged file appears twice in status), with whether they are
+/// untracked. Submodules and ignored files have no blob content of their own.
+pub fn line_ending_candidates(statuses: &[FileStatus]) -> Vec<(String, bool)> {
+    let mut out: Vec<(String, bool)> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for s in statuses {
+        if matches!(
+            s.state,
+            FileState::SubmoduleChanged | FileState::SubmoduleDirty | FileState::Ignored
+        ) {
+            continue;
+        }
+        let path = s.path.to_string_lossy().into_owned();
+        if seen.insert(path.clone()) {
+            out.push((path, s.state == FileState::Untracked));
+        }
+    }
+    out
+}
+
+impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
+    /// Line-ending summary for `inputs`, with a fixed subprocess budget
+    /// regardless of file count: one `config --get`, one `check-attr
+    /// --stdin`, one `cat-file --batch`. Best-effort per source: a failed
+    /// read degrades that source (autocrlf false, no attributes, no blobs)
+    /// instead of failing the whole summary.
+    pub(super) async fn line_ending_entries(
+        &self,
+        inputs: Vec<LineEndingInput>,
+    ) -> Result<Vec<LineEndingStatusEntry>, GitError> {
+        if inputs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let runner = self.runner().await;
+
+        // Resolved core.autocrlf (exit 1 + empty stdout when unset = false).
+        let autocrlf = match runner.run_expecting(&["config", "--get", "core.autocrlf"], &[1]).await {
+            Ok(o) => parse_autocrlf(&o.stdout),
+            Err(_) => AutocrlfSetting::False,
+        };
+
+        let attr_stdin: String = inputs.iter().map(|i| format!("{}\0", i.path)).collect();
+        let attrs = match runner
+            .run_with_stdin(&["check-attr", "-z", "--stdin", "text", "eol"], &attr_stdin)
+            .await
+        {
+            Ok(o) if o.success => parse_check_attr_z(&o.stdout),
+            _ => HashMap::new(),
+        };
+
+        // Index and HEAD blobs for every tracked path in one subprocess; the
+        // request order mirrors `tracked`, so results zip back positionally.
+        let tracked: Vec<&str> = inputs.iter().filter(|i| !i.untracked).map(|i| i.path.as_str()).collect();
+        let mut blobs: HashMap<&str, (Option<Vec<u8>>, Option<Vec<u8>>)> = HashMap::new();
+        if !tracked.is_empty() {
+            let stdin: String = tracked.iter().map(|p| format!(":{p}\nHEAD:{p}\n")).collect();
+            if let Ok(out) = runner.run_with_stdin_bytes(&["cat-file", "--batch"], &stdin).await {
+                if let Some(parsed) = parse_cat_file_batch(&out.stdout) {
+                    if parsed.len() == tracked.len() * 2 {
+                        let mut it = parsed.into_iter();
+                        let capped = |b: Option<Option<Vec<u8>>>| b.flatten().filter(|b| b.len() <= MAX_LINE_ENDING_BYTES);
+                        for p in &tracked {
+                            let index = capped(it.next());
+                            let head = capped(it.next());
+                            blobs.insert(p, (index, head));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(inputs
+            .iter()
+            .map(|i| {
+                let (index, head) = blobs.get(i.path.as_str()).cloned().unwrap_or((None, None));
+                let (text_attr, eol_set) =
+                    attrs.get(&i.path).copied().unwrap_or((EolTextAttr::Unspecified, false));
+                derive_line_ending_entry(
+                    &i.path,
+                    i.working.as_deref(),
+                    index.as_deref(),
+                    head.as_deref(),
+                    text_attr,
+                    eol_set,
+                    autocrlf,
+                )
+            })
+            .collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn st(path: &str, state: FileState, staged: bool) -> FileStatus {
+        FileStatus {
+            path: path.into(),
+            state,
+            staged,
+            additions: None,
+            deletions: None,
+            binary: false,
+            old_path: None,
+        }
+    }
+
+    #[test]
+    fn candidates_are_unique_and_skip_submodules_and_ignored() {
+        let statuses = [
+            st("a.txt", FileState::Modified, true),
+            st("a.txt", FileState::Modified, false),
+            st("sub", FileState::SubmoduleChanged, false),
+            st("dist/x", FileState::Ignored, false),
+            st("new.txt", FileState::Untracked, false),
+        ];
+        assert_eq!(
+            line_ending_candidates(&statuses),
+            vec![("a.txt".to_string(), false), ("new.txt".to_string(), true)]
+        );
+    }
 
     // --- mixed line-ending detection ------------------------------------------
 

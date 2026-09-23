@@ -3,23 +3,18 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRepoStore } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
 import {
-  repoBranches,
   repoCommit,
   repoGitmodulesConsistency,
-  repoListRemotes,
   repoLog,
   repoResolvedIdentity,
-  repoTrackingStatus,
 } from "../../lib/commands";
 import type {
   Branch,
   Commit,
   CommitButtonMode,
   GitmodulesFinding,
-  Remote,
   RepoSummary,
   ResolvedIdentity,
-  TrackingStatus,
 } from "../../lib/types";
 import { useCommitDraftStore } from "../../store/commitDraft";
 import { notify } from "../../store/notifications";
@@ -27,11 +22,12 @@ import { Button } from "../shared/buttons";
 import { ChevronDownIcon, WarningIcon } from "../../icons";
 import { MenuItem } from "../Commits/menu/primitives";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
-import { summonGlobalPanel } from "../GlobalDock";
+import { summonGlobalPanel } from "../../layout/globalSummon";
 import { isDetachedHead } from "../../lib/detachedHead";
 import { pushWithTagFollowUp } from "../../lib/autoPushTags";
 import { remoteOpErrorMessage } from "../../lib/pushFeedback";
-import { PUSH_DOMAINS } from "../Commits/useCommitActions";
+import { SYNC_DOMAINS } from "../../lib/queries/domains";
+import { useBranches, useRemotes, useTracking } from "../../lib/queries/useRepoQueries";
 import { CaretDropdown } from "../shared/CaretDropdown";
 import {
   commitAndPushMenuLabel,
@@ -140,11 +136,7 @@ export function CommitComposer({
 
   // Tracking status — to warn before amending a commit that's already pushed.
   // Shares React Query's cache with the Commits panel (same key).
-  const { data: tracking } = useQuery<TrackingStatus | null>({
-    queryKey: [repo.id, "tracking"],
-    queryFn: () => repoTrackingStatus(repo.id),
-    staleTime: STALE.live,
-  });
+  const { data: tracking } = useTracking(repo.id);
   // HEAD is already published when it has an upstream and no local-only commits
   // ahead of it (ahead === 0 → the tip is on the remote). Amending then rewrites
   // pushed history and needs a force-push.
@@ -154,16 +146,8 @@ export function CommitComposer({
   // and push target (`tracking` cannot: it is null for detached, untracked
   // AND gone upstreams alike, and `upstream_gone` lives only on `Branch`).
   // Both share React Query's cache with the Commits panel (same keys).
-  const { data: branches = [] } = useQuery<Branch[]>({
-    queryKey: [repo.id, "branches"],
-    queryFn: () => repoBranches(repo.id),
-    staleTime: STALE.live,
-  });
-  const { data: remotes = [] } = useQuery<Remote[]>({
-    queryKey: [repo.id, "remotes"],
-    queryFn: () => repoListRemotes(repo.id),
-    staleTime: STALE.live,
-  });
+  const { data: branches = [] } = useBranches(repo.id);
+  const { data: remotes = [] } = useRemotes(repo.id);
   const currentBranch = branches.find((b) => b.is_current && !b.is_remote) ?? null;
   const remoteNames = remotes.map((r) => r.name);
 
@@ -210,7 +194,7 @@ export function CommitComposer({
         } catch (e) {
           notify.error(commitPushFailureMessage(remoteOpErrorMessage(e)));
         }
-        invalidateRepoDomains(queryClient, repo.id, PUSH_DOMAINS);
+        invalidateRepoDomains(queryClient, repo.id, SYNC_DOMAINS);
       }
     });
 

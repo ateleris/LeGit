@@ -1,4 +1,4 @@
-import { formatAppError, gitErrorKind } from "./types";
+import { formatAppError, gitErrorKind } from "./errors";
 import { lfsDownloadErrorMessage } from "./lfsFeedback";
 import type { LfsFailureContext } from "./lfsFeedback";
 

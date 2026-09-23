@@ -1,7 +1,6 @@
 pub mod accounts;
 pub mod branches;
 pub mod browser;
-pub mod config_util;
 pub mod console;
 pub mod credential_helper;
 pub mod credentials;

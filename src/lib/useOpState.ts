@@ -2,9 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { repoOpState } from "./commands";
 import type { RepoOpState } from "./types";
 import { STALE } from "./queryTiming";
-
-/** Query domains every merge/rebase mutation must refresh. */
-export const OP_DOMAINS = ["status", "log", "branches", "diff", "op_state"] as const;
+import { repoKeys } from "./queries/keys";
 
 /**
  * The repo's current multi-step operation state (merge/rebase/... in
@@ -13,7 +11,7 @@ export const OP_DOMAINS = ["status", "log", "branches", "diff", "op_state"] as c
  */
 export function useOpState(repoId: string | undefined): RepoOpState | null {
   const { data } = useQuery<RepoOpState>({
-    queryKey: [repoId, "op_state"],
+    queryKey: repoKeys.opState(repoId),
     queryFn: () => repoOpState(repoId!),
     enabled: !!repoId,
     staleTime: STALE.live,

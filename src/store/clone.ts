@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { cancelClone } from "../lib/commands";
 import type { CloneOptions } from "../lib/commands";
 import { lfsDownloadErrorMessage } from "../lib/lfsFeedback";
-import { cloneCancelCleanupFailure, gitErrorKind } from "../lib/types";
+import { cloneCancelCleanupFailure, gitErrorKind } from "../lib/errors";
 import { formatRepoError } from "../lib/repoErrorFeedback";
 import { notify } from "./notifications";
 import { useRemoteProgressStore } from "./remoteProgress";

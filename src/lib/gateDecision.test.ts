@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { gateDecision, localGitUsable } from "./gateDecision";
-import type { GitStatus } from "../../lib/types";
+import type { GitStatus } from "./types";
 
 const status = (over: Partial<GitStatus>): GitStatus => ({
   resolved_path: "C:\\Program Files\\Git\\cmd\\git.exe",

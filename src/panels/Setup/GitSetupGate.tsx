@@ -3,10 +3,10 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import type { GitStatus } from "../../lib/types";
 import { useGitStatusStore } from "../../store/git-status";
-import { gateDecision } from "./gateDecision";
+import { gateDecision } from "../../lib/gateDecision";
 import { copyText } from "../../lib/clipboard";
 import { Button } from "../shared/buttons";
-import { formatVersionTriple } from "../Settings/GitStatusReadout";
+import { formatVersionTriple } from "../../lib/gitVersion";
 
 interface Props {
   status: GitStatus;

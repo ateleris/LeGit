@@ -1,12 +1,14 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { Button } from "../shared/buttons";
 import { CaretDropdown } from "../shared/CaretDropdown";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
+import { SYNC_DOMAINS } from "../../lib/queries/domains";
+import { useRemotes, useTracking } from "../../lib/queries/useRepoQueries";
 import { autoUpdateSubmodules } from "../../lib/submodules";
-import { consoleCancel, repoFetch, repoListRemotes, repoPull, repoTrackingStatus } from "../../lib/commands";
-import type { Branch, PullStrategy, PushOptions, Remote, TrackingStatus } from "../../lib/types";
+import { consoleCancel, repoFetch, repoPull } from "../../lib/commands";
+import type { Branch, PullStrategy, PushOptions, Remote } from "../../lib/types";
 import { useRemoteProgressStore } from "../../store/remoteProgress";
 import { useSettingsStore } from "../../store/settings";
 import { remoteOpErrorMessage } from "../../lib/pushFeedback";
@@ -15,7 +17,6 @@ import { notifyLfsStubs } from "../../lib/lfsFeedback";
 import { notify } from "../../store/notifications";
 import { BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon, StashIcon } from "../../icons";
 import { MenuItem, Separator } from "./menu/primitives";
-import { STALE } from "../../lib/queryTiming";
 import { useCommandAction } from "../../keys/actions";
 import { useBindingLabel, withBinding } from "../../keys/useBindingLabel";
 
@@ -70,21 +71,11 @@ export function RemoteSyncToolbar({
 }) {
   const queryClient = useQueryClient();
 
-  const { data: tracking } = useQuery<TrackingStatus | null>({
-    queryKey: [repoId, "tracking"],
-    queryFn: () => repoTrackingStatus(repoId),
-    enabled: !!repoId,
-    staleTime: STALE.live,
-  });
+  const { data: tracking } = useTracking(repoId);
 
   // Configured remotes (not just fetched ones) — so Publish works the moment a
   // remote is added, before any fetch creates remote-tracking branches.
-  const { data: remotes = [] } = useQuery<Remote[]>({
-    queryKey: [repoId, "remotes"],
-    queryFn: () => repoListRemotes(repoId),
-    enabled: !!repoId,
-    staleTime: STALE.live,
-  });
+  const { data: remotes = [] } = useRemotes(repoId);
 
   const [busyOp, setBusyOp] = useState<SyncOp | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -145,9 +136,7 @@ export function RemoteSyncToolbar({
       try {
         await fn(opId);
         notify.success(successMsg);
-        // "tags" because push/pull/fetch move remote-tracking refs, which the
-        // tag list's per-tag `target_on_remote` flag is computed against.
-        invalidateRepoDomains(queryClient, repoId, ["log", "branches", "status", "tracking", "tags"]);
+        invalidateRepoDomains(queryClient, repoId, SYNC_DOMAINS);
       } catch (e) {
         if (cancelRequestedRef.current) {
           // User cancelled — the failure is expected, no toast.

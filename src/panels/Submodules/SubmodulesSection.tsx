@@ -1,6 +1,6 @@
 import { joinLocator } from "../../lib/locator";
 import { useCallback, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import {
@@ -16,30 +16,21 @@ import {
   repoSubmoduleSync,
   repoSubmoduleUpdate,
   repoSubmoduleUpdateRemote,
-  repoSubmodules,
 } from "../../lib/commands";
-import {
-  formatAppError,
-  type SubmoduleGitdirInfo,
-  type SubmoduleInfo,
-  type SubmoduleUpdateStrategy,
-} from "../../lib/types";
+import { type SubmoduleGitdirInfo, type SubmoduleInfo, type SubmoduleUpdateStrategy } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notifySubmoduleUpdateResults } from "../../lib/submodules";
 import { notifyLfsStubs } from "../../lib/lfsFeedback";
 import { notify } from "../../store/notifications";
-import { confirmDialog } from "../../store/confirm";
+import { confirmDestructiveAction, confirmDialog } from "../../store/confirm";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { Button } from "../shared/buttons";
-import { useConfirmDestructive } from "../../store/settings";
 import { SubmoduleRow } from "./SubmoduleRow";
-import { STALE } from "../../lib/queryTiming";
-
-// Submodule ops touch the submodule list, the status view, and (after an
-// update moves pointers) the log decorations.
-const AFFECTED_DOMAINS = ["submodules", "status", "log"];
+import { SUBMODULE_DOMAINS } from "../../lib/queries/domains";
+import { useSubmodules } from "../../lib/queries/useRepoQueries";
 
 /**
  * Submodules section (spec 2026-07-08, tiers 2-3): rows with state +
@@ -52,14 +43,8 @@ export function SubmodulesSection() {
   const repo = useActiveRepo();
   const queryClient = useQueryClient();
   const openRepo = useRepoStore((s) => s.openRepo);
-  const confirmDestructive = useConfirmDestructive();
 
-  const { data: subs = [], isFetching, refetch } = useQuery<SubmoduleInfo[]>({
-    queryKey: [repo?.id, "submodules"],
-    queryFn: () => repoSubmodules(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.live,
-  });
+  const { data: subs = [], isFetching, refetch } = useSubmodules(repo?.id);
   const reload = useCallback(() => { refetch(); }, [refetch]);
   usePanelFocusEffect(reload);
 
@@ -71,7 +56,7 @@ export function SubmodulesSection() {
 
   const { busy, run } = usePanelRunner({
     enabled: !!repo,
-    onSuccess: () => invalidateRepoDomains(queryClient, repo!.id, AFFECTED_DOMAINS),
+    onSuccess: () => invalidateRepoDomains(queryClient, repo!.id, SUBMODULE_DOMAINS),
     // Errors go to the toast overlay (never a panel-embedded banner: those
     // scroll out of view and reflow the pane); the full failing command +
     // stderr is in the Git Command Log, which the toast links to.
@@ -132,16 +117,14 @@ export function SubmodulesSection() {
   };
 
   const requestRemove = async (s: SubmoduleInfo) => {
-    if (confirmDestructive) {
-      const ok = await confirmDialog({
-        title: "Remove submodule",
-        message:
-          "Removes its .gitmodules entry and working tree. The repository data under .git/modules is kept.",
-        detail: s.path,
-        confirmLabel: "Remove submodule",
-      });
-      if (!ok) return;
-    }
+    const ok = await confirmDestructiveAction({
+      title: "Remove submodule",
+      message:
+        "Removes its .gitmodules entry and working tree. The repository data under .git/modules is kept.",
+      detail: s.path,
+      confirmLabel: "Remove submodule",
+    });
+    if (!ok) return;
     void doRemove(s);
   };
 

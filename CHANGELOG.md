@@ -12,6 +12,24 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Changing a repo setting no longer removes lane locks or the selected git profile set earlier in the session.
+- Settings, themes, layouts and keybindings are saved atomically, so a crash mid-save can no longer leave a truncated file; a settings file that fails to load is kept as `*.corrupt-<time>` instead of being overwritten with defaults.
+- Errors that also report a failed recovery step (e.g. "checked out in another worktree" plus a failed stash restore) keep their specific guidance instead of turning into a generic error.
+- A merge rejected by a hook is reported as an error instead of as conflicts when a file name contains "conflict".
+- Live updates stay off when turned off while a repository's watcher is still starting, and closed repositories no longer keep a stale watcher error.
+- Credentials embedded in a remote URL are now masked in every git error message, not only in fetch/pull/push errors.
+- A file name containing "conflict (" can no longer make a failed merge, rebase or cherry-pick look like a conflict.
+- A branch checked out in another worktree is recognised in both git wordings when switching, not only when deleting.
+- Checking out a branch from the Branches panel, or creating a branch from a stash, now offers the same clickable "open that worktree" toast as the Commits panel when the branch is checked out elsewhere.
+- Pushing or deleting tags and deleting remote branches show the specific authentication / rejected-push guidance instead of raw git output.
+- Tags' "pushed" indicators refresh after a background or external fetch.
+- The Merge panel no longer drops an unsaved conflict resolution when it is asked to clear; it asks first, like the Diff panel.
+- If git could not confirm an auto-stash before switching branches, the error now says your changes may be in the stash instead of only reporting the git failure.
+- Line-ending indicators for files at a revision no longer read oversized blobs in full before skipping them.
+- Repo Settings now shows the `.gitattributes` line-ending rules of WSL repositories (the file was looked up at a wrong path on Windows).
+
 ## [1.3.3] - 2026-09-23
 
 ### Added

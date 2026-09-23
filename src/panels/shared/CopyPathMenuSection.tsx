@@ -11,7 +11,7 @@ import { useActiveRepo } from "../../store/repos";
 import { toAbsolutePath } from "../../lib/paths";
 import { copyText } from "../../lib/clipboard";
 import { notify } from "../../store/notifications";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 
 export function CopyPathMenuSection({
   path,

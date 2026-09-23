@@ -89,7 +89,7 @@ pub async fn save_layout(
     let mut contents = contents;
     contents["name"] = serde_json::Value::String(safe.clone());
     let json = serde_json::to_string_pretty(&contents)?;
-    tokio::fs::write(&path, json).await?;
+    crate::persist::write_atomic(&path, json).await?;
     Ok(LayoutEntry {
         name: safe,
         path: path.to_string_lossy().to_string(),
@@ -123,7 +123,7 @@ pub async fn rename_layout(
     write_order(&dir, &next).await?;
     value["name"] = serde_json::Value::String(safe.clone());
     let json = serde_json::to_string_pretty(&value)?;
-    tokio::fs::write(&new_path, json).await?;
+    crate::persist::write_atomic(&new_path, json).await?;
     tokio::fs::remove_file(&old_path).await?;
     Ok(LayoutEntry {
         name: safe,
@@ -166,7 +166,7 @@ async fn write_order(dir: &std::path::Path, order: &[String]) -> Result<(), AppE
         version: ORDER_VERSION,
         order: order.to_vec(),
     };
-    tokio::fs::write(dir.join(ORDER_FILE), serde_json::to_string_pretty(&file)?).await?;
+    crate::persist::write_atomic(&dir.join(ORDER_FILE), serde_json::to_string_pretty(&file)?).await?;
     Ok(())
 }
 

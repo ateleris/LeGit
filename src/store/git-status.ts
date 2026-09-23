@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { gitStatusCheck, setGitPath, wslListDistros } from "../lib/commands";
-import { localGitUsable } from "../panels/Setup/gateDecision";
+import { localGitUsable } from "../lib/gateDecision";
 import type { GitStatus } from "../lib/types";
 
 interface GitStatusStore {

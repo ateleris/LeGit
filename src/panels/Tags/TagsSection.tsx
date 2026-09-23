@@ -1,23 +1,19 @@
-import { useCallback, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useMemo, useState } from "react";
+import {
+  createTag,
+  deleteRemoteTag,
+  deleteTag,
+  pushTag,
+  type RefActionContext,
+} from "../../lib/refActions";
+import { confirmDestructiveAction } from "../../store/confirm";
+import { useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
-import { invalidateRepoDomains } from "../../lib/repoInvalidation";
-import {
-  repoCreateTag,
-  repoDeleteTag,
-  repoDeleteRemoteTag,
-  repoListRemotes,
-  repoPushTag,
-  repoRemoteTags,
-  repoTags,
-} from "../../lib/commands";
 import { pushedTagNames, resolveTagRemote } from "../../lib/tags";
-import { autoPushTagAfterCreate } from "../../lib/autoPushTags";
 import { notify } from "../../store/notifications";
-import { confirmDialog } from "../../store/confirm";
-import type { Remote, RemoteTag, TagInfo } from "../../lib/types";
-import { formatAppError } from "../../lib/types";
+import type { TagInfo } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { RemoteIcon, TagIcon } from "../../icons";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { ShrinkingPathText } from "../shared/ShrinkingPathText";
@@ -28,13 +24,10 @@ import { usePanelRunner } from "../shared/usePanelRunner";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { isRowBackgroundClick, jumpPanelsToCommit } from "../shared/jumpToCommit";
 import { Button } from "../shared/buttons";
-import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
+import { useSettingsStore } from "../../store/settings";
 import { useTagRemoteChoice, useTagRemoteStore } from "../../store/tagRemote";
 import { resolveTagsSortMode, sortRefs } from "../../lib/refSort";
-import { STALE } from "../../lib/queryTiming";
-
-// A tag mutation touches the tag list and the graph decorations.
-const AFFECTED_DOMAINS = ["tags", "log"];
+import { useRemoteTags, useRemotes, useTags } from "../../lib/queries/useRepoQueries";
 
 /**
  * Tags section — list local tags with their pushed state, create (optionally
@@ -45,20 +38,9 @@ const AFFECTED_DOMAINS = ["tags", "log"];
 export function TagsSection() {
   const repo = useActiveRepo();
   const queryClient = useQueryClient();
-  const confirmDestructive = useConfirmDestructive();
 
-  const { data: tags = [], isFetching, refetch } = useQuery<TagInfo[]>({
-    queryKey: [repo?.id, "tags"],
-    queryFn: () => repoTags(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.live,
-  });
-  const { data: remotes = [] } = useQuery<Remote[]>({
-    queryKey: [repo?.id, "remotes"],
-    queryFn: () => repoListRemotes(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.live,
-  });
+  const { data: tags = [], isFetching, refetch } = useTags(repo?.id);
+  const { data: remotes = [] } = useRemotes(repo?.id);
   // Remote targeted by push / delete-on-remote / the pushed indicator.
   // Default is `pickTagRemote` (origin, else first); with multiple remotes a
   // selector overrides it. A stale selection (remote removed) falls back.
@@ -70,13 +52,7 @@ export function TagsSection() {
     () => resolveTagRemote(remoteChoice, remotes),
     [remoteChoice, remotes],
   );
-  const { data: remoteTags = [] } = useQuery<RemoteTag[]>({
-    queryKey: [repo?.id, "remote-tags", tagRemote],
-    queryFn: () => repoRemoteTags(repo!.id, tagRemote!, crypto.randomUUID()),
-    enabled: !!repo && tagRemote !== null,
-    staleTime: STALE.rare,
-    retry: false,
-  });
+  const { data: remoteTags = [] } = useRemoteTags(repo?.id, tagRemote);
   const pushed = useMemo(() => pushedTagNames(tags, remoteTags), [tags, remoteTags]);
 
   // User-selected sort order (own setting, inheriting the branches mode
@@ -100,56 +76,45 @@ export function TagsSection() {
   const [createName, setCreateName] = useState("");
   const [createMsg, setCreateMsg] = useState("");
 
+  // The shared actions report their own errors and refresh their domains;
+  // the runner adds the re-entry guard and delayed busy state.
   const { busy, run } = usePanelRunner({
     enabled: !!repo,
-    onSuccess: () => invalidateRepoDomains(queryClient, repo!.id, AFFECTED_DOMAINS),
     onError: (e) => notify.error(formatAppError(e)),
   });
-
-  const doCreate = () =>
-    run(async () => {
-      const name = createName.trim();
-      if (!name) return;
-      await repoCreateTag(repo!.id, name, undefined, createMsg.trim() || undefined);
-      setCreateName("");
-      setCreateMsg("");
-      // Create-time auto-push trigger (gated on the setting inside).
-      void autoPushTagAfterCreate(queryClient, repo!.id, name);
+  const guarded = async (action: (c: RefActionContext) => Promise<boolean>) => {
+    if (!repo) return false;
+    let ok = false;
+    await run(async () => {
+      ok = await action({ queryClient, repo });
     });
-
-  const doDelete = (name: string) => run(() => repoDeleteTag(repo!.id, name));
-
-  const doDeleteRemote = (name: string) =>
-    run(async () => {
-      await repoDeleteRemoteTag(repo!.id, tagRemote!, name, crypto.randomUUID());
-      notify.success(`Deleted tag '${name}' from ${tagRemote}`);
-      invalidateRepoDomains(queryClient, repo!.id, ["remote-tags"]);
-    });
-
-  // Central confirmation dialog: local and remote deletion are separate
-  // actions (GitKraken-style). Gated by the global destructive-confirm
-  // setting; when off, delete runs immediately.
-  const requestDelete = async (name: string, remoteSide: boolean) => {
-    if (confirmDestructive) {
-      const ok = await confirmDialog({
-        title: remoteSide ? "Delete remote tag" : "Delete tag",
-        message: remoteSide
-          ? `Deletes the tag from ${tagRemote}. Local copies (yours and other clones') stay.`
-          : "Deletes the local tag. A copy already pushed to a remote stays there.",
-        detail: name,
-        confirmLabel: remoteSide ? `Delete from ${tagRemote}` : "Delete tag",
-      });
-      if (!ok) return;
-    }
-    void (remoteSide ? doDeleteRemote(name) : doDelete(name));
+    return ok;
   };
 
-  const doPush = (name: string) =>
-    run(async () => {
-      await repoPushTag(repo!.id, tagRemote!, name, crypto.randomUUID());
-      notify.success(`Pushed tag '${name}' to ${tagRemote}`);
-      invalidateRepoDomains(queryClient, repo!.id, ["remote-tags"]);
+  const doCreate = async () => {
+    const name = createName.trim();
+    if (!name) return;
+    if (await guarded((c) => createTag(c, name, undefined, createMsg.trim() || undefined))) {
+      setCreateName("");
+      setCreateMsg("");
+    }
+  };
+
+  // Local and remote deletion are separate actions (GitKraken-style).
+  const requestDelete = async (name: string, remoteSide: boolean) => {
+    const ok = await confirmDestructiveAction({
+      title: remoteSide ? "Delete remote tag" : "Delete tag",
+      message: remoteSide
+        ? `Deletes the tag from ${tagRemote}. Local copies (yours and other clones') stay.`
+        : "Deletes the local tag. A copy already pushed to a remote stays there.",
+      detail: name,
+      confirmLabel: remoteSide ? `Delete from ${tagRemote}` : "Delete tag",
     });
+    if (!ok) return;
+    void guarded((c) => (remoteSide ? deleteRemoteTag(c, name, tagRemote!) : deleteTag(c, name)));
+  };
+
+  const doPush = (name: string) => guarded((c) => pushTag(c, name, tagRemote!));
 
   if (!repo) {
     return (

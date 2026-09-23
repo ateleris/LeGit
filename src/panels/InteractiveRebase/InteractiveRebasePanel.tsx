@@ -7,7 +7,8 @@ import { usePanelApi, usePanelFocusEffect } from "../PanelApiContext";
 import { repoLog, repoRebaseInteractive, repoRebaseRangeInfo } from "../../lib/commands";
 import type { Commit, RebaseAction, RebaseRangeInfo, RebaseStep } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
-import { OP_DOMAINS, useOpState } from "../../lib/useOpState";
+import { useOpState } from "../../lib/useOpState";
+import { HEAD_MOVE_DOMAINS } from "../../lib/queries/domains";
 import { notifyOpError, notifyRebaseOutcome } from "../../lib/mergeFeedback";
 import { DragHandleIcon } from "../../icons";
 import { Button } from "../shared/buttons";
@@ -70,9 +71,7 @@ export function InteractiveRebasePanel() {
     onError: notifyOpError,
     // Even a failed start can leave op state behind; refresh either way.
     onSettled: () => {
-      // "stashes" too: the rebase always runs --autostash, which creates and
-      // reapplies (or, on conflict, keeps) a stash entry.
-      if (repo) invalidateRepoDomains(queryClient, repo.id, [...OP_DOMAINS, "tracking", "stashes"]);
+      if (repo) invalidateRepoDomains(queryClient, repo.id, HEAD_MOVE_DOMAINS);
     },
   });
 

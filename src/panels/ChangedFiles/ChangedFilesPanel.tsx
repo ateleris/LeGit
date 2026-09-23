@@ -11,23 +11,23 @@ import {
   repoCommitDetails,
   repoCommitFiles,
   repoRestoreFileAtRevision,
-  repoStashes,
 } from "../../lib/commands";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { openSubmoduleRepo } from "../../lib/submodules";
 import { usePanelViewState } from "../../store/panelViewState";
 import { notify } from "../../store/notifications";
-import type { CommitDetails, CommitFileChange, CommitId, DiffRequest, StashEntry } from "../../lib/types";
-import { formatAppError } from "../../lib/types";
+import type { CommitDetails, CommitFileChange, CommitId, DiffRequest } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { FileTree } from "../shared/FileTree/FileTree";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
-import { PanelContextMenuProvider, useMenuConfirm } from "../Commits/menu/PanelContextMenu";
+import { PanelContextMenuProvider, useDestructiveMenuConfirm } from "../Commits/menu/PanelContextMenu";
 import { MenuItem } from "../Commits/menu/primitives";
 import { FileRowMenuSection } from "../shared/FileRowMenuSection";
 import type { FileViewRequest } from "../FileView/FileViewPanel";
 import { STALE } from "../../lib/queryTiming";
+import { useStashes } from "../../lib/queries/useRepoQueries";
 
 /**
  * Changed Files panel — receives a CommitId via the summon mechanism and shows
@@ -114,12 +114,7 @@ export function ChangedFilesPanel() {
   // Whether the shown "commit" is a stash entry (openStashDiff routes stash
   // SHAs here) - per-file restore then reads as "apply from stash". Shares
   // the stashes query cache with the Stashes panel.
-  const { data: stashes = [] } = useQuery<StashEntry[]>({
-    queryKey: [repo?.id, "stashes"],
-    queryFn: () => repoStashes(repo!.id),
-    enabled: !!repo && !!selectedId,
-    staleTime: STALE.live,
-  });
+  const { data: stashes = [] } = useStashes(repo?.id, { enabled: !!selectedId });
   const isStash = useMemo(
     () => stashes.some((s) => s.stash_sha === selectedId),
     [stashes, selectedId],
@@ -341,19 +336,14 @@ function FileAtCommitMenuSection({
   onClose: () => void;
 }) {
   const confirmDestructive = useConfirmDestructive();
-  const menuConfirm = useMenuConfirm();
+  const destructiveMenuConfirm = useDestructiveMenuConfirm();
   const commitShort = commitId.slice(0, 8);
   const deleted = file.change === "Deleted";
   // A gitlink has no file content: view/blame/restore would error on it.
   const submodule = file.change === "SubmoduleChanged";
 
   const requestRestore = () => {
-    if (!confirmDestructive) {
-      onClose();
-      onRestore();
-      return;
-    }
-    menuConfirm(
+    destructiveMenuConfirm(
       stash
         ? `Overwrite ${file.path} with its stashed version?`
         : `Overwrite ${file.path} with its content at ${commitShort}?`,

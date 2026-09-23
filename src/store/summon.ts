@@ -3,7 +3,7 @@ import { create } from "zustand";
 import type { DockviewApi } from "dockview-react";
 import { useDockviewStore } from "./dockview";
 import { useSettingsStore } from "./settings";
-import { REPO_PANELS, SUPPRESSIBLE_SUMMON_PANELS } from "../panels/registry";
+import { REPO_PANELS, SUPPRESSIBLE_SUMMON_PANELS } from "../layout/descriptors";
 
 /**
  * True when the user has opted this panel out of auto-opening (Settings →

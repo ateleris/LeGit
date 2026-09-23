@@ -23,3 +23,4 @@ pub mod conflicts;
 pub mod op_state;
 pub mod resolve;
 pub mod worktrees;
+pub mod lfs;

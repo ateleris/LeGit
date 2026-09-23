@@ -1,7 +1,7 @@
 import { confirmDialog } from "../store/confirm";
 import { branchDeleteGuidance } from "./branchDeleteGuidance";
 import { repoBranchMergeAnalysis, repoDeleteBranch } from "./commands";
-import { gitErrorKind } from "./types";
+import { gitErrorKind } from "./errors";
 import type { BranchMergeAnalysis } from "./types";
 
 /** Safe-delete `branch`; on git's "not fully merged" refusal, analyse WHY

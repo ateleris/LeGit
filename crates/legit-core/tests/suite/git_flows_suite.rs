@@ -21,7 +21,7 @@
 use legit_core::{
     BlobBytes, CommitId, GitError, ConflictKind, ConflictSide, DiffEntry, DiffSource, FastForwardResult,
     FetchOptions, FileState, GitmodulesFinding,
-    GitBackend, GitRunner, LogOptions, MergeOptions, MergeOutcome, OperationId,
+    GitBackend, GitExecutor, GitRunner, LogOptions, MergeOptions, MergeOutcome, OperationId,
     PullOptions, PullStrategy, PushOptions, PushRecurseMode, RebaseOutcome, RefDecoration,
     RefSelector, RemoteProgress, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode,
     SequenceOutcome, SignatureStatus, StashApplyOutcome, StashOutcome, SubmoduleAutoUpdateStatus,
@@ -39,19 +39,32 @@ struct TestRepo {
     _guard: BackendGuard,
 }
 
+/// The local config every test repo pins, so results never depend on the
+/// machine's global config: a fixed identity, no signing, no autocrlf.
+const PINNED_CONFIG: [(&str, &str); 5] = [
+    ("user.name", "LeGit Test"),
+    ("user.email", "test@example.invalid"),
+    ("commit.gpgsign", "false"),
+    ("tag.gpgsign", "false"),
+    ("core.autocrlf", "false"),
+];
+
+/// Pin `PINNED_CONFIG` in the nested repo at `subdir` of `repo` (a submodule
+/// clone or an embedded repo, which read only the global config otherwise).
+async fn pin_config(repo: &TestRepo, subdir: &str) {
+    for (key, value) in PINNED_CONFIG {
+        repo.git(&["-C", subdir, "config", key, value]).await;
+    }
+}
+
 impl TestRepo {
     async fn init() -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().to_path_buf();
         let runner = GitRunner::for_repo("git", &path);
-        for args in [
-            ["init", "-b", "main"].as_slice(),
-            &["config", "user.name", "LeGit Test"],
-            &["config", "user.email", "test@example.invalid"],
-            &["config", "commit.gpgsign", "false"],
-            &["config", "tag.gpgsign", "false"],
-            &["config", "core.autocrlf", "false"],
-        ] {
+        let init = ["init", "-b", "main"];
+        let pins = PINNED_CONFIG.map(|(k, v)| ["config", k, v]);
+        for args in std::iter::once(init.as_slice()).chain(pins.iter().map(|a| a.as_slice())) {
             let out = runner.run(args).await.expect("spawn git");
             assert!(out.success, "setup `git {args:?}` failed: {}", out.stderr);
         }
@@ -118,19 +131,7 @@ async fn repo_with_submodule() -> (TestRepo, TestRepo) {
         "submodule", "add", &lib_path, "lib",
     ])
     .await;
-    // The clone is a fresh repo reading the OS-global config for everything
-    // after the add — pin the same local settings TestRepo::init pins
-    // (identity, no signing, no autocrlf) so later checkouts/stashes/commits
-    // inside the submodule behave like every other test repo.
-    for args in [
-        ["-C", "lib", "config", "user.name", "LeGit Test"].as_slice(),
-        &["-C", "lib", "config", "user.email", "test@example.invalid"],
-        &["-C", "lib", "config", "commit.gpgsign", "false"],
-        &["-C", "lib", "config", "tag.gpgsign", "false"],
-        &["-C", "lib", "config", "core.autocrlf", "false"],
-    ] {
-        sup.git(args).await;
-    }
+    pin_config(&sup, "lib").await;
     sup.git(&["commit", "-m", "add submodule"]).await;
     (sup, lib)
 }
@@ -184,6 +185,36 @@ async fn merge_conflict_resolve_continue() {
     let outcome = repo.backend.merge_continue().await.unwrap();
     assert_eq!(outcome, MergeOutcome::Merged);
     assert_eq!(repo.backend.op_state().await.unwrap(), RepoOpState::None);
+    assert!(repo.backend.conflict_entries().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn merge_rejected_by_hook_on_conflict_named_file_is_an_error_not_conflicts() {
+    let repo = TestRepo::init().await;
+    repo.write("conflict.txt", "a\nb\nc\nd\ne\n");
+    repo.commit_all("base").await;
+    repo.git(&["switch", "-c", "feature"]).await;
+    repo.write("conflict.txt", "a\nb\nc\nd\nE\n");
+    repo.commit_all("feature edit").await;
+    repo.git(&["switch", "main"]).await;
+    repo.write("conflict.txt", "A\nb\nc\nd\ne\n");
+    repo.commit_all("main edit").await;
+
+    let hook = repo.path.join(".git/hooks/pre-merge-commit");
+    std::fs::write(&hook, "#!/bin/sh\necho 'hook says no' >&2\nexit 1\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let result = repo.backend.merge("feature", MergeOptions::default()).await;
+    match result {
+        Err(GitError::CommandFailed { stderr, .. }) => {
+            assert!(stderr.contains("hook says no"), "{stderr}");
+        }
+        other => panic!("expected CommandFailed, got {other:?}"),
+    }
     assert!(repo.backend.conflict_entries().await.unwrap().is_empty());
 }
 
@@ -571,6 +602,35 @@ async fn switch_auto_stash_carries_changes_to_the_target_branch() {
     assert_eq!(repo.read("a.txt"), "wip\n");
     assert!(repo.backend.stashes().await.unwrap().is_empty());
     assert_eq!(repo.git(&["branch", "--show-current"]).await.trim(), "feature");
+}
+
+#[tokio::test]
+async fn switch_auto_stash_conflicting_pop_keeps_the_stash_and_reports_conflicts() {
+    // The target branch changed the same lines as the local edit: the switch
+    // succeeds (the tree was stashed), the pop onto the target conflicts.
+    // Outcome, not error: the changes ARE applied (with markers) and git
+    // keeps the stash entry - guidance is "resolve, then drop".
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["switch", "-c", "feature"]).await;
+    repo.write("a.txt", "feature\n");
+    repo.commit_all("feature edit").await;
+    repo.git(&["switch", "main"]).await;
+
+    repo.write("a.txt", "wip\n");
+    let outcome = repo
+        .backend
+        .switch_branch("feature", SwitchDirtyBehavior::AutoStash)
+        .await
+        .unwrap();
+    assert!(
+        matches!(outcome.outcome, SwitchOutcome::StashPopConflicts { .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(repo.git(&["branch", "--show-current"]).await.trim(), "feature");
+    assert!(repo.read("a.txt").contains("<<<<<<<"), "{}", repo.read("a.txt"));
+    assert_eq!(repo.backend.stashes().await.unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -2340,14 +2400,7 @@ async fn file_diff_presents_an_untracked_nested_repo_as_a_submodule_add() {
     // staging would record instead of "no changes".
     let repo = TestRepo::init().await;
     repo.git(&["init", "vendor/embedded"]).await;
-    for args in [
-        ["-C", "vendor/embedded", "config", "user.name", "LeGit Test"].as_slice(),
-        &["-C", "vendor/embedded", "config", "user.email", "test@example.invalid"],
-        &["-C", "vendor/embedded", "config", "commit.gpgsign", "false"],
-        &["-C", "vendor/embedded", "config", "core.autocrlf", "false"],
-    ] {
-        repo.git(args).await;
-    }
+    pin_config(&repo, "vendor/embedded").await;
     repo.write("vendor/embedded/f.txt", "x\n");
     repo.git(&["-C", "vendor/embedded", "add", "."]).await;
     repo.git(&["-C", "vendor/embedded", "commit", "-m", "nested"]).await;
@@ -3959,6 +4012,28 @@ async fn global_config_unset_all_and_helper_round_trip() {
     assert_eq!(out.exit_code, Some(1), "unset key reads back empty: {}", out.stderr);
 }
 
+/// `config::replace_all` / `read_multi` against the real binary: the local
+/// credential-helper write (empty reset entry, then the helper) replaces any
+/// earlier entries, round-trips in order, and an empty replacement removes
+/// the key (`--unset-all` exit 5 on a second removal is tolerated).
+#[tokio::test]
+async fn config_replace_all_round_trips_multi_values() {
+    use legit_core::config::{read_multi, replace_all, ConfigScope, WriteScope};
+    let repo = TestRepo::init().await;
+    let runner = GitRunner::for_repo("git", &repo.path);
+    let key = "credential.helper";
+
+    replace_all(&runner, WriteScope::Local, key, &["", "store"]).await.unwrap();
+    assert_eq!(read_multi(&runner, ConfigScope::Local, key).await, vec!["", "store"]);
+
+    replace_all(&runner, WriteScope::Local, key, &["", "cache"]).await.unwrap();
+    assert_eq!(read_multi(&runner, ConfigScope::Local, key).await, vec!["", "cache"]);
+
+    replace_all(&runner, WriteScope::Local, key, &[]).await.unwrap();
+    assert!(read_multi(&runner, ConfigScope::Local, key).await.is_empty());
+    replace_all(&runner, WriteScope::Local, key, &[]).await.unwrap();
+}
+
 /// Why the global-settings views read `--global`/`--system` only
 /// (`config_util::read_config_global_scopes`): an unbound runner inherits the
 /// app process's cwd, which can lie inside SOME repo (tauri dev runs inside
@@ -4004,7 +4079,7 @@ async fn config_global_flag_ignores_repo_local_values() {
 /// reports unresolvable ones - the framing our batch parser encodes.
 #[tokio::test]
 async fn cat_file_batch_resolves_index_and_head_specs() {
-    use legit_core::parse_cat_file_batch;
+    use legit_core::cli_impl::parse_cat_file_batch;
 
     let repo = TestRepo::init().await;
     repo.write("a.txt", "one\ntwo\n");
@@ -4029,7 +4104,7 @@ async fn cat_file_batch_resolves_index_and_head_specs() {
 /// triples with the values our parser encodes.
 #[tokio::test]
 async fn check_attr_z_output_shape() {
-    use legit_core::{parse_check_attr_z, EolTextAttr};
+    use legit_core::cli_impl::{parse_check_attr_z, EolTextAttr};
 
     let repo = TestRepo::init().await;
     repo.write(
@@ -4058,10 +4133,8 @@ async fn check_attr_z_output_shape() {
 /// add, then compare the staged blob's classification with our prediction.
 #[tokio::test]
 async fn checkin_kind_matches_real_git() {
-    use legit_core::{
-        checkin_normalizes, classify_line_endings, classify_line_endings_normalized,
-        parse_autocrlf, EolTextAttr, LineEndingKind,
-    };
+    use legit_core::{classify_line_endings, LineEndingKind};
+    use legit_core::cli_impl::{checkin_normalizes, classify_line_endings_normalized, parse_autocrlf, EolTextAttr};
 
     // (autocrlf, content, expected staged kind for a FIRST add - no index blob)
     let cases: &[(&str, &str, LineEndingKind)] = &[
@@ -4106,9 +4179,8 @@ async fn checkin_kind_matches_real_git() {
 /// attribute DOES renormalize it. Both encoded in `checkin_normalizes`.
 #[tokio::test]
 async fn committed_crlf_not_renormalized_under_auto() {
-    use legit_core::{
-        checkin_normalizes, classify_line_endings, AutocrlfSetting, EolTextAttr, LineEndingKind,
-    };
+    use legit_core::{classify_line_endings, LineEndingKind};
+    use legit_core::cli_impl::{checkin_normalizes, AutocrlfSetting, EolTextAttr};
 
     let repo = TestRepo::init().await;
     repo.write("f.txt", "a\r\nb\r\n");
@@ -4150,10 +4222,8 @@ async fn committed_crlf_not_renormalized_under_auto() {
 #[tokio::test]
 async fn line_ending_status_pipeline_against_real_repo() {
     use legit_core::types::LineEndingTransition;
-    use legit_core::{
-        derive_line_ending_entry, parse_cat_file_batch, AutocrlfSetting, EolTextAttr,
-        LineEndingKind,
-    };
+    use legit_core::{LineEndingKind};
+    use legit_core::cli_impl::{derive_line_ending_entry, parse_cat_file_batch, AutocrlfSetting, EolTextAttr};
 
     let repo = TestRepo::init().await;
     repo.write("flip.txt", "a\nb\n");
@@ -4569,19 +4639,18 @@ async fn renormalize_preview_reports_non_ascii_paths_raw() {
 }
 
 #[tokio::test]
-async fn stale_preview_lock_blocks_the_preview() {
-    // git refuses to write GIT_INDEX_FILE while `<file>.lock` exists - a
-    // preview killed mid-run leaves that lock behind and would block every
-    // future preview. This pins the failure mode the command layer's
-    // before/after cleanup (`remove_preview_index`) exists to heal.
+async fn stale_preview_lock_is_cleared_before_the_preview() {
+    // git refuses to write GIT_INDEX_FILE while `<file>.lock` exists, and a
+    // preview killed mid-run leaves that lock behind: without the cleanup
+    // every later preview would fail. The preview removes it first and
+    // leaves neither the temp index nor a lock behind.
     let repo = TestRepo::init().await;
     repo.write("a.txt", "one\n");
     repo.commit_all("base").await;
     repo.write(".git/index.legit-renormalize-preview.lock", "");
-    assert!(
-        repo.backend.renormalize_preview().await.is_err(),
-        "a stale preview lock must surface as an error, not a silent empty preview"
-    );
+    assert!(repo.backend.renormalize_preview().await.unwrap().is_empty());
+    assert!(!repo.exists(".git/index.legit-renormalize-preview.lock"));
+    assert!(!repo.exists(".git/index.legit-renormalize-preview"));
 }
 
 #[tokio::test]

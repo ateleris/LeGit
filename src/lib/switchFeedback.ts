@@ -2,7 +2,7 @@
 // Branches panels so the messaging (and its accuracy) stays in one place.
 
 import type { RemoteCheckoutOutcome, SwitchOutcome } from "./types";
-import { formatAppError, gitErrorDetails, gitErrorKind } from "./types";
+import { formatAppError, gitErrorDetails, gitErrorKind } from "./errors";
 import { lfsDownloadErrorMessage } from "./lfsFeedback";
 import { notify } from "../store/notifications";
 
@@ -82,10 +82,8 @@ export function formatSwitchError(e: unknown): string {
       "first — or enable auto-stash in Settings to carry them across."
     );
   }
-  if (gitErrorKind(e) === "CheckedOutInWorktree") {
-    const d = gitErrorDetails<{ branch: string | null; path: string | null }>(e);
-    return checkedOutInWorktreeMessage(d?.branch ?? null, d?.path ?? null);
-  }
+  const worktree = gitErrorDetails(e, "CheckedOutInWorktree");
+  if (worktree) return checkedOutInWorktreeMessage(worktree.branch, worktree.path);
   return formatAppError(e);
 }
 
@@ -112,8 +110,8 @@ export function notifySwitchError(
   opts?: { onOpenWorktree?: (path: string) => void },
 ) {
   const message = formatSwitchError(e);
-  if (opts?.onOpenWorktree && gitErrorKind(e) === "CheckedOutInWorktree") {
-    const d = gitErrorDetails<{ path: string | null }>(e);
+  if (opts?.onOpenWorktree) {
+    const d = gitErrorDetails(e, "CheckedOutInWorktree");
     if (d?.path) {
       const path = d.path;
       notify.error(`${message} Click here to open it.`, {

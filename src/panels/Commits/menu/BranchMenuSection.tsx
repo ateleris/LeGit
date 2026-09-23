@@ -1,6 +1,6 @@
 import { useConfirmDestructive } from "../../../store/settings";
 import { useSummonStore } from "../../../store/summon";
-import { useMenuConfirm, useMenuPicker, usePanelContextMenu } from "./PanelContextMenu";
+import { useDestructiveMenuConfirm, useMenuPicker, usePanelContextMenu } from "./PanelContextMenu";
 import { MenuItem, Separator, SectionLabel, Submenu } from "./primitives";
 import { resolveBranchPushPlan } from "../../../lib/pushPlan";
 import { copyAndNotify } from "../../../lib/clipboard";
@@ -133,16 +133,12 @@ export function BranchMenuSection({
   onRebaseOnto: () => void;
 }) {
   const confirmDestructive = useConfirmDestructive();
-  const menuConfirm = useMenuConfirm();
+  const destructiveMenuConfirm = useDestructiveMenuConfirm();
   const menuPicker = useMenuPicker();
   const pushPlan = resolveBranchPushPlan(upstream, remotes);
 
   const requestDelete = (force: boolean) => {
-    if (!confirmDestructive) {
-      onDelete(force);
-      return;
-    }
-    menuConfirm(
+    destructiveMenuConfirm(
       force ? `Force delete branch '${name}'?` : `Delete branch '${name}'?`,
       () => onDelete(force),
     );
@@ -238,15 +234,10 @@ export function RemoteBranchMenuSection({
   onDeleteRemote: () => void;
 }) {
   const confirmDestructive = useConfirmDestructive();
-  const menuConfirm = useMenuConfirm();
+  const destructiveMenuConfirm = useDestructiveMenuConfirm();
 
-  const requestDeleteRemote = () => {
-    if (!confirmDestructive) {
-      onDeleteRemote();
-      return;
-    }
-    menuConfirm(`Delete remote branch '${remoteName}'?`, onDeleteRemote);
-  };
+  const requestDeleteRemote = () =>
+    destructiveMenuConfirm(`Delete remote branch '${remoteName}'?`, onDeleteRemote);
 
   return (
     <>

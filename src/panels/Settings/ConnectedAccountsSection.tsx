@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { usePanelFocusEffect } from "../PanelApiContext";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import type { ConnectedAccountStatus } from "../../lib/types";
 import {
   connectAccountPat,

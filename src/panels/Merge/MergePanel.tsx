@@ -5,21 +5,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRepoStore } from "../../store/repos";
-import { usePanelViewState } from "../../store/panelViewState";
 import { useSettingsStore } from "../../store/settings";
-import { useSummonTarget } from "../../store/summon";
+import { useGuardedEditorRequest } from "../shared/useGuardedEditorRequest";
 import {
-  repoBranches,
   repoConflictFileSides,
   repoReadWorktreeFile,
   repoResolveTakeSide,
   repoStage,
   repoWriteWorktreeFile,
 } from "../../lib/commands";
-import type { Branch, ConflictFileSides, ConflictSide } from "../../lib/types";
+import type { ConflictFileSides, ConflictSide } from "../../lib/types";
 import { useOpState } from "../../lib/useOpState";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notifyResolutionInvisible } from "../../lib/mergeFeedback";
 import { notify } from "../../store/notifications";
@@ -35,10 +32,10 @@ import {
   parseConflicts,
   sideLabel,
   type LineSelection,
-  type ParsedConflicts,
 } from "../Diff/conflictModel";
 import { MergeView, type MergeViewHandle } from "./MergeView";
 import { STALE } from "../../lib/queryTiming";
+import { useBranches } from "../../lib/queries/useRepoQueries";
 
 /** Payload for summoning the Merge panel. */
 export interface MergeRequest {
@@ -47,14 +44,34 @@ export interface MergeRequest {
 }
 
 
+function sameMergeTarget(a: MergeRequest | null, b: MergeRequest | null): boolean {
+  return !!a && !!b && a.repoId === b.repoId && a.path === b.path;
+}
+
 export function MergePanel() {
   const queryClient = useQueryClient();
-  // Per-repo view state (store/panelViewState.ts): the shown conflict
-  // survives a layout apply's dock rebuild and the slot swap with Diff, and
-  // each repo keeps its own across tab switches (the content query below
-  // only ever runs for the active repo's request).
-  const [request, setRequest] = usePanelViewState<MergeRequest | null>("merge.request", null);
-  const [dirty, setDirty] = useState(false);
+  // The shown conflict is per-repo view state: it survives a layout apply's
+  // dock rebuild and the slot swap with Diff, and each repo keeps its own
+  // across tab switches (the content query below only ever runs for the
+  // active repo's request). While the result has unsaved edits, a summoned
+  // switch waits for the user.
+  const {
+    request,
+    requestRef,
+    dirty,
+    setDirty,
+    pending,
+    acceptPending,
+    rejectPending,
+    rebuildKey,
+    rebuild,
+    guardSave,
+    activeRepoId,
+  } = useGuardedEditorRequest<MergeRequest>({
+    panelId: "merge",
+    viewStateKey: "merge.request",
+    sameTarget: sameMergeTarget,
+  });
   // Conflicts view folds the common stretches; Full file shows everything.
   const [viewMode, setViewMode] = useState<"conflicts" | "full">(
     () => (localStorage.getItem("legit.merge.viewMode") === "full" ? "full" : "conflicts"),
@@ -63,8 +80,6 @@ export function MergePanel() {
     setViewMode(next);
     localStorage.setItem("legit.merge.viewMode", next);
   };
-  const [rebuildKey, setRebuildKey] = useState(0);
-  const [pending, setPending] = useState<MergeRequest | null>(null);
   // Mark-resolved guard: blocks remaining in the result at click time.
   const [confirmUnresolved, setConfirmUnresolved] = useState<number | null>(null);
   // True after THIS panel staged the file - corrects the "use Mark resolved"
@@ -72,34 +87,6 @@ export function MergePanel() {
   const [stagedNotice, setStagedNotice] = useState(false);
   const [navIndex, setNavIndex] = useState(0);
   const viewRef = useRef<MergeViewHandle | null>(null);
-  const savingRef = useRef(false);
-  const dirtyRef = useRef(dirty);
-  dirtyRef.current = dirty;
-  const requestRef = useRef(request);
-  requestRef.current = request;
-
-  const onReceive = useCallback((payload: MergeRequest | null) => {
-    if (
-      dirtyRef.current &&
-      payload &&
-      requestRef.current &&
-      (payload.path !== requestRef.current.path || payload.repoId !== requestRef.current.repoId)
-    ) {
-      setPending(payload);
-      return;
-    }
-    setRequest(payload);
-  }, []);
-  useSummonTarget<MergeRequest | null>("merge", onReceive);
-
-  // On a repo switch the per-repo request key changes underneath us; an
-  // in-progress resolution and a pending switch belong to the previous
-  // repo's file, so drop them.
-  const activeRepoId = useRepoStore((s) => s.activeRepoId);
-  useEffect(() => {
-    setDirty(false);
-    setPending(null);
-  }, [activeRepoId]);
 
   const {
     data: diskContent,
@@ -140,11 +127,8 @@ export function MergePanel() {
     staleTime: STALE.live,
   });
 
-  const { data: branches = [] } = useQuery<Branch[]>({
-    queryKey: [request?.repoId, "branches"],
-    queryFn: () => repoBranches(request!.repoId),
+  const { data: branches = [] } = useBranches(request?.repoId, {
     enabled: !!request && request.repoId === activeRepoId,
-    staleTime: STALE.live,
   });
   const currentBranchName = useMemo(
     () => branches.find((b) => b.is_current)?.name ?? null,
@@ -242,45 +226,45 @@ export function MergePanel() {
         // The whole-file choice supersedes any in-editor result.
         setDirty(false);
         setStagedNotice(true);
-        setRebuildKey((k) => k + 1);
+        rebuild();
         invalidateRepoDomains(queryClient, req.repoId, ["status", "log", "diff", "op_state"]);
         await notifyResolutionInvisible(req.repoId, req.path);
       } catch (e) {
         notify.error(formatAppError(e));
       }
     },
-    [queryClient],
+    [requestRef, setDirty, rebuild, queryClient],
   );
 
   // The single confirming action: write the result document to the file and
   // stage it as resolved. There is no intermediate Save - the result lives
   // in the editor until the merge for this file is confirmed here.
-  const doMarkResolved = useCallback(async () => {
-    if (savingRef.current) return;
-    const req = requestRef.current;
-    if (!req) return;
-    savingRef.current = true;
-    try {
-      const parsedNow = parsedRef.current;
-      let text = viewRef.current?.getText();
-      if (text != null && parsedNow) {
-        // The view guarantees a trailing newline; restore the file's own
-        // convention and EOL before writing.
-        if (!parsedNow.trailingNewline && text.endsWith("\n")) text = text.slice(0, -1);
-        await repoWriteWorktreeFile(req.repoId, req.path, applyEol(text, parsedNow.eol));
-      }
-      await repoStage(req.repoId, [req.path]);
-      setDirty(false);
-      setStagedNotice(true);
-      setRebuildKey((k) => k + 1);
-      invalidateRepoDomains(queryClient, req.repoId, ["status", "log", "diff", "op_state"]);
-      await notifyResolutionInvisible(req.repoId, req.path);
-    } catch (e) {
-      notify.error(formatAppError(e));
-    } finally {
-      savingRef.current = false;
-    }
-  }, [queryClient]);
+  const doMarkResolved = useCallback(
+    () =>
+      guardSave(async () => {
+        const req = requestRef.current;
+        if (!req) return;
+        try {
+          const parsedNow = parsedRef.current;
+          let text = viewRef.current?.getText();
+          if (text != null && parsedNow) {
+            // The view guarantees a trailing newline; restore the file's own
+            // convention and EOL before writing.
+            if (!parsedNow.trailingNewline && text.endsWith("\n")) text = text.slice(0, -1);
+            await repoWriteWorktreeFile(req.repoId, req.path, applyEol(text, parsedNow.eol));
+          }
+          await repoStage(req.repoId, [req.path]);
+          setDirty(false);
+          setStagedNotice(true);
+          rebuild();
+          invalidateRepoDomains(queryClient, req.repoId, ["status", "log", "diff", "op_state"]);
+          await notifyResolutionInvisible(req.repoId, req.path);
+        } catch (e) {
+          notify.error(formatAppError(e));
+        }
+      }),
+    [guardSave, requestRef, setDirty, rebuild, queryClient],
+  );
 
   // Guard: staging a result that still parses to conflict blocks is almost
   // always a mistake - inline confirm instead of a hard block (markers can be
@@ -435,15 +419,8 @@ export function MergePanel() {
           <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
             Unsaved result for {request.path} will be lost.
           </span>
-          <ToolbarButton
-            label="Switch anyway"
-            onClick={() => {
-              setDirty(false);
-              setRequest(pending);
-              setPending(null);
-            }}
-          />
-          <ToolbarButton label="Stay" onClick={() => setPending(null)} />
+          <ToolbarButton label="Switch anyway" onClick={acceptPending} />
+          <ToolbarButton label="Stay" onClick={rejectPending} />
         </div>
       )}
 

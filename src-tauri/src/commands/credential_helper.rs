@@ -13,7 +13,8 @@
 use crate::commands::settings_host::{settings_executor, settings_fs, SettingsHost};
 use crate::error::AppError;
 use crate::state::AppState;
-use legit_core::{GitError, GitExecutor, HostPath, RepoFs};
+use legit_core::config::{self, ConfigScope, WriteScope};
+use legit_core::{GitExecutor, HostPath, RepoFs};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -29,60 +30,32 @@ pub struct CredentialHelperView {
     pub helper_system: Option<String>,
 }
 
-/// Last non-empty line of a `git config --get-all credential.helper` output:
-/// later entries win, and empty entries are the "reset" markers the per-repo
-/// apply writes, not helpers (pure; unit-tested).
-fn last_non_empty(stdout: &str) -> Option<String> {
-    stdout
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .last()
-        .map(|s| s.to_string())
+/// The effective helper among a scope's `credential.helper` values: later
+/// entries win, and empty entries are the "reset" markers the per-repo apply
+/// writes, not helpers.
+fn effective_helper(values: &[String]) -> Option<String> {
+    values.iter().map(|v| v.trim()).filter(|v| !v.is_empty()).last().map(str::to_string)
 }
 
-pub(crate) async fn read_helper_at(runner: &dyn GitExecutor, flag: &str) -> Option<String> {
-    // exit 1 = no helper at this scope: expected, not a failure (Git Log).
-    let out = runner.run_expecting(&["config", flag, "--get-all", KEY], &[1]).await.ok()?;
-    if !out.success {
-        return None;
-    }
-    last_non_empty(&out.stdout)
+pub(crate) async fn read_helper_at(runner: &dyn GitExecutor, scope: ConfigScope) -> Option<String> {
+    effective_helper(&config::read_multi(runner, scope, KEY).await)
 }
 
 pub(crate) async fn build_view(runner: &dyn GitExecutor) -> CredentialHelperView {
     CredentialHelperView {
-        helper_global: read_helper_at(runner, "--global").await,
-        helper_system: read_helper_at(runner, "--system").await,
+        helper_global: read_helper_at(runner, ConfigScope::Global).await,
+        helper_system: read_helper_at(runner, ConfigScope::System).await,
     }
 }
 
 /// Write the host's global `credential.helper` as a single plain value
-/// (`None` unsets). Reset-then-add because a plain set fails when multiple
-/// entries exist; the exit-code assumptions (`--unset-all` exits 5 when
-/// nothing is set or the file is missing, single value round-trips via
-/// `--get-all`) are validated against the real binary in
-/// legit-core/tests/git_flows.rs.
+/// (`None` unsets).
 pub(crate) async fn write_credential_helper_global(
     runner: &dyn GitExecutor,
     helper: Option<&str>,
 ) -> Result<CredentialHelperView, AppError> {
-    let unset = runner.run_expecting(&["config", "--global", "--unset-all", KEY], &[5]).await?;
-    if !unset.success && unset.exit_code != Some(5) {
-        return Err(AppError::Git(GitError::CommandFailed {
-            exit_code: unset.exit_code.unwrap_or(-1),
-            stderr: unset.stderr.trim().to_string(),
-        }));
-    }
-    if let Some(v) = helper.map(str::trim).filter(|v| !v.is_empty()) {
-        let out = runner.run(&["config", "--global", "--add", KEY, v]).await?;
-        if !out.success {
-            return Err(AppError::Git(GitError::CommandFailed {
-                exit_code: out.exit_code.unwrap_or(-1),
-                stderr: out.stderr.trim().to_string(),
-            }));
-        }
-    }
+    let values: Vec<&str> = helper.map(str::trim).filter(|v| !v.is_empty()).into_iter().collect();
+    config::replace_all(runner, WriteScope::Global, KEY, &values).await?;
     Ok(build_view(runner).await)
 }
 
@@ -358,13 +331,14 @@ mod tests {
     }
 
     #[test]
-    fn last_non_empty_skips_reset_entries_and_takes_last() {
+    fn effective_helper_skips_reset_entries_and_takes_last() {
+        let v = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         // The per-repo apply writes an empty reset entry before the helper.
-        assert_eq!(last_non_empty("\nmanager\n").as_deref(), Some("manager"));
+        assert_eq!(effective_helper(&v(&["", "manager"])).as_deref(), Some("manager"));
         // Later entries win.
-        assert_eq!(last_non_empty("store\nmanager\n").as_deref(), Some("manager"));
+        assert_eq!(effective_helper(&v(&["store", "manager"])).as_deref(), Some("manager"));
         // Only empty/blank entries = no helper.
-        assert_eq!(last_non_empty("\n  \n"), None);
-        assert_eq!(last_non_empty(""), None);
+        assert_eq!(effective_helper(&v(&["", "  "])), None);
+        assert_eq!(effective_helper(&[]), None);
     }
 }

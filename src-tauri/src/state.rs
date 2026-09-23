@@ -615,15 +615,47 @@ pub struct RepoSettings {
     pub commit_button_mode: Option<CommitButtonMode>,
 }
 
+/// Repo settings owned by dedicated commands (lane locks, profile selection,
+/// the probed git binary); a settings patch must never write them.
+const REPO_SETTINGS_COMMAND_OWNED: [&str; 3] = ["laneLocks", "git_profile_id", "git_path_override"];
+
+impl RepoSettings {
+    /// `self` with the fields named in `patch` (JSON field names) replaced.
+    /// Fields not in the patch keep their current value.
+    pub fn with_patch(&self, patch: &serde_json::Value) -> Result<Self, AppError> {
+        let patch = patch
+            .as_object()
+            .ok_or_else(|| AppError::Settings("repo settings patch must be an object".into()))?;
+        let serde_json::Value::Object(mut merged) = serde_json::to_value(self)? else {
+            unreachable!("RepoSettings serializes to an object");
+        };
+        for (key, value) in patch {
+            if REPO_SETTINGS_COMMAND_OWNED.contains(&key.as_str()) {
+                return Err(AppError::Settings(format!(
+                    "repo setting '{key}' is managed by its own command"
+                )));
+            }
+            if !merged.contains_key(key) {
+                return Err(AppError::Settings(format!("unknown repo setting '{key}'")));
+            }
+            merged.insert(key.clone(), value.clone());
+        }
+        serde_json::from_value(serde_json::Value::Object(merged))
+            .map_err(|e| AppError::Settings(format!("invalid repo settings patch: {e}")))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Repo session
 // ---------------------------------------------------------------------------
 
 pub struct RepoSession {
     pub id: RepoId,
-    pub path: PathBuf,
-    /// Where this repo lives. Today always `Local` (derived from `path`);
-    /// remote sessions get theirs threaded through the open flow.
+    /// The repo root as the repo's HOST prints it (posix for a WSL repo, also
+    /// on a Windows app build). Extend it with `HostPath::join` / `resolve`;
+    /// only code acting on the app machine converts it (`as_local`).
+    pub root: legit_core::HostPath,
+    /// Where this repo lives (local path or `wsl://<distro>/<path>`).
     pub locator: RepoLocator,
     /// The host this repo lives on — every repo-side action (git spawn, FS,
     /// watch, helper process) goes through it.
@@ -656,15 +688,12 @@ impl RepoSession {
     ) -> Self {
         let runner_lock = Arc::new(RwLock::new(runner));
         let backend = Arc::new(GitCliBackend::new(runner_lock.clone(), host.fs()));
-        // For remote repos this PathBuf holds the HOST's path string — it is
-        // display/join material only; filesystem access goes through the
-        // host's RepoFs.
-        let path = PathBuf::from(locator.display_path());
+        let root = legit_core::HostPath(locator.display_path());
         Self {
             id: Uuid::new_v4().to_string(),
             locator,
             host,
-            path,
+            root,
             runner: runner_lock,
             backend,
             settings: Arc::new(RwLock::new(settings)),
@@ -673,23 +702,11 @@ impl RepoSession {
         }
     }
 
-    /// The repo root as a `HostPath`. Extend it with `HostPath::join` /
-    /// `HostPath::resolve` — never `self.path.join`: remote roots are posix
-    /// and a Windows build's native join would insert '\\' into them.
-    pub fn host_root(&self) -> legit_core::HostPath {
-        legit_core::HostPath::from_path(&self.path)
-    }
-
     pub fn summary(&self) -> RepoSummary {
         RepoSummary {
             id: self.id.clone(),
             path: self.locator.display_path(),
-            name: self
-                .path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("repo")
-                .to_string(),
+            name: self.root.file_name().unwrap_or_else(|| "repo".to_string()),
             host: self.locator.host_ref(),
             locator: self.locator.to_persist_string(),
             watch_error: None,
@@ -754,6 +771,9 @@ pub struct AppState {
     pub git_path: RwLock<PathBuf>,
     /// On-disk path for `global-settings.json`.
     pub global_settings_path: PathBuf,
+    /// Held from settings snapshot to rename, so an older snapshot can never
+    /// land on disk after a newer one.
+    persist_lock: tokio::sync::Mutex<()>,
     /// On-disk root for per-repo data: `repos/<hash>/`.
     pub repos_data_dir: PathBuf,
     /// On-disk location for user themes.
@@ -818,6 +838,7 @@ impl AppState {
             global_settings: Arc::new(RwLock::new(global_settings)),
             git_path: RwLock::new(git_path),
             global_settings_path,
+            persist_lock: tokio::sync::Mutex::new(()),
             repos_data_dir,
             user_themes_dir,
             builtin_themes_dir,
@@ -835,6 +856,41 @@ impl AppState {
     pub fn attach_watch_error(&self, mut summary: RepoSummary) -> RepoSummary {
         summary.watch_error = self.watch_errors.lock().unwrap().get(&summary.id).cloned();
         summary
+    }
+
+    /// Park a freshly started watch for `repo_id`. Returns `false` (and drops
+    /// the watch) when the repo was closed or watching was disabled while the
+    /// watch was starting.
+    pub async fn adopt_watch(&self, repo_id: &str, watch: WatchHandle) -> bool {
+        // Both guards are held across check + insert: `close_repo` needs the
+        // `repos` write guard and disabling needs the settings write guard, so
+        // neither can slip in between and leave a watch parked.
+        let repos = self.repos.read().await;
+        let settings = self.global_settings.read().await;
+        if !repos.contains_key(repo_id) || !settings.watcher_enabled {
+            return false;
+        }
+        self.watchers.lock().unwrap().insert(repo_id.to_string(), watch);
+        self.watch_errors.lock().unwrap().remove(repo_id);
+        true
+    }
+
+    /// Record why `repo_id`'s watch failed to start. Returns `false` when the
+    /// failure is moot (repo closed or watching disabled meanwhile).
+    pub async fn record_watch_failure(&self, repo_id: &str, msg: String) -> bool {
+        let repos = self.repos.read().await;
+        let settings = self.global_settings.read().await;
+        if !repos.contains_key(repo_id) || !settings.watcher_enabled {
+            return false;
+        }
+        self.watch_errors.lock().unwrap().insert(repo_id.to_string(), msg);
+        true
+    }
+
+    /// Drop the watch and any recorded watch failure of `repo_id`.
+    pub fn forget_watch(&self, repo_id: &str) {
+        self.watchers.lock().unwrap().remove(repo_id);
+        self.watch_errors.lock().unwrap().remove(repo_id);
     }
 
     pub async fn get_session(&self, repo_id: &str) -> Result<Arc<RepoSession>, AppError> {
@@ -874,18 +930,20 @@ impl AppState {
     /// the `repo_data_paths` + `persist_repo_settings` pair, so the four
     /// arguments cannot drift apart between commands.
     pub async fn persist_session_settings(&self, session: &RepoSession) -> Result<(), AppError> {
+        let _serial = self.persist_lock.lock().await;
         let settings = session.settings.read().await.clone();
         let (repo_dir, _) = self.repo_data_paths_locator(&session.locator);
-        persist_repo_settings(&settings, &repo_dir, &session.settings_path, &session.path).await
+        persist_repo_settings(&settings, &repo_dir, &session.settings_path, &session.root.as_local()).await
     }
 
     pub async fn persist_global_settings(&self) -> Result<(), AppError> {
+        let _serial = self.persist_lock.lock().await;
         let settings = self.global_settings.read().await.clone();
         if let Some(parent) = self.global_settings_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
         let json = serde_json::to_string_pretty(&settings)?;
-        tokio::fs::write(&self.global_settings_path, json).await?;
+        crate::persist::write_atomic(&self.global_settings_path, json).await?;
         Ok(())
     }
 
@@ -939,13 +997,8 @@ impl AppState {
         if let Some(s) = self.host_settings.read().await.get(distro) {
             return s.clone();
         }
-        let loaded = match std::fs::read(self.host_settings_path(distro)) {
-            Ok(bytes) => serde_json::from_slice::<HostSettings>(&bytes).unwrap_or_else(|e| {
-                tracing::warn!(distro, err = %e, "host settings file is malformed — using defaults");
-                HostSettings::default()
-            }),
-            Err(_) => HostSettings::default(),
-        };
+        let loaded: HostSettings =
+            crate::persist::load_json_or_default(&self.host_settings_path(distro));
         self.host_settings
             .write()
             .await
@@ -966,7 +1019,7 @@ impl AppState {
             .insert(distro.to_string(), settings.clone());
         tokio::fs::create_dir_all(&self.hosts_data_dir).await?;
         let json = serde_json::to_string_pretty(&settings)?;
-        tokio::fs::write(self.host_settings_path(distro), json).await?;
+        crate::persist::write_atomic(&self.host_settings_path(distro), json).await?;
         Ok(())
     }
 
@@ -983,22 +1036,10 @@ impl AppState {
 // Repo settings I/O helpers (sync, for use at open time)
 // ---------------------------------------------------------------------------
 
-/// Load `RepoSettings` from disk, or return defaults if missing/malformed.
+/// Load `RepoSettings` from disk; defaults when missing, and a malformed file
+/// is moved aside first (see `persist::load_json_or_default`).
 pub fn load_repo_settings_sync(settings_path: &Path) -> RepoSettings {
-    match std::fs::read(settings_path) {
-        Ok(bytes) => match serde_json::from_slice::<RepoSettings>(&bytes) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!(
-                    err = %e,
-                    path = %settings_path.display(),
-                    "repo settings.json is malformed — using defaults",
-                );
-                RepoSettings::default()
-            }
-        },
-        Err(_) => RepoSettings::default(),
-    }
+    crate::persist::load_json_or_default(settings_path)
 }
 
 /// Write `RepoSettings` to disk. Creates the repo data directory and
@@ -1016,13 +1057,183 @@ pub async fn persist_repo_settings(
         tokio::fs::write(&path_txt, canonical_path.to_string_lossy().as_bytes()).await?;
     }
     let json = serde_json::to_string_pretty(settings)?;
-    tokio::fs::write(settings_path, json).await?;
+    crate::persist::write_atomic(settings_path, json).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod watch_lifecycle_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct DropFlag(Arc<AtomicBool>);
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    fn watch() -> (WatchHandle, Arc<AtomicBool>) {
+        let dropped = Arc::new(AtomicBool::new(false));
+        (WatchHandle::new(DropFlag(dropped.clone())), dropped)
+    }
+
+    fn state(dir: &Path) -> AppState {
+        AppState::new(
+            PathBuf::from("git"),
+            GlobalSettings::default(),
+            dir.join("global-settings.json"),
+            dir.join("repos"),
+            dir.join("themes"),
+            dir.join("builtin-themes"),
+        )
+    }
+
+    async fn open_repo(state: &AppState, dir: &Path) -> RepoId {
+        let session = Arc::new(RepoSession::new(
+            RepoLocator::local(dir.to_path_buf()),
+            Arc::new(LocalHost),
+            Arc::new(legit_core::GitRunner::for_repo("git", dir)),
+            RepoSettings::default(),
+            dir.join("settings.json"),
+        ));
+        let id = session.id.clone();
+        state.repos.write().await.insert(id.clone(), session);
+        id
+    }
+
+    #[tokio::test]
+    async fn watch_for_open_repo_is_kept_and_clears_a_stale_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state(dir.path());
+        let id = open_repo(&state, dir.path()).await;
+        state.watch_errors.lock().unwrap().insert(id.clone(), "old".into());
+        let (w, dropped) = watch();
+
+        assert!(state.adopt_watch(&id, w).await);
+
+        assert!(!dropped.load(Ordering::SeqCst));
+        assert!(state.watchers.lock().unwrap().contains_key(&id));
+        assert!(!state.watch_errors.lock().unwrap().contains_key(&id));
+    }
+
+    #[tokio::test]
+    async fn watch_finishing_after_close_is_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state(dir.path());
+        let (w, dropped) = watch();
+
+        assert!(!state.adopt_watch("closed-repo", w).await);
+
+        assert!(dropped.load(Ordering::SeqCst));
+        assert!(state.watchers.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn watch_finishing_after_watching_was_disabled_is_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state(dir.path());
+        let id = open_repo(&state, dir.path()).await;
+        state.global_settings.write().await.watcher_enabled = false;
+        let (w, dropped) = watch();
+
+        assert!(!state.adopt_watch(&id, w).await);
+
+        assert!(dropped.load(Ordering::SeqCst));
+        assert!(state.watchers.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn watch_failure_of_a_closed_repo_is_not_recorded() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state(dir.path());
+
+        assert!(!state.record_watch_failure("closed-repo", "limit".into()).await);
+
+        assert!(state.watch_errors.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn watch_failure_after_watching_was_disabled_is_not_recorded() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state(dir.path());
+        let id = open_repo(&state, dir.path()).await;
+        state.global_settings.write().await.watcher_enabled = false;
+
+        assert!(!state.record_watch_failure(&id, "limit".into()).await);
+
+        assert!(state.watch_errors.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn forget_watch_drops_watch_and_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state(dir.path());
+        let id = open_repo(&state, dir.path()).await;
+        let (w, dropped) = watch();
+        state.adopt_watch(&id, w).await;
+        state.watch_errors.lock().unwrap().insert(id.clone(), "x".into());
+
+        state.forget_watch(&id);
+
+        assert!(dropped.load(Ordering::SeqCst));
+        assert!(state.watch_errors.lock().unwrap().is_empty());
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn settings_with_owned_fields() -> RepoSettings {
+        let mut s = RepoSettings::default();
+        s.lane_locks_doc.locks.push(LaneLock { ref_name: "refs/heads/main".into(), lane_index: 2 });
+        s.git_profile_id = Some("work".into());
+        s.git_path_override = Some("/opt/git".into());
+        s.show_remote_branches = Some(true);
+        s
+    }
+
+    #[test]
+    fn repo_settings_patch_changes_only_the_sent_fields() {
+        let current = settings_with_owned_fields();
+        let next = current
+            .with_patch(&serde_json::json!({ "show_remote_branches": false, "auto_push_tags": true }))
+            .unwrap();
+        assert_eq!(next.show_remote_branches, Some(false));
+        assert_eq!(next.auto_push_tags, Some(true));
+        assert_eq!(next.lane_locks_doc.locks.len(), 1);
+        assert_eq!(next.git_profile_id.as_deref(), Some("work"));
+        assert_eq!(next.git_path_override.as_deref(), Some("/opt/git"));
+    }
+
+    #[test]
+    fn repo_settings_patch_null_resets_an_override() {
+        let next = settings_with_owned_fields()
+            .with_patch(&serde_json::json!({ "show_remote_branches": null }))
+            .unwrap();
+        assert_eq!(next.show_remote_branches, None);
+    }
+
+    #[test]
+    fn repo_settings_patch_refuses_fields_owned_by_dedicated_commands() {
+        let current = settings_with_owned_fields();
+        for patch in [
+            serde_json::json!({ "laneLocks": { "format": "x", "formatVersion": 1, "locks": [] } }),
+            serde_json::json!({ "git_profile_id": null }),
+            serde_json::json!({ "git_path_override": "/evil" }),
+        ] {
+            assert!(current.with_patch(&patch).is_err(), "accepted {patch}");
+        }
+    }
+
+    #[test]
+    fn repo_settings_patch_refuses_unknown_fields_and_wrong_types() {
+        let current = RepoSettings::default();
+        assert!(current.with_patch(&serde_json::json!({ "show_remote_branchs": true })).is_err());
+        assert!(current.with_patch(&serde_json::json!({ "auto_push_tags": "yes" })).is_err());
+        assert!(current.with_patch(&serde_json::json!(["not", "an", "object"])).is_err());
+    }
 
     // Pins repo-identity backward compatibility across the RepoLocator
     // generalization: a local repo's hash must stay byte-identical to what

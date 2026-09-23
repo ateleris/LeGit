@@ -1,13 +1,11 @@
 // Hand-written mirror of the Rust types that cross the Tauri IPC boundary.
-//
-// Kept in sync with `crates/legit-core/src/types.rs`,
-// `src-tauri/src/state.rs`, `src-tauri/src/error.rs`, and the command
-// modules. The specta-generated `bindings.ts` (debug builds) is the
-// authoritative source long-term; this file exists so the frontend
-// compiles before the first cargo build.
+// `bindingsParity.ts` asserts every mirrored type is identical to its
+// generated counterpart in `bindings.ts`, so tsc fails on drift.
+
+import type { GitError, JsonValue } from "./bindings";
+export type { GitError, JsonValue };
 
 import type { CommitDateFormat } from "./time";
-import { lfsCauseSentence } from "./lfsMessages";
 
 export type RepoId = string;
 
@@ -88,7 +86,7 @@ export interface GlobalSettings {
   line_ending_chips_in_changes?: boolean;
   /** Warn before committing staged line-ending changes (default true). */
   warn_on_line_ending_commit?: boolean;
-  column_preferences?: unknown;
+  column_preferences?: JsonValue;
   commits_row_height?: number;
   commits_lane_width?: number;
   commits_dot_radius?: number;
@@ -178,9 +176,8 @@ export interface GlobalSettings {
   gitProfiles?: GitProfilesDoc;
   /** Connected platform accounts (managed via connect/disconnect commands,
    * read via list_connected_accounts). Mirrored so a hand-built
-   * GlobalSettings can never silently drop it (same rationale as
-   * RepoSettings.laneLocks; global settings currently have no whole-struct
-   * write command, so this is preventive). */
+   * GlobalSettings can never silently drop it (global settings currently
+   * have no whole-struct write command, so this is preventive). */
   connected_accounts?: ConnectedAccountMeta[];
 }
 
@@ -191,9 +188,9 @@ export type CommitButtonMode = "commit" | "commit_and_push";
 export interface RepoSettings {
   git_path_override: string | null;
   /** Per-repo override for the Working Changes chips (null = inherit). */
-  line_ending_chips_in_changes?: boolean | null;
+  line_ending_chips_in_changes: boolean | null;
   /** Per-repo override for the commit warning (null = inherit). */
-  warn_on_line_ending_commit?: boolean | null;
+  warn_on_line_ending_commit: boolean | null;
   /** Per-repo override for the external editor command template
    * (null/blank = inherit global; same $ROOT/$FILE semantics). */
   external_editor_command?: string | null;
@@ -211,13 +208,16 @@ export interface RepoSettings {
    * Deliberately per-repo only and set only via the button's caret menu -
    * no settings-panel section (see the BACKLOG "Commit & Push" entry). */
   commit_button_mode?: CommitButtonMode | null;
-  /** Commit-graph lane locks (managed via set/unset_lane_lock, NOT the
-   * settings panel). Present here because `update_repo_settings` replaces
-   * the WHOLE struct: a `RepoSettings` built without this field would
-   * silently wipe all lane locks. Always spread the freshly loaded doc
-   * (`updateRepoSetting` in store/repos.ts does) - never hand-build one. */
+  /** Commit-graph lane locks (managed via set/unset_lane_lock). */
   laneLocks?: LaneLocksDoc;
 }
+
+/** Fields a `patch_repo_settings` call may change; the rest are owned by
+ *  their own commands (lane locks, profile selection, the probed git path)
+ *  and the backend refuses them in a patch. */
+export type RepoSettingsPatch = Partial<
+  Omit<RepoSettings, "laneLocks" | "git_profile_id" | "git_path_override">
+>;
 
 export interface RestoreResult {
   repos: RepoSummary[];
@@ -315,7 +315,7 @@ export interface LayoutEntry {
  *  default. Unknown ids are preserved across save/load. */
 export interface KeybindingsFile {
   version: number;
-  bindings: Record<string, string[]>;
+  bindings: Partial<Record<string, string[]>>;
 }
 
 /** A saved panel layout (`.legit-layout.json`): a named snapshot of both
@@ -334,7 +334,7 @@ export type AppError =
   | { kind: "UnknownRepo"; details: string }
   | { kind: "NotARepo"; details: string }
   | { kind: "Io"; details: string }
-  | { kind: "Git"; details: unknown }
+  | { kind: "Git"; details: GitError }
   | { kind: "GitUnavailable"; details: string }
   | { kind: "ForbiddenArg"; details: string }
   | { kind: "InvalidTheme"; details: string }
@@ -343,77 +343,6 @@ export type AppError =
   | { kind: "ParseArgs"; details: string }
   | { kind: "InvalidLockIndex"; details: number }
   | { kind: "UnknownProfile"; details: string };
-
-/** Human-readable labels for `GitError` variants that carry no message. */
-const GIT_ERROR_LABELS: Record<string, string> = {
-  RewordNotHead: "Only the latest commit (HEAD) can be reworded.",
-  RewordPushed:
-    "This commit has already been pushed; rewording would rewrite published history.",
-};
-
-/** Construct a short message suitable for display, regardless of variant. */
-export function formatAppError(e: unknown): string {
-  if (e && typeof e === "object" && "kind" in e) {
-    const ae = e as AppError;
-    // Unwrap a nested GitError ({ kind, details? }): show git's own message
-    // instead of the serialized JSON envelope.
-    if (ae.kind === "Git" && ae.details && typeof ae.details === "object") {
-      const g = ae.details as { kind?: string; details?: unknown };
-      const inner = g.details;
-      // LFS failures get the friendly cause everywhere - the raw stderr is
-      // 404/transfer noise that names neither cause nor fix.
-      if (g.kind === "LfsDownloadFailed" && inner && typeof inner === "object") {
-        const d = inner as { files?: string[]; missing_on_remote?: boolean };
-        return lfsCauseSentence(d.files ?? [], d.missing_on_remote ?? false);
-      }
-      if (typeof inner === "string") return inner;
-      if (inner && typeof inner === "object") {
-        const stderr = (inner as Record<string, unknown>).stderr;
-        if (typeof stderr === "string") return stderr;
-        return `${g.kind ?? "Git error"}: ${JSON.stringify(inner)}`;
-      }
-      return GIT_ERROR_LABELS[g.kind ?? ""] ?? g.kind ?? "Git error";
-    }
-    const details = typeof ae.details === "string" ? ae.details : JSON.stringify(ae.details);
-    return `${ae.kind}: ${details}`;
-  }
-  if (e instanceof Error) return e.message;
-  return String(e);
-}
-
-/** Inner `GitError` kind for an `AppError`, if it is a `Git` variant (e.g.
- *  "AuthFailed", "PushRejected", "CommandFailed"). Lets the UI react to specific
- *  remote-op failures. Returns null for non-git errors. */
-export function gitErrorKind(e: unknown): string | null {
-  if (e && typeof e === "object" && "kind" in e) {
-    const ae = e as AppError;
-    if (ae.kind === "Git" && ae.details && typeof ae.details === "object" && "kind" in ae.details) {
-      return (ae.details as { kind: string }).kind;
-    }
-  }
-  return null;
-}
-
-/** The typed payload of a `GitError` variant (its `details` content), or
- *  null when `e` is not a git error. Callers check `gitErrorKind` first so
- *  the cast below matches the variant they asked for. */
-export function gitErrorDetails<T>(e: unknown): T | null {
-  if (gitErrorKind(e) === null) return null;
-  const git = (e as AppError).details as { details?: T };
-  return git.details ?? null;
-}
-
-/** For a cancelled clone (`GitError::CloneCancelled`): the note describing a
- *  FAILED removal of the partial clone's files, which the UI must surface
- *  (a failed best-effort cleanup is never silent). Null when the cleanup
- *  succeeded or the error is anything else - a plain cancel stays silent. */
-export function cloneCancelCleanupFailure(e: unknown): string | null {
-  if (gitErrorKind(e) !== "CloneCancelled") return null;
-  const git = (e as AppError).details as { details?: unknown };
-  if (!git.details || typeof git.details !== "object") return null;
-  const note = (git.details as Record<string, unknown>).cleanup_failed;
-  return typeof note === "string" ? note : null;
-}
 
 // --- Line endings types (matches §H of DESIGN-v0.2.md) ---
 
@@ -659,7 +588,7 @@ export interface FileStatus {
   binary: boolean;
   /** Rename/copy source path, set only on Renamed/Copied entries. A rename's
    * diff must pair both sides via this, or it reads as a whole-file add. */
-  old_path?: string | null;
+  old_path: string | null;
 }
 
 /** A file changed by a commit, vs its first parent (matches legit-core `CommitFileChange`). */

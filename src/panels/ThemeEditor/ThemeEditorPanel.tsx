@@ -1,11 +1,10 @@
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { partitionThemes, useThemeStore } from "../../store/themes";
 import { notify } from "../../store/notifications";
-import { confirmDialog } from "../../store/confirm";
-import { useConfirmDestructive } from "../../store/settings";
+import { confirmDestructiveAction } from "../../store/confirm";
 import { contrastRatio, wcagBadge, type WcagBadge } from "../../theme/contrast";
 import { DEFAULT_THEME } from "../../theme/defaults";
 import { CONTRAST_PAIRS, PANEL_OVERRIDE_TOKENS, TOKEN_CONTRACT, type ContrastPair } from "../../theme/tokens";
@@ -21,7 +20,7 @@ import {
   effectiveLaneChipFilters,
   withRef,
 } from "../../theme/filters";
-import { GLOBAL_PANELS, REPO_PANELS } from "../descriptors";
+import { GLOBAL_PANELS, REPO_PANELS } from "../../layout/descriptors";
 import { validateTheme } from "../../theme/validate";
 import type { ThemeDocument, ThemeTokenBinding, TokenFilterId } from "../../lib/types";
 import { Button } from "../shared/buttons";
@@ -46,7 +45,6 @@ function baseTokens(pair: ContrastPair): readonly string[] {
 }
 
 export function ThemeEditorPanel() {
-  const confirmDestructive = useConfirmDestructive();
   const themes = useThemeStore((s) => s.themes);
   const activeName = useThemeStore((s) => s.activeThemeName);
   const activeDoc = useThemeStore((s) => s.activeDocument);
@@ -265,15 +263,13 @@ export function ThemeEditorPanel() {
 
   const onDeleteUserTheme = async (name: string) => {
     // Global destructive-confirmation setting: when off, delete immediately.
-    if (confirmDestructive) {
-      const ok = await confirmDialog({
-        title: "Delete theme",
-        message: "Deletes the user theme file. Built-in themes are unaffected.",
-        detail: name,
-        confirmLabel: "Delete theme",
-      });
-      if (!ok) return;
-    }
+    const ok = await confirmDestructiveAction({
+      title: "Delete theme",
+      message: "Deletes the user theme file. Built-in themes are unaffected.",
+      detail: name,
+      confirmLabel: "Delete theme",
+    });
+    if (!ok) return;
     try {
       await deleteUserTheme(name);
     } catch (e) {

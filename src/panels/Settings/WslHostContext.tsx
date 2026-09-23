@@ -13,7 +13,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import type { GitStatus, WslDistro } from "../../lib/types";
 import { wslHostGitStatus } from "../../lib/commands";
 import { onRemoteHostStatus } from "../../lib/events";

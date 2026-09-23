@@ -11,8 +11,8 @@
 
 import { Menu, MenuItem, PredefinedMenuItem, Submenu } from "@tauri-apps/api/menu";
 import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
-import { formatAppError } from "../lib/types";
-import { summonGlobalPanel } from "../panels/GlobalDock";
+import { formatAppError } from "../lib/errors";
+import { summonGlobalPanel } from "../layout/globalSummon";
 import { openRepoPanel } from "../panels/RepoDock";
 import { toggleMaximizeActivePanel, useDockviewStore } from "../store/dockview";
 import { useLayoutsStore } from "../store/layouts";

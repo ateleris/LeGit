@@ -12,7 +12,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { WarningIcon } from "../../icons";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import type { KeyDiff, ManagedConfigView, ProfileStatus, ResolvedIdentity } from "../../lib/types";
 import {
   detectActiveProfileForRepo,

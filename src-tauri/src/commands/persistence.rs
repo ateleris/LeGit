@@ -604,7 +604,7 @@ pub async fn save_theme(
     tokio::fs::create_dir_all(&dir).await?;
     let path = theme_file_path(&dir, &safe)?;
     let json = serde_json::to_string_pretty(&contents)?;
-    tokio::fs::write(&path, json).await?;
+    crate::persist::write_atomic(&path, json).await?;
     Ok(ThemeEntry {
         name: safe,
         source: ThemeSource::User,

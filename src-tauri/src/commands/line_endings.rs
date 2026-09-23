@@ -6,23 +6,18 @@
 //!
 //! All reads/writes go through `GitRunner`.  System scope is read-only.
 
-use crate::commands::config_util::{
-    read_config_all_scopes, read_config_global_scopes, write_config_global, write_config_local,
-    ConfigValue,
-};
+use legit_core::config::{self, ConfigValue, WriteScope};
 use crate::commands::settings_host::{settings_executor, SettingsHost};
 use crate::commands::working::resolve_repo_relative;
 use crate::error::AppError;
 use crate::state::AppState;
 use legit_core::types::{FileState, LineEndingKind, LineEndingStatusEntry, RenormalizeOutcome};
 use legit_core::{
-    classify_line_endings, convert_line_endings, derive_line_ending_entry, parse_autocrlf,
-    parse_cat_file_batch, parse_check_attr_z, AutocrlfSetting, EolTextAttr, GitExecutor,
+    BlobBytes, GitExecutor, LineEndingInput, MAX_LINE_ENDING_BYTES, classify_line_endings, convert_line_endings, line_ending_candidates,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
+
 
 // ---------------------------------------------------------------------------
 // Types exposed to the frontend
@@ -63,11 +58,11 @@ pub struct LineEndingsView {
 /// `.gitattributes` rules.
 async fn build_repo_view(
     fs: &dyn legit_core::RepoFs,
-    repo_root: &Path,
+    repo_root: &legit_core::HostPath,
     runner: &dyn GitExecutor,
 ) -> LineEndingsView {
-    let autocrlf = read_config_all_scopes(runner, "core.autocrlf").await;
-    let eol = read_config_all_scopes(runner, "core.eol").await;
+    let autocrlf = config::read_all_scopes(runner, "core.autocrlf").await;
+    let eol = config::read_all_scopes(runner, "core.eol").await;
     let (gitattributes, gitattributes_covers_all) = read_gitattributes(fs, repo_root).await;
 
     LineEndingsView {
@@ -88,10 +83,10 @@ async fn build_repo_view(
 /// (it only exists inside a repo). Reads global + system only: the unbound
 /// runner's cwd may lie inside some repo, and an all-scopes read would leak
 /// that repo's local config into the resolved value
-/// (see `read_config_global_scopes`).
+/// (see `config::read_global_scopes`).
 pub(crate) async fn build_global_line_endings_view(runner: &dyn GitExecutor) -> LineEndingsView {
-    let autocrlf = read_config_global_scopes(runner, "core.autocrlf").await;
-    let eol = read_config_global_scopes(runner, "core.eol").await;
+    let autocrlf = config::read_global_scopes(runner, "core.autocrlf").await;
+    let eol = config::read_global_scopes(runner, "core.eol").await;
 
     LineEndingsView {
         autocrlf_local: ConfigValue::unset(),
@@ -120,7 +115,7 @@ pub async fn repo_line_endings_view(
 ) -> Result<LineEndingsView, AppError> {
     let session = state.get_session(&repo_id).await?;
     let runner = session.runner.read().await.clone();
-    Ok(build_repo_view(session.host.fs().as_ref(), &session.path, runner.as_ref()).await)
+    Ok(build_repo_view(session.host.fs().as_ref(), &session.root, runner.as_ref()).await)
 }
 
 /// Read the app machine's line-ending config at global scope (no repo
@@ -147,9 +142,9 @@ pub async fn repo_write_line_endings(
 ) -> Result<LineEndingsView, AppError> {
     let session = state.get_session(&repo_id).await?;
     let runner = session.runner.read().await.clone();
-    write_config_local(runner.as_ref(), "core.autocrlf", autocrlf.as_deref()).await?;
-    write_config_local(runner.as_ref(), "core.eol", eol.as_deref()).await?;
-    Ok(build_repo_view(session.host.fs().as_ref(), &session.path, runner.as_ref()).await)
+    config::write(runner.as_ref(), WriteScope::Local, "core.autocrlf", autocrlf.as_deref()).await?;
+    config::write(runner.as_ref(), WriteScope::Local, "core.eol", eol.as_deref()).await?;
+    Ok(build_repo_view(session.host.fs().as_ref(), &session.root, runner.as_ref()).await)
 }
 
 /// Write `core.autocrlf` and `core.eol` to the host's global git config.
@@ -159,8 +154,8 @@ pub(crate) async fn write_line_endings_global(
     autocrlf: Option<&str>,
     eol: Option<&str>,
 ) -> Result<LineEndingsView, AppError> {
-    write_config_global(runner, "core.autocrlf", autocrlf).await?;
-    write_config_global(runner, "core.eol", eol).await?;
+    config::write(runner, WriteScope::Global, "core.autocrlf", autocrlf).await?;
+    config::write(runner, WriteScope::Global, "core.eol", eol).await?;
     Ok(build_global_line_endings_view(runner).await)
 }
 
@@ -183,9 +178,9 @@ pub async fn global_write_line_endings(
 
 async fn read_gitattributes(
     fs: &dyn legit_core::RepoFs,
-    repo_root: &Path,
+    repo_root: &legit_core::HostPath,
 ) -> (Vec<GitAttrRule>, bool) {
-    let path = legit_core::HostPath::from_path(&repo_root.join(".gitattributes"));
+    let path = repo_root.join(".gitattributes");
     let contents = match fs.read(&path, None).await {
         Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
         Err(_) => return (vec![], false),
@@ -255,19 +250,18 @@ pub async fn repo_line_ending_kind(
     let text: Option<String> = match rev.as_deref() {
         None => {
             let fs = session.host.fs();
-            let abs = resolve_repo_relative(fs.as_ref(), &session.path, &path).await?;
+            let abs = resolve_repo_relative(fs.as_ref(), &session.root, &path).await?;
             read_capped_text(fs.as_ref(), &abs).await
         }
         Some(spec_rev) => {
-            let runner = session.runner.read().await.clone();
             // The index is addressed as `:path`; any other rev as `<rev>:path`.
             let spec = if spec_rev == ":" {
                 format!(":{path}")
             } else {
                 format!("{spec_rev}:{path}")
             };
-            match runner.run(&["show", &spec]).await {
-                Ok(o) if o.success && o.stdout.len() <= MAX_LINE_ENDING_BYTES => Some(o.stdout),
+            match session.backend.blob_bytes(&spec, MAX_LINE_ENDING_BYTES as u64).await {
+                Ok(BlobBytes::Bytes(b)) => Some(String::from_utf8_lossy(&b).into_owned()),
                 _ => None,
             }
         }
@@ -290,8 +284,8 @@ pub async fn repo_revert_line_endings(
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
     let fs = session.host.fs();
-    let abs = resolve_repo_relative(fs.as_ref(), &session.path, &path).await?;
-    let hp = legit_core::HostPath::from_path(&abs);
+    let abs = resolve_repo_relative(fs.as_ref(), &session.root, &path).await?;
+    let hp = abs.clone();
 
     let bytes = match fs.read(&hp, Some(MAX_LINE_ENDING_BYTES as u64)).await {
         Ok(b) => b,
@@ -316,11 +310,10 @@ pub async fn repo_revert_line_endings(
 
 /// Line-ending summary for every changed file - drives the Working Changes
 /// chips, the Diff/Merge working-vs-index badges, and the commit warning.
-/// Fixed subprocess budget regardless of file count: status (via the
-/// backend), one `config --get`, one `check-attr --stdin`, one
-/// `cat-file --batch`; working files are read from disk. Every classifiable
-/// changed file gets an entry (the Diff header wants `working_raw` even
-/// when nothing is noteworthy); consumers filter for attention client-side.
+/// Working files are read through the host filesystem (repo-escape checked);
+/// the git side is `line_ending_entries`. Every classifiable changed file
+/// gets an entry (the Diff header wants `working_raw` even when nothing is
+/// noteworthy); consumers filter for attention client-side.
 #[tauri::command]
 #[specta::specta]
 pub async fn repo_line_ending_status(
@@ -328,111 +321,26 @@ pub async fn repo_line_ending_status(
     repo_id: String,
 ) -> Result<Vec<LineEndingStatusEntry>, AppError> {
     let session = state.get_session(&repo_id).await?;
-    let runner = session.runner.read().await.clone();
-
-    let statuses = session.backend.status().await.map_err(AppError::Git)?;
-    // One record per path (a partially-staged file appears twice in status);
-    // submodules and ignored files have no blob content of their own.
-    let mut paths: Vec<String> = Vec::new();
-    let mut untracked: HashSet<String> = HashSet::new();
-    let mut seen: HashSet<String> = HashSet::new();
-    for s in &statuses {
-        if matches!(
-            s.state,
-            FileState::SubmoduleChanged | FileState::SubmoduleDirty | FileState::Ignored
-        ) {
-            continue;
-        }
-        let path = s.path.to_string_lossy().into_owned();
-        if s.state == FileState::Untracked {
-            untracked.insert(path.clone());
-        }
-        if seen.insert(path.clone()) {
-            paths.push(path);
-        }
+    let statuses = session.backend.status().await?;
+    let fs = session.host.fs();
+    let mut inputs = Vec::new();
+    for (path, untracked) in line_ending_candidates(&statuses) {
+        let working = match resolve_repo_relative(fs.as_ref(), &session.root, &path).await {
+            Ok(abs) => read_capped_bytes(fs.as_ref(), &abs).await,
+            Err(_) => None,
+        };
+        inputs.push(LineEndingInput { path, untracked, working });
     }
-    if paths.is_empty() {
-        return Ok(vec![]);
-    }
-
-    // Resolved core.autocrlf (exit 1 + empty stdout when unset = False).
-    let autocrlf: AutocrlfSetting = match runner.run_expecting(&["config", "--get", "core.autocrlf"], &[1]).await {
-        Ok(o) => parse_autocrlf(&o.stdout),
-        Err(_) => AutocrlfSetting::False,
-    };
-
-    // text/eol attributes for all changed paths in one call.
-    let attr_stdin: String = paths.iter().map(|p| format!("{p}\0")).collect();
-    let attrs: HashMap<String, (EolTextAttr, bool)> = match runner
-        .run_with_stdin(&["check-attr", "-z", "--stdin", "text", "eol"], &attr_stdin)
-        .await
-    {
-        Ok(o) if o.success => parse_check_attr_z(&o.stdout),
-        _ => HashMap::new(),
-    };
-
-    // Index and HEAD blobs for every tracked changed path, one subprocess.
-    // Request order mirrors `paths` so the results zip back positionally.
-    let tracked: Vec<&String> = paths.iter().filter(|p| !untracked.contains(*p)).collect();
-    let mut blobs: HashMap<&str, (Option<Vec<u8>>, Option<Vec<u8>>)> = HashMap::new();
-    if !tracked.is_empty() {
-        let stdin: String = tracked.iter().map(|p| format!(":{p}\nHEAD:{p}\n")).collect();
-        if let Ok(out) = runner.run_with_stdin_bytes(&["cat-file", "--batch"], &stdin).await {
-            if let Some(parsed) = parse_cat_file_batch(&out.stdout) {
-                if parsed.len() == tracked.len() * 2 {
-                    let mut it = parsed.into_iter();
-                    for p in &tracked {
-                        let index =
-                            it.next().flatten().filter(|b| b.len() <= MAX_LINE_ENDING_BYTES);
-                        let head =
-                            it.next().flatten().filter(|b| b.len() <= MAX_LINE_ENDING_BYTES);
-                        blobs.insert(p.as_str(), (index, head));
-                    }
-                }
-            }
-        }
-    }
-
-    let mut entries: Vec<LineEndingStatusEntry> = Vec::with_capacity(paths.len());
-    for path in &paths {
-        let working =
-            match resolve_repo_relative(session.host.fs().as_ref(), &session.path, path).await {
-                Ok(abs) => read_capped_bytes(session.host.fs().as_ref(), &abs).await,
-                Err(_) => None,
-            };
-        let (index, head) = blobs.get(path.as_str()).cloned().unwrap_or((None, None));
-        let (text_attr, eol_set) = attrs
-            .get(path)
-            .copied()
-            .unwrap_or((EolTextAttr::Unspecified, false));
-        entries.push(derive_line_ending_entry(
-            path,
-            working.as_deref(),
-            index.as_deref(),
-            head.as_deref(),
-            text_attr,
-            eol_set,
-            autocrlf,
-        ));
-    }
-    Ok(entries)
+    Ok(session.backend.line_ending_entries(inputs).await?)
 }
 
 /// Read a working-tree file's raw bytes for line-ending classification;
 /// `None` if missing, unreadable, or over the size cap (byte-level sibling
 /// of `read_capped_text`).
-async fn read_capped_bytes(fs: &dyn legit_core::RepoFs, abs: &Path) -> Option<Vec<u8>> {
-    fs.read(
-        &legit_core::HostPath::from_path(abs),
-        Some(MAX_LINE_ENDING_BYTES as u64),
-    )
-    .await
-    .ok()
+async fn read_capped_bytes(fs: &dyn legit_core::RepoFs, abs: &legit_core::HostPath) -> Option<Vec<u8>> {
+    fs.read(abs, Some(MAX_LINE_ENDING_BYTES as u64)).await.ok()
 }
 
-/// 2 MB cap: above this the indicator is skipped rather than reading/scanning a
-/// large blob (matches the mixed-ending detector's guard).
-const MAX_LINE_ENDING_BYTES: usize = 2 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
 // Renormalize (Repo Settings "Line endings" -> Normalize block)
@@ -448,7 +356,7 @@ pub struct RenormalizePreview {
 }
 
 /// Simulated `git add --renormalize` (throwaway index; the real index is
-/// untouched). Also cleans up the simulation's temp index file, best-effort.
+/// untouched).
 #[tauri::command]
 #[specta::specta]
 pub async fn repo_renormalize_preview(
@@ -458,13 +366,9 @@ pub async fn repo_renormalize_preview(
     let session = state.get_session(&repo_id).await?;
     // Serialize previews: they share one throwaway-index path, and git's
     // `.lock` on it makes concurrent runs fail ("Another git process seems
-    // to be running"). The pre-run cleanup self-heals after a crashed run
-    // whose lock file would otherwise block every future preview.
+    // to be running").
     let _preview_guard = session.renormalize_preview_lock.lock().await;
-    remove_preview_index(&session).await;
-    let files = session.backend.renormalize_preview().await;
-    remove_preview_index(&session).await;
-    let files = files.map_err(AppError::Git)?;
+    let files = session.backend.renormalize_preview().await?;
 
     let statuses = session.backend.status().await.map_err(AppError::Git)?;
     // `--renormalize` implies `-u`: unstaged modifications, deletions, and
@@ -480,41 +384,6 @@ pub async fn repo_renormalize_preview(
         })
         .count() as u32;
     Ok(RenormalizePreview { files, unstaged_changes })
-}
-
-/// Best-effort removal of the preview's throwaway index file AND its
-/// `.lock` (the backend is executor-only and cannot delete files). The
-/// `.lock` matters: git leaves it behind when a preview is killed mid-run,
-/// and a stale lock makes every subsequent preview fail. Never fails.
-async fn remove_preview_index(session: &crate::state::RepoSession) {
-    let runner = session.runner.read().await.clone();
-    let Ok(out) = runner.run(&["rev-parse", "--git-path", "index"]).await else {
-        return;
-    };
-    if !out.success {
-        return;
-    }
-    let (temp, lock) = preview_index_cleanup_paths(&session.host_root(), &out.stdout);
-    let fs = session.host.fs();
-    let _ = fs.remove_file(&lock).await;
-    let _ = fs.remove_file(&temp).await;
-}
-
-/// The preview's temp index + `.lock` as host paths, from raw
-/// `rev-parse --git-path index` output (relative to the repo root, or
-/// absolute). Textual '/' joins only - remote roots are posix.
-fn preview_index_cleanup_paths(
-    root: &legit_core::HostPath,
-    git_path_out: &str,
-) -> (legit_core::HostPath, legit_core::HostPath) {
-    let index = root.resolve(git_path_out.trim());
-    let temp = legit_core::HostPath(format!(
-        "{}{}",
-        index.as_str(),
-        legit_core::cli_impl::parsers::renormalize::RENORMALIZE_PREVIEW_INDEX_SUFFIX
-    ));
-    let lock = legit_core::HostPath(format!("{}.lock", temp.as_str()));
-    (temp, lock)
 }
 
 /// Run `git add --renormalize -- .`: restages tracked files through the
@@ -542,7 +411,7 @@ pub async fn repo_write_gitattributes_eol(
 ) -> Result<LineEndingsView, AppError> {
     let session = state.get_session(&repo_id).await?;
     let fs = session.host.fs();
-    let hp = session.host_root().join(".gitattributes");
+    let hp = session.root.clone().join(".gitattributes");
     let existing = match fs.read(&hp, None).await {
         Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
         Err(_) => None,
@@ -553,7 +422,7 @@ pub async fn repo_write_gitattributes_eol(
         .await
         .map_err(|e| AppError::Io(e.to_string()))?;
     let runner = session.runner.read().await.clone();
-    Ok(build_repo_view(session.host.fs().as_ref(), &session.path, runner.as_ref()).await)
+    Ok(build_repo_view(session.host.fs().as_ref(), &session.root, runner.as_ref()).await)
 }
 
 /// Build new `.gitattributes` content with a covers-all
@@ -602,20 +471,42 @@ fn insert_covers_all_rule(existing: Option<&str>, eol: Option<&str>) -> Result<S
 
 #[cfg(test)]
 mod tests {
-    use super::{insert_covers_all_rule, preview_index_cleanup_paths};
+    use super::{insert_covers_all_rule, read_gitattributes};
+    use legit_core::{FsDirEntry, FsError, FsProbe, FsStat, HostPath, RepoFs};
+    use std::sync::Mutex;
 
-    #[test]
-    fn preview_index_cleanup_paths_join_textually() {
-        // Remote roots are posix even on Windows app builds: the cleanup path
-        // must be '/'-joined and match the GIT_INDEX_FILE the preview set
-        // (raw `--git-path index` output + suffix).
-        let root = legit_core::HostPath("/home/u/repo".into());
-        let (temp, lock) = preview_index_cleanup_paths(&root, ".git/index\n");
-        assert_eq!(temp.as_str(), "/home/u/repo/.git/index.legit-renormalize-preview");
-        assert_eq!(lock.as_str(), "/home/u/repo/.git/index.legit-renormalize-preview.lock");
-        // Absolute output (worktrees) is kept verbatim.
-        let (temp, _) = preview_index_cleanup_paths(&root, "/elsewhere/gitdir/index");
-        assert_eq!(temp.as_str(), "/elsewhere/gitdir/index.legit-renormalize-preview");
+    /// Records the paths read; every read answers with `.gitattributes`
+    /// content. Any other filesystem access is a test failure.
+    #[derive(Default)]
+    struct ReadLog(Mutex<Vec<String>>);
+
+    #[async_trait::async_trait]
+    impl RepoFs for ReadLog {
+        async fn read(&self, path: &HostPath, _cap: Option<u64>) -> Result<Vec<u8>, FsError> {
+            self.0.lock().unwrap().push(path.as_str().to_string());
+            Ok(b"* text=auto eol=lf\n".to_vec())
+        }
+        async fn stat(&self, _: &HostPath) -> Result<Option<FsStat>, FsError> { unreachable!() }
+        async fn probe_many(&self, _: &[HostPath], _: u64) -> Result<Vec<FsProbe>, FsError> { unreachable!() }
+        async fn write(&self, _: &HostPath, _: &[u8]) -> Result<(), FsError> { unreachable!() }
+        async fn create_dir_all(&self, _: &HostPath) -> Result<(), FsError> { unreachable!() }
+        async fn remove_file(&self, _: &HostPath) -> Result<(), FsError> { unreachable!() }
+        async fn remove_dir_all(&self, _: &HostPath) -> Result<(), FsError> { unreachable!() }
+        async fn canonicalize(&self, _: &HostPath) -> Result<HostPath, FsError> { unreachable!() }
+        async fn read_dir(&self, _: &HostPath) -> Result<Vec<FsDirEntry>, FsError> { unreachable!() }
+        async fn temp_path(&self, _: &str) -> Result<HostPath, FsError> { unreachable!() }
+    }
+
+    // Regression: the root used to be a `PathBuf`, and `PathBuf::join` puts
+    // a '\' between a WSL repo's posix root and `.gitattributes` on the
+    // Windows build - the file was never found, so WSL repos showed no
+    // attribute rules.
+    #[tokio::test]
+    async fn gitattributes_of_a_posix_root_are_read_at_a_posix_path() {
+        let fs = ReadLog::default();
+        let (rules, _) = read_gitattributes(&fs, &HostPath("/home/u/repo".into())).await;
+        assert_eq!(*fs.0.lock().unwrap(), ["/home/u/repo/.gitattributes"]);
+        assert!(!rules.is_empty());
     }
 
     #[test]
@@ -658,7 +549,7 @@ mod tests {
 
 /// Read a working-tree file as text for line-ending classification; `None` if
 /// missing, unreadable, or over the size cap.
-async fn read_capped_text(fs: &dyn legit_core::RepoFs, abs: &Path) -> Option<String> {
+async fn read_capped_text(fs: &dyn legit_core::RepoFs, abs: &legit_core::HostPath) -> Option<String> {
     let bytes = read_capped_bytes(fs, abs).await?;
     Some(String::from_utf8_lossy(&bytes).into_owned())
 }

@@ -8,7 +8,7 @@ import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { repoFileHistory, repoRestoreFileAtRevision } from "../../lib/commands";
 import type { DiffRequest, FileHistoryEntry } from "../../lib/types";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { formatRelative } from "../../lib/time";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { useQueryClient } from "@tanstack/react-query";
@@ -18,7 +18,7 @@ import { Button } from "../shared/buttons";
 import {
   PanelContextMenuProvider,
   usePanelContextMenu,
-  useMenuConfirm,
+  useDestructiveMenuConfirm,
 } from "../Commits/menu/PanelContextMenu";
 import { MenuItem, Separator } from "../Commits/menu/primitives";
 import { FileRowMenuSection } from "../shared/FileRowMenuSection";
@@ -216,7 +216,7 @@ function HistoryRow({
 }) {
   const { openMenu, closeMenu } = usePanelContextMenu();
   const confirmDestructive = useConfirmDestructive();
-  const menuConfirm = useMenuConfirm();
+  const destructiveMenuConfirm = useDestructiveMenuConfirm();
   const sha = entry.commit_id;
 
   const summon = useSummonStore.getState;
@@ -249,23 +249,18 @@ function HistoryRow({
         </MenuItem>
         <Separator />
         <MenuItem
-          onClick={() => {
-            if (confirmDestructive) {
-              menuConfirm(`Restore ${entry.path} to its content at ${sha.slice(0, 8)}?`, () => {
-                closeMenu();
-                onRestore();
-              });
-            } else {
+          onClick={() =>
+            destructiveMenuConfirm(`Restore ${entry.path} to its content at ${sha.slice(0, 8)}?`, () => {
               closeMenu();
               onRestore();
-            }
-          }}
+            })
+          }
         >
           {confirmDestructive ? "Restore file to this commit…" : "Restore file to this commit"}
         </MenuItem>
       </>
     ),
-    [entry, repoId, sha, confirmDestructive, menuConfirm, closeMenu, onRestore, summon],
+    [entry, repoId, sha, confirmDestructive, destructiveMenuConfirm, closeMenu, onRestore, summon],
   );
 
   return (

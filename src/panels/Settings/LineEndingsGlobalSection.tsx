@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
 import { WarningIcon } from "../../icons";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import type { ConfigScope, LineEndingsView } from "../../lib/types";
 import { Button } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";

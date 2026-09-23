@@ -9,38 +9,37 @@
 //! a scripted fake that asserts the exact command sequence and returns
 //! canned `RunOutput`s.
 //!
-//! The trait deliberately mirrors the subset of `GitRunner`'s API the
-//! backend uses: one-shot runs, cancellable runs, and stdin-fed runs.
-//! It also carries the Console's needs — `stream` and `cancel` — so a
-//! session can hold `Arc<dyn GitExecutor>` and be backed by something other
-//! than a local process (a remote agent). Both have defaults that are
-//! correct for scripted fakes. `run_with_op_progress` behaves exactly like
-//! `run_with_op` for the caller (full output at the end), progress reporting
-//! being a side channel through the runner's process-wide observer - so the
-//! default implementation just delegates and scripted fakes need no changes.
+//! Implementors provide ONE run method, `execute` (a `GitRequest` carries
+//! every option: args, env overrides, stdin, operation id, expected exit
+//! codes, progress, raw stdout), plus the Console's `stream` and `cancel`.
+//! The named shapes (`run`, `run_with_op`, `run_with_env`, ...) are
+//! conveniences built on `execute` and must not be overridden, so a scripted
+//! fake sees the complete request of every invocation and a remote transport
+//! forwards all of it.
 
-use crate::runner::{GitRunner, OperationId, RunOutput, RunOutputBytes, RunnerError, RunnerEvent};
+use crate::runner::{
+    GitRequest, GitRunner, OperationId, RunOutput, RunOutputBytes, RunnerError, RunnerEvent,
+};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
 #[async_trait]
 pub trait GitExecutor: Send + Sync + 'static {
-    /// Run a one-shot `git` invocation and collect the full output.
-    async fn run(&self, args: &[&str]) -> Result<RunOutput, RunnerError>;
+    /// Run one `git` invocation and collect its full output.
+    async fn execute(&self, req: GitRequest<'_>) -> Result<RunOutputBytes, RunnerError>;
 
-    /// `run` with caller-declared EXPECTED non-zero exit codes: the result is
-    /// identical, but the invocation log (Git Log panel) records those exits
-    /// as OK instead of failed (`config --get` exits 1 for "key unset" - an
-    /// answer, not a failure). The default delegates to `run`, which is
-    /// correct for scripted fakes: they do no logging, and sequence contracts
-    /// are unaffected.
+    /// A plain one-shot run.
+    async fn run(&self, args: &[&str]) -> Result<RunOutput, RunnerError> {
+        Ok(self.execute(GitRequest::new(args)).await?.into_text())
+    }
+
+    /// `run` with EXPECTED non-zero exit codes, logged as OK.
     async fn run_expecting(
         &self,
         args: &[&str],
         ok_exit_codes: &[i32],
     ) -> Result<RunOutput, RunnerError> {
-        let _ = ok_exit_codes;
-        self.run(args).await
+        Ok(self.execute(GitRequest::new(args).expect_exit_codes(ok_exit_codes)).await?.into_text())
     }
 
     /// Run under a caller-supplied operation id so the caller can cancel it.
@@ -48,7 +47,9 @@ pub trait GitExecutor: Send + Sync + 'static {
         &self,
         args: &[&str],
         op_id: OperationId,
-    ) -> Result<RunOutput, RunnerError>;
+    ) -> Result<RunOutput, RunnerError> {
+        Ok(self.execute(GitRequest::new(args).op(op_id)).await?.into_text())
+    }
 
     /// Run with `stdin_data` fed to standard input (`git apply` reads the
     /// patch from stdin).
@@ -56,56 +57,45 @@ pub trait GitExecutor: Send + Sync + 'static {
         &self,
         args: &[&str],
         stdin_data: &str,
-    ) -> Result<RunOutput, RunnerError>;
+    ) -> Result<RunOutput, RunnerError> {
+        Ok(self.execute(GitRequest::new(args).stdin(stdin_data)).await?.into_text())
+    }
 
-    /// `run_with_stdin` with RAW stdout bytes, for byte-size-framed output
-    /// (`cat-file --batch`) where a lossy UTF-8 conversion would corrupt the
-    /// declared byte counts. The default delegates to `run_with_stdin` (fine
-    /// for scripted fakes, whose canned output is valid UTF-8); `GitRunner`
-    /// overrides it with the truly byte-safe path.
+    /// `run_with_stdin` with byte-exact stdout (`cat-file --batch` frames
+    /// blob contents by byte count).
     async fn run_with_stdin_bytes(
         &self,
         args: &[&str],
         stdin_data: &str,
     ) -> Result<RunOutputBytes, RunnerError> {
-        let out = self.run_with_stdin(args, stdin_data).await?;
-        Ok(RunOutputBytes {
-            stdout: out.stdout.into_bytes(),
-            stderr: out.stderr,
-            exit_code: out.exit_code,
-            success: out.success,
-            duration_ms: out.duration_ms,
-        })
+        self.execute(GitRequest::new(args).stdin(stdin_data).raw_stdout()).await
     }
 
     /// Run with per-invocation environment overrides that win over the
-    /// hardened base env (e.g. `GIT_EDITOR=true` for `merge/rebase
-    /// --continue`, whose commit step would otherwise fail on the base
-    /// `GIT_EDITOR=false`).
+    /// hardened base env.
     async fn run_with_env(
         &self,
         args: &[&str],
         extra_env: &[(&str, &str)],
-    ) -> Result<RunOutput, RunnerError>;
+    ) -> Result<RunOutput, RunnerError> {
+        Ok(self.execute(GitRequest::new(args).env(extra_env)).await?.into_text())
+    }
 
-    /// Cancellable run that additionally streams parsed `--progress` meter
-    /// updates to the runner's process-wide progress observer. Semantically
-    /// identical to `run_with_op` for the caller; the default implementation
-    /// simply delegates (no progress reporting).
+    /// Cancellable run that also reports `--progress` meter updates.
     async fn run_with_op_progress(
         &self,
         args: &[&str],
         op_id: OperationId,
     ) -> Result<RunOutput, RunnerError> {
-        self.run_with_op(args, op_id).await
+        Ok(self.execute(GitRequest::new(args).op(op_id).progress()).await?.into_text())
     }
 
     /// Line-streamed run (the Console's path). The BOUNDED `events_tx` is the
     /// backpressure contract: when the receiver stops draining, the producer
     /// must eventually block so git itself blocks (pager semantics). The
-    /// default degrades to `run_with_op` and replays the collected output as
-    /// events — sequence-correct for scripted fakes; `GitRunner` overrides it
-    /// with true incremental streaming.
+    /// default degrades to a cancellable `execute` and replays the collected
+    /// output as events - sequence-correct for scripted fakes; `GitRunner`
+    /// overrides it with true incremental streaming.
     async fn stream(
         &self,
         args: &[&str],
@@ -152,56 +142,8 @@ pub trait GitExecutor: Send + Sync + 'static {
 
 #[async_trait]
 impl GitExecutor for GitRunner {
-    async fn run(&self, args: &[&str]) -> Result<RunOutput, RunnerError> {
-        GitRunner::run(self, args).await
-    }
-
-    async fn run_expecting(
-        &self,
-        args: &[&str],
-        ok_exit_codes: &[i32],
-    ) -> Result<RunOutput, RunnerError> {
-        GitRunner::run_expecting(self, args, ok_exit_codes).await
-    }
-
-    async fn run_with_op(
-        &self,
-        args: &[&str],
-        op_id: OperationId,
-    ) -> Result<RunOutput, RunnerError> {
-        GitRunner::run_with_op(self, args, op_id).await
-    }
-
-    async fn run_with_stdin(
-        &self,
-        args: &[&str],
-        stdin_data: &str,
-    ) -> Result<RunOutput, RunnerError> {
-        GitRunner::run_with_stdin(self, args, stdin_data).await
-    }
-
-    async fn run_with_stdin_bytes(
-        &self,
-        args: &[&str],
-        stdin_data: &str,
-    ) -> Result<RunOutputBytes, RunnerError> {
-        GitRunner::run_with_stdin_bytes(self, args, stdin_data).await
-    }
-
-    async fn run_with_env(
-        &self,
-        args: &[&str],
-        extra_env: &[(&str, &str)],
-    ) -> Result<RunOutput, RunnerError> {
-        GitRunner::run_with_env(self, args, extra_env).await
-    }
-
-    async fn run_with_op_progress(
-        &self,
-        args: &[&str],
-        op_id: OperationId,
-    ) -> Result<RunOutput, RunnerError> {
-        GitRunner::run_with_op_progress(self, args, op_id).await
+    async fn execute(&self, req: GitRequest<'_>) -> Result<RunOutputBytes, RunnerError> {
+        GitRunner::execute(self, req).await
     }
 
     async fn stream(
@@ -221,49 +163,23 @@ impl GitExecutor for GitRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::FakeExecutor;
 
-    /// Minimal executor relying on every defaulted method — pins the default
-    /// `stream` contract: stdout lines, then stderr lines, then exactly one
-    /// Finished carrying the run's exit metadata.
-    struct CannedExecutor(RunOutput);
-
-    #[async_trait]
-    impl GitExecutor for CannedExecutor {
-        async fn run(&self, _args: &[&str]) -> Result<RunOutput, RunnerError> {
-            Ok(self.0.clone())
-        }
-        async fn run_with_op(
-            &self,
-            _args: &[&str],
-            _op_id: OperationId,
-        ) -> Result<RunOutput, RunnerError> {
-            Ok(self.0.clone())
-        }
-        async fn run_with_stdin(
-            &self,
-            _args: &[&str],
-            _stdin_data: &str,
-        ) -> Result<RunOutput, RunnerError> {
-            Ok(self.0.clone())
-        }
-        async fn run_with_env(
-            &self,
-            _args: &[&str],
-            _extra_env: &[(&str, &str)],
-        ) -> Result<RunOutput, RunnerError> {
-            Ok(self.0.clone())
-        }
-    }
-
+    /// The default `stream` contract: stdout lines, then stderr lines, then
+    /// exactly one Finished carrying the run's exit metadata.
     #[tokio::test]
     async fn default_stream_replays_output_then_finished_once() {
-        let exec = CannedExecutor(RunOutput {
-            stdout: "a\nb\n".into(),
-            stderr: "warn\n".into(),
-            exit_code: Some(3),
-            success: false,
-            duration_ms: 7,
-        });
+        let exec = FakeExecutor::default();
+        exec.expect(
+            &["status"],
+            RunOutput {
+                stdout: "a\nb\n".into(),
+                stderr: "warn\n".into(),
+                exit_code: Some(3),
+                success: false,
+                duration_ms: 7,
+            },
+        );
         let (tx, mut rx) = mpsc::channel(16);
         let exit = exec
             .stream(&["status"], OperationId::new(), tx)
@@ -287,13 +203,7 @@ mod tests {
 
     #[tokio::test]
     async fn default_cancel_reports_not_found() {
-        let exec = CannedExecutor(RunOutput {
-            stdout: String::new(),
-            stderr: String::new(),
-            exit_code: Some(0),
-            success: true,
-            duration_ms: 0,
-        });
+        let exec = FakeExecutor::default();
         assert!(!exec.cancel(&OperationId::new()));
     }
 }

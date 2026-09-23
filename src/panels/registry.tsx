@@ -29,7 +29,7 @@ import type { IDockviewPanelHeaderProps } from "dockview-react";
 // Panel descriptors (ids, titles, placement) live in descriptors.ts to keep
 // them importable from panel components without a cycle; re-exported here so
 // existing consumers keep working.
-export * from "./descriptors";
+export * from "../layout/descriptors";
 
 const TAB_COMPONENTS: Record<string, FunctionComponent<IDockviewPanelHeaderProps>> = {
   "confirm-close": ConfirmCloseTab,

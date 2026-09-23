@@ -1,5 +1,5 @@
 import { useConfirmDestructive } from "../../../store/settings";
-import { useMenuConfirm } from "./PanelContextMenu";
+import { useDestructiveMenuConfirm } from "./PanelContextMenu";
 import { MenuItem, Separator, SectionLabel } from "./primitives";
 
 /**
@@ -30,15 +30,9 @@ export function StashMenuSection({
   onDrop: () => void;
 }) {
   const confirmDestructive = useConfirmDestructive();
-  const menuConfirm = useMenuConfirm();
+  const destructiveMenuConfirm = useDestructiveMenuConfirm();
 
-  const requestDrop = () => {
-    if (!confirmDestructive) {
-      onDrop();
-      return;
-    }
-    menuConfirm(`Drop ${selector}?`, onDrop);
-  };
+  const requestDrop = () => destructiveMenuConfirm(`Drop ${selector}?`, onDrop);
 
   return (
     <>

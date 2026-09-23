@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { notify } from "../../store/notifications";
-import { confirmDialog } from "../../store/confirm";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { confirmDestructiveAction } from "../../store/confirm";
+import { useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
@@ -9,27 +9,21 @@ import {
   consoleCancel,
   repoAddRemote,
   repoFetch,
-  repoListRemotes,
   repoPruneRemote,
   repoRemoveRemote,
   repoRenameRemote,
   repoSetRemoteUrl,
 } from "../../lib/commands";
 import type { Remote } from "../../lib/types";
-import { formatAppError, gitErrorKind } from "../../lib/types";
+import { formatAppError, gitErrorKind } from "../../lib/errors";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { InlineEditor } from "../shared/InlineEditor";
 import { Button } from "../shared/buttons";
 import { ToolbarButton } from "../shared/ToolbarButton";
-import { useConfirmDestructive } from "../../store/settings";
 import { FetchIcon } from "../../icons";
-import { STALE } from "../../lib/queryTiming";
-
-// Domains to refresh after any remote change: the remotes list itself, plus
-// branches/tracking/log so the Commits sync toolbar's remote derivation and
-// ahead/behind indicator stay correct.
-const AFFECTED_DOMAINS = ["remotes", "branches", "tracking", "log"];
+import { REMOTE_DOMAINS } from "../../lib/queries/domains";
+import { useRemotes } from "../../lib/queries/useRepoQueries";
 
 /** Which row is being edited inline, and how. */
 type EditState =
@@ -46,14 +40,8 @@ type EditState =
 export function RemotesSection() {
   const repo = useActiveRepo();
   const queryClient = useQueryClient();
-  const confirmDestructive = useConfirmDestructive();
 
-  const { data: remotes = [], isFetching, refetch } = useQuery<Remote[]>({
-    queryKey: [repo?.id, "remotes"],
-    queryFn: () => repoListRemotes(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.live,
-  });
+  const { data: remotes = [], isFetching, refetch } = useRemotes(repo?.id);
 
   const reload = useCallback(() => {
     refetch();
@@ -76,7 +64,7 @@ export function RemotesSection() {
   // success. Delayed busy + double-click guard per convention.
   const { busy, run: runMut } = usePanelRunner({
     enabled: !!repo,
-    onSuccess: () => invalidateRepoDomains(queryClient, repo!.id, AFFECTED_DOMAINS),
+    onSuccess: () => invalidateRepoDomains(queryClient, repo!.id, REMOTE_DOMAINS),
     onError: (e) => notify.error(formatAppError(e)),
   });
 
@@ -95,7 +83,7 @@ export function RemotesSection() {
       setBusyNet(tag);
       try {
         await fn(opId);
-        invalidateRepoDomains(queryClient, repo.id, AFFECTED_DOMAINS);
+        invalidateRepoDomains(queryClient, repo.id, REMOTE_DOMAINS);
       } catch (e) {
         if (!cancelRequestedRef.current) {
           notify.error(
@@ -156,15 +144,13 @@ export function RemotesSection() {
   // Central confirmation dialog (global destructive-confirmation setting:
   // when off, remove runs immediately).
   const requestRemove = async (name: string) => {
-    if (confirmDestructive) {
-      const ok = await confirmDialog({
-        title: "Remove remote",
-        message: "Removes the remote; its remote-tracking refs will be deleted.",
-        detail: name,
-        confirmLabel: "Remove remote",
-      });
-      if (!ok) return;
-    }
+    const ok = await confirmDestructiveAction({
+      title: "Remove remote",
+      message: "Removes the remote; its remote-tracking refs will be deleted.",
+      detail: name,
+      confirmLabel: "Remove remote",
+    });
+    if (!ok) return;
     void doRemove(name);
   };
 

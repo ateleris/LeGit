@@ -142,6 +142,7 @@ describe("withDerivedDomains", () => {
       "submodules",
       "tracking",
       "unpushed",
+      "tags",
     ]);
   });
   test("leaves unrelated domains alone", () => {
@@ -160,7 +161,13 @@ describe("withDerivedDomains", () => {
   test("external ref moves refresh the ahead/behind counter", () => {
     // An external `git fetch` classifies as branches only; the tracking
     // query domain must be derived or the sync toolbar goes stale.
-    expect(withDerivedDomains(["branches"])).toEqual(["branches", "submodules", "tracking", "unpushed"]);
+    expect(withDerivedDomains(["branches"])).toEqual(["branches", "submodules", "tracking", "unpushed", "tags"]);
     expect(withDerivedDomains(["status"])).not.toContain("tracking");
+  });
+  test("remote ref moves refresh the tags' on-remote flags", () => {
+    // target_on_remote is `rev-list --tags --not --remotes`: a fetch that
+    // moves remote-tracking refs (a `branches` event) can flip it.
+    expect(withDerivedDomains(["branches"])).toContain("tags");
+    expect(withDerivedDomains(["status"])).not.toContain("tags");
   });
 });

@@ -1,5 +1,5 @@
-import { summonGlobalPanel } from "../panels/GlobalDock";
-import { formatAppError } from "../lib/types";
+import { summonGlobalPanel } from "../layout/globalSummon";
+import { formatAppError } from "../lib/errors";
 import { toggleMaximizeActivePanel } from "../store/dockview";
 import { useLayoutsStore } from "../store/layouts";
 import { notify } from "../store/notifications";

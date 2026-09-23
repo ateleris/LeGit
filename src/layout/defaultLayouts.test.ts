@@ -11,7 +11,7 @@ import {
   GLOBAL_PANELS,
   REPO_DOCKVIEW_TAB_COMPONENTS,
   REPO_PANELS,
-} from "./registry";
+} from "../panels/registry";
 
 interface GridNode {
   type: string;

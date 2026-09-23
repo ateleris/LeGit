@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { repoSubmoduleLog } from "../../lib/commands";
 import type { SubmoduleChange, SubmoduleLog } from "../../lib/types";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { useRepoStore } from "../../store/repos";
 import { notify } from "../../store/notifications";
 import { Button } from "../shared/buttons";

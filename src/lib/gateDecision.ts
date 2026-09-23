@@ -1,4 +1,4 @@
-import type { GitStatus } from "../../lib/types";
+import type { GitStatus } from "./types";
 
 /**
  * What the app machine's git probe means for the first screen.

@@ -13,7 +13,7 @@
 // `manager` / `wincred` (which a git inside the distro could never run).
 
 import { useEffect, useState } from "react";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import type { AvailableHelper } from "../../lib/types";
 import { listAvailableCredentialHelpers } from "../../lib/commands";
 import { FieldNote } from "./primitives";

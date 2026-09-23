@@ -8,9 +8,7 @@
 //! Only the GLOBAL scope has commands here: repo-local signing config is
 //! managed through git profiles (`profiles.rs` reuses the `KEY_*` constants).
 
-use crate::commands::config_util::{
-    read_config_global_scopes, write_config_global, ScopedConfig,
-};
+use legit_core::config::{self, ScopedConfig, WriteScope};
 use crate::commands::settings_host::{settings_executor, SettingsHost};
 use crate::error::AppError;
 use crate::state::AppState;
@@ -42,10 +40,10 @@ pub struct SigningView {
 /// repo's local config into the view (see `read_config_global_scopes`).
 pub(crate) async fn read_signing_view_global(runner: &dyn GitExecutor) -> SigningView {
     SigningView {
-        gpgsign: read_config_global_scopes(runner, KEY_GPGSIGN).await.into(),
-        format: read_config_global_scopes(runner, KEY_FORMAT).await.into(),
-        signing_key: read_config_global_scopes(runner, KEY_SIGNING_KEY).await.into(),
-        allowed_signers: read_config_global_scopes(runner, KEY_ALLOWED_SIGNERS).await.into(),
+        gpgsign: config::read_global_scopes(runner, KEY_GPGSIGN).await,
+        format: config::read_global_scopes(runner, KEY_FORMAT).await,
+        signing_key: config::read_global_scopes(runner, KEY_SIGNING_KEY).await,
+        allowed_signers: config::read_global_scopes(runner, KEY_ALLOWED_SIGNERS).await,
     }
 }
 
@@ -58,10 +56,10 @@ pub(crate) async fn write_signing_global(
     signing_key: Option<&str>,
     allowed_signers: Option<&str>,
 ) -> Result<SigningView, AppError> {
-    write_config_global(runner, KEY_GPGSIGN, gpgsign).await?;
-    write_config_global(runner, KEY_FORMAT, format).await?;
-    write_config_global(runner, KEY_SIGNING_KEY, signing_key).await?;
-    write_config_global(runner, KEY_ALLOWED_SIGNERS, allowed_signers).await?;
+    config::write(runner, WriteScope::Global, KEY_GPGSIGN, gpgsign).await?;
+    config::write(runner, WriteScope::Global, KEY_FORMAT, format).await?;
+    config::write(runner, WriteScope::Global, KEY_SIGNING_KEY, signing_key).await?;
+    config::write(runner, WriteScope::Global, KEY_ALLOWED_SIGNERS, allowed_signers).await?;
     Ok(read_signing_view_global(runner).await)
 }
 

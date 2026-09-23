@@ -18,6 +18,7 @@ import {
   useState,
 } from "react";
 import { confirmDialog } from "../../../store/confirm";
+import { useConfirmDestructive } from "../../../store/settings";
 import {
   MenuItem,
   MenuLevelProvider,
@@ -152,6 +153,20 @@ export function useMenuConfirm() {
       });
     },
     [closeMenu],
+  );
+}
+
+/** `useMenuConfirm` gated by the global destructive-confirmation setting:
+ *  when it is off the action runs at once. */
+export function useDestructiveMenuConfirm() {
+  const menuConfirm = useMenuConfirm();
+  const enabled = useConfirmDestructive();
+  return useCallback(
+    (question: string, onConfirm: () => void) => {
+      if (enabled) menuConfirm(question, onConfirm);
+      else onConfirm();
+    },
+    [enabled, menuConfirm],
   );
 }
 

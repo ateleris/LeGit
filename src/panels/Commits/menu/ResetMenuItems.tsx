@@ -1,5 +1,5 @@
 import { useConfirmDestructive } from "../../../store/settings";
-import { useMenuConfirm } from "./PanelContextMenu";
+import { useDestructiveMenuConfirm } from "./PanelContextMenu";
 import { MenuItem, Separator, Submenu } from "./primitives";
 import type { ResetMode } from "../../../lib/types";
 
@@ -18,15 +18,11 @@ export function ResetMenuItems({
   onReset: (mode: ResetMode) => void;
 }) {
   const confirmDestructive = useConfirmDestructive();
-  const menuConfirm = useMenuConfirm();
+  const destructiveMenuConfirm = useDestructiveMenuConfirm();
   const label = branch ? `'${branch}'` : "HEAD";
 
   const requestHard = () => {
-    if (!confirmDestructive) {
-      onReset("hard");
-      return;
-    }
-    menuConfirm(
+    destructiveMenuConfirm(
       `Hard reset ${label} to this commit? Uncommitted changes will be discarded.`,
       () => onReset("hard"),
     );

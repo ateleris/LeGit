@@ -9,7 +9,7 @@ import { MenuItem } from "../Commits/menu/primitives";
 import { repoOpenFileInEditor } from "../../lib/commands";
 import { useActiveRepo } from "../../store/repos";
 import { notify } from "../../store/notifications";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { useEditorAction } from "../../lib/editorAction";
 
 export function OpenInEditorMenuItem({

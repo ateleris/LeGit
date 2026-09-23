@@ -19,6 +19,7 @@ import type {
   GlobalSettings,
   LaneLock,
   RepoSettings,
+  RepoSettingsPatch,
   CommitFileChange,
   CommitSearchKind,
   BlameHunk,
@@ -329,8 +330,10 @@ export const setRepoGitPath = (repoId: string, path: string | null) =>
 export const getRepoSettings = (repoId: string) =>
   invoke<RepoSettings>("get_repo_settings", { repoId });
 
-export const updateRepoSettings = (repoId: string, settings: RepoSettings) =>
-  invoke<null>("update_repo_settings", { repoId, settings });
+/** Change only the fields in `patch` (null resets an override); resolves to
+ *  the merged settings. */
+export const patchRepoSettings = (repoId: string, patch: RepoSettingsPatch) =>
+  invoke<RepoSettings>("patch_repo_settings", { repoId, patch });
 
 // --- persistence ---
 

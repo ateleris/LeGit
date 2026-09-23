@@ -3,7 +3,7 @@ import { useRepoStore } from "../store/repos";
 import { repoOpenInEditor } from "../lib/commands";
 import { editorActionLabel, editorOpensFolder, effectiveEditorTemplate } from "../lib/editorAction";
 import { useSettingsStore } from "../store/settings";
-import { formatAppError } from "../lib/types";
+import { formatAppError } from "../lib/errors";
 import type { RepoSummary } from "../lib/types";
 import { notify } from "../store/notifications";
 import { ExternalEditorIcon, FolderIcon } from "../icons";

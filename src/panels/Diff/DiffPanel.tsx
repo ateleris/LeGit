@@ -2,17 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PanelError } from "../shared/PanelError";
 import { segStyle } from "../shared/segmented";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRepoStore } from "../../store/repos";
-import { usePanelViewState } from "../../store/panelViewState";
-import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
-import { useSummonTarget } from "../../store/summon";
+import { useSettingsStore } from "../../store/settings";
+import { useGuardedEditorRequest } from "../shared/useGuardedEditorRequest";
 import {
   repoDiff,
   repoFileAtRevision,
   repoDiscardHunk,
   repoDiscardLines,
   repoReadWorktreeFile,
-  repoStage,
   repoStageHunk,
   repoStageLines,
   repoUnstageHunk,
@@ -30,14 +27,14 @@ import { binarySizes, isSvgPath } from "../../lib/previewSurface";
 import { formatByteSize } from "../../lib/formatBytes";
 import { LfsPointerNotice } from "../shared/LfsPointerNotice";
 import { lfsPointerDiffSides } from "../../lib/lfsPointer";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notify } from "../../store/notifications";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import {
   PanelContextMenuProvider,
-  useMenuConfirm,
+  useDestructiveMenuConfirm,
   usePanelContextMenu,
   type BaselineEntry,
 } from "../Commits/menu/PanelContextMenu";
@@ -101,53 +98,35 @@ function sameTarget(a: DiffRequest | null, b: DiffRequest | null): boolean {
  */
 export function DiffPanel() {
   const queryClient = useQueryClient();
-  // Per-repo view state (store/panelViewState.ts): the shown diff survives a
-  // layout apply's dock rebuild and the slot swap with Merge, and each repo
-  // keeps its own across tab switches (the query below only ever runs for
-  // the active repo's request).
-  const [request, setRequest] = usePanelViewState<DiffRequest | null>("diff.request", null);
+  // The shown diff is per-repo view state: it survives a layout apply's dock
+  // rebuild and the slot swap with Merge, and each repo keeps its own across
+  // tab switches (the query below only ever runs for the active repo's
+  // request). While the new side has unsaved edits, a summoned file switch
+  // waits for the user.
+  const {
+    request,
+    requestRef,
+    dirty,
+    dirtyRef,
+    setDirty,
+    pending,
+    acceptPending,
+    rejectPending,
+    rebuildKey,
+    rebuild,
+    guardSave,
+    activeRepoId,
+  } = useGuardedEditorRequest<DiffRequest>({
+    panelId: "diff",
+    viewStateKey: "diff.request",
+    sameTarget,
+  });
   const [mode, setMode] = useState<DiffViewMode>(() => loadPref(MODE_KEY, "inline"));
   const [contextMode, setContextMode] = useState<ContextMode>(() =>
     loadPref(CONTEXT_KEY, "chunked")
   );
-  const [dirty, setDirty] = useState(false);
-  // Forces an editor rebuild after save/discard even when the refetched diff
-  // is byte-identical (React Query then keeps the same object, so nothing
-  // else in the mount dependencies changes).
-  const [rebuildKey, setRebuildKey] = useState(0);
-  // A summoned file switch waiting on the user while edits are unsaved; the
-  // inner req may itself be null ("clear the panel"), hence the wrapper.
-  const [pending, setPending] = useState<{ req: DiffRequest | null } | null>(null);
   const editorRef = useRef<DiffEditorHandle | null>(null);
-  const savingRef = useRef(false);
-  // Mirrors so save/receive callbacks keep a stable identity (recreating the
-  // editor mid-edit would discard the user's unsaved changes).
-  const dirtyRef = useRef(dirty);
-  dirtyRef.current = dirty;
-  const requestRef = useRef(request);
-  requestRef.current = request;
   const dataRef = useRef<DiffEntry | undefined>(undefined);
-
-  // A null payload means "no file selected" — reset to the placeholder. While
-  // dirty, a switch to a different file must be confirmed, not silent.
-  const onReceive = useCallback((payload: DiffRequest | null) => {
-    if (dirtyRef.current && !sameTarget(payload, requestRef.current)) {
-      setPending({ req: payload });
-      return;
-    }
-    setRequest(payload);
-  }, []);
-  useSummonTarget<DiffRequest | null>("diff", onReceive);
-
-  // On a repo switch the per-repo request key changes underneath us: the
-  // panel shows the new repo's own diff (or the placeholder). Unsaved edits
-  // and a pending switch belong to the previous repo's file - which is
-  // untouched on disk - so drop them.
-  const activeRepoId = useRepoStore((s) => s.activeRepoId);
-  useEffect(() => {
-    setDirty(false);
-    setPending(null);
-  }, [activeRepoId]);
 
   const context = contextMode === "full" ? FULL_FILE_CONTEXT : CHUNKED_CONTEXT;
 
@@ -332,43 +311,43 @@ export function DiffPanel() {
 
   // Write the edited document back to the file: read the on-disk baseline
   // and splice each hunk's new-side text into it.
-  const onSave = useCallback(async () => {
-    if (savingRef.current) return;
-    const req = requestRef.current;
-    const entry = dataRef.current;
-    const texts = editorRef.current?.collectHunkTexts();
-    if (!req || !entry || !("Text" in entry) || !texts) return;
-    savingRef.current = true;
-    try {
-      const original = await repoReadWorktreeFile(req.repoId, req.path);
-      const next = spliceEdits(
-        original,
-        entry.Text.hunks.map((h) => ({ newStart: h.new_start, newLines: h.new_lines })),
-        texts
-      );
-      await repoWriteWorktreeFile(req.repoId, req.path, next);
-      setDirty(false);
-      setRebuildKey((k) => k + 1);
-      invalidateRepoDomains(queryClient, req.repoId, ["status", "log", "diff"]);
-    } catch (e) {
-      notify.error(formatAppError(e));
-    } finally {
-      savingRef.current = false;
-    }
-  }, [queryClient]);
+  const onSave = useCallback(
+    () =>
+      guardSave(async () => {
+        const req = requestRef.current;
+        const entry = dataRef.current;
+        const texts = editorRef.current?.collectHunkTexts();
+        if (!req || !entry || !("Text" in entry) || !texts) return;
+        try {
+          const original = await repoReadWorktreeFile(req.repoId, req.path);
+          const next = spliceEdits(
+            original,
+            entry.Text.hunks.map((h) => ({ newStart: h.new_start, newLines: h.new_lines })),
+            texts
+          );
+          await repoWriteWorktreeFile(req.repoId, req.path, next);
+          setDirty(false);
+          rebuild();
+          invalidateRepoDomains(queryClient, req.repoId, ["status", "log", "diff"]);
+        } catch (e) {
+          notify.error(formatAppError(e));
+        }
+      }),
+    [guardSave, requestRef, setDirty, rebuild, queryClient],
+  );
 
   const onDiscardEdits = useCallback(() => {
     setDirty(false);
-    // The file on disk never changed, so the refetched diff is identical —
+    // The file on disk never changed, so the refetched diff is identical -
     // the rebuild key is what actually resets the editor's document.
-    setRebuildKey((k) => k + 1);
+    rebuild();
     const req = requestRef.current;
     // Still invalidate: the query was disabled while dirty and may have
     // missed watcher events.
     if (req) invalidateRepoDomains(queryClient, req.repoId, ["diff"]);
-  }, [queryClient]);
+  }, [setDirty, rebuild, requestRef, queryClient]);
 
-  const onDirty = useCallback(() => setDirty(true), []);
+  const onDirty = useCallback(() => setDirty(true), [setDirty]);
 
   const chooseMode = (next: DiffViewMode) => {
     setMode(next);
@@ -473,15 +452,8 @@ export function DiffPanel() {
           <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
             Unsaved edits in {request.path} will be lost.
           </span>
-          <ToolbarButton
-            label="Discard edits & switch"
-            onClick={() => {
-              setDirty(false);
-              setRequest(pending.req);
-              setPending(null);
-            }}
-          />
-          <ToolbarButton label="Keep editing" onClick={() => setPending(null)} />
+          <ToolbarButton label="Discard edits & switch" onClick={acceptPending} />
+          <ToolbarButton label="Keep editing" onClick={rejectPending} />
         </div>
       )}
 
@@ -550,8 +522,7 @@ function DiffBody({
   syntaxPath: string | null;
 }) {
   const { openMenu, closeMenu } = usePanelContextMenu();
-  const confirmDestructive = useConfirmDestructive();
-  const menuConfirm = useMenuConfirm();
+  const destructiveMenuConfirm = useDestructiveMenuConfirm();
 
   // Run a menu entry's action; discard is destructive, so it takes the
   // standard inline-confirm takeover unless the global setting is off.
@@ -561,10 +532,10 @@ function DiffBody({
         run();
         closeMenu();
       };
-      if (action === "discard" && confirmDestructive) menuConfirm(question, go);
+      if (action === "discard") destructiveMenuConfirm(question, go);
       else go();
     },
-    [confirmDestructive, menuConfirm, closeMenu]
+    [destructiveMenuConfirm, closeMenu]
   );
 
   const onContextMenu = useCallback(

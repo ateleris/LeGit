@@ -1,15 +1,15 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useState } from "react";
 import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ConfigScope, LineEndingsView, GitAttrRule, LfsPatternsView, LfsStatus, RepoSettings } from "../../lib/types";
-import { setRepoGitPath, repoLfsPatterns, repoLfsStatus, repoLfsTrack, repoLfsUntrack, repoLineEndingsView, repoWriteLineEndings, updateRepoSettings, wslHostGitOverride } from "../../lib/commands";
+import type { ConfigScope, LineEndingsView, GitAttrRule, LfsPatternsView, RepoSettings } from "../../lib/types";
+import { setRepoGitPath, repoLfsPatterns, repoLfsTrack, repoLfsUntrack, repoLineEndingsView, repoWriteLineEndings, wslHostGitOverride } from "../../lib/commands";
 import { useGitStatusStore } from "../../store/git-status";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
 import { supportsRepoGitOverride } from "../../lib/locator";
-import { summonGlobalPanel } from "../GlobalDock";
+import { summonGlobalPanel } from "../../layout/globalSummon";
 import { RepoIdentitySection } from "./RepoIdentitySection";
 import { NormalizeLineEndingsBlock } from "./NormalizeLineEndingsBlock";
 import { ConfigRow, RadioGroup, ResolvedBadge } from "./SigningSettings";
@@ -19,6 +19,8 @@ import { Button } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
 import { useDelayedFlag } from "../shared/useDelayedFlag";
 import { STALE } from "../../lib/queryTiming";
+import { repoKeys } from "../../lib/queries/keys";
+import { useLfsStatus } from "../../lib/queries/useRepoQueries";
 
 /**
  * Repo Settings panel — edits repo-scope settings for the active repo.
@@ -242,7 +244,7 @@ function ExternalEditorRepoSection({
   repoSettings: RepoSettings | null;
 }) {
   const globalTemplate = useSettingsStore((s) => s.settings?.external_editor_command ?? "");
-  const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
+  const updateRepoSetting = useRepoStore((s) => s.updateRepoSetting);
   const stored = repoSettings?.external_editor_command ?? "";
   const [draft, setDraft] = useState(stored);
   const { busy: saving, run } = useDelayedBusy();
@@ -255,8 +257,7 @@ function ExternalEditorRepoSection({
     const normalized = draft.trim() === "" ? null : draft;
     if ((normalized ?? "") === (repoSettings.external_editor_command ?? "")) return;
     return run(async () => {
-      await updateRepoSettings(repoId, { ...repoSettings, external_editor_command: normalized });
-      await loadRepoSettings(repoId);
+      await updateRepoSetting(repoId, "external_editor_command", normalized);
     });
   };
 
@@ -305,7 +306,7 @@ function LineEndingChangesRepoSection({
 }) {
   const globalChips = useSettingsStore((s) => s.settings?.line_ending_chips_in_changes ?? true);
   const globalWarn = useSettingsStore((s) => s.settings?.warn_on_line_ending_commit ?? true);
-  const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
+  const updateRepoSetting = useRepoStore((s) => s.updateRepoSetting);
   const { busy: saving, run } = useDelayedBusy();
 
   const setOverride = (
@@ -314,8 +315,7 @@ function LineEndingChangesRepoSection({
   ) => {
     if (!repoSettings) return;
     return run(async () => {
-      await updateRepoSettings(repoId, { ...repoSettings, [key]: value });
-      await loadRepoSettings(repoId);
+      await updateRepoSetting(repoId, key, value);
     });
   };
 
@@ -375,7 +375,7 @@ function CommitTreeRepoSection({
   repoId: string;
   repoSettings: RepoSettings | null;
 }) {
-  const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
+  const updateRepoSetting = useRepoStore((s) => s.updateRepoSetting);
   const { busy: saving, run } = useDelayedBusy();
   // null = default ON.
   const enabled = repoSettings?.show_remote_branches ?? true;
@@ -383,8 +383,7 @@ function CommitTreeRepoSection({
   const setEnabled = (value: boolean) => {
     if (!repoSettings) return;
     return run(async () => {
-      await updateRepoSettings(repoId, { ...repoSettings, show_remote_branches: value });
-      await loadRepoSettings(repoId);
+      await updateRepoSetting(repoId, "show_remote_branches", value);
     });
   };
 
@@ -426,7 +425,7 @@ function SubmoduleAutoUpdateSection({
   repoId: string;
   repoSettings: import("../../lib/types").RepoSettings | null;
 }) {
-  const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
+  const updateRepoSetting = useRepoStore((s) => s.updateRepoSetting);
   const { busy: saving, run } = useDelayedBusy();
   // null = default ON.
   const enabled = repoSettings?.submodule_auto_update ?? true;
@@ -434,8 +433,7 @@ function SubmoduleAutoUpdateSection({
   const setEnabled = (value: boolean) => {
     if (!repoSettings) return;
     return run(async () => {
-      await updateRepoSettings(repoId, { ...repoSettings, submodule_auto_update: value });
-      await loadRepoSettings(repoId);
+      await updateRepoSetting(repoId, "submodule_auto_update", value);
     });
   };
 
@@ -477,15 +475,14 @@ function AutoPushTagsRepoSection({
   repoSettings: import("../../lib/types").RepoSettings | null;
 }) {
   const globalEnabled = useSettingsStore((s) => s.settings?.auto_push_tags ?? false);
-  const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
+  const updateRepoSetting = useRepoStore((s) => s.updateRepoSetting);
   const { busy: saving, run } = useDelayedBusy();
   const override = repoSettings?.auto_push_tags ?? null;
 
   const setOverride = (value: boolean | null) => {
     if (!repoSettings) return;
     return run(async () => {
-      await updateRepoSettings(repoId, { ...repoSettings, auto_push_tags: value });
-      await loadRepoSettings(repoId);
+      await updateRepoSetting(repoId, "auto_push_tags", value);
     });
   };
 
@@ -534,7 +531,7 @@ function LfsWarningRepoSection({
   repoId: string;
   repoSettings: RepoSettings | null;
 }) {
-  const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
+  const updateRepoSetting = useRepoStore((s) => s.updateRepoSetting);
   const { busy: saving, run } = useDelayedBusy();
   const suppressed = repoSettings?.suppress_lfs_warning === true;
   // Same cache entry the warning banner reads ([repoId, "lfs"]). This
@@ -544,22 +541,14 @@ function LfsWarningRepoSection({
   // or removed, config edited in a terminal) is invisible until a fresh
   // probe - this button is that trigger.
   const queryClient = useQueryClient();
-  const { data: lfs, dataUpdatedAt } = useQuery<LfsStatus>({
-    queryKey: [repoId, "lfs"],
-    queryFn: () => repoLfsStatus(repoId),
-    staleTime: STALE.rare,
-  });
+  const { data: lfs, dataUpdatedAt } = useLfsStatus(repoId);
 
   // Stored as true (suppressed) or null (warn - the default); never false,
   // so old settings files and the banner's `=== true` check stay aligned.
   const setSuppressed = (value: boolean) => {
     if (!repoSettings) return;
     return run(async () => {
-      await updateRepoSettings(repoId, {
-        ...repoSettings,
-        suppress_lfs_warning: value ? true : null,
-      });
-      await loadRepoSettings(repoId);
+      await updateRepoSetting(repoId, "suppress_lfs_warning", value ? true : null);
     });
   };
 
@@ -595,7 +584,7 @@ function LfsWarningRepoSection({
           </>
         )}
         <div style={{ marginTop: "0.333em", display: "flex", alignItems: "center", gap: "0.667em" }}>
-          <Button onClick={() => queryClient.invalidateQueries({ queryKey: [repoId, "lfs"] })}>
+          <Button onClick={() => queryClient.invalidateQueries({ queryKey: repoKeys.lfs(repoId) })}>
             Re-check
           </Button>
           {/* Always-visible reaction to the button: a re-probe whose result
@@ -632,7 +621,7 @@ function LfsPatternsBlock({ repoId }: { repoId: string }) {
   const applyResult = (next: LfsPatternsView) => {
     queryClient.setQueryData([repoId, "status", "lfs-patterns"], next);
     // The first/last pattern flips uses_lfs - banner and Files icons react.
-    queryClient.invalidateQueries({ queryKey: [repoId, "lfs"] });
+    queryClient.invalidateQueries({ queryKey: repoKeys.lfs(repoId) });
   };
 
   const track = () => {

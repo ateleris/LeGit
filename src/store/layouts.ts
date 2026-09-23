@@ -14,15 +14,15 @@ import {
   captureLayoutDocument,
   chooseUniqueName,
   migrateLegacyDefaultLayout,
-} from "../panels/namedLayouts";
+} from "../layout/namedLayouts";
 import {
   SAVED_GLOBAL_LAYOUT_KEY,
   SAVED_REPO_LAYOUT_KEY,
   applyBakedGlobalLayout,
   applyBakedRepoLayout,
-} from "../panels/layoutSnapshot";
-import { buildDefaultGlobalLayout } from "../panels/GlobalDock";
-import { buildDefaultRepoLayout } from "../panels/RepoDock";
+} from "../layout/layoutSnapshot";
+import { buildDefaultGlobalLayout } from "../layout/defaultLayouts";
+import { buildDefaultRepoLayout } from "../layout/defaultLayouts";
 import { useDockviewStore } from "./dockview";
 
 interface LayoutsStore {

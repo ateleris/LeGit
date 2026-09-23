@@ -3,7 +3,7 @@
 // string ids (menu items carry only an id string across the IPC boundary).
 
 import { describe, expect, it } from "vitest";
-import { GLOBAL_PANELS, REPO_PANELS } from "../panels/descriptors";
+import { GLOBAL_PANELS, REPO_PANELS } from "../layout/descriptors";
 import { parseMacMenuAction, viewMenuEntries } from "./macMenuModel";
 
 describe("viewMenuEntries", () => {

@@ -9,7 +9,7 @@
 // passphrase-protected keys now WORK: the SSH_ASKPASS shim prompts in-app.
 
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import type { ConnectedAccountStatus, SshKeyStatus, SshTestOutcome } from "../../lib/types";
 import {
   defaultSshKeysStatus,

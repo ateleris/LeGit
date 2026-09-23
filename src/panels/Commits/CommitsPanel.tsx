@@ -23,16 +23,15 @@ import { TOOLBAR_FIELD_STYLE } from "../shared/fields";
 import { useDelayedFlag } from "../shared/useDelayedFlag";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { useLayer } from "../../store/layers";
-import { repoCreateBranch, repoStashBranch } from "../../lib/commands";
-import { notifySwitchError } from "../../lib/switchFeedback";
 import { useOpState } from "../../lib/useOpState";
-import type { Branch, Commit, CommitId, Signature } from "../../lib/types";
-import { formatAppError } from "../../lib/types";
+import type { Commit, CommitId, Signature } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { worktreeLocator } from "../../lib/locator";
+import { createBranch, stashBranch } from "../../lib/refActions";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { notify } from "../../store/notifications";
 import { promptDialog } from "../../store/confirm";
-import { BranchIcon, RemoteIcon, SignedIcon, TagIcon } from "../../icons";
+import { SignedIcon } from "../../icons";
 import { useSignatureStore } from "../../store/signatures";
 import { formatAbsolute, formatFull, formatRelative } from "../../lib/time";
 import { RefsCell } from "./cells/RefsCell";
@@ -48,7 +47,7 @@ import { quickSearchMatch } from "./commitSearch";
 import { applyRowClickSelection, arrowSelection, bulkActionPlan, type SelectionState , selectionContiguous } from "./multiSelect";
 import type { LaneEdge, LaneIndex, LaneResult, LockMap, RefsAtCommit } from "./graph/types";
 import { buildLockMap, buildRefsAt, buildStashSelectorById } from "./commitRows";
-import { BRANCH_DOMAINS, useCommitActions } from "./useCommitActions";
+import { useCommitActions } from "./useCommitActions";
 import { useColumnState } from "./columns/useColumnState";
 import { ColumnHeader } from "./columns/ColumnHeader";
 import { LaneLockIndicator } from "./LaneLockIndicator";
@@ -56,8 +55,6 @@ import { PanelContextMenuProvider, type BaselineEntry } from "./menu/PanelContex
 import { RemoteSyncToolbar } from "./RemoteSyncToolbar";
 import { BulkSelectionMenu, CommitRowMenu, WorkdirRowMenu } from "./menu/RowMenu";
 import { SEARCH_MAX_RESULTS, useCommitsQueries } from "./useCommitsQueries";
-import { TagMenuSection } from "./menu/TagMenuSection";
-import { branchesAt } from "./cells/refChips";
 import {
   COLUMN_GAP,
   columnGridTrack,
@@ -675,25 +672,11 @@ export function CommitsPanel() {
     const creation = branchCreation;
     setBranchCreation(null);
     if (!repo || !creation) return;
-    try {
-      if (creation.stashSha) {
-        await repoStashBranch(repo.id, creation.stashSha, name);
-        notify.info(`Created branch '${name}' from the stash and checked it out.`);
-      } else {
-        await repoCreateBranch(repo.id, name, creation.startPoint);
-        // Global setting (default on): a new branch is checked out right
-        // away. handleBranchCheckout carries the switch feedback and its
-        // own error handling (dirty-tree behavior etc.).
-        if (checkoutNewBranch) await handleBranchCheckout(name);
-      }
-      invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
-    } catch (e) {
-      // stash branch checks out the new branch, so its failure mode is a
-      // switch failure (dirty tree) — use the switch messaging for it.
-      if (creation.stashSha) notifySwitchError(e);
-      else notify.error(formatAppError(e));
-    }
-  }, [repo, branchCreation, checkoutNewBranch, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
+    const ctx = { queryClient, repo };
+    if (creation.stashSha) await stashBranch(ctx, creation.stashSha, name);
+    // Global setting (default on): a new branch is checked out right away.
+    else await createBranch(ctx, name, creation.startPoint, { checkout: checkoutNewBranch });
+  }, [repo, branchCreation, checkoutNewBranch, queryClient]);
 
   const handleCreateBranchCancel = useCallback(() => {
     setBranchCreation(null);
