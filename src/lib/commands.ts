@@ -393,6 +393,9 @@ export const setAutoFetchIntervalMinutes = (minutes: number) =>
 export const setCommitAvatars = (enabled: boolean) =>
   invoke<null>("set_commit_avatars", { enabled });
 
+export const setCommitInitials = (enabled: boolean) =>
+  invoke<null>("set_commit_initials", { enabled });
+
 export const setAutoPushTags = (enabled: boolean) =>
   invoke<null>("set_auto_push_tags", { enabled });
 

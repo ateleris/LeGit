@@ -23,7 +23,7 @@
 // applier (see src/theme/applier.ts — `graph.lane.N` -> `--graph-lane-N`).
 
 import { StashIcon } from "../../../icons";
-import { useAvatar } from "../../../lib/avatars";
+import { authorInitials, useAvatar } from "../../../lib/avatars";
 import type { LaneEdge, LaneIndex } from "../graph/types";
 
 interface GraphCellProps {
@@ -84,6 +84,13 @@ interface GraphCellProps {
    * function (the geometry tests call it directly, outside React).
    */
   avatarUrl?: string | null;
+  /**
+   * Author initials (opt-in `commit_initials` setting) drawn inside the
+   * lane-coloured dot. A resolved `avatarUrl` wins: with both settings on,
+   * initials appear only for authors without a Gravatar. Empty/null = plain
+   * dot. Computed from the author name by `GraphCellWithAvatar`.
+   */
+  initials?: string | null;
 }
 
 /**
@@ -182,6 +189,7 @@ export function GraphCell({
   stashNodeColor = null,
   laneColorOverrides,
   avatarUrl = null,
+  initials = null,
 }: GraphCellProps) {
   const halfRow = rowHeight / 2;
   const width = (totalLanes + 1) * laneSpacing;
@@ -347,7 +355,9 @@ export function GraphCell({
       ) : avatarUrl ? (
         // Author avatar clipped to the dot circle, with a lane-coloured ring
         // so the node keeps its lane identity. Scales with the configured dot
-        // radius — no minimum size.
+        // radius — no minimum size. The ring stroke straddles its path, so it
+        // is inset by half its width to keep the node's outer edge at
+        // dotRadius, the plain dot's visual size.
         <g>
           <clipPath id={`av-${idPrefix}`}>
             <circle cx={dotX} cy={halfRow} r={dotRadius} />
@@ -362,11 +372,32 @@ export function GraphCell({
             preserveAspectRatio="xMidYMid slice"
           />
           <circle
-            cx={dotX} cy={halfRow} r={dotRadius}
+            cx={dotX} cy={halfRow}
+            r={Math.max(dotRadius / 2, dotRadius - Math.max(1.5, lineWidth) / 2)}
             fill="none"
             stroke={dotColor}
             strokeWidth={Math.max(1.5, lineWidth)}
           />
+        </g>
+      ) : initials ? (
+        // Author initials knocked out of the lane-coloured dot in the panel
+        // background colour (the StashNode "negative" treatment). Font size
+        // derives from the dot radius so it scales with the configured dot
+        // size; two letters get a slightly smaller size to fit the circle.
+        <g>
+          <circle cx={dotX} cy={halfRow} r={dotRadius} fill={dotColor} />
+          <text
+            x={dotX}
+            y={halfRow}
+            textAnchor="middle"
+            dominantBaseline="central"
+            fill="var(--panel-bg, #1e1e1e)"
+            fontSize={dotRadius * (initials.length > 1 ? 1.0 : 1.35)}
+            fontWeight={700}
+            style={{ userSelect: "none" }}
+          >
+            {initials}
+          </text>
         </g>
       ) : (
         <circle cx={dotX} cy={halfRow} r={dotRadius} fill={dotColor} />
@@ -377,15 +408,22 @@ export function GraphCell({
 
 /**
  * GraphCell plus Gravatar lookup: resolves `avatarEmail` to an image URL via
- * the avatar cache and renders the plain GraphCell with it. Split out so
- * GraphCell stays a pure hook-free function (its geometry tests call it
- * directly). Pass `avatarEmail: null` for stash/working-dir nodes and while
- * the `commit_avatars` setting is off — no lookup happens then.
+ * the avatar cache, derives initials from `initialsName`, and renders the
+ * plain GraphCell with them. Split out so GraphCell stays a pure hook-free
+ * function (its geometry tests call it directly). Pass `avatarEmail` /
+ * `initialsName` as null for stash/working-dir nodes and while the
+ * corresponding setting (`commit_avatars` / `commit_initials`) is off — no
+ * lookup happens then.
  */
 export function GraphCellWithAvatar({
   avatarEmail,
+  initialsName,
   ...props
-}: Omit<GraphCellProps, "avatarUrl"> & { avatarEmail: string | null }) {
+}: Omit<GraphCellProps, "avatarUrl" | "initials"> & {
+  avatarEmail: string | null;
+  initialsName: string | null;
+}) {
   const avatarUrl = useAvatar(avatarEmail, avatarEmail != null);
-  return <GraphCell {...props} avatarUrl={avatarUrl} />;
+  const initials = initialsName != null ? authorInitials(initialsName) : null;
+  return <GraphCell {...props} avatarUrl={avatarUrl} initials={initials} />;
 }

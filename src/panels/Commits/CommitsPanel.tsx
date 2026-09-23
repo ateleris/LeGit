@@ -147,6 +147,7 @@ export function CommitsPanel() {
   // Opt-in author avatars in the commit dots (off by default — no Gravatar
   // request leaves the app unless the user enabled the setting).
   const AVATARS_ENABLED = useSettingsStore((s) => s.settings?.commit_avatars ?? false);
+  const INITIALS_ENABLED = useSettingsStore((s) => s.settings?.commit_initials ?? false);
   // Date column: full author datetime instead of the relative form (global
   // setting), in the user's chosen format.
   const DATE_ABSOLUTE = useSettingsStore((s) => s.settings?.commit_date_absolute ?? false);
@@ -1726,6 +1727,13 @@ export function CommitsPanel() {
                               !stashSelectorById.has(commit.id) &&
                               commit.author.email
                                 ? commit.author.email
+                                : null
+                            }
+                            initialsName={
+                              INITIALS_ENABLED &&
+                              !isWorkingDir &&
+                              !stashSelectorById.has(commit.id)
+                                ? commit.author.name
                                 : null
                             }
                           />

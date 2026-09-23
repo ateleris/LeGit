@@ -12,11 +12,22 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- New global setting to show author initials in the commit graph dots;
+  with Gravatar avatars also enabled, initials appear only for authors
+  without a Gravatar.
+
 ### Changed
 
 - The merge/rebase-in-progress and warning banners now use solid accent /
   warning colours in the built-in themes, so they clearly stand out when
   something needs attention.
+
+### Fixed
+
+- Gravatar dots in the commit graph no longer render slightly larger than
+  plain dots (the lane-coloured ring overhung the dot radius).
 
 ## [1.3.2] - 2026-09-21
 

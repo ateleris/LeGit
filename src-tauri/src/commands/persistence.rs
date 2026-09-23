@@ -366,6 +366,18 @@ pub async fn set_commit_avatars(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn set_commit_initials(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state.mutate_global(|s| {
+        s.commit_initials = enabled;
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn set_auto_push_tags(
     state: tauri::State<'_, AppState>,
     enabled: bool,

@@ -413,6 +413,11 @@ pub struct GlobalSettings {
     /// opt-in; see BACKLOG/settings copy).
     #[serde(default)]
     pub commit_avatars: bool,
+    /// Show author initials in the commit graph dots (default off). Purely
+    /// local. With `commit_avatars` also on, initials show only for authors
+    /// without a Gravatar.
+    #[serde(default)]
+    pub commit_initials: bool,
     /// Syntax-highlight code in the diff viewer. Off by default: highlighting
     /// parses each hunk's sides on the UI thread, so it is opt-in.
     #[serde(default)]
@@ -506,6 +511,7 @@ impl Default for GlobalSettings {
             auto_push_tags: false,
             submodule_attach_branch: false,
             commit_avatars: false,
+            commit_initials: false,
             diff_syntax_highlighting: false,
             commit_date_absolute: false,
             commit_date_format: CommitDateFormat::Iso,

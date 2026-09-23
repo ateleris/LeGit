@@ -31,6 +31,29 @@ export function gravatarUrl(emailHash: string, size: number = GRAVATAR_SIZE): st
   return `https://www.gravatar.com/avatar/${emailHash}?s=${size}&d=404`;
 }
 
+/**
+ * Author initials for the commit dot (the `commit_initials` setting):
+ * two letters when possible (first letter of the first and last words, or
+ * the first two letters of a one-word name), one letter as fallback, never
+ * more than two; "" when the name has no letters (the dot then falls back
+ * to the plain lane-coloured fill). Uppercased. Purely local - unlike the
+ * Gravatar lookup, nothing leaves the app.
+ */
+export function authorInitials(name: string): string {
+  const letters = (s: string): string[] =>
+    Array.from(s.matchAll(/[\p{L}\p{N}]/gu), (m) => m[0]);
+  const words = name
+    .trim()
+    .split(/\s+/)
+    .filter((w) => letters(w).length > 0);
+  if (words.length === 0) return "";
+  const initials =
+    words.length >= 2
+      ? letters(words[0])[0] + letters(words[words.length - 1])[0]
+      : letters(words[0]).slice(0, 2).join("");
+  return initials.toLocaleUpperCase();
+}
+
 interface AvatarStore {
   /** email → avatar URL, or null when Gravatar has none (probe 404'd). */
   urls: Record<string, string | null>;

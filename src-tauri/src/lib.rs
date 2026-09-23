@@ -211,6 +211,7 @@ pub fn run() {
         commands::save_stash_include_untracked,
         commands::save_push_recurse_submodules,
         commands::set_commit_avatars,
+        commands::set_commit_initials,
         commands::set_auto_push_tags,
         commands::set_diff_syntax_highlighting,
         commands::set_commit_date_absolute,

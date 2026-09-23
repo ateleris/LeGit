@@ -152,6 +152,10 @@ export interface GlobalSettings {
   /** Show author Gravatars in the commit graph. OFF by default — enabling it
    * sends hashed author emails to gravatar.com. */
   commit_avatars?: boolean;
+  /** Show author initials in the commit graph dots (default off, purely
+   * local). With `commit_avatars` also on, initials show only for authors
+   * without a Gravatar. */
+  commit_initials?: boolean;
   /** Syntax-highlight code in the diff viewer (default off). */
   diff_syntax_highlighting?: boolean;
   /** Show the full author datetime in the Commits panel's Date column instead

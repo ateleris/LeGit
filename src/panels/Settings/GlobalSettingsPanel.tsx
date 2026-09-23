@@ -398,8 +398,11 @@ function CommitsGraphSection() {
   // sends the hashed author email to gravatar.com.
   const avatars = useSettingsStore((s) => s.settings?.commit_avatars ?? false);
   const setCommitAvatars = useSettingsStore((s) => s.setCommitAvatars);
+  const initials = useSettingsStore((s) => s.settings?.commit_initials ?? false);
+  const setCommitInitials = useSettingsStore((s) => s.setCommitInitials);
   const { busy: savingAvatars, run: runAvatars } = useDelayedBusy();
   const toggleAvatars = () => runAvatars(() => setCommitAvatars(!avatars));
+  const toggleInitials = () => runAvatars(() => setCommitInitials(!initials));
 
   // Lane colouring: on/off is a viewing preference here; the per-part chip
   // filters stay in the theme (Theme Editor → Refs).
@@ -633,6 +636,22 @@ function CommitsGraphSection() {
       <FieldNote>
         Privacy: when enabled, a hash of each author's email address is sent to
         gravatar.com to look up their avatar. Nothing is sent while this is off.
+      </FieldNote>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "0.667em" }}>
+        <input
+          type="checkbox"
+          id="global-commit-initials"
+          checked={initials}
+          onChange={toggleInitials}
+          disabled={savingAvatars}
+        />
+        <label htmlFor="global-commit-initials" style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }}>
+          Show author initials in the commit dots
+        </label>
+      </div>
+      <FieldNote>
+        Initials are computed locally; nothing is sent anywhere. With Gravatar
+        avatars also on, initials appear only for authors without a Gravatar.
       </FieldNote>
     </Section>
   );

@@ -20,6 +20,7 @@ import {
   setCheckUpdatesOnStartup,
   setExternalEditorCommand,
   setCommitAvatars,
+  setCommitInitials,
   setAutoPushTags,
   setDiffSyntaxHighlighting,
   setCommitDateAbsolute,
@@ -162,6 +163,7 @@ interface SettingsStore {
   setCheckUpdatesOnStartup: (enabled: boolean) => Promise<void>;
   setExternalEditorCommand: (command: string | null) => Promise<void>;
   setCommitAvatars: (enabled: boolean) => Promise<void>;
+  setCommitInitials: (enabled: boolean) => Promise<void>;
   setAutoPushTags: (enabled: boolean) => Promise<void>;
   setDiffSyntaxHighlighting: (enabled: boolean) => Promise<void>;
   setCommitDateAbsolute: (enabled: boolean) => Promise<void>;
@@ -336,6 +338,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     await setCommitAvatars(enabled);
     const s = get().settings;
     if (s) set({ settings: { ...s, commit_avatars: enabled } });
+  },
+
+  async setCommitInitials(enabled) {
+    await setCommitInitials(enabled);
+    const s = get().settings;
+    if (s) set({ settings: { ...s, commit_initials: enabled } });
   },
 
   async setAutoPushTags(enabled) {

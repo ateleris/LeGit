@@ -390,3 +390,73 @@ describe("stash connector lane overrides in other rows", () => {
     expect(paths[0].props.stroke).toMatch(/^url\(#gin-/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Author initials in the commit dot (`commit_initials` setting)
+// ---------------------------------------------------------------------------
+
+describe("commit node initials", () => {
+  const nodeCell = (args: {
+    initials?: string | null;
+    avatarUrl?: string | null;
+    hollow?: boolean;
+    isStash?: boolean;
+    dotRadius?: number;
+  }) =>
+    GraphCell({
+      commitId: "self",
+      commitLane: 1,
+      totalLanes: 3,
+      activeLanes: new Set(),
+      edges: [],
+      incomingEdges: [],
+      rowHeight: 40,
+      laneSpacing: 40,
+      dotRadius: args.dotRadius ?? 8,
+      lineWidth: 1.5,
+      initials: args.initials,
+      avatarUrl: args.avatarUrl,
+      hollow: args.hollow,
+      isStash: args.isStash,
+    });
+
+  it("renders the initials centered on the dot, over a lane-coloured fill", () => {
+    const el = nodeCell({ initials: "SB" });
+    const texts = collect(el, "text");
+    expect(texts).toHaveLength(1);
+    expect(texts[0].props.children).toBe("SB");
+    expect(texts[0].props.x).toBe(60); // lane 1 center
+    expect(texts[0].props.y).toBe(20); // row center
+    const circles = collect(el, "circle");
+    expect(circles.some((c) => c.props.fill === "var(--graph-lane-1)")).toBe(true);
+  });
+
+  it("font size scales with the dot radius", () => {
+    const small = collect(nodeCell({ initials: "SB", dotRadius: 5 }), "text")[0];
+    const large = collect(nodeCell({ initials: "SB", dotRadius: 10 }), "text")[0];
+    expect(large.props.fontSize).toBe(small.props.fontSize * 2);
+  });
+
+  it("a resolved avatar image wins over initials (both settings on)", () => {
+    const el = nodeCell({ initials: "SB", avatarUrl: "https://example.test/av.png" });
+    expect(collect(el, "text")).toHaveLength(0);
+    expect(collect(el, "image")).toHaveLength(1);
+  });
+
+  it("the avatar ring stays inside the dot radius (strokes straddle the path)", () => {
+    const el = nodeCell({ avatarUrl: "https://example.test/av.png", dotRadius: 8 });
+    const ring = collect(el, "circle").find((c) => c.props.fill === "none");
+    expect(ring).toBeDefined();
+    expect(ring.props.r + ring.props.strokeWidth / 2).toBe(8);
+  });
+
+  it("no/empty initials fall back to the plain dot", () => {
+    expect(collect(nodeCell({}), "text")).toHaveLength(0);
+    expect(collect(nodeCell({ initials: "" }), "text")).toHaveLength(0);
+  });
+
+  it("hollow and stash nodes never render initials", () => {
+    expect(collect(nodeCell({ initials: "SB", hollow: true }), "text")).toHaveLength(0);
+    expect(collect(nodeCell({ initials: "SB", isStash: true }), "text")).toHaveLength(0);
+  });
+});
