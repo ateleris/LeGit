@@ -35,21 +35,31 @@ git push origin main
 git push origin v0.9.0
 ```
 
-Then: repo → **Releases** → the drafted **LeGit v0.9.0** → review the notes and
-assets → **Publish**. The draft body is assembled automatically: the tag's
-`## [X.Y.Z]` section from `CHANGELOG.md` plus the static download/signing
-footer (`verify-version` job in `release.yml`). Matrix: Windows (`.msi` +
-NSIS `.exe`), macOS Apple Silicon **and** Intel (`.dmg`), Linux (`.deb` +
-`.AppImage`).
+The release is **published automatically** once every platform build and
+the *Write latest.json* job succeeded (*Publish release* job) - the update
+goes out to users at that moment, so the `CHANGELOG.md` section must be
+final before tagging. If any job fails, the release stays a draft: fix the
+cause and re-run the failed jobs. The release body is assembled
+automatically: the tag's `## [X.Y.Z]` section from `CHANGELOG.md` plus the
+static download/signing footer (`verify-version` job in `release.yml`); the
+same text becomes the in-app update notes. Matrix: Windows (`.msi` + NSIS
+`.exe`), macOS Apple Silicon **and** Intel (`.dmg`), Linux (`.deb` +
+`.AppImage` + `.rpm`).
+
+The draft is created once by the `create-release` job and every build uploads
+into it by id. A re-run reuses the draft; a tag whose release is already
+published fails the run instead of uploading into the live release.
 
 Secrets: `GITHUB_TOKEN` (default) plus the **updater signing key** -
 `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (repo
 secrets, added 2026-08-21; the private key lives with Simon, the matching
 pubkey is in `tauri.conf.json`). With those set, `tauri-action` signs the
-update artifacts and attaches `latest.json` to the release - the in-app
+update artifacts, and the `updater-json` job
+(`scripts/updater-json.mjs`) attaches `latest.json` once all of them are
+uploaded - failing if any platform's installer or `.sig` is missing. The in-app
 **Check for updates** (Global Settings → About) reads
 `releases/latest/download/latest.json`, so updates go live exactly when the
-draft is published. Auto-update covers `.msi`/NSIS, `.AppImage`, and the
+release is published. Auto-update covers `.msi`/NSIS, `.AppImage`, and the
 macOS `.app`; `.deb` installs update via the package file as before. This
 updater signature is Tauri's own integrity scheme - the builds remain
 OS-unsigned (SmartScreen/Gatekeeper unchanged).
@@ -123,4 +133,4 @@ that switching formats requires uninstalling the other one first.
 - No code signing is configured — users will see an OS security warning on first run (expected for early releases)
 - CI produces macOS **Apple Silicon and Intel** builds; **Linux ARM** is still not produced
 - **AppImage requires a native Linux environment** — this only affects *manual* WSL2 builds (`linuxdeploy` needs FUSE). The CI Linux runner is native, so it builds both `.deb` and `.AppImage`; for a local WSL2 build, produce `.deb` there and `.AppImage` on a native Linux machine or VM
-- The release workflow drafts the release; a maintainer reviews and publishes it
+- The release workflow publishes the release itself once every job is green; a failed run leaves a draft

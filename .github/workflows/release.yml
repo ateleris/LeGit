@@ -2,16 +2,15 @@ name: Release
 
 # Build native bundles on each OS and attach them to a GitHub Release when a
 # version tag is pushed (e.g. `git tag v0.9.0 && git push origin v0.9.0`).
-# The release is created as a DRAFT so the notes can be reviewed before it goes
-# public — see RELEASING.md.
+# The release stays a DRAFT until every build and latest.json succeeded, then
+# is published automatically - see RELEASING.md.
 on:
   push:
     tags:
       - "v*"
 
 # Least privilege for the default GITHUB_TOKEN: read-only by default; only
-# the build job gets `contents: write` (tauri-action creates the Release and
-# uploads assets with it).
+# the jobs that create the Release or upload to it get `contents: write`.
 permissions:
   contents: read
 
@@ -53,7 +52,7 @@ jobs:
 
       # Release body = the tag's CHANGELOG.md section (guaranteed to exist by
       # the check above for >= 1.0.0) + the static download/signing footer.
-      # Consumed by tauri-action's releaseBody in the build matrix below.
+      # Consumed by create-release below.
       - name: Assemble release notes from CHANGELOG.md
         id: notes
         run: |
@@ -117,10 +116,48 @@ jobs:
           path: agent-dist/
           if-no-files-found: error
 
+  # One shared draft: per-job creation (tauri-action tagName mode) races and
+  # splits the installers across several drafts.
+  create-release:
+    name: Create draft release
+    needs: verify-version
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.release.outputs.id }}
+    steps:
+      - name: Create or reuse the tag's draft release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOTES: ${{ needs.verify-version.outputs.release_notes }}
+        run: |
+          EXISTING=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | \"\(.id) \(.draft)\"")
+          COUNT=$(printf '%s' "$EXISTING" | grep -c . || true)
+          if [ "$COUNT" -gt 1 ]; then
+            echo "::error::$COUNT releases exist for $GITHUB_REF_NAME - delete the extras first"
+            exit 1
+          fi
+          if [ "$COUNT" -eq 1 ]; then
+            read -r ID DRAFT <<< "$EXISTING"
+            if [ "$DRAFT" != "true" ]; then
+              echo "::error::release $GITHUB_REF_NAME is already published - refusing to upload into it"
+              exit 1
+            fi
+            echo "Reusing draft release $ID"
+          else
+            ID=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$GITHUB_REF_NAME" -f name="LeGit $GITHUB_REF_NAME" \
+              -f body="$NOTES" -F draft=true -F prerelease=false --jq .id)
+            echo "Created draft release $ID"
+          fi
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+
   release:
     name: Build ${{ matrix.label }}
-    needs: [verify-version, build-agent]
-    # tauri-action creates the draft Release and uploads the installers.
+    needs: [create-release, build-agent]
     permissions:
       contents: write
     strategy:
@@ -185,25 +222,53 @@ jobs:
         run: npm ci
 
       # Runs the frontend build (beforeBuildCommand: `npm run build`), bundles
-      # the app for this OS, then creates/updates the tag's GitHub Release and
-      # uploads the installers.
+      # the app for this OS, and uploads the installers + .sig files to the
+      # draft Release. latest.json is written once by the updater-json job.
       - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Updater artifact signing (bundle.createUpdaterArtifacts) - the
-          # build FAILS without these repository secrets. tauri-action also
-          # assembles/uploads latest.json when they are present.
+          # build FAILS without these repository secrets.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # Official release: keep the clean version - no `+<commit>` build
           # hash in About / the log banner (see src-tauri/build.rs).
           LEGIT_RELEASE_BUILD: "1"
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "LeGit ${{ github.ref_name }}"
-          # Assembled by verify-version: the tag's CHANGELOG.md section + the
-          # static download/signing footer.
-          releaseBody: ${{ needs.verify-version.outputs.release_notes }}
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          # Per-job latest.json rewrites race; updater-json writes it once.
+          uploadUpdaterJson: false
           args: ${{ matrix.args }}
+
+  updater-json:
+    name: Write latest.json
+    needs: [create-release, release]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+      - name: Assemble and upload latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+        run: node scripts/updater-json.mjs "$RELEASE_ID"
+
+  publish:
+    name: Publish release
+    needs: [create-release, updater-json]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+        # make_latest=legacy: a backport tag (older semver) must not take "Latest" from the newest release.
+        run: |
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false -f make_latest=legacy --jq '"Published \(.html_url)"'
