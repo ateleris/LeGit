@@ -7,7 +7,7 @@ import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { SYNC_DOMAINS } from "../../lib/queries/domains";
 import { useRemotes, useTracking } from "../../lib/queries/useRepoQueries";
 import { autoUpdateSubmodules } from "../../lib/submodules";
-import { consoleCancel, repoFetch, repoPull } from "../../lib/commands";
+import { api } from "../../lib/commands";
 import type { Branch, PullStrategy, PushOptions, Remote } from "../../lib/types";
 import { useRemoteProgressStore } from "../../store/remoteProgress";
 import { useSettingsStore } from "../../store/settings";
@@ -16,7 +16,7 @@ import { pushWithTagFollowUp } from "../../lib/autoPushTags";
 import { notifyLfsStubs } from "../../lib/lfsFeedback";
 import { notify } from "../../store/notifications";
 import { BranchPlusIcon, FetchIcon, PullIcon, PushIcon, ChevronDownIcon, StashIcon } from "../../icons";
-import { MenuItem, Separator } from "./menu/primitives";
+import { MenuItem, Separator } from "../shared/menu/primitives";
 import { useCommandAction } from "../../keys/actions";
 import { useBindingLabel, withBinding } from "../../keys/useBindingLabel";
 
@@ -33,7 +33,7 @@ type SyncOp = "fetch" | "pull" | "push";
  * auth-specific; failures are classified by the backend and surfaced as toasts.
  *
  * Long-running ops are cancellable: the frontend mints the `op_id`, passes it
- * into the sync command, and cancels via `consoleCancel` (the same shared
+ * into the sync command, and cancels via `api.consoleCancel` (the same shared
  * GitRunner). A user-cancelled op suppresses its error toast.
  */
 const PULL_STRATEGY_LABELS: Record<PullStrategy, string> = {
@@ -156,18 +156,18 @@ export function RemoteSyncToolbar({
   const cancelSync = useCallback(() => {
     if (opIdRef.current) {
       cancelRequestedRef.current = true;
-      void consoleCancel(repoId, opIdRef.current);
+      void api.consoleCancel(repoId, opIdRef.current);
     }
   }, [repoId]);
 
   const doFetch = () =>
-    runSync("fetch", (opId) => repoFetch(repoId, { all: true, prune: true, remote: null }, opId), "Fetched");
+    runSync("fetch", (opId) => api.repoFetch(repoId, { all: true, prune: true, remote: null }, opId), "Fetched");
 
   const doPull = () =>
     runSync(
       "pull",
       (opId) =>
-        repoPull(repoId, { strategy: pullStrategy }, opId).then((r) => {
+        api.repoPull(repoId, { strategy: pullStrategy }, opId).then((r) => {
           // git can exit 0 yet leave LFS pointer stubs (skipdownloaderrors,
           // non-required filter) - the user must learn the files hold no
           // real content, never a bare "Pulled".

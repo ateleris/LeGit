@@ -6,12 +6,7 @@ import { useActiveRepo } from "../../store/repos";
 import { useSettingsStore, useConfirmDestructive } from "../../store/settings";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
-import {
-  repoApplyStashFile,
-  repoCommitDetails,
-  repoCommitFiles,
-  repoRestoreFileAtRevision,
-} from "../../lib/commands";
+import { api } from "../../lib/commands";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { openSubmoduleRepo } from "../../lib/submodules";
 import { usePanelViewState } from "../../store/panelViewState";
@@ -22,8 +17,8 @@ import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { FileTree } from "../shared/FileTree/FileTree";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
-import { PanelContextMenuProvider, useDestructiveMenuConfirm } from "../Commits/menu/PanelContextMenu";
-import { MenuItem } from "../Commits/menu/primitives";
+import { PanelContextMenuProvider, useDestructiveMenuConfirm } from "../shared/menu/PanelContextMenu";
+import { MenuItem } from "../shared/menu/primitives";
 import { FileRowMenuSection } from "../shared/FileRowMenuSection";
 import type { FileViewRequest } from "../FileView/FileViewPanel";
 import { STALE } from "../../lib/queryTiming";
@@ -95,7 +90,7 @@ export function ChangedFilesPanel() {
     refetch,
   } = useQuery<CommitFileChange[]>({
     queryKey: [repo?.id, "commit-files", selectedId],
-    queryFn: () => repoCommitFiles(repo!.id, selectedId!),
+    queryFn: () => api.repoCommitFiles(repo!.id, selectedId!),
     enabled: !!repo && !!selectedId,
     staleTime: STALE.stable,
   });
@@ -104,7 +99,7 @@ export function ChangedFilesPanel() {
   // is free when that panel is also open — used only for the subject heading.
   const { data: details } = useQuery<CommitDetails>({
     queryKey: [repo?.id, "commit-details", selectedId],
-    queryFn: () => repoCommitDetails(repo!.id, selectedId!),
+    queryFn: () => api.repoCommitDetails(repo!.id, selectedId!),
     enabled: !!repo && !!selectedId,
     staleTime: STALE.stable,
   });
@@ -194,9 +189,9 @@ export function ChangedFilesPanel() {
         // Stash applies land unstaged (matching whole-stash apply); commit
         // restores keep their established staged behavior.
         if (isStash) {
-          await repoApplyStashFile(repo.id, selectedId, path);
+          await api.repoApplyStashFile(repo.id, selectedId, path);
         } else {
-          await repoRestoreFileAtRevision(repo.id, selectedId, path);
+          await api.repoRestoreFileAtRevision(repo.id, selectedId, path);
         }
         invalidateRepoDomains(queryClient, repo.id, ["status", "diff"]);
         notify.success(

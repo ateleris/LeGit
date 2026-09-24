@@ -403,9 +403,9 @@ async setGitPath(path: string | null) : Promise<Result<GitStatus, AppError>> {
 },
 /**
  * Set a per-repo git binary override. Probes the new binary; if it passes,
- * tears down the old session and opens a fresh one so runner + backend are
- * both rebuilt from scratch. Returns the new RepoSummary (new session ID).
- * See DESIGN-v0.2.md §E.
+ * persists the setting and hot-swaps the session's runner in place (same
+ * session id, backend and watcher untouched) via the `RwLock` indirection
+ * in `RepoSession.runner`, exactly like a global git path change.
  */
 async setRepoGitPath(repoId: string, path: string | null) : Promise<Result<RepoSummary, AppError>> {
     try {
@@ -455,12 +455,15 @@ async setActiveTheme(name: string) : Promise<Result<null, AppError>> {
 }
 },
 /**
- * Persist the region layout state (divider sizes, collapse, placement).
- * Called on drag-end and toggle; debounced by the frontend for dragging.
+ * Patch one or more global settings (JSON field names) in a single write and
+ * return the merged result. Fields owned by dedicated commands (git path,
+ * theme, watcher, session bookkeeping, profiles, accounts) are refused, and
+ * values are normalized (clamped) by `GlobalSettings::with_patch` - so the
+ * frontend never needs to mirror a clamp to know what was stored.
  */
-async saveRegionState(placement: RegionPlacement, sizeTop: number | null, sizeLeft: number | null, collapsed: boolean) : Promise<Result<null, AppError>> {
+async patchGlobalSettings(patch: JsonValue) : Promise<Result<GlobalSettings, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("save_region_state", { placement, sizeTop, sizeLeft, collapsed }) };
+    return { status: "ok", data: await TAURI_INVOKE("patch_global_settings", { patch }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1116,89 +1119,6 @@ async openPlatformTokenSettings(platform: string) : Promise<Result<null, AppErro
     else return { status: "error", error: e  as any };
 }
 },
-async setLineEndingChipsInChanges(enabled: boolean) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_line_ending_chips_in_changes", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async setWarnOnLineEndingCommit(warn: boolean) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_warn_on_line_ending_commit", { warn }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async setConfirmDiscard(confirm: boolean) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_confirm_discard", { confirm }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Detect case-only renames git status cannot see (default true).
- */
-async setDetectCaseRenames(enabled: boolean) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_detect_case_renames", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async setSubmoduleAttachBranch(enabled: boolean) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_submodule_attach_branch", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async setCheckoutRemoteFastForward(enabled: boolean) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_checkout_remote_fast_forward", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async setAutoFetchEnabled(enabled: boolean) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_auto_fetch_enabled", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async setCheckUpdatesOnStartup(enabled: boolean) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_check_updates_on_startup", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async setAutoFetchIntervalMinutes(minutes: number) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_auto_fetch_interval_minutes", { minutes }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async setExternalEditorCommand(command: string | null) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_external_editor_command", { command }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 /**
  * Open the repo root in the configured external editor, or in the OS file
  * manager when no editor is configured. Remote repos spawn the editor
@@ -1248,116 +1168,6 @@ async repoRemoteWebUrl(repoId: string) : Promise<Result<string | null, AppError>
 async repoOpenRemotePage(repoId: string) : Promise<Result<null, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("repo_open_remote_page", { repoId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async saveSwitchDirtyBehavior(behavior: SwitchDirtyBehavior) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("save_switch_dirty_behavior", { behavior }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async savePullStrategy(strategy: PullStrategy) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("save_pull_strategy", { strategy }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Persist the Stash button's default mode (include untracked files or not).
- */
-async saveStashIncludeUntracked(includeUntracked: boolean) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("save_stash_include_untracked", { includeUntracked }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Persist the `push --recurse-submodules` guard mode (None = off).
- */
-async savePushRecurseSubmodules(mode: PushRecurseMode | null) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("save_push_recurse_submodules", { mode }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async setCommitAvatars(enabled: boolean) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_commit_avatars", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async setCommitInitials(enabled: boolean) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_commit_initials", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async setAutoPushTags(enabled: boolean) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_auto_push_tags", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async setDiffSyntaxHighlighting(enabled: boolean) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_diff_syntax_highlighting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async setCommitDateAbsolute(enabled: boolean) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_commit_date_absolute", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async setCommitDateFormat(format: CommitDateFormat) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_commit_date_format", { format }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async setCommitDateShowTime(enabled: boolean) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_commit_date_show_time", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async setSuppressedAutoOpenPanels(panels: string[]) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_suppressed_auto_open_panels", { panels }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async setWorkingChangesSectionOrder(order: string[]) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_working_changes_section_order", { order }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1841,14 +1651,6 @@ async repoSearchCommits(repoId: string, query: string, kind: CommitSearchKind, m
 async repoResolveCommit(repoId: string, rev: string) : Promise<Result<CommitId, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("repo_resolve_commit", { repoId, rev }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async repoSearchPaths(repoId: string, query: string, maxCount: number) : Promise<Result<string[], AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("repo_search_paths", { repoId, query, maxCount }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2641,127 +2443,6 @@ async unsetLaneLock(repoId: string, refName: string) : Promise<Result<LaneLock[]
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
-},
-async saveColumnPreferences(prefs: JsonValue) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("save_column_preferences", { prefs }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Persist the Changed Files panel's view mode (`"tree"` | `"flat"`).
- */
-async saveChangedFilesViewMode(mode: string) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("save_changed_files_view_mode", { mode }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Persist the Branches section's list style (`"tree"` | `"flat"`).
- */
-async saveBranchListView(mode: string) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("save_branch_list_view", { mode }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Persist the Refs panel sort order for branches
- * (`"alphabetical"` | `"date"` | `"date_reversed"`). Unknown values are
- * stored as-is; the frontend falls back to alphabetical when reading.
- */
-async saveRefsSortMode(mode: string) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("save_refs_sort_mode", { mode }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Persist the Tags section's own sort order (same values; unset inherits
- * `refs_sort_mode`).
- */
-async saveTagsSortMode(mode: string) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("save_tags_sort_mode", { mode }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Whether creating a branch also checks it out (default true).
- */
-async setCheckoutNewBranch(enabled: boolean) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_checkout_new_branch", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Persist the global UI font size (px), clamped to a sane range.
- */
-async saveUiFontSize(size: number) : Promise<Result<number, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("save_ui_font_size", { size }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Persist the dock chrome dimensions: the gap between panel groups and the
- * groups' corner radius (px, clamped; 0/0 = the flush square default).
- */
-async savePanelChrome(gap: number, radius: number, border: number) : Promise<Result<PanelChrome, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("save_panel_chrome", { gap, radius, border }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async saveLaneColoredBranchChips(enabled: boolean) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("save_lane_colored_branch_chips", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async saveStashBaseLaneColor(enabled: boolean) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("save_stash_base_lane_color", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Persist the Commits-panel graph metrics (row/line height, per-lane width,
- * commit-dot radius, and connector line width). Clamps each value to sane px
- * bounds before storing; the dot radius and line width are capped to half the
- * smaller cell dimension so they can never overflow the cell or overlap a
- * neighbouring lane. Text has no per-panel size — it follows the global UI
- * font size.
- */
-async saveCommitsGraphMetrics(rowHeight: number, laneWidth: number, dotRadius: number, lineWidth: number) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("save_commits_graph_metrics", { rowHeight, laneWidth, dotRadius, lineWidth }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
 }
 }
 
@@ -2776,6 +2457,20 @@ async saveCommitsGraphMetrics(rowHeight: number, laneWidth: number, dotRadius: n
 /** user-defined types **/
 
 export type AppError = { kind: "UnknownRepo"; details: string } | { kind: "NotARepo"; details: string } | { kind: "Io"; details: string } | { kind: "Git"; details: GitError } | { kind: "GitUnavailable"; details: string } | { kind: "ForbiddenArg"; details: string } | { kind: "InvalidTheme"; details: string } | { kind: "InvalidLayout"; details: string } | { kind: "Settings"; details: string } | { kind: "ParseArgs"; details: string } | { kind: "InvalidLockIndex"; details: number } | { kind: "UnknownProfile"; details: string }
+/**
+ * Wire form of the askpass prompt kind.
+ */
+export type AskpassPromptKind = "passphrase" | "confirmation" | "other"
+/**
+ * Payload for `ASKPASS_REQUEST_EVENT`. `kind` drives the dialog shape;
+ * `prompt` is ssh's raw text (shown verbatim for confirmations - the
+ * host-key fingerprint must reach the user unaltered).
+ */
+export type AskpassRequestPayload = { request_id: string; prompt: string; kind: AskpassPromptKind; key_path: string | null; 
+/**
+ * A repeat after a wrong passphrase (the dialog says so).
+ */
+retry: boolean; repo_dir: string | null }
 /**
  * A credential helper found on this machine.
  */
@@ -2898,6 +2593,36 @@ disk_path: string;
  * the shallowest drifting component).
  */
 is_dir: boolean }
+/**
+ * A react-query data domain affected by a filesystem change. Mirrors the
+ * query-key suffixes used by the frontend
+ * (`[repoId, "status"|"log"|"branches"|"stashes"|"tags"|"diff"|…]`).
+ */
+export type ChangeDomain = "status" | "log" | "branches" | "stashes" | "tags" | 
+/**
+ * Worktree content, the index, or the HEAD-anchored comparison base
+ * changed: open worktree/index diffs may be stale. Revision-pair diffs
+ * are immutable, so ref-only churn (remote/tag/stash refs) stays out.
+ */
+"diff" | 
+/**
+ * A merge/rebase/cherry-pick/revert started, advanced, or ended
+ * (MERGE_HEAD, MERGE_MSG, rebase-merge/, rebase-apply/, *_HEAD).
+ */
+"op_state" | 
+/**
+ * Submodule state changed: a write inside a submodule gitdir
+ * (`.git/modules/**` HEAD/refs/index). Superproject-side triggers
+ * (index, `.gitmodules`) already arrive via `Status`, which the frontend
+ * derives into the submodules query (`withDerivedDomains`).
+ */
+"submodules" | 
+/**
+ * Worktree metadata changed: a write inside `.git/worktrees/**`
+ * (worktree add/remove/lock, or another worktree's HEAD move). Drives
+ * the Refs panel's Worktrees pane.
+ */
+"worktrees"
 /**
  * `repo_clone`'s result: the opened repo plus any LFS pointer stubs the
  * clone's checkout left behind (git can exit 0 with failed LFS downloads
@@ -3056,7 +2781,21 @@ username: string; display_name: string | null }
  * the metadata behind: the UI flags that as "reconnect needed".
  */
 export type ConnectedAccountStatus = { account: ConnectedAccountMeta; token_present: boolean }
+export type ConsoleEventPayload = { op_id: string; 
+/**
+ * Every event that arrived within the flush window, in order.
+ */
+events: RunnerEvent[]; 
+/**
+ * True when the op is now paused waiting for more credit (the pager's
+ * "-- More --" state): the frontend continues it via `console_feed`.
+ */
+paused: boolean }
 export type ConsoleExecHandle = { op_id: string; argv: string[] }
+/**
+ * Payload for `CREDENTIAL_CLOSED_EVENT` and `ASKPASS_CLOSED_EVENT`.
+ */
+export type CredentialClosedPayload = { request_id: string }
 /**
  * The effective helper entry per scope (last non-empty entry at that scope;
  * `None` = no helper configured there). Local scope is deliberately absent:
@@ -3064,6 +2803,16 @@ export type ConsoleExecHandle = { op_id: string; argv: string[] }
  * why global views must not consult local scope).
  */
 export type CredentialHelperView = { helper_global: string | null; helper_system: string | null }
+/**
+ * Payload for `CREDENTIAL_REQUEST_EVENT`.
+ */
+export type CredentialRequestPayload = { request_id: string; protocol: string; host: string; username: string | null; 
+/**
+ * Directory the triggering git operation ran in (its repo working
+ * tree), so the user can verify an unexpected prompt. Attribution only
+ * - not used for any decision.
+ */
+repo_dir: string | null }
 export type DiffEntry = { Text: TextDiff } | { Binary: BinaryDiff } | { Submodule: SubmoduleChange } | 
 /**
  * The raw diff text exceeded the display cap. Rendering it would move
@@ -3277,6 +3026,19 @@ export type GitError = { kind: "RefNotFound"; details: string } | { kind: "AuthF
  * The payload is the user-facing sentence.
  */
 { kind: "UnsafeArgument"; details: string } | { kind: "Parse"; details: string } | { kind: "GitUnavailable"; details: string } | { kind: "RewordNotHead" } | { kind: "RewordPushed" } | { kind: "Internal"; details: string }
+/**
+ * A completed `git` invocation, reported to the process-wide observer (the app
+ * forwards these to the UI as a git command log). Excludes stdout (often large)
+ * but keeps stderr so failures are diagnosable.
+ */
+export type GitInvocation = { args: string[]; cwd: string | null; exit_code: number | null; success: boolean; duration_ms: number; stderr: string; 
+/**
+ * Which host ran this (`None` = the app machine). Runners never set it:
+ * the forwarding layer stamps it (a remote host's connection sink tags
+ * its label), so the Git Log panel can tell same-pathed repos on
+ * different hosts apart.
+ */
+host?: string | null }
 /**
  * A named git-identity profile, defined once globally and selectable per repo.
  * Bundles identity + signing + auth-key config that is written to a repo's
@@ -3774,7 +3536,6 @@ export type MergeOutcome = { kind: "fast_forwarded" } | { kind: "merged" } |
  * `--squash`: changes staged, no commit created; the user commits.
  */
 { kind: "squashed" } | { kind: "already_up_to_date" } | { kind: "conflicts"; message: string }
-export type PanelChrome = { gap: number; radius: number; border: number }
 /**
  * How the repo's live local config relates to the defined profiles.
  */
@@ -3991,6 +3752,28 @@ local_branch: string; switch: SwitchOutcome; fast_forward: FastForwardResult;
  * LFS pointer stubs the checkout left behind (see `LfsStubs`).
  */
 lfs_stubs: LfsStubs | null }
+export type RemoteHostGitPayload = { distro: string; status: GitStatus }
+/**
+ * Wire form of a host's connectivity: `Disconnected` = lost, reconnect loop
+ * running; `Gone` = lost, no reconnect coming; `ConnectFailed` = an attempt
+ * failed and its caller surfaces the error itself.
+ */
+export type RemoteHostStatus = "connecting" | "connected" | "disconnected" | "gone" | "connect_failed"
+export type RemoteHostStatusPayload = { distro: string; status: RemoteHostStatus }
+/**
+ * One parsed progress update, e.g. "Receiving objects:  45% (450/1000)".
+ */
+export type RemoteProgress = { 
+/**
+ * The phase label as git prints it (e.g. `Receiving objects`,
+ * `Resolving deltas`, `Writing objects`, `Compressing objects`).
+ */
+phase: string; 
+/**
+ * The percentage when the phase reports one (counting phases may not).
+ */
+percent: number | null }
+export type RemoteProgressPayload = { op_id: string; progress: RemoteProgress }
 /**
  * A tag as it exists on a remote (`git ls-remote --tags`).
  */
@@ -4015,6 +3798,17 @@ export type RenormalizeOutcome = { restaged: string[] }
  * stages those edits too - `--renormalize` implies `-u`).
  */
 export type RenormalizePreview = { files: string[]; unstaged_changes: number }
+/**
+ * Frontend event payload: which repo changed and in which domains. The wire
+ * shape of the Tauri `legit://repo-changed` event (and the agent protocol's
+ * watch notification); the frontend hand-mirrors it in `src/lib/types.ts`.
+ */
+export type RepoChangedPayload = { repo_id: string; domains: ChangeDomain[]; 
+/**
+ * See [`WatchBatch::trigger_paths`]. Feeds the Git Log panel so a
+ * refetch's cause is visible next to the git calls it triggered.
+ */
+trigger_paths: string[]; trigger_count: number }
 /**
  * A single file in the repo-wide Files tree (`list_repo_files`,
  * `list_files_at_revision`).
@@ -4146,6 +3940,10 @@ export type ResetMode = "soft" | "mixed" | "hard"
  */
 export type ResolvedIdentity = { user_name: string | null; user_email: string | null }
 export type RestoreResult = { repos: RepoSummary[]; active_id: string | null }
+/**
+ * Streaming event emitted while a `git` invocation is in flight.
+ */
+export type RunnerEvent = { kind: "stdout"; line: string } | { kind: "stderr"; line: string } | { kind: "finished"; exit_code: number | null; success: boolean; duration_ms: number }
 /**
  * One config key across the scopes; `resolved` is the value git actually
  * uses (local > global > system).
@@ -4528,6 +4326,7 @@ ahead: number;
  * Commits on the upstream not yet on the local branch.
  */
 behind: number }
+export type WatchStatePayload = { repo_id: string; error: string | null }
 /**
  * How `worktree add` populates the new worktree.
  */

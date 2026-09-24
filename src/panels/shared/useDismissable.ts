@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef } from "react";
 import type React from "react";
 import { useLayersStore, type LayerKind } from "../../store/layers";
-import { MENU_LAYER_ATTR } from "../Commits/menu/primitives";
+import { MENU_LAYER_ATTR } from "../shared/menu/primitives";
 
 /**
  * Shared dismissal for dropdowns/popovers: outside mousedown (capture phase,

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { cancelClone } from "../lib/commands";
+import { api } from "../lib/commands";
 import type { CloneOptions } from "../lib/commands";
 import { lfsDownloadErrorMessage } from "../lib/lfsFeedback";
 import { cloneCancelCleanupFailure, gitErrorKind } from "../lib/errors";
@@ -132,7 +132,7 @@ export const useCloneStore = create<CloneStore>((set, get) => ({
     });
     // Fire-and-forget: the clone's own promise reports the outcome. A
     // rejection here only means the op had already finished.
-    void cancelClone(opId).catch(() => {});
+    void api.cancelClone(opId).catch(() => {});
   },
 
   focus(opId) {

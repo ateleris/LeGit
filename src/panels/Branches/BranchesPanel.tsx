@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { SectionLabel } from "../shared/SectionChrome";
 import {
   checkoutBranch,
   checkoutRemoteBranch,
@@ -37,7 +38,7 @@ import { RefFilterRow } from "../shared/RefFilterRow";
 import { matchesRefFilter, filterRemoteGroups } from "../../lib/refFilter";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { isRowBackgroundClick, jumpPanelsToCommit } from "../shared/jumpToCommit";
-import { PanelContextMenuProvider } from "../Commits/menu/PanelContextMenu";
+import { PanelContextMenuProvider } from "../shared/menu/PanelContextMenu";
 import { BranchMenuSection, RemoteBranchMenuSection } from "../Commits/menu/BranchMenuSection";
 
 type EditState = { name: string; mode: "rename" } | null;
@@ -511,21 +512,6 @@ export function BranchesSection() {
 // ---------------------------------------------------------------------------
 // Subcomponents
 // ---------------------------------------------------------------------------
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <span
-      style={{
-        fontSize: "var(--fz-sm)",
-        textTransform: "uppercase",
-        letterSpacing: 0.5,
-        color: "var(--subtle-fg)",
-      }}
-    >
-      {children}
-    </span>
-  );
-}
 
 /** Collapsible per-remote group heading in the remote-branches area. */
 function RemoteGroupHeader({

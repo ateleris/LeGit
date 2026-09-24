@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { appBuildHash } from "./commands";
+import { api } from "./commands";
 
 /** The user-facing version string: `1.0.3+abc1234` when a build hash was
  * baked in (dev/PR builds), the clean version otherwise (releases). Null
@@ -46,7 +46,7 @@ export function useAppVersionDisplay(): string | null {
   useEffect(() => {
     if (cachedHash !== undefined) return;
     let disposed = false;
-    appBuildHash()
+    api.appBuildHash()
       .then((h) => {
         cachedHash = h;
         if (!disposed) setHash(h);

@@ -5,15 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
-import {
-  consoleCancel,
-  repoAddRemote,
-  repoFetch,
-  repoPruneRemote,
-  repoRemoveRemote,
-  repoRenameRemote,
-  repoSetRemoteUrl,
-} from "../../lib/commands";
+import { api } from "../../lib/commands";
 import type { Remote } from "../../lib/types";
 import { formatAppError, gitErrorKind } from "../../lib/errors";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
@@ -104,7 +96,7 @@ export function RemotesSection() {
   const cancelNet = useCallback(() => {
     if (repo && opIdRef.current) {
       cancelRequestedRef.current = true;
-      void consoleCancel(repo.id, opIdRef.current);
+      void api.consoleCancel(repo.id, opIdRef.current);
     }
   }, [repo]);
 
@@ -124,21 +116,21 @@ export function RemotesSection() {
       setEdit(null);
       return;
     }
-    if (await runMut(() => repoRenameRemote(repo!.id, name, next))) setEdit(null);
+    if (await runMut(() => api.repoRenameRemote(repo!.id, name, next))) setEdit(null);
   };
 
   const saveUrls = async (r: Remote) => {
     const f = draftFetch.trim();
     const p = draftPush.trim();
     const ok = await runMut(async () => {
-      if (f && f !== r.fetch_url) await repoSetRemoteUrl(repo!.id, r.name, f, false);
-      if (p !== r.push_url && p !== "") await repoSetRemoteUrl(repo!.id, r.name, p, true);
+      if (f && f !== r.fetch_url) await api.repoSetRemoteUrl(repo!.id, r.name, f, false);
+      if (p !== r.push_url && p !== "") await api.repoSetRemoteUrl(repo!.id, r.name, p, true);
     });
     if (ok) setEdit(null);
   };
 
   const doRemove = async (name: string) => {
-    if (await runMut(() => repoRemoveRemote(repo!.id, name))) setEdit(null);
+    if (await runMut(() => api.repoRemoveRemote(repo!.id, name))) setEdit(null);
   };
 
   // Central confirmation dialog (global destructive-confirmation setting:
@@ -155,7 +147,7 @@ export function RemotesSection() {
   };
 
   const addRemote = async (name: string, url: string): Promise<boolean> =>
-    runMut(() => repoAddRemote(repo!.id, name, url));
+    runMut(() => api.repoAddRemote(repo!.id, name, url));
 
   if (!repo) {
     return (
@@ -235,7 +227,7 @@ export function RemotesSection() {
                         disabled={blocked}
                         onClick={() =>
                           runNet(`fetch:${r.name}`, (opId) =>
-                            repoFetch(repo.id, { all: false, prune: false, remote: r.name }, opId),
+                            api.repoFetch(repo.id, { all: false, prune: false, remote: r.name }, opId),
                           )
                         }
                       />
@@ -244,7 +236,7 @@ export function RemotesSection() {
                         title="Delete local remote-tracking refs that no longer exist on the remote"
                         disabled={blocked}
                         onClick={() =>
-                          runNet(`prune:${r.name}`, (opId) => repoPruneRemote(repo.id, r.name, opId))
+                          runNet(`prune:${r.name}`, (opId) => api.repoPruneRemote(repo.id, r.name, opId))
                         }
                       />
                       <ToolbarButton label="Edit URLs" disabled={blocked} onClick={() => openUrls(r)} />

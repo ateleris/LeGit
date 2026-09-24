@@ -1,216 +1,151 @@
-// Hand-written mirror of the Rust types that cross the Tauri IPC boundary.
-// `bindingsParity.ts` asserts every mirrored type is identical to its
-// generated counterpart in `bindings.ts`, so tsc fails on drift.
+// Types crossing the Tauri IPC boundary are re-exported from the GENERATED
+// bindings (`src/lib/bindings.ts`, kept fresh by `cargo test -p legit-app
+// bindings`; regenerate with `LEGIT_UPDATE_BINDINGS=1`). Only frontend-owned
+// types (summon payloads, frontend-owned JSON schemas) are defined here.
 
-import type { GitError, JsonValue } from "./bindings";
-export type { GitError, JsonValue };
+export type {
+  AppError,
+  AskpassPromptKind,
+  AskpassRequestPayload,
+  AvailableHelper,
+  BinaryDiff,
+  BlameHunk,
+  Branch,
+  BranchMergeAnalysis,
+  CaseDriftEntry,
+  ChangeDomain,
+  CloneOutcome,
+  Commit,
+  CommitButtonMode,
+  CommitDetails,
+  CommitFileChange,
+  CommitId,
+  CommitSearchKind,
+  ConfigScope,
+  ConfigValue,
+  ConflictEntry,
+  ConflictFileSides,
+  ConflictKind,
+  ConflictSide,
+  ConnectedAccountMeta,
+  ConnectedAccountStatus,
+  ConsoleEventPayload,
+  ConsoleExecHandle,
+  CredentialClosedPayload,
+  CredentialHelperView,
+  CredentialRequestPayload,
+  DiffEntry,
+  DiffHunk,
+  DiffLine,
+  DiffLineKind,
+  DiffSource,
+  FastForwardResult,
+  FetchOptions,
+  FfMode,
+  FileAtRevision,
+  FileHistoryEntry,
+  FilePreview,
+  FileState,
+  FileStatus,
+  GitAttrRule,
+  GitError,
+  GitInvocation,
+  GitProfile,
+  GitProfilesDoc,
+  GitStatus,
+  GitVersion,
+  GitmodulesFinding,
+  GlobalSettings,
+  HostRef,
+  IdentityView,
+  ImageFormat,
+  JsonValue,
+  KeyDiff,
+  KeybindingsFile,
+  LaneLock,
+  LaneLocksDoc,
+  LayoutEntry,
+  LfsPatternsView,
+  LfsStatus,
+  LfsStubs,
+  LineEndingKind,
+  LineEndingStatusEntry,
+  LineEndingTransition,
+  LineEndingsView,
+  ManagedConfigView,
+  ManagedKeys,
+  MergeOptions,
+  MergeOutcome,
+  ProfileMatch,
+  ProfileStatus,
+  PullOptions,
+  PullOutcome,
+  PullStrategy,
+  PushOptions,
+  PushRecurseMode,
+  RebaseAction,
+  RebaseOutcome,
+  RebaseRangeInfo,
+  RebaseStep,
+  RefDecoration,
+  ReflogEntry,
+  RegionPlacement,
+  Remote,
+  RemoteCheckoutOutcome,
+  RemoteHostGitPayload,
+  RemoteHostStatusPayload,
+  RemoteProgress,
+  RemoteProgressPayload,
+  RemoteTag,
+  RenormalizeOutcome,
+  RenormalizePreview,
+  RepoChangedPayload,
+  RepoFileEntry,
+  RepoFileKind,
+  RepoOpState,
+  RepoSettings,
+  RepoSummary,
+  ResetMode,
+  ResolvedIdentity,
+  RestoreResult,
+  ScopedConfig,
+  SequenceOutcome,
+  Signature,
+  SignatureStatus,
+  SignatureVerification,
+  SigningView,
+  SshKeyStatus,
+  SshTestOutcome,
+  StashApplyOutcome,
+  StashEntry,
+  StashOutcome,
+  SubmoduleAutoUpdateResult,
+  SubmoduleAutoUpdateStatus,
+  SubmoduleChange,
+  SubmoduleGitdirInfo,
+  SubmoduleInfo,
+  SubmoduleLog,
+  SubmoduleLogEntry,
+  SubmoduleState,
+  SubmoduleUpdateOptions,
+  SubmoduleUpdateStrategy,
+  SwitchDirtyBehavior,
+  SwitchOutcome,
+  SwitchResult,
+  TagInfo,
+  TextDiff,
+  ThemeEntry,
+  ThemeSource,
+  TrackingStatus,
+  WatchStatePayload,
+  WorktreeAddMode,
+  WorktreeInfo,
+  WslDistro,
+} from "./bindings";
 
-import type { CommitDateFormat } from "./time";
+import type { DiffSource, FileState, RepoSettings } from "./bindings";
 
 export type RepoId = string;
-
-/** The host part of a repo locator (`src-tauri/src/remote/locator.rs`);
- * absent/null = local repo. */
-export type HostRef = { kind: "wsl"; distro: string };
-
-export interface RepoSummary {
-  id: RepoId;
-  /** Repo root as the repo's HOST sees it (a WSL path for remote repos). */
-  path: string;
-  name: string;
-  host?: HostRef | null;
-  /** Persistable locator string (bare path locally, `wsl://<distro>/<path>`
-   * remotely) — what recents store and `openRepo` accepts. */
-  locator?: string;
-  /** Why the repo's filesystem watcher failed to start; null/absent =
-   * watching (or watching deliberately disabled). Drives the "live updates
-   * off" badge on the repo tab. */
-  watch_error?: string | null;
-}
-
-/** Payload of the `legit://watch-state` event: a repo's watcher came up
- * (error null) or failed to start (error = reason). */
-export interface WatchStatePayload {
-  repo_id: RepoId;
-  error: string | null;
-}
-
-/** One WSL distribution (backend `remote::wsl::WslDistro`). */
-export interface WslDistro {
-  name: string;
-  running: boolean;
-  is_default: boolean;
-}
-
-/** Payload of the `legit://remote-host-status` event. "disconnected" means
- *  the backend reconnect loop is running; "gone" means the connection is lost
- *  and no reconnect is coming (settings-only host, or host released);
- *  "connect_failed" means an attempt failed and its caller reports the error. */
-export interface RemoteHostStatusPayload {
-  distro: string;
-  status: "connecting" | "connected" | "disconnected" | "gone" | "connect_failed";
-}
-
-/** A connected host whose git is unusable (missing, or below the floor).
- *  Emitted once per connect, and only when there is a problem. */
-export interface RemoteHostGitPayload {
-  distro: string;
-  status: GitStatus;
-}
-
-/** repo_clone's result: the opened repo plus any LFS pointer stubs the
- * clone's checkout left behind. */
-export interface CloneOutcome {
-  summary: RepoSummary;
-  lfs_stubs: LfsStubs | null;
-}
-
-export type RegionPlacement = "top" | "left";
-
-// Field optionality mirrors the generated bindings.ts exactly (serde default
-// = optional), so swapping this hand-mirror for bindings.ts stays a no-op.
-export interface GlobalSettings {
-  git_path_override: string | null;
-  last_open_repos?: string[];
-  currently_open?: string[];
-  /** Parent directory of the most recent successful clone; prefills the
-   * clone/init dialog's folder field. */
-  last_clone_parent_dir?: string | null;
-  active_open_repo: string | null;
-  active_theme: string | null;
-  global_region_placement: RegionPlacement;
-  global_region_size_top: number | null;
-  global_region_size_left: number | null;
-  global_dock_collapsed: boolean;
-  /** Attention-only line-ending chips on Working Changes rows (default true). */
-  line_ending_chips_in_changes?: boolean;
-  /** Warn before committing staged line-ending changes (default true). */
-  warn_on_line_ending_commit?: boolean;
-  column_preferences?: JsonValue;
-  commits_row_height?: number;
-  commits_lane_width?: number;
-  commits_dot_radius?: number;
-  commits_line_width?: number;
-  /** Remembered Changed Files panel view mode ("tree" | "flat"). */
-  changed_files_view_mode?: string | null;
-  branch_list_view?: string | null;
-  /** Sort order for branches in the Refs panel
-   * ("alphabetical" | "date" | "date_reversed"); null = alphabetical. */
-  refs_sort_mode?: string | null;
-  /** Sort order for the Tags section; null = inherit refs_sort_mode. */
-  tags_sort_mode?: string | null;
-  /** Global UI font size (px) — base for the panel text scale and min sizes. */
-  ui_font_size?: number;
-  /** Gap between dockview panel groups (px); 0/absent = flush. */
-  panel_gap?: number;
-  panel_border_width?: number;
-  lane_colored_branch_chips?: boolean;
-  stash_base_lane_color?: boolean;
-  /** Corner radius of dockview panel groups (px); 0/absent = square. */
-  panel_corner_radius?: number;
-  /** Whether the filesystem watcher auto-refreshes the UI on disk changes. */
-  watcher_enabled?: boolean;
-  /** Whether discarding changes asks for confirmation first (default true). */
-  confirm_discard?: boolean;
-  /** Detect case-only renames git status cannot see and offer to stage them
-   * (default true). Only ever scans on case-insensitive filesystems. */
-  detect_case_renames?: boolean;
-  /** Whether creating a branch also checks it out (default true). */
-  checkout_new_branch?: boolean;
-  /** Periodic background auto-fetch of the active repo's remotes (default off).
-   * Fetch-only and quiet: never pulls/merges, never toasts. */
-  auto_fetch_enabled?: boolean;
-  /** Minutes between background auto-fetches (default 15, minimum 1). */
-  auto_fetch_interval_minutes?: number;
-  /** Check for app updates once at startup (default true). Check-only: an
-   * update surfaces as a toast, nothing downloads without consent. */
-  check_updates_on_startup?: boolean;
-  /** Command template for "open in external editor" (e.g. `code "$ROOT"`).
-   * $ROOT = repo root, $FILE = file path for the open-file action; each is
-   * appended when absent. null/blank = use the OS file manager instead. */
-  external_editor_command?: string | null;
-  /** How to handle uncommitted changes when switching branches (null = try_directly). */
-  switch_dirty_behavior: SwitchDirtyBehavior | null;
-  /** Checking out a remote branch also fast-forwards the local branch to the
-   * remote tip (a LOCAL `merge --ff-only`, never a network pull). Default ON;
-   * consumers read `?? true`. Off = plain checkout like other git clients. */
-  checkout_remote_fast_forward?: boolean;
-  /** Pull integration strategy (null = Default: the repo's pull.rebase decides). */
-  pull_strategy?: PullStrategy | null;
-  /** Default mode for the Commits-toolbar Stash button: include untracked
-   * files (default off = tracked changes only). Picked via the caret menu. */
-  stash_include_untracked?: boolean;
-  /** `push --recurse-submodules` guard mode (null = off). */
-  push_recurse_submodules?: PushRecurseMode | null;
-  /** Auto-push tags with their commit (default off): a push also pushes the
-   * tags whose target commit became public through it, and a tag created on
-   * an already-public commit is pushed immediately. Repo-overridable. */
-  auto_push_tags?: boolean;
-  submodule_attach_branch?: boolean;
-  /** Show author Gravatars in the commit graph. OFF by default — enabling it
-   * sends hashed author emails to gravatar.com. */
-  commit_avatars?: boolean;
-  /** Show author initials in the commit graph dots (default off, purely
-   * local). With `commit_avatars` also on, initials show only for authors
-   * without a Gravatar. */
-  commit_initials?: boolean;
-  /** Syntax-highlight code in the diff viewer (default off). */
-  diff_syntax_highlighting?: boolean;
-  /** Show the full author datetime in the Commits panel's Date column instead
-   * of the compact relative form (default off = relative). */
-  commit_date_absolute?: boolean;
-  /** Which absolute format the Date column uses (when `commit_date_absolute`).
-   * Mirrors the backend `CommitDateFormat`; the string union lives in
-   * `lib/time.ts` next to the formatter. */
-  commit_date_format?: CommitDateFormat;
-  /** Whether the absolute Date column includes the time of day (default on;
-   * off shows the date only). Ignored while the column is relative. */
-  commit_date_show_time?: boolean;
-  /** Panel IDs the user opted out of auto-opening: a summon to one degrades to
-   * notifyIfOpen (updates only if already open, never pops open). */
-  suppressed_auto_open_panels?: string[];
-  /** Top-to-bottom order of the Working Changes sections ("unstaged" | "staged"
-   * | "commit"). Normalized on read; default unstaged → staged → commit. */
-  working_changes_section_order?: string[];
-  /** User-defined git identity profiles (camelCase key — serde rename). */
-  gitProfiles?: GitProfilesDoc;
-  /** Connected platform accounts (managed via connect/disconnect commands,
-   * read via list_connected_accounts). Mirrored so a hand-built
-   * GlobalSettings can never silently drop it (global settings currently
-   * have no whole-struct write command, so this is preventive). */
-  connected_accounts?: ConnectedAccountMeta[];
-}
-
-/** Default action of the Working Changes commit button (matches the Rust
- *  `CommitButtonMode` in state.rs, snake_case variants). */
-export type CommitButtonMode = "commit" | "commit_and_push";
-
-export interface RepoSettings {
-  git_path_override: string | null;
-  /** Per-repo override for the Working Changes chips (null = inherit). */
-  line_ending_chips_in_changes: boolean | null;
-  /** Per-repo override for the commit warning (null = inherit). */
-  warn_on_line_ending_commit: boolean | null;
-  /** Per-repo override for the external editor command template
-   * (null/blank = inherit global; same $ROOT/$FILE semantics). */
-  external_editor_command?: string | null;
-  /** Selected git profile id (null = none / inherit). Intent hint only. */
-  git_profile_id?: string | null;
-  /** Auto-update submodule pointers after switch/pull (null = default ON). */
-  submodule_auto_update?: boolean | null;
-  /** Show remote-tracking branches in the commit tree (null = default ON). */
-  show_remote_branches?: boolean | null;
-  /** Per-repo override for auto-push tags (null = inherit global). */
-  auto_push_tags?: boolean | null;
-  /** Suppress the missing-git-lfs warning banner (null = warn). */
-  suppress_lfs_warning?: boolean | null;
-  /** Working Changes commit button default (null = plain commit).
-   * Deliberately per-repo only and set only via the button's caret menu -
-   * no settings-panel section (see the BACKLOG "Commit & Push" entry). */
-  commit_button_mode?: CommitButtonMode | null;
-  /** Commit-graph lane locks (managed via set/unset_lane_lock). */
-  laneLocks?: LaneLocksDoc;
-}
 
 /** Fields a `patch_repo_settings` call may change; the rest are owned by
  *  their own commands (lane locks, profile selection, the probed git path)
@@ -218,105 +153,6 @@ export interface RepoSettings {
 export type RepoSettingsPatch = Partial<
   Omit<RepoSettings, "laneLocks" | "git_profile_id" | "git_path_override">
 >;
-
-export interface RestoreResult {
-  repos: RepoSummary[];
-  active_id: string | null;
-}
-
-type RunnerEvent =
-  | { kind: "stdout"; line: string }
-  | { kind: "stderr"; line: string }
-  | { kind: "finished"; exit_code: number | null; success: boolean; duration_ms: number };
-
-export interface ConsoleEventPayload {
-  op_id: string;
-  /** Every event that arrived within the backend's flush window, in order
-   *  (the runner's line-per-event stream is batched before crossing IPC). */
-  events: RunnerEvent[];
-  /** True when the op is paused out of stdout credit (the pager's
-   *  "-- More --" state); continue it via `consoleFeed`. */
-  paused: boolean;
-}
-
-export interface ConsoleExecHandle {
-  op_id: string;
-  argv: string[];
-}
-
-/** Query domain affected by a filesystem change. Matches the react-query key
- *  suffixes `[repoId, <domain>]` and the Rust `ChangeDomain` enum in
- *  `src-tauri/src/watcher.rs`. */
-export type ChangeDomain =
-  | "status"
-  | "log"
-  | "branches"
-  | "stashes"
-  | "tags"
-  | "diff"
-  | "op_state"
-  | "submodules"
-  | "worktrees";
-
-/** Payload of the `legit://repo-changed` event emitted by the FS watcher. */
-export interface RepoChangedPayload {
-  repo_id: string;
-  domains: ChangeDomain[];
-  /** First few classified trigger paths (repo-relative, capped at 8 by the
-   *  backend); `trigger_count` carries the full total. */
-  trigger_paths: string[];
-  trigger_count: number;
-}
-
-/** A completed git invocation reported by the backend (matches legit-core
- *  `GitInvocation`). Drives the Git Log panel. */
-export interface GitInvocation {
-  args: string[];
-  cwd: string | null;
-  exit_code: number | null;
-  success: boolean;
-  duration_ms: number;
-  stderr: string;
-  /** Which host ran this (absent/null = the app machine). */
-  host?: string | null;
-}
-
-export interface GitVersion {
-  raw: string;
-  major: number;
-  minor: number;
-  patch: number;
-}
-
-export interface GitStatus {
-  resolved_path: string;
-  version: GitVersion | null;
-  meets_minimum: boolean;
-  minimum_required: [number, number, number];
-  user_override: string | null;
-  error: string | null;
-}
-
-export type ThemeSource = "builtin" | "user";
-
-export interface ThemeEntry {
-  name: string;
-  source: ThemeSource;
-  path: string;
-}
-
-export interface LayoutEntry {
-  name: string;
-  path: string;
-}
-
-/** The persisted user keymap (`keybindings.json`): a DIFF from the shipped
- *  defaults. `[]` = explicitly unbound; an absent command id inherits the
- *  default. Unknown ids are preserved across save/load. */
-export interface KeybindingsFile {
-  version: number;
-  bindings: Partial<Record<string, string[]>>;
-}
 
 /** A saved panel layout (`.legit-layout.json`): a named snapshot of both
  *  docks. `global` is the global dock's plain dockview JSON; `repo` is the
@@ -330,481 +166,6 @@ export interface LayoutDocument {
   repo: unknown;
 }
 
-export type AppError =
-  | { kind: "UnknownRepo"; details: string }
-  | { kind: "NotARepo"; details: string }
-  | { kind: "Io"; details: string }
-  | { kind: "Git"; details: GitError }
-  | { kind: "GitUnavailable"; details: string }
-  | { kind: "ForbiddenArg"; details: string }
-  | { kind: "InvalidTheme"; details: string }
-  | { kind: "InvalidLayout"; details: string }
-  | { kind: "Settings"; details: string }
-  | { kind: "ParseArgs"; details: string }
-  | { kind: "InvalidLockIndex"; details: number }
-  | { kind: "UnknownProfile"; details: string };
-
-// --- Line endings types (matches §H of DESIGN-v0.2.md) ---
-
-export type ConfigScope = "local" | "global" | "system" | "unset";
-
-export interface ConfigValue {
-  value: string | null;
-  source: ConfigScope;
-}
-
-export interface GitAttrRule {
-  pattern: string;
-  text: string | null;
-  eol: string | null;
-}
-
-export interface LineEndingsView {
-  autocrlf_local: ConfigValue;
-  autocrlf_global: ConfigValue;
-  autocrlf_system: ConfigValue;
-  autocrlf_resolved: ConfigValue;
-  eol_local: ConfigValue;
-  eol_global: ConfigValue;
-  eol_system: ConfigValue;
-  eol_resolved: ConfigValue;
-  gitattributes: GitAttrRule[];
-  gitattributes_covers_all: boolean;
-}
-
-/** Result of `git add --renormalize` (matches legit-core `RenormalizeOutcome`).
- * Empty = the repo was already normalized: an outcome, not an error. */
-export interface RenormalizeOutcome {
-  restaged: string[];
-}
-
-/** Simulated-renormalize preview (`repo_renormalize_preview`). */
-export interface RenormalizePreview {
-  /** Index entries a renormalize would change. */
-  files: string[];
-  /** Tracked files with unstaged changes - restaging stages those edits too. */
-  unstaged_changes: number;
-}
-
-// --- Signing config types (matches src-tauri/src/commands/signing.rs) ---
-
-/** A single git-config key resolved across all scopes. */
-export interface ScopedConfig {
-  local: ConfigValue;
-  global: ConfigValue;
-  system: ConfigValue;
-  resolved: ConfigValue;
-}
-
-export interface SigningView {
-  /** `commit.gpgsign` — whether commits are signed by default. */
-  gpgsign: ScopedConfig;
-  /** `gpg.format` — "openpgp" (default), "ssh", or "x509". */
-  format: ScopedConfig;
-  /** `user.signingkey` — key id (GPG) or key path / literal key (SSH). */
-  signing_key: ScopedConfig;
-  /** `gpg.ssh.allowedSignersFile` — required for SSH signatures to verify as trusted. */
-  allowed_signers: ScopedConfig;
-}
-
-// --- Git identity profiles (matches state.rs GitProfile + commands/profiles.rs) ---
-
-/** A named identity/signing/auth bundle. Field casing is camelCase (the Rust
- *  struct uses `rename_all = "camelCase"`). Each field: value = set on apply,
- *  null = unset that key. */
-export interface GitProfile {
-  id: string;
-  name: string;
-  userName: string | null;
-  userEmail: string | null;
-  gpgFormat: string | null;
-  signingKey: string | null;
-  commitGpgsign: string | null;
-  allowedSignersFile: string | null;
-  /** Path to the auth SSH key; synthesized into core.sshCommand. */
-  authSshKey: string | null;
-  /** HTTPS credential helper (e.g. "manager", "store", "osxkeychain"); written
-   *  to local credential.helper. LeGit stores no secrets — the helper does. */
-  credentialHelper: string | null;
-}
-
-export interface GitProfilesDoc {
-  format: string;
-  formatVersion: number;
-  profiles: GitProfile[];
-}
-
-/** Live local value of each managed key (null = unset locally). */
-export interface ManagedKeys {
-  user_name: string | null;
-  user_email: string | null;
-  gpg_format: string | null;
-  signing_key: string | null;
-  commit_gpgsign: string | null;
-  allowed_signers_file: string | null;
-  /** Parsed key path from core.sshCommand (or raw command if unparseable). */
-  auth_ssh_key: string | null;
-  /** Live local `credential.helper` value. */
-  credential_helper: string | null;
-}
-
-export interface KeyDiff {
-  key: string;
-  local: string | null;
-  profile: string | null;
-}
-
-export type ProfileMatch =
-  | { kind: "inherit" }
-  | { kind: "active"; profile_id: string }
-  | { kind: "custom" };
-
-export interface ProfileStatus {
-  /** Live LOCAL value of each managed key (null = unset locally). */
-  local: ManagedKeys;
-  stored_profile_id: string | null;
-  match: ProfileMatch;
-}
-
-/** Local + inherited (global, falling back to system) managed keys. */
-export interface ManagedConfigView {
-  local: ManagedKeys;
-  inherited: ManagedKeys;
-}
-
-/**
- * The identity git would use for a commit in a repo (resolved across all
- * scopes). Both null = a commit would fail with "Please tell me who you are".
- */
-export interface ResolvedIdentity {
-  user_name: string | null;
-  user_email: string | null;
-}
-
-/**
- * user.name / user.email at global + system scope plus the resolved value
- * outside any repo (matches commands/identity.rs). Backs the edit-only
- * "Global identity" section.
- */
-export interface IdentityView {
-  name_global: ConfigValue;
-  name_system: ConfigValue;
-  name_resolved: ConfigValue;
-  email_global: ConfigValue;
-  email_system: ConfigValue;
-  email_resolved: ConfigValue;
-}
-
-/**
- * credential.helper per scope (matches commands/credential_helper.rs).
- * The key is multi-valued and accumulates across scopes, so there is no
- * single "resolved" value; null = no helper configured at that scope.
- */
-export interface CredentialHelperView {
-  helper_global: string | null;
-  helper_system: string | null;
-}
-
-/** A credential helper detected on this machine (matches credential_helper.rs). */
-export interface AvailableHelper {
-  /** The value to write into credential.helper (e.g. "manager"). */
-  name: string;
-  /** Where the executable was found. */
-  path: string;
-}
-
-/** One SSH key pair on disk (matches commands/ssh_keys.rs). */
-export interface SshKeyStatus {
-  /** Absolute private-key path. */
-  private_key_path: string;
-  exists: boolean;
-  /** Content of `<path>.pub`, when readable. */
-  public_key: string | null;
-}
-
-/**
- * One connected platform account (matches state.rs ConnectedAccountMeta).
- * Metadata only: the token lives in the OS keychain.
- */
-export interface ConnectedAccountMeta {
-  /** Platform id: "github" | "gitlab" | "azure_devops". */
-  platform: string;
-  /** Git HTTPS host (also the keychain key host). */
-  host: string;
-  username: string;
-  display_name: string | null;
-}
-
-/**
- * Account metadata plus live keychain presence: false = the token was erased
- * (e.g. git erased a revoked one) and the account needs reconnecting.
- */
-export interface ConnectedAccountStatus {
-  account: ConnectedAccountMeta;
-  token_present: boolean;
-}
-
-/** Result of an `ssh -T git@<host>` authentication probe. */
-export type SshTestOutcome =
-  | { kind: "authenticated"; detail: string }
-  | { kind: "rejected"; detail: string }
-  | { kind: "cannot_connect"; detail: string }
-  | { kind: "unknown"; detail: string };
-
-// --- Git log / commit types (matches legit-core/src/types.rs) ---
-
-export type CommitId = string;
-
-/** Working-tree / index state of a single path (matches legit-core `FileState`). */
-export type FileState =
-  | "Modified"
-  | "Added"
-  | "Deleted"
-  | "Renamed"
-  | "Copied"
-  | "Untracked"
-  | "Ignored"
-  | "Conflicted"
-  | "SubmoduleChanged"
-  /** Uncommitted changes INSIDE the submodule, pointer unmoved. Informational:
-   * nothing is stageable from the superproject. */
-  | "SubmoduleDirty";
-
-/** A single changed path in the working tree (matches legit-core `FileStatus`). */
-export interface FileStatus {
-  path: string;
-  state: FileState;
-  /** True when the change is staged (in the index); false for working-tree-only changes. */
-  staged: boolean;
-  /**
-   * Added lines for this entry's own diff (index diff when staged, worktree
-   * diff when not). Null when git reports no counts for the path (untracked,
-   * conflicted, binary) — distinct from a genuine 0.
-   */
-  additions: number | null;
-  /** Removed lines; same semantics as `additions`. */
-  deletions: number | null;
-  /** True when git reports the file as binary (numstat `-`/`-`). */
-  binary: boolean;
-  /** Rename/copy source path, set only on Renamed/Copied entries. A rename's
-   * diff must pair both sides via this, or it reads as a whole-file add. */
-  old_path: string | null;
-}
-
-/** A file changed by a commit, vs its first parent (matches legit-core `CommitFileChange`). */
-export interface CommitFileChange {
-  /** Path after the change (destination path for renames/copies). */
-  path: string;
-  /** Source path for a rename/copy; null otherwise. */
-  old_path: string | null;
-  change: FileState;
-  /** Added lines; 0 for binary files. */
-  additions: number;
-  /** Removed lines; 0 for binary files. */
-  deletions: number;
-  /** True when git reports the file as binary. */
-  binary: boolean;
-}
-
-/** How git regards a file in the Files tree (matches legit-core `RepoFileKind`). */
-export type RepoFileKind = "tracked" | "untracked" | "ignored";
-
-/** A file in the repo-wide Files tree (matches legit-core `RepoFileEntry`). */
-export interface RepoFileEntry {
-  path: string;
-  kind: RepoFileKind;
-  /** Not a blob: a tracked gitlink (submodule) or an untracked nested git
-   * repo. No file content exists at this path, so blob actions (View,
-   * Blame) don't apply. */
-  submodule: boolean;
-}
-
-/** Line-ending style of a file/blob (matches legit-core `LineEndingKind`). */
-export type LineEndingKind = "lf" | "crlf" | "cr" | "mixed" | "none" | "binary";
-
-/** A line-ending change between two sides of a changed file (old -> new). */
-export interface LineEndingTransition {
-  from: LineEndingKind;
-  to: LineEndingKind;
-}
-
-/** Line-ending summary for one changed file (`repo_line_ending_status`).
- * `unstaged` = index vs what `git add` would store (policy-aware);
- * `staged` = HEAD vs index (exactly what a commit records). */
-export interface LineEndingStatusEntry {
-  path: string;
-  unstaged: LineEndingTransition | null;
-  staged: LineEndingTransition | null;
-  mixed: boolean;
-  working_raw: LineEndingKind | null;
-}
-
-// --- diffs (mirror legit-core `Diff*` types; see bindings.ts) ---
-
-export type DiffLineKind = "Context" | "Added" | "Removed";
-
-export interface DiffLine {
-  kind: DiffLineKind;
-  content: string;
-}
-
-export interface DiffHunk {
-  old_start: number;
-  old_lines: number;
-  new_start: number;
-  new_lines: number;
-  /** The raw `@@ -.. +.. @@ <section>` header line, kept verbatim. */
-  header: string;
-  lines: DiffLine[];
-}
-
-export interface TextDiff {
-  old_path: string | null;
-  new_path: string | null;
-  hunks: DiffHunk[];
-}
-
-export interface BinaryDiff {
-  old_path: string | null;
-  new_path: string | null;
-  old_size: number | null;
-  new_size: number | null;
-}
-
-export interface SubmoduleChange {
-  path: string;
-  old_sha: string | null;
-  new_sha: string | null;
-  /** Submodule worktree has uncommitted content (git's `-dirty` suffix). */
-  dirty: boolean;
-}
-
-/** Orthogonal submodule state flags (mirrors SubmoduleState in types.rs). */
-export interface SubmoduleState {
-  initialized: boolean;
-  populated: boolean;
-  pointer_moved: boolean;
-  dirty_tracked: boolean;
-  dirty_untracked: boolean;
-  conflicted: boolean;
-  orphan_gitlink: boolean;
-  config_drift: boolean;
-}
-
-/** Submodule entry (mirrors SubmoduleInfo in types.rs). */
-export interface SubmoduleInfo {
-  name: string;
-  path: string;
-  url: string | null;
-  gitmodules_url: string | null;
-  branch: string | null;
-  recorded_sha: string | null;
-  checked_out_sha: string | null;
-  head_branch: string | null;
-  state: SubmoduleState;
-}
-
-export interface SubmoduleLogEntry {
-  id: string;
-  subject: string;
-}
-
-export type SubmoduleLog =
-  | { kind: "commits"; commits: SubmoduleLogEntry[] }
-  | { kind: "target_missing" };
-
-/** Options for `git submodule update` (mirrors SubmoduleUpdateOptions). */
-export interface SubmoduleUpdateOptions {
-  init: boolean;
-  recursive: boolean;
-  paths: string[];
-  /** Filled backend-side from the global setting; never set by the frontend. */
-  attach_branch?: boolean;
-}
-
-/** Integration mode for `submodule update --remote`. */
-export type SubmoduleUpdateStrategy = "checkout" | "rebase" | "merge";
-
-/** Retained gitdir of a removed submodule. */
-export interface SubmoduleGitdirInfo {
-  path: string;
-  /** Local commits on no remote - deleting the gitdir destroys them. */
-  unpushed: boolean;
-}
-
-/** Per-submodule outcome of the post-switch/pull auto-update. */
-export type SubmoduleAutoUpdateStatus =
-  | { kind: "updated" }
-  | { kind: "changes_carried" }
-  | { kind: "changes_stashed" }
-  | { kind: "rolled_back"; message: string }
-  | { kind: "changes_in_stash"; message: string }
-  | { kind: "skipped"; message: string };
-
-export interface SubmoduleAutoUpdateResult {
-  path: string;
-  status: SubmoduleAutoUpdateStatus;
-  /** LFS pointer stubs the move left inside the submodule. */
-  lfs_stubs: LfsStubs | null;
-}
-
-export type DiffEntry =
-  | { Text: TextDiff }
-  | { Binary: BinaryDiff }
-  | { Submodule: SubmoduleChange }
-  /** The raw diff exceeded the display cap (20 MB); the panel shows a
-   * notice instead of crashing the webview on multi-MB content. */
-  | { TooLarge: { bytes: number } };
-
-/** A file's content at a revision: text, or a binary classification with the
- * blob's exact byte size (mirrors `FileAtRevision` in types.rs). */
-export type FileAtRevision = { Text: string } | { Binary: { size_bytes: number } };
-
-/** One commit in a single file's history (mirrors `FileHistoryEntry` in
- * types.rs). `path` is the file's name AS OF THAT COMMIT (pre-rename commits
- * carry the old name); `old_path` is set only on the renaming commit. */
-export interface FileHistoryEntry {
-  commit_id: string;
-  summary: string;
-  author: string;
-  /** Author date, unix seconds. */
-  timestamp: number;
-  path: string;
-  old_path: string | null;
-}
-
-/** Which two sides the Diff panel compares for a file (matches `DiffSource`). */
-export type DiffSource =
-  | { kind: "working_unstaged" }
-  | { kind: "working_staged" }
-  | { kind: "commit"; commit_id: string }
-  /** Two arbitrary revs (Compare view) — any rev spec works. */
-  | { kind: "commit_range"; from: string; to: string };
-
-/** What a commit search matches (matches legit-core `CommitSearchKind`). */
-export type CommitSearchKind = "message" | "author" | "content" | "content_regex";
-
-/** One blame hunk (matches legit-core `BlameHunk`): consecutive lines last
- *  touched by the same commit, contents included. All-zeros sha = uncommitted. */
-export interface BlameHunk {
-  sha: CommitId;
-  author: string;
-  timestamp: number;
-  summary: string;
-  /** 1-based first line number. */
-  start_line: number;
-  lines: string[];
-  /** Whether a parent version of the file exists (git porcelain `previous`) —
-   *  false for the commit that added the file, so "blame parent" is hidden. */
-  has_previous: boolean;
-  /** The `previous` header's parent commit — the right rev to re-blame at
-   *  (correct parent for merges, unlike `<sha>^`). */
-  previous_sha: CommitId | null;
-  /** The file's path AT `previous_sha` — the OLD name when the blamed commit
-   *  renamed the file; re-blaming must use this path. */
-  previous_path: string | null;
-}
-
 /** Summon payload delivered to the Diff panel when a file is selected. */
 export interface DiffRequest {
   repoId: string;
@@ -814,437 +175,6 @@ export interface DiffRequest {
   change?: FileState;
   /** Original path for a rename/copy, when known. */
   oldPath?: string | null;
-}
-
-export type RefDecoration =
-  | { type: "head" }
-  | { type: "headOf"; value: string }
-  | { type: "branch"; value: string }
-  | { type: "tag"; value: string }
-  | { type: "remote"; value: string }
-  | { type: "stash"; value: string }
-  | { type: "other"; value: string };
-
-export type LaneLock = { refName: string; laneIndex: number };
-
-/** Versioned on-disk envelope for a repo's lane locks (matches state.rs
- * `LaneLocksDoc`; serialized into `RepoSettings` as `laneLocks`). */
-export type LaneLocksDoc = { format: string; formatVersion: number; locks: LaneLock[] };
-
-/** A local or remote-tracking branch (matches legit-core `Branch`). */
-export interface Branch {
-  name: string;
-  is_current: boolean;
-  is_remote: boolean;
-  /** Full upstream ref (e.g. "refs/remotes/origin/dev") for local branches. */
-  upstream: string | null;
-  head: CommitId | null;
-  /** Commits ahead of the upstream; null when in sync / no upstream / remote branch. */
-  ahead: number | null;
-  /** Commits behind the upstream; null under the same conditions. */
-  behind: number | null;
-  /** The configured upstream ref no longer exists ("[gone]"). */
-  upstream_gone: boolean;
-  /** Tip commit's committer date (Unix seconds); 0 when git returned none.
-   * Drives the user-selectable ref sort order. */
-  created_at: number;
-}
-
-/** A git-lfs download failure's residue: worktree paths left as pointer
- * stubs instead of real content. git can exit 0 in this state
- * (lfs.skipdownloaderrors, non-required filter), so operations report it as
- * data - never a silent success. */
-export interface LfsStubs {
-  files: string[];
-  /** The objects are absent on the server (missing upload). */
-  missing_on_remote: boolean;
-}
-
-/** Result of a successful pull: any LFS pointer stubs it left behind. */
-export interface PullOutcome {
-  lfs_stubs: LfsStubs | null;
-}
-
-/** A switch/checkout's outcome plus any LFS pointer stubs it left behind. */
-export interface SwitchResult {
-  outcome: SwitchOutcome;
-  lfs_stubs: LfsStubs | null;
-}
-
-/** Post-refusal analysis for a "not fully merged" branch delete. */
-export interface BranchMergeAnalysis {
-  /** Refs (short names) that already contain the branch tip - a true merge
-   * landed and only the checked-out base is stale. The branch itself, its
-   * remote counterparts, and remote HEAD symrefs are excluded. */
-  merged_into: string[];
-  /** Baseline ref (e.g. "origin/main") holding a patch-id equivalent of
-   * every commit unique to the branch (squash/rebase merge), if found. */
-  equivalent_in: string | null;
-}
-
-export type SwitchOutcome =
-  | { kind: "clean" }
-  /** `stash_and_keep`: the uncommitted changes were deliberately left parked
-   *  in the stash; the target branch starts clean. */
-  | { kind: "changes_stashed" }
-  /** Auto-stash reapplied but with merge conflicts — changes are in the
-   *  working tree with conflict markers; the stash entry was kept. */
-  | { kind: "stash_pop_conflicts"; message: string }
-  /** Auto-stash could not be applied at all — the changes remain parked in
-   *  the stash entry. */
-  | { kind: "stash_pop_failed"; message: string };
-
-/** What the optional local fast-forward step of a remote-branch checkout did.
- *  Every non-happy case is an outcome, not an error: the checkout succeeded. */
-export type FastForwardResult =
-  | { kind: "not_attempted" }
-  | { kind: "fast_forwarded" }
-  /** Already at the remote tip - including a just-created tracking branch. */
-  | { kind: "up_to_date" }
-  /** Local and remote have diverged; the local branch was left untouched. */
-  | { kind: "diverged" }
-  /** The ff failed for another reason; the local branch was left untouched. */
-  | { kind: "failed"; message: string };
-
-/** Outcome of checking out a remote branch: switch result + ff step result. */
-export interface RemoteCheckoutOutcome {
-  /** Short local branch name derived from the remote ref (`origin/x` -> `x`). */
-  local_branch: string;
-  switch: SwitchOutcome;
-  fast_forward: FastForwardResult;
-  /** LFS pointer stubs the checkout left behind. */
-  lfs_stubs: LfsStubs | null;
-}
-
-/** One mismatch between the STAGED .gitmodules blob and the staged gitlinks
- *  (what the next commit would record). Feeds the composer's pre-commit
- *  warning banner - a warning, never a block. */
-export type GitmodulesFinding =
-  | { kind: "entry_without_gitlink"; name: string; path: string }
-  | { kind: "gitlink_without_entry"; path: string };
-
-/** A tracked path whose on-disk spelling differs from the index only by
- *  letter case - a rename git status cannot see on a case-insensitive
- *  filesystem. Feeds the Working Changes panel's synthetic rename rows. */
-export interface CaseDriftEntry {
-  /** Path as recorded in the index (repo-relative). */
-  index_path: string;
-  /** The same path as actually spelled on disk. */
-  disk_path: string;
-  /** The drifting component is a directory (the fix renames the directory). */
-  is_dir: boolean;
-}
-
-/** One entry of `git worktree list` (matches legit-core `WorktreeInfo`).
- * `path` is absolute ON THE REPO'S HOST and is the worktree's identity. */
-export interface WorktreeInfo {
-  path: string;
-  /** HEAD commit sha; null only for a bare main entry. */
-  head: string | null;
-  /** Short branch name; null when detached or bare. */
-  branch: string | null;
-  /** The first listed entry is the main worktree. */
-  is_main: boolean;
-  detached: boolean;
-  bare: boolean;
-  /** Present when locked; the lock reason ("" when none was given). */
-  locked: string | null;
-  /** Present when prunable; git's reason. */
-  prunable: string | null;
-  /** Uncommitted changes in that checkout (untracked included); null when
-   * not probed (bare/prunable) or the probe failed. */
-  dirty: boolean | null;
-}
-
-/** How `worktree add` populates the new worktree (matches `WorktreeAddMode`). */
-export type WorktreeAddMode =
-  | { kind: "checkout"; branch: string }
-  | { kind: "new_branch"; name: string; start_point: string | null }
-  | { kind: "detach"; rev: string | null };
-
-export type SwitchDirtyBehavior = "try_directly" | "auto_stash" | "stash_and_keep";
-
-/** Fast-forward behavior for a merge (matches legit-core `FfMode`). */
-export type FfMode = "auto" | "no_ff" | "ff_only";
-
-export interface MergeOptions {
-  ff: FfMode;
-  /** `--squash`: stages the result without committing; `ff` is ignored. */
-  squash: boolean;
-}
-
-/** Outcome of merge/merge-continue. Conflicts are data, not an error. */
-export type MergeOutcome =
-  | { kind: "fast_forwarded" }
-  | { kind: "merged" }
-  | { kind: "squashed" }
-  | { kind: "already_up_to_date" }
-  | { kind: "conflicts"; message: string };
-
-export type RebaseOutcome =
-  | { kind: "completed" }
-  | { kind: "already_up_to_date" }
-  | { kind: "conflicts"; message: string }
-  /** Rebase finished, but reapplying the autostash conflicted (stash kept). */
-  | { kind: "completed_with_stash_conflicts"; message: string };
-
-/** Mode for `git reset` (matches legit-core `ResetMode`). Hard is destructive. */
-export type ResetMode = "soft" | "mixed" | "hard";
-
-/** What a rebase step does with its commit (matches legit-core `RebaseAction`). */
-export type RebaseAction = "pick" | "reword" | "squash" | "fixup" | "drop";
-
-/** One interactive-rebase step (matches legit-core `RebaseStep`). Slice order
- *  is the new commit order, oldest first — git's todo order. */
-export interface RebaseStep {
-  action: RebaseAction;
-  sha: CommitId;
-  /** New commit message; set exactly for reword steps. */
-  message?: string | null;
-}
-
-/** Probe behind the rebase panel's pushed chips + transplant notice
- *  (matches legit-core `RebaseRangeInfo`). */
-export interface RebaseRangeInfo {
-  /** Range commits NOT reachable from @{upstream}; null = no upstream. */
-  unpushed: string[] | null;
-  /** True when the base is not an ancestor of HEAD (the rebase relocates). */
-  transplant: boolean;
-}
-
-/** Index stages of a conflicted path (matches `ConflictFileSides`); a side is
- *  null when that stage is absent (add/add, delete conflicts). */
-export interface ConflictFileSides {
-  base: string | null;
-  ours: string | null;
-  theirs: string | null;
-}
-
-/** Outcome of revert / cherry-pick and their continue/skip (matches
- *  `SequenceOutcome`). Conflicts pause the sequencer — data, not an error. */
-export type SequenceOutcome =
-  | { kind: "completed" }
-  | { kind: "conflicts"; message: string };
-
-/** One HEAD reflog entry (matches legit-core `ReflogEntry`). */
-export interface ReflogEntry {
-  /** Positional selector, e.g. `HEAD@{0}` — display-only, shifts constantly. */
-  selector: string;
-  sha: CommitId;
-  /** Action prefix, e.g. "commit", "reset", "checkout", "rebase (finish)". */
-  action: string;
-  /** Subject after the action prefix. */
-  subject: string;
-  /** Unix seconds. */
-  timestamp: number;
-}
-
-/** Which multi-step operation the repo is in (matches `RepoOpState`). */
-export type RepoOpState =
-  | { kind: "none" }
-  | { kind: "merge"; branch: string | null; message: string | null }
-  | {
-      kind: "rebase";
-      onto: string | null;
-      head_name: string | null;
-      current_step: number | null;
-      total_steps: number | null;
-    }
-  | { kind: "cherry_pick"; sha: string }
-  | { kind: "revert"; sha: string };
-
-export type ConflictKind = "both_modified" | "both_added" | "deleted_by_us" | "deleted_by_them";
-
-/** A conflicted path and how it conflicts (matches `ConflictEntry`). */
-export interface ConflictEntry {
-  path: string;
-  kind: ConflictKind;
-}
-
-export type ConflictSide = "ours" | "theirs";
-
-/** A local tag (matches legit-core `TagInfo`). */
-export interface TagInfo {
-  /** Short tag name (no refs/tags/ prefix). */
-  name: string;
-  /** The commit the tag points at (peeled for annotated tags). */
-  target_sha: CommitId;
-  /** Annotated (tag object) vs lightweight. */
-  annotated: boolean;
-  /** Annotation subject line (annotated tags only). */
-  message: string | null;
-  /** The tagged commit is reachable from a remote-tracking ref; pushing a
-   *  tag whose commit is not on the remote is disabled (push branch first). */
-  target_on_remote: boolean;
-  /** Creation date (Unix seconds): the tag object's date for annotated tags,
-   * the tagged commit's committer date for lightweight ones; 0 when absent.
-   * Drives the user-selectable ref sort order. */
-  created_at: number;
-}
-
-/** A tag as it exists on a remote (matches legit-core `RemoteTag`). */
-export interface RemoteTag {
-  name: string;
-  target_sha: CommitId;
-}
-
-/** A single entry from `git stash list` (matches legit-core `StashEntry`). */
-export interface StashEntry {
-  /** The `N` in `stash@{N}` (0 is the most recent). */
-  index: number;
-  /** Reflog selector, e.g. "stash@{0}". Display-only — it is positional and
-   * shifts as stashes are added/removed; actions address the stash by
-   * `stash_sha` instead. */
-  selector: string;
-  /** Reflog subject, e.g. "On main: my message". */
-  message: string;
-  /** The stash's own commit SHA (a real git object, usable as a commit id).
-   * This is the stable handle for apply/pop/drop/rename. */
-  stash_sha: CommitId;
-  /** The base commit the stash was created from (its first parent). */
-  base_sha: CommitId;
-  author: Signature;
-  /** Author timestamp (Unix seconds). */
-  timestamp: number;
-}
-
-export type StashOutcome = { kind: "created" } | { kind: "nothing_to_stash" };
-
-export type StashApplyOutcome =
-  | { kind: "clean" }
-  | { kind: "conflicts"; message: string };
-
-export interface Signature {
-  name: string;
-  email: string;
-  timestamp: number; // Unix seconds UTC
-  tz_offset_minutes: number;
-}
-
-// --- remote sync (matches legit-core/src/types.rs) ---
-
-export interface FetchOptions {
-  /** Fetch from all remotes (--all) rather than `remote`. */
-  all: boolean;
-  /** Prune deleted remote-tracking refs (--prune). */
-  prune: boolean;
-  /** Remote to fetch when `all` is false; ignored when `all` is true. */
-  remote: string | null;
-}
-
-/** How `git pull` integrates fetched changes (serialized variant names). */
-export type PullStrategy = "Default" | "Rebase" | "Merge" | "FfOnly";
-
-export interface PullOptions {
-  strategy: PullStrategy;
-}
-
-export interface PushOptions {
-  remote: string;
-  branch: string;
-  /** Set the pushed branch as upstream (--set-upstream) — publish a new branch. */
-  set_upstream: boolean;
-  /** Force-push without clobbering unseen remote commits (--force-with-lease). */
-  force_with_lease: boolean;
-  /** Submodule guard (--recurse-submodules=check|on-demand); null = no flag. */
-  recurse_submodules?: PushRecurseMode | null;
-}
-
-/** `git push --recurse-submodules` guard mode (mirrors PushRecurseMode). */
-export type PushRecurseMode = "check" | "on_demand";
-
-/** Ahead/behind of the current branch vs its upstream (null = detached / no upstream). */
-export interface TrackingStatus {
-  branch: string;
-  upstream: string;
-  ahead: number;
-  behind: number;
-}
-
-/** Repo LFS probe (mirror of legit-core's LfsStatus). `uses_lfs` comes from
- * tracked .gitattributes; binary/config probes are skipped (false/null)
- * when the repo does not use LFS. */
-export interface LfsStatus {
-  uses_lfs: boolean;
-  installed: boolean;
-  version: string | null;
-  initialized: boolean;
-}
-
-export type ImageFormat = "png" | "jpeg" | "gif" | "webp" | "bmp" | "ico" | "svg";
-
-/** Preview of a file's content at a rev (mirror of legit-app's FilePreview):
- * an image payload, or why there is none. `absent` covers unresolvable
- * specs (deleted side, root commit's `^`) so the UI renders added/removed. */
-export type FilePreview =
-  | { kind: "image"; format: ImageFormat; size: number; base64: string }
-  | { kind: "too_large"; size: number }
-  | { kind: "not_previewable"; size: number }
-  | { kind: "absent" }
-  | { kind: "lfs_missing"; oid: string; size: number };
-
-/** LFS patterns of the repo (mirror of legit-app's LfsPatternsView):
- * manageable root `.gitattributes` patterns + read-only nested attribute
- * files that also declare `filter=lfs`. */
-export interface LfsPatternsView {
-  root_patterns: string[];
-  nested_files: string[];
-}
-
-/** A configured git remote with its fetch/push URLs (matches legit-core `Remote`). */
-export interface Remote {
-  name: string;
-  fetch_url: string;
-  push_url: string;
-}
-
-/** One parsed `--progress` meter update (matches legit-core `RemoteProgress`). */
-export interface RemoteProgress {
-  /** Phase label as git prints it, e.g. "Receiving objects". */
-  phase: string;
-  /** 0-100 when the phase reports a percentage. */
-  percent: number | null;
-}
-
-/** Payload of the `legit://remote-progress` event (src-tauri/src/lib.rs). */
-export interface RemoteProgressPayload {
-  op_id: string;
-  progress: RemoteProgress;
-}
-
-export type SignatureStatus =
-  | "Good"
-  | "BadSignature"
-  | "UnknownKey"
-  | "Untrusted"
-  | "Expired"
-  | "Revoked"
-  | "NoSignature";
-
-export interface SignatureVerification {
-  status: SignatureStatus;
-  signer: string | null;
-  key_id: string | null;
-  raw: string | null;
-}
-
-export interface Commit {
-  id: CommitId;
-  parents: CommitId[];
-  author: Signature;
-  committer: Signature;
-  message: string;
-  timestamp: number;
-  signature: SignatureVerification | null;
-  /** Presence-only: the raw object carries a signature header. NOT a
-   *  verification result (that stays on-demand in commit details). */
-  has_signature: boolean;
-  decorations?: RefDecoration[];
-}
-
-export interface CommitDetails {
-  commit: Commit;
-  raw_object: string;
 }
 
 // --- Theme document shape (matches DESIGN.md §6.3) ---

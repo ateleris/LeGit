@@ -5,7 +5,7 @@
 import type { MergeOutcome, RebaseOutcome, SequenceOutcome } from "./types";
 import { formatAppError, gitErrorKind } from "./errors";
 import { notify } from "../store/notifications";
-import { repoStatus } from "./commands";
+import { api } from "./commands";
 
 /**
  * After resolving a conflict (mark resolved / take side): when the staged
@@ -16,7 +16,7 @@ import { repoStatus } from "./commands";
  */
 export async function notifyResolutionInvisible(repoId: string, path: string) {
   try {
-    const status = await repoStatus(repoId);
+    const status = await api.repoStatus(repoId);
     if (!status.some((s) => s.path === path)) {
       notify.info(
         `Resolved '${path}' - the result is identical to your branch, so it ` +

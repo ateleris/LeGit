@@ -4,7 +4,7 @@ import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
 import { formatAppError } from "../../lib/errors";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ConfigScope, LineEndingsView, GitAttrRule, LfsPatternsView, RepoSettings } from "../../lib/types";
-import { setRepoGitPath, repoLfsPatterns, repoLfsTrack, repoLfsUntrack, repoLineEndingsView, repoWriteLineEndings, wslHostGitOverride } from "../../lib/commands";
+import { api } from "../../lib/commands";
 import { useGitStatusStore } from "../../store/git-status";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
@@ -34,7 +34,6 @@ export function RepoSettingsPanel() {
   );
   const loadRepoSettings = useRepoStore((s) => s.loadRepoSettings);
   const refresh = useRepoStore((s) => s.refresh);
-  const setActive = useRepoStore((s) => s.setActive);
 
   const [draft, setDraft] = useState("");
   const { busy: applying, run: runApply } = useDelayedBusy();
@@ -77,11 +76,9 @@ export function RepoSettingsPanel() {
       setError(null);
       setSuccessMsg(null);
       try {
-        // Command tears down the old session and returns a fresh RepoSummary.
-        const newSummary = await setRepoGitPath(activeRepo.id, path);
+        await api.setRepoGitPath(activeRepo.id, path);
         await refresh();
-        setActive(newSummary.id);
-        setSuccessMsg("Git path updated. Session restarted.");
+        setSuccessMsg("Git path updated.");
         setDraft("");
       } catch (e) {
         setError(formatAppError(e));
@@ -194,7 +191,7 @@ function RemoteRepoGitSection({ distro }: { distro: string }) {
   // The persisted per-distro override: cheap, and deliberately no connect.
   useEffect(() => {
     let cancelled = false;
-    wslHostGitOverride(distro)
+    api.wslHostGitOverride(distro)
       .then((ov) => {
         if (!cancelled) setOverride(ov);
       })
@@ -611,7 +608,7 @@ function LfsPatternsBlock({ repoId }: { repoId: string }) {
   // domain; the short staleTime keeps a reopened panel fresh regardless.
   const { data: view } = useQuery<LfsPatternsView>({
     queryKey: [repoId, "status", "lfs-patterns"],
-    queryFn: () => repoLfsPatterns(repoId),
+    queryFn: () => api.repoLfsPatterns(repoId),
     staleTime: STALE.live,
   });
   const [draft, setDraft] = useState("");
@@ -630,7 +627,7 @@ function LfsPatternsBlock({ repoId }: { repoId: string }) {
     return run(async () => {
       setError(null);
       try {
-        applyResult(await repoLfsTrack(repoId, pattern));
+        applyResult(await api.repoLfsTrack(repoId, pattern));
         setDraft("");
       } catch (e) {
         setError(formatAppError(e));
@@ -642,7 +639,7 @@ function LfsPatternsBlock({ repoId }: { repoId: string }) {
     run(async () => {
       setError(null);
       try {
-        applyResult(await repoLfsUntrack(repoId, pattern));
+        applyResult(await api.repoLfsUntrack(repoId, pattern));
       } catch (e) {
         setError(formatAppError(e));
       }
@@ -711,7 +708,7 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
     setLoading(true);
     setView(null);
     setConfirmPending(false);
-    repoLineEndingsView(repoId)
+    api.repoLineEndingsView(repoId)
       .then((v) => {
         setView(v);
         setDraftAutocrlf(v.autocrlf_local.value ?? null);
@@ -755,7 +752,7 @@ function LineEndingsRepoSection({ repoId }: { repoId: string }) {
       setConfirmPending(false);
       setError(null);
       try {
-        const updated = await repoWriteLineEndings(repoId, draftAutocrlf, draftEol);
+        const updated = await api.repoWriteLineEndings(repoId, draftAutocrlf, draftEol);
         setView(updated);
         setDraftAutocrlf(updated.autocrlf_local.value ?? null);
         setDraftEol(updated.eol_local.value ?? null);

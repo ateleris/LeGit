@@ -5,8 +5,8 @@
 import { useMemo, useState } from "react";
 import type { LaneLock } from "../../../lib/types";
 import { useLaneLocksStore } from "../../../store/laneLocks";
-import { usePanelContextMenu } from "./PanelContextMenu";
-import { MenuItem } from "./primitives";
+import { usePanelContextMenu } from "../../shared/menu/PanelContextMenu";
+import { MenuItem } from "../../shared/menu/primitives";
 import { ordinal } from "./ordinal";
 
 interface LaneLockSectionProps {

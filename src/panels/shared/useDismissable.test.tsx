@@ -4,7 +4,7 @@ import React, { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { KeyDispatcher } from "../../keys/Dispatcher";
 import { useLayersStore, type LayerKind } from "../../store/layers";
-import { MENU_LAYER_ATTR } from "../Commits/menu/primitives";
+import { MENU_LAYER_ATTR } from "../shared/menu/primitives";
 import { useDismissable } from "./useDismissable";
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;

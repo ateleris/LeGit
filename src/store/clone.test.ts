@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const cancelClone = vi.fn((_opId: string) => Promise.resolve(true));
-vi.mock("../lib/commands", () => ({ cancelClone: (id: string) => cancelClone(id) }));
+vi.mock("../lib/commands", () => ({ api: { cancelClone: (id: string) => cancelClone(id) } }));
 
 import { cloneTargetPath, useCloneStore } from "./clone";
 import { useNotificationsStore } from "./notifications";

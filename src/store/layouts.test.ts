@@ -26,7 +26,7 @@ vi.mock("../layout/globalSummon", async (importOriginal) => ({
   summonGlobalPanel: vi.fn(),
 }));
 
-import { listLayouts, loadLayout, setLayoutsOrder } from "../lib/commands";
+import { loadLayout, listLayouts, setLayoutsOrder, saveLayout, renameLayout, deleteLayout } from "../lib/commands";
 import { summonGlobalPanel } from "../layout/globalSummon";
 import { buildLayoutDocument } from "../layout/namedLayouts";
 import { useDockviewStore } from "./dockview";

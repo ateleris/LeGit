@@ -1,13 +1,13 @@
 import { useCallback, useRef, useState } from "react";
 import { useRepoStore } from "../store/repos";
-import { repoOpenInEditor } from "../lib/commands";
+import { api } from "../lib/commands";
 import { editorActionLabel, editorOpensFolder, effectiveEditorTemplate } from "../lib/editorAction";
 import { useSettingsStore } from "../store/settings";
 import { formatAppError } from "../lib/errors";
 import type { RepoSummary } from "../lib/types";
 import { notify } from "../store/notifications";
 import { ExternalEditorIcon, FolderIcon } from "../icons";
-import { SectionLabel } from "./Commits/menu/primitives";
+import { SectionLabel } from "./shared/menu/primitives";
 import { IconButton } from "./shared/buttons";
 import { useDismissable } from "./shared/useDismissable";
 
@@ -162,7 +162,7 @@ export function RepoOverflowMenu() {
                 }}
                 onOpenEditor={() => {
                   setOpen(false);
-                  repoOpenInEditor(r.id).catch((err) => notify.error(formatAppError(err)));
+                  api.repoOpenInEditor(r.id).catch((err) => notify.error(formatAppError(err)));
                 }}
                 onClose={() => closeRepo(r.id)}
               />

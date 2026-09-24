@@ -24,57 +24,6 @@ Effort: **S** = hours, **M** = a day or two, **L** = multi-day.
 
 ---
 
-## 2. Tauri backend (`src-tauri`, `legit-host`, `legit-proto`, `legit-agent`, `legit-watch`)
-
-- [ ] **B2 Hot-swap the runner on a per-repo git path change** (S-M)
-  - `set_repo_git_path` (`git_setup.rs:125-135`) drops and rebuilds the
-    session, which gives the repo a new id under the frontend
-    (`RepoSession::new` mints a UUID). Swap the runner behind the existing
-    `Arc<RwLock<Arc<dyn GitExecutor>>>` (`state.rs:631-636`) instead, as the
-    global git path change already does.
-
-- [ ] **B6 Replace ~40 single-field global-settings setters with a patch command** (M)
-  - `persistence.rs:44-537`: three-line `mutate_global` commands, each also
-    needing `collect_commands!`, `commands.ts`, `types.ts` and store entries
-    (`store/settings.ts` imports 35 setters, near-identical bodies 269-330).
-  - Fix: `patch_global_settings(partial)` with clamping in Rust + generic
-    `setSetting(key, value)` in the store. Same shape as
-    `patch_repo_settings`.
-
-- [ ] **B10 Remove dead `AppState.hosts`** (S)
-  - Only read by `local_host()` (`state.rs:864-871`), never inserted into
-    (WSL hosts live in `wsl_hosts`). Replace with a `local_host` field. Fix the
-    stale `RepoSession.locator` doc ("Today always `Local`", `state.rs:625`).
-
-- [ ] **B12 `watcher::all_domains()` hand-lists `ChangeDomain`** (S)
-  - `watcher.rs:58-70`; make it `ChangeDomain::ALL` in `legit-watch` so a new
-    domain cannot be missed.
-
----
-
-## 3. Frontend data layer (`src/lib`, `src/store`, `src/keys`)
-
-- [ ] **C1 Replace the hand-mirrored types with the generated ones** (M)
-  - `bindings.ts` is committed, a `cargo test` snapshot keeps it current, and
-    `bindingsParity.ts` makes tsc fail when one of the 122 shared types
-    drifts. Remaining: turn `types.ts` definitions into re-exports of the
-    generated types (keeping only frontend-only types), and register events
-    with `collect_events!` so the 15 hand-typed event payloads
-    (`lib/events.ts`) are generated too.
-
-- [ ] **C2 Replace `commands.ts` pass-through wrappers** (M, after C1)
-  - 1283 lines; 246 `invoke` names vs 265 generated commands; header
-    (`commands.ts:1-5`) already calls it the seam bindings will replace.
-  - Fix: one `unwrap(p: Promise<Result<T, AppError>>)` adapter plus
-    `export const api = wrap(commands)`. Keep hand-written functions only where
-    they add value (arg defaults like `repoInit`, the
-    `GLOBAL_/WSL_GIT_CONFIG_COMMANDS` maps at 131-153 pinned by the isolation
-    test).
-  - `repo_search_paths` is registered (`lib.rs:271`,
-    `commands/inspect.rs:53`) but has no frontend caller: delete or wire.
-
----
-
 ## 4. Panels (`src/panels`)
 
 - [ ] **D4 Break up `CommitsPanel.tsx`** (L)
@@ -101,34 +50,6 @@ Effort: **S** = hours, **M** = a day or two, **L** = multi-day.
     split `DiffEditor.tsx` (1226 lines) into theme/extensions, `mountInline`,
     `mountSplit` (954-1168), thin component; move `conflictModel` and pure
     `mergeFolds`/`mergeAlign` into `Merge/` with tests.
-
-- [ ] **D6 Settings panel primitives** (M)
-  - `GlobalSettingsPanel.tsx` (1442 lines): 18 sections, 19 checkboxes;
-    ConfirmDiscard / DetectCaseRenames / CheckoutRemoteFF (1112-1240) are the
-    same ~30-line toggle block; 85 `style={{` (most of any file); 16
-    wordings of the "writes to:" note; em-dashes in UI copy.
-  - Fix: `<SettingToggle scope field label note>` and `<WritesTo scope/>` in
-    `Settings/primitives.tsx`; split into per-group files
-    (CommitsGraphSection alone is 371-660).
-
-- [ ] **D7 `ThemeEditorPanel` draft logic into pure, tested ops** (M)
-  - Main function (48-584) mixes palette mutation (rename auto-rebind
-    123-157, delete guard 141-157, `resetToken`) with import/export/save IO.
-  - Fix: `themeDraftOps.ts` with unit tests for the CLAUDE.md rules (rename
-    rebinds tokens, delete blocked while referenced); own files for
-    `ContrastSection`, `PanelOverridesSection`.
-
-- [ ] **D8 `WorkingChangesPanel` data + diff-sync extraction** (M)
-  - 6+ inline queries (211-360) -> `useWorkingChangesData`; extract
-    `openDiff`/`syncOpenDiff` (389-500).
-  - Hand-rolled pending-dim timer (547-555) is `useDelayedFlag(!pendingEmpty)`.
-
-- [ ] **D10 Move app-wide menu primitives out of `Commits/`** (S)
-  - `Commits/menu/primitives` has 17 importers, `Commits/menu/PanelContextMenu`
-    9 (incl. `shared/*`, ViewMenu, RepoTabBar). Move to `shared/menu/`.
-  - `SectionLabel` redefined in `Branches:605`, `Stashes:329`,
-    `menu/primitives:103`; `Section` in `CommitDetails:155`,
-    `Repositories:142`, `WorkingChanges:1203`. Dedupe.
 
 ---
 
@@ -167,6 +88,6 @@ Effort: **S** = hours, **M** = a day or two, **L** = multi-day.
 
 ## Suggested order
 
-1. B2; B6 with C2; finish C1.
-2. Component splits D4-D8, one at a time behind existing tests.
-3. Section 5 opportunistically.
+1. D4 and D5, one at a time behind existing tests.
+2. Section 5 opportunistically (E0 first needs the Windows spaces-in-path
+   reveal test).

@@ -5,8 +5,8 @@
 // and behaviour cannot drift between panels. Fire-and-forget: editors are
 // long-lived, only a failure to launch is reported.
 
-import { MenuItem } from "../Commits/menu/primitives";
-import { repoOpenFileInEditor } from "../../lib/commands";
+import { MenuItem } from "../shared/menu/primitives";
+import { api } from "../../lib/commands";
 import { useActiveRepo } from "../../store/repos";
 import { notify } from "../../store/notifications";
 import { formatAppError } from "../../lib/errors";
@@ -30,7 +30,7 @@ export function OpenInEditorMenuItem({
     <MenuItem
       onClick={() => {
         onClose();
-        repoOpenFileInEditor(repo.id, path).catch((e) =>
+        api.repoOpenFileInEditor(repo.id, path).catch((e) =>
           notify.error(formatAppError(e)),
         );
       }}

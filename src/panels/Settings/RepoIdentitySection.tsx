@@ -14,15 +14,7 @@ import { usePanelFocusEffect } from "../PanelApiContext";
 import { WarningIcon } from "../../icons";
 import { formatAppError } from "../../lib/errors";
 import type { KeyDiff, ManagedConfigView, ProfileStatus, ResolvedIdentity } from "../../lib/types";
-import {
-  detectActiveProfileForRepo,
-  previewApplyProfile,
-  applyProfileToRepo,
-  clearRepoProfile,
-  createProfileFromRepo,
-  repoResolvedIdentity,
-  repoManagedConfigView,
-} from "../../lib/commands";
+import { api } from "../../lib/commands";
 import { useGitProfiles, invalidateGitProfiles } from "../../lib/useGitProfiles";
 import { Button } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
@@ -53,9 +45,9 @@ export function RepoIdentitySection({ repoId, repoName }: { repoId: string; repo
     setPending(null);
     setClearPending(false);
     Promise.all([
-      detectActiveProfileForRepo(repoId),
-      repoResolvedIdentity(repoId),
-      repoManagedConfigView(repoId),
+      api.detectActiveProfileForRepo(repoId),
+      api.repoResolvedIdentity(repoId),
+      api.repoManagedConfigView(repoId),
     ])
       .then(([s, r, v]) => { setStatus(s); setResolvedIdentity(r); setView(v); })
       .catch((e) => setError(formatAppError(e)));
@@ -77,7 +69,7 @@ export function RepoIdentitySection({ repoId, repoName }: { repoId: string; repo
   /** Refresh status + config view after a mutation, without a full reload. */
   const applyResult = useCallback((s: ProfileStatus) => {
     setStatus(s);
-    repoManagedConfigView(repoId).then(setView).catch((e) => setError(formatAppError(e)));
+    api.repoManagedConfigView(repoId).then(setView).catch((e) => setError(formatAppError(e)));
   }, [repoId]);
 
   if (!status || !view) {
@@ -113,7 +105,7 @@ export function RepoIdentitySection({ repoId, repoName }: { repoId: string; repo
     }
     return run(async () => {
       try {
-        const diffs = await previewApplyProfile(repoId, value);
+        const diffs = await api.previewApplyProfile(repoId, value);
         setClearPending(false);
         setPending({ profileId: value, diffs });
       } catch (e) {
@@ -127,7 +119,7 @@ export function RepoIdentitySection({ repoId, repoName }: { repoId: string; repo
     return run(async () => {
       setError(null);
       try {
-        const s = await applyProfileToRepo(repoId, pending.profileId);
+        const s = await api.applyProfileToRepo(repoId, pending.profileId);
         applyResult(s);
         setPending(null);
       } catch (e) {
@@ -140,7 +132,7 @@ export function RepoIdentitySection({ repoId, repoName }: { repoId: string; repo
     run(async () => {
       setError(null);
       try {
-        const s = await clearRepoProfile(repoId);
+        const s = await api.clearRepoProfile(repoId);
         applyResult(s);
         setClearPending(false);
       } catch (e) {
@@ -153,7 +145,7 @@ export function RepoIdentitySection({ repoId, repoName }: { repoId: string; repo
     return runSaveNew(async () => {
       setError(null);
       try {
-        await createProfileFromRepo(repoId, newName.trim());
+        await api.createProfileFromRepo(repoId, newName.trim());
         setNewName("");
         setCustomPicked(false);
         // List invalidation refetches the shared query; the effect above then

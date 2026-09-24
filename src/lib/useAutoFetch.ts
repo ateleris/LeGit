@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../store/repos";
 import { useSettingsStore } from "../store/settings";
 import { useRemoteProgressStore } from "../store/remoteProgress";
-import { repoFetch } from "./commands";
+import { api } from "./commands";
 import { gitErrorKind } from "./errors";
 import { invalidateRepoDomains } from "./repoInvalidation";
 import { useOpState } from "./useOpState";
@@ -95,7 +95,7 @@ export function useAutoFetch() {
 
       inFlightRef.current = true;
       try {
-        await repoFetch(
+        await api.repoFetch(
           repoId,
           { all: true, prune: false, remote: null },
           crypto.randomUUID(),

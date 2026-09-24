@@ -68,7 +68,7 @@ fn take_pending_open(state: tauri::State<'_, PendingOpen>) -> Option<String> {
     state.0.lock().expect("pending open poisoned").take()
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 pub(crate) struct RemoteProgressPayload {
     pub(crate) op_id: String,
     pub(crate) progress: legit_core::RemoteProgress,
@@ -221,7 +221,21 @@ pub fn run() {
 }
 
 fn specta_builder() -> Builder<tauri::Wry> {
-    Builder::<tauri::Wry>::new().commands(collect_commands![
+    Builder::<tauri::Wry>::new()
+        // Event payloads: not referenced by any command signature, registered
+        // explicitly so bindings.ts carries their generated types (the event
+        // channels themselves stay plain string-named `app.emit` / `listen`).
+        .typ::<crate::watcher::WatchStatePayload>()
+        .typ::<legit_watch::RepoChangedPayload>()
+        .typ::<crate::RemoteProgressPayload>()
+        .typ::<crate::remote::connection::RemoteHostStatusPayload>()
+        .typ::<crate::remote::connection::RemoteHostGitPayload>()
+        .typ::<crate::credentials::CredentialRequestPayload>()
+        .typ::<crate::credentials::CredentialClosedPayload>()
+        .typ::<crate::credentials::AskpassRequestPayload>()
+        .typ::<crate::commands::console::ConsoleEventPayload>()
+        .typ::<legit_core::GitInvocation>()
+        .commands(collect_commands![
         logging::frontend_log,
         logging::open_log_dir,
         take_pending_open,
@@ -264,7 +278,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::get_repo_settings,
         commands::patch_repo_settings,
         commands::set_active_theme,
-        commands::save_region_state,
+        commands::patch_global_settings,
         commands::list_themes,
         commands::load_theme,
         commands::save_theme,
@@ -323,33 +337,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::disconnect_account,
         commands::upload_ssh_key_to_platform,
         commands::open_platform_token_settings,
-        commands::set_line_ending_chips_in_changes,
-        commands::set_warn_on_line_ending_commit,
-        commands::set_confirm_discard,
-        commands::set_detect_case_renames,
-        commands::set_submodule_attach_branch,
-        commands::set_checkout_remote_fast_forward,
-        commands::set_auto_fetch_enabled,
-        commands::set_check_updates_on_startup,
-        commands::set_auto_fetch_interval_minutes,
-        commands::set_external_editor_command,
         commands::repo_open_in_editor,
         commands::repo_open_file_in_editor,
         commands::repo_remote_web_url,
         commands::repo_open_remote_page,
-        commands::save_switch_dirty_behavior,
-        commands::save_pull_strategy,
-        commands::save_stash_include_untracked,
-        commands::save_push_recurse_submodules,
-        commands::set_commit_avatars,
-        commands::set_commit_initials,
-        commands::set_auto_push_tags,
-        commands::set_diff_syntax_highlighting,
-        commands::set_commit_date_absolute,
-        commands::set_commit_date_format,
-        commands::set_commit_date_show_time,
-        commands::set_suppressed_auto_open_panels,
-        commands::set_working_changes_section_order,
         commands::repo_log,
         commands::repo_status,
         commands::repo_branches,
@@ -399,7 +390,6 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::repo_diff_files,
         commands::repo_search_commits,
         commands::repo_resolve_commit,
-        commands::repo_search_paths,
         commands::repo_list_files,
         commands::repo_files_at_revision,
         commands::repo_add_to_gitignore,
@@ -476,17 +466,6 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::list_lane_locks,
         commands::set_lane_lock,
         commands::unset_lane_lock,
-        commands::save_column_preferences,
-        commands::save_changed_files_view_mode,
-        commands::save_branch_list_view,
-        commands::save_refs_sort_mode,
-        commands::save_tags_sort_mode,
-        commands::set_checkout_new_branch,
-        commands::save_ui_font_size,
-        commands::save_panel_chrome,
-        commands::save_lane_colored_branch_chips,
-        commands::save_stash_base_lane_color,
-        commands::save_commits_graph_metrics,
     ])
 }
 

@@ -1,6 +1,6 @@
 import { useConfirmDestructive } from "../../../store/settings";
-import { useDestructiveMenuConfirm } from "./PanelContextMenu";
-import { MenuItem, Separator, SectionLabel } from "./primitives";
+import { useDestructiveMenuConfirm } from "../../shared/menu/PanelContextMenu";
+import { MenuItem, Separator, SectionLabel } from "../../shared/menu/primitives";
 
 /**
  * Shared context-menu section for a stash entry. Used by both the stash row's

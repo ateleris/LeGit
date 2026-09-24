@@ -1,11 +1,5 @@
 import { create } from "zustand";
-import {
-  deleteTheme as deleteThemeCmd,
-  listThemes,
-  loadTheme,
-  saveTheme as saveThemeCmd,
-  setActiveTheme as setActiveThemeCmd,
-} from "../lib/commands";
+import { saveTheme, loadTheme, listThemes, deleteTheme, setActiveTheme } from "../lib/commands";
 import { applyTheme } from "../theme/applier";
 import { DEFAULT_THEME } from "../theme/defaults";
 import { asTheme, validateTheme } from "../theme/validate";
@@ -116,7 +110,7 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
     applyTheme(doc);
     set({ activeThemeName: name, activeDocument: doc, draft: null, draftDirty: false, draftOrigin: null });
     try {
-      await setActiveThemeCmd(name);
+      await setActiveTheme(name);
     } catch (e) {
       console.warn("failed to persist active theme", e);
     }
@@ -200,7 +194,7 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
     if (!result.ok) {
       throw new Error(result.errors.map((e) => `${e.field}: ${e.message}`).join("; "));
     }
-    const entry = await saveThemeCmd(name, doc);
+    const entry = await saveTheme(name, doc);
     // A changed name is a RENAME of the origin theme, not a copy — remove the
     // old file (duplication is `startNewTheme`'s job). Only ever deletes user
     // themes; built-ins aren't editable and are guarded again here.
@@ -210,14 +204,14 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
       origin !== entry.name &&
       get().themes.some((t) => t.name === origin && t.source === "user")
     ) {
-      await deleteThemeCmd(origin);
+      await deleteTheme(origin);
     }
     await get().refreshList();
     await get().setActive(entry.name);
   },
 
   async deleteUserTheme(name) {
-    await deleteThemeCmd(name);
+    await deleteTheme(name);
     if (get().activeThemeName === name) {
       const fallback = get().themes.find((t) => t.name !== name);
       if (fallback) await get().setActive(fallback.name);
@@ -235,7 +229,7 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
     }
     const doc = raw as ThemeDocument;
     const name = suggestedName ?? doc.name;
-    const entry = await saveThemeCmd(name, doc);
+    const entry = await saveTheme(name, doc);
     await get().refreshList();
     // An import is an explicit "use this" gesture: activate it right away
     // (applies + persists). Note this discards any open editor draft.

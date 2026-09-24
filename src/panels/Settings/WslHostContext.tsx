@@ -15,7 +15,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from "react";
 import { formatAppError } from "../../lib/errors";
 import type { GitStatus, WslDistro } from "../../lib/types";
-import { wslHostGitStatus } from "../../lib/commands";
+import { api } from "../../lib/commands";
 import { onRemoteHostStatus } from "../../lib/events";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
 import { wslGitConfigScope, type GitConfigScope } from "./gitConfigHost";
@@ -120,7 +120,7 @@ export function WslHostProvider({
           return rest;
         });
         try {
-          const s = await wslHostGitStatus(target);
+          const s = await api.wslHostGitStatus(target);
           setGitStatuses((prev) => ({ ...prev, [target]: s }));
           markConnected(target);
           // An explicit Connect/Reconnect is also "reload": without it a form

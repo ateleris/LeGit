@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { SectionLabel } from "../shared/SectionChrome";
 import {
   applyStash,
   createStash,
@@ -263,21 +264,6 @@ export function StashesSection() {
 // ---------------------------------------------------------------------------
 // Subcomponents
 // ---------------------------------------------------------------------------
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <span
-      style={{
-        fontSize: "var(--fz-sm)",
-        textTransform: "uppercase",
-        letterSpacing: 0.5,
-        color: "var(--subtle-fg)",
-      }}
-    >
-      {children}
-    </span>
-  );
-}
 
 function StashRow({
   stash,

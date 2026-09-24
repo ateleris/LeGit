@@ -3,13 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useRepoStore } from "../../store/repos";
 import { useTagRemoteChoice } from "../../store/tagRemote";
 import { keepPreviousDataForRepo } from "../../lib/repoScopedPlaceholder";
-import {
-  repoLog,
-  repoResolveCommit,
-  repoSearchCommits,
-  repoSignaturePresence,
-  repoUnpushedCommits,
-} from "../../lib/commands";
+import { repoLog, api } from "../../lib/commands";
 import { pushedTagNames, resolveTagRemote } from "../../lib/tags";
 import { buildUpstreamMap } from "./commitRows";
 import { branchWorktreeMap, detachedWorktreeHeads } from "../Worktrees/worktreeRows";
@@ -104,9 +98,9 @@ export function useCommitsQueries(
       // so OR takes two walks merged client-side. The rev-parse probe runs
       // alongside; failure just means the query isn't a rev.
       const [resolved, byMessage, byAuthor] = await Promise.all([
-        repoResolveCommit(repo!.id, query).catch(() => null),
-        repoSearchCommits(repo!.id, query, "message", SEARCH_MAX_RESULTS),
-        repoSearchCommits(repo!.id, query, "author", SEARCH_MAX_RESULTS),
+        api.repoResolveCommit(repo!.id, query).catch(() => null),
+        api.repoSearchCommits(repo!.id, query, "message", SEARCH_MAX_RESULTS),
+        api.repoSearchCommits(repo!.id, query, "author", SEARCH_MAX_RESULTS),
       ]);
       const ids = mergeSearchResults(byMessage, byAuthor)
         .map((c) => c.id)
@@ -135,7 +129,7 @@ export function useCommitsQueries(
   // entries - history rewrites must only ever see unpublished commits.
   const { data: unpushedIds = [] } = useQuery<CommitId[]>({
     queryKey: [repo?.id, "unpushed"],
-    queryFn: () => repoUnpushedCommits(repo!.id, 1000),
+    queryFn: () => api.repoUnpushedCommits(repo!.id, 1000),
     enabled: !!repo,
     staleTime: STALE.live,
   });
@@ -199,7 +193,7 @@ export function useCommitsQueries(
   const commitIds = useMemo(() => commits.map((c) => c.id), [commits]);
   const { data: signedIds } = useQuery<CommitId[]>({
     queryKey: [repo?.id, "sig-presence", commitIds],
-    queryFn: () => repoSignaturePresence(repo!.id, commitIds),
+    queryFn: () => api.repoSignaturePresence(repo!.id, commitIds),
     enabled: !!repo && signedColumnVisible && commitIds.length > 0,
     staleTime: STALE.immutable,
     placeholderData: keepPreviousDataForRepo<CommitId[]>(repo?.id),

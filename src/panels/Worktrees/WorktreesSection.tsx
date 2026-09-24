@@ -2,13 +2,7 @@ import { useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
-import {
-  repoWorktreeAdd,
-  repoWorktreeLock,
-  repoWorktreePrune,
-  repoWorktreeRemove,
-  repoWorktreeUnlock,
-} from "../../lib/commands";
+import { api } from "../../lib/commands";
 import type { Branch, WorktreeAddMode, WorktreeInfo } from "../../lib/types";
 import { formatAppError } from "../../lib/errors";
 import { supportsHostFolderPicker, worktreeLocator } from "../../lib/locator";
@@ -76,7 +70,7 @@ export function WorktreesSection() {
           : addMode === "checkout"
             ? { kind: "checkout", branch: addBranch }
             : { kind: "detach", rev: addBranch.trim() === "" ? null : addBranch.trim() };
-      await repoWorktreeAdd(repo.id, addPath.trim(), mode);
+      await api.repoWorktreeAdd(repo.id, addPath.trim(), mode);
       setAdding(false);
       setAddPath("");
       setAddBranch("");
@@ -93,7 +87,7 @@ export function WorktreesSection() {
     if (!ok) return;
     void run(async () => {
       try {
-        await repoWorktreeRemove(repo.id, w.path, false);
+        await api.repoWorktreeRemove(repo.id, w.path, false);
       } catch (e) {
         // Dirty worktree: git refuses without --force. Always confirm the
         // force (data loss), independent of the confirm setting - this is a
@@ -107,7 +101,7 @@ export function WorktreesSection() {
           confirmLabel: "Force remove",
         });
         if (!ok) return;
-        await repoWorktreeRemove(repo.id, w.path, true);
+        await api.repoWorktreeRemove(repo.id, w.path, true);
       }
     });
   };
@@ -120,7 +114,7 @@ export function WorktreesSection() {
           <ToolbarButton
             label="Prune"
             disabled={busy}
-            onClick={() => void run(async () => { await repoWorktreePrune(repo.id); })}
+            onClick={() => void run(async () => { await api.repoWorktreePrune(repo.id); })}
           />
         )}
       </div>
@@ -240,7 +234,7 @@ export function WorktreesSection() {
                   onClick={() =>
                     w.locked !== null
                       ? void run(async () => {
-                          await repoWorktreeUnlock(repo.id, w.path);
+                          await api.repoWorktreeUnlock(repo.id, w.path);
                         })
                       : void (async () => {
                           const reason = await promptDialog({
@@ -252,7 +246,7 @@ export function WorktreesSection() {
                           });
                           if (reason === null) return;
                           void run(async () => {
-                            await repoWorktreeLock(repo.id, w.path, reason.trim() || null);
+                            await api.repoWorktreeLock(repo.id, w.path, reason.trim() || null);
                           });
                         })()
                   }

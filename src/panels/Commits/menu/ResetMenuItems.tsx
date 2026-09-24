@@ -1,6 +1,6 @@
 import { useConfirmDestructive } from "../../../store/settings";
-import { useDestructiveMenuConfirm } from "./PanelContextMenu";
-import { MenuItem, Separator, Submenu } from "./primitives";
+import { useDestructiveMenuConfirm } from "../../shared/menu/PanelContextMenu";
+import { MenuItem, Separator, Submenu } from "../../shared/menu/primitives";
 import type { ResetMode } from "../../../lib/types";
 
 /**

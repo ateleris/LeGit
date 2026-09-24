@@ -329,8 +329,8 @@ struct Broker {
 static BROKER: OnceLock<std::sync::Arc<Broker>> = OnceLock::new();
 
 /// Payload for `CREDENTIAL_REQUEST_EVENT`.
-#[derive(Clone, Serialize)]
-struct CredentialRequestPayload {
+#[derive(Clone, Serialize, specta::Type)]
+pub(crate) struct CredentialRequestPayload {
     request_id: String,
     protocol: String,
     host: String,
@@ -341,8 +341,9 @@ struct CredentialRequestPayload {
     repo_dir: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
-struct CredentialClosedPayload {
+/// Payload for `CREDENTIAL_CLOSED_EVENT` and `ASKPASS_CLOSED_EVENT`.
+#[derive(Clone, Serialize, specta::Type)]
+pub(crate) struct CredentialClosedPayload {
     request_id: String,
 }
 
@@ -581,16 +582,24 @@ async fn handle_get(
 /// Payload for `ASKPASS_REQUEST_EVENT`. `kind` drives the dialog shape;
 /// `prompt` is ssh's raw text (shown verbatim for confirmations - the
 /// host-key fingerprint must reach the user unaltered).
-#[derive(Clone, Serialize)]
-struct AskpassRequestPayload {
+#[derive(Clone, Serialize, specta::Type)]
+pub(crate) struct AskpassRequestPayload {
     request_id: String,
     prompt: String,
-    /// "passphrase" | "confirmation" | "other"
-    kind: &'static str,
+    kind: AskpassPromptKind,
     key_path: Option<String>,
     /// A repeat after a wrong passphrase (the dialog says so).
     retry: bool,
     repo_dir: Option<String>,
+}
+
+/// Wire form of the askpass prompt kind.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AskpassPromptKind {
+    Passphrase,
+    Confirmation,
+    Other,
 }
 
 /// `askpass`: an ssh prompt forwarded by the askpass shim. Passphrases are
@@ -606,7 +615,7 @@ async fn handle_askpass(
     let Some(prompt) = fields.get("prompt") else { return cancel };
     let kind = classify_askpass_prompt(prompt);
 
-    let (kind_str, key_path, retry) = match &kind {
+    let (prompt_kind, key_path, retry) = match &kind {
         AskpassKind::Passphrase { key_path, retry } => {
             if *retry {
                 // The cached passphrase was wrong - evict it, or it would be
@@ -619,10 +628,10 @@ async fn handle_askpass(
                     cancel: false,
                 };
             }
-            ("passphrase", Some(key_path.clone()), *retry)
+            (AskpassPromptKind::Passphrase, Some(key_path.clone()), *retry)
         }
-        AskpassKind::Confirmation => ("confirmation", None, false),
-        AskpassKind::Other => ("other", None, false),
+        AskpassKind::Confirmation => (AskpassPromptKind::Confirmation, None, false),
+        AskpassKind::Other => (AskpassPromptKind::Other, None, false),
     };
 
     let request_id = uuid::Uuid::new_v4().to_string();
@@ -633,7 +642,7 @@ async fn handle_askpass(
         AskpassRequestPayload {
             request_id: request_id.clone(),
             prompt: prompt.clone(),
-            kind: kind_str,
+            kind: prompt_kind,
             key_path: key_path.clone(),
             retry,
             repo_dir: cwd.map(str::to_string),
@@ -653,7 +662,7 @@ async fn handle_askpass(
         Some(reply) => {
             // Session-cache passphrases only: confirmations/other answers are
             // one-shot by nature.
-            if let (Some(path), "passphrase") = (key_path, kind_str) {
+            if let (Some(path), AskpassPromptKind::Passphrase) = (key_path, prompt_kind) {
                 lock(&broker.askpass_cache).insert(path, reply.password.clone());
             }
             ShimResponse { username: None, password: Some(reply.password), cancel: false }

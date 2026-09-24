@@ -5,13 +5,15 @@ import { describe, test, expect, vi, beforeEach } from "vitest";
 import { useCommitDraftStore } from "./commitDraft";
 import { useRemoteProgressStore } from "./remoteProgress";
 import { useLaneLocksStore } from "./laneLocks";
-import { listLaneLocks, setLaneLock, unsetLaneLock } from "../lib/commands";
+import { api } from "../lib/commands";
 import type { RemoteProgress } from "../lib/types";
 
 vi.mock("../lib/commands", () => ({
-  listLaneLocks: vi.fn(),
-  setLaneLock: vi.fn(),
-  unsetLaneLock: vi.fn(),
+  api: {
+    listLaneLocks: vi.fn(),
+    setLaneLock: vi.fn(),
+    unsetLaneLock: vi.fn(),
+  },
 }));
 
 beforeEach(() => {
@@ -64,19 +66,19 @@ describe("remoteProgress store", () => {
 
 describe("laneLocks store", () => {
   test("mutations refresh the per-repo cache from the returned list", async () => {
-    vi.mocked(setLaneLock).mockResolvedValue([{ refName: "refs/heads/main", laneIndex: 0 }]);
+    vi.mocked(api.setLaneLock).mockResolvedValue([{ refName: "refs/heads/main", laneIndex: 0 }]);
     await useLaneLocksStore.getState().setLock("r1", "refs/heads/main", 0);
     expect(useLaneLocksStore.getState().getLocks("r1")).toEqual([
       { refName: "refs/heads/main", laneIndex: 0 },
     ]);
 
-    vi.mocked(unsetLaneLock).mockResolvedValue([]);
+    vi.mocked(api.unsetLaneLock).mockResolvedValue([]);
     await useLaneLocksStore.getState().unsetLock("r1", "refs/heads/main");
     expect(useLaneLocksStore.getState().getLocks("r1")).toEqual([]);
   });
 
   test("locks are cached per repo id", async () => {
-    vi.mocked(listLaneLocks).mockResolvedValue([{ refName: "refs/heads/dev", laneIndex: 2 }]);
+    vi.mocked(api.listLaneLocks).mockResolvedValue([{ refName: "refs/heads/dev", laneIndex: 2 }]);
     await useLaneLocksStore.getState().loadLocks("r1");
     expect(useLaneLocksStore.getState().getLocks("r1")).toHaveLength(1);
     expect(useLaneLocksStore.getState().getLocks("r2")).toEqual([]);
@@ -85,7 +87,7 @@ describe("laneLocks store", () => {
   test("a failed load keeps the previous cache (warn, not throw)", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     useLaneLocksStore.setState({ locks: { r1: [{ refName: "x", laneIndex: 1 }] } });
-    vi.mocked(listLaneLocks).mockRejectedValue(new Error("ipc down"));
+    vi.mocked(api.listLaneLocks).mockRejectedValue(new Error("ipc down"));
     await useLaneLocksStore.getState().loadLocks("r1");
     expect(useLaneLocksStore.getState().getLocks("r1")).toHaveLength(1);
     expect(warn).toHaveBeenCalled();

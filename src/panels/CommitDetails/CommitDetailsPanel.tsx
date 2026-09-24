@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { TitledSection } from "../shared/SectionChrome";
 import { PanelError } from "../shared/PanelError";
 import { useQuery } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
@@ -7,7 +8,7 @@ import { useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelViewState } from "../../store/panelViewState";
-import { repoCommitDetails } from "../../lib/commands";
+import { api } from "../../lib/commands";
 import { formatFull, formatRelative } from "../../lib/time";
 import type { CommitDetails, CommitId, SignatureVerification } from "../../lib/types";
 import { signaturePresentation } from "../../lib/signature";
@@ -37,7 +38,7 @@ export function CommitDetailsPanel() {
 
   const { data, isFetching, isError, error, refetch } = useQuery<CommitDetails>({
     queryKey,
-    queryFn: () => repoCommitDetails(repo!.id, selectedId!),
+    queryFn: () => api.repoCommitDetails(repo!.id, selectedId!),
     enabled: !!repo && !!selectedId,
     staleTime: STALE.stable,
   });
@@ -87,46 +88,46 @@ function CommitView({ details }: { details: CommitDetails }) {
 
   return (
     <div className="legit-panel__body" style={{ overflowY: "auto", fontSize: "var(--fz-md)" }}>
-      <Section title="SHA">
+      <TitledSection title="SHA">
         <code style={{ userSelect: "all", wordBreak: "break-all" }}>{commit.id}</code>
-      </Section>
+      </TitledSection>
 
       {commit.parents.length > 0 && (
-        <Section title={commit.parents.length === 1 ? "Parent" : "Parents"}>
+        <TitledSection title={commit.parents.length === 1 ? "Parent" : "Parents"}>
           {commit.parents.map((p) => (
             <div key={p}><code style={{ fontSize: "var(--fz-sm)" }}>{p}</code></div>
           ))}
-        </Section>
+        </TitledSection>
       )}
 
-      <Section title="Author">
+      <TitledSection title="Author">
         <div>{commit.author.name} &lt;{commit.author.email}&gt;</div>
         <div className="legit-subtle">{formatFull(commit.author.timestamp, commit.author.tz_offset_minutes)} ({formatRelative(commit.author.timestamp)})</div>
-      </Section>
+      </TitledSection>
 
       {(commit.committer.name !== commit.author.name || commit.committer.timestamp !== commit.author.timestamp) && (
-        <Section title="Committer">
+        <TitledSection title="Committer">
           <div>{commit.committer.name} &lt;{commit.committer.email}&gt;</div>
           <div className="legit-subtle">{formatFull(commit.committer.timestamp, commit.committer.tz_offset_minutes)}</div>
-        </Section>
+        </TitledSection>
       )}
 
-      <Section title="Message">
+      <TitledSection title="Message">
         <div style={{ fontWeight: 600, marginBottom: body ? 6 : 0 }}>{subject}</div>
         {body && (
           <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "var(--fz-md)", lineHeight: 1.5 }}>
             {body}
           </pre>
         )}
-      </Section>
+      </TitledSection>
 
       {commit.signature && (
-        <Section title="Signature">
+        <TitledSection title="Signature">
           <SignatureView sig={commit.signature} />
-        </Section>
+        </TitledSection>
       )}
 
-      <Section title="">
+      <TitledSection title="">
         <button onClick={() => setShowRaw((s) => !s)} style={{ fontSize: "var(--fz-sm)" }}>
           {showRaw ? "Hide raw object" : "Show raw object"}
         </button>
@@ -135,7 +136,7 @@ function CommitView({ details }: { details: CommitDetails }) {
             {raw_object}
           </pre>
         )}
-      </Section>
+      </TitledSection>
     </div>
   );
 }
@@ -152,15 +153,3 @@ function SignatureView({ sig }: { sig: SignatureVerification }) {
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: "1.167em" }}>
-      {title && (
-        <div style={{ fontSize: "var(--fz-xs)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: "0.333em" }}>
-          {title}
-        </div>
-      )}
-      {children}
-    </div>
-  );
-}

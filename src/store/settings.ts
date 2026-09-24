@@ -1,40 +1,5 @@
 import { create } from "zustand";
-import {
-  getGlobalSettings,
-  saveBranchListView,
-  saveRegionState,
-  saveChangedFilesViewMode,
-  saveRefsSortMode,
-  saveTagsSortMode,
-  saveCommitsGraphMetrics,
-  saveUiFontSize,
-  savePanelChrome,
-  setWatcherEnabled,
-  setConfirmDiscard,
-  setDetectCaseRenames,
-  setCheckoutNewBranch,
-  setCheckoutRemoteFastForward,
-  setSubmoduleAttachBranch,
-  setAutoFetchEnabled,
-  setAutoFetchIntervalMinutes,
-  setCheckUpdatesOnStartup,
-  setExternalEditorCommand,
-  setCommitAvatars,
-  setCommitInitials,
-  setAutoPushTags,
-  setDiffSyntaxHighlighting,
-  setCommitDateAbsolute,
-  setCommitDateFormat,
-  setCommitDateShowTime,
-  setSuppressedAutoOpenPanels,
-  setWorkingChangesSectionOrder,
-  saveSwitchDirtyBehavior,
-  savePullStrategy,
-  saveLaneColoredBranchChips,
-  saveStashBaseLaneColor,
-  saveStashIncludeUntracked,
-  savePushRecurseSubmodules,
-} from "../lib/commands";
+import { api } from "../lib/commands";
 import { reapplyPanelConstraints } from "./dockview";
 import type {
   PushRecurseMode,
@@ -47,7 +12,7 @@ import type { CommitDateFormat } from "../lib/time";
 import type { RefsSortMode } from "../lib/refSort";
 
 /** Defaults + bounds for the Commits-panel graph metrics. Mirror the backend
- * clamps in `save_commits_graph_metrics`. */
+ * clamps in `GlobalSettings::normalized`. */
 export const COMMITS_ROW_HEIGHT_DEFAULT = 22;
 export const COMMITS_LANE_WIDTH_DEFAULT = 22;
 export const COMMITS_DOT_RADIUS_DEFAULT = 8;
@@ -61,7 +26,7 @@ export const COMMITS_DOT_RADIUS_MIN = 1;
 export const COMMITS_LINE_WIDTH_MIN = 1;
 
 /** Global UI font size (px) — base for the panel text scale and min sizes.
- * Mirror the backend clamp in `save_ui_font_size`. */
+ * Mirror the backend clamp in `GlobalSettings::normalized`. */
 export const UI_FONT_SIZE_DEFAULT = 12;
 export const UI_FONT_SIZE_MIN = 8;
 export const UI_FONT_SIZE_MAX = 24;
@@ -72,7 +37,7 @@ export function applyUiFontSize(size: number, root: HTMLElement = document.docum
   root.style.setProperty("--ui-font-size", `${size}px`);
 }
 
-/** Mirror the backend clamps in `save_panel_chrome`. */
+/** Mirror the backend clamps in `GlobalSettings::normalized`. */
 export const PANEL_GAP_MAX = 16;
 export const PANEL_RADIUS_MAX = 16;
 export const PANEL_BORDER_WIDTH_MAX = 8;
@@ -139,6 +104,12 @@ export const useConfirmDestructive = () =>
 interface SettingsStore {
   settings: GlobalSettings | null;
   init: () => Promise<void>;
+  /** Persist a partial settings patch and cache the merged result the backend
+   * returns. Every typed setter below routes through this; panels needing a
+   * field without a setter may call it directly. Command-owned fields (git
+   * path, theme, watcher, session bookkeeping, profiles, accounts) are
+   * refused by the backend — use their dedicated commands. */
+  patchSettings: (patch: Partial<GlobalSettings>) => Promise<GlobalSettings>;
   setRegionPlacement: (placement: RegionPlacement) => Promise<void>;
   setCommitsGraphMetrics: (
     rowHeight: number,
@@ -169,6 +140,8 @@ interface SettingsStore {
   setCommitDateAbsolute: (enabled: boolean) => Promise<void>;
   setCommitDateFormat: (format: CommitDateFormat) => Promise<void>;
   setCommitDateShowTime: (enabled: boolean) => Promise<void>;
+  setLineEndingChipsInChanges: (enabled: boolean) => Promise<void>;
+  setWarnOnLineEndingCommit: (warn: boolean) => Promise<void>;
   setSuppressedAutoOpenPanels: (panels: string[]) => Promise<void>;
   setWorkingChangesSectionOrder: (order: string[]) => Promise<void>;
   setSwitchDirtyBehavior: (behavior: SwitchDirtyBehavior) => Promise<void>;
@@ -179,286 +152,174 @@ interface SettingsStore {
   setPushRecurseSubmodules: (mode: PushRecurseMode | null) => Promise<void>;
 }
 
-export const useSettingsStore = create<SettingsStore>((set, get) => ({
-  settings: null,
+export const useSettingsStore = create<SettingsStore>((set, get) => {
+  const patch = async (fields: Partial<GlobalSettings>) => {
+    const merged = await api.patchGlobalSettings(fields);
+    set({ settings: merged });
+    return merged;
+  };
 
-  async init() {
-    if (get().settings) return;
-    const settings = await getGlobalSettings();
-    applyUiFontSize(settings.ui_font_size ?? UI_FONT_SIZE_DEFAULT);
-    applyPanelChrome(
-      settings.panel_gap ?? 0,
-      settings.panel_corner_radius ?? 0,
-      settings.panel_border_width ?? PANEL_BORDER_WIDTH_DEFAULT,
-    );
-    set({ settings });
-  },
+  return {
+    settings: null,
 
-  async setRegionPlacement(placement: RegionPlacement) {
-    const s = get().settings;
-    await saveRegionState(
-      placement,
-      s?.global_region_size_top ?? null,
-      s?.global_region_size_left ?? null,
-      s?.global_dock_collapsed ?? false,
-    );
-    if (s) {
-      set({ settings: { ...s, global_region_placement: placement } });
-    }
-  },
+    async init() {
+      if (get().settings) return;
+      const settings = await api.getGlobalSettings();
+      applyUiFontSize(settings.ui_font_size ?? UI_FONT_SIZE_DEFAULT);
+      applyPanelChrome(
+        settings.panel_gap ?? 0,
+        settings.panel_corner_radius ?? 0,
+        settings.panel_border_width ?? PANEL_BORDER_WIDTH_DEFAULT,
+      );
+      set({ settings });
+    },
 
-  async setCommitsGraphMetrics(rowHeight, laneWidth, dotRadius, lineWidth) {
-    // The row must clear a ref chip (which scales with the UI font size).
-    const font = get().settings?.ui_font_size ?? UI_FONT_SIZE_DEFAULT;
-    const rh = clamp(rowHeight, minCommitsRowHeight(font), COMMITS_ROW_HEIGHT_MAX);
-    // Lane width shares the row height's font-derived floor (not the current
-    // row height — the two are adjustable independently above it).
-    const lw = clamp(laneWidth, minCommitsRowHeight(font), COMMITS_LANE_WIDTH_MAX);
-    // Dot radius is bounded by the (clamped) cell dimensions — keep it in range
-    // even when the height/width shrink below the current radius.
-    const dr = clamp(dotRadius, COMMITS_DOT_RADIUS_MIN, maxCommitsDotRadius(rh, lw));
-    // Line width, like the dot, is bounded by the (clamped) cell dimensions.
-    const lwd = clamp(lineWidth, COMMITS_LINE_WIDTH_MIN, maxCommitsLineWidth(rh, lw));
-    await saveCommitsGraphMetrics(rh, lw, dr, lwd);
-    const s = get().settings;
-    if (s) {
-      set({
-        settings: {
-          ...s,
-          commits_row_height: rh,
-          commits_lane_width: lw,
-          commits_dot_radius: dr,
-          commits_line_width: lwd,
-        },
+    patchSettings: patch,
+
+    async setRegionPlacement(placement) {
+      await patch({ global_region_placement: placement });
+    },
+
+    async setCommitsGraphMetrics(rowHeight, laneWidth, dotRadius, lineWidth) {
+      await patch({
+        commits_row_height: rowHeight,
+        commits_lane_width: laneWidth,
+        commits_dot_radius: dotRadius,
+        commits_line_width: lineWidth,
       });
-    }
-  },
+    },
 
-  async setChangedFilesViewMode(mode) {
-    await saveChangedFilesViewMode(mode);
-    const s = get().settings;
-    if (s) {
-      set({ settings: { ...s, changed_files_view_mode: mode } });
-    }
-  },
+    async setChangedFilesViewMode(mode) {
+      await patch({ changed_files_view_mode: mode });
+    },
+    async setBranchListView(mode) {
+      await patch({ branch_list_view: mode });
+    },
+    async setRefsSortMode(mode) {
+      await patch({ refs_sort_mode: mode });
+    },
+    async setTagsSortMode(mode) {
+      await patch({ tags_sort_mode: mode });
+    },
 
-  async setBranchListView(mode) {
-    await saveBranchListView(mode);
-    const s = get().settings;
-    if (s) {
-      set({ settings: { ...s, branch_list_view: mode } });
-    }
-  },
+    // The watcher toggle starts/stops live watchers, so it keeps its own
+    // command; the patch command refuses `watcher_enabled`.
+    async setWatcherEnabled(enabled) {
+      await api.setWatcherEnabled(enabled);
+      const s = get().settings;
+      if (s) set({ settings: { ...s, watcher_enabled: enabled } });
+    },
 
-  async setRefsSortMode(mode) {
-    await saveRefsSortMode(mode);
-    const s = get().settings;
-    if (s) {
-      set({ settings: { ...s, refs_sort_mode: mode } });
-    }
-  },
+    async setConfirmDiscard(confirm) {
+      await patch({ confirm_discard: confirm });
+    },
+    async setDetectCaseRenames(enabled) {
+      await patch({ detect_case_renames: enabled });
+    },
+    async setCheckoutNewBranch(enabled) {
+      await patch({ checkout_new_branch: enabled });
+    },
+    async setCheckoutRemoteFastForward(enabled) {
+      await patch({ checkout_remote_fast_forward: enabled });
+    },
+    async setSubmoduleAttachBranch(enabled) {
+      await patch({ submodule_attach_branch: enabled });
+    },
+    async setAutoFetchEnabled(enabled) {
+      await patch({ auto_fetch_enabled: enabled });
+    },
+    async setCheckUpdatesOnStartup(enabled) {
+      await patch({ check_updates_on_startup: enabled });
+    },
+    async setAutoFetchIntervalMinutes(minutes) {
+      // Integer + floor of 1 before sending: the field is a u32 and the
+      // backend rejects fractions instead of rounding them.
+      await patch({ auto_fetch_interval_minutes: Math.max(1, Math.round(minutes)) });
+    },
+    async setExternalEditorCommand(command) {
+      await patch({ external_editor_command: command });
+    },
+    async setCommitAvatars(enabled) {
+      await patch({ commit_avatars: enabled });
+    },
+    async setCommitInitials(enabled) {
+      await patch({ commit_initials: enabled });
+    },
+    async setAutoPushTags(enabled) {
+      await patch({ auto_push_tags: enabled });
+    },
+    async setDiffSyntaxHighlighting(enabled) {
+      await patch({ diff_syntax_highlighting: enabled });
+    },
+    async setCommitDateAbsolute(enabled) {
+      await patch({ commit_date_absolute: enabled });
+    },
+    async setCommitDateFormat(format) {
+      await patch({ commit_date_format: format });
+    },
+    async setCommitDateShowTime(enabled) {
+      await patch({ commit_date_show_time: enabled });
+    },
+    async setLineEndingChipsInChanges(enabled) {
+      await patch({ line_ending_chips_in_changes: enabled });
+    },
+    async setWarnOnLineEndingCommit(warn) {
+      await patch({ warn_on_line_ending_commit: warn });
+    },
+    async setSuppressedAutoOpenPanels(panels) {
+      await patch({ suppressed_auto_open_panels: panels });
+    },
+    async setWorkingChangesSectionOrder(order) {
+      await patch({ working_changes_section_order: order });
+    },
+    async setSwitchDirtyBehavior(behavior) {
+      await patch({ switch_dirty_behavior: behavior });
+    },
+    async setPullStrategy(strategy) {
+      await patch({ pull_strategy: strategy });
+    },
+    async setStashIncludeUntracked(include) {
+      await patch({ stash_include_untracked: include });
+    },
+    async setLaneColoredBranchChips(enabled) {
+      await patch({ lane_colored_branch_chips: enabled });
+    },
+    async setStashBaseLaneColor(enabled) {
+      await patch({ stash_base_lane_color: enabled });
+    },
+    async setPushRecurseSubmodules(mode) {
+      await patch({ push_recurse_submodules: mode });
+    },
 
-  async setTagsSortMode(mode) {
-    await saveTagsSortMode(mode);
-    const s = get().settings;
-    if (s) {
-      set({ settings: { ...s, tags_sort_mode: mode } });
-    }
-  },
+    async setUiFontSize(size) {
+      const clamped = clamp(size, UI_FONT_SIZE_MIN, UI_FONT_SIZE_MAX);
+      // Apply immediately for a live preview, then persist (backend re-clamps).
+      applyUiFontSize(clamped);
+      reapplyPanelConstraints();
+      const merged = await patch({ ui_font_size: clamped });
+      applyUiFontSize(merged.ui_font_size ?? UI_FONT_SIZE_DEFAULT);
+      reapplyPanelConstraints();
+    },
 
-  async setWatcherEnabled(enabled) {
-    await setWatcherEnabled(enabled);
-    const s = get().settings;
-    if (s) {
-      set({ settings: { ...s, watcher_enabled: enabled } });
-    }
-  },
-
-  async setConfirmDiscard(confirm) {
-    await setConfirmDiscard(confirm);
-    const s = get().settings;
-    if (s) {
-      set({ settings: { ...s, confirm_discard: confirm } });
-    }
-  },
-
-  async setDetectCaseRenames(enabled) {
-    await setDetectCaseRenames(enabled);
-    const s = get().settings;
-    if (s) {
-      set({ settings: { ...s, detect_case_renames: enabled } });
-    }
-  },
-
-  async setCheckoutNewBranch(enabled) {
-    await setCheckoutNewBranch(enabled);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, checkout_new_branch: enabled } });
-  },
-
-  async setCheckoutRemoteFastForward(enabled) {
-    await setCheckoutRemoteFastForward(enabled);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, checkout_remote_fast_forward: enabled } });
-  },
-
-  async setSubmoduleAttachBranch(enabled) {
-    await setSubmoduleAttachBranch(enabled);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, submodule_attach_branch: enabled } });
-  },
-
-  async setAutoFetchEnabled(enabled) {
-    await setAutoFetchEnabled(enabled);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, auto_fetch_enabled: enabled } });
-  },
-
-  async setCheckUpdatesOnStartup(enabled) {
-    await setCheckUpdatesOnStartup(enabled);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, check_updates_on_startup: enabled } });
-  },
-
-  async setAutoFetchIntervalMinutes(minutes) {
-    const clamped = Math.max(1, Math.round(minutes)); // backend re-clamps
-    await setAutoFetchIntervalMinutes(clamped);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, auto_fetch_interval_minutes: clamped } });
-  },
-
-  async setExternalEditorCommand(command) {
-    const normalized = command && command.trim() !== "" ? command : null;
-    await setExternalEditorCommand(normalized);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, external_editor_command: normalized } });
-  },
-
-  async setCommitAvatars(enabled) {
-    await setCommitAvatars(enabled);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, commit_avatars: enabled } });
-  },
-
-  async setCommitInitials(enabled) {
-    await setCommitInitials(enabled);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, commit_initials: enabled } });
-  },
-
-  async setAutoPushTags(enabled) {
-    await setAutoPushTags(enabled);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, auto_push_tags: enabled } });
-  },
-
-  async setDiffSyntaxHighlighting(enabled) {
-    await setDiffSyntaxHighlighting(enabled);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, diff_syntax_highlighting: enabled } });
-  },
-
-  async setCommitDateAbsolute(enabled) {
-    await setCommitDateAbsolute(enabled);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, commit_date_absolute: enabled } });
-  },
-
-  async setCommitDateFormat(format) {
-    await setCommitDateFormat(format);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, commit_date_format: format } });
-  },
-
-  async setCommitDateShowTime(enabled) {
-    await setCommitDateShowTime(enabled);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, commit_date_show_time: enabled } });
-  },
-
-  async setSuppressedAutoOpenPanels(panels) {
-    await setSuppressedAutoOpenPanels(panels);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, suppressed_auto_open_panels: panels } });
-  },
-
-  async setWorkingChangesSectionOrder(order) {
-    await setWorkingChangesSectionOrder(order);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, working_changes_section_order: order } });
-  },
-
-  async setSwitchDirtyBehavior(behavior) {
-    await saveSwitchDirtyBehavior(behavior);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, switch_dirty_behavior: behavior } });
-  },
-
-  async setPullStrategy(strategy) {
-    await savePullStrategy(strategy);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, pull_strategy: strategy } });
-  },
-
-  async setStashIncludeUntracked(include) {
-    await saveStashIncludeUntracked(include);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, stash_include_untracked: include } });
-  },
-
-  async setLaneColoredBranchChips(enabled) {
-    await saveLaneColoredBranchChips(enabled);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, lane_colored_branch_chips: enabled } });
-  },
-
-  async setStashBaseLaneColor(enabled) {
-    await saveStashBaseLaneColor(enabled);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, stash_base_lane_color: enabled } });
-  },
-
-  async setPushRecurseSubmodules(mode) {
-    await savePushRecurseSubmodules(mode);
-    const s = get().settings;
-    if (s) set({ settings: { ...s, push_recurse_submodules: mode } });
-  },
-
-  async setUiFontSize(size) {
-    const clamped = clamp(size, UI_FONT_SIZE_MIN, UI_FONT_SIZE_MAX);
-    // Apply immediately for a live preview, then persist (backend re-clamps).
-    applyUiFontSize(clamped);
-    reapplyPanelConstraints();
-    const stored = await saveUiFontSize(clamped);
-    applyUiFontSize(stored);
-    reapplyPanelConstraints();
-    const s = get().settings;
-    if (s) {
-      set({ settings: { ...s, ui_font_size: stored } });
-    }
-  },
-
-  async setPanelChrome(gap, radius, borderWidth) {
-    // Apply immediately for a live preview, then persist (backend re-clamps).
-    // The gap reaches the docks reactively via the settings state (theme prop).
-    const clamped = [
-      clamp(gap, 0, PANEL_GAP_MAX),
-      clamp(radius, 0, PANEL_RADIUS_MAX),
-      clamp(borderWidth, 0, PANEL_BORDER_WIDTH_MAX),
-    ] as const;
-    applyPanelChrome(...clamped);
-    const stored = await savePanelChrome(...clamped);
-    applyPanelChrome(stored.gap, stored.radius, stored.border);
-    const s = get().settings;
-    if (s) {
-      set({
-        settings: {
-          ...s,
-          panel_gap: stored.gap,
-          panel_corner_radius: stored.radius,
-          panel_border_width: stored.border,
-        },
+    async setPanelChrome(gap, radius, borderWidth) {
+      // Apply immediately for a live preview, then persist (backend re-clamps).
+      // The gap reaches the docks reactively via the settings state (theme prop).
+      const clamped = [
+        clamp(gap, 0, PANEL_GAP_MAX),
+        clamp(radius, 0, PANEL_RADIUS_MAX),
+        clamp(borderWidth, 0, PANEL_BORDER_WIDTH_MAX),
+      ] as const;
+      applyPanelChrome(...clamped);
+      const merged = await patch({
+        panel_gap: clamped[0],
+        panel_corner_radius: clamped[1],
+        panel_border_width: clamped[2],
       });
-    }
-  },
-}));
+      applyPanelChrome(
+        merged.panel_gap ?? 0,
+        merged.panel_corner_radius ?? 0,
+        merged.panel_border_width ?? PANEL_BORDER_WIDTH_DEFAULT,
+      );
+    },
+  };
+});

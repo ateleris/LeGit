@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { repoSubmoduleLog } from "../../lib/commands";
+import { api } from "../../lib/commands";
 import type { SubmoduleChange, SubmoduleLog } from "../../lib/types";
 import { formatAppError } from "../../lib/errors";
 import { useRepoStore } from "../../store/repos";
@@ -67,7 +67,7 @@ export function SubmoduleDiffView({
   const { path, old_sha, new_sha, dirty } = change;
   const { data, isError } = useQuery<SubmoduleLog>({
     queryKey: [repoId, "submodule-log", path, old_sha, new_sha],
-    queryFn: () => repoSubmoduleLog(repoId, path, old_sha, new_sha!),
+    queryFn: () => api.repoSubmoduleLog(repoId, path, old_sha, new_sha!),
     enabled: new_sha !== null,
     staleTime: STALE.stable,
     retry: false,

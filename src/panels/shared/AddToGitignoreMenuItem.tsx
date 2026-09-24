@@ -9,8 +9,8 @@
 // itself, the flyout offers the file plus each folder layer above it.
 
 import { useQueryClient } from "@tanstack/react-query";
-import { MenuItem, Submenu } from "../Commits/menu/primitives";
-import { repoAddToGitignore } from "../../lib/commands";
+import { MenuItem, Submenu } from "../shared/menu/primitives";
+import { api } from "../../lib/commands";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { useActiveRepo } from "../../store/repos";
 import { notify } from "../../store/notifications";
@@ -34,7 +34,7 @@ export function AddToGitignoreMenuItem({
 
   const add = (target: string, targetIsDir: boolean) => {
     onClose();
-    repoAddToGitignore(repo.id, target, targetIsDir)
+    api.repoAddToGitignore(repo.id, target, targetIsDir)
       .then(() => {
         invalidateRepoDomains(queryClient, repo.id, ["status"]);
         notify.success(targetIsDir ? `Ignored ${target}/` : `Ignored ${target}`);

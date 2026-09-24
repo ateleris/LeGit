@@ -1,7 +1,7 @@
 import { useConfirmDestructive } from "../../../store/settings";
 import { useSummonStore } from "../../../store/summon";
-import { useDestructiveMenuConfirm, useMenuPicker, usePanelContextMenu } from "./PanelContextMenu";
-import { MenuItem, Separator, SectionLabel, Submenu } from "./primitives";
+import { useDestructiveMenuConfirm, useMenuPicker, usePanelContextMenu } from "../../shared/menu/PanelContextMenu";
+import { MenuItem, Separator, SectionLabel, Submenu } from "../../shared/menu/primitives";
 import { resolveBranchPushPlan } from "../../../lib/pushPlan";
 import { copyAndNotify } from "../../../lib/clipboard";
 import type { MergeOptions } from "../../../lib/types";

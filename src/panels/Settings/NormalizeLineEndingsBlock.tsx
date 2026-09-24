@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  repoRenormalize,
-  repoRenormalizePreview,
-  repoWriteGitattributesEol,
-} from "../../lib/commands";
+import { api } from "../../lib/commands";
 import { formatAppError } from "../../lib/errors";
 import type { LineEndingsView, RenormalizePreview } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
@@ -37,7 +33,7 @@ export function NormalizeLineEndingsBlock({
   const qc = useQueryClient();
 
   const loadPreview = useCallback(() => {
-    repoRenormalizePreview(repoId)
+    api.repoRenormalizePreview(repoId)
       .then(setPreview)
       .catch((e) => setError(formatAppError(e)));
   }, [repoId]);
@@ -62,7 +58,7 @@ export function NormalizeLineEndingsBlock({
 
   const writeAttributes = () =>
     run(async () => {
-      const updated = await repoWriteGitattributesEol(repoId, eolChoice === "" ? null : eolChoice);
+      const updated = await api.repoWriteGitattributesEol(repoId, eolChoice === "" ? null : eolChoice);
       setOutcome(null);
       onViewChange(updated);
     });
@@ -70,7 +66,7 @@ export function NormalizeLineEndingsBlock({
   const executeRenormalize = () =>
     run(async () => {
       setConfirming(false);
-      const result = await repoRenormalize(repoId);
+      const result = await api.repoRenormalize(repoId);
       setOutcome(
         result.restaged.length === 0
           ? "Nothing restaged - line endings already matched the policy."

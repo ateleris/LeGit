@@ -33,7 +33,8 @@ const cmd = vi.hoisted(() => ({
   repoDeleteRemoteBranch: vi.fn(),
   repoCreateBranch: vi.fn(),
 }));
-vi.mock("./commands", () => cmd);
+// Rewritten wrappers live on `api`; `repoCreateBranch` stays a named export.
+vi.mock("./commands", () => ({ ...cmd, api: cmd }));
 
 import {
   applyStash,

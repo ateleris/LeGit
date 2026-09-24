@@ -1,4 +1,4 @@
-import { loadKeybindings, saveKeybindings } from "../lib/commands";
+import { api } from "../lib/commands";
 import { formatAppError } from "../lib/errors";
 import { notify } from "../store/notifications";
 import { normalizeChord } from "./chord";
@@ -35,7 +35,7 @@ export function applyCommandAliases(
 export async function initKeymap(): Promise<void> {
   useKeymapStore.getState().reset(defaultKeymap());
   try {
-    const file = await loadKeybindings();
+    const file = await api.loadKeybindings();
     const diff = applyCommandAliases(file.bindings, COMMAND_ID_ALIASES);
     useKeymapStore.getState().setDiff(diff);
   } catch (e) {
@@ -90,7 +90,7 @@ export function parseKeybindingsImport(text: string): KeybindingsImport {
 export async function setAndPersistDiff(diff: Keymap): Promise<void> {
   useKeymapStore.getState().setDiff(diff);
   try {
-    await saveKeybindings({
+    await api.saveKeybindings({
       version: KEYBINDINGS_VERSION,
       bindings: Object.fromEntries(
         Object.entries(diff).map(([id, chords]) => [id, [...chords]]),

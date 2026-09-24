@@ -1,12 +1,5 @@
 import { create } from "zustand";
-import {
-  deleteLayout as deleteLayoutCmd,
-  listLayouts,
-  loadLayout,
-  renameLayout as renameLayoutCmd,
-  saveLayout as saveLayoutCmd,
-  setLayoutsOrder,
-} from "../lib/commands";
+import { api, saveLayout, loadLayout, listLayouts, renameLayout, deleteLayout, setLayoutsOrder } from "../lib/commands";
 import type { LayoutDocument, LayoutEntry } from "../lib/types";
 import {
   applyLayoutDocument,
@@ -81,7 +74,7 @@ export const useLayoutsStore = create<LayoutsStore>((set, get) => ({
     const { repoApi } = useDockviewStore.getState();
     const doc = captureLayoutDocument(name, repoApi);
     if (!doc) throw new Error("Nothing to capture - open a repository first.");
-    const entry = await saveLayoutCmd(name, doc);
+    const entry = await saveLayout(name, doc);
     set({ lastApplied: entry.name });
     await get().refreshList();
   },
@@ -105,13 +98,13 @@ export const useLayoutsStore = create<LayoutsStore>((set, get) => ({
   },
 
   async rename(oldName, newName) {
-    await renameLayoutCmd(oldName, newName);
+    await renameLayout(oldName, newName);
     if (get().lastApplied === oldName) set({ lastApplied: newName.trim() });
     await get().refreshList();
   },
 
   async remove(name) {
-    await deleteLayoutCmd(name);
+    await deleteLayout(name);
     if (get().lastApplied === name) set({ lastApplied: null });
     await get().refreshList();
   },
@@ -119,7 +112,7 @@ export const useLayoutsStore = create<LayoutsStore>((set, get) => ({
   async importDocument(doc, suggestedName) {
     const taken = new Set(get().layouts.map((l) => l.name));
     const name = chooseUniqueName((suggestedName ?? doc.name).trim() || doc.name, taken);
-    const entry = await saveLayoutCmd(name, doc);
+    const entry = await saveLayout(name, doc);
     await get().refreshList();
     return entry.name;
   },
@@ -180,7 +173,7 @@ async function migrateLegacySavedDefault(get: () => LayoutsStore) {
   const doc = migrateLegacyDefaultLayout(rawRepo, rawGlobal, taken);
   try {
     if (doc) {
-      await saveLayoutCmd(doc.name, doc);
+      await saveLayout(doc.name, doc);
       await get().refreshList();
     }
     localStorage.removeItem(SAVED_REPO_LAYOUT_KEY);

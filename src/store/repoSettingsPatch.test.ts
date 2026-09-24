@@ -10,8 +10,10 @@ const patchRepoSettings = vi.fn(
 );
 const getRepoSettings = vi.fn((_repoId: string) => Promise.resolve(fresh));
 vi.mock("../lib/commands", () => ({
-  patchRepoSettings: (id: string, p: Record<string, unknown>) => patchRepoSettings(id, p),
-  getRepoSettings: (id: string) => getRepoSettings(id),
+  api: {
+    patchRepoSettings: (id: string, p: Record<string, unknown>) => patchRepoSettings(id, p),
+    getRepoSettings: (id: string) => getRepoSettings(id),
+  },
 }));
 
 import { useRepoStore } from "./repos";

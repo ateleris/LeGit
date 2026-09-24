@@ -51,7 +51,7 @@ import { useCommitActions } from "./useCommitActions";
 import { useColumnState } from "./columns/useColumnState";
 import { ColumnHeader } from "./columns/ColumnHeader";
 import { LaneLockIndicator } from "./LaneLockIndicator";
-import { PanelContextMenuProvider, type BaselineEntry } from "./menu/PanelContextMenu";
+import { PanelContextMenuProvider, type BaselineEntry } from "../shared/menu/PanelContextMenu";
 import { RemoteSyncToolbar } from "./RemoteSyncToolbar";
 import { BulkSelectionMenu, CommitRowMenu, WorkdirRowMenu } from "./menu/RowMenu";
 import { SEARCH_MAX_RESULTS, useCommitsQueries } from "./useCommitsQueries";
@@ -252,7 +252,7 @@ export function CommitsPanel() {
   const [tagCreation, setTagCreation] = useState<{ rowId: CommitId } | null>(null);
 
   // Column ordering, hiding, and widths — read from global settings on mount
-  // and persisted (debounced) via `save_column_preferences`.
+  // and persisted (debounced) via `patch_global_settings`.
   const { state: colState, setOrder, setHidden, setWidth } = useColumnState();
 
   const totalToFetch = PAGE_SIZE * (1 + extraPages);

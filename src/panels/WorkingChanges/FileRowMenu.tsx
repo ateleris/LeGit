@@ -1,8 +1,8 @@
 import type { ConflictKind, ConflictSide, DiffSource } from "../../lib/types";
 import type { FileTreeEntry } from "../shared/FileTree/buildTree";
 import { useConfirmDestructive } from "../../store/settings";
-import { MenuItem } from "../Commits/menu/primitives";
-import { useDestructiveMenuConfirm } from "../Commits/menu/PanelContextMenu";
+import { MenuItem } from "../shared/menu/primitives";
+import { useDestructiveMenuConfirm } from "../shared/menu/PanelContextMenu";
 import { FileRowMenuSection } from "../shared/FileRowMenuSection";
 import { takeSideLabels } from "./conflictLabels";
 import type { Section } from "./selection";

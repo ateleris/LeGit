@@ -9,7 +9,7 @@ import { useCommandAction } from "../keys/actions";
 import { useGitLogStore } from "../store/gitLog";
 import { useConsoleStore } from "../store/console";
 import { useRemoteProgressStore } from "../store/remoteProgress";
-import { saveRegionState } from "../lib/commands";
+import { api } from "../lib/commands";
 import { onConsoleOutput, onGitInvocation, onRemoteProgress } from "../lib/events";
 import { useRepoChangeListener } from "../lib/useRepoChangeListener";
 import { useWatchStateListener } from "../lib/useWatchStateListener";
@@ -53,9 +53,12 @@ function persistRegionState(
   sizeLeft: number | null,
   collapsed: boolean
 ) {
-  saveRegionState(placement, sizeTop, sizeLeft, collapsed).catch(
-    (e) => console.warn("save_region_state failed", e)
-  );
+  api.patchGlobalSettings({
+    global_region_placement: placement,
+    global_region_size_top: sizeTop,
+    global_region_size_left: sizeLeft,
+    global_dock_collapsed: collapsed,
+  }).catch((e) => console.warn("saving region state failed", e));
 }
 
 /**

@@ -20,14 +20,14 @@
 // summary (attention-only).
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { repoLineEndingKind, repoRevertLineEndings } from "../../lib/commands";
+import { repoLineEndingKind, api } from "../../lib/commands";
 import { type LineEndingKind, type LineEndingStatusEntry } from "../../lib/types";
 import { formatAppError } from "../../lib/errors";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notify } from "../../store/notifications";
 import { useConfirmDestructive } from "../../store/settings";
-import { useDestructiveMenuConfirm, usePanelContextMenu } from "../Commits/menu/PanelContextMenu";
-import { MenuItem, SectionLabel } from "../Commits/menu/primitives";
+import { useDestructiveMenuConfirm, usePanelContextMenu } from "../shared/menu/PanelContextMenu";
+import { MenuItem, SectionLabel } from "../shared/menu/primitives";
 import { eolLabel, rowChipContent, useLineEndingStatusMap } from "./lineEndingStatus";
 import { STALE } from "../../lib/queryTiming";
 
@@ -184,7 +184,7 @@ export function RevertChipButton({
   const doRevert = async () => {
     closeMenu();
     try {
-      await repoRevertLineEndings(repoId, path, target);
+      await api.repoRevertLineEndings(repoId, path, target);
       invalidateRepoDomains(queryClient, repoId, ["status", "diff"]);
     } catch (e) {
       notify.error(formatAppError(e));

@@ -1,5 +1,5 @@
 // Hook for column state (order / hidden / widths) with debounced persistence
-// to `global-settings.json` via the `save_column_preferences` Tauri command.
+// to `global-settings.json` via the `patch_global_settings` Tauri command.
 //
 // On mount we read `column_preferences` from the global settings, validate it,
 // and fall back to defaults if missing or malformed. Subsequent state changes
@@ -7,7 +7,7 @@
 // one final write.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getGlobalSettings, saveColumnPreferences } from "../../../lib/commands";
+import { api } from "../../../lib/commands";
 import {
   ALL_COLUMN_IDS,
   DEFAULT_HIDDEN,
@@ -15,6 +15,7 @@ import {
   DEFAULT_WIDTHS,
 } from "./types";
 import type { ColumnId, ColumnPreferences, ColumnState } from "./types";
+import type { JsonValue } from "../../../lib/types";
 
 const PERSIST_DEBOUNCE_MS = 500;
 
@@ -101,7 +102,7 @@ export function useColumnState(): {
   setWidth: (colId: ColumnId, width: number) => void;
 } {
   const [state, setState] = useState<ColumnState>(defaultState);
-  // `initialLoadDone`: true once the async getGlobalSettings call completes.
+  // `initialLoadDone`: true once the async api.getGlobalSettings call completes.
   // `loadingFromDisk`: true for the one render triggered by the load's setState,
   //   so the persist effect skips writing data we just read from disk.
   const initialLoadDone = useRef(false);
@@ -111,7 +112,7 @@ export function useColumnState(): {
   // One-shot read of the persisted preferences.
   useEffect(() => {
     let cancelled = false;
-    getGlobalSettings()
+    api.getGlobalSettings()
       .then((settings) => {
         if (cancelled) return;
         const raw = (settings.column_preferences as Record<string, unknown> | null | undefined)
@@ -124,7 +125,7 @@ export function useColumnState(): {
         initialLoadDone.current = true;
       })
       .catch((e) => {
-        console.warn("getGlobalSettings failed; using default columns", e);
+        console.warn("api.getGlobalSettings failed; using default columns", e);
         initialLoadDone.current = true;
       });
     return () => {
@@ -146,9 +147,9 @@ export function useColumnState(): {
         hidden: state.hidden,
         widths: state.widths,
       };
-      saveColumnPreferences({ columnPreferences: { commits: prefs } }).catch((e) =>
-        console.warn("saveColumnPreferences failed", e)
-      );
+      api.patchGlobalSettings({
+        column_preferences: { columnPreferences: { commits: prefs } } as unknown as JsonValue,
+      }).catch((e) => console.warn("saving column preferences failed", e));
     }, PERSIST_DEBOUNCE_MS);
     return () => {
       if (persistTimer.current) clearTimeout(persistTimer.current);

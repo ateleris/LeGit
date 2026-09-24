@@ -9,13 +9,7 @@ import { useActiveRepo } from "../../store/repos";
 import { useConfirmDestructive } from "../../store/settings";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
-import {
-  repoFilesAtRevision,
-  repoLfsFiles,
-  repoListFiles,
-  repoUntrackPath,
-  repoRevealPath,
-} from "../../lib/commands";
+import { api } from "../../lib/commands";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notify } from "../../store/notifications";
 import type { RepoFileEntry, RepoFileKind } from "../../lib/types";
@@ -24,8 +18,8 @@ import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { FileTree } from "../shared/FileTree/FileTree";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
-import { PanelContextMenuProvider, useDestructiveMenuConfirm } from "../Commits/menu/PanelContextMenu";
-import { MenuItem, SectionLabel } from "../Commits/menu/primitives";
+import { PanelContextMenuProvider, useDestructiveMenuConfirm } from "../shared/menu/PanelContextMenu";
+import { MenuItem, SectionLabel } from "../shared/menu/primitives";
 import { AddToGitignoreMenuItem } from "../shared/AddToGitignoreMenuItem";
 import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
 import { FileRowMenuSection } from "../shared/FileRowMenuSection";
@@ -85,7 +79,7 @@ export function FilesPanel() {
   // both untracked-set and tracked-set changes without a new domain.
   const live = useQuery<RepoFileEntry[]>({
     queryKey: [repo?.id, "status", "repo-files", showIgnored],
-    queryFn: () => repoListFiles(repo!.id, showIgnored),
+    queryFn: () => api.repoListFiles(repo!.id, showIgnored),
     enabled: !!repo && rev === null,
     staleTime: STALE.live,
   });
@@ -94,7 +88,7 @@ export function FilesPanel() {
   // watcher invalidation) and never stale.
   const atRev = useQuery<RepoFileEntry[]>({
     queryKey: [repo?.id, "files-at", rev],
-    queryFn: () => repoFilesAtRevision(repo!.id, rev!),
+    queryFn: () => api.repoFilesAtRevision(repo!.id, rev!),
     enabled: !!repo && rev !== null,
     staleTime: STALE.immutable,
   });
@@ -112,7 +106,7 @@ export function FilesPanel() {
   // Non-LFS repos never fetch (enabled gate) - zero extra git calls.
   const lfsFiles = useQuery<string[]>({
     queryKey: [repo?.id, "status", "lfs-files", showIgnored],
-    queryFn: () => repoLfsFiles(repo!.id, showIgnored),
+    queryFn: () => api.repoLfsFiles(repo!.id, showIgnored),
     enabled: !!repo && rev === null && usesLfs,
     staleTime: STALE.live,
   });
@@ -206,7 +200,7 @@ export function FilesPanel() {
     async (path: string) => {
       if (!repo) return;
       try {
-        await repoRevealPath(repo.id, path);
+        await api.repoRevealPath(repo.id, path);
       } catch (e) {
         notify.error(formatAppError(e));
       }
@@ -372,7 +366,9 @@ export function FilesPanel() {
                     onView={() => viewInFileView(file.path)}
                     onReveal={() => reveal(file.path)}
                     onUntrack={() =>
-                      onIgnored(() => repoUntrackPath(repo.id, file.path, false), `Stopped tracking ${file.path}`)
+                      onIgnored(async () => {
+                        await api.repoUntrackPath(repo.id, file.path, false);
+                      }, `Stopped tracking ${file.path}`)
                     }
                     onClose={closeMenu}
                   />,

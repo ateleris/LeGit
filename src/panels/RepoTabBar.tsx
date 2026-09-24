@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRepoStore } from "../store/repos";
 import { formatAppError } from "../lib/errors";
-import { repoOpenInEditor, repoOpenRemotePage, repoRemoteWebUrl, repoSuperproject } from "../lib/commands";
+import { api } from "../lib/commands";
 import { useEditorAction } from "../lib/editorAction";
 import { notify } from "../store/notifications";
 import { ExternalEditorIcon, FolderIcon, RemotePageIcon, SuperprojectIcon } from "../icons";
@@ -158,7 +158,7 @@ export function RepoTabBar() {
   const onOpenInEditor = async () => {
     if (!activeRepoId) return;
     try {
-      await repoOpenInEditor(activeRepoId);
+      await api.repoOpenInEditor(activeRepoId);
     } catch (e) {
       notify.error(formatAppError(e));
     }
@@ -169,14 +169,14 @@ export function RepoTabBar() {
   // refresh the button's enabled state.
   const { data: remoteWebUrl = null } = useQuery<string | null>({
     queryKey: [activeRepoId, "remotes", "web-url"],
-    queryFn: () => repoRemoteWebUrl(activeRepoId!),
+    queryFn: () => api.repoRemoteWebUrl(activeRepoId!),
     enabled: !!activeRepoId,
     staleTime: STALE.stable,
   });
   const onOpenRemotePage = async () => {
     if (!activeRepoId) return;
     try {
-      await repoOpenRemotePage(activeRepoId);
+      await api.repoOpenRemotePage(activeRepoId);
     } catch (e) {
       notify.error(formatAppError(e));
     }
@@ -188,7 +188,7 @@ export function RepoTabBar() {
   const openRepoFromStore = useRepoStore((s) => s.openRepo);
   const { data: superprojectPath = null } = useQuery<string | null>({
     queryKey: [activeRepoId, "superproject"],
-    queryFn: () => repoSuperproject(activeRepoId!),
+    queryFn: () => api.repoSuperproject(activeRepoId!),
     enabled: !!activeRepoId,
     staleTime: STALE.rare,
   });

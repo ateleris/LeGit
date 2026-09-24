@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { repoFilePreview } from "./commands";
+import { api } from "./commands";
 import type { FilePreview } from "./types";
 import { STALE } from "./queryTiming";
 
@@ -15,7 +15,7 @@ export function useFilePreview(
   const mutable = rev === null || rev === ":" || rev === ":0";
   return useQuery<FilePreview>({
     queryKey: [repoId, mutable ? "status" : "log", "preview", rev ?? "worktree", path],
-    queryFn: () => repoFilePreview(repoId!, rev, path!),
+    queryFn: () => api.repoFilePreview(repoId!, rev, path!),
     enabled: enabled && !!repoId && !!path,
     staleTime: mutable ? STALE.live : STALE.stable,
   });

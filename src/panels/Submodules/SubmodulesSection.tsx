@@ -3,20 +3,7 @@ import { useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
-import {
-  repoSubmoduleAdd,
-  repoSubmoduleCreateBranch,
-  repoSubmoduleDeleteGitdir,
-  repoSubmoduleFetch,
-  repoSubmoduleGitdirInfo,
-  repoSubmoduleMove,
-  repoSubmoduleRemove,
-  repoSubmoduleSetBranch,
-  repoSubmoduleSetUrl,
-  repoSubmoduleSync,
-  repoSubmoduleUpdate,
-  repoSubmoduleUpdateRemote,
-} from "../../lib/commands";
+import { api } from "../../lib/commands";
 import { type SubmoduleGitdirInfo, type SubmoduleInfo, type SubmoduleUpdateStrategy } from "../../lib/types";
 import { formatAppError } from "../../lib/errors";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
@@ -75,14 +62,14 @@ export function SubmodulesSection() {
   const updateAll = () =>
     run(async () =>
       notifyLfsStubs(
-        await repoSubmoduleUpdate(repo!.id, { init: true, recursive, paths: [] }, crypto.randomUUID()),
+        await api.repoSubmoduleUpdate(repo!.id, { init: true, recursive, paths: [] }, crypto.randomUUID()),
         "submodule update",
       ),
     );
 
   const pullLatest = (paths: string[]) =>
     run(async () => {
-      const results = await repoSubmoduleUpdateRemote(
+      const results = await api.repoSubmoduleUpdateRemote(
         repo!.id,
         paths,
         strategy,
@@ -95,8 +82,8 @@ export function SubmodulesSection() {
     // Object holder (not a plain `let`): assigned inside the run() closure.
     const retained: { info: SubmoduleGitdirInfo | null } = { info: null };
     const ok = await run(async () => {
-      await repoSubmoduleRemove(repo!.id, s.path);
-      retained.info = await repoSubmoduleGitdirInfo(repo!.id, s.name);
+      await api.repoSubmoduleRemove(repo!.id, s.path);
+      retained.info = await api.repoSubmoduleGitdirInfo(repo!.id, s.name);
     });
     if (!ok || !retained.info) return;
     // Second stage: offer gitdir deletion only if one was retained. This
@@ -113,7 +100,7 @@ export function SubmodulesSection() {
       confirmLabel: "Delete repository data",
       cancelLabel: "Keep",
     });
-    if (del) void run(() => repoSubmoduleDeleteGitdir(repo!.id, s.name));
+    if (del) void run(() => api.repoSubmoduleDeleteGitdir(repo!.id, s.name));
   };
 
   const requestRemove = async (s: SubmoduleInfo) => {
@@ -133,7 +120,7 @@ export function SubmodulesSection() {
       const url = addUrl.trim();
       const path = addPath.trim();
       if (!url || !path) return;
-      await repoSubmoduleAdd(repo!.id, url, path, addBranch.trim() || null, crypto.randomUUID());
+      await api.repoSubmoduleAdd(repo!.id, url, path, addBranch.trim() || null, crypto.randomUUID());
       setAddUrl("");
       setAddPath("");
       setAddBranch("");
@@ -209,7 +196,7 @@ export function SubmodulesSection() {
               onInitUpdate={() =>
                 run(async () =>
                   notifyLfsStubs(
-                    await repoSubmoduleUpdate(
+                    await api.repoSubmoduleUpdate(
                       repo.id,
                       { init: true, recursive: false, paths: [s.path] },
                       crypto.randomUUID(),
@@ -221,7 +208,7 @@ export function SubmodulesSection() {
               onUpdate={() =>
                 run(async () =>
                   notifyLfsStubs(
-                    await repoSubmoduleUpdate(
+                    await api.repoSubmoduleUpdate(
                       repo.id,
                       { init: false, recursive: false, paths: [s.path] },
                       crypto.randomUUID(),
@@ -233,23 +220,23 @@ export function SubmodulesSection() {
               onPullLatest={() => pullLatest([s.path])}
               onSync={() =>
                 run(async () => {
-                  await repoSubmoduleSync(repo.id, [s.path], false);
+                  await api.repoSubmoduleSync(repo.id, [s.path], false);
                   notify.success(`Synced URL for '${s.path}'`);
                 })
               }
-              onFetch={() => run(() => repoSubmoduleFetch(repo.id, s.path, crypto.randomUUID()))}
-              onSetUrl={(url) => run(() => repoSubmoduleSetUrl(repo.id, s.path, url))}
+              onFetch={() => run(() => api.repoSubmoduleFetch(repo.id, s.path, crypto.randomUUID()))}
+              onSetUrl={(url) => run(() => api.repoSubmoduleSetUrl(repo.id, s.path, url))}
               onSetBranch={(branch) =>
-                run(() => repoSubmoduleSetBranch(repo.id, s.path, branch))
+                run(() => api.repoSubmoduleSetBranch(repo.id, s.path, branch))
               }
               onMovePath={(to) =>
                 run(async () => {
-                  await repoSubmoduleMove(repo.id, s.path, to);
+                  await api.repoSubmoduleMove(repo.id, s.path, to);
                   notify.success(`Moved '${s.path}' to '${to}' (staged)`);
                 })
               }
               onCreateBranch={(name) =>
-                run(() => repoSubmoduleCreateBranch(repo.id, s.path, name))
+                run(() => api.repoSubmoduleCreateBranch(repo.id, s.path, name))
               }
               onRemove={() => void requestRemove(s)}
             />

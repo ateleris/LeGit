@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BranchIcon, RemoteIcon, TagIcon, WorktreeIcon } from "../../../icons";
 import type { LaneLock, MergeOptions, RefDecoration } from "../../../lib/types";
-import { usePanelContextMenu } from "../menu/PanelContextMenu";
+import { usePanelContextMenu } from "../../shared/menu/PanelContextMenu";
 import { LaneLockSection } from "../menu/LaneLockSection";
-import { MenuItem, Separator } from "../menu/primitives";
+import { MenuItem, Separator } from "../../shared/menu/primitives";
 import { BranchMenuSection, RemoteBranchMenuSection } from "../menu/BranchMenuSection";
 import { TagMenuSection } from "../menu/TagMenuSection";
 import { InlineRenameInput } from "./InlineRenameInput";

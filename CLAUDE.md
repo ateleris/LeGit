@@ -96,13 +96,21 @@ setup probes, and the session-less `init`/`clone`.
 registered in `src-tauri/src/lib.rs` (`collect_commands!`). The generated
 `src/lib/bindings.ts` is **committed**; `cargo test -p legit-app` fails when it
 is stale - regenerate with `LEGIT_UPDATE_BINDINGS=1 cargo test -p legit-app
-bindings` (a debug app run also rewrites it). The frontend calls
-**hand-written wrappers** in `src/lib/commands.ts` (`invoke(...)`), with types
-**hand-mirrored** in `src/lib/types.ts`; `src/lib/bindingsParity.ts` makes tsc
-fail when a mirrored type differs from its binding (add new mirrored types
-there - `bindingsParity.test.ts` enforces it). Output-only Rust types must not
-carry field-level `#[serde(default)]`: specta turns it into an optional `?`
-field although the value is always sent. Add new commands in both places.
+bindings` (a debug app run also rewrites it). The frontend calls commands
+through **`api` in `src/lib/commands.ts`** - every generated command,
+unwrapped to resolve with the payload and reject with the `AppError` - so a
+new command needs NO frontend wrapper. Hand-written wrappers remain only where
+they add value: argument defaults, the scope-pinned
+`GLOBAL_/WSL_GIT_CONFIG_COMMANDS` maps, and typed seams for the
+frontend-owned `ThemeDocument`/`LayoutDocument` JSON schemas.
+`src/lib/types.ts` re-exports the generated types and defines only
+frontend-owned ones (summon payloads, those JSON schemas). Event payload
+types are generated too (`.typ::<...>()` on the specta builder); the event
+CHANNELS stay plain string-named `app.emit`/`listen` pairs in
+`src/lib/events.ts` - a deliberate cut: `collect_events!` would rename the
+wire events and drag tauri-specta into legit-core/legit-watch. Output-only
+Rust types must not carry field-level `#[serde(default)]`: specta turns it
+into an optional `?` field although the value is always sent.
 
 **Panels are dockview-based.** `src/layout/descriptors.ts` declares every panel
 (`PanelDescriptor`: id, scope global/repo, `summons`, `defaultPlacement`);
@@ -151,10 +159,13 @@ mutations go through `updateRepoSetting(repoId, field, value)`, which sends
 ONLY that field (`patch_repo_settings`, merged server-side) and caches the
 merged settings it returns. Never send a whole cached struct back: fields
 written by their own commands (lane locks, profile, git path) would be
-overwritten with stale values, which is why the patch refuses them. Adding a setting touches 3 places: the
-Rust struct, the hand-mirrored `RepoSettings` in `src/lib/types.ts`, and a
-section in `RepoSettingsPanel.tsx`; consumers read
-`repoSettings?.field ?? default`.
+overwritten with stale values, which is why the patch refuses them. Adding a
+setting touches 2 places: the Rust struct (bindings regenerate the TS type)
+and a section in `RepoSettingsPanel.tsx`; consumers read
+`repoSettings?.field ?? default`. Global settings work the same way
+(`patch_global_settings` + `GlobalSettings::with_patch`, clamps in
+`normalized()`; command-owned fields refused), with one-line setters in
+`store/settings.ts` caching the merged result.
 
 **Repos & sessions.** `src/store/repos.ts` owns `openRepos` + `activeRepoId`.
 `RepoSession`s and watchers are **persistent per repo** (a `HashMap`), not rebuilt

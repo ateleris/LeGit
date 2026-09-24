@@ -1,7 +1,7 @@
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useRef, useState } from "react";
-import { loadLayout } from "../../lib/commands";
+import { api } from "../../lib/commands";
 import { formatAppError } from "../../lib/errors";
 import { DeleteIcon, DragHandleIcon, RenameIcon } from "../../icons";
 import { confirmDestructiveAction } from "../../store/confirm";
@@ -120,7 +120,7 @@ export function LayoutsPanel() {
         filters: [{ name: "LeGit Layout", extensions: ["legit-layout.json", "json"] }],
       });
       if (!path) return;
-      const doc = await loadLayout(name);
+      const doc = await api.loadLayout(name);
       await writeTextFile(path, JSON.stringify(doc, null, 2));
     });
 
@@ -133,7 +133,7 @@ export function LayoutsPanel() {
       if (!path) return;
       const docs: LayoutDocument[] = [];
       for (const l of layouts) {
-        const doc = asLayoutDocument(await loadLayout(l.name));
+        const doc = asLayoutDocument(await api.loadLayout(l.name));
         if (doc) docs.push(doc);
       }
       await writeTextFile(path, JSON.stringify(buildLayoutBundle(docs), null, 2));

@@ -6,19 +6,7 @@ import { invalidateRepoDomains } from "../lib/repoInvalidation";
 import { useOpState } from "../lib/useOpState";
 import { OP_DOMAINS } from "../lib/queries/domains";
 import { useStatus } from "../lib/queries/useRepoQueries";
-import {
-  repoCherryPickAbort,
-  repoCherryPickContinue,
-  repoCherryPickSkip,
-  repoMergeAbort,
-  repoMergeContinue,
-  repoRebaseAbort,
-  repoRebaseContinue,
-  repoRebaseSkip,
-  repoRevertAbort,
-  repoRevertContinue,
-  repoRevertSkip,
-} from "../lib/commands";
+import { api } from "../lib/commands";
 import type { RepoOpState } from "../lib/types";
 import {
   notifyMergeOutcome,
@@ -126,16 +114,16 @@ export function OpStateBanner({
     run(async () => {
       switch (opState.kind) {
         case "merge":
-          notifyMergeOutcome(await repoMergeContinue(repoId), target);
+          notifyMergeOutcome(await api.repoMergeContinue(repoId), target);
           break;
         case "rebase":
-          notifyRebaseOutcome(await repoRebaseContinue(repoId), target);
+          notifyRebaseOutcome(await api.repoRebaseContinue(repoId), target);
           break;
         case "cherry_pick":
-          notifySequenceOutcome(await repoCherryPickContinue(repoId), "cherry-pick", target);
+          notifySequenceOutcome(await api.repoCherryPickContinue(repoId), "cherry-pick", target);
           break;
         case "revert":
-          notifySequenceOutcome(await repoRevertContinue(repoId), "revert", target);
+          notifySequenceOutcome(await api.repoRevertContinue(repoId), "revert", target);
           break;
       }
     });
@@ -144,13 +132,13 @@ export function OpStateBanner({
     run(async () => {
       switch (opState.kind) {
         case "rebase":
-          notifyRebaseOutcome(await repoRebaseSkip(repoId), target);
+          notifyRebaseOutcome(await api.repoRebaseSkip(repoId), target);
           break;
         case "cherry_pick":
-          notifySequenceOutcome(await repoCherryPickSkip(repoId), "cherry-pick", target);
+          notifySequenceOutcome(await api.repoCherryPickSkip(repoId), "cherry-pick", target);
           break;
         case "revert":
-          notifySequenceOutcome(await repoRevertSkip(repoId), "revert", target);
+          notifySequenceOutcome(await api.repoRevertSkip(repoId), "revert", target);
           break;
       }
     });
@@ -159,16 +147,16 @@ export function OpStateBanner({
     run(async () => {
       switch (opState.kind) {
         case "merge":
-          await repoMergeAbort(repoId);
+          await api.repoMergeAbort(repoId);
           break;
         case "rebase":
-          await repoRebaseAbort(repoId);
+          await api.repoRebaseAbort(repoId);
           break;
         case "cherry_pick":
-          await repoCherryPickAbort(repoId);
+          await api.repoCherryPickAbort(repoId);
           break;
         case "revert":
-          await repoRevertAbort(repoId);
+          await api.repoRevertAbort(repoId);
           break;
       }
     });

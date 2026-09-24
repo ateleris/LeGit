@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { gitStatusCheck, setGitPath, wslListDistros } from "../lib/commands";
+import { api } from "../lib/commands";
 import { localGitUsable } from "../lib/gateDecision";
 import type { GitStatus } from "../lib/types";
 
@@ -18,7 +18,7 @@ interface GitStatusStore {
 async function probeRemoteHosts(status: GitStatus): Promise<boolean> {
   if (localGitUsable(status)) return false;
   try {
-    return (await wslListDistros()).length > 0;
+    return (await api.wslListDistros()).length > 0;
   } catch (e) {
     console.warn("failed to list WSL distributions", e);
     return false;
@@ -33,7 +33,7 @@ export const useGitStatusStore = create<GitStatusStore>((set) => ({
   async refresh() {
     set({ pending: true });
     try {
-      const status = await gitStatusCheck();
+      const status = await api.gitStatusCheck();
       set({ status, remoteHostsAvailable: await probeRemoteHosts(status) });
     } finally {
       set({ pending: false });
@@ -43,7 +43,7 @@ export const useGitStatusStore = create<GitStatusStore>((set) => ({
   async setPath(path) {
     set({ pending: true });
     try {
-      const status = await setGitPath(path);
+      const status = await api.setGitPath(path);
       set({ status, remoteHostsAvailable: await probeRemoteHosts(status) });
     } finally {
       set({ pending: false });

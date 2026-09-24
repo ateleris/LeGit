@@ -4,12 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { formatAppError } from "../../lib/errors";
 import type { GitProfile } from "../../lib/types";
-import {
-  createGitProfile,
-  updateGitProfile,
-  deleteGitProfile,
-  reposUsingProfile,
-} from "../../lib/commands";
+import { api } from "../../lib/commands";
 import { useGitProfiles, invalidateGitProfiles } from "../../lib/useGitProfiles";
 import { useConfirmDestructive } from "../../store/settings";
 import { Button } from "../shared/buttons";
@@ -58,9 +53,9 @@ export function GlobalProfilesSection() {
     setError(null);
     try {
       if (p.id === "") {
-        await createGitProfile(p);
+        await api.createGitProfile(p);
       } else {
-        await updateGitProfile(p);
+        await api.updateGitProfile(p);
       }
       setEditing(null);
       invalidateGitProfiles(queryClient);
@@ -76,7 +71,7 @@ export function GlobalProfilesSection() {
   const doDelete = async (id: string) => {
     setError(null);
     try {
-      await deleteGitProfile(id);
+      await api.deleteGitProfile(id);
       setConfirmingDelete(null);
       invalidateGitProfiles(queryClient);
     } catch (e) {
@@ -89,7 +84,7 @@ export function GlobalProfilesSection() {
     if (!confirmDestructive) return void doDelete(id);
     let usedBy: string[] = [];
     try {
-      usedBy = await reposUsingProfile(id);
+      usedBy = await api.reposUsingProfile(id);
     } catch {
       // Usage lookup is best-effort; the confirmation still shows without it.
     }

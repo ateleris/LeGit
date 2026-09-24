@@ -8,13 +8,7 @@
 
 import type { QueryClient } from "@tanstack/react-query";
 import type { GlobalSettings, PushOptions, RemoteTag, RepoSettings, TagInfo } from "./types";
-import {
-  repoListRemotes,
-  repoPush,
-  repoPushTag,
-  repoRemoteTags,
-  repoTags,
-} from "./commands";
+import { api } from "./commands";
 import { pickTagRemote } from "./tags";
 import { invalidateRepoDomains } from "./repoInvalidation";
 import { notify } from "../store/notifications";
@@ -78,8 +72,8 @@ async function runAutoPush(
   remote: string,
   tagsBefore: TagInfo[],
 ): Promise<void> {
-  const tagsAfter = await repoTags(repoId);
-  const remoteTags = await repoRemoteTags(repoId, remote, crypto.randomUUID());
+  const tagsAfter = await api.repoTags(repoId);
+  const remoteTags = await api.repoRemoteTags(repoId, remote, crypto.randomUUID());
   const { push, skipped } = resolveAutoPushTags(tagsBefore, tagsAfter, remoteTags);
 
   for (const name of skipped) {
@@ -91,7 +85,7 @@ async function runAutoPush(
   const pushed: string[] = [];
   for (const name of push) {
     try {
-      await repoPushTag(repoId, remote, name, crypto.randomUUID());
+      await api.repoPushTag(repoId, remote, name, crypto.randomUUID());
       pushed.push(name);
     } catch (e) {
       notify.error(`Auto-push of tag '${name}' to ${remote} failed.`);
@@ -109,8 +103,8 @@ async function runAutoPush(
 }
 
 /**
- * Push-time trigger: `repoPush` plus the tag follow-up when the setting is
- * on. Drop-in for `repoPush` at every branch-push call site - the push's own
+ * Push-time trigger: `api.repoPush` plus the tag follow-up when the setting is
+ * on. Drop-in for `api.repoPush` at every branch-push call site - the push's own
  * success/error handling is untouched (a follow-up failure never rejects).
  */
 export async function pushWithTagFollowUp(
@@ -119,8 +113,8 @@ export async function pushWithTagFollowUp(
   opts: PushOptions,
   opId: string,
 ): Promise<void> {
-  const tagsBefore = autoPushTagsEnabled(repoId) ? await repoTags(repoId) : null;
-  await repoPush(repoId, opts, opId);
+  const tagsBefore = autoPushTagsEnabled(repoId) ? await api.repoTags(repoId) : null;
+  await api.repoPush(repoId, opts, opId);
   if (tagsBefore) {
     try {
       await runAutoPush(qc, repoId, opts.remote, tagsBefore);
@@ -142,9 +136,9 @@ export async function autoPushTagAfterCreate(
 ): Promise<void> {
   if (!autoPushTagsEnabled(repoId)) return;
   try {
-    const remote = pickTagRemote(await repoListRemotes(repoId));
+    const remote = pickTagRemote(await api.repoListRemotes(repoId));
     if (!remote) return;
-    const tags = await repoTags(repoId);
+    const tags = await api.repoTags(repoId);
     // `before` = the list minus the new tag: exactly it becomes the candidate.
     await runAutoPush(qc, repoId, remote, tags.filter((t) => t.name !== name));
   } catch (e) {

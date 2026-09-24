@@ -9,12 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { formatAppError } from "../../lib/errors";
 import type { ConnectedAccountStatus } from "../../lib/types";
-import {
-  connectAccountPat,
-  disconnectAccount,
-  listConnectedAccounts,
-  openPlatformTokenSettings,
-} from "../../lib/commands";
+import { api } from "../../lib/commands";
 import { useConfirmDestructive } from "../../store/settings";
 import { Button } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
@@ -37,7 +32,7 @@ export function ConnectedAccountsSection() {
   const confirmDestructive = useConfirmDestructive();
 
   const load = useCallback(() => {
-    listConnectedAccounts()
+    api.listConnectedAccounts()
       .then(setAccounts)
       .catch((e) => setError(formatAppError(e)));
   }, []);
@@ -52,7 +47,7 @@ export function ConnectedAccountsSection() {
     return run(async () => {
       setError(null);
       try {
-        await connectAccountPat(platform, token);
+        await api.connectAccountPat(platform, token);
         setToken("");
         load();
       } catch (e) {
@@ -65,7 +60,7 @@ export function ConnectedAccountsSection() {
     run(async () => {
       setError(null);
       try {
-        await disconnectAccount(id);
+        await api.disconnectAccount(id);
         setConfirmingDisconnect(null);
         load();
       } catch (e) {
@@ -161,7 +156,7 @@ export function ConnectedAccountsSection() {
           <button
             disabled={busy}
             title="Open the platform's token-creation page in the browser"
-            onClick={() => openPlatformTokenSettings(platform).catch((e) => setError(formatAppError(e)))}
+            onClick={() => api.openPlatformTokenSettings(platform).catch((e) => setError(formatAppError(e)))}
           >
             Create a token…
           </button>

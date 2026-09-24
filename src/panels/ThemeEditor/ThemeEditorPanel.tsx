@@ -5,44 +5,25 @@ import { formatAppError } from "../../lib/errors";
 import { partitionThemes, useThemeStore } from "../../store/themes";
 import { notify } from "../../store/notifications";
 import { confirmDestructiveAction } from "../../store/confirm";
-import { contrastRatio, wcagBadge, type WcagBadge } from "../../theme/contrast";
 import { DEFAULT_THEME } from "../../theme/defaults";
-import { CONTRAST_PAIRS, PANEL_OVERRIDE_TOKENS, TOKEN_CONTRACT, type ContrastPair } from "../../theme/tokens";
+import { TOKEN_CONTRACT } from "../../theme/tokens";
 import {
   bindingFilter,
   bindingRef,
   makeBinding,
-  overridePaletteRefs,
-  renamePaletteRefInOverrides,
   resolveBindingColor,
   setPanelOverrideBinding,
   TOKEN_FILTERS,
   effectiveLaneChipFilters,
-  withRef,
 } from "../../theme/filters";
-import { GLOBAL_PANELS, REPO_PANELS } from "../../layout/descriptors";
+import * as draftOps from "../../theme/draftOps";
 import { validateTheme } from "../../theme/validate";
-import type { ThemeDocument, ThemeTokenBinding, TokenFilterId } from "../../lib/types";
+import type { ThemeDocument, TokenFilterId } from "../../lib/types";
 import { Button } from "../shared/buttons";
-import { ChevronDownIcon } from "../../icons";
 import { SettingsGroup } from "../Settings/primitives";
-
-/**
- * The binding a token actually renders with (mirrors resolveTheme): the
- * theme's own binding when it exists and points at a defined palette entry,
- * otherwise the built-in default's binding.
- */
-function effectiveBinding(working: ThemeDocument, token: string): ThemeTokenBinding | undefined {
-  const b = working.tokens[token];
-  return b !== undefined && working.palette[bindingRef(b)] !== undefined
-    ? b
-    : DEFAULT_THEME.tokens[token];
-}
-
-/** A pair's base surface stack as an array (nearest-first; empty for an opaque bg). */
-function baseTokens(pair: ContrastPair): readonly string[] {
-  return pair.base === undefined ? [] : typeof pair.base === "string" ? [pair.base] : pair.base;
-}
+import { ContrastSection } from "./ContrastSection";
+import { PaletteEditor } from "./PaletteEditor";
+import { PanelOverridesSection } from "./PanelOverridesSection";
 
 export function ThemeEditorPanel() {
   const themes = useThemeStore((s) => s.themes);
@@ -119,46 +100,29 @@ export function ThemeEditorPanel() {
   };
 
   const renamePaletteEntry = (oldName: string, newName: string) => {
-    if (!newName || oldName === newName) return;
-    if (!draft) startEditing();
     const current = (draft ?? activeDoc)!;
-    const palette = { ...current.palette };
-    palette[newName] = palette[oldName];
-    delete palette[oldName];
-    const tokens = { ...current.tokens };
-    for (const [tk, binding] of Object.entries(tokens)) {
-      if (bindingRef(binding) === oldName) tokens[tk] = withRef(binding, newName);
-    }
-    updateDraftPalette(palette);
-    updateDraftTokens(tokens);
-    if (current.panelOverrides) {
-      updateDraftPanelOverrides(renamePaletteRefInOverrides(current.panelOverrides, oldName, newName));
-    }
+    const patch = draftOps.renamePaletteEntry(current, oldName, newName);
+    if (!patch) return;
+    if (!draft) startEditing();
+    updateDraftPalette(patch.palette);
+    updateDraftTokens(patch.tokens);
+    if (patch.panelOverrides) updateDraftPanelOverrides(patch.panelOverrides);
   };
 
   const removePaletteEntry = (name: string) => {
     const current = (draft ?? activeDoc)!;
-    // Guard: never remove a palette entry a token or panel override still
-    // references (it would leave the binding dangling). The UI also disables
-    // the button.
-    if (
-      Object.values(current.tokens).some((b) => bindingRef(b) === name) ||
-      overridePaletteRefs(current.panelOverrides).has(name)
-    )
-      return;
+    // Null while a token or panel override still references the entry (the UI
+    // also disables the button).
+    const palette = draftOps.removePaletteEntry(current, name);
+    if (!palette) return;
     if (!draft) startEditing();
-    const palette = { ...(draft ?? activeDoc)!.palette };
-    delete palette[name];
     updateDraftPalette(palette);
   };
 
   const addPaletteEntry = () => {
     if (!draft) startEditing();
     const current = (draft ?? activeDoc)!;
-    let base = "new-color";
-    let i = 1;
-    while (current.palette[base]) base = `new-color-${++i}`;
-    updateDraftPalette({ ...current.palette, [base]: "#000000" });
+    updateDraftPalette(draftOps.addPaletteEntry(current).palette);
   };
 
   const setTokenBinding = (token: string, paletteRef: string, filter: TokenFilterId | null) => {
@@ -193,9 +157,7 @@ export function ThemeEditorPanel() {
   const resetToken = (token: string) => {
     if (!draft) startEditing();
     const current = (draft ?? activeDoc)!;
-    const next = { ...current.tokens };
-    delete next[token];
-    updateDraftTokens(next);
+    updateDraftTokens(draftOps.resetToken(current, token));
   };
 
   // Saves under the draft's name — rename via the Metadata "Name" field.
@@ -368,12 +330,7 @@ export function ThemeEditorPanel() {
         <SettingsGroup id="theme-editor.palette" title="Palette">
           <PaletteEditor
             palette={working.palette}
-            usedNames={
-              new Set([
-                ...Object.values(working.tokens).map(bindingRef),
-                ...overridePaletteRefs(working.panelOverrides),
-              ])
-            }
+            usedNames={draftOps.paletteRefsInUse(working)}
             disabled={readOnly}
             onChange={setPaletteValue}
             onRename={renamePaletteEntry}
@@ -569,505 +526,4 @@ export function ThemeEditorPanel() {
       </div>
     </div>
   );
-}
-
-/**
- * Per-panel token overrides: rebind the PANEL_OVERRIDE_TOKENS for one panel
- * (e.g. give the Commits panel its own background). Only the panel's own
- * subtree is affected — the tab strip, menus, dialogs, and toasts keep the
- * global colours.
- */
-function PanelOverridesSection({
-  working,
-  readOnly,
-  onSet,
-}: {
-  working: ThemeDocument;
-  readOnly: boolean;
-  onSet: (panelId: string, token: string, paletteRef: string | null, filter: TokenFilterId | null) => void;
-}) {
-  const [panelId, setPanelId] = useState("log");
-  const overriddenPanels = new Set(Object.keys(working.panelOverrides ?? {}));
-  const mergedPalette = { ...DEFAULT_THEME.palette, ...working.palette };
-  const entry = working.panelOverrides?.[panelId] ?? {};
-  const caption =
-    overriddenPanels.size > 0
-      ? `${overriddenPanels.size} panel${overriddenPanels.size === 1 ? "" : "s"} overridden`
-      : undefined;
-  // Overridden panels render bold (font-weight is one of the few styles the
-  // WebView applies to native <option>s).
-  const optionStyle = (id: string) =>
-    overriddenPanels.has(id) ? { fontWeight: 600 } : undefined;
-
-  return (
-    <SettingsGroup
-      id="theme-editor.panel-overrides"
-      title="Panel overrides"
-      caption={caption}
-      defaultOpen={false}
-    >
-      <div style={{ color: "var(--subtle-fg)", marginBottom: "0.667em" }}>
-        Give a single panel its own surface colours. Panel tabs, menus, and dialogs
-        keep the theme's global colours.
-      </div>
-      <label
-        style={{ display: "inline-flex", alignItems: "center", gap: "0.5em", marginBottom: "0.667em" }}
-      >
-        Panel:
-        <select value={panelId} onChange={(e) => setPanelId(e.target.value)}>
-          <optgroup label="Repository">
-            {REPO_PANELS.map((p) => (
-              <option key={p.id} value={p.id} style={optionStyle(p.id)}>
-                {p.title}
-              </option>
-            ))}
-          </optgroup>
-          <optgroup label="Global">
-            {GLOBAL_PANELS.map((p) => (
-              <option key={p.id} value={p.id} style={optionStyle(p.id)}>
-                {p.title}
-              </option>
-            ))}
-          </optgroup>
-        </select>
-      </label>
-      {PANEL_OVERRIDE_TOKENS.map((token) => {
-        const desc = TOKEN_CONTRACT.find((t) => t.name === token);
-        const bound = entry[token];
-        const boundValid = bound !== undefined && mergedPalette[bindingRef(bound)] !== undefined;
-        // Inheriting rows show (dimmed) what the panel actually renders with:
-        // the theme-wide effective binding.
-        const current = boundValid ? bound : effectiveBinding(working, token);
-        const currentRef = boundValid ? bindingRef(bound!) : "";
-        const currentFilter = current ? bindingFilter(current) : null;
-        const color = current ? resolveBindingColor(current, mergedPalette) : undefined;
-        return (
-          <div
-            key={token}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr 0.6fr 20px 24px",
-              alignItems: "center",
-              gap: "0.5em",
-              padding: "0.167em 0",
-              opacity: boundValid ? 1 : 0.65,
-            }}
-            title={
-              boundValid
-                ? `${desc?.documentation ?? token}\n\nOverridden for this panel.`
-                : `${desc?.documentation ?? token}\n\nInheriting the theme-wide value. Picking a palette colour overrides it for this panel only.`
-            }
-          >
-            <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "var(--fz-md)" }}>
-              {token}
-            </span>
-            <select
-              value={currentRef}
-              onChange={(e) =>
-                onSet(panelId, token, e.target.value || null, boundValid ? currentFilter : null)
-              }
-              disabled={readOnly}
-            >
-              <option value="">Inherit</option>
-              {Object.keys(working.palette).map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-            <select
-              value={boundValid ? (currentFilter ?? "") : ""}
-              title="Derive a variant of the palette colour instead of adding another palette entry"
-              onChange={(e) =>
-                onSet(panelId, token, currentRef, (e.target.value || null) as TokenFilterId | null)
-              }
-              disabled={readOnly || !boundValid}
-            >
-              <option value="">No filter</option>
-              {TOKEN_FILTERS.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.label}
-                </option>
-              ))}
-            </select>
-            {bound !== undefined ? (
-              <button
-                onClick={() => onSet(panelId, token, null, null)}
-                disabled={readOnly}
-                title="Remove the override (inherit the theme-wide value)"
-                aria-label={`Remove ${token} override for this panel`}
-                style={{
-                  width: 20,
-                  height: 20,
-                  padding: 0,
-                  lineHeight: 1,
-                  fontSize: "var(--fz-md)",
-                  background: "transparent",
-                  border: "1px solid var(--panel-border)",
-                  borderRadius: 3,
-                  color: "var(--subtle-fg)",
-                  cursor: readOnly ? "default" : "pointer",
-                }}
-              >
-                ↺
-              </button>
-            ) : (
-              <span />
-            )}
-            <span
-              aria-hidden
-              style={{
-                display: "inline-block",
-                width: 16,
-                height: 16,
-                borderRadius: 3,
-                border: "1px solid var(--panel-border)",
-                background: color ?? "transparent",
-              }}
-            />
-          </div>
-        );
-      })}
-    </SettingsGroup>
-  );
-}
-
-/**
- * The WCAG contrast section. Ratios are computed against what actually
- * renders: effective bindings resolved over the merged palette, with
- * translucent backgrounds composited over their `base` surface. Failing pairs
- * sort first within their group, and the header caption summarises the result
- * so the (collapsed-by-default) section is informative without expanding it.
- */
-function ContrastSection({ working }: { working: ThemeDocument }) {
-  const rows = useMemo(() => {
-    const mergedPalette = { ...DEFAULT_THEME.palette, ...working.palette };
-    const resolve = (token: string) => {
-      const b = effectiveBinding(working, token);
-      return b ? resolveBindingColor(b, mergedPalette) : undefined;
-    };
-    return CONTRAST_PAIRS.map((pair) => {
-      const fg = resolve(pair.fg);
-      const bg = resolve(pair.bg);
-      const base = baseTokens(pair).map(resolve);
-      const ratio =
-        fg && bg && base.every((c) => c !== undefined)
-          ? contrastRatio(fg, bg, base as string[])
-          : null;
-      // Below the pair's own floor (AA by default) — distinct from the badge,
-      // which always names the absolute WCAG tier. Advisory pairs have no
-      // floor: informational only.
-      const below = !pair.advisory && ratio !== null && ratio < (pair.minRatio ?? 4.5);
-      return { pair, ratio, badge: wcagBadge(ratio), below };
-    });
-  }, [working]);
-
-  const failing = rows.filter((r) => r.below).length;
-  const enforced = rows.filter((r) => !r.pair.advisory).length;
-  const caption =
-    failing > 0
-      ? `${failing} of ${enforced} pairs below target`
-      : `all ${enforced} pairs meet their target`;
-
-  const grouped = useMemo(() => {
-    const map = new Map<string, typeof rows>();
-    for (const row of rows) {
-      const list = map.get(row.pair.group) ?? [];
-      list.push(row);
-      map.set(row.pair.group, list);
-    }
-    // Below-target pairs first within each group (stable otherwise).
-    for (const list of map.values()) {
-      list.sort((a, b) => Number(b.below) - Number(a.below));
-    }
-    return Array.from(map.entries());
-  }, [rows]);
-
-  const badgeClass = (below: boolean, badge: WcagBadge, advisory: boolean | undefined) =>
-    below ? "legit-error" : advisory || badge === "n/a" ? "legit-subtle" : "legit-success";
-  const cssVar = (token: string) => `var(--${token.replace(/\./g, "-")})`;
-
-  return (
-    <SettingsGroup id="theme-editor.contrast" title="Contrast (WCAG)" caption={caption} defaultOpen={false}>
-      {grouped.map(([group, list]) => {
-        const groupBelow = list.filter((r) => r.below).length;
-        return (
-        <ContrastGroup
-          key={group}
-          id={group}
-          title={group}
-          caption={groupBelow > 0 ? `${groupBelow} below target` : undefined}
-          // Syntax highlighting is opt-in in the diff viewer, so its (large)
-          // group starts collapsed.
-          defaultOpen={group !== "Syntax highlighting"}
-        >
-          {list.map(({ pair, ratio, badge, below }) => (
-            <div
-              key={pair.label}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "0.833em",
-                padding: "0.167em 0",
-              }}
-            >
-              {/* The sample nests inside the pair's base surface(s), deepest
-                  outermost, so translucent backgrounds preview as they
-                  composite in the real UI. */}
-              <span style={{ borderRadius: 3, minWidth: 100, textAlign: "center" }}>
-                {baseTokens(pair).reduceRight(
-                  (child, baseToken) => (
-                    <span
-                      style={{ display: "block", background: cssVar(baseToken), borderRadius: 3 }}
-                    >
-                      {child}
-                    </span>
-                  ),
-                  <span
-                    style={{
-                      display: "block",
-                      background: cssVar(pair.bg),
-                      color: cssVar(pair.fg),
-                      padding: "0.167em 0.667em",
-                      borderRadius: 3,
-                    }}
-                  >
-                    Sample
-                  </span>,
-                )}
-              </span>
-              <span style={{ flex: 1 }}>{pair.label}</span>
-              <span className="legit-subtle">{ratio ? ratio.toFixed(2) : "—"}</span>
-              <span
-                className={badgeClass(below, badge, pair.advisory)}
-                title={
-                  pair.advisory
-                    ? "advisory: no required floor (word highlights are character-level emphasis)"
-                    : `target: at least ${pair.minRatio ?? 4.5}:1`
-                }
-              >
-                {badge}
-              </span>
-            </div>
-          ))}
-        </ContrastGroup>
-        );
-      })}
-    </SettingsGroup>
-  );
-}
-
-/**
- * A collapsible group inside the Contrast section. Same persistence pattern
- * as `SettingsGroup`, but styled as the section's inner group headings so the
- * two-level hierarchy stays readable.
- */
-function ContrastGroup({
-  id,
-  title,
-  caption,
-  defaultOpen = true,
-  children,
-}: {
-  id: string;
-  title: string;
-  caption?: string;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
-}) {
-  const key = `legit.theme-editor.contrast-group.${id}`;
-  const [open, setOpen] = useState(() => {
-    try {
-      const stored = localStorage.getItem(key);
-      if (stored === "collapsed") return false;
-      if (stored === "expanded") return true;
-      return defaultOpen;
-    } catch {
-      return defaultOpen;
-    }
-  });
-  const toggle = () =>
-    setOpen((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem(key, next ? "expanded" : "collapsed");
-      } catch {
-        /* private mode / quota — the toggle still works for the session */
-      }
-      return next;
-    });
-
-  return (
-    <div style={{ marginBottom: "1em" }}>
-      <button
-        type="button"
-        onClick={toggle}
-        aria-expanded={open}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "0.5em",
-          background: "transparent",
-          border: "none",
-          padding: "0.167em 0",
-          cursor: "pointer",
-          color: "var(--panel-fg)",
-          fontWeight: 600,
-        }}
-      >
-        <ChevronDownIcon
-          size="1em"
-          style={{
-            flexShrink: 0,
-            transform: open ? "none" : "rotate(-90deg)",
-            transition: "transform 0.12s",
-          }}
-        />
-        <span>{title}</span>
-        {caption && (
-          <span className="legit-error" style={{ fontWeight: 400 }}>
-            {caption}
-          </span>
-        )}
-      </button>
-      {open && <div style={{ marginTop: "0.333em" }}>{children}</div>}
-    </div>
-  );
-}
-
-interface PaletteEditorProps {
-  palette: Record<string, string>;
-  /** Palette entries currently referenced by a token (not removable). */
-  usedNames: Set<string>;
-  disabled: boolean;
-  onChange: (name: string, value: string) => void;
-  onRename: (oldName: string, newName: string) => void;
-  onRemove: (name: string) => void;
-  onAdd: () => void;
-}
-
-function PaletteEditor(p: PaletteEditorProps) {
-  return (
-    <div style={{ marginBottom: "1em" }}>
-      {Object.entries(p.palette).map(([name, value]) => (
-        <PaletteRow
-          key={name}
-          name={name}
-          value={value}
-          inUse={p.usedNames.has(name)}
-          disabled={p.disabled}
-          onChange={p.onChange}
-          onRename={p.onRename}
-          onRemove={p.onRemove}
-        />
-      ))}
-      <button onClick={p.onAdd} disabled={p.disabled} style={{ marginTop: "0.333em" }}>
-        + Add palette colour
-      </button>
-    </div>
-  );
-}
-
-interface PaletteRowProps {
-  name: string;
-  value: string;
-  inUse: boolean;
-  disabled: boolean;
-  onChange: (name: string, value: string) => void;
-  onRename: (oldName: string, newName: string) => void;
-  onRemove: (name: string) => void;
-}
-
-function PaletteRow(p: PaletteRowProps) {
-  const [rename, setRename] = useState(p.name);
-
-  // Local swatch state so dragging in the colour picker stays responsive
-  // without re-rendering (and live-applying) the whole theme on every
-  // intermediate value. The committed value is applied only on the native
-  // `change` event below.
-  const [picker, setPicker] = useState(() => hexForPicker(p.value));
-  const pickerRef = useRef<HTMLInputElement>(null);
-  const commit = useRef(p.onChange);
-  commit.current = p.onChange;
-
-  // Keep the swatch in sync when the value changes elsewhere (hex field edit,
-  // theme switch) — but not mid-drag.
-  useEffect(() => {
-    setPicker(hexForPicker(p.value));
-  }, [p.value]);
-
-  // `change` fires only when a colour is selected/committed, unlike React's
-  // `onChange` (the DOM `input` event) which fires continuously while picking.
-  useEffect(() => {
-    const el = pickerRef.current;
-    if (!el) return;
-    const onCommit = () => commit.current(p.name, el.value);
-    el.addEventListener("change", onCommit);
-    return () => el.removeEventListener("change", onCommit);
-  }, [p.name]);
-
-  return (
-    <div className="palette-row">
-      <input
-        className="palette-row__name"
-        value={rename}
-        disabled={p.disabled}
-        title="Rename — token bindings update automatically"
-        onChange={(e) => setRename(e.target.value)}
-        onBlur={() => {
-          if (rename !== p.name && rename.trim().length > 0) p.onRename(p.name, rename.trim());
-          else setRename(p.name);
-        }}
-      />
-      <input
-        className="palette-row__hex"
-        value={p.value}
-        disabled={p.disabled}
-        onChange={(e) => p.onChange(p.name, e.target.value)}
-      />
-      {p.disabled ? (
-        // A plain swatch instead of a disabled <input type="color">: the
-        // WebView mutes disabled colour inputs, which misrepresents the
-        // palette entry's actual colour in view mode.
-        <span
-          className="palette-row__picker palette-row__picker--static"
-          style={{ background: p.value }}
-          aria-hidden
-        />
-      ) : (
-        <input
-          ref={pickerRef}
-          type="color"
-          className="palette-row__picker"
-          value={picker}
-          onChange={(e) => setPicker(e.target.value)}
-        />
-      )}
-      <button
-        className="palette-row__delete"
-        disabled={p.disabled || p.inUse}
-        title={p.inUse ? "In use by a token — cannot remove" : "Remove palette colour"}
-        aria-label="Remove palette colour"
-        onClick={() => p.onRemove(p.name)}
-      >
-        ×
-      </button>
-    </div>
-  );
-}
-
-function hexForPicker(color: string): string {
-  // The <input type="color"> only accepts #rrggbb. Map other formats to a sensible fallback.
-  const m = color.trim().match(/^#([0-9a-fA-F]{3,8})$/);
-  if (!m) return "#000000";
-  if (m[1].length === 6 || m[1].length === 8) return `#${m[1].slice(0, 6)}`;
-  if (m[1].length === 3 || m[1].length === 4) {
-    const ex = m[1]
-      .slice(0, 3)
-      .split("")
-      .map((c) => c + c)
-      .join("");
-    return `#${ex}`;
-  }
-  return "#000000";
 }

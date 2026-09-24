@@ -32,16 +32,7 @@ import {
   type RefActionContext,
 } from "../../lib/refActions";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  repoCherryPick,
-  repoLog,
-  repoRebaseAbort,
-  repoRebaseInteractive,
-  repoRenameStash,
-  repoReset,
-  repoRevert,
-  repoRewordCommit,
-} from "../../lib/commands";
+import { repoCherryPick, repoLog, repoRevert, api } from "../../lib/commands";
 import type { Commit, CommitId, MergeOptions, RepoSummary, ResetMode } from "../../lib/types";
 import { formatAppError } from "../../lib/errors";
 import { bulkRebasePlan } from "./multiSelect";
@@ -120,12 +111,12 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
             );
             return;
           }
-          const outcome = await repoRebaseInteractive(repo.id, base, plan);
+          const outcome = await api.repoRebaseInteractive(repo.id, base, plan);
           if (outcome.kind === "conflicts") {
             // Roll back rather than parking in the conflict state: the user
             // asked for a one-shot action, not a rebase session.
             try {
-              await repoRebaseAbort(repo.id);
+              await api.repoRebaseAbort(repo.id);
               notify.error(
                 `${verb} aborted: replaying the remaining commits conflicted. The branch is unchanged.`,
               );
@@ -172,7 +163,7 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
         if (!repo) return;
         // Reset also moves the branch relative to its upstream.
         try {
-          await repoReset(repo.id, sha, mode);
+          await api.repoReset(repo.id, sha, mode);
           invalidate(repo.id, [...OP_DOMAINS, "tracking"]);
           notify.info(`Reset (${mode}) to ${sha.slice(0, 8)}.`);
         } catch (e) {
@@ -189,7 +180,7 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
         // (not HEAD~1) so a stale row cannot reset past a commit that landed
         // after the menu opened.
         try {
-          await repoReset(repo.id, `${headSha}~1`, "soft");
+          await api.repoReset(repo.id, `${headSha}~1`, "soft");
           invalidate(repo.id, [...OP_DOMAINS, "tracking"]);
           notify.info(
             `Undid commit ${headSha.slice(0, 8)} - its changes are staged again.`,
@@ -256,14 +247,14 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
         const lines = commit.message.split("\n");
         const body = lines.slice(1).join("\n");
         const newMessage = body.length > 0 ? `${subject}\n${body}` : subject;
-        await repoRewordCommit(repo.id, commit.id, newMessage);
+        await api.repoRewordCommit(repo.id, commit.id, newMessage);
         invalidate(repo.id, ["log", "branches", "tracking"]);
       },
 
       renameStash: async (sha: string, message: string) => {
         const repo = repoOf();
         if (!repo) return;
-        await repoRenameStash(repo.id, sha, message);
+        await api.repoRenameStash(repo.id, sha, message);
         invalidate(repo.id, STASH_DOMAINS);
       },
 

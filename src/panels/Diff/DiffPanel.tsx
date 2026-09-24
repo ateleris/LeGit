@@ -4,18 +4,7 @@ import { segStyle } from "../shared/segmented";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSettingsStore } from "../../store/settings";
 import { useGuardedEditorRequest } from "../shared/useGuardedEditorRequest";
-import {
-  repoDiff,
-  repoFileAtRevision,
-  repoDiscardHunk,
-  repoDiscardLines,
-  repoReadWorktreeFile,
-  repoStageHunk,
-  repoStageLines,
-  repoUnstageHunk,
-  repoUnstageLines,
-  repoWriteWorktreeFile,
-} from "../../lib/commands";
+import { api } from "../../lib/commands";
 import type { DiffEntry, DiffRequest ,
   TextDiff,
 } from "../../lib/types";
@@ -37,8 +26,8 @@ import {
   useDestructiveMenuConfirm,
   usePanelContextMenu,
   type BaselineEntry,
-} from "../Commits/menu/PanelContextMenu";
-import { MenuItem, Separator } from "../Commits/menu/primitives";
+} from "../shared/menu/PanelContextMenu";
+import { MenuItem, Separator } from "../shared/menu/primitives";
 import {
   DiffEditor,
   type DiffEditorHandle,
@@ -140,7 +129,7 @@ export function DiffPanel() {
     // returns real hunks; a pure rename returns an empty diff (→ rename notice).
     queryKey: [request?.repoId, "diff", request?.source, request?.path, request?.oldPath, context],
     queryFn: () =>
-      repoDiff(request!.repoId, request!.source, request!.path, request!.oldPath ?? null, context),
+      api.repoDiff(request!.repoId, request!.source, request!.path, request!.oldPath ?? null, context),
     // Only diff the ACTIVE repo: the per-repo request key makes a mismatch
     // impossible after the switch renders, but this guards the render where
     // the store subscriptions have not caught up yet. While dirty,
@@ -177,8 +166,8 @@ export function DiffPanel() {
   const { data: expandSource } = useQuery<string | null>({
     queryKey: [request?.repoId, "diff", "expand-src", request?.path, expandRev?.rev ?? "worktree"],
     queryFn: async () => {
-      if (expandRev!.rev === null) return repoReadWorktreeFile(request!.repoId, request!.path);
-      const f = await repoFileAtRevision(request!.repoId, expandRev!.rev, request!.path);
+      if (expandRev!.rev === null) return api.repoReadWorktreeFile(request!.repoId, request!.path);
+      const f = await api.repoFileAtRevision(request!.repoId, expandRev!.rev, request!.path);
       return "Text" in f ? f.Text : null;
     },
     enabled:
@@ -274,9 +263,9 @@ export function DiffPanel() {
       }
       const { repoId, path } = request;
       try {
-        if (action === "stage") await repoStageHunk(repoId, path, hunkIndex);
-        else if (action === "unstage") await repoUnstageHunk(repoId, path, hunkIndex);
-        else await repoDiscardHunk(repoId, path, hunkIndex);
+        if (action === "stage") await api.repoStageHunk(repoId, path, hunkIndex);
+        else if (action === "unstage") await api.repoUnstageHunk(repoId, path, hunkIndex);
+        else await api.repoDiscardHunk(repoId, path, hunkIndex);
         // Refresh the working-tree views and this diff so the new state shows.
         invalidateRepoDomains(queryClient, repoId, ["status", "log", "diff"]);
       } catch (e) {
@@ -298,9 +287,9 @@ export function DiffPanel() {
       }
       const { repoId, path } = request;
       try {
-        if (action === "stage") await repoStageLines(repoId, path, hunkIndex, lines);
-        else if (action === "unstage") await repoUnstageLines(repoId, path, hunkIndex, lines);
-        else await repoDiscardLines(repoId, path, hunkIndex, lines);
+        if (action === "stage") await api.repoStageLines(repoId, path, hunkIndex, lines);
+        else if (action === "unstage") await api.repoUnstageLines(repoId, path, hunkIndex, lines);
+        else await api.repoDiscardLines(repoId, path, hunkIndex, lines);
         invalidateRepoDomains(queryClient, repoId, ["status", "log", "diff"]);
       } catch (e) {
         notify.error(formatAppError(e));
@@ -319,13 +308,13 @@ export function DiffPanel() {
         const texts = editorRef.current?.collectHunkTexts();
         if (!req || !entry || !("Text" in entry) || !texts) return;
         try {
-          const original = await repoReadWorktreeFile(req.repoId, req.path);
+          const original = await api.repoReadWorktreeFile(req.repoId, req.path);
           const next = spliceEdits(
             original,
             entry.Text.hunks.map((h) => ({ newStart: h.new_start, newLines: h.new_lines })),
             texts
           );
-          await repoWriteWorktreeFile(req.repoId, req.path, next);
+          await api.repoWriteWorktreeFile(req.repoId, req.path, next);
           setDirty(false);
           rebuild();
           invalidateRepoDomains(queryClient, req.repoId, ["status", "log", "diff"]);

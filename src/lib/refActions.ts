@@ -4,28 +4,7 @@
 // and local UI state.
 
 import type { QueryClient } from "@tanstack/react-query";
-import {
-  repoApplyStash,
-  repoCheckoutCommit,
-  repoCheckoutRemoteBranch,
-  repoCreateBranch,
-  repoCreateStash,
-  repoCreateTag,
-  repoDeleteBranch,
-  repoDeleteRemoteBranch,
-  repoDeleteRemoteTag,
-  repoDeleteTag,
-  repoDropStash,
-  repoMerge,
-  repoPopStash,
-  repoPushTag,
-  repoRebase,
-  repoRenameBranch,
-  repoRenameStash,
-  repoSetUpstream,
-  repoStashBranch,
-  repoSwitchBranch,
-} from "./commands";
+import { repoCreateBranch, api } from "./commands";
 import type { MergeOptions, RepoSummary } from "./types";
 import { formatAppError } from "./errors";
 import { deleteBranchGuided } from "./branchDelete";
@@ -96,7 +75,7 @@ function reportSwitchError(ctx: RefActionContext) {
 
 export const checkoutBranch = (ctx: RefActionContext, name: string) =>
   attempt(async () => {
-    const result = await repoSwitchBranch(ctx.repo.id, name);
+    const result = await api.repoSwitchBranch(ctx.repo.id, name);
     invalidate(ctx, BRANCH_DOMAINS);
     notifySwitchOutcome(result.outcome, name);
     notifyLfsStubs(result.lfs_stubs, "switch");
@@ -105,7 +84,7 @@ export const checkoutBranch = (ctx: RefActionContext, name: string) =>
 
 export const checkoutRemoteBranch = (ctx: RefActionContext, remoteRef: string) =>
   attempt(async () => {
-    const outcome = await repoCheckoutRemoteBranch(ctx.repo.id, remoteRef);
+    const outcome = await api.repoCheckoutRemoteBranch(ctx.repo.id, remoteRef);
     invalidate(ctx, BRANCH_DOMAINS);
     notifyRemoteCheckoutOutcome(outcome, remoteRef.replace(/^refs\/remotes\//, ""));
     notifyLfsStubs(outcome.lfs_stubs, "checkout");
@@ -114,7 +93,7 @@ export const checkoutRemoteBranch = (ctx: RefActionContext, remoteRef: string) =
 
 export const checkoutCommit = (ctx: RefActionContext, sha: string) =>
   attempt(async () => {
-    const result = await repoCheckoutCommit(ctx.repo.id, sha);
+    const result = await api.repoCheckoutCommit(ctx.repo.id, sha);
     invalidate(ctx, BRANCH_DOMAINS);
     notifySwitchOutcome(result.outcome, sha.slice(0, 8));
     notifyLfsStubs(result.lfs_stubs, "checkout");
@@ -142,7 +121,7 @@ export async function createBranch(
 
 export const renameBranch = (ctx: RefActionContext, oldName: string, newName: string) =>
   attempt(async () => {
-    await repoRenameBranch(ctx.repo.id, oldName, newName);
+    await api.repoRenameBranch(ctx.repo.id, oldName, newName);
     invalidate(ctx, BRANCH_DOMAINS);
   }, reportError);
 
@@ -152,7 +131,7 @@ export async function deleteBranch(ctx: RefActionContext, name: string, force: b
   let gone = false;
   const ok = await attempt(async () => {
     if (force) {
-      await repoDeleteBranch(ctx.repo.id, name, true);
+      await api.repoDeleteBranch(ctx.repo.id, name, true);
       gone = true;
     } else {
       gone = await deleteBranchGuided(ctx.repo.id, name);
@@ -164,7 +143,7 @@ export async function deleteBranch(ctx: RefActionContext, name: string, force: b
 
 export const setUpstream = (ctx: RefActionContext, branch: string, upstream: string | null) =>
   attempt(async () => {
-    await repoSetUpstream(ctx.repo.id, branch, upstream);
+    await api.repoSetUpstream(ctx.repo.id, branch, upstream);
     invalidate(ctx, BRANCH_DOMAINS);
   }, reportError);
 
@@ -193,7 +172,7 @@ export async function deleteRemoteBranch(ctx: RefActionContext, remoteRef: strin
   const split = splitRemoteRef(remoteRef, [...(ctx.remoteNames ?? [])]);
   if (!split) return false;
   return attempt(async () => {
-    await repoDeleteRemoteBranch(ctx.repo.id, split.remote, split.branch, crypto.randomUUID());
+    await api.repoDeleteRemoteBranch(ctx.repo.id, split.remote, split.branch, crypto.randomUUID());
     notify.success(`Deleted '${split.branch}' on ${split.remote}`);
     invalidate(ctx, BRANCH_DOMAINS);
   }, reportRemoteError);
@@ -204,7 +183,7 @@ export async function deleteRemoteBranch(ctx: RefActionContext, remoteRef: strin
  *  failures. */
 export const stashBranch = (ctx: RefActionContext, sha: string, name: string) =>
   attempt(async () => {
-    await repoStashBranch(ctx.repo.id, sha, name);
+    await api.repoStashBranch(ctx.repo.id, sha, name);
     invalidate(ctx, BRANCH_DOMAINS);
     notify.info(`Created branch '${name}' from the stash and checked it out.`);
   }, reportSwitchError(ctx));
@@ -214,7 +193,7 @@ export const stashBranch = (ctx: RefActionContext, sha: string, name: string) =>
 
 export async function mergeInto(ctx: RefActionContext, target: string, options: MergeOptions): Promise<boolean> {
   const ok = await attempt(async () => {
-    notifyMergeOutcome(await repoMerge(ctx.repo.id, target, options), target);
+    notifyMergeOutcome(await api.repoMerge(ctx.repo.id, target, options), target);
   }, notifyOpError);
   invalidate(ctx, OP_DOMAINS);
   return ok;
@@ -224,7 +203,7 @@ export async function mergeInto(ctx: RefActionContext, target: string, options: 
  *  on conflict, keeps) a stash entry. */
 export async function rebaseOnto(ctx: RefActionContext, onto: string): Promise<boolean> {
   const ok = await attempt(async () => {
-    notifyRebaseOutcome(await repoRebase(ctx.repo.id, onto), onto);
+    notifyRebaseOutcome(await api.repoRebase(ctx.repo.id, onto), onto);
   }, notifyOpError);
   invalidate(ctx, [...OP_DOMAINS, "stashes"]);
   return ok;
@@ -239,7 +218,7 @@ export async function createTag(
   message: string | undefined,
 ): Promise<boolean> {
   const ok = await attempt(async () => {
-    await repoCreateTag(ctx.repo.id, name, target, message);
+    await api.repoCreateTag(ctx.repo.id, name, target ?? null, message ?? null);
     invalidate(ctx, TAG_DOMAINS);
   }, reportError);
   // Create-time auto-push trigger (gated on the setting inside).
@@ -249,13 +228,13 @@ export async function createTag(
 
 export const deleteTag = (ctx: RefActionContext, name: string) =>
   attempt(async () => {
-    await repoDeleteTag(ctx.repo.id, name);
+    await api.repoDeleteTag(ctx.repo.id, name);
     invalidate(ctx, TAG_DOMAINS);
   }, reportError);
 
 export const pushTag = (ctx: RefActionContext, name: string, remote: string) =>
   attempt(async () => {
-    await repoPushTag(ctx.repo.id, remote, name, crypto.randomUUID());
+    await api.repoPushTag(ctx.repo.id, remote, name, crypto.randomUUID());
     notify.success(`Pushed tag '${name}' to ${remote}`);
     invalidate(ctx, ["remote-tags"]);
   }, reportRemoteError);
@@ -263,7 +242,7 @@ export const pushTag = (ctx: RefActionContext, name: string, remote: string) =>
 /** Delete the tag ON THE REMOTE only; local copies stay. */
 export const deleteRemoteTag = (ctx: RefActionContext, name: string, remote: string) =>
   attempt(async () => {
-    await repoDeleteRemoteTag(ctx.repo.id, remote, name, crypto.randomUUID());
+    await api.repoDeleteRemoteTag(ctx.repo.id, remote, name, crypto.randomUUID());
     notify.success(`Deleted tag '${name}' from ${remote}`);
     invalidate(ctx, ["remote-tags"]);
   }, reportRemoteError);
@@ -273,7 +252,7 @@ export const deleteRemoteTag = (ctx: RefActionContext, name: string, remote: str
 
 export const applyStash = (ctx: RefActionContext, sha: string, label = "the stash") =>
   attempt(async () => {
-    const outcome = await repoApplyStash(ctx.repo.id, sha);
+    const outcome = await api.repoApplyStash(ctx.repo.id, sha);
     invalidate(ctx, STASH_DOMAINS);
     if (outcome.kind === "conflicts") {
       notify.info(`Applying ${label} produced conflicts - resolve them in your working tree.`);
@@ -282,7 +261,7 @@ export const applyStash = (ctx: RefActionContext, sha: string, label = "the stas
 
 export const popStash = (ctx: RefActionContext, sha: string, label = "the stash") =>
   attempt(async () => {
-    const outcome = await repoPopStash(ctx.repo.id, sha);
+    const outcome = await api.repoPopStash(ctx.repo.id, sha);
     invalidate(ctx, STASH_DOMAINS);
     if (outcome.kind === "conflicts") {
       notify.info(
@@ -293,14 +272,14 @@ export const popStash = (ctx: RefActionContext, sha: string, label = "the stash"
 
 export const dropStash = (ctx: RefActionContext, sha: string) =>
   attempt(async () => {
-    await repoDropStash(ctx.repo.id, sha);
+    await api.repoDropStash(ctx.repo.id, sha);
     invalidate(ctx, STASH_DOMAINS);
   }, reportError);
 
 /** Rename via drop + re-store: the stash moves to stash@{0}. */
 export const renameStash = (ctx: RefActionContext, sha: string, message: string) =>
   attempt(async () => {
-    await repoRenameStash(ctx.repo.id, sha, message);
+    await api.repoRenameStash(ctx.repo.id, sha, message);
     invalidate(ctx, STASH_DOMAINS);
   }, reportError);
 
@@ -312,7 +291,12 @@ export async function createStash(
 ): Promise<"created" | "nothing_to_stash" | null> {
   let result: "created" | "nothing_to_stash" = "created";
   const ok = await attempt(async () => {
-    const outcome = await repoCreateStash(ctx.repo.id, opts.message, opts.includeUntracked, opts.keepIndex);
+    const outcome = await api.repoCreateStash(
+      ctx.repo.id,
+      opts.message ?? null,
+      opts.includeUntracked,
+      opts.keepIndex,
+    );
     invalidate(ctx, STASH_DOMAINS);
     if (outcome.kind === "nothing_to_stash") {
       result = "nothing_to_stash";

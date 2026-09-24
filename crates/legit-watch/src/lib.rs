@@ -97,6 +97,40 @@ pub enum ChangeDomain {
     Worktrees,
 }
 
+impl ChangeDomain {
+    /// Every domain, for the cases where the whole repo may be stale and
+    /// there is no batch to classify (a reconnect, or a watch that only
+    /// became live after the repo was already on screen).
+    pub const ALL: [ChangeDomain; 9] = {
+        // Exhaustiveness guard: a new variant fails this match, forcing the
+        // array below to be extended with it.
+        const fn _every_variant_listed(d: ChangeDomain) {
+            match d {
+                ChangeDomain::Status
+                | ChangeDomain::Log
+                | ChangeDomain::Branches
+                | ChangeDomain::Stashes
+                | ChangeDomain::Tags
+                | ChangeDomain::Diff
+                | ChangeDomain::OpState
+                | ChangeDomain::Submodules
+                | ChangeDomain::Worktrees => {}
+            }
+        }
+        [
+            ChangeDomain::Status,
+            ChangeDomain::Log,
+            ChangeDomain::Branches,
+            ChangeDomain::Stashes,
+            ChangeDomain::Tags,
+            ChangeDomain::Diff,
+            ChangeDomain::OpState,
+            ChangeDomain::Submodules,
+            ChangeDomain::Worktrees,
+        ]
+    };
+}
+
 /// One debounced batch's classified result, handed to the host's sink.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WatchBatch {
@@ -688,6 +722,14 @@ fn build_ignore(worktree: &Path) -> Gitignore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn all_lists_every_domain_once() {
+        let mut sorted = ChangeDomain::ALL.to_vec();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), ChangeDomain::ALL.len(), "ALL holds duplicates");
+    }
 
     fn domains(path: &str, worktree: &Path, git_dir: &Path, ignore: &Gitignore) -> Vec<ChangeDomain> {
         let mut out = BTreeSet::new();

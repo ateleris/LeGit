@@ -1,17 +1,5 @@
 import { create } from "zustand";
-import {
-  closeRepo as closeRepoCmd,
-  listRepos,
-  openRepo as openRepoCmd,
-  repoInit as repoInitCmd,
-  repoClone as repoCloneCmd,
-  restoreOpenRepos,
-  setActiveRepo as setActiveRepoCmd,
-  setOpenReposOrder as setOpenReposOrderCmd,
-  getRepoSettings as getRepoSettingsCmd,
-  patchRepoSettings as patchRepoSettingsCmd,
-} from "../lib/commands";
-import { consoleCancel } from "../lib/commands";
+import { repoInit as repoInitCmd, repoClone as repoCloneCmd, api } from "../lib/commands";
 import type { CloneOptions, InitOptions } from "../lib/commands";
 import { notifyLfsStubs } from "../lib/lfsFeedback";
 import type { RepoId, RepoSettings, RepoSettingsPatch, RepoSummary } from "../lib/types";
@@ -81,7 +69,7 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
   async init() {
     if (get().initialized) return;
     try {
-      const restored = await restoreOpenRepos();
+      const restored = await api.restoreOpenRepos();
       set({
         openRepos: restored.repos,
         activeRepoId: restored.active_id,
@@ -99,9 +87,9 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
   },
 
   async refresh() {
-    const open = await listRepos();
+    const open = await api.listRepos();
     set((s) => {
-      // `listRepos` returns name-sorted; preserve the user's current tab order
+      // `api.listRepos` returns name-sorted; preserve the user's current tab order
       // for repos that remain and append any newly-opened ones at the end.
       const present = new Map(open.map((r) => [r.id, r] as const));
       const ordered: RepoSummary[] = [];
@@ -125,7 +113,7 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
       if (!stillActive) {
         // The switch came from a close, not a click: persist it so a restart
         // restores the same repo.
-        setActiveRepoCmd(nextActive).catch((e) => console.warn("persist active failed", e));
+        api.setActiveRepo(nextActive).catch((e) => console.warn("persist active failed", e));
       }
       return {
         openRepos: ordered,
@@ -154,11 +142,11 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
       for (const r of s.openRepos) if (byId.has(r.id)) next.push(r);
       return { openRepos: next };
     });
-    setOpenReposOrderCmd(orderedIds).catch((e) => console.warn("persist repo order failed", e));
+    api.setOpenReposOrder(orderedIds).catch((e) => console.warn("persist repo order failed", e));
   },
 
   async openRepo(path: string) {
-    const summary = await openRepoCmd(path);
+    const summary = await api.openRepo(path);
     await get().refresh();
     get().setActive(summary.id);
     return summary;
@@ -194,11 +182,11 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
     // BEFORE the backend close.
     const opId = useConsoleStore.getState().sessions[id]?.opId;
     if (opId) {
-      await consoleCancel(id, opId).catch(() => {
+      await api.consoleCancel(id, opId).catch(() => {
         /* already finished */
       });
     }
-    await closeRepoCmd(id);
+    await api.closeRepo(id);
     // The console session is repo-scoped state: a closed repo's scrollback
     // must not linger (or resurrect if the repo is reopened later).
     useConsoleStore.getState().dropRepo(id);
@@ -218,7 +206,7 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
       activeRepoId: id,
       activationHistory: id ? pushActivation(s.activationHistory, id) : s.activationHistory,
     }));
-    setActiveRepoCmd(id).catch((e) => console.warn("persist active failed", e));
+    api.setActiveRepo(id).catch((e) => console.warn("persist active failed", e));
     // Eagerly load settings for the newly-active repo if not cached.
     if (id && !get().repoSettings[id]) {
       get().loadRepoSettings(id);
@@ -227,7 +215,7 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
 
   async loadRepoSettings(id: RepoId) {
     try {
-      const settings = await getRepoSettingsCmd(id);
+      const settings = await api.getRepoSettings(id);
       set((s) => ({ repoSettings: { ...s.repoSettings, [id]: settings } }));
     } catch (e) {
       console.warn("loadRepoSettings failed", e);
@@ -238,7 +226,7 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
     const patch: RepoSettingsPatch = { [key]: value };
     const cached = get().repoSettings[id];
     if (cached) set((s) => ({ repoSettings: { ...s.repoSettings, [id]: { ...cached, ...patch } } }));
-    const merged = await patchRepoSettingsCmd(id, patch);
+    const merged = await api.patchRepoSettings(id, patch);
     set((s) => ({ repoSettings: { ...s.repoSettings, [id]: merged } }));
   },
 }));

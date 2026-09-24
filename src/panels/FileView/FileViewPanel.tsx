@@ -7,7 +7,7 @@ import { useActiveRepo } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
 import { useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
-import { repoFileAtRevision, repoFileWorktree } from "../../lib/commands";
+import { api } from "../../lib/commands";
 import type { FileAtRevision } from "../../lib/types";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { LineEndingBadge } from "../shared/LineEndingBadge";
@@ -115,8 +115,8 @@ export function FileViewPanel() {
       : [repo?.id, "log", "file-at-rev", request?.rev, request?.path],
     queryFn: () =>
       worktree
-        ? repoFileWorktree(repo!.id, request!.path)
-        : repoFileAtRevision(repo!.id, request!.rev!, request!.path),
+        ? api.repoFileWorktree(repo!.id, request!.path)
+        : api.repoFileAtRevision(repo!.id, request!.rev!, request!.path),
     enabled: !!repo && !!request,
     staleTime: worktree ? STALE.live : STALE.stable,
   });

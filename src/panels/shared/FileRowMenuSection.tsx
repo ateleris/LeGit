@@ -3,7 +3,7 @@
 // (the StashMenuSection lesson). Panel-specific entries render around it.
 
 import React from "react";
-import { MenuItem, SectionLabel } from "../Commits/menu/primitives";
+import { MenuItem, SectionLabel } from "../shared/menu/primitives";
 import { CopyPathMenuSection } from "./CopyPathMenuSection";
 import { OpenInEditorMenuItem } from "./OpenInEditorMenuItem";
 import { AddToGitignoreMenuItem } from "./AddToGitignoreMenuItem";

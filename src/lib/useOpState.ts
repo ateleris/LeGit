@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { repoOpState } from "./commands";
+import { api } from "./commands";
 import type { RepoOpState } from "./types";
 import { STALE } from "./queryTiming";
 import { repoKeys } from "./queries/keys";
@@ -12,7 +12,7 @@ import { repoKeys } from "./queries/keys";
 export function useOpState(repoId: string | undefined): RepoOpState | null {
   const { data } = useQuery<RepoOpState>({
     queryKey: repoKeys.opState(repoId),
-    queryFn: () => repoOpState(repoId!),
+    queryFn: () => api.repoOpState(repoId!),
     enabled: !!repoId,
     staleTime: STALE.live,
   });

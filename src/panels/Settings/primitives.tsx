@@ -226,3 +226,113 @@ export function FieldNote({ children }: { children: ReactNode }) {
     <div style={{ fontSize: "var(--fz-sm)", color: "var(--subtle-fg)", marginTop: "0.333em" }}>{children}</div>
   );
 }
+
+/** The standard "writes to:" note under a setting's title, so the wording
+ * cannot drift between sections. */
+export function WritesTo({
+  target = "global settings",
+  note,
+}: {
+  target?: string;
+  note?: string;
+}) {
+  return (
+    <FieldNote>
+      writes to: {target}
+      {note ? ` (${note})` : ""}
+    </FieldNote>
+  );
+}
+
+/** One checkbox + label row in the settings-toggle shape. */
+export function SettingCheckbox({
+  id,
+  label,
+  checked,
+  onChange,
+  disabled,
+  title,
+  topGap = "0.667em",
+}: {
+  id: string;
+  label: ReactNode;
+  checked: boolean;
+  onChange: () => void;
+  disabled?: boolean;
+  /** Tooltip on the label. */
+  title?: string;
+  /** Space above the row; bump it to visually separate a new cluster. */
+  topGap?: string;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: topGap }}>
+      <input type="checkbox" id={id} checked={checked} onChange={onChange} disabled={disabled} />
+      <label htmlFor={id} style={{ fontSize: "var(--fz-lg)", cursor: "pointer" }} title={title}>
+        {label}
+      </label>
+    </div>
+  );
+}
+
+/** One radio option with an inline explanation, the radio-list row shape. */
+export function SettingRadio({
+  checked,
+  onSelect,
+  disabled,
+  label,
+  detail,
+}: {
+  checked: boolean;
+  onSelect: () => void;
+  disabled?: boolean;
+  label: string;
+  detail: string;
+}) {
+  return (
+    <label
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "0.667em",
+        cursor: disabled ? "default" : "pointer",
+      }}
+    >
+      <input type="radio" checked={checked} onChange={onSelect} disabled={disabled} />
+      <span style={{ fontSize: "var(--fz-lg)" }}>{label}</span>
+      <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
+        {detail}
+      </span>
+    </label>
+  );
+}
+
+/** A Section holding a single toggle: title, writes-to note, one checkbox,
+ * and optional trailing notes as children. */
+export function ToggleSection({
+  title,
+  writesNote,
+  id,
+  label,
+  checked,
+  disabled,
+  onToggle,
+  children,
+}: {
+  title: string;
+  /** Parenthesized part of the writes-to note, e.g. "applies to all repos". */
+  writesNote?: string;
+  id: string;
+  label: ReactNode;
+  checked: boolean;
+  disabled?: boolean;
+  onToggle: () => void;
+  children?: ReactNode;
+}) {
+  return (
+    <Section title={title}>
+      <WritesTo note={writesNote} />
+      <SettingCheckbox id={id} label={label} checked={checked} onChange={onToggle} disabled={disabled} />
+      {children}
+    </Section>
+  );
+}

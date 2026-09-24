@@ -1,12 +1,12 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { usePanelViewState } from "../../store/panelViewState";
 import { useSettingsStore } from "../../store/settings";
 import { usePanelActiveEffect, usePanelFocusEffect } from "../PanelApiContext";
-import { repoCaseDrift, repoConflictEntries, repoConflictReopen, repoCreateStashPaths, repoDiscard, repoDiscardCaseRename, repoResolveTakeSide, repoResolveUndoPaths, repoStage, repoStageCaseRename, repoStagedMarkerPaths, repoUnstage, repoUnstagedMarkerPaths } from "../../lib/commands";
-import type { CaseDriftEntry, ConflictEntry, ConflictSide, DiffRequest, DiffSource, FileStatus } from "../../lib/types";
+import { api } from "../../lib/commands";
+import type { CaseDriftEntry, ConflictSide, DiffSource, FileStatus } from "../../lib/types";
 import { formatAppError } from "../../lib/errors";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { notify } from "../../store/notifications";
@@ -15,22 +15,19 @@ import { segStyle } from "../shared/segmented";
 import { FileTree, STATUS_META } from "../shared/FileTree/FileTree";
 import { GitFork } from "lucide-react";
 import { LineEndingRowBadge } from "../shared/LineEndingBadge";
-import { useLineEndingStatusMap } from "../shared/lineEndingStatus";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { IconButton } from "../shared/buttons";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
 import { StageIcon, UnstageIcon, WarningIcon } from "../../icons";
-import { PanelContextMenuProvider, type BaselineEntry } from "../Commits/menu/PanelContextMenu";
-import { MenuItem } from "../Commits/menu/primitives";
+import { PanelContextMenuProvider, type BaselineEntry } from "../shared/menu/PanelContextMenu";
+import { MenuItem } from "../shared/menu/primitives";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notifyResolutionInvisible } from "../../lib/mergeFeedback";
 import { openSubmoduleRepo } from "../../lib/submodules";
-import { useOpState } from "../../lib/useOpState";
-import { isSubmodulePath, submodulePathSet } from "./submoduleRows";
-import { stagedEolChanges } from "./lineEndingWarning";
+import { isSubmodulePath } from "./submoduleRows";
 import {
   orderedWorkingChangesSections,
   type WorkingChangesSection,
@@ -38,13 +35,7 @@ import {
 import { FileRowMenuSection } from "../shared/FileRowMenuSection";
 import { AddToGitignoreMenuItem } from "../shared/AddToGitignoreMenuItem";
 import { allUntracked } from "./dirGitignore";
-import {
-  caseDriftByPath,
-  caseDriftTitle,
-  selectionDiffAction,
-  splitDriftTargets,
-  withCaseDriftRows,
-} from "./caseDrift";
+import { caseDriftTitle, selectionDiffAction, splitDriftTargets } from "./caseDrift";
 import { CommitComposer } from "./CommitComposer";
 import { FileRowMenu } from "./FileRowMenu";
 import {
@@ -66,8 +57,9 @@ import {
   type PendingSections,
 } from "./pendingDim";
 import { expandUnstagePaths } from "./unstagePaths";
-import { STALE } from "../../lib/queryTiming";
-import { useStatus, useSubmodules } from "../../lib/queries/useRepoQueries";
+import { useWorkingChangesData } from "./useWorkingChangesData";
+import { useDiffSync } from "./useDiffSync";
+import { useDelayedFlag } from "../shared/useDelayedFlag";
 
 /** Persisted unstaged/staged height split (fraction of the first file
  *  section in render order) + its clamp, so neither list can be squeezed
@@ -76,27 +68,7 @@ const SPLIT_KEY = "legit.workingChanges.split";
 const SPLIT_MIN = 0.15;
 const SPLIT_MAX = 0.85;
 
-const toEntry = (s: FileStatus): FileTreeEntry => ({
-  path: s.path,
-  change: s.state,
-  old_path: s.old_path ?? undefined,
-  additions: s.additions ?? undefined,
-  deletions: s.deletions ?? undefined,
-  binary: s.binary,
-});
-
 const EMPTY_PATHS: ReadonlySet<string> = new Set();
-
-/** Sum a section's per-file line counts (entries without counts add 0). */
-const sumCounts = (files: FileTreeEntry[]) => {
-  let add = 0;
-  let del = 0;
-  for (const f of files) {
-    add += f.additions ?? 0;
-    del += f.deletions ?? 0;
-  }
-  return { add, del };
-};
 
 /** "+A −D" in the status colours; renders nothing when both are zero. */
 function CountsSummary({ add, del }: { add: number; del: number }) {
@@ -208,18 +180,36 @@ export function WorkingChangesPanel() {
   );
 
   const {
-    data: status = [],
+    status,
     isFetching,
     isError,
     error,
     refetch,
-  } = useStatus(repo?.id);
+    submodulePaths,
+    eolMap,
+    staged,
+    unstaged,
+    caseDrift,
+    driftByPath,
+    unstagedWithDrift,
+    eolChanges,
+    stagedTotals,
+    unstagedTotals,
+    totals,
+    conflictCount,
+    opActive,
+    stagedMarkerSet,
+    unstagedMarkerSet,
+    reopenable,
+    conflictKinds,
+    entryFor,
+  } = useWorkingChangesData({
+    repoId: repo?.id,
+    eolEnabled: chipsEnabled || warnEolCommit,
+    detectCaseRenames,
+  });
+  const { openDiff, driftDiffRequest, syncOpenDiff } = useDiffSync({ repo, entryFor });
 
-  // Known submodule paths (gitlinked, or declared in .gitmodules but never
-  // added) drive the fork-glyph icon override below, so a to-be-added
-  // submodule never reads as a plain new file.
-  const { data: submodules = [] } = useSubmodules(repo?.id);
-  const submodulePaths = useMemo(() => submodulePathSet(submodules), [submodules]);
   const submoduleFileIcon = useCallback(
     (file: FileTreeEntry): ReactNode => {
       // Conflicted keeps its warning triangle - the conflict cue outranks
@@ -237,118 +227,11 @@ export function WorkingChangesPanel() {
     [submodulePaths, iconSize],
   );
 
-  // Batch line-ending summary - drives the row chips and the commit
-  // warning. Disabled entirely when both features are off.
-  const eolMap = useLineEndingStatusMap(repo?.id, chipsEnabled || warnEolCommit);
-
   // Refresh whenever the panel is focused or swapped/summoned into view, so the
   // working tree is re-read after edits made while it wasn't the shown panel.
   const reload = useCallback(() => { refetch(); }, [refetch]);
   usePanelFocusEffect(reload);
   usePanelActiveEffect(reload);
-
-  const staged = useMemo(() => status.filter((s) => s.staged).map(toEntry), [status]);
-  const unstaged = useMemo(() => status.filter((s) => !s.staged).map(toEntry), [status]);
-
-  // Case-only rename drift: renames git status cannot see (case-insensitive
-  // filesystems). Surfaced as synthetic rename rows in the Unstaged list with
-  // a "Stage rename" action; the backend returns [] on case-sensitive
-  // filesystems without scanning. Invalidated via the derived "case_drift"
-  // domain, so the repo-open catch-up refresh also covers renames made while
-  // the app was closed.
-  const { data: caseDrift = [] } = useQuery<CaseDriftEntry[]>({
-    queryKey: [repo?.id, "case_drift"],
-    queryFn: () => repoCaseDrift(repo!.id),
-    enabled: !!repo && detectCaseRenames,
-    staleTime: STALE.live,
-  });
-  // Only entries that actually became synthetic rows get row overrides - a
-  // path collision with a real status row must not restyle that row.
-  const driftByPath = useMemo(() => {
-    const statusPaths = new Set(unstaged.map((f) => f.path));
-    return caseDriftByPath(caseDrift.filter((d) => !statusPaths.has(d.disk_path)));
-  }, [unstaged, caseDrift]);
-  const unstagedWithDrift = useMemo(
-    () => withCaseDriftRows(unstaged, caseDrift),
-    [unstaged, caseDrift],
-  );
-
-  // Line-count sums for the toolbar (whole panel) and the section headers.
-  // The panel-wide file count is unique paths — a partially staged file has an
-  // entry in both sections but is still one file.
-  // Staged line-ending changes the next commit would record - the commit
-  // warning's data (index vs HEAD, so repo policy can't false-positive).
-  const stagedPathSet = useMemo(() => new Set(staged.map((f) => f.path)), [staged]);
-  const eolChanges = useMemo(
-    () => stagedEolChanges(eolMap.values(), stagedPathSet),
-    [eolMap, stagedPathSet],
-  );
-
-  const stagedTotals = useMemo(() => sumCounts(staged), [staged]);
-  const unstagedTotals = useMemo(() => sumCounts(unstaged), [unstaged]);
-  const totals = useMemo(
-    () => ({
-      files: new Set(status.map((s) => s.path)).size,
-      add: stagedTotals.add + unstagedTotals.add,
-      del: stagedTotals.del + unstagedTotals.del,
-    }),
-    [status, stagedTotals, unstagedTotals],
-  );
-
-  // Conflict count drives the conflict-row menu labels; the in-progress
-  // merge/rebase banner itself is app chrome now (OpStateStrip in AppLayout).
-  const conflictCount = useMemo(
-    () => status.filter((s) => s.state === "Conflicted").length,
-    [status],
-  );
-
-  // An in-progress op gates the resolution-safety features below: that's the
-  // window where staged conflict markers are accidents and git's resolve-undo
-  // record exists. Both queries are idle otherwise.
-  const opState = useOpState(repo?.id);
-  const opActive = !!opState && opState.kind !== "none";
-
-  // Files whose content still holds leftover conflict markers - the
-  // "accidentally marked resolved" warning. Checked on both sides so the
-  // warning follows the file when it is unstaged again; on the unstaged side
-  // it only decorates non-Conflicted rows (conflicts already show as such).
-  const { data: stagedMarkerPaths = [] } = useQuery<string[]>({
-    queryKey: [repo?.id, "status", "staged-markers"],
-    queryFn: () => repoStagedMarkerPaths(repo!.id),
-    enabled: !!repo && opActive,
-    staleTime: STALE.live,
-  });
-  const stagedMarkerSet = useMemo(() => new Set(stagedMarkerPaths), [stagedMarkerPaths]);
-  const { data: unstagedMarkerPaths = [] } = useQuery<string[]>({
-    queryKey: [repo?.id, "status", "unstaged-markers"],
-    queryFn: () => repoUnstagedMarkerPaths(repo!.id),
-    enabled: !!repo && opActive,
-    staleTime: STALE.live,
-  });
-  const unstagedMarkerSet = useMemo(() => new Set(unstagedMarkerPaths), [unstagedMarkerPaths]);
-
-  // Paths whose conflict was resolved & staged during this op (git's
-  // resolve-undo record) - eligible for "Reopen conflict".
-  const { data: undoPaths = [] } = useQuery<string[]>({
-    queryKey: [repo?.id, "op_state", "resolve-undo"],
-    queryFn: () => repoResolveUndoPaths(repo!.id),
-    enabled: !!repo && opActive,
-    staleTime: STALE.live,
-  });
-  const reopenable = useMemo(() => new Set(undoPaths), [undoPaths]);
-
-  // Conflict kinds for delete-aware Take-ours/theirs labels; only fetched
-  // while conflicts exist (the cheap ls-files -u otherwise never runs).
-  const { data: conflictEntries = [] } = useQuery<ConflictEntry[]>({
-    queryKey: [repo?.id, "op_state", "conflicts"],
-    queryFn: () => repoConflictEntries(repo!.id),
-    enabled: !!repo && conflictCount > 0,
-    staleTime: STALE.live,
-  });
-  const conflictKinds = useMemo(
-    () => new Map(conflictEntries.map((e) => [e.path, e.kind])),
-    [conflictEntries],
-  );
 
   // The highlighted set for each list — non-empty only for the active section.
   const unstagedSelected = useMemo(
@@ -358,61 +241,6 @@ export function WorkingChangesPanel() {
   const stagedSelected = useMemo(
     () => new Set(selected?.section === "staged" ? selected.paths : []),
     [selected],
-  );
-
-  // Resolve the targets for a right-click and align the selection like Windows
-  // Explorer: right-clicking inside the current selection acts on the whole set
-  // and leaves it intact; right-clicking outside it selects just that row
-  // (deselecting the rest), then acts on it.
-  // Open a file's diff in the Diff panel; the source side depends on which
-  // section the row lives in.
-  // The entry backing a row, preferring the clicked section's side (a
-  // partially-staged file has one entry per section under the same path).
-  const entryFor = useCallback(
-    (section: ListSection, path: string): FileStatus | undefined =>
-      status.find((s) => s.path === path && s.staged === (section === "staged")) ??
-      status.find((s) => s.path === path),
-    [status],
-  );
-
-  const openDiff = useCallback(
-    (section: ListSection, path: string) => {
-      if (!repo) return;
-      const source: DiffSource =
-        section === "staged" ? { kind: "working_staged" } : { kind: "working_unstaged" };
-      const entry = entryFor(section, path);
-      const change = entry?.state;
-      // Conflicted files open the dedicated Merge panel; everything else the
-      // Diff panel. The two share one dock slot (swapSummon closes the other).
-      if (change === "Conflicted") {
-        useSummonStore.getState().swapSummon("merge", "diff", { repoId: repo.id, path });
-      } else {
-        useSummonStore.getState().swapSummon("diff", "merge", {
-          repoId: repo.id,
-          path,
-          source,
-          change,
-          // Lets the diff pair a rename's sides; without it a staged rename
-          // reads as a whole-file add.
-          oldPath: entry?.old_path ?? null,
-        } satisfies DiffRequest);
-      }
-    },
-    [repo, entryFor],
-  );
-
-  // A case-drift row's diff request: the rename pair, whose diff is empty
-  // (git sees a clean tree), so the Diff panel renders the "Renamed from
-  // old → new (no content changes)" notice - mirroring the staged side.
-  const driftDiffRequest = useCallback(
-    (d: CaseDriftEntry): DiffRequest => ({
-      repoId: repo!.id,
-      path: d.disk_path,
-      source: { kind: "working_unstaged" },
-      change: "Renamed",
-      oldPath: d.index_path,
-    }),
-    [repo],
   );
 
   // Track the selection and, when exactly one file is selected, show its diff.
@@ -443,42 +271,6 @@ export function WorkingChangesPanel() {
       }
     },
     [openDiff, driftByPath, driftDiffRequest],
-  );
-
-  // After a stage/unstage/discard, keep an ALREADY-OPEN diff viewer in sync with
-  // the resulting selection (without forcing it open). If a single file is
-  // selected after the op, show its diff in the new section (e.g. staging flips
-  // it from the unstaged to the staged diff). If a previously single-selected
-  // file is now gone (discarded), clear the viewer. Otherwise leave it alone.
-  const syncOpenDiff = useCallback(
-    (prev: Selection | null, next: Selection | null) => {
-      if (!repo) return;
-      const store = useSummonStore.getState();
-      if (next && next.paths.length === 1) {
-        const source: DiffSource =
-          next.section === "staged" ? { kind: "working_staged" } : { kind: "working_unstaged" };
-        const entry = entryFor(next.section, next.paths[0]);
-        if (entry?.state === "Conflicted") {
-          store.notifyIfOpen("merge", { repoId: repo.id, path: next.paths[0] });
-          store.notifyIfOpen("diff", null);
-        } else {
-          store.notifyIfOpen("diff", {
-            repoId: repo.id,
-            path: next.paths[0],
-            source,
-            change: entry?.state,
-            oldPath: entry?.old_path ?? null,
-          } satisfies DiffRequest);
-          store.notifyIfOpen("merge", null);
-        }
-        return;
-      }
-      if (prev && prev.paths.length === 1 && !next?.paths.includes(prev.paths[0])) {
-        store.notifyIfOpen("diff", null);
-        store.notifyIfOpen("merge", null);
-      }
-    },
-    [repo, entryFor],
   );
 
   // Summoned from the log's working-dir row: the shared Diff/Merge slot may
@@ -530,19 +322,10 @@ export function WorkingChangesPanel() {
   // like every busy indicator; cleared when the rows leave the section (the
   // refetch landing) or immediately when the op fails (the rows stay).
   const [pending, setPending] = useState<PendingSections>(NO_PENDING);
-  const [pendingVisible, setPendingVisible] = useState(false);
   const pendingEmpty = pending.unstaged.size === 0 && pending.staged.size === 0;
   // One timer from the FIRST pending op (merges don't restart it), reset when
   // everything confirmed.
-  useEffect(() => {
-    if (pendingEmpty) {
-      setPendingVisible(false);
-      return;
-    }
-    if (pendingVisible) return;
-    const t = setTimeout(() => setPendingVisible(true), 150);
-    return () => clearTimeout(t);
-  }, [pendingEmpty, pendingVisible]);
+  const pendingVisible = useDelayedFlag(!pendingEmpty);
   // Each file's dim clears as git confirms its move (the row leaves its
   // section); identity-preserving, so this never loops.
   useEffect(() => {
@@ -582,9 +365,9 @@ export function WorkingChangesPanel() {
         // Drift rows route through the rename command - `git add` on a path
         // git considers clean would silently do nothing.
         const { drift, rest } = splitDriftTargets(paths, driftByPath);
-        if (rest.length > 0) await repoStage(repo!.id, rest);
+        if (rest.length > 0) await api.repoStage(repo!.id, rest);
         for (const d of drift) {
-          await repoStageCaseRename(repo!.id, d.index_path, d.disk_path);
+          await api.repoStageCaseRename(repo!.id, d.index_path, d.disk_path);
         }
         if (drift.length > 0) {
           invalidateRepoDomains(queryClient, repo!.id, ["case_drift"]);
@@ -601,7 +384,7 @@ export function WorkingChangesPanel() {
       run(async () => {
         // A rename must restore BOTH its paths, or the source's deletion
         // stays staged (see expandUnstagePaths).
-        await repoUnstage(repo!.id, expandUnstagePaths(paths, staged));
+        await api.repoUnstage(repo!.id, expandUnstagePaths(paths, staged));
         if (opts?.follow === false) return;
         const next = moveSelection(selected, "staged", "unstaged", paths);
         setSelected(next);
@@ -613,7 +396,7 @@ export function WorkingChangesPanel() {
   // regenerates the markers), then bring the Merge panel up for the file.
   const reopenConflict = (path: string) =>
     run(async () => {
-      await repoConflictReopen(repo!.id, path);
+      await api.repoConflictReopen(repo!.id, path);
       useSummonStore.getState().summon("merge", { repoId: repo!.id, path });
     });
 
@@ -621,7 +404,7 @@ export function WorkingChangesPanel() {
   // HEAD vanishes from status entirely, so it carries the explanatory note.
   const takeSide = (path: string, side: ConflictSide) =>
     run(async () => {
-      await repoResolveTakeSide(repo!.id, path, side);
+      await api.repoResolveTakeSide(repo!.id, path, side);
       await notifyResolutionInvisible(repo!.id, path);
     });
 
@@ -631,7 +414,7 @@ export function WorkingChangesPanel() {
   // refuses pathspec stashes over unmerged entries.
   const stashFiles = (paths: string[]) =>
     run(async () => {
-      const outcome = await repoCreateStashPaths(repo!.id, undefined, paths);
+      const outcome = await api.repoCreateStashPaths(repo!.id, null, paths);
       invalidateRepoDomains(queryClient, repo!.id, ["stashes"]);
       if (outcome.kind === "nothing_to_stash") {
         notify.info("Nothing to stash - the selected files have no local changes.");
@@ -670,9 +453,9 @@ export function WorkingChangesPanel() {
         // Drift rows route through the rename-back command - a plain discard
         // pathspec would not match anything git considers changed.
         const { drift, rest } = splitDriftTargets(paths, driftByPath);
-        if (rest.length > 0) await repoDiscard(repo!.id, rest);
+        if (rest.length > 0) await api.repoDiscard(repo!.id, rest);
         for (const d of drift) {
-          await repoDiscardCaseRename(repo!.id, d.index_path, d.disk_path);
+          await api.repoDiscardCaseRename(repo!.id, d.index_path, d.disk_path);
         }
         if (drift.length > 0) {
           invalidateRepoDomains(queryClient, repo!.id, ["case_drift"]);

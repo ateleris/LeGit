@@ -4,7 +4,7 @@ import { useActiveRepo } from "../../store/repos";
 import { useSummonTarget } from "../../store/summon";
 import { confirmDialog } from "../../store/confirm";
 import { usePanelApi, usePanelFocusEffect } from "../PanelApiContext";
-import { repoLog, repoRebaseInteractive, repoRebaseRangeInfo } from "../../lib/commands";
+import { repoLog, api } from "../../lib/commands";
 import type { Commit, RebaseAction, RebaseRangeInfo, RebaseStep } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { useOpState } from "../../lib/useOpState";
@@ -118,7 +118,7 @@ export function InteractiveRebasePanel() {
   // upstream just means no chips, no dialog, no notice.
   const { data: rangeInfo } = useQuery<RebaseRangeInfo>({
     queryKey: [repo?.id, "log", "rebase-range-info", base],
-    queryFn: () => repoRebaseRangeInfo(repo!.id, base!),
+    queryFn: () => api.repoRebaseRangeInfo(repo!.id, base!),
     enabled: !!repo && !!base,
     staleTime: STALE.live,
   });
@@ -237,7 +237,7 @@ export function InteractiveRebasePanel() {
         sha: r.sha,
         message: r.action === "reword" ? r.message : null,
       }));
-      const outcome = await repoRebaseInteractive(repo!.id, base, plan);
+      const outcome = await api.repoRebaseInteractive(repo!.id, base, plan);
       notifyRebaseOutcome(outcome, base.slice(0, 8));
       if (closesAfterOutcome(outcome.kind)) {
         // Rebase over (completed / up to date / done with a stash-reapply

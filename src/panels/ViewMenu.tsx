@@ -17,7 +17,7 @@ import {
   SectionLabel,
   Separator,
   Submenu,
-} from "./Commits/menu/primitives";
+} from "./shared/menu/primitives";
 
 /**
  * Dropdown that lets the user re-open closed panels in either dock and switch

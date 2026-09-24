@@ -6,7 +6,7 @@ import { useActiveRepo } from "../../store/repos";
 import { useConfirmDestructive } from "../../store/settings";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
-import { repoFileHistory, repoRestoreFileAtRevision } from "../../lib/commands";
+import { repoFileHistory, api } from "../../lib/commands";
 import type { DiffRequest, FileHistoryEntry } from "../../lib/types";
 import { formatAppError } from "../../lib/errors";
 import { formatRelative } from "../../lib/time";
@@ -19,8 +19,8 @@ import {
   PanelContextMenuProvider,
   usePanelContextMenu,
   useDestructiveMenuConfirm,
-} from "../Commits/menu/PanelContextMenu";
-import { MenuItem, Separator } from "../Commits/menu/primitives";
+} from "../shared/menu/PanelContextMenu";
+import { MenuItem, Separator } from "../shared/menu/primitives";
 import { FileRowMenuSection } from "../shared/FileRowMenuSection";
 import { STALE } from "../../lib/queryTiming";
 
@@ -109,7 +109,7 @@ function FileHistoryBody() {
     async (entry: FileHistoryEntry) => {
       if (!repo) return;
       try {
-        await repoRestoreFileAtRevision(repo.id, entry.commit_id, entry.path);
+        await api.repoRestoreFileAtRevision(repo.id, entry.commit_id, entry.path);
         invalidateRepoDomains(queryClient, repo.id, ["status", "log", "diff"]);
         notify.success(`Restored ${entry.path} to ${entry.commit_id.slice(0, 8)} (staged)`);
       } catch (e) {

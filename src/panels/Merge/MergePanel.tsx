@@ -7,13 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSettingsStore } from "../../store/settings";
 import { useGuardedEditorRequest } from "../shared/useGuardedEditorRequest";
-import {
-  repoConflictFileSides,
-  repoReadWorktreeFile,
-  repoResolveTakeSide,
-  repoStage,
-  repoWriteWorktreeFile,
-} from "../../lib/commands";
+import { api } from "../../lib/commands";
 import type { ConflictFileSides, ConflictSide } from "../../lib/types";
 import { useOpState } from "../../lib/useOpState";
 import { formatAppError } from "../../lib/errors";
@@ -97,7 +91,7 @@ export function MergePanel() {
     // enabled while dirty so external edits are still NOTICED (the view's
     // baseline below is what protects the in-progress result).
     queryKey: [request?.repoId, "diff", "merge-content", request?.path],
-    queryFn: () => repoReadWorktreeFile(request!.repoId, request!.path),
+    queryFn: () => api.repoReadWorktreeFile(request!.repoId, request!.path),
     enabled: !!request && request.repoId === activeRepoId,
     staleTime: STALE.live,
   });
@@ -122,7 +116,7 @@ export function MergePanel() {
 
   const { data: sides } = useQuery<ConflictFileSides>({
     queryKey: [request?.repoId, "diff", "sides", request?.path],
-    queryFn: () => repoConflictFileSides(request!.repoId, request!.path),
+    queryFn: () => api.repoConflictFileSides(request!.repoId, request!.path),
     enabled: !!request && request.repoId === activeRepoId && !dirty && !isReadError,
     staleTime: STALE.live,
   });
@@ -222,7 +216,7 @@ export function MergePanel() {
       const req = requestRef.current;
       if (!req) return;
       try {
-        await repoResolveTakeSide(req.repoId, req.path, side);
+        await api.repoResolveTakeSide(req.repoId, req.path, side);
         // The whole-file choice supersedes any in-editor result.
         setDirty(false);
         setStagedNotice(true);
@@ -251,9 +245,9 @@ export function MergePanel() {
             // The view guarantees a trailing newline; restore the file's own
             // convention and EOL before writing.
             if (!parsedNow.trailingNewline && text.endsWith("\n")) text = text.slice(0, -1);
-            await repoWriteWorktreeFile(req.repoId, req.path, applyEol(text, parsedNow.eol));
+            await api.repoWriteWorktreeFile(req.repoId, req.path, applyEol(text, parsedNow.eol));
           }
-          await repoStage(req.repoId, [req.path]);
+          await api.repoStage(req.repoId, [req.path]);
           setDirty(false);
           setStagedNotice(true);
           rebuild();

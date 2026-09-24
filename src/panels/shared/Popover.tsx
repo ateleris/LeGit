@@ -1,7 +1,7 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { LayerKind } from "../../store/layers";
-import { MENU_LAYER_ATTR } from "../Commits/menu/primitives";
+import { MENU_LAYER_ATTR } from "../shared/menu/primitives";
 import { useDismissable } from "./useDismissable";
 import { clampToViewport } from "./popoverPosition";
 

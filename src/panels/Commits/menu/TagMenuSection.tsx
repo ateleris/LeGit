@@ -1,7 +1,7 @@
 import { useConfirmDestructive } from "../../../store/settings";
 import { copyAndNotify } from "../../../lib/clipboard";
-import { useDestructiveMenuConfirm, useMenuPicker, usePanelContextMenu } from "./PanelContextMenu";
-import { MenuItem, Separator, SectionLabel } from "./primitives";
+import { useDestructiveMenuConfirm, useMenuPicker, usePanelContextMenu } from "../../shared/menu/PanelContextMenu";
+import { MenuItem, Separator, SectionLabel } from "../../shared/menu/primitives";
 
 /**
  * Shared context-menu section for a tag. Used by both the tag chip's menu and

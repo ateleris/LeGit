@@ -9,7 +9,7 @@ import { usePanelDirty } from "../PanelApiContext";
 import { WarningIcon } from "../../icons";
 import { formatAppError } from "../../lib/errors";
 import type { ManagedKeys, ProfileStatus } from "../../lib/types";
-import { writeRepoManagedConfig } from "../../lib/commands";
+import { api } from "../../lib/commands";
 import { Button } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
 import { FieldNote } from "./primitives";
@@ -87,7 +87,7 @@ export function CustomConfigEditor({
       setConfirmPending(false);
       setError(null);
       try {
-        const s = await writeRepoManagedConfig(repoId, draft);
+        const s = await api.writeRepoManagedConfig(repoId, draft);
         onSaved(s);
       } catch (e) {
         setError(formatAppError(e));

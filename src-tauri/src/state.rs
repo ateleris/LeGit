@@ -25,17 +25,11 @@ pub type RepoId = String;
 
 /// Compute the 16-hex-char directory name for a repo's app-data entry.
 ///
-/// SHA-256 of the canonicalized absolute path (lowercased on case-insensitive
-/// filesystems), first 8 bytes as 16 lowercase hex chars. Short enough to be
-/// readable; collision-safe for any realistic number of repos.
-pub fn repo_hash(canonical_path: &Path) -> String {
-    repo_hash_locator(&RepoLocator::Local {
-        path: canonical_path.to_path_buf(),
-    })
-}
-
-/// Locator-aware form of [`repo_hash`]. Local repos hash byte-identically to
-/// what older versions wrote (case-folding keyed on the APP OS, matching the
+/// SHA-256 of the persisted locator (for a local repo: the canonicalized
+/// absolute path, lowercased on case-insensitive filesystems), first 8 bytes
+/// as 16 lowercase hex chars. Short enough to be readable; collision-safe for
+/// any realistic number of repos. Local repos hash byte-identically to what
+/// older versions wrote (case-folding keyed on the APP OS, matching the
 /// historical behavior), so existing `repos/<hash>/` dirs keep resolving.
 /// Remote paths hash case-SENSITIVELY — their filesystems are, and the app
 /// OS's case rules must not corrupt their identity.
@@ -524,6 +518,71 @@ impl Default for GlobalSettings {
     }
 }
 
+/// Global settings owned by dedicated commands or flows (the probed git
+/// binary, theme name sanitizing, watcher start/stop side effects, session
+/// bookkeeping, profiles, accounts); a settings patch must never write them.
+const GLOBAL_SETTINGS_COMMAND_OWNED: [&str; 9] = [
+    "git_path_override",
+    "active_theme",
+    "watcher_enabled",
+    "last_open_repos",
+    "currently_open",
+    "active_open_repo",
+    "last_clone_parent_dir",
+    "gitProfiles",
+    "connected_accounts",
+];
+
+impl GlobalSettings {
+    /// `self` with the fields named in `patch` (JSON field names) replaced and
+    /// the result normalized. Fields not in the patch keep their current value.
+    pub fn with_patch(&self, patch: &serde_json::Value) -> Result<Self, AppError> {
+        let patch = patch
+            .as_object()
+            .ok_or_else(|| AppError::Settings("global settings patch must be an object".into()))?;
+        let serde_json::Value::Object(mut merged) = serde_json::to_value(self)? else {
+            unreachable!("GlobalSettings serializes to an object");
+        };
+        for (key, value) in patch {
+            if GLOBAL_SETTINGS_COMMAND_OWNED.contains(&key.as_str()) {
+                return Err(AppError::Settings(format!(
+                    "global setting '{key}' is managed by its own command"
+                )));
+            }
+            if !merged.contains_key(key) {
+                return Err(AppError::Settings(format!("unknown global setting '{key}'")));
+            }
+            merged.insert(key.clone(), value.clone());
+        }
+        let next: Self = serde_json::from_value(serde_json::Value::Object(merged))
+            .map_err(|e| AppError::Settings(format!("invalid global settings patch: {e}")))?;
+        Ok(next.normalized())
+    }
+
+    /// Enforce every value invariant on the merged result, so a patch cannot
+    /// store an out-of-range value regardless of which fields it combines.
+    fn normalized(mut self) -> Self {
+        self.ui_font_size = self.ui_font_size.clamp(8.0, 24.0);
+        self.panel_gap = self.panel_gap.clamp(0.0, 16.0);
+        self.panel_corner_radius = self.panel_corner_radius.clamp(0.0, 16.0);
+        self.panel_border_width = self.panel_border_width.clamp(0.0, 8.0);
+        // The row must clear a ref chip, which scales with the UI font size;
+        // lane width shares the same font-derived floor. Dot radius and line
+        // width are capped to half the smaller (clamped) cell dimension so
+        // they can never overflow the cell or overlap a neighbouring lane.
+        let min_rh = min_commits_row_height(self.ui_font_size);
+        self.commits_row_height = self.commits_row_height.clamp(min_rh, 120.0);
+        self.commits_lane_width = self.commits_lane_width.clamp(min_rh, 120.0);
+        let max_dot = max_commits_dot_radius(self.commits_row_height, self.commits_lane_width);
+        self.commits_dot_radius = self.commits_dot_radius.clamp(1.0, max_dot);
+        self.commits_line_width = self.commits_line_width.clamp(1.0, max_dot);
+        self.auto_fetch_interval_minutes = self.auto_fetch_interval_minutes.max(1);
+        // Blank means "not configured": store None so the fallback applies.
+        self.external_editor_command = self.external_editor_command.filter(|c| !c.trim().is_empty());
+        self
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Repo-scope settings  (DESIGN-v0.2.md §D.1)
 // ---------------------------------------------------------------------------
@@ -927,8 +986,8 @@ impl AppState {
     }
 
     /// Persist `session`'s current repo settings - the single call point for
-    /// the `repo_data_paths` + `persist_repo_settings` pair, so the four
-    /// arguments cannot drift apart between commands.
+    /// the `repo_data_paths_locator` + `persist_repo_settings` pair, so the
+    /// four arguments cannot drift apart between commands.
     pub async fn persist_session_settings(&self, session: &RepoSession) -> Result<(), AppError> {
         let _serial = self.persist_lock.lock().await;
         let settings = session.settings.read().await.clone();
@@ -947,18 +1006,9 @@ impl AppState {
         Ok(())
     }
 
-    /// Resolve the `repos/<hash>/` directory for `canonical_path` and return
-    /// `(repo_dir, settings_path)`. Creates the directory and writes
-    /// `path.txt` lazily when `write = true`.
-    pub fn repo_data_paths(&self, canonical_path: &Path) -> (PathBuf, PathBuf) {
-        let hash = repo_hash(canonical_path);
-        let repo_dir = self.repos_data_dir.join(&hash);
-        let settings_path = repo_dir.join("settings.json");
-        (repo_dir, settings_path)
-    }
-
-    /// Locator-aware form of [`AppState::repo_data_paths`] (remote repos hash
-    /// by their full locator, see `repo_hash_locator`).
+    /// Resolve the `repos/<hash>/` directory for `locator` and return
+    /// `(repo_dir, settings_path)` (remote repos hash by their full locator,
+    /// see `repo_hash_locator`).
     pub fn repo_data_paths_locator(&self, locator: &RepoLocator) -> (PathBuf, PathBuf) {
         let hash = repo_hash_locator(locator);
         let repo_dir = self.repos_data_dir.join(&hash);
@@ -1235,6 +1285,88 @@ mod tests {
         assert!(current.with_patch(&serde_json::json!(["not", "an", "object"])).is_err());
     }
 
+    #[test]
+    fn global_settings_patch_changes_only_the_sent_fields() {
+        let current = GlobalSettings::default();
+        let next = current
+            .with_patch(&serde_json::json!({ "confirm_discard": false, "commit_avatars": true }))
+            .unwrap();
+        assert!(!next.confirm_discard);
+        assert!(next.commit_avatars);
+        assert_eq!(next.ui_font_size, current.ui_font_size);
+        assert_eq!(next.auto_fetch_enabled, current.auto_fetch_enabled);
+    }
+
+    #[test]
+    fn global_settings_patch_refuses_fields_owned_by_dedicated_commands() {
+        for patch in [
+            serde_json::json!({ "git_path_override": "/evil" }),
+            serde_json::json!({ "active_theme": "x" }),
+            serde_json::json!({ "watcher_enabled": false }),
+            serde_json::json!({ "currently_open": [] }),
+            serde_json::json!({ "last_open_repos": [] }),
+            serde_json::json!({ "active_open_repo": null }),
+            serde_json::json!({ "last_clone_parent_dir": "/x" }),
+            serde_json::json!({ "gitProfiles": {} }),
+            serde_json::json!({ "connected_accounts": [] }),
+        ] {
+            assert!(GlobalSettings::default().with_patch(&patch).is_err(), "accepted {patch}");
+        }
+    }
+
+    #[test]
+    fn global_settings_patch_refuses_unknown_fields_and_wrong_types() {
+        let current = GlobalSettings::default();
+        assert!(current.with_patch(&serde_json::json!({ "confirm_discardd": true })).is_err());
+        assert!(current.with_patch(&serde_json::json!({ "confirm_discard": "yes" })).is_err());
+        assert!(current.with_patch(&serde_json::json!(["not", "an", "object"])).is_err());
+    }
+
+    #[test]
+    fn global_settings_patch_normalizes_out_of_range_values() {
+        let d = GlobalSettings::default;
+        assert_eq!(d().with_patch(&serde_json::json!({ "ui_font_size": 99.0 })).unwrap().ui_font_size, 24.0);
+        assert_eq!(d().with_patch(&serde_json::json!({ "ui_font_size": 1.0 })).unwrap().ui_font_size, 8.0);
+        assert_eq!(
+            d().with_patch(&serde_json::json!({ "auto_fetch_interval_minutes": 0 }))
+                .unwrap()
+                .auto_fetch_interval_minutes,
+            1
+        );
+        assert_eq!(
+            d().with_patch(&serde_json::json!({ "external_editor_command": "   " }))
+                .unwrap()
+                .external_editor_command,
+            None
+        );
+        let chrome = d()
+            .with_patch(&serde_json::json!({
+                "panel_gap": 99.0, "panel_corner_radius": -3.0, "panel_border_width": 99.0
+            }))
+            .unwrap();
+        assert_eq!(chrome.panel_gap, 16.0);
+        assert_eq!(chrome.panel_corner_radius, 0.0);
+        assert_eq!(chrome.panel_border_width, 8.0);
+    }
+
+    #[test]
+    fn global_settings_patch_clamps_graph_metrics_against_the_patched_font_size() {
+        let next = GlobalSettings::default()
+            .with_patch(&serde_json::json!({
+                "ui_font_size": 24.0,
+                "commits_row_height": 1.0,
+                "commits_lane_width": 1.0,
+                "commits_dot_radius": 500.0,
+                "commits_line_width": 500.0,
+            }))
+            .unwrap();
+        let min_rh = min_commits_row_height(24.0);
+        assert_eq!(next.commits_row_height, min_rh);
+        assert_eq!(next.commits_lane_width, min_rh);
+        assert_eq!(next.commits_dot_radius, max_commits_dot_radius(min_rh, min_rh));
+        assert_eq!(next.commits_line_width, max_commits_dot_radius(min_rh, min_rh));
+    }
+
     // Pins repo-identity backward compatibility across the RepoLocator
     // generalization: a local repo's hash must stay byte-identical to what
     // pre-locator versions computed, or every existing repos/<hash>/
@@ -1244,10 +1376,6 @@ mod tests {
     // builds alike.
     #[test]
     fn local_repo_hash_is_pinned() {
-        assert_eq!(
-            repo_hash(Path::new("/tmp/legit-fixed-example")),
-            "25bd95ddb634925e"
-        );
         assert_eq!(
             repo_hash_locator(&RepoLocator::local("/tmp/legit-fixed-example")),
             "25bd95ddb634925e"

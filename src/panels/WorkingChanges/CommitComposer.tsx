@@ -2,12 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRepoStore } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
-import {
-  repoCommit,
-  repoGitmodulesConsistency,
-  repoLog,
-  repoResolvedIdentity,
-} from "../../lib/commands";
+import { repoCommit, repoLog, api } from "../../lib/commands";
 import type {
   Branch,
   Commit,
@@ -20,7 +15,7 @@ import { useCommitDraftStore } from "../../store/commitDraft";
 import { notify } from "../../store/notifications";
 import { Button } from "../shared/buttons";
 import { ChevronDownIcon, WarningIcon } from "../../icons";
-import { MenuItem } from "../Commits/menu/primitives";
+import { MenuItem } from "../shared/menu/primitives";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { summonGlobalPanel } from "../../layout/globalSummon";
 import { isDetachedHead } from "../../lib/detachedHead";
@@ -158,7 +153,7 @@ export function CommitComposer({
   // the panel-focus refetch keeps it honest after the user sets one.
   const { data: identity } = useQuery<ResolvedIdentity>({
     queryKey: [repo.id, "identity"],
-    queryFn: () => repoResolvedIdentity(repo.id),
+    queryFn: () => api.repoResolvedIdentity(repo.id),
     staleTime: STALE.appDefault,
   });
   const identityMissing = !!identity && (!identity.user_name || !identity.user_email);
@@ -222,7 +217,7 @@ export function CommitComposer({
   // committing.
   const proceedCommit = () => {
     void (async () => {
-      const findings = await repoGitmodulesConsistency(repo.id).catch(
+      const findings = await api.repoGitmodulesConsistency(repo.id).catch(
         () => [] as GitmodulesFinding[],
       );
       if (findings.length > 0) {

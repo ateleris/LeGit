@@ -15,7 +15,7 @@
 import { useEffect, useRef, useState } from "react";
 import { formatAppError } from "../../lib/errors";
 import type { WslDistro } from "../../lib/types";
-import { setWslHostGitPath, wslHostGitOverride, wslListDistros } from "../../lib/commands";
+import { api } from "../../lib/commands";
 import { Button } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
 import { Section, Row, FieldNote, SettingsGroup } from "./primitives";
@@ -29,7 +29,7 @@ export function WslGitGroup() {
 
   useEffect(() => {
     let cancelled = false;
-    wslListDistros()
+    api.wslListDistros()
       .then((list) => {
         if (!cancelled) setDistros(list);
       })
@@ -168,7 +168,7 @@ function WslGitExecutableSection() {
   // Prefill from the persisted override — cheap, and deliberately no connect.
   useEffect(() => {
     let cancelled = false;
-    wslHostGitOverride(distro)
+    api.wslHostGitOverride(distro)
       .then((ov) => {
         if (!cancelled) setDraft(ov ?? "");
       })
@@ -184,7 +184,7 @@ function WslGitExecutableSection() {
     void run(async () => {
       setError(null);
       try {
-        const s = await setWslHostGitPath(distro, path);
+        const s = await api.setWslHostGitPath(distro, path);
         setGitStatus(s);
         setDraft(s.user_override ?? "");
       } catch (e) {

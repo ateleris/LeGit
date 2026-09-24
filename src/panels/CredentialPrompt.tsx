@@ -5,7 +5,7 @@ import {
   onCredentialClosed,
   type CredentialRequestPayload,
 } from "../lib/events";
-import { credentialRespond, credentialCancel } from "../lib/commands";
+import { api } from "../lib/commands";
 import { useLayer } from "../store/layers";
 import { Button } from "./shared/buttons";
 
@@ -75,7 +75,7 @@ function CredentialDialog({
     if (submittedRef.current || !username.trim() || !password) return;
     submittedRef.current = true;
     try {
-      await credentialRespond(request.request_id, username.trim(), password, remember);
+      await api.credentialRespond(request.request_id, username.trim(), password, remember);
     } finally {
       onDone();
     }
@@ -85,7 +85,7 @@ function CredentialDialog({
     if (submittedRef.current) return;
     submittedRef.current = true;
     try {
-      await credentialCancel(request.request_id);
+      await api.credentialCancel(request.request_id);
     } finally {
       onDone();
     }
