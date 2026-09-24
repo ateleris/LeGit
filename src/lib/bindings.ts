@@ -3234,7 +3234,13 @@ text: string | null;
  * `eol` attribute value: "lf" or "crlf".
  */
 eol: string | null }
-export type GitError = { kind: "RefNotFound"; details: string } | { kind: "AuthFailed"; details: string } | { kind: "PushRejected"; details: { stderr: string } } | { kind: "UnpushedSubmodules"; details: { stderr: string } } | { kind: "WouldOverwriteLocalChanges"; details: string } | 
+export type GitError = { kind: "RefNotFound"; details: string } | { kind: "AuthFailed"; details: string } | { kind: "PushRejected"; details: { stderr: string } } | 
+/**
+ * The remote itself declined the push (pre-receive hook or server-side
+ * branch policy): pulling or force-pushing cannot help, the server's
+ * message names the real reason.
+ */
+{ kind: "PushRejectedByRemote"; details: { stderr: string } } | { kind: "UnpushedSubmodules"; details: { stderr: string } } | { kind: "WouldOverwriteLocalChanges"; details: string } | 
 /**
  * `git branch -d` refused because the branch is not fully merged (its
  * tip is not reachable from the upstream / HEAD). The UI reacts with a

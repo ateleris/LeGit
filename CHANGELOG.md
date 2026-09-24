@@ -18,6 +18,7 @@ lives in the git log and the GitHub release notes.
 - Settings, themes, layouts and keybindings are saved atomically, so a crash mid-save can no longer leave a truncated file; a settings file that fails to load is kept as `*.corrupt-<time>` instead of being overwritten with defaults.
 - Errors that also report a failed recovery step (e.g. "checked out in another worktree" plus a failed stash restore) keep their specific guidance instead of turning into a generic error.
 - A merge rejected by a hook is reported as an error instead of as conflicts when a file name contains "conflict".
+- A push declined by the server (branch policy or pre-receive hook, e.g. Azure DevOps "use a pull request") no longer shows the misleading "pull first or force-push" advice; the toast names the remote rejection and clicking it opens the Git Command Log with the server's message.
 - Live updates stay off when turned off while a repository's watcher is still starting, and closed repositories no longer keep a stale watcher error.
 - Credentials embedded in a remote URL are now masked in every git error message, not only in fetch/pull/push errors.
 - A file name containing "conflict (" can no longer make a failed merge, rebase or cherry-pick look like a conflict.

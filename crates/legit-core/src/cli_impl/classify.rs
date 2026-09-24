@@ -267,6 +267,9 @@ pub(super) fn append_error_note(e: GitError, note: &str) -> GitError {
         GitError::RefNotFound(m) => GitError::RefNotFound(add(m)),
         GitError::AuthFailed(m) => GitError::AuthFailed(add(m)),
         GitError::PushRejected { stderr } => GitError::PushRejected { stderr: add(stderr) },
+        GitError::PushRejectedByRemote { stderr } => {
+            GitError::PushRejectedByRemote { stderr: add(stderr) }
+        }
         GitError::UnpushedSubmodules { stderr } => {
             GitError::UnpushedSubmodules { stderr: add(stderr) }
         }
@@ -354,7 +357,8 @@ pub fn lfs_stubs_from_stderr(stderr: &str) -> Option<LfsStubs> {
 }
 
 /// Map a failed remote op's stderr to a specific `GitError`: authentication
-/// problems → `AuthFailed`, non-fast-forward/rejected pushes → `PushRejected`,
+/// problems → `AuthFailed`, non-fast-forward pushes → `PushRejected`, pushes
+/// the server itself declined (hook / branch policy) → `PushRejectedByRemote`,
 /// everything else → `CommandFailed`. Public so session-less callers (e.g. the
 /// `git clone` command) can classify failures the same way.
 pub fn classify_remote_error(exit_code: i32, stderr: &str) -> GitError {
@@ -396,15 +400,32 @@ pub fn classify_remote_error(exit_code: i32, stderr: &str) -> GitError {
             stderr: clean(stderr),
         };
     }
-    const REJECTED: [&str; 5] = [
+    // The remote itself declined (pre-receive hook / branch policy, e.g.
+    // Azure DevOps TF402455). MUST precede the non-fast-forward check: the
+    // same stderr also contains "failed to push some refs", and "pull first /
+    // force-push" advice would be wrong (the policy rejects those too).
+    const REJECTED_BY_REMOTE: [&str; 2] = ["[remote rejected]", "pre-receive hook declined"];
+    if REJECTED_BY_REMOTE.iter().any(|p| lc.contains(p)) {
+        return GitError::PushRejectedByRemote {
+            stderr: clean(stderr),
+        };
+    }
+    const REJECTED: [&str; 4] = [
         "[rejected]",
         "non-fast-forward",
         "fetch first",
         "stale info",
-        "failed to push some refs",
     ];
     if REJECTED.iter().any(|p| lc.contains(p)) {
         return GitError::PushRejected {
+            stderr: clean(stderr),
+        };
+    }
+    // Refs were refused for a reason no pattern above recognized: never claim
+    // non-fast-forward - surface it as a remote decline so the UI points at
+    // the server's own message instead of advising pull/force-push.
+    if lc.contains("failed to push some refs") {
+        return GitError::PushRejectedByRemote {
             stderr: clean(stderr),
         };
     }
@@ -813,6 +834,34 @@ fatal: feat.bin: smudge filter lfs failed\n";
             " ! [rejected]        main -> main (non-fast-forward)\nerror: failed to push some refs",
         );
         assert!(matches!(e, GitError::PushRejected { .. }));
+    }
+
+    #[test]
+    fn classify_remote_declined_branch_policy() {
+        // Azure DevOps branch policy: contains "failed to push some refs" too,
+        // so the remote-decline check must win over the non-fast-forward one.
+        let e = classify_remote_error(
+            1,
+            "To ssh.dev.azure.com:v3/org/proj/repo\n ! [remote rejected]   develop -> develop (TF402455: Pushes to this branch are not permitted; you must use a pull request to update this branch.)\nerror: failed to push some refs to 'ssh.dev.azure.com:v3/org/proj/repo'",
+        );
+        assert!(matches!(e, GitError::PushRejectedByRemote { .. }), "{e:?}");
+    }
+
+    #[test]
+    fn classify_remote_declined_pre_receive_hook() {
+        let e = classify_remote_error(
+            1,
+            " ! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs to 'origin'",
+        );
+        assert!(matches!(e, GitError::PushRejectedByRemote { .. }), "{e:?}");
+    }
+
+    #[test]
+    fn classify_push_refs_failure_without_known_cause_is_remote_decline() {
+        // No non-fast-forward marker: never claim "pull first" for an
+        // unrecognized refusal - route it to the show-the-server's-message kind.
+        let e = classify_remote_error(1, "error: failed to push some refs to 'origin'");
+        assert!(matches!(e, GitError::PushRejectedByRemote { .. }), "{e:?}");
     }
 
     #[test]

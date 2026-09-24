@@ -3256,6 +3256,40 @@ async fn non_fast_forward_push_is_classified_and_lease_force_recovers() {
 }
 
 #[tokio::test]
+async fn hook_declined_push_is_classified_as_remote_rejection() {
+    let (_keep, bare_path, url) = bare_remote().await;
+
+    // A pre-receive hook that refuses everything stands in for a server-side
+    // branch policy (Azure DevOps TF402455, protected branches): git must
+    // report it as "[remote rejected] ... (pre-receive hook declined)", which
+    // classifies as PushRejectedByRemote, never as the pull-first kind.
+    let hook = bare_path.join("hooks").join("pre-receive");
+    std::fs::write(&hook, "#!/bin/sh\necho 'pushes to this branch are not permitted' >&2\nexit 1\n")
+        .expect("write hook");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod hook");
+    }
+
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["remote", "add", "origin", &url]).await;
+
+    let err = repo
+        .backend
+        .push(push_opts("main", true, false), OperationId::new())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, legit_core::GitError::PushRejectedByRemote { .. }),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
 async fn fetch_prune_drops_stale_remote_tracking_refs() {
     let (_keep, bare_path, url) = bare_remote().await;
 
