@@ -282,6 +282,15 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   hide-the-Refs-pane-when-no-gitlinks (paneview layouts persist panes);
   `--shallow-submodules` on clone when depth + submodules are both set
   (skipped: fails on servers without reachable-sha1 fetch support).
+- **One Explorer invocation for local and WSL reveal** (from the 2026-09-23
+  review's E0; blocked on a Windows check). `reveal_in_file_manager` (now
+  `os_open`, Windows arm) passes `/select,<path>` through `Command::arg`,
+  which quotes the WHOLE argument when the path has a space;
+  `reveal_remote_in_explorer` uses `raw_arg` with quotes around the UNC path
+  only, the form Explorer documents. Check on Windows whether the local form
+  reveals a file whose path contains a space; if not, switch both to the
+  quoted-path `raw_arg` form and route them through one function taking the
+  app-visible path (local path, or the `\\wsl.localhost\` UNC).
 - **Show unstaged moves as renames: decide want/need.** Open product
   question. A moved file that is not staged shows in Working Changes as a
   deletion plus an untracked file: `git status` only pairs a rename when

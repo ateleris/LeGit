@@ -5,7 +5,7 @@ use super::*;
 impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
     pub(super) async fn log(&self, opts: LogOptions) -> Result<Vec<Commit>, GitError> {
         let runner = self.runner().await;
-        let fmt_arg = format!("--format={}", parsers::log::LOG_FORMAT);
+        let fmt_arg = parsers::format_arg(parsers::log::LOG_FORMAT);
         let max_count = opts.max_count.unwrap_or(500);
         let skip = opts.skip.unwrap_or(0);
         let max_count_arg = format!("--max-count={max_count}");
@@ -264,7 +264,7 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         max_count: u32,
     ) -> Result<Vec<Commit>, GitError> {
         let runner = self.runner().await;
-        let fmt_arg = format!("--format={}", parsers::log::LOG_FORMAT);
+        let fmt_arg = parsers::format_arg(parsers::log::LOG_FORMAT);
         let max_arg = format!("--max-count={max_count}");
         let filter = match kind {
             CommitSearchKind::Message => format!("--grep={query}"),
@@ -339,7 +339,7 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
     ) -> Result<Vec<FileHistoryEntry>, GitError> {
         let runner = self.runner().await;
         let path_str = path.to_string_lossy();
-        let fmt_arg = format!("--format={}", parsers::file_history::FILE_HISTORY_FORMAT);
+        let fmt_arg = parsers::format_arg(parsers::file_history::FILE_HISTORY_FORMAT);
         let max_arg = format!("--max-count={max_count}");
         let skip_arg = format!("--skip={skip}");
         // `--follow` requires exactly one pathspec (guaranteed here). `-M`
@@ -382,7 +382,7 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
 
     pub(super) async fn reflog(&self, max_count: u32) -> Result<Vec<ReflogEntry>, GitError> {
         let runner = self.runner().await;
-        let fmt_arg = format!("--format={}", parsers::reflog::REFLOG_FORMAT);
+        let fmt_arg = parsers::format_arg(parsers::reflog::REFLOG_FORMAT);
         let count_arg = format!("-n{max_count}");
         let output = runner
             .run(&["reflog", &count_arg, &fmt_arg])

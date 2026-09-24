@@ -275,35 +275,7 @@ pub(crate) fn explorer_path(path: &std::path::Path) -> String {
 }
 
 pub(crate) fn reveal_in_file_manager(abs: &std::path::Path) -> Result<(), AppError> {
-    use std::process::Command;
-    let spawn = |mut cmd: Command| -> Result<(), AppError> {
-        cmd.spawn()
-            .map(|_| ())
-            .map_err(|e| AppError::Io(format!("open file manager: {e}")))
-    };
-    #[cfg(target_os = "windows")]
-    {
-        let mut cmd = Command::new("explorer");
-        // `explorer /select,<path>` selects the file; it exits non-zero even on
-        // success, so we only care that it spawned. The path must be in plain
-        // backslash form (see `explorer_path`) or explorer opens Documents.
-        cmd.arg(format!("/select,{}", explorer_path(abs)));
-        spawn(cmd)
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let mut cmd = Command::new("open");
-        cmd.args(["-R".as_ref(), abs.as_os_str()]);
-        spawn(cmd)
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        // xdg-open has no "select" mode; open the containing directory.
-        let target = abs.parent().unwrap_or(abs);
-        let mut cmd = Command::new("xdg-open");
-        cmd.arg(target);
-        spawn(cmd)
-    }
+    crate::os_open::os_open(crate::os_open::OpenTarget::RevealFile(abs), "open file manager")
 }
 
 #[cfg(test)]

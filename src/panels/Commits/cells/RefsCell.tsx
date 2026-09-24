@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BranchIcon, RemoteIcon, TagIcon, WorktreeIcon } from "../../../icons";
-import type { LaneLock, MergeOptions, RefDecoration } from "../../../lib/types";
+import type { RefDecoration } from "../../../lib/types";
+import { useCommitsRow } from "../RowContext";
 import { usePanelContextMenu } from "../../shared/menu/PanelContextMenu";
 import { LaneLockSection } from "../menu/LaneLockSection";
 import { MenuItem, Separator } from "../../shared/menu/primitives";
@@ -18,90 +19,65 @@ import type { ChipDescriptor } from "./refChips";
 
 interface RefsCellProps {
   decorations: RefDecoration[];
-  /** Current locks for the active repo. */
-  locks: LaneLock[];
-  /** Active repo id (needed for set/unsetLock calls). */
-  repoId: string;
-  /** Full local ref → full upstream ref, for fusing a branch with its remote. */
-  upstreamMap: Map<string, string>;
-  /** Chip font size in px (user-configurable, shared with the text columns). */
-  textSize: number;
-  /**
-   * Short name of the branch being renamed in place — its chip renders as an
-   * input (Enter approves, Esc discards). Branch names are unique, so at most
-   * one chip matches.
-   */
-  renamingBranch?: string | null;
-  onBranchRenameSave?: (oldName: string, newName: string) => void;
-  onBranchRenameCancel?: () => void;
+  /** OTHER worktrees sitting DETACHED on this row's commit - rendered as
+   *  read-only worktree chips (branch checkouts are marked on the branch
+   *  chip instead). */
+  worktreeHeads?: { name: string; path: string; dirty: boolean }[];
+  /** Lane-coloured chips (per-theme toggle): the ROW's lane colour as a CSS
+   *  var() string plus the theme's per-part filters, or null when off. */
+  laneChip?: LaneChipStyle | null;
   /**
    * Show an empty branch-name input (create-new mode, from the toolbar's
    * New-branch button). Only the HEAD row's cell receives `true`. The branch
    * is created on Enter — Esc discards without creating anything.
    */
   creatingBranch?: boolean;
-  onCreateBranchSave?: (name: string) => void;
-  onCreateBranchCancel?: () => void;
   /** Same as `creatingBranch`, but for a tag on this row's commit (annotated
    *  when a message is entered, lightweight otherwise). */
   creatingTag?: boolean;
-  onCreateTagSave?: (name: string) => void;
-  onCreateTagCancel?: () => void;
-  /** Tag names that exist on the remote with the same target — their chips
-   *  carry the remote indicator, like fused branch chips do. */
-  pushedTags?: ReadonlySet<string>;
-  /** Tag names whose target commit is on the remote; pushing the others is
-   *  disabled (it would upload commits no remote branch references). */
-  tagTargetsOnRemote?: ReadonlySet<string>;
-  /** Default remote tags are pushed to (chip menu label), or null when none exists. */
-  tagRemote?: string | null;
-  /** All configured remote names (tag/branch push targets; multi-remote repos
-   *  get a picker entry). */
-  remotes?: string[];
-  onTagPush?: (name: string, remote: string) => void;
-  onTagDelete?: (name: string) => void;
-  /** Deletes the tag on the given remote only (offered while pushed). */
-  onTagDeleteRemote?: (name: string, remote: string) => void;
-  onBranchCheckout?: (name: string) => void;
-  onBranchRename?: (name: string) => void;
-  /** Push a local branch (checked out or not); `setUpstream` publishes. */
-  onBranchPush?: (name: string, remote: string, setUpstream: boolean) => void;
-  /** Set (short remote ref) or clear (null) a local branch's upstream. */
-  onBranchSetUpstream?: (name: string, upstream: string | null) => void;
-  /** Existing same-name remote-tracking branches a local branch could track. */
-  upstreamCandidatesFor?: (name: string) => string[];
-  onBranchDelete?: (name: string, force: boolean) => void;
-  /** Called when checking out a remote-tracking branch (passes the full remote ref, e.g. `origin/feature-x`). */
-  onRemoteCheckout?: (remoteRef: string) => void;
-  /** Delete the branch on its remote (`git push --delete`); local untouched. */
-  onRemoteBranchDelete?: (remoteRef: string) => void;
-  /** Current branch (merge/rebase menu labels); null when HEAD is detached. */
-  currentBranch?: string | null;
-  /** Short branch name -> worktree mark, for branches checked out in ANOTHER
-   *  worktree: their chips carry the worktree indicator (switching to them
-   *  here is refused by git), with a dot when that checkout is dirty. */
-  worktreeBranches?: ReadonlyMap<string, WorktreeMark>;
-  /** OTHER worktrees sitting DETACHED on this row's commit - rendered as
-   *  read-only worktree chips (branch checkouts are marked on the branch
-   *  chip instead). */
-  worktreeHeads?: { name: string; path: string; dirty: boolean }[];
-  /** Open a worktree as its own repo tab (worktree-head chip menu). */
-  onOpenWorktree?: (path: string) => void;
-  /** Lane-coloured chips (per-theme toggle): the ROW's lane colour as a CSS
-   *  var() string plus the theme's per-part filters, or null when off. */
-  laneChip?: LaneChipStyle | null;
-  /** Hide merge/rebase entries while a merge/rebase is already running. */
-  opInProgress?: boolean;
-  /** Merge `target` (local name or remote ref) into the current branch. */
-  onBranchMerge?: (target: string, options: MergeOptions) => void;
-  /** Rebase the current branch onto `target`. */
-  onBranchRebaseOnto?: (target: string) => void;
 }
 
 const CHIP_GAP = 3;
 
-/** Renders ref decoration chips for a commit row. */
-export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, renamingBranch, onBranchRenameSave, onBranchRenameCancel, creatingBranch, onCreateBranchSave, onCreateBranchCancel, creatingTag, onCreateTagSave, onCreateTagCancel, pushedTags, tagTargetsOnRemote, tagRemote, remotes, onTagPush, onTagDelete, onTagDeleteRemote, onBranchCheckout, onBranchRename, onBranchPush, onBranchSetUpstream, upstreamCandidatesFor, onBranchDelete, onRemoteCheckout, onRemoteBranchDelete, currentBranch, opInProgress, onBranchMerge, onBranchRebaseOnto, worktreeBranches, worktreeHeads, onOpenWorktree, laneChip }: RefsCellProps) {
+/** Renders ref decoration chips for a commit row. Everything shared across
+ * rows (repo data + branch/tag action handlers) comes from CommitsRowContext;
+ * the props carry only what varies per row. */
+export function RefsCell({ decorations, worktreeHeads, laneChip, creatingBranch, creatingTag }: RefsCellProps) {
+  const rowCtx = useCommitsRow();
+  const {
+    locks,
+    repoId,
+    upstreamMap,
+    textSize,
+    pushedTags,
+    tagTargetsOnRemote,
+    tagRemote,
+    remotes,
+    currentBranch,
+    opInProgress,
+    upstreamCandidatesFor,
+    worktreeBranches,
+    onOpenWorktree,
+  } = rowCtx;
+  const renamingBranch = rowCtx.edits.renamingBranch;
+  const onBranchRenameSave = rowCtx.edits.handleBranchRenameSave;
+  const onBranchRenameCancel = rowCtx.edits.handleBranchRenameCancel;
+  const onCreateBranchSave = rowCtx.edits.handleCreateBranchSave;
+  const onCreateBranchCancel = rowCtx.edits.handleCreateBranchCancel;
+  const onCreateTagSave = rowCtx.edits.handleCreateTagSave;
+  const onCreateTagCancel = rowCtx.edits.handleCreateTagCancel;
+  const onBranchRename = rowCtx.edits.handleBranchRename;
+  const onTagPush = rowCtx.actions.handleTagPush;
+  const onTagDelete = rowCtx.actions.handleTagDelete;
+  const onTagDeleteRemote = rowCtx.actions.handleTagDeleteRemote;
+  const onBranchCheckout = rowCtx.actions.handleBranchCheckout;
+  const onBranchPush = rowCtx.actions.handleBranchPush;
+  const onBranchSetUpstream = rowCtx.actions.handleSetUpstream;
+  const onBranchDelete = rowCtx.actions.handleBranchDelete;
+  const onRemoteCheckout = rowCtx.actions.handleRemoteCheckout;
+  const onRemoteBranchDelete = rowCtx.actions.handleRemoteBranchDelete;
+  const onBranchMerge = rowCtx.actions.handleMerge;
+  const onBranchRebaseOnto = rowCtx.actions.handleRebaseOnto;
   const { openMenu, closeMenu } = usePanelContextMenu();
   const [visibleCount, setVisibleCount] = useState(Number.MAX_SAFE_INTEGER);
   const [popover, setPopover] = useState<{ x: number; y: number } | null>(null);
@@ -339,8 +315,8 @@ export function RefsCell({ decorations, locks, repoId, upstreamMap, textSize, re
           const mark = worktreeMark;
           return () =>
             notify.info(
-              `${checkedOutInWorktreeMessage(localName, mark.path)}${onOpenWorktree ? " Click here to open it." : ""}`,
-              onOpenWorktree ? { action: () => onOpenWorktree(mark.path) } : undefined,
+              `${checkedOutInWorktreeMessage(localName, mark.path)} Click here to open it.`,
+              { action: () => onOpenWorktree(mark.path) },
             );
         }
         return onBranchCheckout && (() => onBranchCheckout(localName));

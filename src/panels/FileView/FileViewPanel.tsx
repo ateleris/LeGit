@@ -17,8 +17,8 @@ import { useFilePreview } from "../../lib/useFilePreview";
 import { parseLfsPointer } from "../../lib/lfsPointer";
 import { formatByteSize } from "../../lib/formatBytes";
 import { usePanelViewState } from "../../store/panelViewState";
-import { baseTheme, readOnly } from "../Diff/DiffEditor";
-import { loadLanguageForPath, syntaxColorTheme } from "../Diff/syntaxLanguages";
+import { baseTheme, readOnly } from "../codemirror/theme";
+import { loadLanguageForPath, syntaxColorTheme } from "../codemirror/syntaxLanguages";
 import { STALE } from "../../lib/queryTiming";
 
 /**

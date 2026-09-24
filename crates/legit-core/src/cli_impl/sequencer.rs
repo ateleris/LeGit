@@ -83,7 +83,7 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
             }
             let sha = step.sha.as_str();
             let author = self
-                .run_checked(&["log", "-1", "--format=%an%x00%ae%x00%aD", sha])
+                .run_checked(&["log", "-1", AUTHOR_FIELDS_FORMAT_ARG, sha])
                 .await?;
             let (name, email, date) = parse_author_fields(&author).ok_or_else(|| {
                 GitError::Internal(format!("unexpected author format for {sha}: {author:?}"))
@@ -504,6 +504,9 @@ pub(super) fn build_rebase_todo(
     }
     Ok(todo)
 }
+
+/// The `git log -1` format `parse_author_fields` consumes.
+pub(super) const AUTHOR_FIELDS_FORMAT_ARG: &str = "--format=%an%x00%ae%x00%aD";
 
 /// Parse `git log -1 --format=%an%x00%ae%x00%aD` output into
 /// (name, email, date). NUL-separated: names/emails may contain anything

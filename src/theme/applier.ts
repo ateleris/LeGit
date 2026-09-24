@@ -1,5 +1,5 @@
 // Apply a theme document to the document root by writing CSS custom
-// properties (DESIGN.md §6.2). No JavaScript is involved in the actual
+// properties (DESIGN-v0.1.md §6.2). No JavaScript is involved in the actual
 // re-paint — the browser cascades.
 
 import type { ThemeDocument, ThemeTokenBinding } from "../lib/types";

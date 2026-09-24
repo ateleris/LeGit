@@ -66,8 +66,75 @@ fn sibling(path: &Path, suffix: &str) -> PathBuf {
     path.with_file_name(name)
 }
 
+/// Validate a user-facing file-stem name (theme / layout): trimmed, non-empty,
+/// no path separators, Windows-forbidden or control characters, no Windows
+/// reserved device name (CON, NUL, COM1, ... - reserved even with an
+/// extension), and no trailing dot (Windows strips it on create, silently
+/// colliding names). Err carries the reason, starting with "name ...".
+pub fn sanitize_file_stem(name: &str) -> Result<String, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("name is empty".to_string());
+    }
+    const BAD: &[char] = &['/', '\\', '\0', ':', '*', '?', '"', '<', '>', '|'];
+    if trimmed.chars().any(|c| BAD.contains(&c) || c.is_control()) {
+        return Err(format!("name contains forbidden character(s): {trimmed:?}"));
+    }
+    if trimmed.ends_with('.') {
+        return Err(format!("name must not end with a dot: {trimmed:?}"));
+    }
+    // Windows matches device names on the part before the first dot.
+    let stem = trimmed.split('.').next().unwrap_or(trimmed);
+    let upper = stem.to_ascii_uppercase();
+    let reserved = matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ((upper.starts_with("COM") || upper.starts_with("LPT"))
+            && upper.len() == 4
+            && upper.as_bytes()[3].is_ascii_digit()
+            && upper.as_bytes()[3] != b'0');
+    if reserved {
+        return Err(format!("name is a reserved Windows device name: {trimmed:?}"));
+    }
+    Ok(trimmed.to_string())
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn file_stem_accepts_normal_names_trimmed() {
+        assert_eq!(sanitize_file_stem("  My Theme "), Ok("My Theme".to_string()));
+        assert_eq!(sanitize_file_stem("dark-2"), Ok("dark-2".to_string()));
+    }
+
+    #[test]
+    fn file_stem_rejects_empty_and_forbidden_characters() {
+        for bad in ["", "   ", "a/b", "a\\b", "a:b", "a*b", "a?b", "a\"b", "a<b", "a>b", "a|b", "a\0b"] {
+            assert!(sanitize_file_stem(bad).is_err(), "accepted {bad:?}");
+        }
+    }
+
+    #[test]
+    fn file_stem_rejects_windows_reserved_device_names() {
+        // Reserved with or without an extension-like suffix, any case:
+        // "con.legit-theme.json" is still the CON device on Windows.
+        for bad in ["CON", "con", "Nul", "AUX", "prn", "COM1", "lpt9", "con.backup"] {
+            assert!(sanitize_file_stem(bad).is_err(), "accepted {bad:?}");
+        }
+        // Similar-but-not-reserved names stay fine.
+        for ok in ["CONSOLE", "com10", "lpt0", "nulx"] {
+            assert!(sanitize_file_stem(ok).is_ok(), "rejected {ok:?}");
+        }
+    }
+
+    #[test]
+    fn file_stem_rejects_trailing_dots() {
+        // Windows strips trailing dots on create, silently colliding names.
+        assert!(sanitize_file_stem("theme.").is_err());
+        assert!(sanitize_file_stem("theme..").is_err());
+        assert!(sanitize_file_stem("the.me").is_ok());
+    }
+
     use super::*;
 
     #[derive(serde::Deserialize, Default, Debug, PartialEq)]

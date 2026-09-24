@@ -1,7 +1,7 @@
 //! Domain-level errors that cross the `GitBackend` boundary.
 //!
 //! `GitError` is the contract. `GitCliBackend` maps `git`'s exit codes and
-//! stderr patterns into specific variants (DESIGN.md §7.7).
+//! stderr patterns into specific variants (DESIGN-v0.1.md §7.7).
 
 use serde::{Deserialize, Serialize};
 use specta::Type;

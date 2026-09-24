@@ -88,7 +88,7 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
             }
         }
         let matching: Vec<String> = match runner
-            .run(&["-C", p, "for-each-ref", "refs/heads", "--points-at", "HEAD", "--format=%(refname:short)"])
+            .run(&["-C", p, "for-each-ref", "refs/heads", "--points-at", "HEAD", super::branch::REFNAME_SHORT_FORMAT_ARG])
             .await
         {
             Ok(o) if o.success => o

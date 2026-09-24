@@ -5,7 +5,7 @@ use super::*;
 impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
     pub(super) async fn tags(&self) -> Result<Vec<TagInfo>, GitError> {
         let runner = self.runner().await;
-        let fmt_arg = format!("--format={}", parsers::tags::TAGS_FORMAT);
+        let fmt_arg = parsers::format_arg(parsers::tags::TAGS_FORMAT);
         let output = runner
             .run(&["for-each-ref", &fmt_arg, "refs/tags"])
             .await?;

@@ -12,7 +12,7 @@ import { classifyConsoleInput, isScrolledToBottom, spaceKeyAction } from "./cons
 const CANCEL_HINT_DELAY_MS = 150;
 
 /**
- * Git Console panel (DESIGN.md §7.4), terminal-style: a scrollback with the
+ * Git Console panel (DESIGN-v0.1.md §7.4), terminal-style: a scrollback with the
  * `$ git` prompt pinned below it, no buttons. Enter runs; `clear` wipes the
  * scrollback; `q` / `:q` / Ctrl+C cancel the running command
  * (`consoleInput.ts` holds the decision table). Output is PAGED like a

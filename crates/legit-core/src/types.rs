@@ -1,7 +1,7 @@
 //! Domain types crossing the `GitBackend` boundary.
 //!
-//! Types are shaped for the long-term feature set described in DESIGN.md §4.4,
-//! even when v0.1 callers only populate a subset of fields. Adding fields
+//! Types are shaped for the long-term feature set described in DESIGN-v0.1.md §4.4,
+//! even when callers only populate a subset of fields. Adding fields
 //! later is a cross-cutting refactor; defining them now is one line.
 
 use serde::{Deserialize, Serialize};

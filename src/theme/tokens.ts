@@ -1,5 +1,5 @@
 // Token contract — once a panel references a name here, that name is part
-// of LeGit's user-facing theme contract (DESIGN.md §6.8). Renaming or
+// of LeGit's user-facing theme contract (DESIGN-v0.1.md §6.8). Renaming or
 // removing entries breaks user themes. Adding is safe.
 //
 // `documentation` is shown when a user hovers a token in the Theme Editor.

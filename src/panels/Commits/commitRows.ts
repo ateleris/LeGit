@@ -67,3 +67,7 @@ export function buildStashSelectorById(commits: readonly Commit[]): Map<string, 
   }
   return map;
 }
+
+// Sentinel id for the synthetic "uncommitted changes" row prepended above
+// HEAD. Chosen to never collide with a real 40-hex commit id.
+export const WORKING_DIR_ID = "__legit_working_dir__";

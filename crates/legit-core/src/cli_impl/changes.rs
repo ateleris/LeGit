@@ -646,9 +646,7 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
             None => return Ok(None),
         };
 
-        let list = runner
-            .run(&["stash", "list", "--format=%H"])
-            .await?;
+        let list = runner.run(super::stash::STASH_LIST_SHA_ARGS).await?;
         if !list.success {
             return Ok(None);
         }
@@ -672,7 +670,7 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
     /// shape alone is ambiguous (an octopus merge has it too), so stash
     /// handling must confirm membership.
     pub(super) async fn is_stash_commit(&self, sha: &str) -> Result<bool, GitError> {
-        let list = self.run_checked(&["stash", "list", "--format=%H"]).await?;
+        let list = self.run_checked(super::stash::STASH_LIST_SHA_ARGS).await?;
         Ok(list.lines().any(|l| l.trim() == sha))
     }
 

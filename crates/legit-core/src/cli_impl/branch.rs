@@ -5,7 +5,7 @@ use super::*;
 impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
     pub(super) async fn branches(&self) -> Result<Vec<Branch>, GitError> {
         let runner = self.runner().await;
-        let fmt_arg = format!("--format={}", parsers::branches::BRANCH_FORMAT);
+        let fmt_arg = parsers::format_arg(parsers::branches::BRANCH_FORMAT);
 
         let output = runner
             .run(&["for-each-ref", &fmt_arg, "refs/heads", "refs/remotes"])
@@ -119,7 +119,7 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
                     "for-each-ref",
                     "--contains",
                     &tip,
-                    "--format=%(refname:short)",
+                    REFNAME_SHORT_FORMAT_ARG,
                     "refs/heads",
                     "refs/remotes",
                 ])
@@ -334,6 +334,10 @@ pub(super) fn remote_ref_names(remote_ref: &str) -> (&str, &str) {
     let local = short.split_once('/').map(|(_, b)| b).unwrap_or(short);
     (short, local)
 }
+
+/// `for-each-ref` format printing short ref names - consumed by
+/// `filter_containing_refs` and the submodule branch-attach probe.
+pub(super) const REFNAME_SHORT_FORMAT_ARG: &str = "--format=%(refname:short)";
 
 /// Filter `for-each-ref --contains <tip> --format=%(refname:short)` output
 /// down to the refs that make a branch "already merged": the branch itself,

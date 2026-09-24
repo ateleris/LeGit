@@ -38,7 +38,7 @@ import {
 import { spliceEdits, splitLines } from "./editModel";
 import { lineActionLabel } from "./selectionModel";
 import { expandDiff, type HunkExpansion } from "./expandModel";
-import { EXPAND_STEP } from "./hunkExpanders";
+import { EXPAND_STEP } from "../codemirror/hunkExpanders";
 import { STALE } from "../../lib/queryTiming";
 
 const ACTION_TITLE: Record<HunkAction, string> = {

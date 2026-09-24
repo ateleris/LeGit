@@ -16,7 +16,7 @@ interface Props {
 }
 
 /**
- * DESIGN.md §7.6: block app use until git is resolved. Below-minimum
+ * DESIGN-v0.1.md §7.6: block app use until git is resolved. Below-minimum
  * versions get a soft warning with "continue anyway".
  *
  * This is the app's first-run screen on machines without git (the bundled-git

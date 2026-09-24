@@ -1,7 +1,7 @@
 // Front-end validation that mirrors the Rust validator in
 // `src-tauri/src/commands/persistence.rs::validate_theme`. We run it here
 // too so the Theme Editor can surface errors *before* round-tripping to the
-// backend (DESIGN.md §6.5).
+// backend (DESIGN-v0.1.md §6.5).
 
 import type { ThemeDocument } from "../lib/types";
 import { isTokenFilterId, TOKEN_FILTER_IDS } from "./filters";

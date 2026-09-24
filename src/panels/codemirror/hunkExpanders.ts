@@ -111,7 +111,7 @@ export const EXPANDER_THEME = {
     justifyContent: "center" as const,
     flex: "1",
     width: "100%",
-    padding: "0 4px",
+    padding: "0 0.333em",
     border: "none",
     borderRadius: "0",
     // Same band as the hunk-header row the buttons belong to.

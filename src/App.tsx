@@ -87,7 +87,7 @@ export function App() {
     })();
   }, [initSettings, initThemes, initGitStatus, initRepos, initLayouts]);
 
-  // Block the app until we know whether git is available (DESIGN.md §7.6) AND
+  // Block the app until we know whether git is available (DESIGN-v0.1.md §7.6) AND
   // the persisted repos + theme are restored, so the first real paint shows a
   // fully populated layout instead of an empty repo list. Panel contents still
   // stream in afterwards via their own (delayed) loading indicators.

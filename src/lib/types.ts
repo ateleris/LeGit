@@ -177,7 +177,7 @@ export interface DiffRequest {
   oldPath?: string | null;
 }
 
-// --- Theme document shape (matches DESIGN.md §6.3) ---
+// --- Theme document shape (matches DESIGN-v0.1.md §6.3) ---
 
 /** Derived-colour filter applied to a token's palette reference. */
 export type TokenFilterId =

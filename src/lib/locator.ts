@@ -28,21 +28,12 @@ export function parseLocator(s: string): ParsedLocator {
   return { host: null, path: s };
 }
 
-export function formatWslLocator(distro: string, absPath: string): string {
-  return `${WSL_SCHEME}${distro}${absPath.startsWith("/") ? "" : "/"}${absPath}`;
-}
-
 /** Join a repo-relative path onto a repo's LOCATOR string. Works for both
  * schemes: a bare local path stays a bare path, `wsl://<distro>/<path>` keeps
  * its scheme — which is what makes "open this submodule" host-correct. */
 export function joinLocator(parentLocator: string, rel: string): string {
   const sep = parentLocator.endsWith("/") || parentLocator.endsWith("\\") ? "" : "/";
   return `${parentLocator}${sep}${rel}`;
-}
-
-/** Short host label for chips/badges (`Ubuntu`), or null for local repos. */
-export function hostLabel(host: HostRef | null | undefined): string | null {
-  return host ? host.distro : null;
 }
 
 /**

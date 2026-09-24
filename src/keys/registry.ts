@@ -182,6 +182,3 @@ export function defaultKeymap(): Keymap {
   return Object.fromEntries(COMMANDS.map((c) => [c.id, c.defaultBinding]));
 }
 
-export function commandById(id: string): Command | undefined {
-  return COMMANDS.find((c) => c.id === id);
-}

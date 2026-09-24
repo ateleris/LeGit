@@ -31,6 +31,8 @@ lives in the git log and the GitHub release notes.
 - Line-ending indicators for files at a revision no longer read oversized blobs in full before skipping them.
 - Repo Settings now shows the `.gitattributes` line-ending rules of WSL repositories (the file was looked up at a wrong path on Windows).
 
+- Theme and layout names that Windows reserves (CON, NUL, COM1, ...) or that end with a dot are rejected on save instead of producing an unusable or silently renamed file.
+
 ### Changed
 
 - Changing a repo's git binary override no longer restarts the repo session: the new binary is swapped in live, keeping panel state and selections.

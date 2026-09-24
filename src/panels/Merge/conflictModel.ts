@@ -9,7 +9,7 @@ import {
   splitLines,
   type Eol,
   type ResolveRegions,
-} from "./editModel";
+} from "../Diff/editModel";
 
 export interface CommonSection {
   kind: "common";

@@ -1,4 +1,4 @@
-//! Persistence commands: settings, dock layout, theme files (DESIGN.md §7.8).
+//! Persistence commands: settings, dock layout, theme files (DESIGN-v0.1.md §7.8).
 //!
 //! Settings are a single JSON document under the app data dir. Themes are
 //! `.legit-theme.json` files under either the bundled resource dir
@@ -160,7 +160,7 @@ pub async fn delete_theme(
     Ok(())
 }
 
-/// Validate against the rules in DESIGN.md §6.5. Strict on structure, lenient
+/// Validate against the rules in DESIGN-v0.1.md §6.5. Strict on structure, lenient
 /// on unknown content. Tokens missing/unknown tokens are *not* rejected here
 /// — the frontend fills missing ones from the default theme and preserves
 /// unknown ones silently.
@@ -276,17 +276,7 @@ fn theme_file_path(dir: &std::path::Path, name: &str) -> Result<PathBuf, AppErro
 }
 
 fn sanitize_theme_name(name: &str) -> Result<String, AppError> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        return Err(AppError::InvalidTheme("theme name is empty".into()));
-    }
-    let bad: &[char] = &['/', '\\', '\0', ':', '*', '?', '"', '<', '>', '|'];
-    if trimmed.chars().any(|c| bad.contains(&c) || c.is_control()) {
-        return Err(AppError::InvalidTheme(format!(
-            "theme name contains forbidden character(s): {trimmed:?}"
-        )));
-    }
-    Ok(trimmed.to_string())
+    crate::persist::sanitize_file_stem(name).map_err(|e| AppError::InvalidTheme(format!("theme {e}")))
 }
 
 

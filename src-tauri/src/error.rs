@@ -2,7 +2,7 @@
 //!
 //! `GitError` (domain) lives in `legit-core`. `AppError` adds command-layer
 //! variants like "unknown repo id" and "forbidden console argument", as
-//! described in DESIGN.md §7.7. It is `Serialize` so it crosses the IPC
+//! described in DESIGN-v0.1.md §7.7. It is `Serialize` so it crosses the IPC
 //! boundary cleanly.
 
 use legit_core::{GitError, RunnerError};

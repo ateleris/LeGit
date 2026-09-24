@@ -297,17 +297,7 @@ fn layout_file_path(dir: &std::path::Path, name: &str) -> Result<PathBuf, AppErr
 }
 
 fn sanitize_layout_name(name: &str) -> Result<String, AppError> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        return Err(AppError::InvalidLayout("layout name is empty".into()));
-    }
-    let bad: &[char] = &['/', '\\', '\0', ':', '*', '?', '"', '<', '>', '|'];
-    if trimmed.chars().any(|c| bad.contains(&c) || c.is_control()) {
-        return Err(AppError::InvalidLayout(format!(
-            "layout name contains forbidden character(s): {trimmed:?}"
-        )));
-    }
-    Ok(trimmed.to_string())
+    crate::persist::sanitize_file_stem(name).map_err(|e| AppError::InvalidLayout(format!("layout {e}")))
 }
 
 #[cfg(test)]

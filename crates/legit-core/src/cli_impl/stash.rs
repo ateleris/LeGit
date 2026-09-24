@@ -18,7 +18,7 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
 
     pub(super) async fn stashes(&self) -> Result<Vec<StashEntry>, GitError> {
         let runner = self.runner().await;
-        let fmt_arg = format!("--format={}", parsers::stash::STASH_FORMAT);
+        let fmt_arg = parsers::format_arg(parsers::stash::STASH_FORMAT);
 
         let output = runner
             .run(&["stash", "list", &fmt_arg])
@@ -209,7 +209,7 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         scope: Option<&str>,
         stash_sha: &str,
     ) -> Result<String, GitError> {
-        let list = self.run_checked(&scoped(scope, &["stash", "list", "--format=%H %gd"])).await?;
+        let list = self.run_checked(&scoped(scope, STASH_LIST_SELECTOR_ARGS)).await?;
         find_stash_selector(&list, stash_sha).ok_or_else(|| {
             GitError::RefNotFound(format!(
                 "{stash_sha} is not (or no longer) a stash entry - the stash list may have changed"
@@ -334,6 +334,14 @@ pub(super) fn scoped<'a>(scope: Option<&'a str>, args: &[&'a str]) -> Vec<&'a st
 /// The list format `find_created_stash` consumes: one entry per line,
 /// `<sha> <subject>`, newest first (kept next to its parser per convention).
 pub(super) const STASH_LIST_SUBJECT_ARGS: &[&str] = &["stash", "list", "--format=%H %s"];
+
+/// `git stash list` printing only each entry's commit SHA - what stash
+/// membership checks compare against.
+pub(super) const STASH_LIST_SHA_ARGS: &[&str] = &["stash", "list", "--format=%H"];
+
+/// `git stash list` pairing each entry's SHA with its positional selector -
+/// the input `find_stash_selector` resolves against.
+pub(super) const STASH_LIST_SELECTOR_ARGS: &[&str] = &["stash", "list", "--format=%H %gd"];
 
 pub(super) fn find_created_stash(before_list: &str, after_list: &str, marker: &str) -> Option<String> {
     let before: std::collections::HashSet<&str> = before_list

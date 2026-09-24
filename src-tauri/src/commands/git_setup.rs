@@ -1,5 +1,5 @@
 //! Startup `git --version` check and runtime Git binary path configuration
-//! (DESIGN.md §7.6).
+//! (DESIGN-v0.1.md §7.6).
 
 use crate::error::AppError;
 use crate::git_resolve::resolve_git_path;

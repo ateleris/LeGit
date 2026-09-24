@@ -26,7 +26,7 @@ import {
   parseConflicts,
   sideLabel,
   type LineSelection,
-} from "../Diff/conflictModel";
+} from "./conflictModel";
 import { MergeView, type MergeViewHandle } from "./MergeView";
 import { STALE } from "../../lib/queryTiming";
 import { useBranches } from "../../lib/queries/useRepoQueries";

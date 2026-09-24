@@ -20,7 +20,7 @@ import {
   syntaxVarFor,
   type SyntaxSegment,
 } from "../Diff/syntaxModel";
-import { loadParserForPath } from "../Diff/syntaxLanguages";
+import { loadParserForPath } from "../codemirror/syntaxLanguages";
 import { STALE } from "../../lib/queryTiming";
 
 const UNCOMMITTED = "0".repeat(40);

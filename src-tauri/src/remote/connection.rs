@@ -60,7 +60,7 @@ fn git_needs_attention(status: &GitStatus) -> bool {
 }
 
 /// Probe the distro's git once per connect and report an unusable one. The
-/// startup gate (DESIGN.md §7.6) only ever probes the APP machine's binary,
+/// startup gate (DESIGN-v0.1.md §7.6) only ever probes the APP machine's binary,
 /// so for a repo on a WSL host this is the only place the user hears that its
 /// git is missing or too old.
 async fn report_host_git(app: &tauri::AppHandle, state: &AppState, distro: &str, host: &RemoteHost) {

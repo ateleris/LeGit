@@ -1,4 +1,4 @@
-//! Git Console command (DESIGN.md §7.4).
+//! Git Console command (DESIGN-v0.1.md §7.4).
 //!
 //! Runs user-typed args against the active repo through the *same*
 //! `GitRunner` every other panel will use. The args are tokenized with
@@ -487,7 +487,7 @@ pub async fn console_cancel(
 }
 
 /// Reject arguments that would let the Console escape the active
-/// repository's working tree (DESIGN.md §7.4).
+/// repository's working tree (DESIGN-v0.1.md §7.4).
 fn validate_console_args(argv: &[String]) -> Result<(), AppError> {
     for (idx, arg) in argv.iter().enumerate() {
         // The leading "git" is implied — and a hint the user is confused.

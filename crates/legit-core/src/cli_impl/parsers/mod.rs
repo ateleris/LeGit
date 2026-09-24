@@ -1,4 +1,4 @@
-//! Pure parsers: `text -> domain type` (DESIGN.md §4.3).
+//! Pure parsers: `text -> domain type` (DESIGN-v0.1.md §4.3).
 //!
 //! Each parser lives next to the backend method that produces its input.
 //! The format string for each command is a constant in the same module as
@@ -24,3 +24,8 @@ pub mod op_state;
 pub mod resolve;
 pub mod worktrees;
 pub mod lfs;
+
+/// The `--format=<fmt>` argument for a parser module's format constant.
+pub fn format_arg(format: &str) -> String {
+    format!("--format={format}")
+}

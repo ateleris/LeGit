@@ -16,7 +16,6 @@
 use crate::error::AppError;
 use crate::state::AppState;
 use std::path::Path;
-use std::process::Command;
 
 /// Split a command template into tokens. Double quotes group words (so paths
 /// with spaces work); there is no escape syntax. An unterminated quote or an
@@ -114,32 +113,7 @@ fn build_editor_file_invocation(
 /// editor is configured. (Distinct from `repo_reveal_path`, which *selects* a
 /// file; this opens the folder itself.)
 fn open_directory(dir: &Path) -> Result<(), AppError> {
-    let spawn = |mut cmd: Command| -> Result<(), AppError> {
-        cmd.spawn()
-            .map(|_| ())
-            .map_err(|e| AppError::Io(format!("open folder: {e}")))
-    };
-    #[cfg(target_os = "windows")]
-    {
-        let mut cmd = Command::new("explorer");
-        // Session paths come from `git rev-parse --show-toplevel`, which
-        // prints forward slashes on Windows - explorer silently opens the
-        // Documents folder for such a path, so normalize first.
-        cmd.arg(crate::commands::files::explorer_path(dir));
-        spawn(cmd)
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let mut cmd = Command::new("open");
-        cmd.arg(dir);
-        spawn(cmd)
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        let mut cmd = Command::new("xdg-open");
-        cmd.arg(dir);
-        spawn(cmd)
-    }
+    crate::os_open::os_open(crate::os_open::OpenTarget::Folder(dir), "open folder")
 }
 
 /// The effective editor template for a repo: the repo-scope override wins

@@ -1,6 +1,6 @@
 //! `GitRunner` — the single chokepoint that invokes `git`.
 //!
-//! Execution only. Never parses. See DESIGN.md §3.1, §3.2.
+//! Execution only. Never parses. See DESIGN-v0.1.md §3.1, §3.2.
 //!
 //! Every Git operation in LeGit (Console included) goes through this
 //! struct. Each invocation:
@@ -39,7 +39,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{info, instrument, warn};
 use uuid::Uuid;
 
-/// Minimum supported `git` version (DESIGN.md §7.6 — set for SSH signing).
+/// Minimum supported `git` version (DESIGN-v0.1.md §7.6 — set for SSH signing).
 pub const MIN_SUPPORTED_GIT_VERSION: (u32, u32, u32) = (2, 34, 0);
 
 /// Stable identifier for an in-flight `git` invocation. Used for cancellation
@@ -608,7 +608,7 @@ impl GitRunner {
     }
 }
 
-/// Default base environment applied to every `git` invocation (DESIGN.md §3.2).
+/// Default base environment applied to every `git` invocation (DESIGN-v0.1.md §3.2).
 fn default_base_env() -> Vec<(String, String)> {
     vec![
         ("GIT_EDITOR".to_string(), "false".to_string()),

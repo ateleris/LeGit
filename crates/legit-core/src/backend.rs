@@ -1,7 +1,7 @@
 //! The `GitBackend` trait — the contract between the UI/command layer and
 //! the implementation that actually performs Git operations.
 //!
-//! The only implementation is `GitCliBackend` (DESIGN.md §4.3), which runs
+//! The only implementation is `GitCliBackend` (DESIGN-v0.1.md §4.3), which runs
 //! the real `git` CLI through `GitRunner`. The trait exists so composed
 //! flows can be tested against a scripted executor and so the command layer
 //! never depends on how git is invoked.
