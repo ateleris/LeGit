@@ -36,6 +36,7 @@ lives in the git log and the GitHub release notes.
 ### Changed
 
 - Changing a repo's git binary override no longer restarts the repo session: the new binary is swapped in live, keeping panel state and selections.
+- The Settings panels were redesigned: settings are grouped into finer categories (Branches, Remotes & sync, Submodules, Working tree, Application, ...), a search field filters them, and wide panels show a category nav that follows scrolling; Repo Settings mirrors the same layout. Category headers are full-width tinted bands that stay pinned while scrolling through their group (also in the Theme Editor).
 
 ## [1.3.3] - 2026-09-23
 

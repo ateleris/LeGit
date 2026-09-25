@@ -297,7 +297,15 @@ export function ThemeEditorPanel() {
           </Button>
         )}
       </div>
-      <div className="legit-panel__body" onPointerDown={onReadOnlyPointerDown}>
+      <div
+        className="legit-panel__body"
+        onPointerDown={onReadOnlyPointerDown}
+        // No top padding on the scroller: the sticky group headers pin flush
+        // against the top edge (see SettingsGroup); the spacer below scrolls
+        // away with the content instead.
+        style={{ paddingTop: 0 }}
+      >
+        <div style={{ height: "calc(var(--ui-font-size) * 0.667)" }} />
         {error && <pre className="legit-error">{error}</pre>}
 
         <SettingsGroup id="theme-editor.metadata" title="Metadata">

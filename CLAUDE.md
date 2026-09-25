@@ -160,12 +160,24 @@ ONLY that field (`patch_repo_settings`, merged server-side) and caches the
 merged settings it returns. Never send a whole cached struct back: fields
 written by their own commands (lane locks, profile, git path) would be
 overwritten with stale values, which is why the patch refuses them. Adding a
-setting touches 2 places: the Rust struct (bindings regenerate the TS type)
-and a section in `RepoSettingsPanel.tsx`; consumers read
+setting touches 3 places: the Rust struct (bindings regenerate the TS type),
+a section component (`RepoSections.tsx` / the global section files), and that
+section's entry in the settings manifest; consumers read
 `repoSettings?.field ?? default`. Global settings work the same way
 (`patch_global_settings` + `GlobalSettings::with_patch`, clamps in
 `normalized()`; command-owned fields refused), with one-line setters in
 `store/settings.ts` caching the merged result.
+
+**Settings panels are manifest-driven.** Both settings panels render through
+`SettingsShell` (search filter, category nav with scroll-spy on wide panels,
+always-expanded groups under sticky full-width header bands; collapsing
+exists only in the Theme Editor's groups): the taxonomy, nav labels and
+search keywords live in
+`globalSettingsManifest.tsx` / `repoSettingsManifest.tsx`, and the two panels
+mirror the same group names. A new section is a component (using the
+`primitives.tsx` building blocks) plus a manifest entry with searchable
+`keywords`; integrity is pinned by `settingsManifest.test.ts` and the filter
+semantics by `settingsSearch.test.ts`.
 
 **Repos & sessions.** `src/store/repos.ts` owns `openRepos` + `activeRepoId`.
 `RepoSession`s and watchers are **persistent per repo** (a `HashMap`), not rebuilt
