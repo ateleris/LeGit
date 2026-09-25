@@ -1,35 +1,38 @@
-// The `Git (WSL)` settings group: a COMPLETE, separate git configuration
+// The `Git (WSL)` settings sections: a COMPLETE, separate git configuration
 // surface per WSL distribution — its git binary, identity, signing, credential
 // helper, and line endings, all written to that distribution's own config.
 //
-// It is deliberately not a subsection of the `Git` group: a WSL repo's git
+// It is deliberately not part of the `Git` group: a WSL repo's git
 // configuration has nothing to do with the app machine's, and mixing them made
 // "Identity, signing & credentials (global)" look like it applied to WSL repos
 // when it never did.
 //
-// The group owns its own `SettingsGroup` so it can render NOTHING at all when
-// no distributions exist (a `SettingsGroup` shows its header even when every
-// child returns null, which would leave every non-Windows build with an empty
-// "GIT (WSL)" heading).
+// The sections are consumed through the settings manifest; the panel includes
+// the group only when distributions exist (so non-Windows builds never show an
+// empty "GIT (WSL)" heading) and mounts `WslHostProvider` OUTSIDE the shell:
+// sections unmount when a search filters them away, and the "already
+// connected" memory must not be lost there — otherwise every re-mount would
+// restart the distro.
 
-import { useEffect, useRef, useState } from "react";
-import { formatAppError } from "../../lib/types";
+import { useEffect, useState } from "react";
+import { formatAppError } from "../../lib/errors";
 import type { WslDistro } from "../../lib/types";
-import { setWslHostGitPath, wslHostGitOverride, wslListDistros } from "../../lib/commands";
+import { api } from "../../lib/commands";
 import { Button } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
-import { Section, Row, FieldNote, SettingsGroup } from "./primitives";
+import { Section, Row, FieldNote } from "./primitives";
 import { GitStatusReadout } from "./GitStatusReadout";
 import { GlobalGitConfigSection } from "./GlobalGitConfigSection";
 import { LineEndingsGlobalSection } from "./LineEndingsGlobalSection";
-import { WslHostProvider, useWslHost } from "./WslHostContext";
+import { useWslHost } from "./WslHostContext";
 
-export function WslGitGroup() {
+/** One cheap `wsl --list` probe; empty on machines without WSL. */
+export function useWslDistros(): WslDistro[] {
   const [distros, setDistros] = useState<WslDistro[]>([]);
 
   useEffect(() => {
     let cancelled = false;
-    wslListDistros()
+    api.wslListDistros()
       .then((list) => {
         if (!cancelled) setDistros(list);
       })
@@ -39,48 +42,14 @@ export function WslGitGroup() {
     };
   }, []);
 
-  if (distros.length === 0) return null;
-
-  return (
-    // The provider sits OUTSIDE the group: `SettingsGroup` unmounts its
-    // children when collapsed, and the "already connected" memory must not be
-    // lost there — otherwise every expand restarts the distro.
-    <WslHostProvider distros={distros}>
-      <SettingsGroup id="git-wsl" title="Git (WSL)" caption="Integration & configuration">
-        <WslGitGroupBody />
-      </SettingsGroup>
-    </WslHostProvider>
-  );
+  return distros;
 }
 
-function WslGitGroupBody() {
-  const {
-    distros,
-    distro,
-    setDistro,
-    running,
-    everConnected,
-    status,
-    reloadNonce,
-    connect,
-    busy,
-    error,
-    scope,
-  } = useWslHost();
-
-  // An already-running distro loads without a click (connecting to it costs
-  // nothing extra); a stopped one waits, because connecting STARTS it.
-  const autoConnected = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    if (!running || everConnected || busy || autoConnected.current.has(distro)) return;
-    autoConnected.current.add(distro);
-    connect();
-  }, [distro, running, everConnected, busy, connect]);
-
-  const lost = status === "disconnected";
+export function WslConnectionSection() {
+  const { distros, distro, setDistro, everConnected, connect, busy, error } = useWslHost();
 
   return (
-    <>
+    <Section title="Distribution">
       <Row
         label="Distribution"
         value={
@@ -105,33 +74,42 @@ function WslGitGroupBody() {
         you connect.
       </FieldNote>
       {error && <pre className="legit-error">{error}</pre>}
-
-      <div style={{ marginTop: "1.167em" }}>
-        <WslGitExecutableSection />
-        {/* `key={distro}` remounts the forms on a distro switch, so a draft
-            typed for one distribution can never be saved into another. */}
-        <GlobalGitConfigSection
-          key={`config-${distro}`}
-          scope={scope}
-          enabled={everConnected}
-          reloadNonce={reloadNonce}
-          disabled={lost}
-        />
-        <LineEndingsGlobalSection
-          key={`eol-${distro}`}
-          scope={scope}
-          enabled={everConnected}
-          reloadNonce={reloadNonce}
-          disabled={lost}
-        />
-      </div>
-
       <FieldNote>
         Connected accounts and Git identity profiles are LeGit&apos;s own and already apply to
         repositories inside WSL — they live under <strong>Git</strong> above. SSH keys inside a
         distribution are managed there, not by LeGit.
       </FieldNote>
-    </>
+    </Section>
+  );
+}
+
+/** Identity, signing & credentials written into the selected distribution. */
+export function WslConfigSection() {
+  const { distro, scope, everConnected, reloadNonce, status } = useWslHost();
+  return (
+    // `key={distro}` remounts the form on a distro switch, so a draft typed
+    // for one distribution can never be saved into another.
+    <GlobalGitConfigSection
+      key={`config-${distro}`}
+      scope={scope}
+      enabled={everConnected}
+      reloadNonce={reloadNonce}
+      disabled={status === "disconnected"}
+    />
+  );
+}
+
+/** Line endings written into the selected distribution. */
+export function WslEolSection() {
+  const { distro, scope, everConnected, reloadNonce, status } = useWslHost();
+  return (
+    <LineEndingsGlobalSection
+      key={`eol-${distro}`}
+      scope={scope}
+      enabled={everConnected}
+      reloadNonce={reloadNonce}
+      disabled={status === "disconnected"}
+    />
   );
 }
 
@@ -159,7 +137,7 @@ function ConnectionState() {
  * path names a binary INSIDE the distro — so there is no `Browse…`: the file
  * dialog would browse Windows.
  */
-function WslGitExecutableSection() {
+export function WslGitExecutableSection() {
   const { distro, gitStatus, setGitStatus, busy: connecting } = useWslHost();
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -168,7 +146,7 @@ function WslGitExecutableSection() {
   // Prefill from the persisted override — cheap, and deliberately no connect.
   useEffect(() => {
     let cancelled = false;
-    wslHostGitOverride(distro)
+    api.wslHostGitOverride(distro)
       .then((ov) => {
         if (!cancelled) setDraft(ov ?? "");
       })
@@ -184,7 +162,7 @@ function WslGitExecutableSection() {
     void run(async () => {
       setError(null);
       try {
-        const s = await setWslHostGitPath(distro, path);
+        const s = await api.setWslHostGitPath(distro, path);
         setGitStatus(s);
         setDraft(s.user_override ?? "");
       } catch (e) {

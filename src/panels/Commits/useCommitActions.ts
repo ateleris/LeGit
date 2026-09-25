@@ -10,69 +10,40 @@
 // index lock; the runner convention covers button-driven panels).
 
 import { useMemo, useRef } from "react";
+import {
+  applyStash,
+  checkoutBranch,
+  checkoutCommit,
+  checkoutRemoteBranch,
+  createStash,
+  createTag as createTagAction,
+  deleteBranch,
+  deleteRemoteBranch,
+  deleteRemoteTag,
+  deleteTag,
+  dropStash,
+  mergeInto,
+  popStash,
+  pushBranch,
+  pushTag,
+  rebaseOnto,
+  renameBranch,
+  setUpstream,
+  type RefActionContext,
+} from "../../lib/refActions";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  repoApplyStash,
-  repoCheckoutCommit,
-  repoCheckoutRemoteBranch,
-  repoCherryPick,
-  repoCreateStash,
-  repoCreateTag,
-  repoDeleteBranch,
-  repoDeleteRemoteBranch,
-  repoDeleteRemoteTag,
-  repoDeleteTag,
-  repoDropStash,
-  repoLog,
-  repoMerge,
-  repoPopStash,
-  repoPushTag,
-  repoRebase,
-  repoRebaseAbort,
-  repoRebaseInteractive,
-  repoRenameBranch,
-  repoRenameStash,
-  repoReset,
-  repoRevert,
-  repoRewordCommit,
-  repoSetUpstream,
-  repoSwitchBranch,
-} from "../../lib/commands";
+import { repoCherryPick, repoLog, repoRevert, api } from "../../lib/commands";
 import type { Commit, CommitId, MergeOptions, RepoSummary, ResetMode } from "../../lib/types";
-import { formatAppError } from "../../lib/types";
-import { deleteBranchGuided } from "../../lib/branchDelete";
+import { formatAppError } from "../../lib/errors";
 import { bulkRebasePlan } from "./multiSelect";
-import { notifyLfsStubs } from "../../lib/lfsFeedback";
-import { worktreeLocator } from "../../lib/locator";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
-import { autoUpdateSubmodules } from "../../lib/submodules";
 import { notify } from "../../store/notifications";
-import { useSettingsStore } from "../../store/settings";
-import { useRepoStore } from "../../store/repos";
+import { notifyOpError, notifySequenceOutcome } from "../../lib/mergeFeedback";
 import {
-  notifySwitchOutcome,
-  notifyRemoteCheckoutOutcome,
-  notifySwitchError,
-} from "../../lib/switchFeedback";
-import { remoteOpErrorMessage } from "../../lib/pushFeedback";
-import { autoPushTagAfterCreate, pushWithTagFollowUp } from "../../lib/autoPushTags";
-import {
-  notifyMergeOutcome,
-  notifyOpError,
-  notifyRebaseOutcome,
-  notifySequenceOutcome,
-} from "../../lib/mergeFeedback";
-import { OP_DOMAINS } from "../../lib/useOpState";
-import { splitRemoteRef } from "../../lib/branchGroups";
-
-// Switching can create/consume an auto-stash, so "stashes" is invalidated too.
-export const BRANCH_DOMAINS = ["branches", "log", "status", "tracking", "stashes"] as const;
-// Push moves remote-tracking refs; "tags" because the tag list's per-tag
-// `target_on_remote` flag is computed against them (same set as the sync
-// toolbar's invalidation).
-export const PUSH_DOMAINS = ["log", "branches", "status", "tracking", "tags"] as const;
-export const STASH_DOMAINS = ["stashes", "log", "status"] as const;
-export const TAG_DOMAINS = ["tags", "log"] as const;
+  OP_DOMAINS,
+  STASH_DOMAINS,
+  type QueryDomain,
+} from "../../lib/queries/domains";
 
 export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]) {
   const queryClient = useQueryClient();
@@ -84,33 +55,19 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
   return useMemo(() => {
     /** The active repo, or null - every action no-ops without one. */
     const repoOf = () => ctx.current.repo;
-    const invalidate = (repoId: string, domains: readonly string[]) =>
+    const invalidate = (repoId: string, domains: readonly QueryDomain[]) =>
       invalidateRepoDomains(queryClient, repoId, domains);
-    // A checked-out-elsewhere refusal's toast opens the blocking worktree on
-    // click (host-correct locator, same as the chip menus).
-    const openWorktreeFromToast = (path: string) => {
+    const actionCtx = (): RefActionContext | null => {
       const repo = repoOf();
-      if (!repo) return;
-      void useRepoStore
-        .getState()
-        .openRepo(worktreeLocator(repo.locator ?? repo.path, path))
-        .catch((err: unknown) => notify.error(formatAppError(err)));
+      return repo ? { queryClient, repo, remoteNames: ctx.current.remoteNames } : null;
     };
 
     return {
       // --- merge / rebase / sequencer (conflicts pause into op-state; a
       // failed op can still leave state behind, so refresh either way) ---
       handleMerge: async (target: string, options: MergeOptions) => {
-        const repo = repoOf();
-        if (!repo) return;
-        try {
-          const outcome = await repoMerge(repo.id, target, options);
-          invalidate(repo.id, OP_DOMAINS);
-          notifyMergeOutcome(outcome, target);
-        } catch (e) {
-          invalidate(repo.id, OP_DOMAINS);
-          notifyOpError(e);
-        }
+        const c = actionCtx();
+        if (c) await mergeInto(c, target, options);
       },
 
       // `mainline` (1-based parent number) comes from the merge-commit
@@ -154,12 +111,12 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
             );
             return;
           }
-          const outcome = await repoRebaseInteractive(repo.id, base, plan);
+          const outcome = await api.repoRebaseInteractive(repo.id, base, plan);
           if (outcome.kind === "conflicts") {
             // Roll back rather than parking in the conflict state: the user
             // asked for a one-shot action, not a rebase session.
             try {
-              await repoRebaseAbort(repo.id);
+              await api.repoRebaseAbort(repo.id);
               notify.error(
                 `${verb} aborted: replaying the remaining commits conflicted. The branch is unchanged.`,
               );
@@ -206,7 +163,7 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
         if (!repo) return;
         // Reset also moves the branch relative to its upstream.
         try {
-          await repoReset(repo.id, sha, mode);
+          await api.repoReset(repo.id, sha, mode);
           invalidate(repo.id, [...OP_DOMAINS, "tracking"]);
           notify.info(`Reset (${mode}) to ${sha.slice(0, 8)}.`);
         } catch (e) {
@@ -223,7 +180,7 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
         // (not HEAD~1) so a stale row cannot reset past a commit that landed
         // after the menu opened.
         try {
-          await repoReset(repo.id, `${headSha}~1`, "soft");
+          await api.repoReset(repo.id, `${headSha}~1`, "soft");
           invalidate(repo.id, [...OP_DOMAINS, "tracking"]);
           notify.info(
             `Undid commit ${headSha.slice(0, 8)} - its changes are staged again.`,
@@ -235,144 +192,50 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
       },
 
       handleRebaseOnto: async (onto: string) => {
-        const repo = repoOf();
-        if (!repo) return;
-        // "stashes" too: rebase runs --autostash, which creates and
-        // reapplies (or, on conflict, keeps) a stash entry.
-        try {
-          const outcome = await repoRebase(repo.id, onto);
-          invalidate(repo.id, [...OP_DOMAINS, "stashes"]);
-          notifyRebaseOutcome(outcome, onto);
-        } catch (e) {
-          invalidate(repo.id, [...OP_DOMAINS, "stashes"]);
-          notifyOpError(e);
-        }
+        const c = actionCtx();
+        if (c) await rebaseOnto(c, onto);
       },
 
       // --- checkouts ---
       handleBranchCheckout: async (name: string) => {
-        const repo = repoOf();
-        if (!repo) return;
-        try {
-          const result = await repoSwitchBranch(repo.id, name);
-          invalidate(repo.id, BRANCH_DOMAINS);
-          notifySwitchOutcome(result.outcome, name);
-          notifyLfsStubs(result.lfs_stubs, "switch");
-          void autoUpdateSubmodules(queryClient, repo.id);
-        } catch (e) {
-          notifySwitchError(e, { onOpenWorktree: openWorktreeFromToast });
-        }
+        const c = actionCtx();
+        if (c) await checkoutBranch(c, name);
       },
 
       handleRemoteCheckout: async (remoteRef: string) => {
-        const repo = repoOf();
-        if (!repo) return;
-        try {
-          const outcome = await repoCheckoutRemoteBranch(repo.id, remoteRef);
-          invalidate(repo.id, BRANCH_DOMAINS);
-          notifyRemoteCheckoutOutcome(outcome, remoteRef);
-          notifyLfsStubs(outcome.lfs_stubs, "checkout");
-          void autoUpdateSubmodules(queryClient, repo.id);
-        } catch (e) {
-          notifySwitchError(e, { onOpenWorktree: openWorktreeFromToast });
-        }
+        const c = actionCtx();
+        if (c) await checkoutRemoteBranch(c, remoteRef);
       },
 
       handleCommitCheckout: async (sha: string) => {
-        const repo = repoOf();
-        if (!repo) return;
-        try {
-          const result = await repoCheckoutCommit(repo.id, sha);
-          invalidate(repo.id, BRANCH_DOMAINS);
-          notifySwitchOutcome(result.outcome, sha.slice(0, 8));
-          notifyLfsStubs(result.lfs_stubs, "checkout");
-          void autoUpdateSubmodules(queryClient, repo.id);
-        } catch (e) {
-          notifySwitchError(e, { onOpenWorktree: openWorktreeFromToast });
-        }
+        const c = actionCtx();
+        if (c) await checkoutCommit(c, sha);
       },
 
       // --- branches ---
       handleBranchRenameSave: async (oldName: string, newName: string) => {
-        const repo = repoOf();
-        if (!repo) return;
-        try {
-          await repoRenameBranch(repo.id, oldName, newName);
-          invalidate(repo.id, BRANCH_DOMAINS);
-        } catch (e) {
-          notify.error(formatAppError(e));
-        }
+        const c = actionCtx();
+        if (c) await renameBranch(c, oldName, newName);
       },
 
-      // Safe deletes go through the guided flow: a "not fully merged"
-      // refusal raises the central dialog with a case-specific force-delete
-      // offer.
       handleBranchDelete: async (name: string, force: boolean) => {
-        const repo = repoOf();
-        if (!repo) return;
-        try {
-          if (force) await repoDeleteBranch(repo.id, name, true);
-          else await deleteBranchGuided(repo.id, name);
-          invalidate(repo.id, BRANCH_DOMAINS);
-        } catch (e) {
-          notify.error(formatAppError(e));
-        }
+        const c = actionCtx();
+        if (c) await deleteBranch(c, name, force);
       },
 
       handleSetUpstream: async (branch: string, upstream: string | null) => {
-        const repo = repoOf();
-        if (!repo) return;
-        try {
-          await repoSetUpstream(repo.id, branch, upstream);
-          invalidate(repo.id, BRANCH_DOMAINS);
-        } catch (e) {
-          notify.error(formatAppError(e));
-        }
+        const c = actionCtx();
+        if (c) await setUpstream(c, branch, upstream);
       },
 
-      // Pushes a branch - checked out or not (the backend addresses the full
-      // refs/heads/ refspec). `setUpstream` publishes: the target remote
-      // becomes the branch's upstream. Feedback is toast-based like the other
-      // menu actions; the classified remote errors share the sync toolbar's
-      // wording via remoteOpErrorMessage.
       handleBranchPush: async (branch: string, remote: string, setUpstream: boolean) => {
-        const repo = repoOf();
-        if (!repo) return;
-        try {
-          await pushWithTagFollowUp(
-            queryClient,
-            repo.id,
-            {
-              remote,
-              branch,
-              set_upstream: setUpstream,
-              force_with_lease: false,
-              recurse_submodules:
-                useSettingsStore.getState().settings?.push_recurse_submodules ?? null,
-            },
-            crypto.randomUUID(),
-          );
-          notify.success(`Pushed '${branch}' to ${remote}`);
-          invalidate(repo.id, PUSH_DOMAINS);
-        } catch (e) {
-          notify.error(remoteOpErrorMessage(e));
-        }
+        const c = actionCtx();
+        if (c) await pushBranch(c, branch, remote, setUpstream);
       },
 
-      // Deletes the branch ON THE REMOTE only (`git push --delete`) — any
-      // local counterpart is untouched, mirroring remote tag deletion.
       handleRemoteBranchDelete: async (remoteRef: string) => {
-        const repo = repoOf();
-        if (!repo) return;
-        const split = splitRemoteRef(remoteRef, ctx.current.remoteNames);
-        if (!split) return;
-        try {
-          await repoDeleteRemoteBranch(repo.id, split.remote, split.branch, crypto.randomUUID());
-          notify.success(`Deleted '${split.branch}' on ${split.remote}`);
-          invalidate(repo.id, BRANCH_DOMAINS);
-        } catch (e) {
-          notify.error(formatAppError(e));
-        }
+        const c = actionCtx();
+        if (c) await deleteRemoteBranch(c, remoteRef);
       },
 
       // --- reword / stash rename (the in-place subject edit's git halves;
@@ -384,126 +247,56 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
         const lines = commit.message.split("\n");
         const body = lines.slice(1).join("\n");
         const newMessage = body.length > 0 ? `${subject}\n${body}` : subject;
-        await repoRewordCommit(repo.id, commit.id, newMessage);
+        await api.repoRewordCommit(repo.id, commit.id, newMessage);
         invalidate(repo.id, ["log", "branches", "tracking"]);
       },
 
       renameStash: async (sha: string, message: string) => {
         const repo = repoOf();
         if (!repo) return;
-        await repoRenameStash(repo.id, sha, message);
+        await api.repoRenameStash(repo.id, sha, message);
         invalidate(repo.id, STASH_DOMAINS);
       },
 
       // --- tags ---
       handleTagPush: async (name: string, remote: string) => {
-        const repo = repoOf();
-        if (!repo) return;
-        try {
-          await repoPushTag(repo.id, remote, name, crypto.randomUUID());
-          notify.success(`Pushed tag '${name}' to ${remote}`);
-          invalidate(repo.id, ["remote-tags"]);
-        } catch (e) {
-          notify.error(formatAppError(e));
-        }
+        const c = actionCtx();
+        if (c) await pushTag(c, name, remote);
       },
 
       handleTagDelete: async (name: string) => {
-        const repo = repoOf();
-        if (!repo) return;
-        try {
-          await repoDeleteTag(repo.id, name);
-          invalidate(repo.id, TAG_DOMAINS);
-        } catch (e) {
-          notify.error(formatAppError(e));
-        }
+        const c = actionCtx();
+        if (c) await deleteTag(c, name);
       },
 
-      // Deletes the tag ON THE REMOTE only — local/remote deletion are
-      // separate, deliberate actions (GitKraken-style).
       handleTagDeleteRemote: async (name: string, remote: string) => {
-        const repo = repoOf();
-        if (!repo) return;
-        try {
-          await repoDeleteRemoteTag(repo.id, remote, name, crypto.randomUUID());
-          notify.success(`Deleted tag '${name}' from ${remote}`);
-          invalidate(repo.id, ["remote-tags"]);
-        } catch (e) {
-          notify.error(formatAppError(e));
-        }
+        const c = actionCtx();
+        if (c) await deleteRemoteTag(c, name, remote);
       },
 
       createTag: async (name: string, target: CommitId, message: string | null) => {
-        const repo = repoOf();
-        if (!repo) return;
-        try {
-          await repoCreateTag(repo.id, name, target, message ?? undefined);
-          invalidate(repo.id, TAG_DOMAINS);
-          // Create-time auto-push trigger (gated on the setting inside).
-          void autoPushTagAfterCreate(queryClient, repo.id, name);
-        } catch (e) {
-          notify.error(formatAppError(e));
-        }
+        const c = actionCtx();
+        if (c) await createTagAction(c, name, target, message ?? undefined);
       },
 
-      // --- stashes (addressed by commit SHA; the backend resolves the
-      // current stash@{N} at action time, so a stale list can never hit the
-      // wrong stash; toasts use generic wording accordingly) ---
       handleStashApply: async (sha: string) => {
-        const repo = repoOf();
-        if (!repo) return;
-        try {
-          const outcome = await repoApplyStash(repo.id, sha);
-          invalidate(repo.id, STASH_DOMAINS);
-          if (outcome.kind === "conflicts") {
-            notify.info(
-              "Applying the stash produced conflicts — resolve them in your working tree.",
-            );
-          }
-        } catch (e) {
-          notify.error(formatAppError(e));
-        }
+        const c = actionCtx();
+        if (c) await applyStash(c, sha);
       },
 
       handleStashPop: async (sha: string) => {
-        const repo = repoOf();
-        if (!repo) return;
-        try {
-          const outcome = await repoPopStash(repo.id, sha);
-          invalidate(repo.id, STASH_DOMAINS);
-          if (outcome.kind === "conflicts") {
-            notify.info(
-              "Popping the stash produced conflicts — the stash was kept; resolve them in your working tree.",
-            );
-          }
-        } catch (e) {
-          notify.error(formatAppError(e));
-        }
+        const c = actionCtx();
+        if (c) await popStash(c, sha);
       },
 
       handleStashDrop: async (sha: string) => {
-        const repo = repoOf();
-        if (!repo) return;
-        try {
-          await repoDropStash(repo.id, sha);
-          invalidate(repo.id, STASH_DOMAINS);
-        } catch (e) {
-          notify.error(formatAppError(e));
-        }
+        const c = actionCtx();
+        if (c) await dropStash(c, sha);
       },
 
       handleCreateStash: async (includeUntracked: boolean) => {
-        const repo = repoOf();
-        if (!repo) return;
-        try {
-          const outcome = await repoCreateStash(repo.id, undefined, includeUntracked, false);
-          invalidate(repo.id, STASH_DOMAINS);
-          if (outcome.kind === "nothing_to_stash") {
-            notify.info("Nothing to stash — the working tree is clean.");
-          }
-        } catch (e) {
-          notify.error(formatAppError(e));
-        }
+        const c = actionCtx();
+        if (c) await createStash(c, { includeUntracked, keepIndex: false });
       },
     };
   }, [queryClient]);

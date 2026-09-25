@@ -53,29 +53,12 @@ pub fn emit_sink(app: AppHandle, repo_id: String) -> WatchSink {
     })
 }
 
-/// Every change domain. For the cases where the whole repo may be stale and
-/// there is no batch to classify - a reconnect, or a watch that only became
-/// live after the repo was already on screen.
-pub fn all_domains() -> Vec<ChangeDomain> {
-    vec![
-        ChangeDomain::Status,
-        ChangeDomain::Log,
-        ChangeDomain::Branches,
-        ChangeDomain::Stashes,
-        ChangeDomain::Tags,
-        ChangeDomain::Diff,
-        ChangeDomain::OpState,
-        ChangeDomain::Worktrees,
-        ChangeDomain::Submodules,
-    ]
-}
-
 /// Emit a full-domain [`REPO_CHANGED_EVENT`] for `repo_id`. `trigger` names
 /// the reason in place of a changed path (e.g. `<reconnected>`).
 pub fn emit_all_domains_changed(app: &AppHandle, repo_id: &str, trigger: &str) {
     let payload = RepoChangedPayload {
         repo_id: repo_id.to_string(),
-        domains: all_domains(),
+        domains: ChangeDomain::ALL.to_vec(),
         trigger_paths: vec![trigger.to_string()],
         trigger_count: 0,
     };

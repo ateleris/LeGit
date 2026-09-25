@@ -4,10 +4,11 @@ import { useActiveRepo } from "../../store/repos";
 import { useSummonTarget } from "../../store/summon";
 import { confirmDialog } from "../../store/confirm";
 import { usePanelApi, usePanelFocusEffect } from "../PanelApiContext";
-import { repoLog, repoRebaseInteractive, repoRebaseRangeInfo } from "../../lib/commands";
+import { repoLog, api } from "../../lib/commands";
 import type { Commit, RebaseAction, RebaseRangeInfo, RebaseStep } from "../../lib/types";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
-import { OP_DOMAINS, useOpState } from "../../lib/useOpState";
+import { useOpState } from "../../lib/useOpState";
+import { HEAD_MOVE_DOMAINS } from "../../lib/queries/domains";
 import { notifyOpError, notifyRebaseOutcome } from "../../lib/mergeFeedback";
 import { DragHandleIcon } from "../../icons";
 import { Button } from "../shared/buttons";
@@ -70,9 +71,7 @@ export function InteractiveRebasePanel() {
     onError: notifyOpError,
     // Even a failed start can leave op state behind; refresh either way.
     onSettled: () => {
-      // "stashes" too: the rebase always runs --autostash, which creates and
-      // reapplies (or, on conflict, keeps) a stash entry.
-      if (repo) invalidateRepoDomains(queryClient, repo.id, [...OP_DOMAINS, "tracking", "stashes"]);
+      if (repo) invalidateRepoDomains(queryClient, repo.id, HEAD_MOVE_DOMAINS);
     },
   });
 
@@ -119,7 +118,7 @@ export function InteractiveRebasePanel() {
   // upstream just means no chips, no dialog, no notice.
   const { data: rangeInfo } = useQuery<RebaseRangeInfo>({
     queryKey: [repo?.id, "log", "rebase-range-info", base],
-    queryFn: () => repoRebaseRangeInfo(repo!.id, base!),
+    queryFn: () => api.repoRebaseRangeInfo(repo!.id, base!),
     enabled: !!repo && !!base,
     staleTime: STALE.live,
   });
@@ -238,7 +237,7 @@ export function InteractiveRebasePanel() {
         sha: r.sha,
         message: r.action === "reword" ? r.message : null,
       }));
-      const outcome = await repoRebaseInteractive(repo!.id, base, plan);
+      const outcome = await api.repoRebaseInteractive(repo!.id, base, plan);
       notifyRebaseOutcome(outcome, base.slice(0, 8));
       if (closesAfterOutcome(outcome.kind)) {
         // Rebase over (completed / up to date / done with a stash-reapply

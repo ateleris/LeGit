@@ -3,7 +3,7 @@
 // resulting set (ordering for cherry-pick vs revert, the compare pair, the
 // merge-commit guard). Pure data-in/data-out, like the other Commits helpers.
 import { describe, it, expect } from "vitest";
-import { applyRowClickSelection, arrowSelection, bulkActionPlan, bulkRebasePlan, selectionContiguous, type SelectionState } from "./multiSelect";
+import { applyRowClickSelection, arrowSelection, bulkActionPlan, bulkMenuPlan, bulkRebasePlan, selectionContiguous, type SelectionState } from "./multiSelect";
 
 const ROWS = ["e", "d", "c", "b", "a"]; // display order: newest first
 const selectable = (id: string) => id !== "wd" && id !== "stash1";
@@ -214,5 +214,72 @@ describe("arrowSelection", () => {
   it("shift at the selectable edge is a no-op", () => {
     const extended = { lead: "c", ids: new Set(["c", "d"]) };
     expect(arrowSelection(extended, rows, 1, true, selectable)).toBeNull();
+  });
+});
+
+describe("bulkMenuPlan", () => {
+  // Display order, newest first: d(merge) c b a(root).
+  const menuRows = [
+    { id: "d", parents: ["c", "x"], message: "merge branch" },
+    { id: "c", parents: ["b"], message: "third\n\nbody" },
+    { id: "b", parents: ["a"], message: "second" },
+    { id: "a", parents: [], message: "first" },
+  ];
+  const all = new Set(menuRows.map((r) => r.id));
+
+  it("is null below two selected rows", () => {
+    expect(bulkMenuPlan(new Set(["c"]), menuRows, all)).toBeNull();
+    expect(bulkMenuPlan(new Set(["c", "gone"]), menuRows, all)).toBeNull();
+  });
+
+  it("offers the rewrite with base, ordered snapshot, and squash prefill", () => {
+    const out = bulkMenuPlan(new Set(["c", "b"]), menuRows, all)!;
+    expect(out.plan.count).toBe(2);
+    expect(out.rewrite).not.toBeNull();
+    expect(out.rewrite!.base).toBe("a");
+    expect([...out.rewrite!.selectedSnapshot]).toEqual(["c", "b"]);
+    expect(out.rewrite!.contiguous).toBe(true);
+    // Oldest first, full messages, short-sha fallback covered below.
+    expect(out.rewrite!.squashPrefill).toBe("second\n\nthird\n\nbody");
+  });
+
+  it("marks a gapped selection as non-contiguous", () => {
+    const rows2 = [
+      { id: "e", parents: ["d2"], message: "e" },
+      { id: "d2", parents: ["c"], message: "d2" },
+      { id: "c", parents: ["b"], message: "c" },
+      { id: "b", parents: ["a"], message: "b" },
+    ];
+    const out = bulkMenuPlan(new Set(["e", "c"]), rows2, new Set(["e", "d2", "c", "b"]))!;
+    expect(out.rewrite!.contiguous).toBe(false);
+  });
+
+  it("withholds the rewrite when a selected commit is pushed", () => {
+    const out = bulkMenuPlan(new Set(["c", "b"]), menuRows, new Set(["c"]))!;
+    expect(out.rewrite).toBeNull();
+  });
+
+  it("withholds the rewrite when the selection contains a merge", () => {
+    const out = bulkMenuPlan(new Set(["d", "c"]), menuRows, all)!;
+    expect(out.plan.containsMerge).toBe(true);
+    expect(out.rewrite).toBeNull();
+  });
+
+  it("withholds the rewrite when the oldest selected commit is the root", () => {
+    const out = bulkMenuPlan(new Set(["b", "a"]), menuRows, all)!;
+    expect(out.rewrite).toBeNull();
+  });
+
+  it("falls back to a short sha for a missing message", () => {
+    const rows2 = [
+      { id: "feedc0ffee123456", parents: ["b"] },
+      { id: "b", parents: ["a"], message: "b msg" },
+    ];
+    const out = bulkMenuPlan(
+      new Set(["feedc0ffee123456", "b"]),
+      rows2,
+      new Set(["feedc0ffee123456", "b"]),
+    )!;
+    expect(out.rewrite!.squashPrefill).toBe("b msg\n\nfeedc0ff");
   });
 });

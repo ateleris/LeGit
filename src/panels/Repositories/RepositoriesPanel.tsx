@@ -1,6 +1,7 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { TitledSection } from "../shared/SectionChrome";
 import { useEffect, useState } from "react";
-import { recentRepos } from "../../lib/commands";
+import { api } from "../../lib/commands";
 import { parseLocator } from "../../lib/locator";
 import { formatRepoError } from "../../lib/repoErrorFeedback";
 import { useGitProfiles } from "../../lib/useGitProfiles";
@@ -35,10 +36,10 @@ export function RepositoriesPanel() {
 
   useEffect(() => {
     if (!initialized) refresh();
-    recentRepos().then(setRecents).catch(console.warn);
+    api.recentRepos().then(setRecents).catch(console.warn);
   }, [initialized, refresh, clonesCompleted]);
 
-  const refreshRecents = () => recentRepos().then(setRecents).catch(console.warn);
+  const refreshRecents = () => api.recentRepos().then(setRecents).catch(console.warn);
 
   const doOpen = async (path: string) => {
     setError(null);
@@ -103,7 +104,7 @@ export function RepositoriesPanel() {
           </div>
         )}
 
-        <Section title="Open">
+        <TitledSection title="Open">
           {openRepos.length === 0 && <div className="legit-subtle">No repositories are open.</div>}
           {openRepos.map((r) => (
             <div
@@ -120,8 +121,8 @@ export function RepositoriesPanel() {
               <Button variant="danger" onClick={() => closeRepo(r.id)} aria-label={`Close ${r.name}`}>Close</Button>
             </div>
           ))}
-        </Section>
-        <Section title="Recent">
+        </TitledSection>
+        <TitledSection title="Recent">
           {recents.length === 0 && <div className="legit-subtle">No recent repositories yet.</div>}
           {recents.map((p) => {
             const parsed = parseLocator(p);
@@ -133,19 +134,9 @@ export function RepositoriesPanel() {
               </div>
             );
           })}
-        </Section>
+        </TitledSection>
       </div>
     </div>
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: "1.333em" }}>
-      <div style={{ fontSize: "var(--fz-sm)", textTransform: "uppercase", letterSpacing: 0.5, color: "var(--subtle-fg)", marginBottom: "0.5em" }}>
-        {title}
-      </div>
-      {children}
-    </div>
-  );
-}

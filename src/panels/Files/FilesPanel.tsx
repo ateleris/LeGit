@@ -9,28 +9,22 @@ import { useActiveRepo } from "../../store/repos";
 import { useConfirmDestructive } from "../../store/settings";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
-import {
-  repoFilesAtRevision,
-  repoLfsFiles,
-  repoLfsStatus,
-  repoListFiles,
-  repoUntrackPath,
-  repoRevealPath,
-} from "../../lib/commands";
+import { api } from "../../lib/commands";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notify } from "../../store/notifications";
-import type { LfsStatus, RepoFileEntry, RepoFileKind } from "../../lib/types";
-import { formatAppError } from "../../lib/types";
+import type { RepoFileEntry, RepoFileKind } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { FileTree } from "../shared/FileTree/FileTree";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
-import { PanelContextMenuProvider, useMenuConfirm } from "../Commits/menu/PanelContextMenu";
-import { MenuItem, SectionLabel } from "../Commits/menu/primitives";
+import { PanelContextMenuProvider, useDestructiveMenuConfirm } from "../shared/menu/PanelContextMenu";
+import { MenuItem, SectionLabel, Separator } from "../shared/menu/primitives";
 import { AddToGitignoreMenuItem } from "../shared/AddToGitignoreMenuItem";
 import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
 import { FileRowMenuSection } from "../shared/FileRowMenuSection";
 import { STALE } from "../../lib/queryTiming";
+import { useLfsStatus } from "../../lib/queries/useRepoQueries";
 
 /** Summon payload for browse-at-commit mode: `{ rev }` lists that commit's
  * tree; `{ rev: null }` returns to the working tree. */
@@ -85,7 +79,7 @@ export function FilesPanel() {
   // both untracked-set and tracked-set changes without a new domain.
   const live = useQuery<RepoFileEntry[]>({
     queryKey: [repo?.id, "status", "repo-files", showIgnored],
-    queryFn: () => repoListFiles(repo!.id, showIgnored),
+    queryFn: () => api.repoListFiles(repo!.id, showIgnored),
     enabled: !!repo && rev === null,
     staleTime: STALE.live,
   });
@@ -94,18 +88,13 @@ export function FilesPanel() {
   // watcher invalidation) and never stale.
   const atRev = useQuery<RepoFileEntry[]>({
     queryKey: [repo?.id, "files-at", rev],
-    queryFn: () => repoFilesAtRevision(repo!.id, rev!),
+    queryFn: () => api.repoFilesAtRevision(repo!.id, rev!),
     enabled: !!repo && rev !== null,
     staleTime: STALE.immutable,
   });
 
   // Shares [repoId, "lfs"] with LfsWarningBanner: one probe per repo.
-  const lfsStatus = useQuery<LfsStatus>({
-    queryKey: [repo?.id, "lfs"],
-    queryFn: () => repoLfsStatus(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.rare,
-  });
+  const lfsStatus = useLfsStatus(repo?.id);
   const usesLfs = lfsStatus.data?.uses_lfs === true;
 
   // LFS-tracked paths for the icon override. Working-tree view only: the
@@ -117,7 +106,7 @@ export function FilesPanel() {
   // Non-LFS repos never fetch (enabled gate) - zero extra git calls.
   const lfsFiles = useQuery<string[]>({
     queryKey: [repo?.id, "status", "lfs-files", showIgnored],
-    queryFn: () => repoLfsFiles(repo!.id, showIgnored),
+    queryFn: () => api.repoLfsFiles(repo!.id, showIgnored),
     enabled: !!repo && rev === null && usesLfs,
     staleTime: STALE.live,
   });
@@ -211,7 +200,7 @@ export function FilesPanel() {
     async (path: string) => {
       if (!repo) return;
       try {
-        await repoRevealPath(repo.id, path);
+        await api.repoRevealPath(repo.id, path);
       } catch (e) {
         notify.error(formatAppError(e));
       }
@@ -377,7 +366,9 @@ export function FilesPanel() {
                     onView={() => viewInFileView(file.path)}
                     onReveal={() => reveal(file.path)}
                     onUntrack={() =>
-                      onIgnored(() => repoUntrackPath(repo.id, file.path, false), `Stopped tracking ${file.path}`)
+                      onIgnored(async () => {
+                        await api.repoUntrackPath(repo.id, file.path, false);
+                      }, `Stopped tracking ${file.path}`)
                     }
                     onClose={closeMenu}
                   />,
@@ -445,13 +436,12 @@ function FileMenuSection({
   onClose: () => void;
 }) {
   const confirmDestructive = useConfirmDestructive();
-  const menuConfirm = useMenuConfirm();
+  const destructiveMenuConfirm = useDestructiveMenuConfirm();
   const tracked = kind === "tracked";
 
   const requestUntrack = () => {
     const run = () => { onClose(); onUntrack(); };
-    if (!confirmDestructive) return run();
-    menuConfirm(`Stop tracking ${path} (kept on disk) and ignore it?`, run);
+    destructiveMenuConfirm(`Stop tracking ${path} (kept on disk) and ignore it?`, run);
   };
 
   return (
@@ -468,14 +458,15 @@ function FileMenuSection({
         gitignore={!atRev && kind === "untracked" ? "file" : null}
         onClose={onClose}
       />
-      {!atRev && (
+      {!atRev && submodule && (
+        <MenuItem onClick={() => { onClose(); onReveal(); }}>Open in folder</MenuItem>
+      )}
+      {!atRev && tracked && !submodule && (
         <>
-          <MenuItem onClick={() => { onClose(); onReveal(); }}>Reveal in file manager</MenuItem>
-          {tracked && !submodule && (
-            <MenuItem onClick={requestUntrack}>
-              {confirmDestructive ? "Stop tracking & ignore…" : "Stop tracking & ignore"}
-            </MenuItem>
-          )}
+          <Separator />
+          <MenuItem onClick={requestUntrack}>
+            {confirmDestructive ? "Stop tracking & ignore…" : "Stop tracking & ignore"}
+          </MenuItem>
         </>
       )}
     </>
@@ -502,7 +493,7 @@ function DirMenuSection({
       {!atRev && <AddToGitignoreMenuItem path={dirPath} isDir onClose={onClose} />}
       <CopyPathMenuSection path={dirPath} onClose={onClose} />
       {!atRev && (
-        <MenuItem onClick={() => { onClose(); onReveal(); }}>Reveal in file manager</MenuItem>
+        <MenuItem onClick={() => { onClose(); onReveal(); }}>Open in folder</MenuItem>
       )}
     </>
   );

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatWslLocator, hostLabel, parseLocator, supportsHostFolderPicker, supportsRepoGitOverride, worktreeLocator } from "./locator";
+import { parseLocator, supportsHostFolderPicker, supportsRepoGitOverride, worktreeLocator } from "./locator";
 
 describe("parseLocator", () => {
   it("treats bare paths as local, byte-identical", () => {
@@ -8,10 +8,8 @@ describe("parseLocator", () => {
     }
   });
 
-  it("round-trips wsl locators", () => {
-    const s = formatWslLocator("Ubuntu", "/home/orell/github/LeGit");
-    expect(s).toBe("wsl://Ubuntu/home/orell/github/LeGit");
-    expect(parseLocator(s)).toEqual({
+  it("parses wsl locators", () => {
+    expect(parseLocator("wsl://Ubuntu/home/orell/github/LeGit")).toEqual({
       host: { kind: "wsl", distro: "Ubuntu" },
       path: "/home/orell/github/LeGit",
     });
@@ -24,13 +22,6 @@ describe("parseLocator", () => {
   });
 });
 
-describe("hostLabel", () => {
-  it("labels wsl hosts by distro and local as null", () => {
-    expect(hostLabel({ kind: "wsl", distro: "Ubuntu" })).toBe("Ubuntu");
-    expect(hostLabel(null)).toBeNull();
-    expect(hostLabel(undefined)).toBeNull();
-  });
-});
 
 describe("supportsRepoGitOverride", () => {
   it("allows a per-repo override for local repos only", () => {

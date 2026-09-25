@@ -4,7 +4,7 @@
 export function segStyle(active: boolean, side: "left" | "right"): React.CSSProperties {
   return {
     fontSize: "var(--fz-sm)",
-    padding: "2px 8px",
+    padding: "0.167em 0.667em",
     border: "1px solid var(--panel-border)",
     borderRadius: side === "left" ? "3px 0 0 3px" : "0 3px 3px 0",
     marginLeft: side === "right" ? -1 : 0,

@@ -1,4 +1,4 @@
-//! Persistence commands: settings, dock layout, theme files (DESIGN.md §7.8).
+//! Persistence commands: settings, dock layout, theme files (DESIGN-v0.1.md §7.8).
 //!
 //! Settings are a single JSON document under the app data dir. Themes are
 //! `.legit-theme.json` files under either the bundled resource dir
@@ -6,16 +6,17 @@
 //! validation rules from §6.5 live next to `save_theme`.
 
 use crate::error::AppError;
-use crate::state::{
-    max_commits_dot_radius, min_commits_row_height, AppState, CommitDateFormat, GlobalSettings,
-    RegionPlacement,
-};
-use legit_core::SwitchDirtyBehavior;
+use crate::state::{AppState, GlobalSettings};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::PathBuf;
 
 const THEME_EXT: &str = ".legit-theme.json";
+
+/// Broadcast after any persisted settings/theme change so secondary windows
+/// re-apply theme and font. Matches `GLOBAL_SETTINGS_CHANGED_EVENT` in
+/// `src/lib/events.ts`.
+pub(crate) const GLOBAL_SETTINGS_CHANGED_EVENT: &str = "legit://global-settings-changed";
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct ThemeEntry {
@@ -42,6 +43,7 @@ pub async fn get_global_settings(
 #[tauri::command]
 #[specta::specta]
 pub async fn set_active_theme(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     name: String,
 ) -> Result<(), AppError> {
@@ -49,489 +51,34 @@ pub async fn set_active_theme(
     state.mutate_global(|s| {
         s.active_theme = Some(safe);
     })
-    .await
-}
-
-/// Persist the region layout state (divider sizes, collapse, placement).
-/// Called on drag-end and toggle; debounced by the frontend for dragging.
-#[tauri::command]
-#[specta::specta]
-pub async fn save_region_state(
-    state: tauri::State<'_, AppState>,
-    placement: RegionPlacement,
-    size_top: Option<f64>,
-    size_left: Option<f64>,
-    collapsed: bool,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.global_region_placement = placement;
-        s.global_region_size_top = size_top;
-        s.global_region_size_left = size_left;
-        s.global_dock_collapsed = collapsed;
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn save_column_preferences(
-    state: tauri::State<'_, AppState>,
-    prefs: serde_json::Value,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.column_preferences = prefs;
-    })
-    .await
-}
-
-/// Persist the Changed Files panel's view mode (`"tree"` | `"flat"`).
-#[tauri::command]
-#[specta::specta]
-pub async fn save_changed_files_view_mode(
-    state: tauri::State<'_, AppState>,
-    mode: String,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.changed_files_view_mode = Some(mode);
-    })
-    .await
-}
-
-/// Persist the Branches section's list style (`"tree"` | `"flat"`).
-#[tauri::command]
-#[specta::specta]
-pub async fn save_branch_list_view(
-    state: tauri::State<'_, AppState>,
-    mode: String,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.branch_list_view = Some(mode);
-    })
-    .await
-}
-
-/// Persist the Refs panel sort order for branches
-/// (`"alphabetical"` | `"date"` | `"date_reversed"`). Unknown values are
-/// stored as-is; the frontend falls back to alphabetical when reading.
-#[tauri::command]
-#[specta::specta]
-pub async fn save_refs_sort_mode(
-    state: tauri::State<'_, AppState>,
-    mode: String,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.refs_sort_mode = Some(mode);
-    })
-    .await
-}
-
-/// Persist the Tags section's own sort order (same values; unset inherits
-/// `refs_sort_mode`).
-#[tauri::command]
-#[specta::specta]
-pub async fn save_tags_sort_mode(
-    state: tauri::State<'_, AppState>,
-    mode: String,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.tags_sort_mode = Some(mode);
-    })
-    .await
-}
-
-/// Persist the global UI font size (px), clamped to a sane range.
-#[tauri::command]
-#[specta::specta]
-pub async fn save_ui_font_size(
-    state: tauri::State<'_, AppState>,
-    size: f64,
-) -> Result<f64, AppError> {
-    let clamped = size.clamp(8.0, 24.0);
-    state.mutate_global(|s| {
-        s.ui_font_size = clamped;
-    })
     .await?;
-    Ok(clamped)
+    use tauri::Emitter as _;
+    let _ = app.emit(GLOBAL_SETTINGS_CHANGED_EVENT, ());
+    Ok(())
 }
 
-/// Persist the dock chrome dimensions: the gap between panel groups and the
-/// groups' corner radius (px, clamped; 0/0 = the flush square default).
+/// Patch one or more global settings (JSON field names) in a single write and
+/// return the merged result. Fields owned by dedicated commands (git path,
+/// theme, watcher, session bookkeeping, profiles, accounts) are refused, and
+/// values are normalized (clamped) by `GlobalSettings::with_patch` - so the
+/// frontend never needs to mirror a clamp to know what was stored.
 #[tauri::command]
 #[specta::specta]
-pub async fn save_panel_chrome(
+pub async fn patch_global_settings(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
-    gap: f64,
-    radius: f64,
-    border: f64,
-) -> Result<PanelChrome, AppError> {
-    let chrome = PanelChrome {
-        gap: gap.clamp(0.0, 16.0),
-        radius: radius.clamp(0.0, 16.0),
-        border: border.clamp(0.0, 8.0),
+    patch: serde_json::Value,
+) -> Result<GlobalSettings, AppError> {
+    let merged = {
+        let mut s = state.global_settings.write().await;
+        let next = s.with_patch(&patch)?;
+        *s = next.clone();
+        next
     };
-    state
-        .mutate_global(|s| {
-            s.panel_gap = chrome.gap;
-            s.panel_corner_radius = chrome.radius;
-            s.panel_border_width = chrome.border;
-        })
-        .await?;
-    Ok(chrome)
-}
-
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, specta::Type)]
-pub struct PanelChrome {
-    pub gap: f64,
-    pub radius: f64,
-    pub border: f64,
-}
-
-/// Persist the Commits-panel graph metrics (row/line height, per-lane width,
-/// commit-dot radius, and connector line width). Clamps each value to sane px
-/// bounds before storing; the dot radius and line width are capped to half the
-/// smaller cell dimension so they can never overflow the cell or overlap a
-/// neighbouring lane. Text has no per-panel size — it follows the global UI
-/// font size.
-#[tauri::command]
-#[specta::specta]
-pub async fn save_commits_graph_metrics(
-    state: tauri::State<'_, AppState>,
-    row_height: f64,
-    lane_width: f64,
-    dot_radius: f64,
-    line_width: f64,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        // The row must clear a ref chip, which scales with the UI font size;
-        // lane width shares the same font-derived floor.
-        let min_rh = min_commits_row_height(s.ui_font_size);
-        let rh = row_height.clamp(min_rh, 120.0);
-        let lw = lane_width.clamp(min_rh, 120.0);
-        s.commits_row_height = rh;
-        s.commits_lane_width = lw;
-        s.commits_dot_radius = dot_radius.clamp(1.0, max_commits_dot_radius(rh, lw));
-        // Line width can't exceed half the smaller cell dimension or the stroke
-        // would overflow the cell / neighbouring lane — same bound as the dot.
-        s.commits_line_width = line_width.clamp(1.0, max_commits_dot_radius(rh, lw));
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn set_line_ending_chips_in_changes(
-    state: tauri::State<'_, AppState>,
-    enabled: bool,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.line_ending_chips_in_changes = enabled;
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn set_warn_on_line_ending_commit(
-    state: tauri::State<'_, AppState>,
-    warn: bool,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.warn_on_line_ending_commit = warn;
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn set_confirm_discard(
-    state: tauri::State<'_, AppState>,
-    confirm: bool,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.confirm_discard = confirm;
-    })
-    .await
-}
-
-/// Detect case-only renames git status cannot see (default true).
-#[tauri::command]
-#[specta::specta]
-pub async fn set_detect_case_renames(
-    state: tauri::State<'_, AppState>,
-    enabled: bool,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.detect_case_renames = enabled;
-    })
-    .await
-}
-
-/// Whether creating a branch also checks it out (default true).
-#[tauri::command]
-#[specta::specta]
-pub async fn set_checkout_new_branch(
-    state: tauri::State<'_, AppState>,
-    enabled: bool,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.checkout_new_branch = enabled;
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn set_checkout_remote_fast_forward(
-    state: tauri::State<'_, AppState>,
-    enabled: bool,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.checkout_remote_fast_forward = enabled;
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn set_submodule_attach_branch(
-    state: tauri::State<'_, AppState>,
-    enabled: bool,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.submodule_attach_branch = enabled;
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn set_external_editor_command(
-    state: tauri::State<'_, AppState>,
-    command: Option<String>,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        // Blank means "not configured" — store None so the fallback applies.
-        s.external_editor_command = command.filter(|c| !c.trim().is_empty());
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn set_auto_fetch_enabled(
-    state: tauri::State<'_, AppState>,
-    enabled: bool,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.auto_fetch_enabled = enabled;
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn set_check_updates_on_startup(
-    state: tauri::State<'_, AppState>,
-    enabled: bool,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.check_updates_on_startup = enabled;
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn set_auto_fetch_interval_minutes(
-    state: tauri::State<'_, AppState>,
-    minutes: u32,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.auto_fetch_interval_minutes = minutes.max(1);
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn set_commit_avatars(
-    state: tauri::State<'_, AppState>,
-    enabled: bool,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.commit_avatars = enabled;
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn set_commit_initials(
-    state: tauri::State<'_, AppState>,
-    enabled: bool,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.commit_initials = enabled;
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn set_auto_push_tags(
-    state: tauri::State<'_, AppState>,
-    enabled: bool,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.auto_push_tags = enabled;
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn set_diff_syntax_highlighting(
-    state: tauri::State<'_, AppState>,
-    enabled: bool,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.diff_syntax_highlighting = enabled;
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn set_commit_date_absolute(
-    state: tauri::State<'_, AppState>,
-    enabled: bool,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.commit_date_absolute = enabled;
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn set_commit_date_format(
-    state: tauri::State<'_, AppState>,
-    format: CommitDateFormat,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.commit_date_format = format;
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn set_commit_date_show_time(
-    state: tauri::State<'_, AppState>,
-    enabled: bool,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.commit_date_show_time = enabled;
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn set_suppressed_auto_open_panels(
-    state: tauri::State<'_, AppState>,
-    panels: Vec<String>,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.suppressed_auto_open_panels = panels;
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn set_working_changes_section_order(
-    state: tauri::State<'_, AppState>,
-    order: Vec<String>,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.working_changes_section_order = order;
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn save_switch_dirty_behavior(
-    state: tauri::State<'_, AppState>,
-    behavior: SwitchDirtyBehavior,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.switch_dirty_behavior = Some(behavior);
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn save_pull_strategy(
-    state: tauri::State<'_, AppState>,
-    strategy: legit_core::PullStrategy,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.pull_strategy = Some(strategy);
-    })
-    .await
-}
-
-/// Persist the Stash button's default mode (include untracked files or not).
-#[tauri::command]
-#[specta::specta]
-pub async fn save_stash_include_untracked(
-    state: tauri::State<'_, AppState>,
-    include_untracked: bool,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.stash_include_untracked = include_untracked;
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn save_lane_colored_branch_chips(
-    state: tauri::State<'_, AppState>,
-    enabled: bool,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.lane_colored_branch_chips = enabled;
-    })
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn save_stash_base_lane_color(
-    state: tauri::State<'_, AppState>,
-    enabled: bool,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.stash_base_lane_color = enabled;
-    })
-    .await
-}
-
-/// Persist the `push --recurse-submodules` guard mode (None = off).
-#[tauri::command]
-#[specta::specta]
-pub async fn save_push_recurse_submodules(
-    state: tauri::State<'_, AppState>,
-    mode: Option<legit_core::PushRecurseMode>,
-) -> Result<(), AppError> {
-    state.mutate_global(|s| {
-        s.push_recurse_submodules = mode;
-    })
-    .await
+    state.persist_global_settings().await?;
+    use tauri::Emitter as _;
+    let _ = app.emit(GLOBAL_SETTINGS_CHANGED_EVENT, ());
+    Ok(merged)
 }
 
 #[tauri::command]
@@ -594,6 +141,7 @@ pub async fn load_theme(
 #[tauri::command]
 #[specta::specta]
 pub async fn save_theme(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     name: String,
     contents: serde_json::Value,
@@ -604,7 +152,9 @@ pub async fn save_theme(
     tokio::fs::create_dir_all(&dir).await?;
     let path = theme_file_path(&dir, &safe)?;
     let json = serde_json::to_string_pretty(&contents)?;
-    tokio::fs::write(&path, json).await?;
+    crate::persist::write_atomic(&path, json).await?;
+    use tauri::Emitter as _;
+    let _ = app.emit(GLOBAL_SETTINGS_CHANGED_EVENT, ());
     Ok(ThemeEntry {
         name: safe,
         source: ThemeSource::User,
@@ -625,7 +175,7 @@ pub async fn delete_theme(
     Ok(())
 }
 
-/// Validate against the rules in DESIGN.md §6.5. Strict on structure, lenient
+/// Validate against the rules in DESIGN-v0.1.md §6.5. Strict on structure, lenient
 /// on unknown content. Tokens missing/unknown tokens are *not* rejected here
 /// — the frontend fills missing ones from the default theme and preserves
 /// unknown ones silently.
@@ -741,17 +291,7 @@ fn theme_file_path(dir: &std::path::Path, name: &str) -> Result<PathBuf, AppErro
 }
 
 fn sanitize_theme_name(name: &str) -> Result<String, AppError> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        return Err(AppError::InvalidTheme("theme name is empty".into()));
-    }
-    let bad: &[char] = &['/', '\\', '\0', ':', '*', '?', '"', '<', '>', '|'];
-    if trimmed.chars().any(|c| bad.contains(&c) || c.is_control()) {
-        return Err(AppError::InvalidTheme(format!(
-            "theme name contains forbidden character(s): {trimmed:?}"
-        )));
-    }
-    Ok(trimmed.to_string())
+    crate::persist::sanitize_file_stem(name).map_err(|e| AppError::InvalidTheme(format!("theme {e}")))
 }
 
 

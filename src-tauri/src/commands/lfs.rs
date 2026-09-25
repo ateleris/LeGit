@@ -4,6 +4,7 @@
 
 use crate::error::AppError;
 use crate::state::AppState;
+use legit_core::cli_impl::parsers::lfs::{add_lfs_pattern, parse_lfs_patterns, remove_lfs_pattern};
 use legit_core::LfsStatus;
 
 /// LFS usage/availability for the repo. A missing binary or unset config is
@@ -53,9 +54,6 @@ pub async fn repo_lfs_files(
 // 2026-08-17-lfs-track-management-design.md)
 // ---------------------------------------------------------------------------
 
-/// The attribute set `git lfs track` writes; a tracked line consisting of a
-/// subset of these can be removed safely, anything extra must not be dropped.
-const LFS_ATTRS: [&str; 4] = ["filter=lfs", "diff=lfs", "merge=lfs", "-text"];
 
 /// LFS patterns of the repo: the manageable root `.gitattributes` ones plus
 /// (read-only) which nested attribute files also declare `filter=lfs`.
@@ -65,110 +63,19 @@ pub struct LfsPatternsView {
     pub nested_files: Vec<String>,
 }
 
-/// Split a `.gitattributes` line into (pattern, attrs). The pattern token may
-/// be double-quoted (patterns containing whitespace). None for blank/comment
-/// lines or a dangling quote.
-fn split_attr_line(line: &str) -> Option<(String, Vec<&str>)> {
-    let line = line.trim();
-    if line.is_empty() || line.starts_with('#') {
-        return None;
-    }
-    if let Some(rest) = line.strip_prefix('"') {
-        let end = rest.find('"')?;
-        Some((rest[..end].to_string(), rest[end + 1..].split_whitespace().collect()))
-    } else {
-        let mut parts = line.split_whitespace();
-        let pattern = parts.next()?.to_string();
-        Some((pattern, parts.collect()))
-    }
-}
 
-/// Patterns whose attributes include `filter=lfs`, in file order.
-fn parse_lfs_patterns(text: &str) -> Vec<String> {
-    text.lines()
-        .filter_map(split_attr_line)
-        .filter(|(_, attrs)| attrs.contains(&"filter=lfs"))
-        .map(|(pattern, _)| pattern)
-        .collect()
-}
 
-/// The exact line `git lfs track <pattern>` would write (quoted when the
-/// pattern contains whitespace).
-fn format_track_line(pattern: &str) -> String {
-    let quoted = if pattern.chars().any(char::is_whitespace) {
-        format!("\"{pattern}\"")
-    } else {
-        pattern.to_string()
-    };
-    format!("{quoted} filter=lfs diff=lfs merge=lfs -text")
-}
 
-/// Append a track line for `pattern`. None = already tracked (no-op).
-/// Preserves existing content and guarantees a trailing newline.
-fn add_lfs_pattern(existing: &str, pattern: &str) -> Option<String> {
-    if parse_lfs_patterns(existing).iter().any(|p| p == pattern) {
-        return None;
-    }
-    let mut out = existing.to_string();
-    if !out.is_empty() && !out.ends_with('\n') {
-        out.push('\n');
-    }
-    out.push_str(&format_track_line(pattern));
-    out.push('\n');
-    Some(out)
-}
 
-/// Remove `pattern`'s LFS line. Ok(None) = not tracked (no-op). Err when the
-/// matching line carries attributes beyond the standard LFS set - refusing
-/// beats silently dropping the user's other attributes.
-fn remove_lfs_pattern(existing: &str, pattern: &str) -> Result<Option<String>, String> {
-    let mut removed = false;
-    let mut kept: Vec<&str> = Vec::new();
-    for line in existing.lines() {
-        match split_attr_line(line) {
-            Some((p, attrs)) if p == pattern && attrs.contains(&"filter=lfs") => {
-                if attrs.iter().any(|a| !LFS_ATTRS.contains(a)) {
-                    return Err(format!(
-                        "the .gitattributes line for \"{pattern}\" carries attributes \
-                         besides the standard LFS set; edit .gitattributes directly \
-                         so they are not lost"
-                    ));
-                }
-                removed = true;
-            }
-            _ => kept.push(line),
-        }
-    }
-    if !removed {
-        return Ok(None);
-    }
-    let mut out = kept.join("\n");
-    if !out.is_empty() {
-        out.push('\n');
-    }
-    Ok(Some(out))
-}
 
 /// Build the view: root patterns from `<root>/.gitattributes` (missing file =
 /// none), nested files from the same tracked-attribute-files grep the LFS
 /// status probe uses (exit 1 = no hits).
 async fn patterns_view(session: &crate::state::RepoSession) -> LfsPatternsView {
     let root_text = read_gitattributes(session).await;
-    let runner = session.runner.read().await.clone();
-    let nested_files = match runner
-        .run_expecting(
-            &["grep", "-l", "-e", "filter=lfs", "--", ":(glob)**/.gitattributes"],
-            &[1],
-        )
-        .await
-    {
-        Ok(out) if out.exit_code == Some(0) => out
-            .stdout
-            .lines()
-            .filter(|f| *f != ".gitattributes" && !f.is_empty())
-            .map(str::to_string)
-            .collect(),
-        _ => vec![],
+    let nested_files = match session.backend.lfs_attribute_files().await {
+        Ok(files) => files.into_iter().filter(|f| f != ".gitattributes").collect(),
+        Err(_) => vec![],
     };
     LfsPatternsView { root_patterns: parse_lfs_patterns(&root_text), nested_files }
 }
@@ -241,7 +148,7 @@ pub async fn repo_lfs_untrack(
 /// Root `.gitattributes` text via the repo host's fs (missing = empty, like
 /// the read_to_string().unwrap_or_default() it replaces).
 async fn read_gitattributes(session: &crate::state::RepoSession) -> String {
-    let hp = session.host_root().join(".gitattributes");
+    let hp = session.root.clone().join(".gitattributes");
     match session.host.fs().read(&hp, None).await {
         Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
         Err(_) => String::new(),
@@ -252,65 +159,11 @@ async fn write_gitattributes(
     session: &crate::state::RepoSession,
     content: &str,
 ) -> Result<(), AppError> {
-    let hp = session.host_root().join(".gitattributes");
+    let hp = session.root.clone().join(".gitattributes");
     session
         .host
         .fs()
         .write(&hp, content.as_bytes())
         .await
         .map_err(|e| AppError::Io(format!("write {hp}: {e}")))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_lfs_patterns_shapes() {
-        let text = "\
-# comment\n\
-*.png filter=lfs diff=lfs merge=lfs -text\n\
-\"my file.psd\" filter=lfs diff=lfs merge=lfs -text\n\
-*.txt text eol=lf\n\
-*.bin filter=lfs\n";
-        let patterns = parse_lfs_patterns(text);
-        assert_eq!(patterns, vec!["*.png", "my file.psd", "*.bin"]);
-        assert!(parse_lfs_patterns("").is_empty());
-    }
-
-    #[test]
-    fn add_lfs_pattern_appends_and_dedupes() {
-        // Create-from-empty, with trailing newline.
-        let out = add_lfs_pattern("", "*.png").expect("added");
-        assert_eq!(out, "*.png filter=lfs diff=lfs merge=lfs -text\n");
-        // Append preserves existing content and fixes a missing final newline.
-        let out = add_lfs_pattern("*.txt text eol=lf", "*.png").expect("added");
-        assert_eq!(out, "*.txt text eol=lf\n*.png filter=lfs diff=lfs merge=lfs -text\n");
-        // Whitespace patterns are quoted on write.
-        let out = add_lfs_pattern("", "my file.psd").expect("added");
-        assert_eq!(out, "\"my file.psd\" filter=lfs diff=lfs merge=lfs -text\n");
-        // Duplicate (plain and quoted existing forms) is a no-op.
-        assert!(add_lfs_pattern("*.png filter=lfs diff=lfs merge=lfs -text\n", "*.png").is_none());
-        assert!(add_lfs_pattern("\"my file.psd\" filter=lfs\n", "my file.psd").is_none());
-    }
-
-    #[test]
-    fn remove_lfs_pattern_rules() {
-        let text = "*.txt text eol=lf\n*.png filter=lfs diff=lfs merge=lfs -text\n";
-        // Standard line removed, others kept.
-        let out = remove_lfs_pattern(text, "*.png").expect("ok").expect("removed");
-        assert_eq!(out, "*.txt text eol=lf\n");
-        // Absent pattern is a no-op (Ok(None)).
-        assert!(remove_lfs_pattern(text, "*.zip").expect("ok").is_none());
-        // A same-pattern line WITHOUT filter=lfs is not touched and not a match.
-        assert!(remove_lfs_pattern("*.png text\n", "*.png").expect("ok").is_none());
-        // Extra attributes on the LFS line: refuse rather than drop them.
-        let err = remove_lfs_pattern("*.png filter=lfs text=auto\n", "*.png").unwrap_err();
-        assert!(err.contains(".gitattributes"), "message should point at manual editing: {err}");
-        // Quoted lines match their unquoted pattern.
-        let out = remove_lfs_pattern("\"my file.psd\" filter=lfs diff=lfs merge=lfs -text\n", "my file.psd")
-            .expect("ok")
-            .expect("removed");
-        assert_eq!(out, "");
-    }
 }

@@ -20,7 +20,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useState } from "react";
 import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
 import { WarningIcon } from "../../icons";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import type { CredentialHelperView, IdentityView, ScopedConfig, SigningView } from "../../lib/types";
 import { Button } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";

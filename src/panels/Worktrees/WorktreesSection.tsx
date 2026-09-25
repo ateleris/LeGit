@@ -1,27 +1,18 @@
 import { useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
-import { useConfirmDestructive } from "../../store/settings";
-import {
-  repoBranches,
-  repoWorktreeAdd,
-  repoWorktreeList,
-  repoWorktreeLock,
-  repoWorktreePrune,
-  repoWorktreeRemove,
-  repoWorktreeUnlock,
-} from "../../lib/commands";
+import { api } from "../../lib/commands";
 import type { Branch, WorktreeAddMode, WorktreeInfo } from "../../lib/types";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { supportsHostFolderPicker, worktreeLocator } from "../../lib/locator";
 import { notify } from "../../store/notifications";
-import { confirmDialog, promptDialog } from "../../store/confirm";
+import { confirmDestructiveAction, confirmDialog, promptDialog } from "../../store/confirm";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { worktreeBadges, worktreeLabel } from "./worktreeRows";
-import { STALE } from "../../lib/queryTiming";
+import { useBranches, useWorktrees } from "../../lib/queries/useRepoQueries";
 
 const normalize = (p: string) => p.replaceAll("\\", "/");
 
@@ -30,26 +21,15 @@ export function WorktreesSection() {
   const repo = useActiveRepo();
   const queryClient = useQueryClient();
   const openRepo = useRepoStore((s) => s.openRepo);
-  const confirmDestructive = useConfirmDestructive();
   const [adding, setAdding] = useState(false);
   const [addPath, setAddPath] = useState("");
   const [addMode, setAddMode] = useState<"new_branch" | "checkout" | "detach">("new_branch");
   const [addBranch, setAddBranch] = useState("");
 
-  const { data: worktrees = [] } = useQuery<WorktreeInfo[]>({
-    queryKey: [repo?.id, "worktrees"],
-    queryFn: () => repoWorktreeList(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.live,
-  });
+  const { data: worktrees = [] } = useWorktrees(repo?.id);
   // Existing local branches feed the checkout mode's picker; branches
   // checked out in some worktree are filtered out (git would refuse them).
-  const { data: branches = [] } = useQuery<Branch[]>({
-    queryKey: [repo?.id, "branches"],
-    queryFn: () => repoBranches(repo!.id),
-    enabled: !!repo && adding,
-    staleTime: STALE.live,
-  });
+  const { data: branches = [] } = useBranches(repo?.id, { enabled: adding });
 
   const refresh = () => {
     if (!repo) return;
@@ -90,26 +70,24 @@ export function WorktreesSection() {
           : addMode === "checkout"
             ? { kind: "checkout", branch: addBranch }
             : { kind: "detach", rev: addBranch.trim() === "" ? null : addBranch.trim() };
-      await repoWorktreeAdd(repo.id, addPath.trim(), mode);
+      await api.repoWorktreeAdd(repo.id, addPath.trim(), mode);
       setAdding(false);
       setAddPath("");
       setAddBranch("");
     });
 
   const requestRemove = async (w: WorktreeInfo) => {
-    if (confirmDestructive) {
-      const ok = await confirmDialog({
-        title: "Remove worktree",
-        message:
-          "Deletes the worktree checkout from disk. The branch and its commits are kept.",
-        detail: w.path,
-        confirmLabel: "Remove",
-      });
-      if (!ok) return;
-    }
+    const ok = await confirmDestructiveAction({
+      title: "Remove worktree",
+      message:
+        "Deletes the worktree checkout from disk. The branch and its commits are kept.",
+      detail: w.path,
+      confirmLabel: "Remove",
+    });
+    if (!ok) return;
     void run(async () => {
       try {
-        await repoWorktreeRemove(repo.id, w.path, false);
+        await api.repoWorktreeRemove(repo.id, w.path, false);
       } catch (e) {
         // Dirty worktree: git refuses without --force. Always confirm the
         // force (data loss), independent of the confirm setting - this is a
@@ -123,7 +101,7 @@ export function WorktreesSection() {
           confirmLabel: "Force remove",
         });
         if (!ok) return;
-        await repoWorktreeRemove(repo.id, w.path, true);
+        await api.repoWorktreeRemove(repo.id, w.path, true);
       }
     });
   };
@@ -136,7 +114,7 @@ export function WorktreesSection() {
           <ToolbarButton
             label="Prune"
             disabled={busy}
-            onClick={() => void run(async () => { await repoWorktreePrune(repo.id); })}
+            onClick={() => void run(async () => { await api.repoWorktreePrune(repo.id); })}
           />
         )}
       </div>
@@ -256,7 +234,7 @@ export function WorktreesSection() {
                   onClick={() =>
                     w.locked !== null
                       ? void run(async () => {
-                          await repoWorktreeUnlock(repo.id, w.path);
+                          await api.repoWorktreeUnlock(repo.id, w.path);
                         })
                       : void (async () => {
                           const reason = await promptDialog({
@@ -268,7 +246,7 @@ export function WorktreesSection() {
                           });
                           if (reason === null) return;
                           void run(async () => {
-                            await repoWorktreeLock(repo.id, w.path, reason.trim() || null);
+                            await api.repoWorktreeLock(repo.id, w.path, reason.trim() || null);
                           });
                         })()
                   }

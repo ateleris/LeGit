@@ -2,77 +2,42 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PanelError } from "../shared/PanelError";
 import { segStyle } from "../shared/segmented";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRepoStore } from "../../store/repos";
-import { usePanelViewState } from "../../store/panelViewState";
-import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
-import { useSummonTarget } from "../../store/summon";
-import {
-  repoDiff,
-  repoFileAtRevision,
-  repoDiscardHunk,
-  repoDiscardLines,
-  repoReadWorktreeFile,
-  repoStage,
-  repoStageHunk,
-  repoStageLines,
-  repoUnstageHunk,
-  repoUnstageLines,
-  repoWriteWorktreeFile,
-} from "../../lib/commands";
+import { useSettingsStore } from "../../store/settings";
+import { useGuardedEditorRequest } from "../shared/useGuardedEditorRequest";
+import { api } from "../../lib/commands";
 import type { DiffEntry, DiffRequest ,
   TextDiff,
 } from "../../lib/types";
 import { diffSides } from "../../lib/diffSides";
 import { LineEndingBadge, RevertableLineEndingBadge } from "../shared/LineEndingBadge";
-import { SubmoduleDiffView, SubmoduleDirtyNotice } from "./SubmoduleDiffView";
-import { ImageDiffView } from "./ImageDiffView";
-import { binarySizes, isSvgPath } from "../../lib/previewSurface";
-import { formatByteSize } from "../../lib/formatBytes";
-import { LfsPointerNotice } from "../shared/LfsPointerNotice";
-import { lfsPointerDiffSides } from "../../lib/lfsPointer";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notify } from "../../store/notifications";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import {
   PanelContextMenuProvider,
-  useMenuConfirm,
-  usePanelContextMenu,
   type BaselineEntry,
-} from "../Commits/menu/PanelContextMenu";
-import { MenuItem, Separator } from "../Commits/menu/primitives";
+} from "../shared/menu/PanelContextMenu";
 import {
-  DiffEditor,
   type DiffEditorHandle,
   type DiffViewMode,
   type HunkAction,
   type LineActionOp,
 } from "./DiffEditor";
 import { spliceEdits, splitLines } from "./editModel";
-import { lineActionLabel } from "./selectionModel";
 import { expandDiff, type HunkExpansion } from "./expandModel";
-import { EXPAND_STEP } from "./hunkExpanders";
+import { EXPAND_STEP } from "../codemirror/hunkExpanders";
 import { STALE } from "../../lib/queryTiming";
-
-const ACTION_TITLE: Record<HunkAction, string> = {
-  stage: "Stage chunk",
-  unstage: "Unstage chunk",
-  discard: "Discard chunk",
-};
-
-type ContextMode = "chunked" | "full";
-
-// View-mode preferences are remembered client-side across panel re-opens.
-const MODE_KEY = "legit.diff.viewMode";
-const CONTEXT_KEY = "legit.diff.contextMode";
-const FULL_FILE_CONTEXT = 100_000;
-const CHUNKED_CONTEXT = 3;
-
-function loadPref<T extends string>(key: string, fallback: T): T {
-  const v = typeof localStorage !== "undefined" ? localStorage.getItem(key) : null;
-  return (v as T) ?? fallback;
-}
+import { DiffBody } from "./DiffBody";
+import {
+  CHUNKED_CONTEXT,
+  CONTEXT_KEY,
+  FULL_FILE_CONTEXT,
+  MODE_KEY,
+  loadPref,
+  type ContextMode,
+} from "./viewPrefs";
 
 /** Per-hunk actions offered for a given diff source. Commit diffs are read-only. */
 function actionsForSource(req: DiffRequest | null): HunkAction[] {
@@ -101,53 +66,35 @@ function sameTarget(a: DiffRequest | null, b: DiffRequest | null): boolean {
  */
 export function DiffPanel() {
   const queryClient = useQueryClient();
-  // Per-repo view state (store/panelViewState.ts): the shown diff survives a
-  // layout apply's dock rebuild and the slot swap with Merge, and each repo
-  // keeps its own across tab switches (the query below only ever runs for
-  // the active repo's request).
-  const [request, setRequest] = usePanelViewState<DiffRequest | null>("diff.request", null);
+  // The shown diff is per-repo view state: it survives a layout apply's dock
+  // rebuild and the slot swap with Merge, and each repo keeps its own across
+  // tab switches (the query below only ever runs for the active repo's
+  // request). While the new side has unsaved edits, a summoned file switch
+  // waits for the user.
+  const {
+    request,
+    requestRef,
+    dirty,
+    dirtyRef,
+    setDirty,
+    pending,
+    acceptPending,
+    rejectPending,
+    rebuildKey,
+    rebuild,
+    guardSave,
+    activeRepoId,
+  } = useGuardedEditorRequest<DiffRequest>({
+    panelId: "diff",
+    viewStateKey: "diff.request",
+    sameTarget,
+  });
   const [mode, setMode] = useState<DiffViewMode>(() => loadPref(MODE_KEY, "inline"));
   const [contextMode, setContextMode] = useState<ContextMode>(() =>
     loadPref(CONTEXT_KEY, "chunked")
   );
-  const [dirty, setDirty] = useState(false);
-  // Forces an editor rebuild after save/discard even when the refetched diff
-  // is byte-identical (React Query then keeps the same object, so nothing
-  // else in the mount dependencies changes).
-  const [rebuildKey, setRebuildKey] = useState(0);
-  // A summoned file switch waiting on the user while edits are unsaved; the
-  // inner req may itself be null ("clear the panel"), hence the wrapper.
-  const [pending, setPending] = useState<{ req: DiffRequest | null } | null>(null);
   const editorRef = useRef<DiffEditorHandle | null>(null);
-  const savingRef = useRef(false);
-  // Mirrors so save/receive callbacks keep a stable identity (recreating the
-  // editor mid-edit would discard the user's unsaved changes).
-  const dirtyRef = useRef(dirty);
-  dirtyRef.current = dirty;
-  const requestRef = useRef(request);
-  requestRef.current = request;
   const dataRef = useRef<DiffEntry | undefined>(undefined);
-
-  // A null payload means "no file selected" — reset to the placeholder. While
-  // dirty, a switch to a different file must be confirmed, not silent.
-  const onReceive = useCallback((payload: DiffRequest | null) => {
-    if (dirtyRef.current && !sameTarget(payload, requestRef.current)) {
-      setPending({ req: payload });
-      return;
-    }
-    setRequest(payload);
-  }, []);
-  useSummonTarget<DiffRequest | null>("diff", onReceive);
-
-  // On a repo switch the per-repo request key changes underneath us: the
-  // panel shows the new repo's own diff (or the placeholder). Unsaved edits
-  // and a pending switch belong to the previous repo's file - which is
-  // untouched on disk - so drop them.
-  const activeRepoId = useRepoStore((s) => s.activeRepoId);
-  useEffect(() => {
-    setDirty(false);
-    setPending(null);
-  }, [activeRepoId]);
 
   const context = contextMode === "full" ? FULL_FILE_CONTEXT : CHUNKED_CONTEXT;
 
@@ -161,7 +108,7 @@ export function DiffPanel() {
     // returns real hunks; a pure rename returns an empty diff (→ rename notice).
     queryKey: [request?.repoId, "diff", request?.source, request?.path, request?.oldPath, context],
     queryFn: () =>
-      repoDiff(request!.repoId, request!.source, request!.path, request!.oldPath ?? null, context),
+      api.repoDiff(request!.repoId, request!.source, request!.path, request!.oldPath ?? null, context),
     // Only diff the ACTIVE repo: the per-repo request key makes a mismatch
     // impossible after the switch renders, but this guards the render where
     // the store subscriptions have not caught up yet. While dirty,
@@ -198,8 +145,8 @@ export function DiffPanel() {
   const { data: expandSource } = useQuery<string | null>({
     queryKey: [request?.repoId, "diff", "expand-src", request?.path, expandRev?.rev ?? "worktree"],
     queryFn: async () => {
-      if (expandRev!.rev === null) return repoReadWorktreeFile(request!.repoId, request!.path);
-      const f = await repoFileAtRevision(request!.repoId, expandRev!.rev, request!.path);
+      if (expandRev!.rev === null) return api.repoReadWorktreeFile(request!.repoId, request!.path);
+      const f = await api.repoFileAtRevision(request!.repoId, expandRev!.rev, request!.path);
       return "Text" in f ? f.Text : null;
     },
     enabled:
@@ -295,9 +242,9 @@ export function DiffPanel() {
       }
       const { repoId, path } = request;
       try {
-        if (action === "stage") await repoStageHunk(repoId, path, hunkIndex);
-        else if (action === "unstage") await repoUnstageHunk(repoId, path, hunkIndex);
-        else await repoDiscardHunk(repoId, path, hunkIndex);
+        if (action === "stage") await api.repoStageHunk(repoId, path, hunkIndex);
+        else if (action === "unstage") await api.repoUnstageHunk(repoId, path, hunkIndex);
+        else await api.repoDiscardHunk(repoId, path, hunkIndex);
         // Refresh the working-tree views and this diff so the new state shows.
         invalidateRepoDomains(queryClient, repoId, ["status", "log", "diff"]);
       } catch (e) {
@@ -319,9 +266,9 @@ export function DiffPanel() {
       }
       const { repoId, path } = request;
       try {
-        if (action === "stage") await repoStageLines(repoId, path, hunkIndex, lines);
-        else if (action === "unstage") await repoUnstageLines(repoId, path, hunkIndex, lines);
-        else await repoDiscardLines(repoId, path, hunkIndex, lines);
+        if (action === "stage") await api.repoStageLines(repoId, path, hunkIndex, lines);
+        else if (action === "unstage") await api.repoUnstageLines(repoId, path, hunkIndex, lines);
+        else await api.repoDiscardLines(repoId, path, hunkIndex, lines);
         invalidateRepoDomains(queryClient, repoId, ["status", "log", "diff"]);
       } catch (e) {
         notify.error(formatAppError(e));
@@ -332,43 +279,43 @@ export function DiffPanel() {
 
   // Write the edited document back to the file: read the on-disk baseline
   // and splice each hunk's new-side text into it.
-  const onSave = useCallback(async () => {
-    if (savingRef.current) return;
-    const req = requestRef.current;
-    const entry = dataRef.current;
-    const texts = editorRef.current?.collectHunkTexts();
-    if (!req || !entry || !("Text" in entry) || !texts) return;
-    savingRef.current = true;
-    try {
-      const original = await repoReadWorktreeFile(req.repoId, req.path);
-      const next = spliceEdits(
-        original,
-        entry.Text.hunks.map((h) => ({ newStart: h.new_start, newLines: h.new_lines })),
-        texts
-      );
-      await repoWriteWorktreeFile(req.repoId, req.path, next);
-      setDirty(false);
-      setRebuildKey((k) => k + 1);
-      invalidateRepoDomains(queryClient, req.repoId, ["status", "log", "diff"]);
-    } catch (e) {
-      notify.error(formatAppError(e));
-    } finally {
-      savingRef.current = false;
-    }
-  }, [queryClient]);
+  const onSave = useCallback(
+    () =>
+      guardSave(async () => {
+        const req = requestRef.current;
+        const entry = dataRef.current;
+        const texts = editorRef.current?.collectHunkTexts();
+        if (!req || !entry || !("Text" in entry) || !texts) return;
+        try {
+          const original = await api.repoReadWorktreeFile(req.repoId, req.path);
+          const next = spliceEdits(
+            original,
+            entry.Text.hunks.map((h) => ({ newStart: h.new_start, newLines: h.new_lines })),
+            texts
+          );
+          await api.repoWriteWorktreeFile(req.repoId, req.path, next);
+          setDirty(false);
+          rebuild();
+          invalidateRepoDomains(queryClient, req.repoId, ["status", "log", "diff"]);
+        } catch (e) {
+          notify.error(formatAppError(e));
+        }
+      }),
+    [guardSave, requestRef, setDirty, rebuild, queryClient],
+  );
 
   const onDiscardEdits = useCallback(() => {
     setDirty(false);
-    // The file on disk never changed, so the refetched diff is identical —
+    // The file on disk never changed, so the refetched diff is identical -
     // the rebuild key is what actually resets the editor's document.
-    setRebuildKey((k) => k + 1);
+    rebuild();
     const req = requestRef.current;
     // Still invalidate: the query was disabled while dirty and may have
     // missed watcher events.
     if (req) invalidateRepoDomains(queryClient, req.repoId, ["diff"]);
-  }, [queryClient]);
+  }, [setDirty, rebuild, requestRef, queryClient]);
 
-  const onDirty = useCallback(() => setDirty(true), []);
+  const onDirty = useCallback(() => setDirty(true), [setDirty]);
 
   const chooseMode = (next: DiffViewMode) => {
     setMode(next);
@@ -473,15 +420,8 @@ export function DiffPanel() {
           <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
             Unsaved edits in {request.path} will be lost.
           </span>
-          <ToolbarButton
-            label="Discard edits & switch"
-            onClick={() => {
-              setDirty(false);
-              setRequest(pending.req);
-              setPending(null);
-            }}
-          />
-          <ToolbarButton label="Keep editing" onClick={() => setPending(null)} />
+          <ToolbarButton label="Discard edits & switch" onClick={acceptPending} />
+          <ToolbarButton label="Keep editing" onClick={rejectPending} />
         </div>
       )}
 
@@ -512,236 +452,5 @@ export function DiffPanel() {
     </div>
     </PanelContextMenuProvider>
   );
-}
-
-function DiffBody({
-  data,
-  mode,
-  actions,
-  onAction,
-  request,
-  lineActionOp,
-  onLineAction,
-  editable,
-  dirty,
-  onDirty,
-  onSaveRequest,
-  editorRef,
-  rebuildKey,
-  onExpandHunk,
-  trailingExpander,
-  syntaxPath,
-}: {
-  data: DiffEntry | undefined;
-  mode: DiffViewMode;
-  actions: HunkAction[];
-  onAction: (hunkIndex: number, action: HunkAction) => void;
-  request: DiffRequest;
-  lineActionOp: LineActionOp;
-  onLineAction: (hunkIndex: number, lineIndices: number[], action: HunkAction) => void;
-  editable: boolean;
-  dirty: boolean;
-  onDirty: () => void;
-  onSaveRequest: () => void;
-  editorRef: React.MutableRefObject<DiffEditorHandle | null>;
-  rebuildKey: number;
-  onExpandHunk?: (hunkIndex: number, dir: "up" | "down") => void;
-  trailingExpander?: boolean;
-  syntaxPath: string | null;
-}) {
-  const { openMenu, closeMenu } = usePanelContextMenu();
-  const confirmDestructive = useConfirmDestructive();
-  const menuConfirm = useMenuConfirm();
-
-  // Run a menu entry's action; discard is destructive, so it takes the
-  // standard inline-confirm takeover unless the global setting is off.
-  const runMenuAction = useCallback(
-    (action: HunkAction, question: string, run: () => void) => {
-      const go = () => {
-        run();
-        closeMenu();
-      };
-      if (action === "discard" && confirmDestructive) menuConfirm(question, go);
-      else go();
-    },
-    [confirmDestructive, menuConfirm, closeMenu]
-  );
-
-  const onContextMenu = useCallback(
-    (
-      hunkIndex: number,
-      lineIndex: number | null,
-      event: MouseEvent,
-      selectedLines: number[] | null
-    ) => {
-      // Line entries act on the selection when the click landed inside one,
-      // else on the clicked changed line (may be neither, e.g. a bare
-      // context line - then only the chunk entries show).
-      const lines = selectedLines ?? (lineIndex != null ? [lineIndex] : null);
-      const section = (
-        <>
-          {lines !== null &&
-            actions.map((a) => (
-              <MenuItem
-                key={`line-${a}`}
-                onClick={() =>
-                  runMenuAction(a, `${lineActionLabel(a, lines.length)}?`, () =>
-                    onLineAction(hunkIndex, lines, a)
-                  )
-                }
-              >
-                {lineActionLabel(a, lines.length)}
-              </MenuItem>
-            ))}
-          {lines !== null && <Separator />}
-          {actions.map((a) => (
-            <MenuItem
-              key={a}
-              onClick={() =>
-                runMenuAction(a, `${ACTION_TITLE[a]}?`, () => onAction(hunkIndex, a))
-              }
-            >
-              {ACTION_TITLE[a]}
-            </MenuItem>
-          ))}
-        </>
-      );
-      openMenu(event as unknown as React.MouseEvent, section);
-    },
-    [actions, onAction, onLineAction, openMenu, runMenuAction]
-  );
-
-  // A dirty-inside submodule has no superproject diff (unmoved pointer, and
-  // untracked-only dirt yields empty diff output) - render the explanatory
-  // notice from the known state instead of whatever the diff text parsed to.
-  if (request.change === "SubmoduleDirty") {
-    return <SubmoduleDirtyNotice repoId={request.repoId} path={request.path} />;
-  }
-
-  if (!data) return null;
-
-  if ("Binary" in data) {
-    // Image preview when at least one side decodes as an image; otherwise
-    // the plain placeholder, enriched with the sizes the preview calls
-    // returned (BinaryDiff itself never carries sizes).
-    return (
-      <ImageDiffView
-        repoId={request.repoId}
-        source={request.source}
-        path={request.path}
-        oldPath={request.oldPath ?? null}
-        fallback={(o, n) => {
-          const sizes = binarySizes(o, n);
-          return (
-            <div className="legit-panel__body">
-              <span className="legit-subtle">
-                Binary file{sizes ? ` (${sizes})` : ""}, no preview available.
-              </span>
-            </div>
-          );
-        }}
-      />
-    );
-  }
-  if ("Submodule" in data) {
-    return <SubmoduleDiffView repoId={request.repoId} change={data.Submodule} />;
-  }
-
-  // The whole text-diff rendering, as a function so the SVG image branch
-  // below can use it as its no-image fallback.
-  const renderTextDiff = (text: TextDiff): React.ReactNode => {
-  if (text.hunks.length === 0) {
-    // A rename/copy with no content change has no hunks — say so explicitly
-    // rather than the bare "No changes".
-    const isRename = request.change === "Renamed" || request.change === "Copied";
-    return (
-      <div className="legit-panel__body">
-        <span className="legit-subtle">
-          {isRename
-            ? `Renamed${request.oldPath ? ` from ${request.oldPath}` : ""} → ${request.path} (no content changes)`
-            : "No changes."}
-        </span>
-      </div>
-    );
-  }
-
-  // A pointer-to-pointer change (LFS file modified/added/removed) reads as
-  // 3 lines of pointer noise as a text diff - render the LFS notice instead.
-  // An LFS-to-text conversion deliberately keeps the normal diff (the helper
-  // returns null unless every present side is a pointer).
-  const lfsSides = lfsPointerDiffSides(text.hunks);
-  if (lfsSides) {
-    // The preview command resolves pointers to local LFS objects; when no
-    // side yields an image the pointer notice renders as before.
-    return (
-      <ImageDiffView
-        repoId={request.repoId}
-        source={request.source}
-        path={request.path}
-        oldPath={request.oldPath ?? null}
-        fallback={() => (
-          <div className="legit-panel__body">
-            <LfsPointerNotice oldInfo={lfsSides.oldInfo} newInfo={lfsSides.newInfo} />
-          </div>
-        )}
-      />
-    );
-  }
-
-  // Identity of the shown file/source: scroll is preserved across content
-  // refetches (e.g. after staging) but reset when this changes.
-  const scrollResetKey = `${request.repoId}|${request.path}|${request.source.kind}|${
-    request.source.kind === "commit" ? request.source.commit_id : ""
-  }`;
-
-  return (
-    <DiffEditor
-      ref={editorRef}
-      diff={text}
-      mode={mode}
-      actions={actions}
-      onAction={onAction}
-      onContextMenu={onContextMenu}
-      lineActionOp={lineActionOp}
-      onLineAction={onLineAction}
-      scrollResetKey={scrollResetKey}
-      editable={editable}
-      dirty={dirty}
-      onDirty={onDirty}
-      onSaveRequest={onSaveRequest}
-      rebuildKey={rebuildKey}
-      onExpandHunk={onExpandHunk}
-      trailingExpander={trailingExpander}
-      syntaxPath={syntaxPath}
-    />
-  );
-  };
-
-  const renderTooLarge = (bytes: number) => (
-    <div className="legit-panel__body">
-      <span className="legit-subtle">
-        Diff too large to display ({formatByteSize(bytes)}, cap 20 MiB).
-      </span>
-    </div>
-  );
-
-  // SVG is text to git, so it never classifies as Binary - route .svg paths
-  // through the image panes (extension-triggered), falling back to the text
-  // diff (or the too-large notice) when no side previews as an image.
-  if (isSvgPath(request.path) && ("Text" in data || "TooLarge" in data)) {
-    return (
-      <ImageDiffView
-        repoId={request.repoId}
-        source={request.source}
-        path={request.path}
-        oldPath={request.oldPath ?? null}
-        fallback={() =>
-          "TooLarge" in data ? renderTooLarge(data.TooLarge.bytes) : renderTextDiff(data.Text)
-        }
-      />
-    );
-  }
-  if ("TooLarge" in data) return renderTooLarge(data.TooLarge.bytes);
-  return renderTextDiff(data.Text);
 }
 

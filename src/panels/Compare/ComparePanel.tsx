@@ -6,16 +6,16 @@ import { useActiveRepo } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
-import { repoDiffFiles, repoMergeBase } from "../../lib/commands";
+import { api } from "../../lib/commands";
 import type { CommitFileChange, DiffRequest } from "../../lib/types";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { Button } from "../shared/buttons";
 import { segStyle } from "../shared/segmented";
 import { TOOLBAR_FIELD_STYLE } from "../shared/fields";
 import { FileTree } from "../shared/FileTree/FileTree";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
-import { PanelContextMenuProvider } from "../Commits/menu/PanelContextMenu";
+import { PanelContextMenuProvider } from "../shared/menu/PanelContextMenu";
 import { FileRowMenuSection } from "../shared/FileRowMenuSection";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { RevPicker } from "../shared/RevPicker";
@@ -105,7 +105,7 @@ export function ComparePanel() {
 
   const { data: files = [], isFetching, isError, error, refetch } = useQuery<CommitFileChange[]>({
     queryKey: [repo?.id, "log", "compare", range],
-    queryFn: () => repoDiffFiles(repo!.id, range!.from, range!.to),
+    queryFn: () => api.repoDiffFiles(repo!.id, range!.from, range!.to),
     enabled: !!repo && !!range,
     staleTime: STALE.live,
   });
@@ -130,7 +130,7 @@ export function ComparePanel() {
       // Resolve the merge base once here; the file list AND the per-file
       // diffs (DiffSource::CommitRange) then share the same concrete base.
       try {
-        const base = await repoMergeBase(repo.id, f, t);
+        const base = await api.repoMergeBase(repo.id, f, t);
         if (!base) {
           applyRange(null);
           setResolveError(`${f} and ${t} have no common ancestor.`);

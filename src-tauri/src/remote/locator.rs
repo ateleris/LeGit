@@ -27,6 +27,17 @@ impl RepoLocator {
         RepoLocator::Local { path: path.into() }
     }
 
+    /// The same host at another path (`path` as that host prints it, e.g.
+    /// `rev-parse --show-toplevel` output).
+    pub fn with_path(&self, path: &str) -> Self {
+        match self {
+            RepoLocator::Local { .. } => RepoLocator::local(path),
+            RepoLocator::Wsl { distro, .. } => {
+                RepoLocator::Wsl { distro: distro.clone(), path: HostPath(path.to_string()) }
+            }
+        }
+    }
+
     /// Parse a persisted/typed locator string. A `\\wsl.localhost\` /
     /// `\\wsl$\` UNC path (what the native folder picker returns for the
     /// Explorer "Linux" node) is recognized as a WSL locator, so "Open
@@ -123,6 +134,16 @@ pub enum HostRef {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn with_path_keeps_the_host() {
+        let wsl = RepoLocator::Wsl { distro: "Ubuntu".into(), path: HostPath("/home/u/r/sub".into()) };
+        assert_eq!(
+            wsl.with_path("/home/u/r"),
+            RepoLocator::Wsl { distro: "Ubuntu".into(), path: HostPath("/home/u/r".into()) }
+        );
+        assert_eq!(RepoLocator::local("C:/r/sub").with_path("C:/r"), RepoLocator::local("C:/r"));
+    }
 
     #[test]
     fn bare_paths_parse_as_local_and_round_trip_byte_identical() {

@@ -102,6 +102,64 @@ export function bulkActionPlan(
   };
 }
 
+export interface BulkMenuRow {
+  id: CommitId;
+  parents: readonly CommitId[];
+  message?: string;
+}
+
+export interface BulkMenu {
+  plan: BulkPlan;
+  /** Drop/squash offer: present only when the WHOLE selection is unpushed,
+   * merge-free, and not rooted (base = the oldest selected commit's parent). */
+  rewrite: {
+    contiguous: boolean;
+    base: CommitId;
+    /** The selection at menu-open time, display order (newest first): it can
+     * change while the confirm or message dialog is open. */
+    selectedSnapshot: ReadonlySet<CommitId>;
+    /** Squash message prefill: the selected messages, oldest first. */
+    squashPrefill: string;
+  } | null;
+}
+
+/** Everything the bulk right-click menu decides from data: the action plan
+ * plus the guarded drop/squash offer. Null while fewer than two selected
+ * commits exist in the rows (the caller falls through to the single-row
+ * menu). `rows` is the current display order, newest first. */
+export function bulkMenuPlan(
+  selected: ReadonlySet<CommitId>,
+  rows: readonly BulkMenuRow[],
+  unpushed: ReadonlySet<CommitId>,
+): BulkMenu | null {
+  const bulkRows: BulkRow[] = rows.map((r) => ({
+    id: r.id,
+    isMerge: r.parents.length > 1,
+  }));
+  const plan = bulkActionPlan(selected, bulkRows);
+  if (plan.count < 2) return null;
+
+  const selectedInOrder = rows.filter((r) => selected.has(r.id));
+  const oldest = selectedInOrder[selectedInOrder.length - 1];
+  const base = oldest?.parents[0];
+  const allUnpushed = selectedInOrder.every((r) => unpushed.has(r.id));
+  if (base === undefined || !allUnpushed || plan.containsMerge) {
+    return { plan, rewrite: null };
+  }
+  return {
+    plan,
+    rewrite: {
+      contiguous: selectionContiguous(selected, bulkRows),
+      base,
+      selectedSnapshot: new Set(selectedInOrder.map((r) => r.id)),
+      squashPrefill: selectedInOrder
+        .map((r) => r.message ?? r.id.slice(0, 8))
+        .reverse()
+        .join("\n\n"),
+    },
+  };
+}
+
 /** A bulk drop/squash rebase plan over the FULL `base..HEAD` range
  * (`rangeNewestFirst`, as `git log` returns it - never the visible rows,
  * which can be filtered or show other branches). Todo order: oldest first.

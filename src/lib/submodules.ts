@@ -1,9 +1,10 @@
 import { joinLocator } from "./locator";
 import type { QueryClient } from "@tanstack/react-query";
 import type { DiffEntry, DiffSource, SubmoduleAutoUpdateResult, SubmoduleInfo } from "./types";
-import { repoDiff, repoSubmoduleAutoUpdate } from "./commands";
+import { api } from "./commands";
 import { lfsStubWarning } from "./lfsFeedback";
 import { invalidateRepoDomains } from "./repoInvalidation";
+import { SUBMODULE_DOMAINS } from "./queries/domains";
 import { notify } from "../store/notifications";
 import { useRepoStore } from "../store/repos";
 import { useSummonStore } from "../store/summon";
@@ -14,9 +15,9 @@ import { useSummonStore } from "../store/summon";
  * strategy; silent when nothing moved. */
 export async function autoUpdateSubmodules(qc: QueryClient, repoId: string) {
   try {
-    const results = await repoSubmoduleAutoUpdate(repoId);
+    const results = await api.repoSubmoduleAutoUpdate(repoId);
     if (results.length > 0) {
-      invalidateRepoDomains(qc, repoId, ["submodules", "status", "log"]);
+      invalidateRepoDomains(qc, repoId, SUBMODULE_DOMAINS);
     }
     notifySubmoduleUpdateResults(results);
   } catch (e) {
@@ -56,7 +57,7 @@ export function submoduleSelectTarget(diff: DiffEntry): string | null {
 /** Open a submodule's own repo as a peer tab and, when `source` names the
  * superproject entry the user came from, select that entry's new pointer in
  * the submodule's log (design/2026-08-06-submodule-open-at-commit.md).
- * The pointer is resolved BEFORE the repo switch (repoDiff needs the
+ * The pointer is resolved BEFORE the repo switch (api.repoDiff needs the
  * superproject session) and is best-effort: opening never fails on it. The
  * log's pending-jump seek gives up quietly if the commit does not exist
  * locally, so an unfetched target degrades to a plain open. */
@@ -72,7 +73,7 @@ export async function openSubmoduleRepo(
   let target: string | null = null;
   if (source) {
     try {
-      target = submoduleSelectTarget(await repoDiff(repoId, source, path, null, 0));
+      target = submoduleSelectTarget(await api.repoDiff(repoId, source, path, null, 0));
     } catch {
       target = null;
     }

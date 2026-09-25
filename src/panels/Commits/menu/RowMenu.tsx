@@ -7,9 +7,9 @@ import { branchesAt } from "../cells/refChips";
 import { mainlineChoices } from "../mainline";
 import { undoLastCommitPlan } from "../undoLastCommit";
 import type { BulkPlan } from "../multiSelect";
-import { useMenuConfirm, usePanelContextMenu } from "./PanelContextMenu";
+import { useDestructiveMenuConfirm, usePanelContextMenu } from "../../shared/menu/PanelContextMenu";
 import { useConfirmDestructive } from "../../../store/settings";
-import { MenuItem, SectionLabel, Separator, Submenu } from "./primitives";
+import { MenuItem, SectionLabel, Separator, Submenu } from "../../shared/menu/primitives";
 import { BranchMenuSection, RemoteBranchMenuSection } from "./BranchMenuSection";
 import { StashMenuSection } from "./StashMenuSection";
 import { TagMenuSection } from "./TagMenuSection";
@@ -62,7 +62,7 @@ export function BulkSelectionMenu({
   onSquash?: () => void;
 }) {
   const { closeMenu } = usePanelContextMenu();
-  const menuConfirm = useMenuConfirm();
+  const destructiveMenuConfirm = useDestructiveMenuConfirm();
   const confirmDestructive = useConfirmDestructive();
   const comparePair = plan.compare;
   const requestDrop = () => {
@@ -70,11 +70,7 @@ export function BulkSelectionMenu({
       closeMenu();
       onDrop?.();
     };
-    if (!confirmDestructive) {
-      run();
-      return;
-    }
-    menuConfirm(
+    destructiveMenuConfirm(
       `Drop ${plan.count} commits? They are removed from the branch's history permanently.`,
       run,
     );

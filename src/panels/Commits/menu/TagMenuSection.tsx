@@ -1,7 +1,7 @@
 import { useConfirmDestructive } from "../../../store/settings";
 import { copyAndNotify } from "../../../lib/clipboard";
-import { useMenuConfirm, useMenuPicker, usePanelContextMenu } from "./PanelContextMenu";
-import { MenuItem, Separator, SectionLabel } from "./primitives";
+import { useDestructiveMenuConfirm, useMenuPicker, usePanelContextMenu } from "../../shared/menu/PanelContextMenu";
+import { MenuItem, Separator, SectionLabel } from "../../shared/menu/primitives";
 
 /**
  * Shared context-menu section for a tag. Used by both the tag chip's menu and
@@ -40,26 +40,15 @@ export function TagMenuSection({
   onDeleteRemote: (remote: string) => void;
 }) {
   const confirmDestructive = useConfirmDestructive();
-  const menuConfirm = useMenuConfirm();
+  const destructiveMenuConfirm = useDestructiveMenuConfirm();
   const menuPicker = useMenuPicker();
   const { closeMenu } = usePanelContextMenu();
   const multiRemote = remotes.length > 1;
 
-  const requestDelete = () => {
-    if (!confirmDestructive) {
-      onDelete();
-      return;
-    }
-    menuConfirm(`Delete tag '${name}'?`, onDelete);
-  };
+  const requestDelete = () => destructiveMenuConfirm(`Delete tag '${name}'?`, onDelete);
 
-  const requestDeleteRemote = (target: string) => {
-    if (!confirmDestructive) {
-      onDeleteRemote(target);
-      return;
-    }
-    menuConfirm(`Delete tag '${name}' from ${target}?`, () => onDeleteRemote(target));
-  };
+  const requestDeleteRemote = (target: string) =>
+    destructiveMenuConfirm(`Delete tag '${name}' from ${target}?`, () => onDeleteRemote(target));
 
   return (
     <>

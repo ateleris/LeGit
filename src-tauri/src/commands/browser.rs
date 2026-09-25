@@ -10,7 +10,6 @@
 use crate::error::AppError;
 use crate::state::AppState;
 use legit_core::Remote;
-use std::process::Command;
 
 /// Translate a git remote URL into the hosting provider's web URL, or `None`
 /// when the remote has no web page (local paths, `file://`).
@@ -75,31 +74,7 @@ fn pick_remote(remotes: &[Remote]) -> Option<&Remote> {
 
 /// Open a URL in the default browser (fire-and-forget).
 pub(crate) fn open_url(url: &str) -> Result<(), AppError> {
-    let spawn = |mut cmd: Command| -> Result<(), AppError> {
-        cmd.spawn()
-            .map(|_| ())
-            .map_err(|e| AppError::Io(format!("open browser: {e}")))
-    };
-    #[cfg(target_os = "windows")]
-    {
-        // `explorer <url>` hands the URL to the default browser without a
-        // console window or cmd quoting quirks.
-        let mut cmd = Command::new("explorer");
-        cmd.arg(url);
-        spawn(cmd)
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let mut cmd = Command::new("open");
-        cmd.arg(url);
-        spawn(cmd)
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        let mut cmd = Command::new("xdg-open");
-        cmd.arg(url);
-        spawn(cmd)
-    }
+    crate::os_open::os_open(crate::os_open::OpenTarget::Url(url), "open browser")
 }
 
 /// The translated web URL for the repo's picked remote, or `None` when no

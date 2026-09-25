@@ -3,7 +3,7 @@
 // in-app View menu; a menu item carries only its string id across the IPC
 // boundary, so actions round-trip through `parseMacMenuAction`.
 
-import { GLOBAL_PANELS, REPO_PANELS } from "../panels/descriptors";
+import { GLOBAL_PANELS, REPO_PANELS } from "../layout/descriptors";
 
 export interface MacMenuEntry {
   actionId: string;

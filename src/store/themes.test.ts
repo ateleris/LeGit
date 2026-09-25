@@ -4,7 +4,7 @@
 
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import { partitionThemes, pickInitialThemeName, useThemeStore } from "./themes";
-import { listThemes, loadTheme, saveTheme, setActiveTheme } from "../lib/commands";
+import { listThemes, loadTheme, saveTheme, setActiveTheme, deleteTheme } from "../lib/commands";
 import { applyTheme } from "../theme/applier";
 import { DEFAULT_THEME } from "../theme/defaults";
 import type { ThemeDocument } from "../lib/types";

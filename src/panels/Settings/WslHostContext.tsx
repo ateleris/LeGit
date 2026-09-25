@@ -2,9 +2,9 @@
 // selected, whether LeGit is connected to it, and the memoized per-distro
 // command scope every subsection uses.
 //
-// It deliberately lives ABOVE the group's `SettingsGroup`, which unmounts its
-// children when collapsed: "we already connected to Ubuntu this session" must
-// survive a collapse, or every expand would reconnect (and restart) the distro.
+// It deliberately lives ABOVE the settings shell, which unmounts sections a
+// search filters away: "we already connected to Ubuntu this session" must
+// survive that, or every re-mount would reconnect (and restart) the distro.
 //
 // Nothing here connects on its own. `wslListDistros` (cheap, no connect) is the
 // only call the group makes unprompted; `connect()` is the user's action, and
@@ -13,9 +13,9 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import type { GitStatus, WslDistro } from "../../lib/types";
-import { wslHostGitStatus } from "../../lib/commands";
+import { api } from "../../lib/commands";
 import { onRemoteHostStatus } from "../../lib/events";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
 import { wslGitConfigScope, type GitConfigScope } from "./gitConfigHost";
@@ -120,7 +120,7 @@ export function WslHostProvider({
           return rest;
         });
         try {
-          const s = await wslHostGitStatus(target);
+          const s = await api.wslHostGitStatus(target);
           setGitStatuses((prev) => ({ ...prev, [target]: s }));
           markConnected(target);
           // An explicit Connect/Reconnect is also "reload": without it a form
@@ -152,6 +152,15 @@ export function WslHostProvider({
   const status = statuses[distro] ?? "unknown";
   const everConnected = started.includes(distro);
   const running = (listed?.running ?? false) || everConnected;
+
+  // An already-running distro loads without a click (connecting to it costs
+  // nothing extra); a stopped one waits, because connecting STARTS it.
+  const autoConnected = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!running || everConnected || busy || autoConnected.current.has(distro)) return;
+    autoConnected.current.add(distro);
+    connect();
+  }, [distro, running, everConnected, busy, connect]);
 
   const value = useMemo<WslHostCtx>(
     () => ({

@@ -9,17 +9,9 @@
 // passphrase-protected keys now WORK: the SSH_ASKPASS shim prompts in-app.
 
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import type { ConnectedAccountStatus, SshKeyStatus, SshTestOutcome } from "../../lib/types";
-import {
-  defaultSshKeysStatus,
-  generateSshKey,
-  listConnectedAccounts,
-  openPlatformKeySettings,
-  sshKeyStatus,
-  testSshAuth,
-  uploadSshKeyToPlatform,
-} from "../../lib/commands";
+import { api } from "../../lib/commands";
 import { copyText } from "../../lib/clipboard";
 import { Button } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
@@ -91,7 +83,7 @@ function PlatformKeyTargets({
   const { busy, run } = useDelayedBusy();
 
   useEffect(() => {
-    listConnectedAccounts().then(setAccounts).catch(() => setAccounts([]));
+    api.listConnectedAccounts().then(setAccounts).catch(() => setAccounts([]));
   }, []);
 
   const candidate = candidates[0] ?? null;
@@ -105,7 +97,7 @@ function PlatformKeyTargets({
       if (!candidate) return;
       setError(null);
       try {
-        await uploadSshKeyToPlatform(id, candidate.title, candidate.publicKey);
+        await api.uploadSshKeyToPlatform(id, candidate.title, candidate.publicKey);
         setUploaded((u) => ({ ...u, [id]: true }));
       } catch (e) {
         setError(formatAppError(e));
@@ -114,7 +106,7 @@ function PlatformKeyTargets({
 
   const openPage = (id: string) => {
     setError(null);
-    openPlatformKeySettings(id).catch((e) => setError(formatAppError(e)));
+    api.openPlatformKeySettings(id).catch((e) => setError(formatAppError(e)));
   };
 
   return (
@@ -168,7 +160,7 @@ function SshTestRow({ privateKeyPath }: { privateKeyPath: string | null }) {
       setError(null);
       setResult(null);
       try {
-        setResult(await testSshAuth(host, privateKeyPath));
+        setResult(await api.testSshAuth(host, privateKeyPath));
       } catch (e) {
         setError(formatAppError(e));
       }
@@ -256,7 +248,7 @@ export function SshKeyActions({ privateKeyPath }: { privateKeyPath: string }) {
 
   useEffect(() => {
     let stale = false;
-    sshKeyStatus(privateKeyPath)
+    api.sshKeyStatus(privateKeyPath)
       .then((s) => { if (!stale) setStatus(s); })
       .catch(() => { if (!stale) setStatus(null); });
     return () => { stale = true; };
@@ -329,7 +321,7 @@ export function GenerateSshKeyForm({
     run(async () => {
       setError(null);
       try {
-        const status = await generateSshKey(fileName.trim(), keyType, comment.trim());
+        const status = await api.generateSshKey(fileName.trim(), keyType, comment.trim());
         onGenerated(status.private_key_path);
       } catch (e) {
         setError(formatAppError(e));
@@ -408,7 +400,7 @@ export function DefaultSshKeysField() {
   const { busy, run } = useDelayedBusy();
 
   const load = useCallback(() => {
-    defaultSshKeysStatus()
+    api.defaultSshKeysStatus()
       .then(setKeys)
       .catch((e) => setError(formatAppError(e)));
   }, []);
@@ -419,7 +411,7 @@ export function DefaultSshKeysField() {
     run(async () => {
       setError(null);
       try {
-        await generateSshKey(fileName, keyType, "");
+        await api.generateSshKey(fileName, keyType, "");
         load();
       } catch (e) {
         setError(formatAppError(e));

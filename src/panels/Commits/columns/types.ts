@@ -17,7 +17,7 @@ export interface ColumnState {
   widths: Partial<Record<ColumnId, number>>;
 }
 
-/** On-disk shape persisted via `save_column_preferences`. §I.1 */
+/** On-disk shape persisted via `patch_global_settings` (column_preferences). §I.1 */
 export interface ColumnPreferences {
   format: "legit-commits-columns";
   formatVersion: 1;

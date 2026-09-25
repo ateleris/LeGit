@@ -25,10 +25,13 @@ import {
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { codeFolding, foldEffect, unfoldAll, unfoldEffect } from "@codemirror/language";
-import { EXPAND_STEP, EXPANDER_THEME, expanderPair, headerBand } from "../Diff/hunkExpanders";
-import { baseTheme, NumberMarker, plusMinusIcon, readOnly } from "../Diff/DiffEditor";
-import { loadLanguageForPath, syntaxColorTheme } from "../Diff/syntaxLanguages";
+import { EXPAND_STEP, EXPANDER_THEME, expanderPair, headerBand } from "../codemirror/hunkExpanders";
+import { baseTheme, readOnly } from "../codemirror/theme";
+import { NumberMarker, plusMinusIcon } from "../codemirror/gutters";
+import { loadLanguageForPath, syntaxColorTheme } from "../codemirror/syntaxLanguages";
 import { splitLines } from "../Diff/editModel";
+import { chunkBelowFold, foldBarLabel, foldRange, slotDirection, type FoldBase } from "./mergeFolds";
+import { computeAlignment, spacerPads } from "./mergeAlign";
 import {
   blockOrigin,
   blockSection,
@@ -41,7 +44,7 @@ import {
   type ConflictSideNames,
   type LineSelection,
   type ParsedConflicts,
-} from "../Diff/conflictModel";
+} from "./conflictModel";
 
 export interface MergeViewHandle {
   /** Re-run the block surgery for one conflict after its selection changed. */
@@ -564,9 +567,7 @@ export const MergeView = forwardRef<
         const own = ownLens();
         const off = offsets();
         for (let i = 0; i < st.length; i++) {
-          const slot = slotLensRef.current[i] ?? 0;
-          const top = off[i] ?? 0;
-          const bottom = slot - top - (own[i] ?? 0);
+          const { top, bottom } = spacerPads(slotLensRef.current[i] ?? 0, own[i] ?? 0, off[i] ?? 0);
           const firstLine = Math.min(st[i] + 1, state.doc.lines);
           if (top > 0) {
             ranges.push(
@@ -613,38 +614,21 @@ export const MergeView = forwardRef<
     // rule as the diff's first/last hunk headers). Identical in every pane.
     const slotDirs = new Map<number, "both" | "up" | "down">();
 
-    /** The fold's current (revealed-adjusted) line range in a pane, or null
-     *  when it has shrunk below the placeholder threshold. */
-    const currentFoldRange = (v: EditorView, k: number) => {
-      const b = foldBases.get(v)?.get(k);
-      if (!b) return null;
-      const r = gapReveals[k] ?? { down: 0, up: 0 };
-      const f = b.from + r.down;
-      const t = b.to - r.up;
-      return t - f + 1 >= MIN_REMAINDER ? { f, t } : null;
+    /** This pane's fold bases as the contiguous slot array the pure fold
+     *  helpers take (slots are keyed 0..n by construction in paneFold). */
+    const foldBaseList = (v: EditorView): FoldBase[] => {
+      const bases = foldBases.get(v);
+      const arr: FoldBase[] = [];
+      if (bases) for (let k = 0; bases.has(k); k++) arr.push(bases.get(k)!);
+      return arr;
     };
 
     /** The visible chunk (1-based start line + count) below fold `slot` in
      *  a pane, ending at the next still-active fold or the file end. */
-    const chunkBelow = (
-      v: EditorView,
-      slot: number,
-    ): { start: number; count: number } | null => {
-      const bases = foldBases.get(v);
-      if (!bases) return null;
-      const total = v.state.doc.lines;
-      const own = currentFoldRange(v, slot);
-      if (!own) return null;
-      const start0 = own.t + 1;
-      let end0 = total - 1;
-      for (let j = slot + 1; bases.has(j); j++) {
-        const next = currentFoldRange(v, j);
-        if (next) {
-          end0 = next.f - 1;
-          break;
-        }
-      }
-      return { start: start0 + 1, count: Math.max(0, end0 - start0 + 1) };
+    const chunkBelow = (v: EditorView, slot: number): { start: number; count: number } | null => {
+      const bases = foldBaseList(v);
+      if (slot >= bases.length) return null;
+      return chunkBelowFold(slot, bases, gapReveals, v.state.doc.lines, MIN_REMAINDER);
     };
 
     // Reveal a few more lines of one gap in EVERY pane, surgically: only
@@ -666,17 +650,15 @@ export const MergeView = forwardRef<
         });
         const effects = [];
         const slots = foldSlotByPos.get(v);
-        const oldF = base.from + before.down;
-        const oldT = base.to - before.up;
-        if (oldT - oldF + 1 >= MIN_REMAINDER) {
-          const old = posRange(oldF, oldT);
+        const oldRange = foldRange(base, before, MIN_REMAINDER);
+        if (oldRange) {
+          const old = posRange(oldRange.from, oldRange.to);
           effects.push(unfoldEffect.of(old));
           slots?.delete(old.from);
         }
-        const newF = base.from + reveal.down;
-        const newT = base.to - reveal.up;
-        if (newT - newF + 1 >= MIN_REMAINDER) {
-          const next = posRange(newF, newT);
+        const newRange = foldRange(base, reveal, MIN_REMAINDER);
+        if (newRange) {
+          const next = posRange(newRange.from, newRange.to);
           effects.push(foldEffect.of(next));
           slots?.set(next.from, slot);
         }
@@ -698,9 +680,7 @@ export const MergeView = forwardRef<
 
     const renderFoldBarText = (el: HTMLElement, view: EditorView, from: number) => {
       const slot = foldSlotByPos.get(view)?.get(from);
-      const own = slot !== undefined ? chunkBelow(view, slot) : null;
-      el.textContent =
-        own && own.count > 0 ? `@@ -${own.start},${own.count} +${own.start},${own.count} @@` : "";
+      el.textContent = foldBarLabel(slot !== undefined ? chunkBelow(view, slot) : null);
     };
 
     // Result-doc edits (block surgery, manual typing) move the folds through
@@ -1110,22 +1090,15 @@ export const MergeView = forwardRef<
         const endLine = doc.lineAt(Math.min(b.to - 1, doc.length)).number - 1;
         return endLine - resultStartsRef.current[i] + 1;
       });
-      // Segment offsets: where each side's lines sit INSIDE the result's
-      // block. Unresolved markers give exact offsets (ours after `<<<<<<<`,
-      // theirs after `=======`); a composed block's come from its origin.
-      offOursRef.current = blocks.map((b) => (b.origin === null ? 1 : 0));
-      offTheirsRef.current = blocks.map((b, i) => {
-        if (b.origin !== null) return b.origin.ours;
-        const baseSeg = baseLens[i] > 0 ? 1 + baseLens[i] : 0;
-        return 1 + (regionLens.ours[i] ?? 0) + baseSeg + 1;
-      });
-      slotLensRef.current = resultLensRef.current.map((r, i) =>
-        Math.max(
-          r,
-          (offOursRef.current[i] ?? 0) + (regionLens.ours[i] ?? 0),
-          (offTheirsRef.current[i] ?? 0) + (regionLens.theirs[i] ?? 0),
-        ),
+      // Segment offsets and slot heights - the pure math lives in mergeAlign.
+      const alignment = computeAlignment(
+        blocks.map((b, i) => ({ len: resultLensRef.current[i], origin: b.origin })),
+        baseLens,
+        regionLens,
       );
+      offOursRef.current = alignment.offOurs;
+      offTheirsRef.current = alignment.offTheirs;
+      slotLensRef.current = alignment.slotLens;
       for (const v of paneViews) v.dispatch({ effects: alignRefresh.of(null) });
     };
     recomputeRef.current = recomputeAlignment;
@@ -1150,20 +1123,15 @@ export const MergeView = forwardRef<
         const bases = foldableRanges(starts, lens, total, CONTEXT);
         for (let k = 0; k < bases.length; k++) {
           paneBases.set(k, bases[k]);
-          slotDirs.set(
-            k,
-            bases[k].from === 0 ? "up" : bases[k].to === total - 1 ? "down" : "both",
-          );
-          const reveal = gapReveals[k] ?? { down: 0, up: 0 };
-          const from = bases[k].from + reveal.down;
-          const to = bases[k].to - reveal.up;
-          if (to - from + 1 < MIN_REMAINDER) continue; // fully / nearly revealed
-          const pos = view.state.doc.line(Math.min(from + 1, total)).from;
+          slotDirs.set(k, slotDirection(bases[k], total));
+          const range = foldRange(bases[k], gapReveals[k] ?? { down: 0, up: 0 }, MIN_REMAINDER);
+          if (!range) continue; // fully / nearly revealed
+          const pos = view.state.doc.line(Math.min(range.from + 1, total)).from;
           slots.set(pos, k);
           effects.push(
             foldEffect.of({
               from: pos,
-              to: view.state.doc.line(Math.min(to + 1, total)).to,
+              to: view.state.doc.line(Math.min(range.to + 1, total)).to,
             }),
           );
         }

@@ -1,5 +1,5 @@
 // WCAG 2.x relative luminance + contrast ratio. Used by the Theme Editor's
-// contrast indicator (DESIGN.md §6.7).
+// contrast indicator (DESIGN-v0.1.md §6.7).
 //
 // Themes lean heavily on translucent washes (diff line tints, selected rows,
 // ref chip fills), so a naive fg-vs-bg ratio over the raw hex misstates what

@@ -1,4 +1,4 @@
-import { formatVersionTriple } from "../panels/Settings/GitStatusReadout";
+import { formatVersionTriple } from "./gitVersion";
 import type { RemoteHostGitPayload } from "./types";
 
 /**

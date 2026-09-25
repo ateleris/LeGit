@@ -4,7 +4,7 @@
 
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { useGitStatusStore } from "../../store/git-status";
 import { Button } from "../shared/buttons";
 import { Section, FieldNote } from "./primitives";

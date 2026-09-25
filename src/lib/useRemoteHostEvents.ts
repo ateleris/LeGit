@@ -8,7 +8,7 @@
 
 import { useEffect } from "react";
 import { onOpenLocator, onRemoteHostGit, onRemoteHostStatus } from "./events";
-import { takePendingOpen } from "./commands";
+import { api } from "./commands";
 import { formatRepoError } from "./repoErrorFeedback";
 import type { RemoteHostGitPayload, RemoteHostStatusPayload } from "./types";
 import { remoteHostGitMessage } from "./remoteHostGit";
@@ -78,7 +78,7 @@ export function useRemoteHostEvents() {
       openRepo(locator).catch((e) => notify.error(formatRepoError(e, locator)));
     };
     void onOpenLocator(doOpen).then((u) => (disposed ? u() : unsubs.push(u)));
-    takePendingOpen()
+    api.takePendingOpen()
       .then((locator) => {
         if (locator) doOpen(locator);
       })

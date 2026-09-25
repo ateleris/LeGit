@@ -7,7 +7,7 @@
 //! Signing has its own global section (`commands/signing.rs`); repos override
 //! this identity by applying a profile, and reset to it by clearing one.
 
-use crate::commands::config_util::{read_config_global_scopes, write_config_global, ConfigValue};
+use legit_core::config::{self, ConfigValue, WriteScope};
 use crate::commands::settings_host::{settings_executor, SettingsHost};
 use crate::error::AppError;
 use crate::state::AppState;
@@ -35,8 +35,8 @@ pub(crate) async fn build_global_view(runner: &dyn GitExecutor) -> IdentityView 
     // Global + system only: the unbound runner's cwd may lie inside some
     // repo, so an all-scopes read would leak that repo's local config here
     // (see `read_config_global_scopes`).
-    let name = read_config_global_scopes(runner, KEY_USER_NAME).await;
-    let email = read_config_global_scopes(runner, KEY_USER_EMAIL).await;
+    let name = config::read_global_scopes(runner, KEY_USER_NAME).await;
+    let email = config::read_global_scopes(runner, KEY_USER_EMAIL).await;
     IdentityView {
         name_global: name.global,
         name_system: name.system,
@@ -56,8 +56,8 @@ pub(crate) async fn write_identity_global(
     name: Option<&str>,
     email: Option<&str>,
 ) -> Result<IdentityView, AppError> {
-    write_config_global(runner, KEY_USER_NAME, name).await?;
-    write_config_global(runner, KEY_USER_EMAIL, email).await?;
+    config::write(runner, WriteScope::Global, KEY_USER_NAME, name).await?;
+    config::write(runner, WriteScope::Global, KEY_USER_EMAIL, email).await?;
     Ok(build_global_view(runner).await)
 }
 

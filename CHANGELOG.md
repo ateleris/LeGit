@@ -12,6 +12,50 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- File history can open in its own window (commits left, diff right) via the
+  new "Open file history in a separate window" setting
+- The File History panel highlights the commit whose details it opened
+- File rows with a commit context (File History, its popup window, and other
+  rev-scoped menus) can open that version of the file in the external editor
+  (a detached temp copy)
+- File context menus gained "Open in folder" for the working-tree file
+
+### Changed
+
+- The tab bar's combined editor/folder button is split: an always-present
+  "Open in folder" button and an editor button shown only when an
+  external editor is configured (same split in the open-repositories dropdown)
+- With no external editor configured, "Open in editor" on a file now opens it
+  with the OS default application instead of revealing it in the file manager
+
+### Fixed
+
+- Changing a repo setting no longer removes lane locks or the selected git profile set earlier in the session.
+- Settings, themes, layouts and keybindings are saved atomically, so a crash mid-save can no longer leave a truncated file; a settings file that fails to load is kept as `*.corrupt-<time>` instead of being overwritten with defaults.
+- Errors that also report a failed recovery step (e.g. "checked out in another worktree" plus a failed stash restore) keep their specific guidance instead of turning into a generic error.
+- A merge rejected by a hook is reported as an error instead of as conflicts when a file name contains "conflict".
+- A push declined by the server (branch policy or pre-receive hook, e.g. Azure DevOps "use a pull request") no longer shows the misleading "pull first or force-push" advice; the toast names the remote rejection and clicking it opens the Git Command Log with the server's message.
+- Live updates stay off when turned off while a repository's watcher is still starting, and closed repositories no longer keep a stale watcher error.
+- Credentials embedded in a remote URL are now masked in every git error message, not only in fetch/pull/push errors.
+- A file name containing "conflict (" can no longer make a failed merge, rebase or cherry-pick look like a conflict.
+- A branch checked out in another worktree is recognised in both git wordings when switching, not only when deleting.
+- Checking out a branch from the Branches panel, or creating a branch from a stash, now offers the same clickable "open that worktree" toast as the Commits panel when the branch is checked out elsewhere.
+- Pushing or deleting tags and deleting remote branches show the specific authentication / rejected-push guidance instead of raw git output.
+- Tags' "pushed" indicators refresh after a background or external fetch.
+- The Merge panel no longer drops an unsaved conflict resolution when it is asked to clear; it asks first, like the Diff panel.
+- If git could not confirm an auto-stash before switching branches, the error now says your changes may be in the stash instead of only reporting the git failure.
+- Line-ending indicators for files at a revision no longer read oversized blobs in full before skipping them.
+- Repo Settings now shows the `.gitattributes` line-ending rules of WSL repositories (the file was looked up at a wrong path on Windows).
+
+- Theme and layout names that Windows reserves (CON, NUL, COM1, ...) or that end with a dot are rejected on save instead of producing an unusable or silently renamed file.
+
+### Changed
+
+- Changing a repo's git binary override no longer restarts the repo session: the new binary is swapped in live, keeping panel state and selections.
+- The Settings panels were redesigned: settings are grouped into finer categories (Branches, Remotes & sync, Submodules, Working tree, Application, ...), a search field filters them, and wide panels show a category nav that follows scrolling; Repo Settings mirrors the same layout. Category headers are full-width tinted bands that stay pinned while scrolling through their group (also in the Theme Editor).
+
 ## [1.3.3] - 2026-09-23
 
 ### Added

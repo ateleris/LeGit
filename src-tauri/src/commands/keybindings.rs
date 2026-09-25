@@ -68,7 +68,7 @@ pub async fn write_keybindings_file(path: &Path, file: &KeybindingsFile) -> Resu
         tokio::fs::create_dir_all(parent).await?;
     }
     let json = serde_json::to_string_pretty(file)?;
-    tokio::fs::write(path, json).await?;
+    crate::persist::write_atomic(path, json).await?;
     Ok(())
 }
 

@@ -32,10 +32,20 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct RemoteHostStatusPayload {
     pub distro: String,
-    /// "connecting" | "connected" | "disconnected" (lost, reconnect loop
-    /// running) | "gone" (lost, no reconnect coming) | "connect_failed"
-    /// (an attempt failed; the caller surfaces the error itself)
-    pub status: String,
+    pub status: RemoteHostStatus,
+}
+
+/// Wire form of a host's connectivity: `Disconnected` = lost, reconnect loop
+/// running; `Gone` = lost, no reconnect coming; `ConnectFailed` = an attempt
+/// failed and its caller surfaces the error itself.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteHostStatus {
+    Connecting,
+    Connected,
+    Disconnected,
+    Gone,
+    ConnectFailed,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -50,7 +60,7 @@ fn git_needs_attention(status: &GitStatus) -> bool {
 }
 
 /// Probe the distro's git once per connect and report an unusable one. The
-/// startup gate (DESIGN.md §7.6) only ever probes the APP machine's binary,
+/// startup gate (DESIGN-v0.1.md §7.6) only ever probes the APP machine's binary,
 /// so for a repo on a WSL host this is the only place the user hears that its
 /// git is missing or too old.
 async fn report_host_git(app: &tauri::AppHandle, state: &AppState, distro: &str, host: &RemoteHost) {
@@ -68,12 +78,12 @@ async fn report_host_git(app: &tauri::AppHandle, state: &AppState, distro: &str,
     );
 }
 
-fn emit_status(app: &tauri::AppHandle, distro: &str, status: &str) {
+fn emit_status(app: &tauri::AppHandle, distro: &str, status: RemoteHostStatus) {
     let _ = app.emit(
         REMOTE_HOST_STATUS_EVENT,
         RemoteHostStatusPayload {
             distro: distro.to_string(),
-            status: status.to_string(),
+            status,
         },
     );
 }
@@ -158,16 +168,16 @@ pub async fn ensure_wsl_host(
     if let Some(host) = state.wsl_hosts.live_host(distro).await {
         return Ok(host);
     }
-    emit_status(app, distro, "connecting");
+    emit_status(app, distro, RemoteHostStatus::Connecting);
     let result = connect(app, state, distro).await;
     match &result {
         Ok(host) => {
-            emit_status(app, distro, "connected");
+            emit_status(app, distro, RemoteHostStatus::Connected);
             report_host_git(app, state, distro, host).await;
         }
         // Not "disconnected": no reconnect loop follows a failed attempt, and
         // the caller (open flow / Settings) reports the error itself.
-        Err(_) => emit_status(app, distro, "connect_failed"),
+        Err(_) => emit_status(app, distro, RemoteHostStatus::ConnectFailed),
     }
     result
 }
@@ -410,10 +420,10 @@ fn build_sinks(app: tauri::AppHandle, distro: String) -> HostSinks {
                     .map(|s| s.locator.clone())
                     .collect();
                 if !should_keep_reconnecting(&distro, &locators) {
-                    emit_status(&app, &distro, "gone");
+                    emit_status(&app, &distro, RemoteHostStatus::Gone);
                     return;
                 }
-                emit_status(&app, &distro, "disconnected");
+                emit_status(&app, &distro, RemoteHostStatus::Disconnected);
                 reconnect_with_backoff(app.clone(), distro).await;
             });
         }),
@@ -457,7 +467,7 @@ async fn reconnect_with_backoff(app: tauri::AppHandle, distro: String) {
             .await
             .contains_key(&distro)
         {
-            emit_status(&app, &distro, "gone");
+            emit_status(&app, &distro, RemoteHostStatus::Gone);
             return;
         }
         // Stop for a settings-only host: nothing depends on it being live.
@@ -470,7 +480,7 @@ async fn reconnect_with_backoff(app: tauri::AppHandle, distro: String) {
             .collect();
         if !should_keep_reconnecting(&distro, &locators) {
             tracing::debug!(distro, "no repos open on this distro - not reconnecting");
-            emit_status(&app, &distro, "gone");
+            emit_status(&app, &distro, RemoteHostStatus::Gone);
             return;
         }
         match ensure_wsl_host(&app, &state, &distro).await {

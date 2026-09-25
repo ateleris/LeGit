@@ -1,5 +1,5 @@
-import { useMenuConfirm } from "./PanelContextMenu";
-import { MenuItem } from "./primitives";
+import { useMenuConfirm } from "../../shared/menu/PanelContextMenu";
+import { MenuItem } from "../../shared/menu/primitives";
 
 /**
  * "Undo last commit" entry for the HEAD row's context menu: soft-resets to

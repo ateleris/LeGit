@@ -1,7 +1,7 @@
 //! Domain types crossing the `GitBackend` boundary.
 //!
-//! Types are shaped for the long-term feature set described in DESIGN.md §4.4,
-//! even when v0.1 callers only populate a subset of fields. Adding fields
+//! Types are shaped for the long-term feature set described in DESIGN-v0.1.md §4.4,
+//! even when callers only populate a subset of fields. Adding fields
 //! later is a cross-cutting refactor; defining them now is one line.
 
 use serde::{Deserialize, Serialize};
@@ -75,7 +75,6 @@ pub struct Commit {
     /// (`gpgsig`/`gpgsig-sha256`/`mergetag`). Detected by the commit list's
     /// batched header scan - NOT a verification result (`signature` is, and
     /// stays on-demand; the bulk log must never verify, see LOG_FORMAT).
-    #[serde(default)]
     pub has_signature: bool,
     #[serde(default)]
     pub decorations: Vec<RefDecoration>,
@@ -246,7 +245,6 @@ pub struct RepoFileEntry {
     /// `commit`) or an untracked nested git repo (`ls-files --others` lists it
     /// as `dir/`). No file content exists at this path in the object store,
     /// so blob actions (View, Blame) don't apply.
-    #[serde(default)]
     pub submodule: bool,
 }
 
@@ -470,7 +468,6 @@ pub struct Branch {
     pub upstream_gone: bool,
     /// `%(creatordate:unix)`: the tip commit's committer date (Unix seconds).
     /// Drives the user-selectable ref sort order; 0 when git returned none.
-    #[serde(default)]
     pub created_at: i64,
 }
 
@@ -703,7 +700,6 @@ pub struct TagInfo {
     /// `%(creatordate:unix)` (Unix seconds): the tag object's creation date
     /// for annotated tags, the tagged commit's committer date for lightweight
     /// ones. Drives the user-selectable ref sort order; 0 when absent.
-    #[serde(default)]
     pub created_at: i64,
 }
 

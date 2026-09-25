@@ -23,6 +23,19 @@ describe("remoteOpErrorMessage", () => {
     expect(msg).toMatch(/force-push/i);
   });
 
+  test("remote-declined pushes point at the log, never at pull/force-push", () => {
+    const msg = remoteOpErrorMessage(
+      gitError("PushRejectedByRemote", {
+        stderr:
+          "! [remote rejected] develop -> develop (TF402455: Pushes to this branch are not permitted)",
+      }),
+    );
+    expect(msg).toMatch(/rejected by the remote/i);
+    expect(msg).toMatch(/click/i);
+    expect(msg).not.toMatch(/TF402455/);
+    expect(msg).not.toMatch(/pull first|force-push/i);
+  });
+
   test("the submodule guard explains pushing the submodule first", () => {
     const msg = remoteOpErrorMessage(gitError("UnpushedSubmodules", "lib"));
     expect(msg).toMatch(/submodule/i);

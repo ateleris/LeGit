@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { consoleCancel, consoleExec, consoleFeed } from "../../lib/commands";
-import { formatAppError } from "../../lib/types";
+import { consoleExec, api } from "../../lib/commands";
+import { formatAppError } from "../../lib/errors";
 import { useActiveRepo } from "../../store/repos";
 import { EMPTY_CONSOLE_SESSION, useConsoleStore, type ConsoleLine } from "../../store/console";
 import { parseAnsiLine, type AnsiSpan } from "./ansi";
@@ -12,7 +12,7 @@ import { classifyConsoleInput, isScrolledToBottom, spaceKeyAction } from "./cons
 const CANCEL_HINT_DELAY_MS = 150;
 
 /**
- * Git Console panel (DESIGN.md §7.4), terminal-style: a scrollback with the
+ * Git Console panel (DESIGN-v0.1.md §7.4), terminal-style: a scrollback with the
  * `$ git` prompt pinned below it, no buttons. Enter runs; `clear` wipes the
  * scrollback; `q` / `:q` / Ctrl+C cancel the running command
  * (`consoleInput.ts` holds the decision table). Output is PAGED like a
@@ -107,7 +107,7 @@ export function ConsolePanel() {
     // Optimistic: the backend confirms by either sending more output or
     // re-announcing the pause.
     useConsoleStore.getState().setPaused(repoId, false);
-    consoleFeed(opId, pageSize()).catch(() => {
+    api.consoleFeed(opId, pageSize()).catch(() => {
       /* op already gone - its Finished event settles the UI */
     });
   }, [repoId, opId]);
@@ -119,7 +119,7 @@ export function ConsolePanel() {
     // Finished event once the process is reaped.
     useConsoleStore.getState().append(repoId, [{ stream: "system", text: "^C" }]);
     try {
-      const accepted = await consoleCancel(repoId, opId);
+      const accepted = await api.consoleCancel(repoId, opId);
       // An accepted cancel reports itself via the Finished event.
       if (!accepted) {
         useConsoleStore

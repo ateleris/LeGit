@@ -1,4 +1,4 @@
-import { formatAppError, gitErrorKind } from "./types";
+import { formatAppError, gitErrorKind } from "./errors";
 import { lfsDownloadErrorMessage } from "./lfsFeedback";
 import type { LfsFailureContext } from "./lfsFeedback";
 
@@ -21,6 +21,12 @@ export function remoteOpErrorMessage(e: unknown, context: LfsFailureContext = "g
       return (
         "Push rejected — the remote has commits you don't have. Pull first, " +
         "or use Force-push (with lease)."
+      );
+    case "PushRejectedByRemote":
+      // The server's reason stays out of the toast: clicking it opens the Git Command Log.
+      return (
+        "Push rejected by the remote (branch policy or server hook). " +
+        "Click for the server's message."
       );
     case "UnpushedSubmodules":
       return (

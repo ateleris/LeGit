@@ -95,7 +95,7 @@ pub async fn open_session(
         repos.insert(session.id.clone(), session.clone());
         session
     };
-    tracing::info!(path = %session.path.display(), id = %session.id, "open: new session");
+    tracing::info!(path = %session.root, id = %session.id, "open: new session");
     let summary = session.summary();
     // Starting the watcher must never gate opening the repo. `notify`'s
     // recursive registration walks the ENTIRE worktree up front (on Linux one
@@ -217,17 +217,43 @@ async fn resolve_new_repo_target(
     global_git: &Path,
 ) -> Result<(Arc<dyn Host>, NewRepoTarget), AppError> {
     let locator = RepoLocator::parse(path);
-    let (host, host_git, home): (Arc<dyn Host>, Option<String>, Option<String>) = match &locator {
-        RepoLocator::Local { .. } => (state.local_host(), None, None),
+    let lh = locator_host(state, app, &locator).await?;
+    let target = new_repo_target(locator, global_git, lh.host_git.as_deref(), lh.home.as_deref());
+    Ok((lh.host, target))
+}
+
+/// The host a locator's repo lives on, its host-level git override (remote
+/// only; `None` = PATH git there) and the remote home directory (for `~`).
+struct LocatorHost {
+    host: Arc<dyn Host>,
+    host_git: Option<String>,
+    home: Option<String>,
+}
+
+async fn locator_host(
+    state: &AppState,
+    app: &tauri::AppHandle,
+    locator: &RepoLocator,
+) -> Result<LocatorHost, AppError> {
+    Ok(match locator {
+        RepoLocator::Local { .. } => LocatorHost { host: state.local_host(), host_git: None, home: None },
         RepoLocator::Wsl { distro, .. } => {
             let host = crate::remote::connection::ensure_wsl_host(app, state, distro).await?;
             let home = host.conn().get().info().map(|i| i.home.clone());
-            let host_git = state.host_git_override(distro).await;
-            (host, host_git, home)
+            LocatorHost { host, host_git: state.host_git_override(distro).await, home }
         }
-    };
-    let target = new_repo_target(locator, global_git, host_git.as_deref(), home.as_deref());
-    Ok((host, target))
+    })
+}
+
+/// `git rev-parse --show-toplevel` for `target` on its host (the probe also
+/// proves git runs there).
+async fn probe_toplevel(
+    host: &dyn Host,
+    target: &NewRepoTarget,
+) -> Result<legit_core::RunOutput, legit_core::RunnerError> {
+    host.executor_for(&target.git, Some(&target.dir))
+        .run(&["rev-parse", "--show-toplevel"])
+        .await
 }
 
 /// `dir` must be an existing directory on `host`; the failure text names it
@@ -258,33 +284,23 @@ async fn start_repo_watcher(state: &AppState, app: &tauri::AppHandle, session: &
     if !state.global_settings.read().await.watcher_enabled {
         return;
     }
-    let runner = session.runner.read().await.clone();
-    let git_dir = match runner.run(&["rev-parse", "--absolute-git-dir"]).await {
-        Ok(out) if out.success => HostPath(out.stdout.trim().to_string()),
-        _ => session.host_root().join(".git"),
-    };
+    let git_dir = session
+        .backend
+        .absolute_git_dir()
+        .await
+        .unwrap_or_else(|_| session.root.clone().join(".git"));
     let sink = crate::watcher::emit_sink(app.clone(), session.id.clone());
     match session
         .host
-        .watch(&session.host_root(), &git_dir, sink)
+        .watch(&session.root.clone(), &git_dir, sink)
         .await
     {
         Ok(w) => {
-            // The repo can be closed while its watch is still starting. Hold
-            // the `repos` read guard across the insert: `close_repo` needs the
-            // write guard to drop the session, so it cannot slip between the
-            // check and the insert and leave a watch parked for a dead repo.
-            {
-                let repos = state.repos.read().await;
-                if !repos.contains_key(&session.id) {
-                    tracing::info!(repo_id = %session.id, "repo closed while its watcher was starting - dropping the watch");
-                    return;
-                }
-                state.watchers.lock().unwrap().insert(session.id.clone(), w);
+            if !state.adopt_watch(&session.id, w).await {
+                tracing::info!(repo_id = %session.id, "repo closed or watching disabled while its watcher was starting - dropping the watch");
+                return;
             }
-            // Clear a stale failure (e.g. a retry via the watcher toggle) so
-            // the "live updates off" badge disappears.
-            state.watch_errors.lock().unwrap().remove(&session.id);
+            // Clears a stale failure badge (e.g. a retry via the watcher toggle).
             crate::watcher::emit_watch_state(app, &session.id, None);
             // A watch only reports events from its registration onward, and the
             // repo has been on screen since before that: anything that changed
@@ -294,16 +310,13 @@ async fn start_repo_watcher(state: &AppState, app: &tauri::AppHandle, session: &
         Err(e) => {
             tracing::warn!(repo_id = %session.id, err = %e, "failed to start repo watcher");
             // The repo silently loses live updates otherwise (it happened for
-            // real: "OS file watch limit reached") — record it for the tab
+            // real: "OS file watch limit reached") - record it for the tab
             // badge. State first, event second: a reader must never see the
             // event and then miss the state.
             let msg = e.to_string();
-            state
-                .watch_errors
-                .lock()
-                .unwrap()
-                .insert(session.id.clone(), msg.clone());
-            crate::watcher::emit_watch_state(app, &session.id, Some(&msg));
+            if state.record_watch_failure(&session.id, msg.clone()).await {
+                crate::watcher::emit_watch_state(app, &session.id, Some(&msg));
+            }
         }
     }
 }
@@ -337,50 +350,16 @@ pub(crate) async fn probe_and_open(
     git_path: PathBuf,
     probe: RepoLocator,
 ) -> Result<RepoSummary, AppError> {
-    let (host, toplevel_locator): (Arc<dyn Host>, RepoLocator) = match probe {
-        RepoLocator::Local { path } => {
-            let host = state.local_host();
-            let exec = host.executor_for(
-                &HostPath::from_path(&git_path),
-                Some(&HostPath::from_path(&path)),
-            );
-            let out = exec
-                .run(&["rev-parse", "--show-toplevel"])
-                .await
-                .map_err(AppError::from)?;
-            if !out.success {
-                return Err(AppError::NotARepo(out.stderr.trim().to_string()));
-            }
-            (host, RepoLocator::local(out.stdout.trim()))
-        }
-        RepoLocator::Wsl { distro, path } => {
-            let host = crate::remote::connection::ensure_wsl_host(app, state, &distro).await?;
-            let home = host.conn().get().info().map(|i| i.home.clone());
-            let path = expand_remote_home(path, home.as_deref());
-            // Remote git comes from the host override, else the agent's
-            // PATH; the probe doubles as the "git exists on this host" check.
-            let host_git = state
-                .host_git_override(&distro)
-                .await
-                .unwrap_or_else(|| "git".into());
-            let exec = host.executor_for(&HostPath(host_git), Some(&path));
-            let out = exec
-                .run(&["rev-parse", "--show-toplevel"])
-                .await
-                .map_err(|e| AppError::NotARepo(format!("git failed in '{distro}': {e}")))?;
-            if !out.success {
-                return Err(AppError::NotARepo(out.stderr.trim().to_string()));
-            }
-            let host: Arc<dyn Host> = host;
-            (
-                host,
-                RepoLocator::Wsl {
-                    distro,
-                    path: HostPath(out.stdout.trim().to_string()),
-                },
-            )
-        }
-    };
+    let lh = locator_host(state, app, &probe).await?;
+    let target = new_repo_target(probe, &git_path, lh.host_git.as_deref(), lh.home.as_deref());
+    let out = probe_toplevel(lh.host.as_ref(), &target).await.map_err(|e| match &target.locator {
+        RepoLocator::Wsl { distro, .. } => AppError::NotARepo(format!("git failed in '{distro}': {e}")),
+        RepoLocator::Local { .. } => AppError::from(e),
+    })?;
+    if !out.success {
+        return Err(AppError::NotARepo(out.stderr.trim().to_string()));
+    }
+    let (host, toplevel_locator) = (lh.host, target.locator.with_path(out.stdout.trim()));
 
     // open_session reuses an existing session for this directory (identity
     // comparison, atomically with the insert) or creates one.
@@ -772,9 +751,21 @@ pub async fn cancel_clone(
 #[tauri::command]
 #[specta::specta]
 pub async fn close_repo(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     repo_id: String,
 ) -> Result<(), AppError> {
+    {
+        // A history window is pinned to this repo: close its windows with it.
+        use tauri::Manager as _;
+        let prefix = format!("{}{}-", crate::commands::FILE_HISTORY_LABEL_PREFIX, repo_id);
+        for win in app.webview_windows().values() {
+            if win.label().starts_with(&prefix) {
+                let _ = win.close();
+            }
+        }
+    }
+
     let locator = state
         .repos
         .write()
@@ -782,9 +773,7 @@ pub async fn close_repo(
         .remove(&repo_id)
         .map(|s| s.locator.clone());
 
-    // Stop and drop the repo's watcher (no-op if watching was disabled).
-    state.watchers.lock().unwrap().remove(&repo_id);
-    state.watch_errors.lock().unwrap().remove(&repo_id);
+    state.forget_watch(&repo_id);
 
     if let Some(locator) = locator {
         let key = locator.to_persist_string();
@@ -920,15 +909,19 @@ enum ProbedEntry {
     Keep(String),
 }
 
-/// What a restored LOCAL entry becomes from its `rev-parse` probe, with
-/// `probe` = `None` when git could not be spawned at all. That case is
-/// "unavailable, not gone" - exactly like a WSL distro that is down: the app
-/// machine may have no git (WSL-only setups run without one), so the tab is
-/// kept for the next launch instead of being forgotten. Pure.
-fn local_probe_entry(probe: Option<&legit_core::RunOutput>, raw: &str) -> Option<ProbedEntry> {
+/// What a restored entry at `locator` becomes from its `rev-parse` probe,
+/// with `probe` = `None` when git could not be run at all. That case is
+/// "unavailable, not gone" (the app machine may have no git in a WSL-only
+/// setup; a distro's connection may have died), so the tab is kept for the
+/// next launch instead of being forgotten. Pure.
+fn probe_entry(
+    locator: &RepoLocator,
+    probe: Option<&legit_core::RunOutput>,
+    raw: &str,
+) -> Option<ProbedEntry> {
     match probe {
         None => Some(ProbedEntry::Keep(raw.to_string())),
-        Some(out) if out.success => Some(ProbedEntry::Open(RepoLocator::local(out.stdout.trim()))),
+        Some(out) if out.success => Some(ProbedEntry::Open(locator.with_path(out.stdout.trim()))),
         Some(_) => None,
     }
 }
@@ -996,70 +989,38 @@ pub async fn restore_open_repos(
     // path (the frontend holds the splash until restore completes): each repo
     // costs at least one process spawn, which dominates on Windows, so with
     // many repos sequential probing is the visible splash time.
-    let local_host = state.local_host();
     let probe_handles: Vec<_> = paths
         .into_iter()
         .map(|raw| {
             let git_path = git_path.clone();
-            let host = local_host.clone();
             let app = app.clone();
             tokio::spawn(async move {
-                match RepoLocator::parse(&raw) {
-                    RepoLocator::Local { path } => {
-                        if !path.exists() {
-                            tracing::info!(path = %raw, "restore: skipping missing path");
-                            return None;
-                        }
-                        let probe = host.executor_for(
-                            &HostPath::from_path(&git_path),
-                            Some(&HostPath::from_path(&path)),
-                        );
-                        let out = probe.run(&["rev-parse", "--show-toplevel"]).await;
-                        match &out {
-                            Err(e) => tracing::warn!(path = %raw, err = %e, "restore: rev-parse spawn failed — keeping the entry for next launch"),
-                            Ok(o) if !o.success => tracing::info!(path = %raw, stderr = %o.stderr.trim(), "restore: not a repo"),
-                            Ok(_) => {}
-                        }
-                        local_probe_entry(out.as_ref().ok(), &raw)
-                    }
-                    RepoLocator::Wsl { distro, path } => {
-                        // Connecting is serialized per distro inside
-                        // ensure_wsl_host; concurrent probes are fine.
-                        let state = app.state::<AppState>();
-                        let host = match crate::remote::connection::ensure_wsl_host(
-                            &app, &state, &distro,
-                        )
-                        .await
-                        {
-                            Ok(h) => h,
-                            Err(e) => {
-                                tracing::warn!(distro, err = %e, "restore: wsl host unavailable — keeping the entry for next launch");
-                                return Some(ProbedEntry::Keep(raw));
-                            }
-                        };
-                        let host_git = state
-                            .host_git_override(&distro)
-                            .await
-                            .unwrap_or_else(|| "git".into());
-                        let exec = host.executor_for(&HostPath(host_git), Some(&path));
-                        match exec.run(&["rev-parse", "--show-toplevel"]).await {
-                            Ok(out) if out.success => Some(ProbedEntry::Open(RepoLocator::Wsl {
-                                distro,
-                                path: HostPath(out.stdout.trim().to_string()),
-                            })),
-                            Ok(out) => {
-                                tracing::info!(path = %raw, stderr = %out.stderr.trim(), "restore: remote path is not a repo");
-                                None
-                            }
-                            Err(e) => {
-                                // The connection died between handshake and
-                                // probe: unavailable, not "gone" — keep it.
-                                tracing::warn!(path = %raw, err = %e, "restore: remote probe failed — keeping the entry for next launch");
-                                Some(ProbedEntry::Keep(raw))
-                            }
-                        }
+                let locator = RepoLocator::parse(&raw);
+                if let RepoLocator::Local { path } = &locator {
+                    if !path.exists() {
+                        tracing::info!(path = %raw, "restore: skipping missing path");
+                        return None;
                     }
                 }
+                // Connecting is serialized per distro inside ensure_wsl_host;
+                // concurrent probes are fine.
+                let state = app.state::<AppState>();
+                let lh = match locator_host(&state, &app, &locator).await {
+                    Ok(lh) => lh,
+                    Err(e) => {
+                        tracing::warn!(path = %raw, err = %e, "restore: host unavailable - keeping the entry for next launch");
+                        return Some(ProbedEntry::Keep(raw));
+                    }
+                };
+                let target =
+                    new_repo_target(locator, &git_path, lh.host_git.as_deref(), lh.home.as_deref());
+                let out = probe_toplevel(lh.host.as_ref(), &target).await;
+                match &out {
+                    Err(e) => tracing::warn!(path = %raw, err = %e, "restore: probe failed to run - keeping the entry for next launch"),
+                    Ok(o) if !o.success => tracing::info!(path = %raw, stderr = %o.stderr.trim(), "restore: not a repo"),
+                    Ok(_) => {}
+                }
+                probe_entry(&target.locator, out.as_ref().ok(), &raw)
             })
         })
         .collect();
@@ -1109,18 +1070,11 @@ pub async fn restore_open_repos(
             let git_path = git_path.clone();
             tokio::spawn(async move {
                 let state = app.state::<AppState>();
-                let host: Arc<dyn Host> = match &locator {
-                    RepoLocator::Local { .. } => state.local_host(),
-                    RepoLocator::Wsl { distro, .. } => {
-                        match crate::remote::connection::ensure_wsl_host(&app, &state, distro)
-                            .await
-                        {
-                            Ok(h) => h,
-                            Err(e) => {
-                                tracing::warn!(err = %e, "restore: wsl host lost between probe and open");
-                                return None;
-                            }
-                        }
+                let host = match locator_host(&state, &app, &locator).await {
+                    Ok(lh) => lh.host,
+                    Err(e) => {
+                        tracing::warn!(err = %e, "restore: host lost between probe and open");
+                        return None;
                     }
                 };
                 // open_session reuses-or-creates atomically, so a restore
@@ -1217,20 +1171,23 @@ pub async fn get_repo_settings(
     Ok(s)
 }
 
-/// Replace the repo-scoped settings and persist them to disk.
+/// Change the repo-scoped settings named in `patch` (JSON field names; `null`
+/// resets an override), persist, and return the merged settings.
 #[tauri::command]
 #[specta::specta]
-pub async fn update_repo_settings(
+pub async fn patch_repo_settings(
     state: tauri::State<'_, AppState>,
     repo_id: String,
-    settings: RepoSettings,
-) -> Result<(), AppError> {
+    patch: serde_json::Value,
+) -> Result<RepoSettings, AppError> {
     let session = state.get_session(&repo_id).await?;
-    {
+    let merged = {
         let mut s = session.settings.write().await;
-        *s = settings;
-    }
-    state.persist_session_settings(&session).await
+        *s = s.with_patch(&patch)?;
+        s.clone()
+    };
+    state.persist_session_settings(&session).await?;
+    Ok(merged)
 }
 
 /// Return all lane locks for an open repo.
@@ -1313,7 +1270,7 @@ mod tests {
         }
     }
 
-    use super::{local_probe_entry, restore_bookkeeping, ProbedEntry, RepoLocator};
+    use super::{probe_entry, restore_bookkeeping, ProbedEntry, RepoLocator};
 
     fn probe_output(success: bool, stdout: &str) -> legit_core::RunOutput {
         legit_core::RunOutput {
@@ -1332,14 +1289,30 @@ mod tests {
     #[test]
     fn restore_keeps_local_entries_when_git_cannot_be_spawned() {
         let raw = "C:/code/repo";
+        let local = RepoLocator::local(raw);
+        assert_eq!(probe_entry(&local, None, raw), Some(ProbedEntry::Keep(raw.to_string())));
+        assert_eq!(probe_entry(&local, Some(&probe_output(false, "")), raw), None);
         assert_eq!(
-            local_probe_entry(None, raw),
-            Some(ProbedEntry::Keep(raw.to_string()))
-        );
-        assert_eq!(local_probe_entry(Some(&probe_output(false, "")), raw), None);
-        assert_eq!(
-            local_probe_entry(Some(&probe_output(true, "C:/code/repo\n")), raw),
+            probe_entry(&local, Some(&probe_output(true, "C:/code/repo\n")), raw),
             Some(ProbedEntry::Open(RepoLocator::local("C:/code/repo")))
+        );
+    }
+
+    // Same rules on a WSL host: a probe that could not run (connection died
+    // between handshake and probe) keeps the tab; the toplevel stays on the
+    // entry's distro.
+    #[test]
+    fn restore_probe_rules_are_the_same_for_wsl_entries() {
+        let raw = "wsl://Ubuntu/home/u/repo/sub";
+        let wsl = RepoLocator::parse(raw);
+        assert_eq!(probe_entry(&wsl, None, raw), Some(ProbedEntry::Keep(raw.to_string())));
+        assert_eq!(probe_entry(&wsl, Some(&probe_output(false, "")), raw), None);
+        assert_eq!(
+            probe_entry(&wsl, Some(&probe_output(true, "/home/u/repo\n")), raw),
+            Some(ProbedEntry::Open(RepoLocator::Wsl {
+                distro: "Ubuntu".into(),
+                path: legit_core::HostPath("/home/u/repo".into()),
+            }))
         );
     }
 

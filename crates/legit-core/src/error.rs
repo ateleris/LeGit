@@ -1,7 +1,7 @@
 //! Domain-level errors that cross the `GitBackend` boundary.
 //!
 //! `GitError` is the contract. `GitCliBackend` maps `git`'s exit codes and
-//! stderr patterns into specific variants (DESIGN.md §7.7).
+//! stderr patterns into specific variants (DESIGN-v0.1.md §7.7).
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -18,6 +18,12 @@ pub enum GitError {
 
     #[error("push rejected: {stderr}")]
     PushRejected { stderr: String },
+
+    /// The remote itself declined the push (pre-receive hook or server-side
+    /// branch policy): pulling or force-pushing cannot help, the server's
+    /// message names the real reason.
+    #[error("push rejected by the remote: {stderr}")]
+    PushRejectedByRemote { stderr: String },
 
     #[error("push blocked: the superproject references submodule commits that exist on no remote:\n{stderr}")]
     UnpushedSubmodules { stderr: String },

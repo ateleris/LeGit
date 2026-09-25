@@ -1,15 +1,14 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useRepoStore } from "../store/repos";
 import { useLfsWarningStore } from "../store/lfsWarning";
-import { repoLfsStatus } from "../lib/commands";
-import type { LfsStatus } from "../lib/types";
 import {
   lfsWarningKind,
   lfsWarningMessage,
   shouldShowLfsWarning,
 } from "../lib/lfsWarning";
 import { ToolbarButton } from "./shared/ToolbarButton";
-import { STALE } from "../lib/queryTiming";
+import { repoKeys } from "../lib/queries/keys";
+import { useLfsStatus } from "../lib/queries/useRepoQueries";
 
 // Ghost buttons sit on banner-warning-bg, not a panel surface, so their
 // text and border must follow the banner's own foreground token (same
@@ -39,15 +38,8 @@ export function LfsWarningBanner() {
   const dismiss = useLfsWarningStore((s) => s.dismiss);
   const queryClient = useQueryClient();
 
-  // Rare-change data (.gitattributes edits, LFS installs): long staleTime,
-  // deliberately not watcher-invalidated - Re-check and repo activation
-  // cover the gaps. Key shared with the Files panel's probe.
-  const { data: status } = useQuery<LfsStatus>({
-    queryKey: [activeRepoId, "lfs"],
-    queryFn: () => repoLfsStatus(activeRepoId!),
-    enabled: !!activeRepoId,
-    staleTime: STALE.rare,
-  });
+  // Re-check and repo activation cover the gaps left by skipping the watcher.
+  const { data: status } = useLfsStatus(activeRepoId);
 
   if (
     !activeRepoId ||
@@ -90,7 +82,7 @@ export function LfsWarningBanner() {
           label="Re-check"
           title="Probe git-lfs again"
           onClick={() =>
-            queryClient.invalidateQueries({ queryKey: [activeRepoId, "lfs"] })
+            queryClient.invalidateQueries({ queryKey: repoKeys.lfs(activeRepoId) })
           }
           style={BANNER_BUTTON_STYLE}
         />

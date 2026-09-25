@@ -195,18 +195,17 @@ pub async fn repo_reword_commit(
 /// traverse.
 pub(crate) async fn resolve_repo_relative(
     fs: &dyn RepoFs,
-    root: &Path,
+    root: &HostPath,
     rel: &str,
-) -> Result<PathBuf, AppError> {
+) -> Result<HostPath, AppError> {
     // The pre-check is pure and stays synchronous; only canonicalization
     // touches the (possibly remote) filesystem, via the host's RepoFs.
     validate_repo_relative_shape(rel)?;
-    let root_hp = HostPath::from_path(root);
     let canonical_root = fs
-        .canonicalize(&root_hp)
+        .canonicalize(root)
         .await
-        .map_err(|e| AppError::Io(format!("resolve {}: {e}", root.display())))?;
-    let joined = root_hp.join(rel);
+        .map_err(|e| AppError::Io(format!("resolve {root}: {e}")))?;
+    let joined = root.join(rel);
     let canonical = match fs.canonicalize(&joined).await {
         Ok(c) => c,
         Err(FsError::NotFound { .. }) => {
@@ -229,7 +228,7 @@ pub(crate) async fn resolve_repo_relative(
             "path escapes the repository: {rel}"
         )));
     }
-    Ok(canonical.as_local())
+    Ok(canonical)
 }
 
 /// The pure half of [`resolve_repo_relative`]: reject absolute paths and any
@@ -258,11 +257,11 @@ pub async fn repo_read_worktree_file(
 ) -> Result<String, AppError> {
     let session = state.get_session(&repo_id).await?;
     let fs = session.host.fs();
-    let abs = resolve_repo_relative(fs.as_ref(), &session.path, &path).await?;
+    let abs = resolve_repo_relative(fs.as_ref(), &session.root, &path).await?;
     let bytes = fs
-        .read(&HostPath::from_path(&abs), None)
+        .read(&abs.clone(), None)
         .await
-        .map_err(|e| AppError::Io(format!("read {}: {e}", abs.display())))?;
+        .map_err(|e| AppError::Io(format!("read {}: {e}", abs)))?;
     String::from_utf8(bytes).map_err(|_| AppError::Io(format!("{path} is not UTF-8 text")))
 }
 
@@ -278,10 +277,10 @@ pub async fn repo_write_worktree_file(
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
     let fs = session.host.fs();
-    let abs = resolve_repo_relative(fs.as_ref(), &session.path, &path).await?;
-    fs.write(&HostPath::from_path(&abs), content.as_bytes())
+    let abs = resolve_repo_relative(fs.as_ref(), &session.root, &path).await?;
+    fs.write(&abs.clone(), content.as_bytes())
         .await
-        .map_err(|e| AppError::Io(format!("write {}: {e}", abs.display())))
+        .map_err(|e| AppError::Io(format!("write {}: {e}", abs)))
 }
 
 #[cfg(test)]
@@ -290,7 +289,7 @@ mod tests {
     use legit_core::LocalFs;
 
     async fn resolve(root: &Path, rel: &str) -> Result<PathBuf, AppError> {
-        resolve_repo_relative(&LocalFs, root, rel).await
+        resolve_repo_relative(&LocalFs, &HostPath::from_path(root), rel).await.map(|p| p.as_local())
     }
 
     #[tokio::test]

@@ -10,14 +10,14 @@ import {
   notifyResolutionInvisible,
 } from "./mergeFeedback";
 import { notify } from "../store/notifications";
-import { repoStatus } from "./commands";
+import { api } from "./commands";
 import type { MergeOutcome, RebaseOutcome, SequenceOutcome } from "./types";
 
 vi.mock("../store/notifications", () => ({
   notify: { info: vi.fn(), error: vi.fn(), success: vi.fn() },
 }));
 vi.mock("./commands", () => ({
-  repoStatus: vi.fn(),
+  api: { repoStatus: vi.fn() },
 }));
 
 const lastInfo = () =>
@@ -95,19 +95,19 @@ describe("notifyOpError", () => {
 
 describe("notifyResolutionInvisible", () => {
   test("notes the invisible resolution when the file left the status", async () => {
-    vi.mocked(repoStatus).mockResolvedValue([]);
+    vi.mocked(api.repoStatus).mockResolvedValue([]);
     await notifyResolutionInvisible("r1", "a.txt");
     expect(lastInfo()).toContain("won't appear as a change");
   });
   test("stays silent while the file still shows", async () => {
-    vi.mocked(repoStatus).mockResolvedValue([
+    vi.mocked(api.repoStatus).mockResolvedValue([
       { path: "a.txt" } as never,
     ]);
     await notifyResolutionInvisible("r1", "a.txt");
     expect(notify.info).not.toHaveBeenCalled();
   });
   test("a status failure never throws (best-effort note)", async () => {
-    vi.mocked(repoStatus).mockRejectedValue(new Error("boom"));
+    vi.mocked(api.repoStatus).mockRejectedValue(new Error("boom"));
     await expect(notifyResolutionInvisible("r1", "a.txt")).resolves.toBeUndefined();
     expect(notify.info).not.toHaveBeenCalled();
   });

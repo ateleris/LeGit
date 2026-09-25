@@ -27,7 +27,7 @@ function listSourceFiles(dir: string): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) out.push(...listSourceFiles(full));
-    else if (/\.(tsx|css)$/.test(entry.name) && !/\.test\./.test(entry.name)) out.push(full);
+    else if (/\.(tsx?|css)$/.test(entry.name) && !/\.test\./.test(entry.name)) out.push(full);
   }
   return out;
 }

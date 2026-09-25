@@ -1,6 +1,6 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { MENU_LAYER_ATTR } from "../Commits/menu/primitives";
+import { MENU_LAYER_ATTR } from "../shared/menu/primitives";
 import { useDismissable } from "./useDismissable";
 
 /** Which way the caret dropdown opens. Down is the default; it flips up when

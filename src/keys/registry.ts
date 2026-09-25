@@ -1,5 +1,5 @@
-import { summonGlobalPanel } from "../panels/GlobalDock";
-import { formatAppError } from "../lib/types";
+import { summonGlobalPanel } from "../layout/globalSummon";
+import { formatAppError } from "../lib/errors";
 import { toggleMaximizeActivePanel } from "../store/dockview";
 import { useLayoutsStore } from "../store/layouts";
 import { notify } from "../store/notifications";
@@ -182,6 +182,3 @@ export function defaultKeymap(): Keymap {
   return Object.fromEntries(COMMANDS.map((c) => [c.id, c.defaultBinding]));
 }
 
-export function commandById(id: string): Command | undefined {
-  return COMMANDS.find((c) => c.id === id);
-}

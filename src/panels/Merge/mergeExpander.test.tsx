@@ -7,7 +7,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { EditorView } from "@codemirror/view";
 import { MergeView, type MergeViewHandle } from "./MergeView";
-import { parseConflicts, type LineSelection } from "../Diff/conflictModel";
+import { parseConflicts, type LineSelection } from "./conflictModel";
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 

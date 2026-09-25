@@ -1,13 +1,13 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
-import { recentRepos } from "../lib/commands";
+import { api } from "../lib/commands";
 import { parseLocator } from "../lib/locator";
 import { formatRepoError } from "../lib/repoErrorFeedback";
 import { useGitProfiles } from "../lib/useGitProfiles";
 import { useCloneStore } from "../store/clone";
 import { useRepoStore } from "../store/repos";
 import { notify } from "../store/notifications";
-import { SectionLabel } from "./Commits/menu/primitives";
+import { SectionLabel } from "./shared/menu/primitives";
 import { AddRepoIcon } from "../icons";
 import { CloneForm, InitForm } from "./Repositories/forms";
 import { HostBadge } from "./shared/HostBadge";
@@ -44,7 +44,7 @@ export function RepoAddMenu() {
   // repos are opened; the profile list refreshes through the shared query).
   useEffect(() => {
     if (!open) return;
-    recentRepos().then(setRecents).catch(console.warn);
+    api.recentRepos().then(setRecents).catch(console.warn);
     void refetchProfiles();
   }, [open, openRepoIds, refetchProfiles]);
 

@@ -1,15 +1,14 @@
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useRef, useState } from "react";
-import { loadLayout } from "../../lib/commands";
-import { formatAppError } from "../../lib/types";
+import { api } from "../../lib/commands";
+import { formatAppError } from "../../lib/errors";
 import { DeleteIcon, DragHandleIcon, RenameIcon } from "../../icons";
-import { confirmDialog } from "../../store/confirm";
+import { confirmDestructiveAction } from "../../store/confirm";
 import { useLayoutsStore } from "../../store/layouts";
 import { notify } from "../../store/notifications";
-import { useConfirmDestructive } from "../../store/settings";
 import { InlineRenameInput } from "../Commits/cells/InlineRenameInput";
-import { asLayoutBundle, asLayoutDocument, buildLayoutBundle } from "../namedLayouts";
+import { asLayoutBundle, asLayoutDocument, buildLayoutBundle } from "../../layout/namedLayouts";
 import type { LayoutDocument } from "../../lib/types";
 import { Button, IconButton } from "../shared/buttons";
 import { useRowDragReorder } from "../shared/useRowDragReorder";
@@ -22,7 +21,6 @@ import { LayoutShortcutChip } from "./LayoutShortcutChip";
  * default.
  */
 export function LayoutsPanel() {
-  const confirmDestructive = useConfirmDestructive();
   const layouts = useLayoutsStore((s) => s.layouts);
   const lastApplied = useLayoutsStore((s) => s.lastApplied);
   const saveCurrent = useLayoutsStore((s) => s.saveCurrent);
@@ -68,8 +66,8 @@ export function LayoutsPanel() {
       if (!name) return;
       // Saving under an existing name IS the override action - same
       // confirmation as the per-row Override button.
-      if (nameTaken(name) && confirmDestructive) {
-        const ok = await confirmDialog({
+      if (nameTaken(name)) {
+        const ok = await confirmDestructiveAction({
           title: "Override layout",
           message: "Replaces the saved layout with the current arrangement.",
           detail: name,
@@ -83,29 +81,25 @@ export function LayoutsPanel() {
 
   const onOverride = (name: string) =>
     run(async () => {
-      if (confirmDestructive) {
-        const ok = await confirmDialog({
-          title: "Override layout",
-          message: "Replaces the saved layout with the current arrangement.",
-          detail: name,
-          confirmLabel: "Override",
-        });
-        if (!ok) return;
-      }
+      const ok = await confirmDestructiveAction({
+        title: "Override layout",
+        message: "Replaces the saved layout with the current arrangement.",
+        detail: name,
+        confirmLabel: "Override",
+      });
+      if (!ok) return;
       await saveCurrent(name);
     });
 
   const onDelete = (name: string) =>
     run(async () => {
-      if (confirmDestructive) {
-        const ok = await confirmDialog({
-          title: "Delete layout",
-          message: "Deletes the saved layout file.",
-          detail: name,
-          confirmLabel: "Delete layout",
-        });
-        if (!ok) return;
-      }
+      const ok = await confirmDestructiveAction({
+        title: "Delete layout",
+        message: "Deletes the saved layout file.",
+        detail: name,
+        confirmLabel: "Delete layout",
+      });
+      if (!ok) return;
       await remove(name);
     });
 
@@ -126,7 +120,7 @@ export function LayoutsPanel() {
         filters: [{ name: "LeGit Layout", extensions: ["legit-layout.json", "json"] }],
       });
       if (!path) return;
-      const doc = await loadLayout(name);
+      const doc = await api.loadLayout(name);
       await writeTextFile(path, JSON.stringify(doc, null, 2));
     });
 
@@ -139,7 +133,7 @@ export function LayoutsPanel() {
       if (!path) return;
       const docs: LayoutDocument[] = [];
       for (const l of layouts) {
-        const doc = asLayoutDocument(await loadLayout(l.name));
+        const doc = asLayoutDocument(await api.loadLayout(l.name));
         if (doc) docs.push(doc);
       }
       await writeTextFile(path, JSON.stringify(buildLayoutBundle(docs), null, 2));

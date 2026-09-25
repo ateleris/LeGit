@@ -1,5 +1,5 @@
 import { useQuery, type QueryClient } from "@tanstack/react-query";
-import { listGitProfiles } from "./commands";
+import { api } from "./commands";
 import type { GitProfile } from "./types";
 import { STALE } from "./queryTiming";
 
@@ -15,7 +15,7 @@ export const GIT_PROFILES_KEY = ["global", "profiles"];
 export function useGitProfiles() {
   return useQuery<GitProfile[]>({
     queryKey: GIT_PROFILES_KEY,
-    queryFn: listGitProfiles,
+    queryFn: api.listGitProfiles,
     staleTime: STALE.live,
   });
 }

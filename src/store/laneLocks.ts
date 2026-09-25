@@ -1,9 +1,5 @@
 import { create } from "zustand";
-import {
-  listLaneLocks,
-  setLaneLock as setLaneLockCmd,
-  unsetLaneLock as unsetLaneLockCmd,
-} from "../lib/commands";
+import { api } from "../lib/commands";
 import type { LaneLock, RepoId } from "../lib/types";
 
 interface LaneLocksStore {
@@ -28,7 +24,7 @@ export const useLaneLocksStore = create<LaneLocksStore>((set, get) => ({
 
   async loadLocks(repoId: RepoId) {
     try {
-      const list = await listLaneLocks(repoId);
+      const list = await api.listLaneLocks(repoId);
       set((s) => ({ locks: { ...s.locks, [repoId]: list } }));
     } catch (e) {
       console.warn("loadLocks failed", e);
@@ -36,12 +32,12 @@ export const useLaneLocksStore = create<LaneLocksStore>((set, get) => ({
   },
 
   async setLock(repoId: RepoId, refName: string, laneIndex: number) {
-    const list = await setLaneLockCmd(repoId, refName, laneIndex);
+    const list = await api.setLaneLock(repoId, refName, laneIndex);
     set((s) => ({ locks: { ...s.locks, [repoId]: list } }));
   },
 
   async unsetLock(repoId: RepoId, refName: string) {
-    const list = await unsetLaneLockCmd(repoId, refName);
+    const list = await api.unsetLaneLock(repoId, refName);
     set((s) => ({ locks: { ...s.locks, [repoId]: list } }));
   },
 

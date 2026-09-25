@@ -10,7 +10,7 @@
 //! against the profile definitions, so a deleted/edited profile or a hand-edited
 //! config degrades gracefully (shown as custom) rather than lying.
 
-use crate::commands::config_util::{read_config_scope, write_config_local};
+use legit_core::config::{self, ConfigScope, WriteScope};
 use crate::commands::signing;
 use crate::error::AppError;
 use crate::state::{AppState, GitProfile};
@@ -137,10 +137,8 @@ fn normalize_draft(mk: &ManagedKeys) -> ManagedKeys {
 /// profile's auth/signing bundle, so a machine-wide `credential.helper` or
 /// `core.sshCommand` can't be applied by one click. The global/system reads
 /// exist for the repo section's "inherited" view.
-async fn read_managed_scope(runner: &dyn GitExecutor, flag: &'static str) -> ManagedKeys {
-    let at = |key: &'static str| async move {
-        read_config_scope(runner, key, &[flag]).await.value
-    };
+async fn read_managed_scope(runner: &dyn GitExecutor, scope: ConfigScope) -> ManagedKeys {
+    let at = |key: &'static str| async move { config::read_scope(runner, scope, key).await.value };
     let ssh_raw = at(KEY_SSH_COMMAND).await;
     ManagedKeys {
         user_name: at(KEY_USER_NAME).await,
@@ -154,12 +152,12 @@ async fn read_managed_scope(runner: &dyn GitExecutor, flag: &'static str) -> Man
                 .map(|p| normalize_key_path(&p))
                 .unwrap_or(cmd)
         }),
-        credential_helper: crate::commands::credential_helper::read_helper_at(runner, flag).await,
+        credential_helper: crate::commands::credential_helper::read_helper_at(runner, scope).await,
     }
 }
 
 async fn read_local_managed(runner: &dyn GitExecutor) -> ManagedKeys {
-    read_managed_scope(runner, "--local").await
+    read_managed_scope(runner, ConfigScope::Local).await
 }
 
 /// Pure: per-key scope precedence for the inherited view (global beats system).
@@ -188,44 +186,25 @@ fn coalesce_inherited(global: ManagedKeys, system: ManagedKeys) -> ManagedKeys {
 /// Note: the value must be a form the git CLI can run via `sh -c`: a short name
 /// like `manager`, not a path containing spaces (which `sh` would word-split).
 async fn write_credential_helper(runner: &dyn GitExecutor, value: Option<&str>) -> Result<(), AppError> {
-    // Drop any existing local entries first (exit 5 = none set; fine).
-    let unset = runner
-        .run_expecting(&["config", "--local", "--unset-all", KEY_CREDENTIAL_HELPER], &[5])
-        .await?;
-    if !unset.success && unset.exit_code != Some(5) {
-        return Err(AppError::Git(GitError::CommandFailed {
-            exit_code: unset.exit_code.unwrap_or(-1),
-            stderr: unset.stderr.trim().to_string(),
-        }));
-    }
-    if let Some(v) = value {
-        // Empty reset entry clears inherited helpers; then our helper.
-        for arg in ["", v] {
-            let out = runner
-                .run(&["config", "--local", "--add", KEY_CREDENTIAL_HELPER, arg])
-                .await?;
-            if !out.success {
-                return Err(AppError::Git(GitError::CommandFailed {
-                    exit_code: out.exit_code.unwrap_or(-1),
-                    stderr: out.stderr.trim().to_string(),
-                }));
-            }
-        }
-    }
-    Ok(())
+    // The empty entry clears inherited helpers; ours follows it.
+    let values: &[&str] = match value {
+        Some(v) => &["", v],
+        None => &[],
+    };
+    Ok(config::replace_all(runner, WriteScope::Local, KEY_CREDENTIAL_HELPER, values).await?)
 }
 
 /// Write a managed-key set to LOCAL config. `None` for a field unsets it. The
 /// auth key is synthesized into a `core.sshCommand`.
 async fn write_managed(runner: &dyn GitExecutor, mk: &ManagedKeys) -> Result<(), AppError> {
-    write_config_local(runner, KEY_USER_NAME, mk.user_name.as_deref()).await?;
-    write_config_local(runner, KEY_USER_EMAIL, mk.user_email.as_deref()).await?;
-    write_config_local(runner, signing::KEY_FORMAT, mk.gpg_format.as_deref()).await?;
-    write_config_local(runner, signing::KEY_SIGNING_KEY, mk.signing_key.as_deref()).await?;
-    write_config_local(runner, signing::KEY_GPGSIGN, mk.commit_gpgsign.as_deref()).await?;
-    write_config_local(runner, signing::KEY_ALLOWED_SIGNERS, mk.allowed_signers_file.as_deref()).await?;
+    config::write(runner, WriteScope::Local, KEY_USER_NAME, mk.user_name.as_deref()).await?;
+    config::write(runner, WriteScope::Local, KEY_USER_EMAIL, mk.user_email.as_deref()).await?;
+    config::write(runner, WriteScope::Local, signing::KEY_FORMAT, mk.gpg_format.as_deref()).await?;
+    config::write(runner, WriteScope::Local, signing::KEY_SIGNING_KEY, mk.signing_key.as_deref()).await?;
+    config::write(runner, WriteScope::Local, signing::KEY_GPGSIGN, mk.commit_gpgsign.as_deref()).await?;
+    config::write(runner, WriteScope::Local, signing::KEY_ALLOWED_SIGNERS, mk.allowed_signers_file.as_deref()).await?;
     let ssh = mk.auth_ssh_key.as_ref().map(|p| synth_ssh_command(p));
-    write_config_local(runner, KEY_SSH_COMMAND, ssh.as_deref()).await?;
+    config::write(runner, WriteScope::Local, KEY_SSH_COMMAND, ssh.as_deref()).await?;
     write_credential_helper(runner, mk.credential_helper.as_deref()).await?;
     Ok(())
 }
@@ -241,10 +220,10 @@ async fn write_one_managed(
     match key {
         KEY_SSH_COMMAND => {
             let ssh = value.map(synth_ssh_command);
-            write_config_local(runner, KEY_SSH_COMMAND, ssh.as_deref()).await
+            Ok(config::write(runner, WriteScope::Local, KEY_SSH_COMMAND, ssh.as_deref()).await?)
         }
         KEY_CREDENTIAL_HELPER => write_credential_helper(runner, value).await,
-        k => write_config_local(runner, k, value).await,
+        k => Ok(config::write(runner, WriteScope::Local, k, value).await?),
     }
 }
 
@@ -598,9 +577,9 @@ pub async fn repo_managed_config_view(
 ) -> Result<ManagedConfigView, AppError> {
     let session = state.get_session(&repo_id).await?;
     let runner = session.runner.read().await.clone();
-    let local = read_managed_scope(runner.as_ref(), "--local").await;
-    let global = read_managed_scope(runner.as_ref(), "--global").await;
-    let system = read_managed_scope(runner.as_ref(), "--system").await;
+    let local = read_managed_scope(runner.as_ref(), ConfigScope::Local).await;
+    let global = read_managed_scope(runner.as_ref(), ConfigScope::Global).await;
+    let system = read_managed_scope(runner.as_ref(), ConfigScope::System).await;
     Ok(ManagedConfigView { local, inherited: coalesce_inherited(global, system) })
 }
 
@@ -701,10 +680,9 @@ pub async fn repo_resolved_identity(
 ) -> Result<ResolvedIdentity, AppError> {
     let session = state.get_session(&repo_id).await?;
     let runner = session.runner.read().await.clone();
-    // No scope flag: `git config --get` resolves across all scopes.
     Ok(ResolvedIdentity {
-        user_name: read_config_scope(runner.as_ref(), KEY_USER_NAME, &[]).await.value,
-        user_email: read_config_scope(runner.as_ref(), KEY_USER_EMAIL, &[]).await.value,
+        user_name: config::read_effective(runner.as_ref(), KEY_USER_NAME).await,
+        user_email: config::read_effective(runner.as_ref(), KEY_USER_EMAIL).await,
     })
 }
 
@@ -722,7 +700,7 @@ pub async fn create_profile_from_repo(
     let local = read_local_managed(runner.as_ref()).await;
     // Re-parse the raw command so we only capture an auth key that round-trips
     // cleanly (a custom, non-`ssh -i` command is dropped rather than stored).
-    let ssh_raw = read_config_scope(runner.as_ref(), KEY_SSH_COMMAND, &["--local"]).await.value;
+    let ssh_raw = config::read_scope(runner.as_ref(), ConfigScope::Local, KEY_SSH_COMMAND).await.value;
     let auth_ssh_key = ssh_raw
         .as_deref()
         .and_then(parse_ssh_key_from_command)

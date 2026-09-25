@@ -4,24 +4,21 @@ import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { autoUpdateSubmodules } from "../../lib/submodules";
-import { repoCheckoutCommit, repoReflog, repoReset } from "../../lib/commands";
+import { api } from "../../lib/commands";
 import { notify } from "../../store/notifications";
-import { confirmDialog } from "../../store/confirm";
-import { useConfirmDestructive } from "../../store/settings";
+import { confirmDestructiveAction } from "../../store/confirm";
 import { notifySwitchOutcome, formatSwitchError } from "../../lib/switchFeedback";
 import { notifyLfsStubs } from "../../lib/lfsFeedback";
 import type { ReflogEntry } from "../../lib/types";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { formatRelative } from "../../lib/time";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { STALE } from "../../lib/queryTiming";
+import { HEAD_MOVE_DOMAINS } from "../../lib/queries/domains";
 
 const MAX_ENTRIES = 200;
-
-// Restoring / checking out from the reflog moves HEAD like any other op.
-const AFFECTED_DOMAINS = ["status", "log", "branches", "diff", "op_state", "tracking", "stashes"];
 
 /**
  * Reflog section — HEAD's reflog as the undo safety net: every HEAD movement
@@ -38,7 +35,7 @@ export function ReflogSection() {
   // invalidates "log", which is exactly when the reflog changes too.
   const { data: entries = [], isFetching, refetch } = useQuery<ReflogEntry[]>({
     queryKey: [repo?.id, "log", "reflog"],
-    queryFn: () => repoReflog(repo!.id, MAX_ENTRIES),
+    queryFn: () => api.repoReflog(repo!.id, MAX_ENTRIES),
     enabled: !!repo,
     staleTime: STALE.live,
   });
@@ -57,16 +54,15 @@ export function ReflogSection() {
     onError: (e) => notify.error(formatAppError(e)),
   });
   const busy = switchBusy || resetBusy;
-  const confirmDestructive = useConfirmDestructive();
 
   const invalidate = useCallback(() => {
     if (!repo) return;
-    invalidateRepoDomains(queryClient, repo.id, AFFECTED_DOMAINS);
+    invalidateRepoDomains(queryClient, repo.id, HEAD_MOVE_DOMAINS);
   }, [queryClient, repo]);
 
   const doCheckout = (e: ReflogEntry) =>
     runSwitch(async () => {
-      const result = await repoCheckoutCommit(repo!.id, e.sha);
+      const result = await api.repoCheckoutCommit(repo!.id, e.sha);
       invalidate();
       notifySwitchOutcome(result.outcome, e.sha.slice(0, 8));
       notifyLfsStubs(result.lfs_stubs, "checkout");
@@ -75,7 +71,7 @@ export function ReflogSection() {
 
   const doReset = (e: ReflogEntry) =>
     runReset(async () => {
-      await repoReset(repo!.id, e.sha, "hard");
+      await api.repoReset(repo!.id, e.sha, "hard");
       invalidate();
       notify.info(`Hard-reset to ${e.sha.slice(0, 8)} (${e.selector}).`);
     });
@@ -83,15 +79,13 @@ export function ReflogSection() {
   // Central confirmation dialog (global destructive-confirmation setting:
   // when off, reset runs immediately).
   const requestReset = async (e: ReflogEntry) => {
-    if (confirmDestructive) {
-      const ok = await confirmDialog({
-        title: "Hard reset",
-        message: "Moves HEAD and the working tree to this entry. Uncommitted changes will be discarded.",
-        detail: `${e.sha.slice(0, 8)}  ${e.selector}`,
-        confirmLabel: "Hard-reset",
-      });
-      if (!ok) return;
-    }
+    const ok = await confirmDestructiveAction({
+      title: "Hard reset",
+      message: "Moves HEAD and the working tree to this entry. Uncommitted changes will be discarded.",
+      detail: `${e.sha.slice(0, 8)}  ${e.selector}`,
+      confirmLabel: "Hard-reset",
+    });
+    if (!ok) return;
     void doReset(e);
   };
 

@@ -1,4 +1,4 @@
-//! Resolve the path to the system `git` executable (DESIGN.md §7.6).
+//! Resolve the path to the system `git` executable (DESIGN-v0.1.md §7.6).
 //!
 //! Order:
 //!   1. User-specified path from settings (passed in).

@@ -6,6 +6,7 @@ use crate::commands::working::resolve_repo_relative;
 use crate::error::AppError;
 use crate::state::AppState;
 use base64::Engine as _;
+use legit_core::cli_impl::parsers::lfs::{lfs_object_path, parse_lfs_pointer, LfsPointer};
 use legit_core::types::BlobBytes;
 
 /// Per-side preview cap (spec: 20 MB). Protects the IPC channel and the
@@ -61,67 +62,10 @@ fn detect_image_format(bytes: &[u8]) -> Option<ImageFormat> {
     None
 }
 
-pub(crate) struct LfsPointer {
-    oid: String,
-    size: u64,
-}
 
-// Mirror of the strict frontend grammar in src/lib/lfsPointer.ts: version
-// line first, `oid sha256:<64 lowercase hex>` and `size <n>` among
-// key-value lines, whole pointer under 1024 bytes. Strictness matters: a
-// false positive would divert a real file into the LFS lookup.
-const VERSION_PREFIX: &str = "version https://git-lfs.github.com/spec/";
-const MAX_POINTER_BYTES: usize = 1024;
 
-fn is_key_value(line: &str) -> bool {
-    match line.split_once(' ') {
-        Some((key, value)) => {
-            !key.is_empty()
-                && key.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-                && value.chars().next().is_some_and(|c| !c.is_whitespace())
-        }
-        None => false,
-    }
-}
 
-fn parse_lfs_pointer(bytes: &[u8]) -> Option<LfsPointer> {
-    if bytes.is_empty() || bytes.len() >= MAX_POINTER_BYTES {
-        return None;
-    }
-    let text = std::str::from_utf8(bytes).ok()?;
-    let mut lines = text.strip_suffix('\n').unwrap_or(text).lines();
-    if !lines.next()?.starts_with(VERSION_PREFIX) {
-        return None;
-    }
-    let (mut oid, mut size) = (None, None);
-    for line in lines {
-        if let Some(hex) = line.strip_prefix("oid sha256:") {
-            if hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
-                oid = Some(hex.to_string());
-                continue;
-            }
-        }
-        if let Some(n) = line.strip_prefix("size ") {
-            if let Ok(v) = n.parse::<u64>() {
-                size = Some(v);
-                continue;
-            }
-        }
-        // Unknown keys (pointer extensions) are fine; a non key-value line
-        // means this is not a pointer at all.
-        if !is_key_value(line) {
-            return None;
-        }
-    }
-    Some(LfsPointer { oid: oid?, size: size? })
-}
 
-/// `<git-dir>/lfs/objects/<oid[0..2]>/<oid[2..4]>/<oid>` (the LFS store is
-/// plain files; oid is validated 64-hex by the parser). Textual '/' join:
-/// the git dir may be a remote posix path on a Windows app build.
-fn lfs_object_path(git_dir: &legit_core::HostPath, oid: &str) -> legit_core::HostPath {
-    git_dir.join(&format!("lfs/objects/{}/{}/{oid}", &oid[..2], &oid[2..4]))
-}
 
 fn classify_bytes(bytes: Vec<u8>, svg_hint: bool) -> FilePreview {
     let size = bytes.len() as u64;
@@ -187,8 +131,8 @@ pub async fn repo_file_preview(
     let fs = session.host.fs();
     let bytes: Vec<u8> = match &rev {
         None => {
-            let abs = resolve_repo_relative(fs.as_ref(), &session.path, &path).await?;
-            let hp = legit_core::HostPath::from_path(&abs);
+            let abs = resolve_repo_relative(fs.as_ref(), &session.root, &path).await?;
+            let hp = abs.clone();
             match fs.stat(&hp).await {
                 Ok(None) | Err(_) => return Ok(FilePreview::Absent),
                 Ok(Some(st)) if st.len > MAX_PREVIEW_BYTES => {
@@ -197,7 +141,7 @@ pub async fn repo_file_preview(
                 Ok(Some(_)) => fs
                     .read(&hp, Some(MAX_PREVIEW_BYTES))
                     .await
-                    .map_err(|e| AppError::Io(format!("read {}: {e}", abs.display())))?,
+                    .map_err(|e| AppError::Io(format!("read {}: {e}", abs)))?,
             }
         }
         Some(r) => {
@@ -219,13 +163,10 @@ pub async fn repo_file_preview(
     };
     if let Some(pointer) = parse_lfs_pointer(&bytes) {
         // Worktrees/submodules relocate `.git`: resolve the real git dir.
-        let runner = session.runner.read().await.clone();
-        let out = runner.run(&["rev-parse", "--git-dir"]).await?;
-        if out.success {
-            let git_dir = session.host_root().resolve(out.stdout.trim());
-            return Ok(resolve_lfs(fs.as_ref(), &git_dir, pointer, is_svg_path(&path)).await);
-        }
-        return Ok(FilePreview::LfsMissing { oid: pointer.oid, size: pointer.size });
+        return Ok(match session.backend.absolute_git_dir().await {
+            Ok(git_dir) => resolve_lfs(fs.as_ref(), &git_dir, pointer, is_svg_path(&path)).await,
+            Err(_) => FilePreview::LfsMissing { oid: pointer.oid, size: pointer.size },
+        });
     }
     Ok(classify_bytes(bytes, is_svg_path(&path)))
 }
@@ -233,6 +174,8 @@ pub async fn repo_file_preview(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const POINTER: &str = "version https://git-lfs.github.com/spec/v1\noid sha256:4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393\nsize 12345\n";
 
     #[test]
     fn detects_image_formats_by_magic() {
@@ -250,43 +193,8 @@ mod tests {
         assert_eq!(detect_image_format(b"plain text"), None);
     }
 
-    const POINTER: &str = "version https://git-lfs.github.com/spec/v1\noid sha256:4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393\nsize 12345\n";
 
-    #[test]
-    fn parses_lfs_pointers_strictly() {
-        let p = parse_lfs_pointer(POINTER.as_bytes()).expect("pointer");
-        assert_eq!(p.oid, "4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393");
-        assert_eq!(p.size, 12345);
-        // Extension key-value lines are tolerated.
-        let ext = format!("{POINTER}x-custom value\n");
-        assert!(parse_lfs_pointer(ext.as_bytes()).is_some());
-        // Rejected: no version line, non key-value line, missing oid/size,
-        // binary bytes, oversized pointer.
-        assert!(parse_lfs_pointer(b"oid sha256:abcd\nsize 1\n").is_none());
-        // A line that is not `key value` shaped (no space / bad key chars)
-        // disqualifies the whole blob. NOTE: "not a pointer!" WOULD pass as
-        // key "not" + value - the grammar (like the TS original) tolerates
-        // unknown keys, so the rejection needs a structurally invalid line.
-        let junk = format!("{POINTER}definitely_not_a_key_value_line\n");
-        assert!(parse_lfs_pointer(junk.as_bytes()).is_none());
-        let bad_key = format!("{POINTER}b@d key\n");
-        assert!(parse_lfs_pointer(bad_key.as_bytes()).is_none());
-        assert!(parse_lfs_pointer(b"version https://git-lfs.github.com/spec/v1\nsize 1\n").is_none());
-        assert!(parse_lfs_pointer(&[0x89, 0x50, 0x00, 0x47]).is_none());
-        let huge = format!("version https://git-lfs.github.com/spec/v1\n{}", "k v\n".repeat(300));
-        assert!(parse_lfs_pointer(huge.as_bytes()).is_none());
-    }
 
-    #[test]
-    fn lfs_object_path_layout() {
-        // Textual '/' joins: a remote posix git dir must never grow '\\' on a
-        // Windows app build.
-        let oid = "4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393";
-        assert_eq!(
-            lfs_object_path(&legit_core::HostPath("/repo/.git".into()), oid).as_str(),
-            format!("/repo/.git/lfs/objects/4d/7a/{oid}")
-        );
-    }
 
     #[test]
     fn classifies_bytes_image_vs_not() {

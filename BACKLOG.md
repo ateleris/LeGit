@@ -76,6 +76,31 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 
 ## Smaller follow-ups
 
+- **History panels should highlight the selected commit.** The Commits panel
+  and the changed-files list mark the row whose details are shown. DONE for
+  File History (docked panel and popup window). Still open for any other
+  commit-history-style list that lacks it (submodule log, reflog?) - apply
+  the same selected-row styling (`--graph-row-selected-bg`, aria-current).
+
+- **File-history window: v2 candidates.** The window feature (see
+  `design`/spec `docs/superpowers/specs/2026-09-25-file-history-window-design.md`)
+  deliberately left out: a generic per-panel "open as window" setting (the
+  summon redirect and shell are built so a panel-id map can replace the
+  single boolean); cross-window jumps ("open this commit in the main
+  window"); live Theme Editor palette preview reaching open popups (they
+  catch up on the next persisted settings change). Small deferred cleanups
+  from review: a file-history summon with the setting on and no active repo
+  silently no-ops (currently unreachable); the window-context map entry
+  lingers if the window build fails (self-heals); the capabilities file
+  description still says "main window"; folder rows in the Files panel keep
+  their own menu layout (not the fenced copy/open block file rows have).
+
+- **Branch/tag chip ellipsis should truncate like file paths.** When a ref
+  name is too long, the chip currently ellipsizes end-first; for
+  slash-separated names the last segment (after the last `/`) is the most
+  important part, so truncate the leading path first - the same
+  middle/leading truncation style the file rows use.
+
 - **Stash-all button in Working Changes?** (open question, 2026-09-16) The
   sections have "Stage all" / "Unstage all" / "Discard all"; a "Stash all"
   alongside them would complete the set. The action already exists (the
@@ -282,6 +307,29 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   hide-the-Refs-pane-when-no-gitlinks (paneview layouts persist panes);
   `--shallow-submodules` on clone when depth + submodules are both set
   (skipped: fails on servers without reachable-sha1 fetch support).
+- **One Explorer invocation for local and WSL reveal** (from the 2026-09-23
+  review's E0; blocked on a Windows check). `reveal_in_file_manager` (now
+  `os_open`, Windows arm) passes `/select,<path>` through `Command::arg`,
+  which quotes the WHOLE argument when the path has a space;
+  `reveal_remote_in_explorer` uses `raw_arg` with quotes around the UNC path
+  only, the form Explorer documents. Check on Windows whether the local form
+  reveals a file whose path contains a space; if not, switch both to the
+  quoted-path `raw_arg` form and route them through one function taking the
+  app-visible path (local path, or the `\\wsl.localhost\` UNC).
+- **Show unstaged moves as renames: decide want/need.** Open product
+  question. A moved file that is not staged shows in Working Changes as a
+  deletion plus an untracked file: `git status` only pairs a rename when
+  the new path is in the index (`git add -N` turns it into `.R`), and
+  LeGit reports git's status as-is. Once both sides are staged it shows as
+  a rename. Check first: how GitKraken renders an unstaged move (it is
+  libgit2-based, and libgit2 can pair index-to-workdir renames with
+  `GIT_STATUS_OPT_RENAMES_INDEX_TO_WORKDIR`, which the git CLI's status
+  cannot). If wanted, approach: pair `.D` entries with untracked entries
+  by content similarity in legit-core (same shape as case-drift
+  detection: display-only, never touches the index), render the pair as
+  one "moved" row, and map stage/unstage/discard on it to both paths.
+  Other option: running `git add -N` on untracked files (cheap, but it
+  silently changes the user's index).
 
 ## Only if it hurts in practice
 

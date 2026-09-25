@@ -5,7 +5,7 @@ import {
   onAskpassClosed,
   type AskpassRequestPayload,
 } from "../lib/events";
-import { askpassRespond, askpassCancel } from "../lib/commands";
+import { api } from "../lib/commands";
 import { useLayer } from "../store/layers";
 import { Button } from "./shared/buttons";
 
@@ -74,7 +74,7 @@ function AskpassDialog({
     if (submittedRef.current) return;
     submittedRef.current = true;
     try {
-      await askpassRespond(request.request_id, value);
+      await api.askpassRespond(request.request_id, value);
     } finally {
       onDone();
     }
@@ -84,7 +84,7 @@ function AskpassDialog({
     if (submittedRef.current) return;
     submittedRef.current = true;
     try {
-      await askpassCancel(request.request_id);
+      await api.askpassCancel(request.request_id);
     } finally {
       onDone();
     }

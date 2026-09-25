@@ -4,12 +4,12 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AddToGitignoreMenuItem } from "./AddToGitignoreMenuItem";
-import { MenuLevelProvider } from "../Commits/menu/primitives";
+import { MenuLevelProvider } from "../shared/menu/primitives";
 import { useRepoStore } from "../../store/repos";
-import { repoAddToGitignore } from "../../lib/commands";
+import { api } from "../../lib/commands";
 
 vi.mock("../../lib/commands", () => ({
-  repoAddToGitignore: vi.fn(() => Promise.resolve()),
+  api: { repoAddToGitignore: vi.fn(() => Promise.resolve()) },
 }));
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
@@ -84,7 +84,7 @@ describe("AddToGitignoreMenuItem", () => {
     );
     await hover(document.querySelector('[data-testid="menu-gitignore-submenu"]')!);
     await act(async () => item("src/panels/")!.click());
-    expect(repoAddToGitignore).toHaveBeenCalledWith("r1", "src/panels", true);
+    expect(api.repoAddToGitignore).toHaveBeenCalledWith("r1", "src/panels", true);
   });
 
   it("ignores the file itself when the trigger is clicked", async () => {
@@ -95,7 +95,7 @@ describe("AddToGitignoreMenuItem", () => {
       '[data-testid="menu-gitignore-submenu"]',
     );
     await act(async () => trigger!.click());
-    expect(repoAddToGitignore).toHaveBeenCalledWith("r1", "src/panels/a.ts", false);
+    expect(api.repoAddToGitignore).toHaveBeenCalledWith("r1", "src/panels/a.ts", false);
   });
 
   it("keeps the flat folder entry for a dir row", async () => {

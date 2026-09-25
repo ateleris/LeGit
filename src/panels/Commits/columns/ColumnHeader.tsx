@@ -3,8 +3,8 @@
 // visible column.
 
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
-import { usePanelContextMenu } from "../menu/PanelContextMenu";
-import { MenuItem, Separator, SectionLabel } from "../menu/primitives";
+import { usePanelContextMenu } from "../../shared/menu/PanelContextMenu";
+import { MenuItem, Separator, SectionLabel } from "../../shared/menu/primitives";
 import { COLUMN_GAP, MIN_COLUMN_WIDTH } from "./types";
 import type { ColumnId } from "./types";
 

@@ -12,7 +12,7 @@ import { createRoot, type Root } from "react-dom/client";
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
 const cancelClone = vi.fn((_opId: string) => Promise.resolve(true));
-vi.mock("../lib/commands", () => ({ cancelClone: (id: string) => cancelClone(id) }));
+vi.mock("../lib/commands", () => ({ api: { cancelClone: (id: string) => cancelClone(id) } }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(() => Promise.resolve(null)) }));
 
 import { CloneTabs } from "./CloneTab";

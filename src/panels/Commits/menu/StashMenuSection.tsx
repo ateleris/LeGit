@@ -1,6 +1,6 @@
 import { useConfirmDestructive } from "../../../store/settings";
-import { useMenuConfirm } from "./PanelContextMenu";
-import { MenuItem, Separator, SectionLabel } from "./primitives";
+import { useDestructiveMenuConfirm } from "../../shared/menu/PanelContextMenu";
+import { MenuItem, Separator, SectionLabel } from "../../shared/menu/primitives";
 
 /**
  * Shared context-menu section for a stash entry. Used by both the stash row's
@@ -30,15 +30,9 @@ export function StashMenuSection({
   onDrop: () => void;
 }) {
   const confirmDestructive = useConfirmDestructive();
-  const menuConfirm = useMenuConfirm();
+  const destructiveMenuConfirm = useDestructiveMenuConfirm();
 
-  const requestDrop = () => {
-    if (!confirmDestructive) {
-      onDrop();
-      return;
-    }
-    menuConfirm(`Drop ${selector}?`, onDrop);
-  };
+  const requestDrop = () => destructiveMenuConfirm(`Drop ${selector}?`, onDrop);
 
   return (
     <>

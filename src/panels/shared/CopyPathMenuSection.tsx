@@ -6,12 +6,12 @@
 // (design/2026-07-09-copy-path-actions.md). The section renders entries
 // only — the caller owns its SectionLabel.
 
-import { MenuItem } from "../Commits/menu/primitives";
+import { MenuItem } from "../shared/menu/primitives";
 import { useActiveRepo } from "../../store/repos";
 import { toAbsolutePath } from "../../lib/paths";
 import { copyText } from "../../lib/clipboard";
 import { notify } from "../../store/notifications";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 
 export function CopyPathMenuSection({
   path,

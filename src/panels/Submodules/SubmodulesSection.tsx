@@ -1,45 +1,23 @@
 import { joinLocator } from "../../lib/locator";
 import { useCallback, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
-import {
-  repoSubmoduleAdd,
-  repoSubmoduleCreateBranch,
-  repoSubmoduleDeleteGitdir,
-  repoSubmoduleFetch,
-  repoSubmoduleGitdirInfo,
-  repoSubmoduleMove,
-  repoSubmoduleRemove,
-  repoSubmoduleSetBranch,
-  repoSubmoduleSetUrl,
-  repoSubmoduleSync,
-  repoSubmoduleUpdate,
-  repoSubmoduleUpdateRemote,
-  repoSubmodules,
-} from "../../lib/commands";
-import {
-  formatAppError,
-  type SubmoduleGitdirInfo,
-  type SubmoduleInfo,
-  type SubmoduleUpdateStrategy,
-} from "../../lib/types";
+import { api } from "../../lib/commands";
+import { type SubmoduleGitdirInfo, type SubmoduleInfo, type SubmoduleUpdateStrategy } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notifySubmoduleUpdateResults } from "../../lib/submodules";
 import { notifyLfsStubs } from "../../lib/lfsFeedback";
 import { notify } from "../../store/notifications";
-import { confirmDialog } from "../../store/confirm";
+import { confirmDestructiveAction, confirmDialog } from "../../store/confirm";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { Button } from "../shared/buttons";
-import { useConfirmDestructive } from "../../store/settings";
 import { SubmoduleRow } from "./SubmoduleRow";
-import { STALE } from "../../lib/queryTiming";
-
-// Submodule ops touch the submodule list, the status view, and (after an
-// update moves pointers) the log decorations.
-const AFFECTED_DOMAINS = ["submodules", "status", "log"];
+import { SUBMODULE_DOMAINS } from "../../lib/queries/domains";
+import { useSubmodules } from "../../lib/queries/useRepoQueries";
 
 /**
  * Submodules section (spec 2026-07-08, tiers 2-3): rows with state +
@@ -52,14 +30,8 @@ export function SubmodulesSection() {
   const repo = useActiveRepo();
   const queryClient = useQueryClient();
   const openRepo = useRepoStore((s) => s.openRepo);
-  const confirmDestructive = useConfirmDestructive();
 
-  const { data: subs = [], isFetching, refetch } = useQuery<SubmoduleInfo[]>({
-    queryKey: [repo?.id, "submodules"],
-    queryFn: () => repoSubmodules(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.live,
-  });
+  const { data: subs = [], isFetching, refetch } = useSubmodules(repo?.id);
   const reload = useCallback(() => { refetch(); }, [refetch]);
   usePanelFocusEffect(reload);
 
@@ -71,7 +43,7 @@ export function SubmodulesSection() {
 
   const { busy, run } = usePanelRunner({
     enabled: !!repo,
-    onSuccess: () => invalidateRepoDomains(queryClient, repo!.id, AFFECTED_DOMAINS),
+    onSuccess: () => invalidateRepoDomains(queryClient, repo!.id, SUBMODULE_DOMAINS),
     // Errors go to the toast overlay (never a panel-embedded banner: those
     // scroll out of view and reflow the pane); the full failing command +
     // stderr is in the Git Command Log, which the toast links to.
@@ -90,14 +62,14 @@ export function SubmodulesSection() {
   const updateAll = () =>
     run(async () =>
       notifyLfsStubs(
-        await repoSubmoduleUpdate(repo!.id, { init: true, recursive, paths: [] }, crypto.randomUUID()),
+        await api.repoSubmoduleUpdate(repo!.id, { init: true, recursive, paths: [] }, crypto.randomUUID()),
         "submodule update",
       ),
     );
 
   const pullLatest = (paths: string[]) =>
     run(async () => {
-      const results = await repoSubmoduleUpdateRemote(
+      const results = await api.repoSubmoduleUpdateRemote(
         repo!.id,
         paths,
         strategy,
@@ -110,8 +82,8 @@ export function SubmodulesSection() {
     // Object holder (not a plain `let`): assigned inside the run() closure.
     const retained: { info: SubmoduleGitdirInfo | null } = { info: null };
     const ok = await run(async () => {
-      await repoSubmoduleRemove(repo!.id, s.path);
-      retained.info = await repoSubmoduleGitdirInfo(repo!.id, s.name);
+      await api.repoSubmoduleRemove(repo!.id, s.path);
+      retained.info = await api.repoSubmoduleGitdirInfo(repo!.id, s.name);
     });
     if (!ok || !retained.info) return;
     // Second stage: offer gitdir deletion only if one was retained. This
@@ -128,20 +100,18 @@ export function SubmodulesSection() {
       confirmLabel: "Delete repository data",
       cancelLabel: "Keep",
     });
-    if (del) void run(() => repoSubmoduleDeleteGitdir(repo!.id, s.name));
+    if (del) void run(() => api.repoSubmoduleDeleteGitdir(repo!.id, s.name));
   };
 
   const requestRemove = async (s: SubmoduleInfo) => {
-    if (confirmDestructive) {
-      const ok = await confirmDialog({
-        title: "Remove submodule",
-        message:
-          "Removes its .gitmodules entry and working tree. The repository data under .git/modules is kept.",
-        detail: s.path,
-        confirmLabel: "Remove submodule",
-      });
-      if (!ok) return;
-    }
+    const ok = await confirmDestructiveAction({
+      title: "Remove submodule",
+      message:
+        "Removes its .gitmodules entry and working tree. The repository data under .git/modules is kept.",
+      detail: s.path,
+      confirmLabel: "Remove submodule",
+    });
+    if (!ok) return;
     void doRemove(s);
   };
 
@@ -150,7 +120,7 @@ export function SubmodulesSection() {
       const url = addUrl.trim();
       const path = addPath.trim();
       if (!url || !path) return;
-      await repoSubmoduleAdd(repo!.id, url, path, addBranch.trim() || null, crypto.randomUUID());
+      await api.repoSubmoduleAdd(repo!.id, url, path, addBranch.trim() || null, crypto.randomUUID());
       setAddUrl("");
       setAddPath("");
       setAddBranch("");
@@ -226,7 +196,7 @@ export function SubmodulesSection() {
               onInitUpdate={() =>
                 run(async () =>
                   notifyLfsStubs(
-                    await repoSubmoduleUpdate(
+                    await api.repoSubmoduleUpdate(
                       repo.id,
                       { init: true, recursive: false, paths: [s.path] },
                       crypto.randomUUID(),
@@ -238,7 +208,7 @@ export function SubmodulesSection() {
               onUpdate={() =>
                 run(async () =>
                   notifyLfsStubs(
-                    await repoSubmoduleUpdate(
+                    await api.repoSubmoduleUpdate(
                       repo.id,
                       { init: false, recursive: false, paths: [s.path] },
                       crypto.randomUUID(),
@@ -250,23 +220,23 @@ export function SubmodulesSection() {
               onPullLatest={() => pullLatest([s.path])}
               onSync={() =>
                 run(async () => {
-                  await repoSubmoduleSync(repo.id, [s.path], false);
+                  await api.repoSubmoduleSync(repo.id, [s.path], false);
                   notify.success(`Synced URL for '${s.path}'`);
                 })
               }
-              onFetch={() => run(() => repoSubmoduleFetch(repo.id, s.path, crypto.randomUUID()))}
-              onSetUrl={(url) => run(() => repoSubmoduleSetUrl(repo.id, s.path, url))}
+              onFetch={() => run(() => api.repoSubmoduleFetch(repo.id, s.path, crypto.randomUUID()))}
+              onSetUrl={(url) => run(() => api.repoSubmoduleSetUrl(repo.id, s.path, url))}
               onSetBranch={(branch) =>
-                run(() => repoSubmoduleSetBranch(repo.id, s.path, branch))
+                run(() => api.repoSubmoduleSetBranch(repo.id, s.path, branch))
               }
               onMovePath={(to) =>
                 run(async () => {
-                  await repoSubmoduleMove(repo.id, s.path, to);
+                  await api.repoSubmoduleMove(repo.id, s.path, to);
                   notify.success(`Moved '${s.path}' to '${to}' (staged)`);
                 })
               }
               onCreateBranch={(name) =>
-                run(() => repoSubmoduleCreateBranch(repo.id, s.path, name))
+                run(() => api.repoSubmoduleCreateBranch(repo.id, s.path, name))
               }
               onRemove={() => void requestRemove(s)}
             />

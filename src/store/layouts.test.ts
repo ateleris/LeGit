@@ -16,17 +16,19 @@ vi.mock(import("../lib/commands"), async (importOriginal) => ({
   deleteLayout: vi.fn(async () => null),
   setLayoutsOrder: vi.fn(async () => null),
 }));
-vi.mock("../panels/GlobalDock", () => ({
+vi.mock("../layout/defaultLayouts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../layout/defaultLayouts")>()),
   buildDefaultGlobalLayout: vi.fn(),
-  summonGlobalPanel: vi.fn(),
-}));
-vi.mock("../panels/RepoDock", () => ({
   buildDefaultRepoLayout: vi.fn(),
 }));
+vi.mock("../layout/globalSummon", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../layout/globalSummon")>()),
+  summonGlobalPanel: vi.fn(),
+}));
 
-import { listLayouts, loadLayout, setLayoutsOrder } from "../lib/commands";
-import { summonGlobalPanel } from "../panels/GlobalDock";
-import { buildLayoutDocument } from "../panels/namedLayouts";
+import { loadLayout, listLayouts, setLayoutsOrder, saveLayout, renameLayout, deleteLayout } from "../lib/commands";
+import { summonGlobalPanel } from "../layout/globalSummon";
+import { buildLayoutDocument } from "../layout/namedLayouts";
 import { useDockviewStore } from "./dockview";
 import { useLayoutsStore } from "./layouts";
 

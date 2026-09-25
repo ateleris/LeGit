@@ -48,22 +48,6 @@ pub async fn repo_resolve_commit(
     session.backend.resolve_commit(&rev).await.map_err(AppError::Git)
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn repo_search_paths(
-    state: tauri::State<'_, AppState>,
-    repo_id: String,
-    query: String,
-    max_count: u32,
-) -> Result<Vec<PathBuf>, AppError> {
-    let session = state.get_session(&repo_id).await?;
-    session
-        .backend
-        .search_paths(&query, max_count)
-        .await
-        .map_err(AppError::Git)
-}
-
 /// Blame `path` - at `rev` when given, else the working tree.
 #[tauri::command]
 #[specta::specta]

@@ -1,35 +1,21 @@
 import { useCallback, useRef, useState } from "react";
 import { notify } from "../../store/notifications";
-import { confirmDialog } from "../../store/confirm";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { confirmDestructiveAction } from "../../store/confirm";
+import { useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
-import {
-  consoleCancel,
-  repoAddRemote,
-  repoFetch,
-  repoListRemotes,
-  repoPruneRemote,
-  repoRemoveRemote,
-  repoRenameRemote,
-  repoSetRemoteUrl,
-} from "../../lib/commands";
+import { api } from "../../lib/commands";
 import type { Remote } from "../../lib/types";
-import { formatAppError, gitErrorKind } from "../../lib/types";
+import { formatAppError, gitErrorKind } from "../../lib/errors";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { InlineEditor } from "../shared/InlineEditor";
 import { Button } from "../shared/buttons";
 import { ToolbarButton } from "../shared/ToolbarButton";
-import { useConfirmDestructive } from "../../store/settings";
 import { FetchIcon } from "../../icons";
-import { STALE } from "../../lib/queryTiming";
-
-// Domains to refresh after any remote change: the remotes list itself, plus
-// branches/tracking/log so the Commits sync toolbar's remote derivation and
-// ahead/behind indicator stay correct.
-const AFFECTED_DOMAINS = ["remotes", "branches", "tracking", "log"];
+import { REMOTE_DOMAINS } from "../../lib/queries/domains";
+import { useRemotes } from "../../lib/queries/useRepoQueries";
 
 /** Which row is being edited inline, and how. */
 type EditState =
@@ -46,14 +32,8 @@ type EditState =
 export function RemotesSection() {
   const repo = useActiveRepo();
   const queryClient = useQueryClient();
-  const confirmDestructive = useConfirmDestructive();
 
-  const { data: remotes = [], isFetching, refetch } = useQuery<Remote[]>({
-    queryKey: [repo?.id, "remotes"],
-    queryFn: () => repoListRemotes(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.live,
-  });
+  const { data: remotes = [], isFetching, refetch } = useRemotes(repo?.id);
 
   const reload = useCallback(() => {
     refetch();
@@ -76,7 +56,7 @@ export function RemotesSection() {
   // success. Delayed busy + double-click guard per convention.
   const { busy, run: runMut } = usePanelRunner({
     enabled: !!repo,
-    onSuccess: () => invalidateRepoDomains(queryClient, repo!.id, AFFECTED_DOMAINS),
+    onSuccess: () => invalidateRepoDomains(queryClient, repo!.id, REMOTE_DOMAINS),
     onError: (e) => notify.error(formatAppError(e)),
   });
 
@@ -95,7 +75,7 @@ export function RemotesSection() {
       setBusyNet(tag);
       try {
         await fn(opId);
-        invalidateRepoDomains(queryClient, repo.id, AFFECTED_DOMAINS);
+        invalidateRepoDomains(queryClient, repo.id, REMOTE_DOMAINS);
       } catch (e) {
         if (!cancelRequestedRef.current) {
           notify.error(
@@ -116,7 +96,7 @@ export function RemotesSection() {
   const cancelNet = useCallback(() => {
     if (repo && opIdRef.current) {
       cancelRequestedRef.current = true;
-      void consoleCancel(repo.id, opIdRef.current);
+      void api.consoleCancel(repo.id, opIdRef.current);
     }
   }, [repo]);
 
@@ -136,40 +116,38 @@ export function RemotesSection() {
       setEdit(null);
       return;
     }
-    if (await runMut(() => repoRenameRemote(repo!.id, name, next))) setEdit(null);
+    if (await runMut(() => api.repoRenameRemote(repo!.id, name, next))) setEdit(null);
   };
 
   const saveUrls = async (r: Remote) => {
     const f = draftFetch.trim();
     const p = draftPush.trim();
     const ok = await runMut(async () => {
-      if (f && f !== r.fetch_url) await repoSetRemoteUrl(repo!.id, r.name, f, false);
-      if (p !== r.push_url && p !== "") await repoSetRemoteUrl(repo!.id, r.name, p, true);
+      if (f && f !== r.fetch_url) await api.repoSetRemoteUrl(repo!.id, r.name, f, false);
+      if (p !== r.push_url && p !== "") await api.repoSetRemoteUrl(repo!.id, r.name, p, true);
     });
     if (ok) setEdit(null);
   };
 
   const doRemove = async (name: string) => {
-    if (await runMut(() => repoRemoveRemote(repo!.id, name))) setEdit(null);
+    if (await runMut(() => api.repoRemoveRemote(repo!.id, name))) setEdit(null);
   };
 
   // Central confirmation dialog (global destructive-confirmation setting:
   // when off, remove runs immediately).
   const requestRemove = async (name: string) => {
-    if (confirmDestructive) {
-      const ok = await confirmDialog({
-        title: "Remove remote",
-        message: "Removes the remote; its remote-tracking refs will be deleted.",
-        detail: name,
-        confirmLabel: "Remove remote",
-      });
-      if (!ok) return;
-    }
+    const ok = await confirmDestructiveAction({
+      title: "Remove remote",
+      message: "Removes the remote; its remote-tracking refs will be deleted.",
+      detail: name,
+      confirmLabel: "Remove remote",
+    });
+    if (!ok) return;
     void doRemove(name);
   };
 
   const addRemote = async (name: string, url: string): Promise<boolean> =>
-    runMut(() => repoAddRemote(repo!.id, name, url));
+    runMut(() => api.repoAddRemote(repo!.id, name, url));
 
   if (!repo) {
     return (
@@ -249,7 +227,7 @@ export function RemotesSection() {
                         disabled={blocked}
                         onClick={() =>
                           runNet(`fetch:${r.name}`, (opId) =>
-                            repoFetch(repo.id, { all: false, prune: false, remote: r.name }, opId),
+                            api.repoFetch(repo.id, { all: false, prune: false, remote: r.name }, opId),
                           )
                         }
                       />
@@ -258,7 +236,7 @@ export function RemotesSection() {
                         title="Delete local remote-tracking refs that no longer exist on the remote"
                         disabled={blocked}
                         onClick={() =>
-                          runNet(`prune:${r.name}`, (opId) => repoPruneRemote(repo.id, r.name, opId))
+                          runNet(`prune:${r.name}`, (opId) => api.repoPruneRemote(repo.id, r.name, opId))
                         }
                       />
                       <ToolbarButton label="Edit URLs" disabled={blocked} onClick={() => openUrls(r)} />

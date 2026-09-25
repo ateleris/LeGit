@@ -4,10 +4,10 @@
 // must never cascade (the IPC itself may be what broke), so every call
 // swallows its own rejection and the browser console remains the fallback.
 
-import { frontendLog } from "./commands";
+import { api } from "./commands";
 
 function send(message: string) {
-  frontendLog("error", message).catch(() => {
+  api.frontendLog("error", message).catch(() => {
     /* logging must never throw - console retains the original error */
   });
 }

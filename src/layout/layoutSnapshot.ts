@@ -1,0 +1,347 @@
+// Dock layout snapshots: capture/apply for both docks' persistence formats
+// (repo: envelope { dockview, placements, fallbacks }; global: plain dockview
+// JSON), shared by the startup restore, the baked defaults, and named layouts
+// (see namedLayouts.ts). The SAVED_* keys are the retired "saved default"
+// localStorage snapshot, kept only for its one-time migration into a named
+// layout.
+
+import type { DockviewApi } from "dockview-react";
+import { applyPanelConstraints } from "../store/dockview";
+import {
+  computeFallbackPosition,
+  useSummonStore,
+  type FallbackPosition,
+} from "../store/summon";
+// Only the RepoLayoutEnvelope TYPE flows back into defaultLayouts - no
+// runtime cycle.
+import { DEFAULT_GLOBAL_LAYOUT, DEFAULT_REPO_LAYOUT } from "./defaultLayouts";
+import { GLOBAL_PANELS, PANEL_TITLES, REPO_PANELS } from "./descriptors";
+
+// Legacy "saved default" snapshot keys - written by the retired
+// "Save as default layout" menu entry, read only by the one-time migration
+// into a named layout (store/layouts.ts).
+export const SAVED_REPO_LAYOUT_KEY = "legit.repo-dock-layout-default";
+export const SAVED_GLOBAL_LAYOUT_KEY = "legit.global-dock-layout-default";
+
+/** Persisted shape of the repo dock's layout (live key and saved default). */
+export interface RepoLayoutEnvelope {
+  dockview: unknown;
+  placements: Record<string, string>;
+  fallbacks: Record<string, FallbackPosition>;
+}
+
+/**
+ * Parse a persisted repo-dock layout. Accepts the envelope format and, for
+ * backward compatibility, a bare dockview layout (pre-envelope persistence).
+ * Returns null for unparseable input - callers fall back to the default
+ * layout, never throw.
+ */
+export function parseRepoLayoutEnvelope(raw: string | null): RepoLayoutEnvelope | null {
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  return coerceRepoLayoutEnvelope(parsed);
+}
+
+/** Same tolerance rules as `parseRepoLayoutEnvelope`, for already-parsed
+ *  values (a named layout document's `repo` field). */
+export function coerceRepoLayoutEnvelope(parsed: unknown): RepoLayoutEnvelope | null {
+  if (!parsed || typeof parsed !== "object") return null;
+  const envelope = parsed as {
+    dockview?: unknown;
+    placements?: unknown;
+    fallbacks?: unknown;
+  };
+
+  const placements: Record<string, string> = {};
+  if (envelope.placements && typeof envelope.placements === "object") {
+    for (const [panelId, groupId] of Object.entries(envelope.placements)) {
+      if (typeof groupId === "string") placements[panelId] = groupId;
+    }
+  }
+
+  const fallbacks: Record<string, FallbackPosition> = {};
+  if (envelope.fallbacks && typeof envelope.fallbacks === "object") {
+    for (const [panelId, pos] of Object.entries(envelope.fallbacks)) {
+      if (pos && typeof pos === "object" && "referencePanel" in (pos as object)) {
+        fallbacks[panelId] = pos as FallbackPosition;
+      }
+    }
+  }
+
+  // Bare layouts (no `dockview` field) are the layout itself.
+  return { dockview: envelope.dockview ?? parsed, placements, fallbacks };
+}
+
+/**
+ * Strip panels whose component no longer exists from a persisted dockview
+ * layout. A removed panel (e.g. the retired Search panel) would otherwise
+ * make `fromJSON` throw AFTER building the restored panes' DOM - the exact
+ * failure mode behind the old Refs pane-duplication bug - and nuke the whole
+ * layout to the default. Returns the cleaned layout, or null when nothing
+ * usable remains (callers fall back to the default). Pure so the pruning
+ * rules are unit-tested.
+ *
+ * `titles` (registry title per component) overrides each surviving panel's
+ * persisted title: layouts store titles verbatim, so without this a panel
+ * rename in the registry would never reach existing saved layouts.
+ */
+export function sanitizeDockviewLayout(
+  json: unknown,
+  knownComponents: ReadonlySet<string>,
+  titles?: Readonly<Record<string, string>>,
+): unknown | null {
+  const layout = json as {
+    grid?: { root?: unknown };
+    panels?: Record<string, unknown>;
+    activeGroup?: unknown;
+  } | null;
+  if (!layout || typeof layout !== "object" || !layout.grid || !layout.panels) return null;
+
+  // Panels whose contentComponent still exists.
+  const panels: Record<string, unknown> = {};
+  for (const [id, p] of Object.entries(layout.panels)) {
+    const component = (p as { contentComponent?: unknown } | null)?.contentComponent;
+    if (typeof component !== "string" || !knownComponents.has(component)) continue;
+    const title = titles?.[component];
+    panels[id] = title !== undefined ? { ...(p as object), title } : p;
+  }
+
+  const groupIds = new Set<string>();
+  const usedViews = new Set<string>();
+
+  type Node = { type?: unknown; data?: unknown; size?: unknown };
+  const sanitizeNode = (node: Node | null | undefined): Node | null => {
+    if (!node || typeof node !== "object") return null;
+    if (node.type === "leaf") {
+      const data = (node.data ?? {}) as { views?: unknown; activeView?: unknown; id?: unknown };
+      const views = (Array.isArray(data.views) ? data.views : []).filter(
+        (v): v is string => typeof v === "string" && v in panels,
+      );
+      if (views.length === 0) return null;
+      for (const v of views) usedViews.add(v);
+      if (typeof data.id === "string") groupIds.add(data.id);
+      const activeView =
+        typeof data.activeView === "string" && views.includes(data.activeView)
+          ? data.activeView
+          : views[0];
+      return { ...node, data: { ...data, views, activeView } };
+    }
+    if (node.type === "branch") {
+      const children = (Array.isArray(node.data) ? node.data : [])
+        .map((c) => sanitizeNode(c as Node))
+        .filter((c): c is Node => c !== null);
+      if (children.length === 0) return null;
+      return { ...node, data: children };
+    }
+    return null;
+  };
+
+  const root = sanitizeNode((layout.grid as { root?: Node }).root);
+  if (!root) return null;
+
+  // A layout serialized while a group was maximized carries a `maximizedNode`
+  // marker that fromJSON re-applies. Maximization is a transient focus mode,
+  // never the resting layout, so it must not survive a restore.
+  const grid: Record<string, unknown> = { ...(layout.grid as object), root };
+  delete grid.maximizedNode;
+
+  const result: Record<string, unknown> = {
+    ...layout,
+    grid,
+    panels: Object.fromEntries(Object.entries(panels).filter(([id]) => usedViews.has(id))),
+  };
+  if (typeof layout.activeGroup === "string" && !groupIds.has(layout.activeGroup)) {
+    delete result.activeGroup;
+  }
+  return result;
+}
+
+/**
+ * Panels sharing one dock slot, shown one at a time. A layout naming one
+ * member means "the slot": on apply, the member CURRENTLY showing keeps it -
+ * with a commit selected, Changed Files stays even though the layout was
+ * saved with Working Changes (and vice versa); an in-progress Merge stays
+ * where the layout has Diff. Diff/Merge derive from the descriptors'
+ * `swapsWith`; Working Changes / Changed Files swap per selection at their
+ * `swapSummon` call sites (not via `swapsWith`, which would make a plain
+ * summon of one close the other), so that pair is declared here.
+ */
+export const SLOT_PAIRS: ReadonlyArray<readonly [string, string]> = [
+  ["working-changes", "changed-files"],
+  ...REPO_PANELS.flatMap((p) =>
+    p.swapsWith && p.id < p.swapsWith ? [[p.id, p.swapsWith] as const] : [],
+  ),
+];
+
+/**
+ * Rewrite a persisted dockview layout so each slot pair shows the member
+ * that is currently open (see SLOT_PAIRS). Substitutes only when the layout
+ * names exactly one member and the dock currently shows exactly the other;
+ * a layout naming both, or a dock showing both/neither, is left as saved.
+ * Returns the input unchanged when there is nothing to do, and never throws
+ * on foreign shapes (sanitizeDockviewLayout deals with those). The renamed
+ * panel's persisted title is dropped - sanitize re-titles from the registry.
+ */
+export function substituteSlotPanels(
+  json: unknown,
+  isOpen: (panelId: string) => boolean,
+  pairs: ReadonlyArray<readonly [string, string]> = SLOT_PAIRS,
+): unknown {
+  const layout = json as {
+    grid?: { root?: unknown };
+    panels?: Record<string, unknown>;
+  } | null;
+  if (!layout || typeof layout !== "object" || !layout.grid || !layout.panels) return json;
+
+  const renames = new Map<string, string>();
+  for (const [a, b] of pairs) {
+    const hasA = a in layout.panels;
+    const hasB = b in layout.panels;
+    if (hasA === hasB) continue;
+    const from = hasA ? a : b;
+    const to = hasA ? b : a;
+    if (isOpen(to) && !isOpen(from)) renames.set(from, to);
+  }
+  if (renames.size === 0) return json;
+
+  const panels: Record<string, unknown> = {};
+  for (const [id, p] of Object.entries(layout.panels)) {
+    const to = renames.get(id);
+    if (to === undefined) {
+      panels[id] = p;
+      continue;
+    }
+    const entry = { ...(p as object), id: to, contentComponent: to } as Record<string, unknown>;
+    delete entry.title;
+    panels[to] = entry;
+  }
+
+  type Node = { type?: unknown; data?: unknown };
+  const renameNode = (node: Node | null | undefined): unknown => {
+    if (!node || typeof node !== "object") return node;
+    if (node.type === "leaf") {
+      const data = (node.data ?? {}) as { views?: unknown; activeView?: unknown };
+      const views = Array.isArray(data.views)
+        ? data.views.map((v) => (typeof v === "string" ? (renames.get(v) ?? v) : v))
+        : data.views;
+      const activeView =
+        typeof data.activeView === "string"
+          ? (renames.get(data.activeView) ?? data.activeView)
+          : data.activeView;
+      return { ...node, data: { ...data, views, activeView } };
+    }
+    if (node.type === "branch" && Array.isArray(node.data)) {
+      return { ...node, data: node.data.map((c) => renameNode(c as Node)) };
+    }
+    return node;
+  };
+
+  return {
+    ...layout,
+    grid: { ...layout.grid, root: renameNode(layout.grid.root as Node) },
+    panels,
+  };
+}
+
+const REPO_COMPONENT_IDS: ReadonlySet<string> = new Set(REPO_PANELS.map((p) => p.id));
+const GLOBAL_COMPONENT_IDS: ReadonlySet<string> = new Set(GLOBAL_PANELS.map((p) => p.id));
+
+/**
+ * Snapshot the current group ID and fallback position for every open panel
+ * into the summon store (drives where closed panels re-open). Pass
+ * `layoutJson` if you already called `api.toJSON()` to avoid a second call.
+ */
+export function capturePlacements(api: DockviewApi, layoutJson?: unknown) {
+  const json = layoutJson ?? api.toJSON();
+  const { capturePlacement, captureFallback } = useSummonStore.getState();
+  for (const panel of api.panels) {
+    const groupId = panel.group?.id;
+    if (!groupId) continue;
+    capturePlacement(panel.id, groupId);
+    const fallback = computeFallbackPosition(json, groupId);
+    if (fallback) captureFallback(panel.id, fallback);
+  }
+}
+
+/** The repo dock's current layout in its persisted envelope shape. */
+export function captureRepoLayoutEnvelope(api: DockviewApi): RepoLayoutEnvelope {
+  return {
+    dockview: api.toJSON(),
+    placements: useSummonStore.getState().placements,
+    fallbacks: useSummonStore.getState().fallbackPositions,
+  };
+}
+
+/**
+ * Restore the repo dock from a parsed envelope: seed the summon store's
+ * placements/fallbacks first (matching the startup order in RepoDock), then
+ * apply the layout. Returns false when the layout restored zero panels or
+ * threw - the caller falls back to the default layout.
+ */
+export function applyRepoLayoutEnvelope(api: DockviewApi, envelope: RepoLayoutEnvelope): boolean {
+  // Slot pairs first: keep the member currently showing (a selected commit's
+  // Changed Files survives a layout saved with Working Changes). A no-op on
+  // the startup restore, where nothing is open yet.
+  const swapped = substituteSlotPanels(envelope.dockview, (id) => !!api.getPanel(id));
+  // Retired panels are pruned next - a stale reference would make fromJSON
+  // throw and nuke the whole layout.
+  const dockview = sanitizeDockviewLayout(swapped, REPO_COMPONENT_IDS, PANEL_TITLES);
+  if (dockview === null) return false;
+  const { capturePlacement, captureFallback } = useSummonStore.getState();
+  for (const [panelId, groupId] of Object.entries(envelope.placements)) {
+    capturePlacement(panelId, groupId);
+  }
+  for (const [panelId, pos] of Object.entries(envelope.fallbacks)) {
+    captureFallback(panelId, pos);
+  }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    api.fromJSON(dockview as any);
+  } catch (e) {
+    console.warn("could not apply repo dock layout", e);
+    return false;
+  }
+  if (api.panels.length === 0) return false;
+  capturePlacements(api);
+  applyPanelConstraints(api);
+  return true;
+}
+
+/**
+ * Apply a plain global-dock layout JSON (sanitized: retired panels pruned).
+ * Shared by the startup restore, the saved default, and the baked default.
+ */
+export function applyGlobalLayoutJson(api: DockviewApi, json: unknown): boolean {
+  const layout = sanitizeDockviewLayout(json, GLOBAL_COMPONENT_IDS, PANEL_TITLES);
+  if (layout === null) return false;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    api.fromJSON(layout as any);
+  } catch (e) {
+    console.warn("could not apply global dock layout", e);
+    return false;
+  }
+  if (api.panels.length === 0) return false;
+  applyPanelConstraints(api);
+  return true;
+}
+
+/**
+ * Apply the built-in default repo layout (`defaultLayouts.ts`). Cloned so
+ * fromJSON / the summon store never share references with the module
+ * constant. Returns false if it fails to apply - callers fall back to the
+ * programmatic builder.
+ */
+export function applyBakedRepoLayout(api: DockviewApi): boolean {
+  return applyRepoLayoutEnvelope(api, structuredClone(DEFAULT_REPO_LAYOUT));
+}
+
+/** Same as `applyBakedRepoLayout`, for the global dock. */
+export function applyBakedGlobalLayout(api: DockviewApi): boolean {
+  return applyGlobalLayoutJson(api, structuredClone(DEFAULT_GLOBAL_LAYOUT));
+}

@@ -7,7 +7,7 @@ export const TOOLBAR_FIELD_STYLE: React.CSSProperties = {
   fontSize: "var(--fz-sm)",
   height: "2em",
   boxSizing: "border-box",
-  padding: "0 6px",
+  padding: "0 0.5em",
   border: "1px solid var(--panel-border)",
   borderRadius: 3,
   background: "var(--input-bg)",

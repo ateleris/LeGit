@@ -1,24 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useConfirmDestructive } from "../store/settings";
 import { useRepoStore } from "../store/repos";
 import { invalidateRepoDomains } from "../lib/repoInvalidation";
-import { OP_DOMAINS, useOpState } from "../lib/useOpState";
-import {
-  repoCherryPickAbort,
-  repoCherryPickContinue,
-  repoCherryPickSkip,
-  repoMergeAbort,
-  repoMergeContinue,
-  repoRebaseAbort,
-  repoRebaseContinue,
-  repoRebaseSkip,
-  repoRevertAbort,
-  repoRevertContinue,
-  repoRevertSkip,
-  repoStatus,
-} from "../lib/commands";
-import type { FileStatus, RepoOpState } from "../lib/types";
+import { useOpState } from "../lib/useOpState";
+import { OP_DOMAINS } from "../lib/queries/domains";
+import { useStatus } from "../lib/queries/useRepoQueries";
+import { api } from "../lib/commands";
+import type { RepoOpState } from "../lib/types";
 import {
   notifyMergeOutcome,
   notifyOpError,
@@ -27,7 +16,6 @@ import {
 } from "../lib/mergeFeedback";
 import { ToolbarButton } from "./shared/ToolbarButton";
 import { usePanelRunner } from "./shared/usePanelRunner";
-import { STALE } from "../lib/queryTiming";
 
 // The banner's ghost buttons sit on banner-op-bg, not a panel surface, so
 // their text and border must follow the banner's own foreground token.
@@ -58,12 +46,7 @@ export function OpStateStrip() {
   // Same key + fetcher as Working Changes, so the cache is shared; this own
   // subscription keeps the conflict count watcher-fresh when that panel is
   // closed. Only fetched while an operation is actually in progress.
-  const { data: status = [] } = useQuery<FileStatus[]>({
-    queryKey: [activeRepoId, "status"],
-    queryFn: () => repoStatus(activeRepoId!),
-    enabled: !!activeRepoId && opActive,
-    staleTime: STALE.live,
-  });
+  const { data: status = [] } = useStatus(activeRepoId, { enabled: opActive });
   const conflictCount = useMemo(
     () => status.filter((s) => s.state === "Conflicted").length,
     [status],
@@ -131,16 +114,16 @@ export function OpStateBanner({
     run(async () => {
       switch (opState.kind) {
         case "merge":
-          notifyMergeOutcome(await repoMergeContinue(repoId), target);
+          notifyMergeOutcome(await api.repoMergeContinue(repoId), target);
           break;
         case "rebase":
-          notifyRebaseOutcome(await repoRebaseContinue(repoId), target);
+          notifyRebaseOutcome(await api.repoRebaseContinue(repoId), target);
           break;
         case "cherry_pick":
-          notifySequenceOutcome(await repoCherryPickContinue(repoId), "cherry-pick", target);
+          notifySequenceOutcome(await api.repoCherryPickContinue(repoId), "cherry-pick", target);
           break;
         case "revert":
-          notifySequenceOutcome(await repoRevertContinue(repoId), "revert", target);
+          notifySequenceOutcome(await api.repoRevertContinue(repoId), "revert", target);
           break;
       }
     });
@@ -149,13 +132,13 @@ export function OpStateBanner({
     run(async () => {
       switch (opState.kind) {
         case "rebase":
-          notifyRebaseOutcome(await repoRebaseSkip(repoId), target);
+          notifyRebaseOutcome(await api.repoRebaseSkip(repoId), target);
           break;
         case "cherry_pick":
-          notifySequenceOutcome(await repoCherryPickSkip(repoId), "cherry-pick", target);
+          notifySequenceOutcome(await api.repoCherryPickSkip(repoId), "cherry-pick", target);
           break;
         case "revert":
-          notifySequenceOutcome(await repoRevertSkip(repoId), "revert", target);
+          notifySequenceOutcome(await api.repoRevertSkip(repoId), "revert", target);
           break;
       }
     });
@@ -164,16 +147,16 @@ export function OpStateBanner({
     run(async () => {
       switch (opState.kind) {
         case "merge":
-          await repoMergeAbort(repoId);
+          await api.repoMergeAbort(repoId);
           break;
         case "rebase":
-          await repoRebaseAbort(repoId);
+          await api.repoRebaseAbort(repoId);
           break;
         case "cherry_pick":
-          await repoCherryPickAbort(repoId);
+          await api.repoCherryPickAbort(repoId);
           break;
         case "revert":
-          await repoRevertAbort(repoId);
+          await api.repoRevertAbort(repoId);
           break;
       }
     });

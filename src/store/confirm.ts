@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useSettingsStore } from "./settings";
 
 /**
  * Central confirmation/decision dialogs (rendered by `ConfirmDialogHost`).
@@ -80,6 +81,15 @@ export const useConfirmStore = create<ConfirmStore>((set, get) => ({
 /** Ask the user to confirm. Resolves true on confirm, false on cancel. */
 export function confirmDialog(req: ConfirmRequest): Promise<boolean> {
   return useConfirmStore.getState().request(req);
+}
+
+/** Confirm a destructive action through the central dialog, honouring the
+ *  global "Destructive action confirmation" setting: resolves true at once
+ *  when it is off. History/data-loss warnings must use `confirmDialog`, which
+ *  is never gated. */
+export function confirmDestructiveAction(req: ConfirmRequest): Promise<boolean> {
+  const enabled = useSettingsStore.getState().settings?.confirm_discard ?? true;
+  return enabled ? confirmDialog(req) : Promise.resolve(true);
 }
 
 /** Ask for a text value (multi-line). Resolves the edited value on confirm,

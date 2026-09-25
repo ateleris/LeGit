@@ -9,14 +9,12 @@ use crate::runner::OperationId;
 use crate::types::{
     CommitId, GitmodulesFinding, LfsStubs, SubmoduleAutoUpdateResult, SubmoduleAutoUpdateStatus,
     SubmoduleGitdirInfo, SubmoduleInfo, SubmoduleLog, SubmoduleUpdateOptions,
-    SubmoduleUpdateStrategy, SwitchDirtyBehavior,
+    StashApplyOutcome, SubmoduleUpdateStrategy, SwitchDirtyBehavior,
 };
 use std::path::{Path, PathBuf};
 
-use super::{
-    append_error_note, find_created_stash, find_stash_selector, fs_internal,
-    lfs_stubs_from_stderr, parsers, safe_ref, GitCliBackend,
-};
+use super::stash::{AutoStash, AutoStashFailure};
+use super::{append_error_note, fs_internal, lfs_stubs_from_stderr, parsers, safe_ref, GitCliBackend};
 
 /// Target of a per-submodule move (see `update_one_submodule`).
 #[derive(Debug, Clone, Copy)]
@@ -90,7 +88,7 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
             }
         }
         let matching: Vec<String> = match runner
-            .run(&["-C", p, "for-each-ref", "refs/heads", "--points-at", "HEAD", "--format=%(refname:short)"])
+            .run(&["-C", p, "for-each-ref", "refs/heads", "--points-at", "HEAD", super::branch::REFNAME_SHORT_FORMAT_ARG])
             .await
         {
             Ok(o) if o.success => o
@@ -170,76 +168,31 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
                 }
             }
             SwitchDirtyBehavior::AutoStash | SwitchDirtyBehavior::StashAndKeep => {
-                // Stash inside the submodule, verified by a marker-matched
-                // stash-list diff (never by exit code: `stash push` exits 0
-                // on a clean tree; never by the tip alone: a concurrently
-                // created entry must not be adopted and later popped).
                 const SUB_MARKER: &str = "legit: auto-stash before submodule update";
-                // A failed list read must be LOUD, never treated as an empty
-                // list: an empty "before" could adopt a leftover marker entry
-                // from an earlier crash, and an empty "after" would take the
-                // clean-tree branch below - the submodule would move, report a
-                // plain Updated, and the user's changes would sit silently in
-                // the submodule's stash (best-effort failure must never be
-                // silent; house rule).
-                let sub_list =
-                    |o: Result<crate::runner::RunOutput, crate::runner::RunnerError>| -> Result<String, String> {
-                        match o {
-                            Ok(out) if out.success => Ok(out.stdout),
-                            Ok(out) => {
-                                let msg = out.stderr.trim().to_string();
-                                Err(if msg.is_empty() {
-                                    format!("git stash list exited with {:?}", out.exit_code)
-                                } else {
-                                    msg
-                                })
-                            }
-                            Err(e) => Err(e.to_string()),
-                        }
-                    };
-                let runner = self.runner().await;
-                let before = match sub_list(
-                    runner
-                        .run(&["-C", &p, "stash", "list", "--format=%H %s"])
-                        .await,
-                ) {
-                    Ok(list) => list,
+                let stash_sha = match self.auto_stash_push(Some(&p), SUB_MARKER).await {
+                    Ok(AutoStash::Created(sha)) => sha,
+                    // Race: tree turned out clean - just move.
+                    Ok(AutoStash::Nothing) => {
+                        return match self.move_submodule(&p, mv, op_id).await {
+                            Ok(stubs) => (SubmoduleAutoUpdateStatus::Updated, stubs),
+                            Err(e) => skip(e.to_string()),
+                        };
+                    }
                     // Nothing has been touched yet: abort this submodule's
                     // update instead of risking adopting (and later popping)
                     // a stash entry we did not create.
-                    Err(e) => {
+                    Err(AutoStashFailure::ListUnreadable(e)) => {
                         return skip(format!(
                             "could not read the submodule's stash list before auto-stashing ({e}); the submodule was left untouched"
                         ));
                     }
-                };
-                drop(runner);
-                if let Err(e) = self
-                    .run_simple(&[
-                        "-C",
-                        &p,
-                        "stash",
-                        "push",
-                        "--include-untracked",
-                        "-m",
-                        SUB_MARKER,
-                    ])
-                    .await
-                {
-                    return skip(format!("could not stash local changes: {e}"));
-                }
-                let runner = self.runner().await;
-                let after = match sub_list(
-                    runner
-                        .run(&["-C", &p, "stash", "list", "--format=%H %s"])
-                        .await,
-                ) {
-                    Ok(list) => list,
-                    // The stash push already ran: the changes MAY be parked in
-                    // the submodule's stash, but without the list we cannot
-                    // verify it (nor pop by SHA). Stop here - do NOT move the
-                    // submodule - and say so prominently.
-                    Err(e) => {
+                    Err(AutoStashFailure::PushFailed(e)) => {
+                        return skip(format!("could not stash local changes: {e}"));
+                    }
+                    // The push ran, but without the list we cannot verify it
+                    // (nor pop by SHA). Stop here - do NOT move the submodule
+                    // - and say so prominently.
+                    Err(AutoStashFailure::Unverified(e)) => {
                         return (
                             SubmoduleAutoUpdateStatus::ChangesInStash {
                                 message: format!(
@@ -249,14 +202,6 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
                             None,
                         );
                     }
-                };
-                drop(runner);
-                let Some(stash_sha) = find_created_stash(&before, &after, SUB_MARKER) else {
-                    // Race: tree turned out clean - just move.
-                    return match self.move_submodule(&p, mv, op_id).await {
-                        Ok(stubs) => (SubmoduleAutoUpdateStatus::Updated, stubs),
-                        Err(e) => skip(e.to_string()),
-                    };
                 };
 
                 // Move to the target (tree is clean now).
@@ -324,21 +269,14 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         }
     }
 
-    /// Pop the given stash SHA inside submodule `p`, resolving the SHA to its
-    /// CURRENT selector first (positional selectors shift; house rule).
-    async fn pop_submodule_stash(&self, p: &str, stash_sha: &str) -> Result<(), GitError> {
-        let runner = self.runner().await;
-        let list = runner
-            .run(&["-C", p, "stash", "list", "--format=%H %gd"])
-            .await?;
-        Self::ensure_success(&list)?;
-        let Some(selector) = find_stash_selector(&list.stdout, stash_sha) else {
-            return Err(GitError::Internal(format!(
-                "auto-stash {stash_sha} vanished from the submodule stash list"
-            )));
-        };
-        drop(runner);
-        self.run_simple(&["-C", p, "stash", "pop", &selector]).await
+    /// Pop our auto-stash entry inside submodule `p`. For the update flow a
+    /// conflicted pop is a failure like any other: it rolls back.
+    async fn pop_submodule_stash(&self, p: &str, stash_sha: &str) -> Result<(), String> {
+        match self.pop_stash_sha_in(Some(p), stash_sha).await {
+            Ok(StashApplyOutcome::Clean) => Ok(()),
+            Ok(StashApplyOutcome::Conflicts { message }) => Err(message),
+            Err(e) => Err(e.to_string()),
+        }
     }
 
     /// Resolve `.git/modules/<name>` for this repo, validated against path

@@ -9,6 +9,8 @@ mod credentials;
 mod error;
 mod git_resolve;
 mod logging;
+mod os_open;
+mod persist;
 mod remote;
 mod state;
 mod watcher;
@@ -67,7 +69,7 @@ fn take_pending_open(state: tauri::State<'_, PendingOpen>) -> Option<String> {
     state.0.lock().expect("pending open poisoned").take()
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 pub(crate) struct RemoteProgressPayload {
     pub(crate) op_id: String,
     pub(crate) progress: legit_core::RemoteProgress,
@@ -90,286 +92,11 @@ pub fn run() {
     let pending_open: Vec<String> = std::env::args().collect();
     let pending_open = parse_open_arg(&pending_open);
 
-    let specta_builder = Builder::<tauri::Wry>::new().commands(collect_commands![
-        logging::frontend_log,
-        logging::open_log_dir,
-        take_pending_open,
-        logging::app_build_hash,
-        commands::open_repo,
-        commands::wsl_list_distros,
-        commands::wsl_host_git_override,
-        commands::wsl_host_git_status,
-        commands::set_wsl_host_git_path,
-        commands::wsl_identity_view,
-        commands::wsl_write_identity,
-        commands::wsl_signing_config,
-        commands::wsl_write_signing,
-        commands::wsl_credential_helper_view,
-        commands::wsl_write_credential_helper,
-        commands::wsl_available_credential_helpers,
-        commands::wsl_line_endings_view,
-        commands::wsl_write_line_endings,
-        commands::repo_init,
-        commands::repo_clone,
-        commands::cancel_clone,
-        commands::close_repo,
-        commands::list_repos,
-        commands::recent_repos,
-        commands::restore_open_repos,
-        commands::set_open_repos_order,
-        commands::set_active_repo,
-        commands::set_watcher_enabled,
-        commands::console_exec,
-        commands::console_cancel,
-        commands::console_feed,
-        commands::credential_respond,
-        commands::credential_cancel,
-        commands::askpass_respond,
-        commands::askpass_cancel,
-        commands::git_status_check,
-        commands::set_git_path,
-        commands::set_repo_git_path,
-        commands::get_global_settings,
-        commands::get_repo_settings,
-        commands::update_repo_settings,
-        commands::set_active_theme,
-        commands::save_region_state,
-        commands::list_themes,
-        commands::load_theme,
-        commands::save_theme,
-        commands::delete_theme,
-        commands::list_layouts,
-        commands::load_layout,
-        commands::save_layout,
-        commands::rename_layout,
-        commands::delete_layout,
-        commands::set_layouts_order,
-        commands::load_keybindings,
-        commands::save_keybindings,
-        commands::repo_line_endings_view,
-        commands::repo_line_ending_kind,
-        commands::repo_revert_line_endings,
-        commands::repo_line_ending_status,
-        commands::global_line_endings_view,
-        commands::repo_write_line_endings,
-        commands::global_write_line_endings,
-        commands::repo_renormalize_preview,
-        commands::repo_renormalize,
-        commands::repo_lfs_status,
-        commands::repo_lfs_files,
-        commands::repo_lfs_patterns,
-        commands::repo_lfs_track,
-        commands::repo_lfs_untrack,
-        commands::repo_file_preview,
-        commands::repo_write_gitattributes_eol,
-        commands::global_signing_config,
-        commands::global_write_signing,
-        commands::list_git_profiles,
-        commands::create_git_profile,
-        commands::update_git_profile,
-        commands::delete_git_profile,
-        commands::repos_using_profile,
-        commands::repo_managed_config_view,
-        commands::write_repo_managed_config,
-        commands::detect_active_profile_for_repo,
-        commands::preview_apply_profile,
-        commands::apply_profile_to_repo,
-        commands::clear_repo_profile,
-        commands::create_profile_from_repo,
-        commands::repo_resolved_identity,
-        commands::global_identity_view,
-        commands::global_write_identity,
-        commands::global_credential_helper_view,
-        commands::global_write_credential_helper,
-        commands::list_available_credential_helpers,
-        commands::ssh_key_status,
-        commands::default_ssh_keys_status,
-        commands::generate_ssh_key,
-        commands::test_ssh_auth,
-        commands::open_platform_key_settings,
-        commands::list_connected_accounts,
-        commands::connect_account_pat,
-        commands::disconnect_account,
-        commands::upload_ssh_key_to_platform,
-        commands::open_platform_token_settings,
-        commands::set_line_ending_chips_in_changes,
-        commands::set_warn_on_line_ending_commit,
-        commands::set_confirm_discard,
-        commands::set_detect_case_renames,
-        commands::set_submodule_attach_branch,
-        commands::set_checkout_remote_fast_forward,
-        commands::set_auto_fetch_enabled,
-        commands::set_check_updates_on_startup,
-        commands::set_auto_fetch_interval_minutes,
-        commands::set_external_editor_command,
-        commands::repo_open_in_editor,
-        commands::repo_open_file_in_editor,
-        commands::repo_remote_web_url,
-        commands::repo_open_remote_page,
-        commands::save_switch_dirty_behavior,
-        commands::save_pull_strategy,
-        commands::save_stash_include_untracked,
-        commands::save_push_recurse_submodules,
-        commands::set_commit_avatars,
-        commands::set_commit_initials,
-        commands::set_auto_push_tags,
-        commands::set_diff_syntax_highlighting,
-        commands::set_commit_date_absolute,
-        commands::set_commit_date_format,
-        commands::set_commit_date_show_time,
-        commands::set_suppressed_auto_open_panels,
-        commands::set_working_changes_section_order,
-        commands::repo_log,
-        commands::repo_status,
-        commands::repo_branches,
-        commands::repo_create_branch,
-        commands::repo_set_upstream,
-        commands::repo_switch_branch,
-        commands::repo_delete_branch,
-        commands::repo_branch_merge_analysis,
-        commands::repo_delete_remote_branch,
-        commands::repo_rename_branch,
-        commands::repo_checkout_remote_branch,
-        commands::repo_checkout_commit,
-        commands::repo_submodules,
-        commands::repo_submodule_log,
-        commands::repo_submodule_update,
-        commands::repo_submodule_sync,
-        commands::repo_submodule_fetch,
-        commands::repo_superproject,
-        commands::repo_submodule_add,
-        commands::repo_submodule_set_url,
-        commands::repo_submodule_set_branch,
-        commands::repo_submodule_update_remote,
-        commands::repo_submodule_move,
-        commands::repo_submodule_remove,
-        commands::repo_submodule_gitdir_info,
-        commands::repo_submodule_delete_gitdir,
-        commands::repo_submodule_auto_update,
-        commands::repo_submodule_create_branch,
-        commands::repo_tags,
-        commands::repo_create_tag,
-        commands::repo_delete_tag,
-        commands::repo_push_tag,
-        commands::repo_delete_remote_tag,
-        commands::repo_remote_tags,
-        commands::repo_stashes,
-        commands::repo_create_stash,
-        commands::repo_create_stash_paths,
-        commands::repo_apply_stash,
-        commands::repo_apply_stash_file,
-        commands::repo_pop_stash,
-        commands::repo_drop_stash,
-        commands::repo_rename_stash,
-        commands::repo_stash_branch,
-        commands::repo_commit_details,
-        commands::repo_signature_presence,
-        commands::repo_commit_files,
-        commands::repo_diff_files,
-        commands::repo_search_commits,
-        commands::repo_resolve_commit,
-        commands::repo_search_paths,
-        commands::repo_list_files,
-        commands::repo_files_at_revision,
-        commands::repo_add_to_gitignore,
-        commands::repo_untrack_path,
-        commands::repo_reveal_path,
-        commands::repo_file_worktree,
-        commands::repo_blame,
-        commands::repo_merge_base,
-        commands::repo_file_at_revision,
-        commands::repo_file_history,
-        commands::repo_restore_file_at_revision,
-        commands::repo_diff,
-        commands::repo_stage_hunk,
-        commands::repo_unstage_hunk,
-        commands::repo_discard_hunk,
-        commands::repo_stage_lines,
-        commands::repo_unstage_lines,
-        commands::repo_discard_lines,
-        commands::repo_stage,
-        commands::repo_unstage,
-        commands::repo_discard,
-        commands::repo_read_worktree_file,
-        commands::repo_write_worktree_file,
-        commands::repo_merge,
-        commands::repo_merge_continue,
-        commands::repo_merge_abort,
-        commands::repo_rebase,
-        commands::repo_rebase_continue,
-        commands::repo_rebase_skip,
-        commands::repo_rebase_abort,
-        commands::repo_rebase_interactive,
-        commands::repo_rebase_range_info,
-        commands::repo_unpushed_commits,
-        commands::repo_conflict_file_sides,
-        commands::repo_reset,
-        commands::repo_revert,
-        commands::repo_cherry_pick,
-        commands::repo_cherry_pick_continue,
-        commands::repo_cherry_pick_skip,
-        commands::repo_cherry_pick_abort,
-        commands::repo_revert_continue,
-        commands::repo_revert_skip,
-        commands::repo_revert_abort,
-        commands::repo_reflog,
-        commands::repo_op_state,
-        commands::repo_conflict_entries,
-        commands::repo_resolve_take_side,
-        commands::repo_resolve_undo_paths,
-        commands::repo_staged_marker_paths,
-        commands::repo_unstaged_marker_paths,
-        commands::repo_conflict_reopen,
-        commands::repo_commit,
-        commands::repo_gitmodules_consistency,
-        commands::repo_case_drift,
-        commands::repo_stage_case_rename,
-        commands::repo_discard_case_rename,
-        commands::repo_worktree_list,
-        commands::repo_worktree_add,
-        commands::repo_worktree_remove,
-        commands::repo_worktree_prune,
-        commands::repo_worktree_lock,
-        commands::repo_worktree_unlock,
-        commands::repo_reword_commit,
-        commands::repo_fetch,
-        commands::repo_pull,
-        commands::repo_push,
-        commands::repo_tracking_status,
-        commands::repo_list_remotes,
-        commands::repo_add_remote,
-        commands::repo_remove_remote,
-        commands::repo_rename_remote,
-        commands::repo_set_remote_url,
-        commands::repo_prune_remote,
-        commands::list_lane_locks,
-        commands::set_lane_lock,
-        commands::unset_lane_lock,
-        commands::save_column_preferences,
-        commands::save_changed_files_view_mode,
-        commands::save_branch_list_view,
-        commands::save_refs_sort_mode,
-        commands::save_tags_sort_mode,
-        commands::set_checkout_new_branch,
-        commands::save_ui_font_size,
-        commands::save_panel_chrome,
-        commands::save_lane_colored_branch_chips,
-        commands::save_stash_base_lane_color,
-        commands::save_commits_graph_metrics,
-    ]);
+    let specta_builder = specta_builder();
 
     #[cfg(debug_assertions)]
-    {
-        use specta_typescript::{BigIntExportBehavior, Typescript};
-        let _ = specta_builder
-            .export(
-                // i64 timestamps (Unix seconds) are safe as JS `number` —
-                // MAX_SAFE_INTEGER covers timestamps until the year 285,428,751.
-                Typescript::default().bigint(BigIntExportBehavior::Number),
-                "../src/lib/bindings.ts",
-            )
-            .map_err(|e| eprintln!("specta export failed: {e}"));
-    }
+    let _ = export_bindings(&specta_builder, "../src/lib/bindings.ts")
+        .map_err(|e| eprintln!("specta export failed: {e}"));
 
     tauri::Builder::default()
         // MUST be the first plugin (its docs' contract): a second invocation
@@ -391,7 +118,52 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(PendingOpen(std::sync::Mutex::new(pending_open)))
+        .manage(commands::HistoryWindows::default())
         .invoke_handler(specta_builder.invoke_handler())
+        .on_window_event(|window, event| {
+            use tauri::{Manager, WindowEvent};
+            let label = window.label();
+            if label == "main" {
+                // History windows are unusable without the main window: close
+                // them with it so the process can exit.
+                if matches!(event, WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed) {
+                    for win in window.app_handle().webview_windows().values() {
+                        if win.label().starts_with(commands::FILE_HISTORY_LABEL_PREFIX) {
+                            let _ = win.close();
+                        }
+                    }
+                }
+                return;
+            }
+            if !label.starts_with(commands::FILE_HISTORY_LABEL_PREFIX) {
+                return;
+            }
+            match event {
+                WindowEvent::CloseRequested { .. } => {
+                    // Remember the size for the next history window (logical px).
+                    if let (Ok(size), Ok(scale)) = (window.inner_size(), window.scale_factor()) {
+                        let logical = size.to_logical::<f64>(scale);
+                        let app = window.app_handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            let state = app.state::<AppState>();
+                            let _ = state
+                                .mutate_global(|s| {
+                                    s.file_history_window_size = Some(state::WindowSize {
+                                        width: logical.width,
+                                        height: logical.height,
+                                    });
+                                })
+                                .await;
+                        });
+                    }
+                }
+                WindowEvent::Destroyed => {
+                    let windows = window.app_handle().state::<commands::HistoryWindows>();
+                    windows.0.lock().unwrap().remove(label);
+                }
+                _ => {}
+            }
+        })
         .setup(move |app| {
             specta_builder.mount_events(app);
 
@@ -494,20 +266,295 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-fn load_global_settings_sync(path: &std::path::Path) -> GlobalSettings {
-    match std::fs::read(path) {
-        Ok(bytes) => match serde_json::from_slice::<GlobalSettings>(&bytes) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!(
-                    err = %e,
-                    path = %path.display(),
-                    "global-settings.json is malformed — starting with defaults",
-                );
-                GlobalSettings::default()
-            }
-        },
-        Err(_) => GlobalSettings::default(),
-    }
+fn specta_builder() -> Builder<tauri::Wry> {
+    Builder::<tauri::Wry>::new()
+        // Event payloads: not referenced by any command signature, registered
+        // explicitly so bindings.ts carries their generated types (the event
+        // channels themselves stay plain string-named `app.emit` / `listen`).
+        .typ::<crate::watcher::WatchStatePayload>()
+        .typ::<legit_watch::RepoChangedPayload>()
+        .typ::<crate::RemoteProgressPayload>()
+        .typ::<crate::remote::connection::RemoteHostStatusPayload>()
+        .typ::<crate::remote::connection::RemoteHostGitPayload>()
+        .typ::<crate::credentials::CredentialRequestPayload>()
+        .typ::<crate::credentials::CredentialClosedPayload>()
+        .typ::<crate::credentials::AskpassRequestPayload>()
+        .typ::<crate::commands::console::ConsoleEventPayload>()
+        .typ::<legit_core::GitInvocation>()
+        .commands(collect_commands![
+        logging::frontend_log,
+        logging::open_log_dir,
+        take_pending_open,
+        logging::app_build_hash,
+        commands::open_repo,
+        commands::wsl_list_distros,
+        commands::wsl_host_git_override,
+        commands::wsl_host_git_status,
+        commands::set_wsl_host_git_path,
+        commands::wsl_identity_view,
+        commands::wsl_write_identity,
+        commands::wsl_signing_config,
+        commands::wsl_write_signing,
+        commands::wsl_credential_helper_view,
+        commands::wsl_write_credential_helper,
+        commands::wsl_available_credential_helpers,
+        commands::wsl_line_endings_view,
+        commands::wsl_write_line_endings,
+        commands::repo_init,
+        commands::repo_clone,
+        commands::cancel_clone,
+        commands::close_repo,
+        commands::list_repos,
+        commands::recent_repos,
+        commands::restore_open_repos,
+        commands::set_open_repos_order,
+        commands::set_active_repo,
+        commands::set_watcher_enabled,
+        commands::console_exec,
+        commands::console_cancel,
+        commands::console_feed,
+        commands::credential_respond,
+        commands::credential_cancel,
+        commands::askpass_respond,
+        commands::askpass_cancel,
+        commands::git_status_check,
+        commands::set_git_path,
+        commands::set_repo_git_path,
+        commands::get_global_settings,
+        commands::get_repo_settings,
+        commands::patch_repo_settings,
+        commands::set_active_theme,
+        commands::patch_global_settings,
+        commands::list_themes,
+        commands::load_theme,
+        commands::save_theme,
+        commands::delete_theme,
+        commands::list_layouts,
+        commands::load_layout,
+        commands::save_layout,
+        commands::rename_layout,
+        commands::delete_layout,
+        commands::set_layouts_order,
+        commands::load_keybindings,
+        commands::save_keybindings,
+        commands::repo_line_endings_view,
+        commands::repo_line_ending_kind,
+        commands::repo_revert_line_endings,
+        commands::repo_line_ending_status,
+        commands::global_line_endings_view,
+        commands::repo_write_line_endings,
+        commands::global_write_line_endings,
+        commands::repo_renormalize_preview,
+        commands::repo_renormalize,
+        commands::repo_lfs_status,
+        commands::repo_lfs_files,
+        commands::repo_lfs_patterns,
+        commands::repo_lfs_track,
+        commands::repo_lfs_untrack,
+        commands::repo_file_preview,
+        commands::repo_write_gitattributes_eol,
+        commands::global_signing_config,
+        commands::global_write_signing,
+        commands::list_git_profiles,
+        commands::create_git_profile,
+        commands::update_git_profile,
+        commands::delete_git_profile,
+        commands::repos_using_profile,
+        commands::repo_managed_config_view,
+        commands::write_repo_managed_config,
+        commands::detect_active_profile_for_repo,
+        commands::preview_apply_profile,
+        commands::apply_profile_to_repo,
+        commands::clear_repo_profile,
+        commands::create_profile_from_repo,
+        commands::repo_resolved_identity,
+        commands::global_identity_view,
+        commands::global_write_identity,
+        commands::global_credential_helper_view,
+        commands::global_write_credential_helper,
+        commands::list_available_credential_helpers,
+        commands::ssh_key_status,
+        commands::default_ssh_keys_status,
+        commands::generate_ssh_key,
+        commands::test_ssh_auth,
+        commands::open_platform_key_settings,
+        commands::list_connected_accounts,
+        commands::connect_account_pat,
+        commands::disconnect_account,
+        commands::upload_ssh_key_to_platform,
+        commands::open_platform_token_settings,
+        commands::repo_open_in_editor,
+        commands::repo_open_file_in_editor,
+        commands::repo_remote_web_url,
+        commands::repo_open_remote_page,
+        commands::repo_log,
+        commands::repo_status,
+        commands::repo_branches,
+        commands::repo_create_branch,
+        commands::repo_set_upstream,
+        commands::repo_switch_branch,
+        commands::repo_delete_branch,
+        commands::repo_branch_merge_analysis,
+        commands::repo_delete_remote_branch,
+        commands::repo_rename_branch,
+        commands::repo_checkout_remote_branch,
+        commands::repo_checkout_commit,
+        commands::repo_submodules,
+        commands::repo_submodule_log,
+        commands::repo_submodule_update,
+        commands::repo_submodule_sync,
+        commands::repo_submodule_fetch,
+        commands::repo_superproject,
+        commands::repo_submodule_add,
+        commands::repo_submodule_set_url,
+        commands::repo_submodule_set_branch,
+        commands::repo_submodule_update_remote,
+        commands::repo_submodule_move,
+        commands::repo_submodule_remove,
+        commands::repo_submodule_gitdir_info,
+        commands::repo_submodule_delete_gitdir,
+        commands::repo_submodule_auto_update,
+        commands::repo_submodule_create_branch,
+        commands::repo_tags,
+        commands::repo_create_tag,
+        commands::repo_delete_tag,
+        commands::repo_push_tag,
+        commands::repo_delete_remote_tag,
+        commands::repo_remote_tags,
+        commands::repo_stashes,
+        commands::repo_create_stash,
+        commands::repo_create_stash_paths,
+        commands::repo_apply_stash,
+        commands::repo_apply_stash_file,
+        commands::repo_pop_stash,
+        commands::repo_drop_stash,
+        commands::repo_rename_stash,
+        commands::repo_stash_branch,
+        commands::repo_commit_details,
+        commands::repo_signature_presence,
+        commands::repo_commit_files,
+        commands::repo_diff_files,
+        commands::repo_search_commits,
+        commands::repo_resolve_commit,
+        commands::repo_list_files,
+        commands::repo_files_at_revision,
+        commands::repo_add_to_gitignore,
+        commands::repo_untrack_path,
+        commands::repo_reveal_path,
+        commands::repo_file_worktree,
+        commands::repo_blame,
+        commands::repo_merge_base,
+        commands::repo_file_at_revision,
+        commands::repo_file_history,
+        commands::repo_restore_file_at_revision,
+        commands::repo_diff,
+        commands::repo_stage_hunk,
+        commands::repo_unstage_hunk,
+        commands::repo_discard_hunk,
+        commands::repo_stage_lines,
+        commands::repo_unstage_lines,
+        commands::repo_discard_lines,
+        commands::repo_stage,
+        commands::repo_unstage,
+        commands::repo_discard,
+        commands::repo_read_worktree_file,
+        commands::repo_write_worktree_file,
+        commands::repo_merge,
+        commands::repo_merge_continue,
+        commands::repo_merge_abort,
+        commands::repo_rebase,
+        commands::repo_rebase_continue,
+        commands::repo_rebase_skip,
+        commands::repo_rebase_abort,
+        commands::repo_rebase_interactive,
+        commands::repo_rebase_range_info,
+        commands::repo_unpushed_commits,
+        commands::repo_conflict_file_sides,
+        commands::repo_reset,
+        commands::repo_revert,
+        commands::repo_cherry_pick,
+        commands::repo_cherry_pick_continue,
+        commands::repo_cherry_pick_skip,
+        commands::repo_cherry_pick_abort,
+        commands::repo_revert_continue,
+        commands::repo_revert_skip,
+        commands::repo_revert_abort,
+        commands::repo_reflog,
+        commands::repo_op_state,
+        commands::repo_conflict_entries,
+        commands::repo_resolve_take_side,
+        commands::repo_resolve_undo_paths,
+        commands::repo_staged_marker_paths,
+        commands::repo_unstaged_marker_paths,
+        commands::repo_conflict_reopen,
+        commands::repo_commit,
+        commands::repo_gitmodules_consistency,
+        commands::repo_case_drift,
+        commands::repo_stage_case_rename,
+        commands::repo_discard_case_rename,
+        commands::repo_worktree_list,
+        commands::repo_worktree_add,
+        commands::repo_worktree_remove,
+        commands::repo_worktree_prune,
+        commands::repo_worktree_lock,
+        commands::repo_worktree_unlock,
+        commands::repo_reword_commit,
+        commands::repo_fetch,
+        commands::repo_pull,
+        commands::repo_push,
+        commands::repo_tracking_status,
+        commands::repo_list_remotes,
+        commands::repo_add_remote,
+        commands::repo_remove_remote,
+        commands::repo_rename_remote,
+        commands::repo_set_remote_url,
+        commands::repo_prune_remote,
+        commands::list_lane_locks,
+        commands::set_lane_lock,
+        commands::unset_lane_lock,
+        commands::open_file_history_window,
+        commands::history_window_context,
+        commands::repo_open_file_at_revision_in_editor,
+        commands::repo_open_folder,
+    ])
 }
 
+fn export_bindings(builder: &Builder<tauri::Wry>, path: &str) -> Result<(), String> {
+    use specta_typescript::{BigIntExportBehavior, Typescript};
+    builder
+        .export(
+            // i64 timestamps (Unix seconds) are safe as JS `number`:
+            // MAX_SAFE_INTEGER covers timestamps until the year 285,428,751.
+            Typescript::default().bigint(BigIntExportBehavior::Number),
+            path,
+        )
+        .map_err(|e| e.to_string())
+}
+
+fn load_global_settings_sync(path: &std::path::Path) -> GlobalSettings {
+    persist::load_json_or_default(path)
+}
+
+
+#[cfg(test)]
+mod bindings_tests {
+    /// The committed `src/lib/bindings.ts` must match the registered commands
+    /// and types. Regenerate with `LEGIT_UPDATE_BINDINGS=1 cargo test -p legit-app bindings`.
+    #[test]
+    fn committed_bindings_are_up_to_date() {
+        let committed = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/lib/bindings.ts");
+        let dir = tempfile::tempdir().unwrap();
+        let fresh = dir.path().join("bindings.ts");
+        super::export_bindings(&super::specta_builder(), fresh.to_str().unwrap()).unwrap();
+        let fresh = std::fs::read_to_string(&fresh).unwrap();
+        if std::env::var_os("LEGIT_UPDATE_BINDINGS").is_some() {
+            std::fs::write(&committed, &fresh).unwrap();
+            return;
+        }
+        let current = std::fs::read_to_string(&committed).unwrap_or_default();
+        assert!(
+            current.replace("\r\n", "\n") == fresh.replace("\r\n", "\n"),
+            "src/lib/bindings.ts is stale: run `LEGIT_UPDATE_BINDINGS=1 cargo test -p legit-app bindings`"
+        );
+    }
+}

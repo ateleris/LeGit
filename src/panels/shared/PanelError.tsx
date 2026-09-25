@@ -3,7 +3,7 @@
 // place that guarantees the message renders via formatAppError - git's own
 // message, never a JSON envelope or "[object Object]".
 
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 
 export function PanelError({
   error,

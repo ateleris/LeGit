@@ -23,49 +23,37 @@ import { TOOLBAR_FIELD_STYLE } from "../shared/fields";
 import { useDelayedFlag } from "../shared/useDelayedFlag";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { useLayer } from "../../store/layers";
-import { repoCreateBranch, repoStashBranch } from "../../lib/commands";
-import { notifySwitchError } from "../../lib/switchFeedback";
 import { useOpState } from "../../lib/useOpState";
-import type { Branch, Commit, CommitId, Signature } from "../../lib/types";
-import { formatAppError } from "../../lib/types";
+import type { Commit, CommitId, RepoSummary, Signature } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { worktreeLocator } from "../../lib/locator";
+import { createBranch, stashBranch } from "../../lib/refActions";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { notify } from "../../store/notifications";
-import { promptDialog } from "../../store/confirm";
-import { BranchIcon, RemoteIcon, SignedIcon, TagIcon } from "../../icons";
+import { SignedIcon } from "../../icons";
 import { useSignatureStore } from "../../store/signatures";
-import { formatAbsolute, formatFull, formatRelative } from "../../lib/time";
-import { RefsCell } from "./cells/RefsCell";
-import { InlineRenameInput } from "./cells/InlineRenameInput";
-import { SignatureBadge } from "./cells/SignatureBadge";
-import { GraphCellWithAvatar, laneColor } from "./cells/GraphCell";
-import { dotHoverTitle, subjectHoverTitle } from "./hoverTitles";
-import { computeLanes } from "./graph/lanes";
-import { computeEdgeSpans, computeStashConnectorSpans } from "./graph/spans";
+import { formatAbsolute, formatRelative } from "../../lib/time";
+import { laneColor } from "./cells/GraphCell";
 import { pickHeadCommitId } from "./headId";
 import { growJumpWindow, pendingJumpAction, shouldCenterScroll } from "./scrollToRow";
-import { quickSearchMatch } from "./commitSearch";
-import { applyRowClickSelection, arrowSelection, bulkActionPlan, type SelectionState , selectionContiguous } from "./multiSelect";
-import type { LaneEdge, LaneIndex, LaneResult, LockMap, RefsAtCommit } from "./graph/types";
-import { buildLockMap, buildRefsAt, buildStashSelectorById } from "./commitRows";
-import { BRANCH_DOMAINS, useCommitActions } from "./useCommitActions";
+import { applyRowClickSelection, type SelectionState } from "./multiSelect";
+import type { LockMap } from "./graph/types";
+import { buildLockMap, WORKING_DIR_ID } from "./commitRows";
+import { useCommitActions } from "./useCommitActions";
+import { CommitsRowContext, type CommitsRowContextValue } from "./RowContext";
+import { CommitRow } from "./CommitRow";
+import { maxVisibleLaneFor, useGraphModel } from "./useGraphModel";
+import { useInlineEdits } from "./useInlineEdits";
+import { useQuickJump } from "./useQuickJump";
 import { useColumnState } from "./columns/useColumnState";
 import { ColumnHeader } from "./columns/ColumnHeader";
 import { LaneLockIndicator } from "./LaneLockIndicator";
-import { PanelContextMenuProvider, type BaselineEntry } from "./menu/PanelContextMenu";
+import { PanelContextMenuProvider, type BaselineEntry } from "../shared/menu/PanelContextMenu";
 import { RemoteSyncToolbar } from "./RemoteSyncToolbar";
-import { BulkSelectionMenu, CommitRowMenu, WorkdirRowMenu } from "./menu/RowMenu";
 import { SEARCH_MAX_RESULTS, useCommitsQueries } from "./useCommitsQueries";
-import { TagMenuSection } from "./menu/TagMenuSection";
-import { branchesAt } from "./cells/refChips";
-import {
-  COLUMN_GAP,
-  columnGridTrack,
-  columnsMinWidth,
-  NON_HIDEABLE,
-  NON_RESIZABLE,
-} from "./columns/types";
+import { COLUMN_GAP, NON_HIDEABLE, NON_RESIZABLE } from "./columns/types";
 import type { ColumnId } from "./columns/types";
+import { computeColumnLayout, reorderColumns } from "./columns/layout";
 import { computeContentMaxWidths } from "./columns/contentWidths";
 
 const COLUMN_LABELS: Record<ColumnId, string> = {
@@ -106,9 +94,7 @@ async function toggleAbdaesele(): Promise<void> {
 }
 
 
-// Sentinel id for the synthetic "uncommitted changes" row prepended above HEAD.
-// Chosen to never collide with a real 40-hex commit id.
-export const WORKING_DIR_ID = "__legit_working_dir__";
+export { WORKING_DIR_ID } from "./commitRows";
 
 // Placeholder signature for the synthetic working-dir row. Its author/date
 // columns are rendered blank, so these values are never shown.
@@ -122,6 +108,24 @@ const EMPTY_SIGNATURE: Signature = {
 /** Commits panel — virtualised, multi-column log of commits for the active repo. */
 export function CommitsPanel() {
   const repo = useActiveRepo();
+  // The guard lives OUTSIDE the stateful body: the panel stays mounted when
+  // the last repo closes, and any hook below a conditional return inside one
+  // component changes the hook count across the transition and crashes the
+  // tree (React errors 300/310; see CommitsPanel.test.tsx). As its own
+  // component, the body's hooks simply unmount instead.
+  if (!repo) {
+    return (
+      <div className="legit-panel">
+        <div className="legit-panel__body">
+          <span className="legit-subtle">No repo open.</span>
+        </div>
+      </div>
+    );
+  }
+  return <CommitsPanelBody repo={repo} />;
+}
+
+function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
   const queryClient = useQueryClient();
 
   // User-configurable graph metrics (Global Settings). Fall back to defaults
@@ -226,36 +230,8 @@ export function CommitsPanel() {
   // the end and the columns drift apart on the final few pixels.
   const [headerShift, setHeaderShift] = useState(0);
 
-  // In-place editing in the Subject column: rewording a commit's subject line
-  // or renaming a stash's message. The row keeps its normal layout — only the
-  // subject text is swapped for an input (Enter approves, Esc discards).
-  const [subjectEdit, setSubjectEdit] = useState<
-    { kind: "reword" | "stashRename"; id: string } | null
-  >(null);
-  const [subjectBusy, setSubjectBusy] = useState(false);
-
-  // Branch being renamed in place inside its ref chip (short name, unique
-  // across the repo — at most one chip matches).
-  const [renamingBranch, setRenamingBranch] = useState<string | null>(null);
-
-  // Create-new-branch mode: shows an empty branch-name input on `rowId`'s ref
-  // cell; the branch is only created when a name is confirmed. From the
-  // toolbar the input sits on the HEAD row and `startPoint` is undefined
-  // (git branches at HEAD proper); from a row's context menu the clicked
-  // commit's SHA is the explicit start point. With `stashSha` set (a stash
-  // row's "Branch from stash…"), confirming runs `git stash branch` instead:
-  // branch at the stash's base, stash applied and dropped.
-  const [branchCreation, setBranchCreation] = useState<
-    { rowId: CommitId; startPoint?: string; stashSha?: string } | null
-  >(null);
-
-  // Create-new-tag mode (row context menu): same pattern as branchCreation;
-  // the input creates a lightweight tag at the clicked commit. Annotated tags
-  // (with a message) are created via the Refs panel's Tags section.
-  const [tagCreation, setTagCreation] = useState<{ rowId: CommitId } | null>(null);
-
   // Column ordering, hiding, and widths — read from global settings on mount
-  // and persisted (debounced) via `save_column_preferences`.
+  // and persisted (debounced) via `patch_global_settings`.
   const { state: colState, setOrder, setHidden, setWidth } = useColumnState();
 
   const totalToFetch = PAGE_SIZE * (1 + extraPages);
@@ -263,22 +239,18 @@ export function CommitsPanel() {
   // Load lane locks on mount / when the active repo changes.
   const loadLocks = useLaneLocksStore((s) => s.loadLocks);
   useEffect(() => {
-    if (repo) loadLocks(repo.id);
-  }, [repo?.id, loadLocks]);
+    loadLocks(repo.id);
+  }, [repo.id, loadLocks]);
 
-  // Discard any in-place edit when the active repo changes — the edited
-  // commit/stash/branch belongs to the previous repo. Selection, search, and
-  // filters need no reset: they are keyed per repo (usePanelViewState).
+  // Drop a stale jump target when the active repo changes (the in-place
+  // edits reset inside useInlineEdits). Selection, search, and filters need
+  // no reset: they are keyed per repo (usePanelViewState).
   useEffect(() => {
-    setSubjectEdit(null);
-    setRenamingBranch(null);
-    setBranchCreation(null);
-    setTagCreation(null);
     setPendingJump(null);
-  }, [repo?.id]);
+  }, [repo.id]);
 
   // Raw lock list from the store; used by the Refs context menu UI.
-  const rawLocks = useLaneLocks(repo?.id ?? "");
+  const rawLocks = useLaneLocks(repo.id);
 
   // Build a conflict-free LockMap for the lane algorithm. §H.5 says the
   // backend storage is permissive; if two locks claim the same lane (e.g.
@@ -317,7 +289,7 @@ export function CommitsPanel() {
     signedColumnVisible,
   });
 
-  const opState = useOpState(repo?.id);
+  const opState = useOpState(repo.id);
   const opInProgress = !!opState && opState.kind !== "none";
 
   // Lane-coloured branch chips: the on/off toggles are GLOBAL settings; the
@@ -338,7 +310,7 @@ export function CommitsPanel() {
   // Open a detached worktree (from its HEAD chip) as its own repo tab.
   const handleOpenWorktree = useCallback(
     (path: string) => {
-      if (!repo) return;
+
       void useRepoStore
         .getState()
         .openRepo(worktreeLocator(repo.locator ?? repo.path, path))
@@ -382,23 +354,6 @@ export function CommitsPanel() {
     handleCreateStash,
   } = actions;
 
-  // Branch rename happens in place, inside the branch's ref chip.
-  const handleBranchRename = useCallback((name: string) => {
-    setRenamingBranch(name);
-  }, []);
-
-  const handleBranchRenameSave = useCallback(
-    async (oldName: string, newName: string) => {
-      setRenamingBranch(null);
-      await actions.handleBranchRenameSave(oldName, newName);
-    },
-    [actions],
-  );
-
-  const handleBranchRenameCancel = useCallback(() => {
-    setRenamingBranch(null);
-  }, []);
-
   // Existing same-name remote-tracking branches a local branch could track —
   // the candidates offered by the "Set upstream to …" menu entries.
   const upstreamCandidatesFor = useCallback(
@@ -421,68 +376,6 @@ export function CommitsPanel() {
     if (currentBranch?.upstream && tracking && tracking.ahead === 0) return false;
     return true;
   }, [headSha, currentBranch, tracking]);
-
-  const handleRewordStart = useCallback((commit: Commit) => {
-    setSubjectEdit({ kind: "reword", id: commit.id });
-    setSubjectBusy(false);
-  }, []);
-
-  const handleSubjectEditCancel = useCallback(() => {
-    setSubjectEdit(null);
-    setSubjectBusy(false);
-  }, []);
-
-  // Save the in-place subject edit. For a reword, only the subject line is
-  // edited — a multi-line body (everything after the first line) is preserved
-  // verbatim. For a stash, the whole reflog subject is the message. On failure
-  // the editor stays open (toast carries the error) so the draft isn't lost.
-  const handleSubjectEditSave = useCallback(
-    async (commit: Commit, value: string) => {
-      if (!subjectEdit) return;
-      setSubjectBusy(true);
-      try {
-        if (subjectEdit.kind === "reword") {
-          await actions.rewordCommit(commit, value);
-        } else {
-          await actions.renameStash(commit.id, value);
-        }
-        setSubjectEdit(null);
-      } catch (e) {
-        notify.error(formatAppError(e));
-      } finally {
-        setSubjectBusy(false);
-      }
-    },
-    [subjectEdit, actions],
-  );
-
-
-  // Create-new-tag flow: the input shows on the clicked row; the (lightweight)
-  // tag is only created when a name is confirmed.
-  const handleCreateTagStart = useCallback((commitId: CommitId) => {
-    setTagCreation({ rowId: commitId });
-  }, []);
-
-  const handleCreateTagSave = useCallback(
-    async (name: string) => {
-      const creation = tagCreation;
-      setTagCreation(null);
-      if (!creation) return;
-      await actions.createTag(name, creation.rowId, null);
-    },
-    [tagCreation, actions],
-  );
-
-  const handleCreateTagCancel = useCallback(() => {
-    setTagCreation(null);
-  }, []);
-
-  // Stash rename happens in place: the stash row's subject (which shows the
-  // stash message) becomes an input.
-  const handleStashRename = useCallback((sha: string) => {
-    setSubjectEdit({ kind: "stashRename", id: sha });
-    setSubjectBusy(false);
-  }, []);
 
   const refetch = useCallback(() => {
     if (repo) {
@@ -618,6 +511,19 @@ export function CommitsPanel() {
   rowsRef.current = rows;
   const virtualizerRef = useRef(rowVirtualizer);
   virtualizerRef.current = rowVirtualizer;
+  // In-place edit state (reword / stash rename / branch rename / create
+  // branch / create tag) and its handlers; rows read it via the row context.
+  const edits = useInlineEdits({
+    repo,
+    actions,
+    queryClient,
+    checkoutNewBranch,
+    headId,
+    rowsRef,
+    virtualizerRef,
+  });
+  const { handleCreateBranchStart } = edits;
+
   const adoptSelection = useCallback((payload: unknown) => {
     // `{ filterRef }` payload (ref menus' "Show only this branch"): switch
     // the walk to that ref. Clears an active search - its hits may not be
@@ -647,174 +553,23 @@ export function CommitsPanel() {
   }, []);
   useSummonTarget("log", adoptSelection);
 
-  // Create-new-branch flow: scroll the target row into view and show the
-  // empty branch-name input there; the branch is only created when a name is
-  // confirmed (Esc leaves no trace). No `startPoint` = branch at HEAD proper
-  // (the toolbar button); a commit SHA = branch from that commit (row menu).
-  const handleCreateBranchStart = useCallback((startPoint?: string) => {
-    const rowId = startPoint ?? headId;
-    if (rowId === null) return; // empty repo — nothing to branch from
-    setBranchCreation({ rowId, startPoint });
-    const idx = rows.findIndex((c) => c.id === rowId);
-    if (idx >= 0 && shouldCenterScroll(idx, rowVirtualizer.range)) {
-      rowVirtualizer.scrollToIndex(idx, { align: "center" });
-    }
-  }, [headId, rows, rowVirtualizer]);
-
-  // "Branch from stash…" — reuses the create-branch chip input on the stash's
-  // own row; the save handler routes to `git stash branch` via `stashSha`.
-  const handleStashBranchStart = useCallback((sha: string) => {
-    setBranchCreation({ rowId: sha, stashSha: sha });
-    const idx = rows.findIndex((c) => c.id === sha);
-    if (idx >= 0 && shouldCenterScroll(idx, rowVirtualizer.range)) {
-      rowVirtualizer.scrollToIndex(idx, { align: "center" });
-    }
-  }, [rows, rowVirtualizer]);
-
-  const handleCreateBranchSave = useCallback(async (name: string) => {
-    const creation = branchCreation;
-    setBranchCreation(null);
-    if (!repo || !creation) return;
-    try {
-      if (creation.stashSha) {
-        await repoStashBranch(repo.id, creation.stashSha, name);
-        notify.info(`Created branch '${name}' from the stash and checked it out.`);
-      } else {
-        await repoCreateBranch(repo.id, name, creation.startPoint);
-        // Global setting (default on): a new branch is checked out right
-        // away. handleBranchCheckout carries the switch feedback and its
-        // own error handling (dirty-tree behavior etc.).
-        if (checkoutNewBranch) await handleBranchCheckout(name);
-      }
-      invalidateRepoDomains(queryClient, repo.id, BRANCH_DOMAINS);
-    } catch (e) {
-      // stash branch checks out the new branch, so its failure mode is a
-      // switch failure (dirty tree) — use the switch messaging for it.
-      if (creation.stashSha) notifySwitchError(e);
-      else notify.error(formatAppError(e));
-    }
-  }, [repo, branchCreation, checkoutNewBranch, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleCreateBranchCancel = useCallback(() => {
-    setBranchCreation(null);
-  }, []);
-
-  // refsAt map (commitId -> [refName,...]) from log decorations: branch and
-  // tag refs feed the lane algorithm (via §H locks in Phase 6).
-  const refsAt = useMemo((): RefsAtCommit => buildRefsAt(commits), [commits]);
-
-  // Stash nodes (synthetic commits the backend injects into the log). Maps the
-  // stash's commit id → its reflog selector (e.g. "stash@{0}"), driving the
-  // distinct diamond dot and the stash context-menu actions.
-  const stashSelectorById = useMemo(() => buildStashSelectorById(commits), [commits]);
-
-  // Stability refs for load-more. previousAssignments are reused ONLY when the
-  // new rows are a pure bottom-append of the previous ones (pagination): i.e.
-  // the previous row ids are still an exact prefix. Any other change — a stash
-  // created/dropped, the working-dir row appearing/disappearing, a branch op —
-  // fails the prefix test and triggers a full recompute. (A length-only check
-  // would misread a synthetic-node insertion as load-more and pin rows to
-  // lanes that were chosen for a different graph shape.)
-  const prevAssignmentsRef = useRef<Map<string, number> | undefined>(undefined);
-  const prevRowIdsRef = useRef<string[] | undefined>(undefined);
-
-  const resetPrevAssignments = () => {
-    prevAssignmentsRef.current = undefined;
-    prevRowIdsRef.current = undefined;
-  };
-
-  // Reset on repo or lock change — a full recompute is needed in both cases.
-  useEffect(() => { resetPrevAssignments(); }, [repo?.id]);    // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { resetPrevAssignments(); }, [rawLocks]);    // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Lane assignments + edges for EVERY row — real commits, injected stash nodes,
-  // and the synthetic working-dir row alike. Nothing is special-cased out of the
-  // graph: each node's parents drive its lane and edges through the one
-  // algorithm. The working-dir row hangs off HEAD and a stash hangs off its base
-  // exactly as any childless commit would. Only the working-dir row is flagged
-  // to inherit its parent's locked lane (it continues HEAD's line). Stashes
-  // deliberately are NOT (revised 2026-08-06): they render on free side lanes
-  // exactly as they do without a lock - flagging them piled every stash onto
-  // the locked lane (design/2026-07-09-lane-lock-synthetic-nodes.md).
-  const { assignments, edges: allEdges } = useMemo((): LaneResult => {
-    // An author-filtered walk is an arbitrary, mostly-disconnected subset:
-    // the graph column is hidden, so skip the lane walk entirely (it would
-    // open a lane per dangling parent and never close them).
-    const laneRows = authorFilter !== null ? [] : rows;
-    const forGraph = laneRows.map((c) => ({
-      id: c.id,
-      parentIds: c.parents,
-      inheritsParentLane: c.id === WORKING_DIR_ID || undefined,
-    }));
-    const prevIds = prevRowIdsRef.current;
-    const isPrefixAppend =
-      prevIds !== undefined &&
-      prevAssignmentsRef.current !== undefined &&
-      forGraph.length > prevIds.length &&
-      prevIds.every((id, i) => id === forGraph[i].id);
-    const result = computeLanes(
-      forGraph,
-      lockMap,
-      refsAt,
-      isPrefixAppend ? prevAssignmentsRef.current : undefined,
-    );
-    prevAssignmentsRef.current = result.assignments;
-    prevRowIdsRef.current = forGraph.map((c) => c.id);
-    return result;
-  }, [rows, authorFilter, lockMap, refsAt, stashSelectorById]);
-
-  // Outgoing edge lookup: edges originating at each commit (child → parent).
-  const edgesByCommit = useMemo(() => {
-    const map = new Map<string, LaneEdge[]>();
-    for (const edge of allEdges) {
-      const arr = map.get(edge.fromCommitId) ?? [];
-      arr.push(edge);
-      map.set(edge.fromCommitId, arr);
-    }
-    return map;
-  }, [allEdges]);
-
-  // Incoming edge lookup: all edges arriving at each commit as parent.
-  // GraphCell derives the top stub and jog arcs from these.
-  const incomingEdgesByCommit = useMemo(() => {
-    const map = new Map<string, LaneEdge[]>();
-    for (const edge of allEdges) {
-      const arr = map.get(edge.toCommitId) ?? [];
-      arr.push(edge);
-      map.set(edge.toCommitId, arr);
-    }
-    return map;
-  }, [allEdges]);
-
-
-  // Maps commitId → row index. Used to convert edges into row-span records.
-  const commitIndexById = useMemo(
-    () => new Map(rows.map((c, i) => [c.id, i])),
-    [rows],
-  );
-
-  // Edge spans: for each edge, the lane that is "active" (waiting for the
-  // parent commit) for the rows strictly between the two commit rows.
-  const edgeSpans = useMemo(
-    () => computeEdgeSpans(allEdges, commitIndexById, rows.length),
-    [allEdges, commitIndexById, rows.length],
-  );
-
-  // Stash-connector spans (stash_base_lane_color): the stash's dying lane
-  // paints in the base's colour across the rows it spans — the pass-throughs
-  // in between and the jog arc at the base row (GraphCell laneColorOverrides).
-  const stashConnectorSpans = useMemo(
-    () =>
-      stashBaseLaneColor
-        ? computeStashConnectorSpans(
-            rows,
-            new Set(stashSelectorById.keys()),
-            assignments,
-            commitIndexById,
-          )
-        : [],
-    [stashBaseLaneColor, rows, stashSelectorById, assignments, commitIndexById],
-  );
+  // Lane assignments, edge lookups, and row spans for the graph column.
+  const {
+    stashSelectorById,
+    assignments,
+    edgesByCommit,
+    incomingEdgesByCommit,
+    edgeSpans,
+    stashConnectorSpans,
+  } = useGraphModel({
+    repoId: repo.id,
+    rows,
+    commits,
+    graphDisabled: authorFilter !== null,
+    lockMap,
+    rawLocks,
+    stashBaseLaneColor,
+  });
 
   // Dynamic column width. getVirtualItems() always returns a new array
   // reference so we compute inline; also include active pass-through lanes
@@ -888,19 +643,7 @@ export function CommitsPanel() {
     setPendingJump(hit);
   }, [search, searchFetching, searchHits, searchHit]);
 
-  let maxVisibleLane = 0;
-  for (const vItem of visibleItems) {
-    const rowIndex = vItem.index;
-    const c = rows[rowIndex];
-    if (!c) continue;
-    const lane = assignments.get(c.id) ?? 0;
-    if (lane > maxVisibleLane) maxVisibleLane = lane;
-    for (const span of edgeSpans) {
-      if (span.fromRow < rowIndex && rowIndex < span.toRow && span.lane > maxVisibleLane) {
-        maxVisibleLane = span.lane;
-      }
-    }
-  }
+  const maxVisibleLane = maxVisibleLaneFor(visibleItems, rows, assignments, edgeSpans);
 
   // Latest-ref so handleRowClick stays referentially stable across selection
   // changes (same pattern as rowsRef above).
@@ -952,90 +695,46 @@ export function CommitsPanel() {
     summon.swapSummon("changed-files", "working-changes", commit.id);
   }, []);
 
-  // Type-to-jump quick search state (used further below): declared BEFORE the
-  // no-repo early return - the panel stays mounted when the last repo closes,
-  // so a hook below that return changes the hook count across the transition
-  // and crashes the tree (React errors 300/310; see CommitsPanel.test.tsx).
-  const quickBufferRef = useRef("");
-  const lastQuickQueryRef = useRef("");
-  const quickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [quickOverlay, setQuickOverlay] = useState<string | null>(null);
-  const clearQuickJump = () => {
-    quickBufferRef.current = "";
-    lastQuickQueryRef.current = "";
-    if (quickTimerRef.current) clearTimeout(quickTimerRef.current);
-    setQuickOverlay(null);
-  };
-  // While visible the overlay is a popover layer: the key dispatcher pops it
-  // on Escape (topmost layer first), so dismissing it can never also exit a
-  // maximized panel.
-  useLayer(quickOverlay !== null, "popover", clearQuickJump);
-
-  if (!repo) {
-    return (
-      <div className="legit-panel">
-        <div className="legit-panel__body">
-          <span className="legit-subtle">No repo open.</span>
-        </div>
-      </div>
-    );
-  }
+  // Type-to-jump quick search and list keyboard navigation.
+  const applySelection = useCallback((sel: SelectionState) => {
+    setSelectedId(sel.lead);
+    setSelectedIds(sel.ids);
+  }, []);
+  const { quickOverlay, handleQuickSearchKey } = useQuickJump({
+    rowsRef,
+    virtualizerRef,
+    selectionRef,
+    selectedId,
+    selectSingle,
+    applySelection,
+    isMultiSelectable,
+    summonForRow,
+  });
 
   // Grid column layout — driven by `colState` (order + widths + hidden).
-  // The Graph column's width tracks the maximum visible lane; Subject is
-  // always the elastic filler. All others use the persisted px width
-  // (or DEFAULT_WIDTHS if not yet set).
-  const graphColWidth = (maxVisibleLane + 2) * LANE_SPACING;
-  // The graph column hides under an author filter - lanes/edges between an
-  // arbitrary subset of commits would be meaningless.
-  const visibleColumns = colState.order.filter(
-    (id) => !colState.hidden.includes(id) && !(authorFilter !== null && id === "graph")
+  // Memoized so the row context (which carries it) only changes identity
+  // when the layout actually does.
+  const layout = useMemo(
+    () =>
+      computeColumnLayout({
+        colState,
+        authorFilterActive: authorFilter !== null,
+        maxVisibleLane,
+        laneSpacing: LANE_SPACING,
+        uiFontSize: TEXT_SIZE,
+        maxWidths: contentMaxWidths,
+      }),
+    [colState, authorFilter, maxVisibleLane, LANE_SPACING, TEXT_SIZE, contentMaxWidths],
   );
-
-  // Signed column: fixed one-icon width, derived from the UI font size so it
-  // scales with the rest of the chrome (icons render at 1em of TEXT_SIZE).
-  const signedColWidth = Math.round(TEXT_SIZE * 1.3);
-
-  // Subject never collapses below ~10 characters (see columnGridTrack).
-  const subjectMinWidth = Math.round(TEXT_SIZE * 10);
-
-  const colWidth = (id: ColumnId): string =>
-    columnGridTrack(id, {
-      graphColWidth,
-      signedColWidth,
-      subjectMinWidth,
-      widths: colState.widths,
-      maxWidths: contentMaxWidths,
-    });
-
-  const GRID_COLUMNS = visibleColumns.map(colWidth).join(" ");
-
-  // Shared width floor for the header grid and the row container: a bare
-  // `width: 100%` resolves to the scroller's VIEWPORT width, so with a
-  // horizontal scrollbar the selection background ended mid-row. 24 = the
-  // rows'/header's horizontal padding (border-box).
-  const minRowWidth = columnsMinWidth(
-    visibleColumns,
-    { graphColWidth, signedColWidth, subjectMinWidth, widths: colState.widths, maxWidths: contentMaxWidths },
-    COLUMN_GAP,
-    24,
-  );
+  const { visibleColumns, colWidth, gridColumns: GRID_COLUMNS, minRowWidth } = layout;
 
   const handleReorder = (
     draggedId: ColumnId,
     targetId: ColumnId,
     side: "left" | "right"
   ) => {
-    if (draggedId === targetId) return;
-    const newOrder = [...colState.order];
-    const fromIdx = newOrder.indexOf(draggedId);
-    if (fromIdx === -1) return;
-    newOrder.splice(fromIdx, 1);
-    const toIdx = newOrder.indexOf(targetId);
-    if (toIdx === -1) return;
-    const insertAt = toIdx + (side === "right" ? 1 : 0);
-    newOrder.splice(insertAt, 0, draggedId);
-    setOrder(newOrder);
+    const next = reorderColumns(colState.order, draggedId, targetId, side);
+    if (next) setOrder(next);
   };
   const handleHide = (id: ColumnId) => {
     if (colState.hidden.includes(id)) return;
@@ -1043,97 +742,6 @@ export function CommitsPanel() {
   };
   const handleShow = (id: ColumnId) =>
     setHidden(colState.hidden.filter((h) => h !== id));
-
-  // Type-to-jump quick search (GitExtensions-style): with the list focused,
-  // typing jumps the selection to the next loaded row whose subject or ref
-  // label matches; Alt+Down/Up steps through matches (also after the typing
-  // buffer expired - `lastQuickQuery` persists), Esc dismisses. Purely
-  // client-side over the loaded rows; the toolbar filter covers full history.
-  // (State hooks live above the no-repo early return.)
-  const showQuickOverlay = (text: string) => {
-    setQuickOverlay(text);
-    if (quickTimerRef.current) clearTimeout(quickTimerRef.current);
-    quickTimerRef.current = setTimeout(() => {
-      quickBufferRef.current = "";
-      setQuickOverlay(null);
-    }, 1200);
-  };
-
-  const quickJump = (anchor: number, direction: 1 | -1, query: string) => {
-    const idx = quickSearchMatch(rowsRef.current, query, anchor, direction);
-    if (idx === null) return;
-    selectSingle(rowsRef.current[idx].id);
-    if (shouldCenterScroll(idx, virtualizerRef.current.range)) {
-      virtualizerRef.current.scrollToIndex(idx, { align: "center" });
-    }
-  };
-
-  const handleQuickSearchKey = (e: React.KeyboardEvent) => {
-    // Never intercept typing meant for an inline editor or the toolbar.
-    const target = e.target as HTMLElement;
-    if (target.closest("input, textarea, select, [contenteditable=true]")) return;
-    const selectedIdx = rowsRef.current.findIndex((c) => c.id === selectedId);
-
-    if (e.altKey && (e.key === "ArrowDown" || e.key === "ArrowUp") && lastQuickQueryRef.current) {
-      e.preventDefault();
-      const dir = e.key === "ArrowDown" ? 1 : -1;
-      quickJump(selectedIdx + dir, dir, lastQuickQueryRef.current);
-      showQuickOverlay(lastQuickQueryRef.current);
-      return;
-    }
-    // Plain arrows move the selection like a native list (details follow, as
-    // on a click); Shift+arrows extend/shrink a bulk range (no summon, like
-    // modifier clicks). Alt+arrows above (quick-jump repeat) win when a
-    // quick-jump query is live.
-    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !e.altKey && !e.ctrlKey && !e.metaKey) {
-      e.preventDefault();
-      const delta = e.key === "ArrowDown" ? 1 : -1;
-      const moved = arrowSelection(
-        selectionRef.current,
-        rowsRef.current.map((r) => r.id),
-        delta,
-        e.shiftKey,
-        isMultiSelectable,
-      );
-      if (!moved) return;
-      setSelectedId(moved.selection.lead);
-      setSelectedIds(moved.selection.ids);
-      const idx = rowsRef.current.findIndex((r) => r.id === moved.cursorId);
-      if (idx >= 0) {
-        virtualizerRef.current.scrollToIndex(idx);
-        if (!e.shiftKey) summonForRow(rowsRef.current[idx]);
-      }
-      return;
-    }
-    if (e.key === "Escape") {
-      // A visible overlay is popped by the key dispatcher before this handler
-      // ever sees Escape; reached only to clear the invisible leftover query,
-      // which must not swallow anyone's Esc.
-      clearQuickJump();
-      return;
-    }
-    if (e.key === "Backspace" && quickBufferRef.current) {
-      e.preventDefault();
-      const next = quickBufferRef.current.slice(0, -1);
-      quickBufferRef.current = next;
-      lastQuickQueryRef.current = next;
-      if (next) {
-        quickJump(Math.max(selectedIdx, 0), 1, next);
-        showQuickOverlay(next);
-      } else {
-        setQuickOverlay(null);
-      }
-      return;
-    }
-    if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) return;
-    e.preventDefault();
-    const next = quickBufferRef.current + e.key;
-    quickBufferRef.current = next;
-    lastQuickQueryRef.current = next;
-    // Anchor inclusively on the current row so refining the query stays put.
-    quickJump(Math.max(selectedIdx, 0), 1, next);
-    showQuickOverlay(next);
-  };
 
   // Enter on an already-submitted query advances to the next hit (wrapping);
   // Shift+Enter steps back. A changed query submits a new search - the
@@ -1155,15 +763,130 @@ export function CommitsPanel() {
     setSearchHit(0);
   };
 
-  const clearSearch = () => {
+  const clearSearch = useCallback(() => {
     setSearch(null);
     setSearchDraft("");
     setSearchHit(0);
-  };
+  }, []);
+
+  // Everything panel-constant the rows need, plus stable getters for the
+  // volatile selection/rows (read at event time, so selection changes don't
+  // re-render every row through the context).
+  const getSelection = useCallback(() => selectionRef.current, []);
+  const getRows = useCallback(() => rowsRef.current, []);
+  const rowContext = useMemo<CommitsRowContextValue>(
+    () => ({
+      repoId: repo.id,
+      textSize: TEXT_SIZE,
+      rowHeight: ROW_HEIGHT,
+      laneSpacing: LANE_SPACING,
+      dotRadius: DOT_RADIUS,
+      lineWidth: LINE_WIDTH,
+      avatarsEnabled: AVATARS_ENABLED,
+      initialsEnabled: INITIALS_ENABLED,
+      dateAbsolute: DATE_ABSOLUTE,
+      dateFormat: DATE_FORMAT,
+      dateShowTime: DATE_SHOW_TIME,
+      laneChipFilters,
+      stashBaseLaneColor,
+      locks: rawLocks,
+      upstreamMap,
+      worktreeBranches,
+      worktreeHeadsBySha,
+      branches,
+      remotes: remoteNames,
+      currentBranch: currentBranchName ?? null,
+      currentBranchLocal: currentBranch,
+      tracking: tracking ?? null,
+      headSha,
+      headIsRewordable,
+      pushedTags,
+      tagTargetsOnRemote,
+      tagRemote: tagRemote ?? null,
+      unpushedSet,
+      commitMessageById,
+      stashSelectorById,
+      signedSet,
+      verifiedSignatures,
+      opInProgress,
+      assignments,
+      edgesByCommit,
+      incomingEdgesByCommit,
+      edgeSpans,
+      stashConnectorSpans,
+      visibleColumns,
+      gridColumns: GRID_COLUMNS,
+      maxVisibleLane,
+      getSelection,
+      getRows,
+      isMultiSelectable,
+      actions,
+      edits,
+      upstreamCandidatesFor,
+      onOpenWorktree: handleOpenWorktree,
+      setAuthorFilter,
+      clearSearch,
+      onRowClick: handleRowClick,
+    }),
+    [
+      repo.id,
+      TEXT_SIZE,
+      ROW_HEIGHT,
+      LANE_SPACING,
+      DOT_RADIUS,
+      LINE_WIDTH,
+      AVATARS_ENABLED,
+      INITIALS_ENABLED,
+      DATE_ABSOLUTE,
+      DATE_FORMAT,
+      DATE_SHOW_TIME,
+      laneChipFilters,
+      stashBaseLaneColor,
+      rawLocks,
+      upstreamMap,
+      worktreeBranches,
+      worktreeHeadsBySha,
+      branches,
+      remoteNames,
+      currentBranchName,
+      currentBranch,
+      tracking,
+      headSha,
+      headIsRewordable,
+      pushedTags,
+      tagTargetsOnRemote,
+      tagRemote,
+      unpushedSet,
+      commitMessageById,
+      stashSelectorById,
+      signedSet,
+      verifiedSignatures,
+      opInProgress,
+      assignments,
+      edgesByCommit,
+      incomingEdgesByCommit,
+      edgeSpans,
+      stashConnectorSpans,
+      visibleColumns,
+      GRID_COLUMNS,
+      maxVisibleLane,
+      getSelection,
+      getRows,
+      isMultiSelectable,
+      actions,
+      edits,
+      upstreamCandidatesFor,
+      handleOpenWorktree,
+      setAuthorFilter,
+      clearSearch,
+      handleRowClick,
+    ],
+  );
 
   return (
     <PanelContextMenuProvider baseline={baseline}>
-      {({ openMenu, closeMenu }) => (
+      {({ openMenu }) => (
+        <CommitsRowContext.Provider value={rowContext}>
         <div
           className="legit-panel"
           style={{ display: "flex", flexDirection: "column" }}
@@ -1455,450 +1178,16 @@ export function CommitsPanel() {
           }}
         >
           {visibleItems.map((vItem) => {
-            const rowIndex = vItem.index;
-            const commit = rows[rowIndex];
-            const isSelected = commit.id === selectedId || selectedIds.has(commit.id);
-            const isWorkingDir = commit.id === WORKING_DIR_ID;
-            const commitLane = assignments.get(commit.id) ?? 0;
-            const edges = edgesByCommit.get(commit.id) ?? [];
-
-            // Active lanes at this row: the commit's own lane plus every lane
-            // that has a live edge spanning this row (strictly between its two
-            // commit rows). Pass-through lines are drawn only for these lanes.
-            // A span on the commit's *own* lane is suppressed as a pass-through
-            // (to avoid double-drawing) but must still render the own-lane
-            // vertical full height — flagged via `ownLanePassThrough`.
-            const activeLanes = new Set<LaneIndex>([commitLane]);
-            let ownLanePassThrough = false;
-            for (const span of edgeSpans) {
-              if (span.fromRow < rowIndex && rowIndex < span.toRow) {
-                activeLanes.add(span.lane);
-                if (span.lane === commitLane) ownLanePassThrough = true;
-              }
-            }
-
-            // Stash connectors covering this row (pass-through rows AND the
-            // base row itself, whose jog arc finishes the line).
-            let laneColorOverrides: Map<LaneIndex, string> | undefined;
-            for (const span of stashConnectorSpans) {
-              if (span.fromRow < rowIndex && rowIndex <= span.toRow) {
-                (laneColorOverrides ??= new Map()).set(span.lane, laneColor(span.baseLane));
-              }
-            }
+            const commit = rows[vItem.index];
             return (
-              <div
+              <CommitRow
                 key={vItem.key}
-                data-index={vItem.index}
-                ref={rowVirtualizer.measureElement}
-                // Hover + selection backgrounds live in global.css (classes,
-                // because :hover can't be expressed in inline styles).
-                className={`legit-commit-row${isSelected ? " legit-commit-row--selected" : ""}`}
-                onClick={(e) => handleRowClick(commit, e)}
-                // Shift+click extends the selection - keep the browser from
-                // also sweeping a text selection across the rows.
-                onMouseDown={(e) => {
-                  if (e.shiftKey) e.preventDefault();
-                }}
-                onContextMenu={(e) => {
-                  // Right-click on a row inside a 2+ multi-selection: the
-                  // bulk menu for the whole set. Any other row falls through
-                  // to its normal single-row menu.
-                  if (selectedIds.size >= 2 && selectedIds.has(commit.id) && isMultiSelectable(commit.id)) {
-                    const bulkRows = rows.map((r) => ({
-                      id: r.id,
-                      isMerge: (r.parents?.length ?? 0) > 1,
-                    }));
-                    const plan = bulkActionPlan(selectedIds, bulkRows);
-                    if (plan.count >= 2) {
-                      // Drop/squash: history rewrites, offered only when the
-                      // WHOLE selection is unpublished, merge-free, and not
-                      // rooted (base = the oldest selected commit's parent).
-                      const selectedInOrder = rows.filter((r) => selectedIds.has(r.id));
-                      const oldest = selectedInOrder[selectedInOrder.length - 1];
-                      const base = oldest?.parents?.[0];
-                      const allUnpushed = selectedInOrder.every((r) => unpushedSet.has(r.id));
-                      const rewrite =
-                        base !== undefined && allUnpushed && !plan.containsMerge
-                          ? { contiguous: selectionContiguous(selectedIds, bulkRows) }
-                          : null;
-                      // Snapshots: the selection can change while the confirm
-                      // or the message dialog is open.
-                      const selectedSnapshot = new Set(selectedInOrder.map((r) => r.id));
-                      const prefill = selectedInOrder
-                        .map((r) => commitMessageById.get(r.id) ?? r.id.slice(0, 8))
-                        .reverse()
-                        .join("\n\n");
-                      openMenu(
-                        e,
-                        <BulkSelectionMenu
-                          plan={plan}
-                          opInProgress={opInProgress}
-                          handleCherryPick={handleCherryPick}
-                          handleRevert={handleRevert}
-                          rewrite={rewrite}
-                          onDrop={() => {
-                            if (base) void handleBulkRewrite("drop", selectedSnapshot, base, null);
-                          }}
-                          onSquash={() => {
-                            if (!base) return;
-                            void (async () => {
-                              const message = await promptDialog({
-                                title: `Squash ${selectedSnapshot.size} commits`,
-                                message: "Commit message for the squashed commit:",
-                                confirmLabel: "Squash",
-                                danger: false,
-                                input: { initialValue: prefill },
-                              });
-                              if (message !== null) {
-                                void handleBulkRewrite("squash", selectedSnapshot, base, message);
-                              }
-                            })();
-                          }}
-                        />,
-                      );
-                      return;
-                    }
-                  }
-                  if (commit.id === WORKING_DIR_ID) {
-                    openMenu(e, <WorkdirRowMenu handleCreateStash={handleCreateStash} />);
-                    return;
-                  }
-                  // Author-specific entries only when the click landed in the
-                  // Author cell (keeps the row menu uncluttered).
-                  const inAuthorCell =
-                    (e.target as HTMLElement).closest('[data-col="author"]') !== null;
-                  openMenu(
-                    e,
-                    <CommitRowMenu
-                      commit={commit}
-                      stashSelector={stashSelectorById.get(commit.id)}
-                      inAuthorCell={inAuthorCell}
-                      opInProgress={opInProgress}
-                      headSha={headSha}
-                      headIsRewordable={headIsRewordable}
-                      hasUpstream={!!currentBranch?.upstream}
-                      trackingAhead={tracking?.ahead ?? null}
-                      currentBranchName={currentBranchName}
-                      branches={branches}
-                      remoteNames={remoteNames}
-                      pushedTags={pushedTags}
-                      tagTargetsOnRemote={tagTargetsOnRemote}
-                      tagRemote={tagRemote}
-                      commitMessageById={commitMessageById}
-                      upstreamCandidatesFor={upstreamCandidatesFor}
-                      setAuthorFilter={setAuthorFilter}
-                      clearSearch={clearSearch}
-                      handleRewordStart={handleRewordStart}
-                      handleUndoLastCommit={handleUndoLastCommit}
-                      handleCommitCheckout={handleCommitCheckout}
-                      handleCreateBranchStart={handleCreateBranchStart}
-                      handleCreateTagStart={handleCreateTagStart}
-                      handleCherryPick={handleCherryPick}
-                      handleRevert={handleRevert}
-                      handleReset={handleReset}
-                      handleMerge={handleMerge}
-                      handleRebaseOnto={handleRebaseOnto}
-                      handleBranchCheckout={handleBranchCheckout}
-                      handleBranchRename={handleBranchRename}
-                      handleBranchPush={handleBranchPush}
-                      handleSetUpstream={handleSetUpstream}
-                      handleBranchDelete={handleBranchDelete}
-                      handleRemoteCheckout={handleRemoteCheckout}
-                      handleRemoteBranchDelete={handleRemoteBranchDelete}
-                      handleTagPush={handleTagPush}
-                      handleTagDelete={handleTagDelete}
-                      handleTagDeleteRemote={handleTagDeleteRemote}
-                      handleStashApply={handleStashApply}
-                      handleStashPop={handleStashPop}
-                      handleStashBranchStart={handleStashBranchStart}
-                      handleStashRename={handleStashRename}
-                      handleStashDrop={handleStashDrop}
-                    />,
-                  );
-                }}
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  transform: `translateY(${vItem.start}px)`,
-                  paddingLeft: "1em",
-                  paddingRight: "1em",
-                  cursor: "pointer",
-                  display: "grid",
-                  gridTemplateColumns: GRID_COLUMNS,
-                  gap: `0 ${COLUMN_GAP}px`,
-                  alignItems: "center",
-                  height: ROW_HEIGHT,
-                }}
-              >
-                {visibleColumns.map((colId) => {
-                  switch (colId) {
-                    case "refs":
-                      return (
-                        <div key="refs" style={{ overflow: "hidden" }}>
-                          <RefsCell
-                            decorations={commit.decorations ?? []}
-                            locks={rawLocks}
-                            repoId={repo.id}
-                            upstreamMap={upstreamMap}
-                            worktreeBranches={worktreeBranches}
-                            worktreeHeads={worktreeHeadsBySha.get(commit.id)}
-                            onOpenWorktree={handleOpenWorktree}
-                            laneChip={
-                              laneChipFilters
-                                ? { tint: laneColor(commitLane), ...laneChipFilters }
-                                : null
-                            }
-                            textSize={TEXT_SIZE}
-                            renamingBranch={renamingBranch}
-                            onBranchRenameSave={handleBranchRenameSave}
-                            onBranchRenameCancel={handleBranchRenameCancel}
-                            creatingBranch={branchCreation?.rowId === commit.id}
-                            onCreateBranchSave={handleCreateBranchSave}
-                            onCreateBranchCancel={handleCreateBranchCancel}
-                            creatingTag={tagCreation?.rowId === commit.id}
-                            onCreateTagSave={handleCreateTagSave}
-                            onCreateTagCancel={handleCreateTagCancel}
-                            pushedTags={pushedTags}
-                            tagTargetsOnRemote={tagTargetsOnRemote}
-                            tagRemote={tagRemote}
-                            remotes={remoteNames}
-                            onTagPush={handleTagPush}
-                            onTagDelete={handleTagDelete}
-                            onTagDeleteRemote={handleTagDeleteRemote}
-                            onBranchCheckout={handleBranchCheckout}
-                            onBranchRename={handleBranchRename}
-                            onBranchPush={handleBranchPush}
-                            onBranchSetUpstream={handleSetUpstream}
-                            upstreamCandidatesFor={upstreamCandidatesFor}
-                            onBranchDelete={handleBranchDelete}
-                            onRemoteCheckout={handleRemoteCheckout}
-                            onRemoteBranchDelete={handleRemoteBranchDelete}
-                            currentBranch={currentBranchName}
-                            opInProgress={opInProgress}
-                            onBranchMerge={handleMerge}
-                            onBranchRebaseOnto={handleRebaseOnto}
-                          />
-                        </div>
-                      );
-                    case "graph":
-                      return (
-                        <div
-                          key="graph"
-                          style={{
-                            overflow: "visible",
-                            alignSelf: "stretch",
-                            display: "flex",
-                            alignItems: "stretch",
-                          }}
-                        >
-                          <GraphCellWithAvatar
-                            commitId={commit.id}
-                            commitLane={commitLane}
-                            totalLanes={maxVisibleLane + 1}
-                            activeLanes={activeLanes}
-                            edges={edges}
-                            incomingEdges={incomingEdgesByCommit.get(commit.id) ?? []}
-                            rowHeight={ROW_HEIGHT}
-                            laneSpacing={LANE_SPACING}
-                            dotRadius={DOT_RADIUS}
-                            lineWidth={LINE_WIDTH}
-                            ownLanePassThrough={ownLanePassThrough}
-                            laneColorOverrides={laneColorOverrides}
-                            hollow={isWorkingDir}
-                            isStash={stashSelectorById.has(commit.id)}
-                            stashNodeColor={
-                              // Per-theme: paint the stash with its BASE
-                              // commit's lane so it reads as belonging to the
-                              // branch it was taken from (base outside the
-                              // loaded window falls back to the own lane).
-                              stashBaseLaneColor &&
-                              stashSelectorById.has(commit.id) &&
-                              commit.parents[0] !== undefined &&
-                              assignments.has(commit.parents[0])
-                                ? laneColor(assignments.get(commit.parents[0])!)
-                                : null
-                            }
-                            avatarEmail={
-                              // Only regular commit dots carry an avatar — not
-                              // the working-dir ring or stash squares.
-                              AVATARS_ENABLED &&
-                              !isWorkingDir &&
-                              !stashSelectorById.has(commit.id) &&
-                              commit.author.email
-                                ? commit.author.email
-                                : null
-                            }
-                            initialsName={
-                              INITIALS_ENABLED &&
-                              !isWorkingDir &&
-                              !stashSelectorById.has(commit.id)
-                                ? commit.author.name
-                                : null
-                            }
-                            dotTitle={
-                              !isWorkingDir && !stashSelectorById.has(commit.id)
-                                ? dotHoverTitle(commit.author.name, commit.author.email)
-                                : null
-                            }
-                          />
-                        </div>
-                      );
-                    case "signed":
-                      // Icon-only column: presence chip, upgraded to the
-                      // verified verdict once the commit has been inspected
-                      // in Commit Details (session signature cache).
-                      return (
-                        <div
-                          key="signed"
-                          style={{ overflow: "hidden", display: "flex", alignItems: "center" }}
-                        >
-                          {!isWorkingDir && (
-                            <SignatureBadge
-                              signature={verifiedSignatures?.[commit.id] ?? null}
-                              hasSignature={signedSet.has(commit.id)}
-                              size={TEXT_SIZE}
-                            />
-                          )}
-                        </div>
-                      );
-                    case "subject": {
-                      // The checked-out commit's subject renders bold — the
-                      // row-level counterpart of the dot on the current
-                      // branch's chip.
-                      const isHeadRow = (commit.decorations ?? []).some(
-                        (d) => d.type === "head" || d.type === "headOf",
-                      );
-                      // In-place edit: reword (subject line; a body is kept
-                      // verbatim) or stash rename (the whole reflog subject).
-                      if (subjectEdit?.id === commit.id) {
-                        return (
-                          <InlineRenameInput
-                            key="subject"
-                            initialValue={
-                              subjectEdit.kind === "reword"
-                                ? subjectOf(commit.message)
-                                : commit.message
-                            }
-                            disabled={subjectBusy}
-                            onSave={(value) => void handleSubjectEditSave(commit, value)}
-                            onCancel={handleSubjectEditCancel}
-                            title="Enter to save · Esc to cancel"
-                            style={{
-                              width: "100%",
-                              fontSize: TEXT_SIZE,
-                              padding: "0 0.333em",
-                            }}
-                          />
-                        );
-                      }
-                      return (
-                        <span
-                          key="subject"
-                          data-testid="commit-subject"
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "0.417em",
-                            fontSize: TEXT_SIZE,
-                            fontStyle: isWorkingDir ? "italic" : undefined,
-                            fontWeight: isHeadRow ? 700 : undefined,
-                            overflow: "hidden",
-                          }}
-                        >
-                          <span
-                            style={{
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
-                            // Full message on hover, but only when the cell
-                            // hides something (clipped subject or a body).
-                            // Clipping depends on the live column width, so
-                            // it's measured per hover, not per render.
-                            onMouseEnter={(e) => {
-                              const el = e.currentTarget;
-                              el.title = subjectHoverTitle(
-                                commit.message,
-                                el.scrollWidth > el.clientWidth,
-                              );
-                            }}
-                          >
-                            {subjectOf(commit.message)}
-                          </span>
-                        </span>
-                      );
-                    }
-                    case "date":
-                      return (
-                        <span
-                          key="date"
-                          // Hover complements the cell: the exact author
-                          // datetime (author's timezone) when the cell is
-                          // relative, plus the relative form when the cell
-                          // shows the absolute date.
-                          title={
-                            isWorkingDir
-                              ? undefined
-                              : DATE_ABSOLUTE
-                                ? `${formatFull(commit.timestamp, commit.author.tz_offset_minutes)} (${formatRelative(commit.timestamp)})`
-                                : formatFull(commit.timestamp, commit.author.tz_offset_minutes)
-                          }
-                          style={{
-                            fontSize: TEXT_SIZE,
-                            color: "var(--subtle-fg)",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {isWorkingDir
-                            ? ""
-                            : DATE_ABSOLUTE
-                              ? formatAbsolute(commit.timestamp, commit.author.tz_offset_minutes, DATE_FORMAT, DATE_SHOW_TIME)
-                              : formatRelative(commit.timestamp)}
-                        </span>
-                      );
-                    case "author":
-                      return (
-                        <span
-                          key="author"
-                          // Marks the cell for the row menu's author-scoped
-                          // entries (right-click here offers the author filter).
-                          data-col="author"
-                          style={{
-                            fontSize: TEXT_SIZE,
-                            color: "var(--subtle-fg)",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {isWorkingDir ? "" : commit.author.name}
-                        </span>
-                      );
-                    case "sha":
-                      return (
-                        <span
-                          key="sha"
-                          style={{
-                            fontSize: TEXT_SIZE,
-                            color: "var(--subtle-fg)",
-                            fontFamily: "monospace",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {isWorkingDir ? "" : commit.id.slice(0, 8)}
-                        </span>
-                      );
-                    default:
-                      return null;
-                  }
-                })}
-              </div>
+                commit={commit}
+                rowIndex={vItem.index}
+                start={vItem.start}
+                isSelected={commit.id === selectedId || selectedIds.has(commit.id)}
+                measureElement={rowVirtualizer.measureElement}
+              />
             );
           })}
         </div>
@@ -1924,6 +1213,7 @@ export function CommitsPanel() {
         </div>
       )}
         </div>
+        </CommitsRowContext.Provider>
       )}
     </PanelContextMenuProvider>
   );
@@ -1932,10 +1222,6 @@ export function CommitsPanel() {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function subjectOf(message: string): string {
-  return message.split("\n")[0] ?? "";
-}
 
 /** Active-filter chip in the sync toolbar (branch / author walk filters):
  *  the same "selected" surface as the active view-mode toggles, plus an ✕.

@@ -1,7 +1,7 @@
 import { confirmDialog } from "../store/confirm";
 import { branchDeleteGuidance } from "./branchDeleteGuidance";
-import { repoBranchMergeAnalysis, repoDeleteBranch } from "./commands";
-import { gitErrorKind } from "./types";
+import { api } from "./commands";
+import { gitErrorKind } from "./errors";
 import type { BranchMergeAnalysis } from "./types";
 
 /** Safe-delete `branch`; on git's "not fully merged" refusal, analyse WHY
@@ -13,13 +13,13 @@ import type { BranchMergeAnalysis } from "./types";
  * the caller's normal handling. */
 export async function deleteBranchGuided(repoId: string, branch: string): Promise<boolean> {
   try {
-    await repoDeleteBranch(repoId, branch, false);
+    await api.repoDeleteBranch(repoId, branch, false);
     return true;
   } catch (e) {
     if (gitErrorKind(e) !== "BranchNotFullyMerged") throw e;
     let analysis: BranchMergeAnalysis | null = null;
     try {
-      analysis = await repoBranchMergeAnalysis(repoId, branch);
+      analysis = await api.repoBranchMergeAnalysis(repoId, branch);
     } catch {
       // Best-effort: the guidance hedges when the analysis is missing.
     }
@@ -33,7 +33,7 @@ export async function deleteBranchGuided(repoId: string, branch: string): Promis
       cancelLabel: "Keep branch",
     });
     if (!ok) return false;
-    await repoDeleteBranch(repoId, branch, true);
+    await api.repoDeleteBranch(repoId, branch, true);
     return true;
   }
 }

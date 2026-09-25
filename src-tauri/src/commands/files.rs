@@ -63,8 +63,8 @@ pub async fn repo_add_to_gitignore(
     let session = state.get_session(&repo_id).await?;
     // Defence in depth: reject absolute / traversal paths even though these
     // come from our own `ls-files` output.
-    resolve_repo_relative(session.host.fs().as_ref(), &session.path, &path).await?;
-    write_gitignore_line(session.host.fs().as_ref(), &session.path, &path, is_dir).await
+    resolve_repo_relative(session.host.fs().as_ref(), &session.root, &path).await?;
+    write_gitignore_line(session.host.fs().as_ref(), &session.root, &path, is_dir).await
 }
 
 /// Stop tracking a file (`git rm --cached`, keeps it on disk) and add it to
@@ -79,13 +79,13 @@ pub async fn repo_untrack_path(
     is_dir: bool,
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
-    resolve_repo_relative(session.host.fs().as_ref(), &session.path, &path).await?;
+    resolve_repo_relative(session.host.fs().as_ref(), &session.root, &path).await?;
     session
         .backend
         .rm_cached(&[PathBuf::from(&path)])
         .await
         .map_err(AppError::Git)?;
-    write_gitignore_line(session.host.fs().as_ref(), &session.path, &path, is_dir)
+    write_gitignore_line(session.host.fs().as_ref(), &session.root, &path, is_dir)
         .await
         .map_err(|e| {
             AppError::Io(format!(
@@ -107,11 +107,11 @@ pub async fn repo_file_worktree(
 ) -> Result<FileAtRevision, AppError> {
     let session = state.get_session(&repo_id).await?;
     let fs = session.host.fs();
-    let abs = resolve_repo_relative(fs.as_ref(), &session.path, &path).await?;
+    let abs = resolve_repo_relative(fs.as_ref(), &session.root, &path).await?;
     let bytes = fs
-        .read(&HostPath::from_path(&abs), None)
+        .read(&abs.clone(), None)
         .await
-        .map_err(|e| AppError::Io(format!("read {}: {e}", abs.display())))?;
+        .map_err(|e| AppError::Io(format!("read {}: {e}", abs)))?;
     Ok(classify_worktree_bytes(&bytes))
 }
 
@@ -136,11 +136,11 @@ pub async fn repo_reveal_path(
     path: String,
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
-    let abs = resolve_repo_relative(session.host.fs().as_ref(), &session.path, &path).await?;
+    let abs = resolve_repo_relative(session.host.fs().as_ref(), &session.root, &path).await?;
     if let crate::remote::RepoLocator::Wsl { .. } = &session.locator {
         return reveal_remote_in_explorer(&session, &abs);
     }
-    reveal_in_file_manager(&abs)
+    reveal_in_file_manager(&abs.as_local())
 }
 
 // ---------------------------------------------------------------------------
@@ -191,11 +191,11 @@ fn append_gitignore(existing: &[u8], line: &str) -> Option<Vec<u8>> {
 /// line is already there.
 async fn write_gitignore_line(
     fs: &dyn RepoFs,
-    root: &std::path::Path,
+    root: &HostPath,
     rel: &str,
     is_dir: bool,
 ) -> Result<(), AppError> {
-    let gitignore = HostPath::from_path(root).join(".gitignore");
+    let gitignore = root.join(".gitignore");
     let existing = match fs.read(&gitignore, None).await {
         Ok(bytes) => bytes,
         Err(legit_core::FsError::NotFound { .. }) => Vec::new(),
@@ -223,12 +223,12 @@ async fn write_gitignore_line(
 /// nature; other app OSes report it unsupported.
 pub(crate) fn reveal_remote_in_explorer(
     session: &crate::state::RepoSession,
-    abs: &std::path::Path,
+    abs: &HostPath,
 ) -> Result<(), AppError> {
     let crate::remote::RepoLocator::Wsl { distro, .. } = &session.locator else {
-        return reveal_in_file_manager(abs);
+        return reveal_in_file_manager(&abs.as_local());
     };
-    let unc = wsl_unc_path(distro, &abs.to_string_lossy());
+    let unc = wsl_unc_path(distro, abs.as_str());
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -274,36 +274,42 @@ pub(crate) fn explorer_path(path: &std::path::Path) -> String {
     }
 }
 
+/// Open a repo file with the OS DEFAULT application (no editor template):
+/// local files directly, WSL files through the `\\wsl.localhost\` share.
+pub(crate) fn open_with_default_app(
+    session: &crate::state::RepoSession,
+    abs: &HostPath,
+) -> Result<(), AppError> {
+    use crate::os_open::{os_open, OpenTarget};
+    if let crate::remote::RepoLocator::Wsl { distro, .. } = &session.locator {
+        let unc = wsl_unc_path(distro, abs.as_str());
+        return os_open(OpenTarget::File(std::path::Path::new(&unc)), "open file");
+    }
+    let local = abs.as_local();
+    os_open(OpenTarget::File(&local), "open file")
+}
+
+/// Open the repo's root folder in the OS file manager (local directly, WSL
+/// through the share). The tab bar's folder button - independent of the
+/// external-editor setting.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_open_folder(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<(), AppError> {
+    use crate::os_open::{os_open, OpenTarget};
+    let session = state.get_session(&repo_id).await?;
+    if let crate::remote::RepoLocator::Wsl { distro, .. } = &session.locator {
+        let unc = wsl_unc_path(distro, session.root.as_str());
+        return os_open(OpenTarget::Folder(std::path::Path::new(&unc)), "open folder");
+    }
+    let local = session.root.as_local();
+    os_open(OpenTarget::Folder(&local), "open folder")
+}
+
 pub(crate) fn reveal_in_file_manager(abs: &std::path::Path) -> Result<(), AppError> {
-    use std::process::Command;
-    let spawn = |mut cmd: Command| -> Result<(), AppError> {
-        cmd.spawn()
-            .map(|_| ())
-            .map_err(|e| AppError::Io(format!("open file manager: {e}")))
-    };
-    #[cfg(target_os = "windows")]
-    {
-        let mut cmd = Command::new("explorer");
-        // `explorer /select,<path>` selects the file; it exits non-zero even on
-        // success, so we only care that it spawned. The path must be in plain
-        // backslash form (see `explorer_path`) or explorer opens Documents.
-        cmd.arg(format!("/select,{}", explorer_path(abs)));
-        spawn(cmd)
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let mut cmd = Command::new("open");
-        cmd.args(["-R".as_ref(), abs.as_os_str()]);
-        spawn(cmd)
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        // xdg-open has no "select" mode; open the containing directory.
-        let target = abs.parent().unwrap_or(abs);
-        let mut cmd = Command::new("xdg-open");
-        cmd.arg(target);
-        spawn(cmd)
-    }
+    crate::os_open::os_open(crate::os_open::OpenTarget::RevealFile(abs), "open file manager")
 }
 
 #[cfg(test)]

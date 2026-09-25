@@ -1,10 +1,12 @@
 import type { QueryClient } from "@tanstack/react-query";
+import type { QueryDomain } from "./queries/domains";
+import { repoKeys } from "./queries/keys";
 
 /** Window in which a repeat invalidation for the same repo+domain is treated as
  *  the same logical action and (for coalescing callers) suppressed. */
 const SUPPRESS_MS = 400;
 const lastFired = new Map<string, number>(); // `${repoId} ${domain}` -> ms
-const key = (repoId: string, domain: string) => `${repoId} ${domain}`;
+const key = (repoId: string, domain: QueryDomain) => `${repoId} ${domain}`;
 
 /**
  * Invalidate `[repoId, domain]` query caches with leading-edge coalescing.
@@ -19,7 +21,7 @@ const key = (repoId: string, domain: string) => `${repoId} ${domain}`;
 export function invalidateRepoDomains(
   qc: QueryClient,
   repoId: string,
-  domains: Iterable<string>,
+  domains: Iterable<QueryDomain>,
   opts?: {
     coalesce?: boolean;
     now?: number;
@@ -39,7 +41,7 @@ export function invalidateRepoDomains(
       if (prev !== undefined && now - prev < SUPPRESS_MS) continue; // redundant repeat
     }
     lastFired.set(k, now);
-    qc.invalidateQueries({ queryKey: [repoId, domain], refetchType: opts?.refetchType });
+    qc.invalidateQueries({ queryKey: repoKeys.domain(repoId, domain), refetchType: opts?.refetchType });
   }
 }
 
@@ -56,8 +58,8 @@ export function invalidateRepoDomains(
  * - `case_drift`: a case-only rename classifies as `status` in the watcher
  *   while `git status` itself stays clean - only re-running the drift scan
  *   can surface it. Frontend query domain only. */
-export function withDerivedDomains(domains: string[]): string[] {
-  const out = [...domains];
+export function withDerivedDomains(domains: readonly QueryDomain[]): QueryDomain[] {
+  const out: QueryDomain[] = [...domains];
   if ((out.includes("status") || out.includes("branches")) && !out.includes("submodules")) {
     out.push("submodules");
   }
@@ -71,6 +73,11 @@ export function withDerivedDomains(domains: string[]): string[] {
   // unpublished; `unpushed` is a frontend query domain only.
   if (out.includes("branches") && !out.includes("unpushed")) {
     out.push("unpushed");
+  }
+  // Each tag's `target_on_remote` is computed against the remote-tracking
+  // refs, which a fetch moves (classified as `branches`).
+  if (out.includes("branches") && !out.includes("tags")) {
+    out.push("tags");
   }
   return out;
 }

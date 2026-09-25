@@ -1,5 +1,5 @@
-import { loadKeybindings, saveKeybindings } from "../lib/commands";
-import { formatAppError } from "../lib/types";
+import { api } from "../lib/commands";
+import { formatAppError } from "../lib/errors";
 import { notify } from "../store/notifications";
 import { normalizeChord } from "./chord";
 import { useKeymapStore, type Keymap } from "./keymap";
@@ -17,11 +17,12 @@ export const KEYBINDINGS_VERSION = 1;
 /** Rename aliased command ids in a loaded diff. An entry already present
  * under the new id wins over the aliased old one. */
 export function applyCommandAliases(
-  diff: Keymap,
+  diff: Partial<Keymap>,
   aliases: Readonly<Record<string, string>>,
 ): Keymap {
   const out: Record<string, readonly string[]> = {};
   for (const [id, chords] of Object.entries(diff)) {
+    if (chords === undefined) continue;
     const target = aliases[id] ?? id;
     if (target !== id && target in diff) continue;
     out[target] = chords;
@@ -34,7 +35,7 @@ export function applyCommandAliases(
 export async function initKeymap(): Promise<void> {
   useKeymapStore.getState().reset(defaultKeymap());
   try {
-    const file = await loadKeybindings();
+    const file = await api.loadKeybindings();
     const diff = applyCommandAliases(file.bindings, COMMAND_ID_ALIASES);
     useKeymapStore.getState().setDiff(diff);
   } catch (e) {
@@ -89,7 +90,7 @@ export function parseKeybindingsImport(text: string): KeybindingsImport {
 export async function setAndPersistDiff(diff: Keymap): Promise<void> {
   useKeymapStore.getState().setDiff(diff);
   try {
-    await saveKeybindings({
+    await api.saveKeybindings({
       version: KEYBINDINGS_VERSION,
       bindings: Object.fromEntries(
         Object.entries(diff).map(([id, chords]) => [id, [...chords]]),

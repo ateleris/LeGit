@@ -1,6 +1,6 @@
 //! `GitRunner` — the single chokepoint that invokes `git`.
 //!
-//! Execution only. Never parses. See DESIGN.md §3.1, §3.2.
+//! Execution only. Never parses. See DESIGN-v0.1.md §3.1, §3.2.
 //!
 //! Every Git operation in LeGit (Console included) goes through this
 //! struct. Each invocation:
@@ -22,11 +22,24 @@ use std::time::Instant;
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+
+use crate::executor::GitExecutor;
+
+mod invocation_log;
+mod proc_tree;
+
+pub use invocation_log::{
+    redact_url_credentials, set_invocation_observer, set_progress_observer, GitInvocation,
+};
+use invocation_log::{log_invocation, logged_ok, report_progress};
+#[cfg(windows)]
+use proc_tree::app_job;
+use proc_tree::{terminate_tree, ProcTree};
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, info, instrument, warn};
+use tracing::{info, instrument, warn};
 use uuid::Uuid;
 
-/// Minimum supported `git` version (DESIGN.md §7.6 — set for SSH signing).
+/// Minimum supported `git` version (DESIGN-v0.1.md §7.6 — set for SSH signing).
 pub const MIN_SUPPORTED_GIT_VERSION: (u32, u32, u32) = (2, 34, 0);
 
 /// Stable identifier for an in-flight `git` invocation. Used for cancellation
@@ -75,54 +88,87 @@ pub struct RunOutputBytes {
     pub duration_ms: u64,
 }
 
-/// A completed `git` invocation, reported to the process-wide observer (the app
-/// forwards these to the UI as a git command log). Excludes stdout (often large)
-/// but keeps stderr so failures are diagnosable.
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct GitInvocation {
-    pub args: Vec<String>,
-    pub cwd: Option<String>,
-    pub exit_code: Option<i32>,
-    pub success: bool,
-    pub duration_ms: u64,
-    pub stderr: String,
-    /// Which host ran this (`None` = the app machine). Runners never set it —
-    /// the forwarding layer stamps it (a remote host's connection sink tags
-    /// its label), so the Git Log panel can tell same-pathed repos on
-    /// different hosts apart.
-    #[serde(default)]
-    pub host: Option<String>,
-}
-
-type InvocationObserver = std::sync::Arc<dyn Fn(GitInvocation) + Send + Sync>;
-static INVOCATION_OBSERVER: std::sync::OnceLock<InvocationObserver> = std::sync::OnceLock::new();
-
-/// Install a process-wide observer notified after every `git` invocation. Set
-/// once at startup; the app uses it to forward a git command log to the UI.
-pub fn set_invocation_observer(observer: InvocationObserver) {
-    let _ = INVOCATION_OBSERVER.set(observer);
-}
-
-fn report_invocation(inv: GitInvocation) {
-    if let Some(obs) = INVOCATION_OBSERVER.get() {
-        obs(inv);
+impl RunOutputBytes {
+    /// The text form; invalid UTF-8 in stdout is replaced (U+FFFD).
+    pub fn into_text(self) -> RunOutput {
+        let stdout = match String::from_utf8(self.stdout) {
+            Ok(s) => s,
+            Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+        };
+        RunOutput {
+            stdout,
+            stderr: self.stderr,
+            exit_code: self.exit_code,
+            success: self.success,
+            duration_ms: self.duration_ms,
+        }
     }
 }
 
-type ProgressObserver =
-    std::sync::Arc<dyn Fn(&OperationId, crate::progress::RemoteProgress) + Send + Sync>;
-static PROGRESS_OBSERVER: std::sync::OnceLock<ProgressObserver> = std::sync::OnceLock::new();
-
-/// Install a process-wide observer notified with parsed `--progress` meter
-/// updates from invocations run via `run_with_op_progress`, keyed by their
-/// `OperationId`. Set once at startup; the app forwards these to the UI.
-pub fn set_progress_observer(observer: ProgressObserver) {
-    let _ = PROGRESS_OBSERVER.set(observer);
+/// One `git` invocation. Every run shape is a combination of these options,
+/// and every combination is valid.
+#[derive(Debug, Clone)]
+pub struct GitRequest<'a> {
+    pub args: &'a [&'a str],
+    /// Applied after the hardened base env, so they win (e.g.
+    /// `GIT_EDITOR=true` for `merge/rebase --continue`: env beats any
+    /// `-c core.editor=...`).
+    pub env: &'a [(&'a str, &'a str)],
+    pub stdin: Option<&'a str>,
+    /// Id to cancel the run with; `None` mints a fresh one.
+    pub op_id: Option<OperationId>,
+    /// Non-zero exits that are answers, not failures (`config --get` exits 1
+    /// for "key unset"): logged as OK. `success` stays `exit == 0`.
+    pub ok_exit_codes: &'a [i32],
+    /// Report `--progress` meter updates to the progress observer and keep
+    /// them out of the returned stderr.
+    pub progress: bool,
+    /// Stdout must arrive byte-exact (byte-count-framed output such as
+    /// `cat-file --batch`); transports may otherwise send it as text.
+    pub raw_stdout: bool,
 }
 
-fn report_progress(op_id: &OperationId, progress: crate::progress::RemoteProgress) {
-    if let Some(obs) = PROGRESS_OBSERVER.get() {
-        obs(op_id, progress);
+impl<'a> GitRequest<'a> {
+    pub fn new(args: &'a [&'a str]) -> Self {
+        Self {
+            args,
+            env: &[],
+            stdin: None,
+            op_id: None,
+            ok_exit_codes: &[],
+            progress: false,
+            raw_stdout: false,
+        }
+    }
+
+    pub fn env(mut self, env: &'a [(&'a str, &'a str)]) -> Self {
+        self.env = env;
+        self
+    }
+
+    pub fn stdin(mut self, data: &'a str) -> Self {
+        self.stdin = Some(data);
+        self
+    }
+
+    pub fn op(mut self, op_id: OperationId) -> Self {
+        self.op_id = Some(op_id);
+        self
+    }
+
+    pub fn expect_exit_codes(mut self, codes: &'a [i32]) -> Self {
+        self.ok_exit_codes = codes;
+        self
+    }
+
+    pub fn progress(mut self) -> Self {
+        self.progress = true;
+        self
+    }
+
+    pub fn raw_stdout(mut self) -> Self {
+        self.raw_stdout = true;
+        self
     }
 }
 
@@ -222,65 +268,24 @@ impl GitRunner {
         self.cwd.as_deref()
     }
 
-    /// Run a one-shot `git` invocation and collect the full output.
+    /// Run one `git` invocation and collect its full output. Every run is
+    /// registered under its operation id (the request's, or a fresh one), so
+    /// any shape can be cancelled.
     ///
     /// The span records NO argv: the fmt layer prints span fields as a prefix
     /// on every event inside the span, so a raw argv here would put a
     /// URL-embedded token in the log file next to the redacted copy
     /// `log_invocation` emits (`redact_url_credentials`).
     #[instrument(level = "info", skip_all, fields(cwd = ?self.cwd))]
-    pub async fn run(&self, args: &[&str]) -> Result<RunOutput, RunnerError> {
-        self.run_inner(args, &[], OperationId::new(), &[]).await
-    }
+    pub async fn execute(&self, req: GitRequest<'_>) -> Result<RunOutputBytes, RunnerError> {
+        use tokio::io::AsyncWriteExt;
 
-    /// Like `run`, but the caller declares non-zero exit codes that are
-    /// EXPECTED outcomes - `config --get` exits 1 for "key unset",
-    /// `--unset` 5 for "was already absent", `merge-base` 1 for "no common
-    /// ancestor". The invocation log (and the Git Log panel it feeds) records
-    /// those exits as OK instead of failed; the returned `RunOutput` is
-    /// unchanged (`success` stays `exit == 0`), so callers still branch on
-    /// the exit code themselves.
-    pub async fn run_expecting(
-        &self,
-        args: &[&str],
-        ok_exit_codes: &[i32],
-    ) -> Result<RunOutput, RunnerError> {
-        self.run_inner(args, &[], OperationId::new(), ok_exit_codes).await
-    }
-
-    /// Run a one-shot `git` invocation under a caller-supplied operation id,
-    /// so the caller can cancel it.
-    pub async fn run_with_op(
-        &self,
-        args: &[&str],
-        op_id: OperationId,
-    ) -> Result<RunOutput, RunnerError> {
-        self.run_inner(args, &[], op_id, &[]).await
-    }
-
-    /// Run with per-invocation environment overrides, applied *after* the
-    /// hardened base env so they win. Needed where a single command must relax
-    /// one hardening default - e.g. `merge/rebase --continue` conclude with a
-    /// commit whose message step consults `GIT_EDITOR`; the base
-    /// `GIT_EDITOR=false` would fail it (and env beats any `-c core.editor=…`),
-    /// so those pass `GIT_EDITOR=true` to accept the prepared message.
-    pub async fn run_with_env(
-        &self,
-        args: &[&str],
-        extra_env: &[(&str, &str)],
-    ) -> Result<RunOutput, RunnerError> {
-        self.run_inner(args, extra_env, OperationId::new(), &[]).await
-    }
-
-    async fn run_inner(
-        &self,
-        args: &[&str],
-        extra_env: &[(&str, &str)],
-        op_id: OperationId,
-        ok_exit_codes: &[i32],
-    ) -> Result<RunOutput, RunnerError> {
         let started = Instant::now();
-        let mut cmd = self.build_command_with_env(args, extra_env);
+        let op_id = req.op_id.clone().unwrap_or_default();
+        let mut cmd = self.build_command_with_env(req.args, req.env);
+        if req.stdin.is_some() {
+            cmd.stdin(Stdio::piped());
+        }
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         let (mut child, tree) = self.spawn_child(&mut cmd)?;
@@ -290,15 +295,31 @@ impl GitRunner {
 
         let stdout = child.stdout.take().expect("stdout piped");
         let stderr = child.stderr.take().expect("stderr piped");
+        let stdout_task = tokio::spawn(read_to_bytes(stdout));
+        let stderr_task = if req.progress {
+            tokio::spawn(read_progress_stderr(stderr, op_id.clone()))
+        } else {
+            tokio::spawn(read_to_string(stderr))
+        };
+        // Written after the readers start, so a large input cannot deadlock
+        // against a child that emits output before consuming all of it.
+        let stdin_task = match (child.stdin.take(), req.stdin) {
+            (Some(mut pipe), Some(data)) => {
+                let data = data.as_bytes().to_vec();
+                Some(tokio::spawn(async move {
+                    // Dropping the pipe afterwards sends EOF.
+                    pipe.write_all(&data).await
+                }))
+            }
+            _ => None,
+        };
 
-        let stdout_task = tokio::spawn(read_to_string(stdout));
-        let stderr_task = tokio::spawn(read_to_string(stderr));
-
-        let exit_code = tokio::select! {
+        let status = tokio::select! {
             _ = kill_rx => {
-                warn!(op_id = %op_id, "git invocation cancelled — killing child");
-                let status = terminate_tree(&mut child, &tree).await.map_err(RunnerError::Io)?;
+                warn!(op_id = %op_id, "git invocation cancelled - killing child");
+                let status = terminate_tree(&mut child, &tree).await;
                 self.remove_running(&op_id);
+                let status = status.map_err(RunnerError::Io)?;
                 // Do NOT wait for pipe EOF here: a descendant that survived
                 // the kill (Git for Windows' `cmd\git.exe` shim wraps the
                 // real git) still holds the write ends, and EOF would arrive
@@ -306,12 +327,15 @@ impl GitRunner {
                 // button that "did nothing". Abort the readers instead;
                 // dropping our read ends kills such an orphan on its next
                 // write (broken pipe). Same fix as `stream`'s cancel arm.
+                if let Some(t) = &stdin_task {
+                    t.abort();
+                }
                 stdout_task.abort();
                 stderr_task.abort();
                 let stdout = stdout_task.await.unwrap_or_default();
                 let stderr = stderr_task.await.unwrap_or_default();
-                log_invocation(self.cwd.as_deref(), args, started, status.code(), false, &stderr);
-                return Ok(RunOutput {
+                log_invocation(self.cwd.as_deref(), req.args, started, status.code(), false, &stderr);
+                return Ok(RunOutputBytes {
                     stdout,
                     stderr,
                     exit_code: status.code(),
@@ -319,222 +343,27 @@ impl GitRunner {
                     duration_ms: started.elapsed().as_millis() as u64,
                 });
             }
-            status = child.wait() => {
-                status.map_err(RunnerError::Io)?
-            }
+            status = child.wait() => status,
         };
-
         self.remove_running(&op_id);
+        let status = status.map_err(RunnerError::Io)?;
 
         let stdout = stdout_task.await.unwrap_or_default();
         let stderr = stderr_task.await.unwrap_or_default();
+        if let Some(t) = stdin_task {
+            if let Ok(Err(e)) = t.await {
+                return Err(RunnerError::Io(e));
+            }
+        }
 
         log_invocation(
             self.cwd.as_deref(),
-            args,
+            req.args,
             started,
-            exit_code.code(),
-            logged_ok(exit_code.success(), exit_code.code(), ok_exit_codes),
+            status.code(),
+            logged_ok(status.success(), status.code(), req.ok_exit_codes),
             &stderr,
         );
-
-        Ok(RunOutput {
-            stdout,
-            stderr,
-            exit_code: exit_code.code(),
-            success: exit_code.success(),
-            duration_ms: started.elapsed().as_millis() as u64,
-        })
-    }
-
-    /// Like `run_with_op`, but reads stderr incrementally and reports parsed
-    /// `--progress` meter updates to the process-wide progress observer,
-    /// keyed by `op_id`. Git delimits meter updates with `\r` (not `\n`), so
-    /// stderr is split on both. Recognized meter segments are *excluded* from
-    /// the returned/logged stderr (they are high-volume redraw noise); every
-    /// other stderr line is kept, so error classification is unaffected.
-    /// Callers must pass `--progress` themselves — stderr is a pipe, and git
-    /// suppresses the meter on non-TTYs otherwise.
-    pub async fn run_with_op_progress(
-        &self,
-        args: &[&str],
-        op_id: OperationId,
-    ) -> Result<RunOutput, RunnerError> {
-        use tokio::io::AsyncReadExt;
-
-        let started = Instant::now();
-        let mut cmd = self.build_command(args);
-        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-
-        let (mut child, tree) = self.spawn_child(&mut cmd)?;
-
-        let (kill_tx, kill_rx) = oneshot::channel();
-        self.try_insert_running(op_id.clone(), kill_tx)?;
-
-        let stdout = child.stdout.take().expect("stdout piped");
-        let mut stderr = child.stderr.take().expect("stderr piped");
-
-        let stdout_task = tokio::spawn(read_to_string(stdout));
-        let op_for_reader = op_id.clone();
-        let stderr_task = tokio::spawn(async move {
-            let mut splitter = crate::progress::SegmentSplitter::default();
-            let mut kept = String::new();
-            let mut on_segment = |seg: &str| match crate::progress::parse_progress(seg) {
-                Some(p) => report_progress(&op_for_reader, p),
-                None => {
-                    if !kept.is_empty() {
-                        kept.push('\n');
-                    }
-                    kept.push_str(seg);
-                }
-            };
-            let mut chunk = [0u8; 4096];
-            loop {
-                match stderr.read(&mut chunk).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => splitter.feed(&chunk[..n], &mut on_segment),
-                }
-            }
-            splitter.finish(&mut on_segment);
-            kept
-        });
-
-        let exit_code = tokio::select! {
-            _ = kill_rx => {
-                warn!(op_id = %op_id, "git invocation cancelled — killing child");
-                let status = terminate_tree(&mut child, &tree).await.map_err(RunnerError::Io)?;
-                self.remove_running(&op_id);
-                // Do NOT wait for pipe EOF here: a descendant that survived
-                // the kill (Git for Windows' `cmd\git.exe` shim wraps the
-                // real git) still holds the write ends, and EOF would arrive
-                // only after its ENTIRE remaining output - the clone cancel
-                // button that "did nothing". Abort the readers instead;
-                // dropping our read ends kills such an orphan on its next
-                // write (broken pipe). Same fix as `stream`'s cancel arm.
-                stdout_task.abort();
-                stderr_task.abort();
-                let stdout = stdout_task.await.unwrap_or_default();
-                let stderr = stderr_task.await.unwrap_or_default();
-                log_invocation(self.cwd.as_deref(), args, started, status.code(), false, &stderr);
-                return Ok(RunOutput {
-                    stdout,
-                    stderr,
-                    exit_code: status.code(),
-                    success: false,
-                    duration_ms: started.elapsed().as_millis() as u64,
-                });
-            }
-            status = child.wait() => {
-                status.map_err(RunnerError::Io)?
-            }
-        };
-
-        self.remove_running(&op_id);
-
-        let stdout = stdout_task.await.unwrap_or_default();
-        let stderr = stderr_task.await.unwrap_or_default();
-
-        log_invocation(self.cwd.as_deref(), args, started, exit_code.code(), exit_code.success(), &stderr);
-
-        Ok(RunOutput {
-            stdout,
-            stderr,
-            exit_code: exit_code.code(),
-            success: exit_code.success(),
-            duration_ms: started.elapsed().as_millis() as u64,
-        })
-    }
-
-    /// Run a one-shot `git` invocation, feeding `stdin_data` to its standard
-    /// input (used by `git apply`, which reads the patch from stdin). Readers
-    /// are spawned before the write so a large patch can't deadlock against a
-    /// child that starts emitting output before consuming all of its input.
-    pub async fn run_with_stdin(
-        &self,
-        args: &[&str],
-        stdin_data: &str,
-    ) -> Result<RunOutput, RunnerError> {
-        use tokio::io::AsyncWriteExt;
-
-        let started = Instant::now();
-        let mut cmd = self.build_command(args);
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        let (mut child, _tree) = self.spawn_child(&mut cmd)?;
-
-        let mut stdin = child.stdin.take().expect("stdin piped");
-        let stdout = child.stdout.take().expect("stdout piped");
-        let stderr = child.stderr.take().expect("stderr piped");
-
-        let stdout_task = tokio::spawn(read_to_string(stdout));
-        let stderr_task = tokio::spawn(read_to_string(stderr));
-
-        stdin
-            .write_all(stdin_data.as_bytes())
-            .await
-            .map_err(RunnerError::Io)?;
-        // Close stdin so git sees EOF and proceeds.
-        drop(stdin);
-
-        let status = child.wait().await.map_err(RunnerError::Io)?;
-        let stdout = stdout_task.await.unwrap_or_default();
-        let stderr = stderr_task.await.unwrap_or_default();
-
-        log_invocation(self.cwd.as_deref(), args, started, status.code(), status.success(), &stderr);
-
-        Ok(RunOutput {
-            stdout,
-            stderr,
-            exit_code: status.code(),
-            success: status.success(),
-            duration_ms: started.elapsed().as_millis() as u64,
-        })
-    }
-
-    /// `run_with_stdin` with RAW stdout bytes (see `RunOutputBytes`). Used by
-    /// `cat-file --batch`, whose output frames blob contents by byte count.
-    pub async fn run_with_stdin_bytes(
-        &self,
-        args: &[&str],
-        stdin_data: &str,
-    ) -> Result<RunOutputBytes, RunnerError> {
-        use tokio::io::AsyncWriteExt;
-
-        let started = Instant::now();
-        let mut cmd = self.build_command(args);
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        let (mut child, _tree) = self.spawn_child(&mut cmd)?;
-
-        let mut stdin = child.stdin.take().expect("stdin piped");
-        let stdout = child.stdout.take().expect("stdout piped");
-        let stderr = child.stderr.take().expect("stderr piped");
-
-        let stdout_task = tokio::spawn(async move {
-            use tokio::io::AsyncReadExt;
-            let mut buf = Vec::new();
-            let mut reader = stdout;
-            let _ = reader.read_to_end(&mut buf).await;
-            buf
-        });
-        let stderr_task = tokio::spawn(read_to_string(stderr));
-
-        stdin
-            .write_all(stdin_data.as_bytes())
-            .await
-            .map_err(RunnerError::Io)?;
-        // Close stdin so git sees EOF and proceeds.
-        drop(stdin);
-
-        let status = child.wait().await.map_err(RunnerError::Io)?;
-        let stdout = stdout_task.await.unwrap_or_default();
-        let stderr = stderr_task.await.unwrap_or_default();
-
-        log_invocation(self.cwd.as_deref(), args, started, status.code(), status.success(), &stderr);
 
         Ok(RunOutputBytes {
             stdout,
@@ -779,199 +608,7 @@ impl GitRunner {
     }
 }
 
-/// Handle on a spawned git's whole process tree, for `terminate_tree`.
-///
-/// Unix needs nothing: the child leads its own process group (see
-/// `build_command_with_env`) and a group signal reaches every descendant.
-/// Windows has no group signal, so each invocation gets its own job object
-/// (nested inside the app-lifetime `app_job`); git's helpers inherit the
-/// membership, and `TerminateJobObject` kills the entire tree in one call.
-/// Without this only the direct child died and an orphaned `index-pack`
-/// kept the partial clone's pack file open until its next (throttled)
-/// progress write hit the broken pipe - long enough for the cancelled
-/// clone's cleanup to fail with "being used by another process".
-///
-/// The job has NO kill-on-close limit: dropping the handle after a normal
-/// completion must not kill daemons git deliberately leaves behind
-/// (fsmonitor--daemon); those are reaped by `app_job` at app exit.
-struct ProcTree {
-    #[cfg(windows)]
-    job: Option<usize>,
-}
-
-#[cfg(not(windows))]
-impl ProcTree {
-    fn new(_child: &tokio::process::Child) -> Self {
-        Self {}
-    }
-}
-
-#[cfg(windows)]
-impl ProcTree {
-    fn new(child: &tokio::process::Child) -> Self {
-        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
-        use windows_sys::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW};
-        let Some(raw) = child.raw_handle() else {
-            return Self { job: None };
-        };
-        let job = unsafe {
-            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-            if job.is_null() {
-                return Self { job: None };
-            }
-            if AssignProcessToJobObject(job, raw as HANDLE) == 0 {
-                CloseHandle(job);
-                return Self { job: None };
-            }
-            job
-        };
-        Self {
-            job: Some(job as usize),
-        }
-    }
-
-    /// Kill every process in the job. Best-effort: with no job (creation or
-    /// assignment failed at spawn) the caller still kills the direct child.
-    fn terminate(&self) {
-        use windows_sys::Win32::Foundation::HANDLE;
-        use windows_sys::Win32::System::JobObjects::TerminateJobObject;
-        if let Some(job) = self.job {
-            unsafe {
-                TerminateJobObject(job as HANDLE, 1);
-            }
-        }
-    }
-}
-
-#[cfg(windows)]
-impl Drop for ProcTree {
-    fn drop(&mut self) {
-        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
-        if let Some(job) = self.job {
-            unsafe {
-                CloseHandle(job as HANDLE);
-            }
-        }
-    }
-}
-
-/// Terminate a cancelled invocation's whole process tree, not just the
-/// direct child. git forks helpers (remote-https, index-pack, ...) that
-/// inherit our pipes and do the real work, so killing only the direct child
-/// can leave the operation effectively running (on Git for Windows even the
-/// real git itself: `cmd\git.exe` is a shim around it).
-///
-/// Unix: the child leads its own process group (see `build_command_with_env`),
-/// so one group signal reaches every descendant - and the termination is
-/// gentle first: SIGTERM lets git run its own cleanup handlers (a terminated
-/// clone removes its partial target, lockfiles get released) before any hard
-/// kill. The group is swept with SIGKILL afterwards for stragglers.
-///
-/// Windows: there is no group signal here; the invocation's job object
-/// (`ProcTree`) terminates the whole tree at once, then the direct child is
-/// killed and reaped. Any straggler that escaped the job dies on broken
-/// pipe once the reader tasks are aborted; `app_job` reaps the rest at exit.
-/// How long a SIGTERMed git gets to run its cleanup handlers before the hard
-/// SIGKILL. Long enough for normal junk removal and lock release, short
-/// enough that a cancel of a signal-ignoring process still feels immediate.
-#[cfg(unix)]
-const TERM_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
-
-#[cfg_attr(not(windows), allow(unused_variables))]
-async fn terminate_tree(
-    child: &mut tokio::process::Child,
-    tree: &ProcTree,
-) -> std::io::Result<std::process::ExitStatus> {
-    #[cfg(unix)]
-    if let Some(pid) = child.id() {
-        // Negative pid: signal the whole process group the child leads.
-        let pgid = -(pid as i32);
-        unsafe {
-            libc::kill(pgid, libc::SIGTERM);
-        }
-        let status = match tokio::time::timeout(TERM_GRACE, child.wait()).await {
-            Ok(status) => status?,
-            Err(_elapsed) => {
-                warn!("cancelled git ignored SIGTERM - escalating to SIGKILL");
-                unsafe {
-                    libc::kill(pgid, libc::SIGKILL);
-                }
-                child.wait().await?
-            }
-        };
-        // Sweep the group for stragglers that outlived the direct child.
-        // (Daemons git means to leave behind, e.g. fsmonitor--daemon, have
-        // detached into their own session and are not hit by this.)
-        unsafe {
-            libc::kill(pgid, libc::SIGKILL);
-        }
-        return Ok(status);
-    }
-    #[cfg(windows)]
-    tree.terminate();
-    let _ = child.start_kill();
-    child.wait().await
-}
-
-/// Windows: an app-lifetime job object with `KILL_ON_JOB_CLOSE`. Every git we
-/// spawn is assigned to it, and processes a git spawns inherit the membership.
-/// When the LeGit process ends - cleanly or by crash - the OS closes the
-/// handle and terminates everything still inside the job, so no git we
-/// started (nor any of its children) can outlive the app. The Unix
-/// counterpart is `PR_SET_PDEATHSIG` in `build_command_with_env`.
-#[cfg(windows)]
-mod app_job {
-    use std::sync::OnceLock;
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    };
-
-    /// The raw handle, stored as `usize` so the static is `Send + Sync`. It
-    /// is deliberately never closed: closing it would kill every running git.
-    static JOB: OnceLock<Option<usize>> = OnceLock::new();
-
-    fn handle() -> Option<HANDLE> {
-        JOB.get_or_init(|| unsafe {
-            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-            if job.is_null() {
-                return None;
-            }
-            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            if SetInformationJobObject(
-                job,
-                JobObjectExtendedLimitInformation,
-                &info as *const _ as *const core::ffi::c_void,
-                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            ) == 0
-            {
-                CloseHandle(job);
-                return None;
-            }
-            Some(job as usize)
-        })
-        .map(|raw| raw as HANDLE)
-    }
-
-    /// Best-effort enrolment right after spawn. On failure the child simply
-    /// is not tied to the app's lifetime, which is the pre-existing behavior.
-    /// (A child that spawns its own process in the instant before assignment
-    /// would escape the job; in practice assignment runs before the newly
-    /// created process gets scheduled.)
-    pub(super) fn assign(child: &tokio::process::Child) {
-        let (Some(job), Some(raw)) = (handle(), child.raw_handle()) else {
-            return;
-        };
-        unsafe {
-            AssignProcessToJobObject(job, raw as HANDLE);
-        }
-    }
-}
-
-/// Default base environment applied to every `git` invocation (DESIGN.md §3.2).
+/// Default base environment applied to every `git` invocation (DESIGN-v0.1.md §3.2).
 fn default_base_env() -> Vec<(String, String)> {
     vec![
         ("GIT_EDITOR".to_string(), "false".to_string()),
@@ -998,120 +635,46 @@ fn default_base_env() -> Vec<(String, String)> {
 /// repo, not us), so decode lossily - a strict read would either error or,
 /// worse, silently yield an EMPTY string for a whole non-UTF-8 stream,
 /// making a real diff look like "no changes".
-async fn read_to_string<R: tokio::io::AsyncRead + Unpin>(reader: R) -> String {
+async fn read_to_bytes<R: tokio::io::AsyncRead + Unpin>(mut reader: R) -> Vec<u8> {
     use tokio::io::AsyncReadExt;
     let mut buf = Vec::new();
-    let mut reader = reader;
     let _ = reader.read_to_end(&mut buf).await;
-    String::from_utf8_lossy(&buf).into_owned()
+    buf
 }
 
-/// Whether an invocation should be LOGGED as ok: a zero exit, or a non-zero
-/// exit the caller declared expected (`run_expecting`) - e.g. `config --get`'s
-/// 1 for "key unset" is an answer, not a failure, and must not paint the Git
-/// Log panel red. Affects logging only; `RunOutput.success` stays `exit == 0`.
-/// Pure; unit-tested.
-fn logged_ok(success: bool, exit_code: Option<i32>, ok_exit_codes: &[i32]) -> bool {
-    success || exit_code.is_some_and(|c| ok_exit_codes.contains(&c))
+async fn read_to_string<R: tokio::io::AsyncRead + Unpin>(reader: R) -> String {
+    String::from_utf8_lossy(&read_to_bytes(reader).await).into_owned()
 }
 
-/// Replace the credentials in every `scheme://user:secret@host` URL inside
-/// `s` with `***`, leaving everything else untouched.
-///
-/// A remote URL can legitimately carry a token (`https://<PAT>@github.com/…`
-/// is what GitHub's own HTTPS instructions produce), and such a URL turns up
-/// both in argv (`clone`, `push`, `remote set-url`) and in git's own error
-/// text ("fatal: Authentication failed for 'https://user:pass@host/'"). The
-/// Git Log panel renders both verbatim, and bug reports carry screenshots of
-/// it, so the secret is stripped at this single chokepoint instead.
-///
-/// When the userinfo has no colon the WHOLE of it is replaced: a lone
-/// userinfo is just as often a token (`https://ghp_…@github.com`) as a user
-/// name, and the two cannot be told apart.
-pub fn redact_url_credentials(s: &str) -> std::borrow::Cow<'_, str> {
-    if !s.contains("://") {
-        return std::borrow::Cow::Borrowed(s);
-    }
-    let mut out = String::new();
-    let mut rest = s;
-    let mut redacted = false;
-    while let Some(scheme_end) = rest.find("://") {
-        let after = scheme_end + 3;
-        // The authority ends at the path/query/fragment, or at whitespace or a
-        // quote when the URL is embedded in a sentence (git's stderr).
-        let auth_len = rest[after..]
-            .find(|c: char| c.is_whitespace() || matches!(c, '/' | '?' | '#' | '\'' | '"'))
-            .unwrap_or(rest.len() - after);
-        let authority = &rest[after..after + auth_len];
-        match authority.rfind('@') {
-            Some(at) => {
-                let userinfo = &authority[..at];
-                out.push_str(&rest[..after]);
-                match userinfo.find(':') {
-                    Some(colon) => {
-                        out.push_str(&userinfo[..colon]);
-                        out.push_str(":***");
-                    }
-                    None => out.push_str("***"),
-                }
-                out.push_str(&authority[at..]);
-                redacted = true;
+/// Read stderr incrementally, reporting parsed `--progress` meter updates to
+/// the process-wide progress observer under `op_id`. Git delimits meter
+/// updates with `\r` (not `\n`), so stderr is split on both. Recognized meter
+/// segments are EXCLUDED from the returned stderr (high-volume redraw noise);
+/// every other line is kept, so error classification is unaffected. Callers
+/// must pass `--progress` themselves: stderr is a pipe, and git suppresses
+/// the meter on non-TTYs otherwise.
+async fn read_progress_stderr<R: tokio::io::AsyncRead + Unpin>(mut stderr: R, op_id: OperationId) -> String {
+    use tokio::io::AsyncReadExt;
+    let mut splitter = crate::progress::SegmentSplitter::default();
+    let mut kept = String::new();
+    let mut on_segment = |seg: &str| match crate::progress::parse_progress(seg) {
+        Some(p) => report_progress(&op_id, p),
+        None => {
+            if !kept.is_empty() {
+                kept.push('\n');
             }
-            None => out.push_str(&rest[..after + auth_len]),
+            kept.push_str(seg);
         }
-        rest = &rest[after + auth_len..];
+    };
+    let mut chunk = [0u8; 4096];
+    loop {
+        match stderr.read(&mut chunk).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => splitter.feed(&chunk[..n], &mut on_segment),
+        }
     }
-    if !redacted {
-        return std::borrow::Cow::Borrowed(s);
-    }
-    out.push_str(rest);
-    std::borrow::Cow::Owned(out)
-}
-
-fn log_invocation(
-    cwd: Option<&Path>,
-    args: &[&str],
-    started: Instant,
-    exit_code: Option<i32>,
-    success: bool,
-    stderr: &str,
-) {
-    let duration_ms = started.elapsed().as_millis() as u64;
-    // Credentials never reach a log or the UI (see `redact_url_credentials`).
-    let args: Vec<String> = args
-        .iter()
-        .map(|a| redact_url_credentials(a).into_owned())
-        .collect();
-    let stderr = redact_url_credentials(stderr);
-    let stderr = stderr.as_ref();
-    // Log at debug for both outcomes — the runner doesn't know whether a
-    // non-zero exit code is expected (e.g. `git config --get` returning 1 for
-    // "key not found"). Callers that consider a non-zero result an actual error
-    // are responsible for logging at the appropriate level.
-    let snippet: String = stderr.lines().take(5).collect::<Vec<_>>().join(" | ");
-    debug!(
-        duration_ms,
-        exit_code = exit_code.unwrap_or(-1),
-        success,
-        args = ?args,
-        stderr = %snippet,
-        "git invocation complete",
-    );
-    // Keep a higher-level info log only for successful long-running ops so
-    // progress is visible without enabling full debug output.
-    if success {
-        info!(duration_ms, args = ?args, "git ok");
-    }
-    // Forward to the UI command log (if an observer is installed).
-    report_invocation(GitInvocation {
-        args,
-        cwd: cwd.map(|p| p.to_string_lossy().into_owned()),
-        exit_code,
-        success,
-        duration_ms,
-        stderr: stderr.to_string(),
-        host: None,
-    });
+    splitter.finish(&mut on_segment);
+    kept
 }
 
 /// Parsed `git --version` output.
@@ -1331,7 +894,6 @@ mod tests {
     /// Wait for a marker file the scripted child creates once it is
     /// demonstrably running (the one-shot runners expose no mid-run output
     /// to synchronize on, unlike `stream`).
-    #[cfg(unix)]
     async fn wait_for_marker(path: &std::path::Path) {
         let deadline = Instant::now() + std::time::Duration::from_secs(5);
         while !path.exists() {
@@ -1539,7 +1101,7 @@ mod tests {
         let run = tokio::spawn(async move {
             runner_for_run
                 .run_with_op(
-                    &["-c", "trap 'touch cleaned; exit 0' TERM; touch started; sleep 30"],
+                    &["-c", "trap ': > cleaned; exit 0' TERM; touch started; sleep 30"],
                     op,
                 )
                 .await
@@ -1596,7 +1158,7 @@ mod tests {
         assert!(!out.success);
         // Grace period plus a scheduling margin.
         assert!(
-            started.elapsed() < TERM_GRACE + std::time::Duration::from_secs(2),
+            started.elapsed() < proc_tree::TERM_GRACE + std::time::Duration::from_secs(2),
             "escalation took {} ms",
             started.elapsed().as_millis()
         );
@@ -1622,82 +1184,67 @@ mod tests {
         assert_eq!(envs.get("GIT_TERMINAL_PROMPT").map(String::as_str), Some("0"));
     }
 
-    #[test]
-    fn logged_ok_accepts_declared_expected_exit_codes() {
-        // Zero always logs ok; a declared code logs ok; anything else fails.
-        assert!(logged_ok(true, Some(0), &[]));
-        assert!(logged_ok(false, Some(1), &[1]));
-        assert!(logged_ok(false, Some(5), &[1, 5]));
-        assert!(!logged_ok(false, Some(128), &[1, 5]));
-        assert!(!logged_ok(false, Some(1), &[]));
-        // Killed by signal (no exit code) is never "expected".
-        assert!(!logged_ok(false, None, &[1]));
-    }
-
     // --- credential redaction in the command log ---
 
-    /// The Git Log panel renders every argv verbatim, and a remote URL can
-    /// carry a token (`https://<PAT>@github.com/…` is what GitHub's HTTPS
-    /// instructions produce). Nothing secret may survive this function.
-    #[test]
-    fn redaction_strips_url_credentials() {
-        let cases = [
-            (
-                "https://user:ghp_SECRET@github.com/o/r.git",
-                "https://user:***@github.com/o/r.git",
-            ),
-            // Token as the whole userinfo: indistinguishable from a user name,
-            // so all of it goes.
-            ("https://ghp_SECRET@github.com/o/r.git", "https://***@github.com/o/r.git"),
-            ("http://u:p@example.com:8080/x", "http://u:***@example.com:8080/x"),
-            // Embedded in git's own error text, quote-terminated.
-            (
-                "fatal: Authentication failed for 'https://u:p@host/r.git/'",
-                "fatal: Authentication failed for 'https://u:***@host/r.git/'",
-            ),
-            // Two URLs in one string.
-            (
-                "https://a:b@h1/x and https://c:d@h2/y",
-                "https://a:***@h1/x and https://c:***@h2/y",
-            ),
-            // Nothing to redact: returned untouched.
-            ("https://github.com/o/r.git", "https://github.com/o/r.git"),
-            ("git@github.com:o/r.git", "git@github.com:o/r.git"),
-            ("ssh://git@github.com/o/r.git", "ssh://***@github.com/o/r.git"),
-            ("--end-of-options", "--end-of-options"),
-            ("", ""),
-        ];
-        for (input, want) in cases {
-            assert_eq!(redact_url_credentials(input), want, "input: {input}");
-        }
+    /// Every option combines with every other: before the single request
+    /// shape, stdin runs could not be cancelled and progress runs could not
+    /// take env overrides.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn request_options_combine() {
+        let dir = tempfile::tempdir().unwrap();
+        let runner = GitRunner::for_repo("sh", dir.path());
+        let args = ["-c", "cat; echo \"$LEGIT_T\" >&2; exit 3"];
+        let out = runner
+            .execute(
+                GitRequest::new(&args)
+                    .stdin("from stdin")
+                    .env(&[("LEGIT_T", "from env")])
+                    .op(OperationId::new())
+                    .progress()
+                    .expect_exit_codes(&[3]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.stdout, b"from stdin");
+        assert!(out.stderr.contains("from env"), "{}", out.stderr);
+        assert_eq!(out.exit_code, Some(3));
+        assert!(!out.success);
     }
 
-    /// A string with no credentials is passed through by reference (the hot
-    /// path: every argv of every invocation goes through here).
-    #[test]
-    fn redaction_borrows_when_nothing_to_do() {
-        assert!(matches!(
-            redact_url_credentials("status --porcelain=v2"),
-            std::borrow::Cow::Borrowed(_)
-        ));
-        assert!(matches!(
-            redact_url_credentials("https://github.com/o/r.git"),
-            std::borrow::Cow::Borrowed(_)
-        ));
-        assert!(matches!(
-            redact_url_credentials("https://u:p@h/x"),
-            std::borrow::Cow::Owned(_)
-        ));
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stdin_fed_run_is_cancellable() {
+        let dir = tempfile::tempdir().unwrap();
+        let runner = GitRunner::for_repo("sh", dir.path());
+        let op = OperationId::new();
+        let op_for_cancel = op.clone();
+        let runner_for_run = runner.clone();
+        let run = tokio::spawn(async move {
+            runner_for_run
+                .execute(GitRequest::new(&["-c", "touch started; sleep 5"]).stdin("x").op(op))
+                .await
+        });
+        wait_for_marker(&dir.path().join("started")).await;
+        assert!(runner.cancel(&op_for_cancel));
+        let out = tokio::time::timeout(std::time::Duration::from_secs(4), run)
+            .await
+            .expect("cancel did not stop the stdin-fed run")
+            .unwrap()
+            .unwrap();
+        assert!(!out.success);
     }
 
-    /// Multi-byte content must not panic or corrupt (byte indices are taken
-    /// from ASCII delimiters, so they stay on char boundaries).
-    #[test]
-    fn redaction_handles_non_ascii() {
-        assert_eq!(
-            redact_url_credentials("https://üser:pä@例え.jp/リポ"),
-            "https://üser:***@例え.jp/リポ"
-        );
-        assert_eq!(redact_url_credentials("日本語 no url"), "日本語 no url");
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stdout_is_byte_exact_and_text_is_lossy() {
+        let dir = tempfile::tempdir().unwrap();
+        let runner = GitRunner::for_repo("sh", dir.path());
+        let out = runner
+            .execute(GitRequest::new(&["-c", "printf 'a\\377b'"]))
+            .await
+            .unwrap();
+        assert_eq!(out.stdout, b"a\xffb");
+        assert_eq!(out.into_text().stdout, "a\u{fffd}b");
     }
 }

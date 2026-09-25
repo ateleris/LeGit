@@ -1,24 +1,22 @@
 import { useCallback, useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { SectionLabel } from "../shared/SectionChrome";
+import {
+  applyStash,
+  createStash,
+  dropStash,
+  popStash,
+  renameStash,
+  stashBranch,
+  type RefActionContext,
+} from "../../lib/refActions";
+import { confirmDestructiveAction } from "../../store/confirm";
+import { useQueryClient } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { usePanelFocusEffect } from "../PanelApiContext";
-import { invalidateRepoDomains } from "../../lib/repoInvalidation";
-import {
-  repoStashes,
-  repoCreateStash,
-  repoApplyStash,
-  repoPopStash,
-  repoDropStash,
-  repoRenameStash,
-  repoStashBranch,
-} from "../../lib/commands";
-import { formatSwitchError } from "../../lib/switchFeedback";
 import { notify } from "../../store/notifications";
-import { confirmDialog } from "../../store/confirm";
 import { useSummonStore } from "../../store/summon";
-import { useConfirmDestructive } from "../../store/settings";
 import type { StashEntry } from "../../lib/types";
-import { formatAppError } from "../../lib/types";
+import { formatAppError } from "../../lib/errors";
 import { formatRelative } from "../../lib/time";
 import { StashIcon } from "../../icons";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
@@ -31,12 +29,7 @@ import { matchesRefFilter } from "../../lib/refFilter";
 import { Button } from "../shared/buttons";
 import { ToolbarButton } from "../shared/ToolbarButton";
 import { isRowBackgroundClick, jumpPanelsToCommit } from "../shared/jumpToCommit";
-import { STALE } from "../../lib/queryTiming";
-
-// A stash mutation touches the working tree, the stash list, and the graph.
-const AFFECTED_DOMAINS = ["stashes", "log", "status"];
-// Branch-from-stash additionally creates and checks out a branch.
-const BRANCH_DOMAINS = ["stashes", "log", "status", "branches", "tracking"];
+import { useStashes } from "../../lib/queries/useRepoQueries";
 
 const monoInput: React.CSSProperties = {
   fontSize: "var(--fz-md)",
@@ -63,12 +56,7 @@ export function StashesSection() {
   const repo = useActiveRepo();
   const queryClient = useQueryClient();
 
-  const { data: stashes = [], isFetching, refetch } = useQuery<StashEntry[]>({
-    queryKey: [repo?.id, "stashes"],
-    queryFn: () => repoStashes(repo!.id),
-    enabled: !!repo,
-    staleTime: STALE.live,
-  });
+  const { data: stashes = [], isFetching, refetch } = useStashes(repo?.id);
 
   const [filterQuery, setFilterQuery] = useState("");
   const filteredStashes = useMemo(
@@ -79,32 +67,29 @@ export function StashesSection() {
   const reload = useCallback(() => { refetch(); }, [refetch]);
   usePanelFocusEffect(reload);
 
-  // Two runners, one per error classification: stash-branch failures go
-  // through the switch classifier (it checks out the new branch).
-  const { busy: mutBusy, run } = usePanelRunner({
+  // The shared actions report their own errors and refresh their domains;
+  // the runner adds the re-entry guard and delayed busy state.
+  const { busy, run } = usePanelRunner({
     enabled: !!repo,
     onError: (e) => notify.error(formatAppError(e)),
   });
-  const { busy: branchBusy, run: runBranch } = usePanelRunner({
-    enabled: !!repo,
-    onError: (e) => notify.error(formatSwitchError(e)),
-  });
-  const busy = mutBusy || branchBusy;
+  const guarded = async (action: (c: RefActionContext) => Promise<boolean>) => {
+    if (!repo) return false;
+    let ok = false;
+    await run(async () => {
+      ok = await action({ queryClient, repo });
+    });
+    return ok;
+  };
   const [createMsg, setCreateMsg] = useState("");
   // Default on: a stash should capture the full working state, untracked files
   // included. Users can still opt out per-stash.
   const [includeUntracked, setIncludeUntracked] = useState(true);
   const [keepIndex, setKeepIndex] = useState(false);
-  const confirmDestructive = useConfirmDestructive();
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draftMsg, setDraftMsg] = useState("");
   const [branching, setBranching] = useState<string | null>(null);
   const [draftBranch, setDraftBranch] = useState("");
-
-  const invalidate = useCallback(() => {
-    if (!repo) return;
-    invalidateRepoDomains(queryClient, repo.id, AFFECTED_DOMAINS);
-  }, [queryClient, repo]);
 
   const openRename = (s: StashEntry) => {
     setBranching(null);
@@ -118,88 +103,42 @@ export function StashesSection() {
     setBranching(s.stash_sha);
   };
 
-  // `git stash branch`: new branch at the stash's base, stash applied and
-  // dropped on success — the escape hatch when a plain apply would conflict.
   const doBranch = async (sha: string) => {
     const name = draftBranch.trim();
     if (!name) return;
-    await runBranch(async () => {
-      await repoStashBranch(repo!.id, sha, name);
-      invalidateRepoDomains(queryClient, repo!.id, BRANCH_DOMAINS);
-      setBranching(null);
-      notify.info(`Created branch '${name}' from the stash and checked it out.`);
-    });
+    if (await guarded((c) => stashBranch(c, sha, name))) setBranching(null);
   };
 
-  // Rename via drop + re-store (see the backend): the stash keeps its content
-  // but moves to stash@{0}. The list refetch reflects the new order.
   const doRename = async (sha: string) => {
     const next = draftMsg.trim();
     if (!next) return;
-    await run(async () => {
-      await repoRenameStash(repo!.id, sha, next);
-      invalidate();
-      setRenaming(null);
-    });
+    if (await guarded((c) => renameStash(c, sha, next))) setRenaming(null);
   };
 
-  const doCreate = () =>
-    run(async () => {
-      const outcome = await repoCreateStash(
-        repo!.id,
-        createMsg.trim() || undefined,
-        includeUntracked,
-        keepIndex,
+  const doCreate = async () => {
+    if (!repo) return;
+    let result: Awaited<ReturnType<typeof createStash>> = null;
+    await run(async () => {
+      result = await createStash(
+        { queryClient, repo },
+        { message: createMsg.trim() || undefined, includeUntracked, keepIndex },
       );
-      invalidate();
-      if (outcome.kind === "nothing_to_stash") {
-        notify.info("Nothing to stash — the working tree is clean.");
-      } else {
-        setCreateMsg("");
-        setIncludeUntracked(false);
-        setKeepIndex(false);
-      }
     });
-
-  // Apply or pop, surfacing a merge conflict as an info toast (the op partially
-  // succeeded; on a pop, git keeps the stash so it reappears after refetch).
-  // Actions address the stash by SHA; the selector is only for the toast text.
-  const doApplyOrPop = (
-    sha: string,
-    selector: string,
-    fn: (repoId: string, sha: string) => Promise<{ kind: string; message?: string }>,
-    verb: string,
-  ) =>
-    run(async () => {
-      const outcome = await fn(repo!.id, sha);
-      invalidate();
-      if (outcome.kind === "conflicts") {
-        notify.info(
-          `${verb} ${selector} produced conflicts — resolve them in your working tree.`,
-        );
-      }
-    });
-
-  const doDrop = (sha: string) =>
-    run(async () => {
-      await repoDropStash(repo!.id, sha);
-      invalidate();
-    });
-
-  // Central confirmation dialog (global destructive-confirmation setting:
-  // when off, drop runs immediately). The row context menu keeps its own
-  // inline confirm section.
-  const requestDrop = async (s: StashEntry) => {
-    if (confirmDestructive) {
-      const ok = await confirmDialog({
-        title: "Drop stash",
-        message: "Deletes the stash entry; its changes are not applied anywhere.",
-        detail: s.message,
-        confirmLabel: "Drop stash",
-      });
-      if (!ok) return;
+    if (result === "created") {
+      setCreateMsg("");
+      setIncludeUntracked(false);
+      setKeepIndex(false);
     }
-    void doDrop(s.stash_sha);
+  };
+
+  const requestDrop = async (s: StashEntry) => {
+    const ok = await confirmDestructiveAction({
+      title: "Drop stash",
+      message: "Deletes the stash entry; its changes are not applied anywhere.",
+      detail: s.message,
+      confirmLabel: "Drop stash",
+    });
+    if (ok) void guarded((c) => dropStash(c, s.stash_sha));
   };
 
   if (!repo) {
@@ -249,8 +188,8 @@ export function StashesSection() {
                 onOpenBranch={() => openBranch(s)}
                 onSaveBranch={() => doBranch(s.stash_sha)}
                 onCancelBranch={() => setBranching(null)}
-                onApply={() => doApplyOrPop(s.stash_sha, s.selector, repoApplyStash, "Applying")}
-                onPop={() => doApplyOrPop(s.stash_sha, s.selector, repoPopStash, "Popping")}
+                onApply={() => guarded((c) => applyStash(c, s.stash_sha, s.selector))}
+                onPop={() => guarded((c) => popStash(c, s.stash_sha, s.selector))}
                 onViewDiff={() => openStashDiff(s.stash_sha)}
                 onOpenRename={() => openRename(s)}
                 onSaveRename={() => doRename(s.stash_sha)}
@@ -325,21 +264,6 @@ export function StashesSection() {
 // ---------------------------------------------------------------------------
 // Subcomponents
 // ---------------------------------------------------------------------------
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <span
-      style={{
-        fontSize: "var(--fz-sm)",
-        textTransform: "uppercase",
-        letterSpacing: 0.5,
-        color: "var(--subtle-fg)",
-      }}
-    >
-      {children}
-    </span>
-  );
-}
 
 function StashRow({
   stash,

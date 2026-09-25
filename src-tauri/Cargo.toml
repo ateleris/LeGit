@@ -58,7 +58,9 @@ legit-proto = { workspace = true }
 tempfile = "3"
 # test-util: paused-time (`start_paused`) for the console pump's paging tests.
 tokio = { workspace = true, features = ["test-util"] }
-# Scripted `GitExecutor` fakes (config-scope argv contracts).
+# The scripted `FakeExecutor` (config-scope argv contracts).
+legit-core = { workspace = true, features = ["test-support"] }
+# Test fakes of async traits (`RepoFs`).
 async-trait = { workspace = true }
 
 [features]

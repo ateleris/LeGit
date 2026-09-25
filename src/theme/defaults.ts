@@ -1,5 +1,5 @@
 // Built-in default theme (used as the fallback when a user theme is missing
-// tokens, per DESIGN.md §6.5). This is the *frontend's* default — the
+// tokens, per DESIGN-v0.1.md §6.5). This is the *frontend's* default — the
 // `Dark.legit-theme.json` file on disk is the canonical "Dark" theme and
 // loads through the same code path as user themes.
 

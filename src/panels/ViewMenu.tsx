@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckIcon } from "../icons";
-import { formatAppError } from "../lib/types";
-import { confirmDialog } from "../store/confirm";
+import { formatAppError } from "../lib/errors";
+import { confirmDestructiveAction } from "../store/confirm";
 import { hasMaximizedPanel, toggleMaximizeActivePanel, useDockviewStore } from "../store/dockview";
 import { useBindingLabel } from "../keys/useBindingLabel";
 import { useLayoutsStore } from "../store/layouts";
 import { notify } from "../store/notifications";
-import { useConfirmDestructive } from "../store/settings";
 import { GLOBAL_PANELS, REPO_PANELS } from "./registry";
-import { summonGlobalPanel } from "./GlobalDock";
+import { summonGlobalPanel } from "../layout/globalSummon";
 import { openRepoPanel } from "./RepoDock";
 import { useDismissable } from "./shared/useDismissable";
 import { LayoutShortcutChip } from "./Layouts/LayoutShortcutChip";
@@ -18,7 +17,7 @@ import {
   SectionLabel,
   Separator,
   Submenu,
-} from "./Commits/menu/primitives";
+} from "./shared/menu/primitives";
 
 /**
  * Dropdown that lets the user re-open closed panels in either dock and switch
@@ -26,7 +25,6 @@ import {
  * strip.
  */
 export function ViewMenu() {
-  const confirmDestructive = useConfirmDestructive();
   const globalApi = useDockviewStore((s) => s.globalApi);
   const repoApi = useDockviewStore((s) => s.repoApi);
   const layouts = useLayoutsStore((s) => s.layouts);
@@ -60,15 +58,13 @@ export function ViewMenu() {
   const onOverrideLayout = async (name: string) => {
     setOpen(false);
     try {
-      if (confirmDestructive) {
-        const ok = await confirmDialog({
-          title: "Override layout",
-          message: "Replaces the saved layout with the current arrangement.",
-          detail: name,
-          confirmLabel: "Override",
-        });
-        if (!ok) return;
-      }
+      const ok = await confirmDestructiveAction({
+        title: "Override layout",
+        message: "Replaces the saved layout with the current arrangement.",
+        detail: name,
+        confirmLabel: "Override",
+      });
+      if (!ok) return;
       await saveCurrent(name);
       notify.success(`Layout "${name}" now holds the current arrangement.`);
     } catch (e) {
