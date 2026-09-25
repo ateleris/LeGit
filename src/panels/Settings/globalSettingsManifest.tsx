@@ -10,6 +10,7 @@ import { DiffViewerSection, WorkingChangesLayoutSection } from "./AppearanceSect
 import {
   AutoFetchSection,
   AutoOpenPanelsSection,
+  FileHistoryWindowSection,
   AutoPushTagsSection,
   AutoRefreshSection,
   BranchCreationSection,
@@ -157,6 +158,12 @@ export function buildGlobalSettingsGroups(hasWsl: boolean): SettingsGroupDef[] {
           title: "Auto-open panels",
           keywords: ["summon", "detail", "focus", "panel"],
           render: () => <AutoOpenPanelsSection />,
+        },
+        {
+          id: "file-history-window",
+          title: "File history window",
+          keywords: ["history", "window", "popup", "detach", "monitor", "sourcetree"],
+          render: () => <FileHistoryWindowSection />,
         },
         {
           id: "auto-refresh",

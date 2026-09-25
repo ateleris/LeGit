@@ -76,6 +76,31 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 
 ## Smaller follow-ups
 
+- **History panels should highlight the selected commit.** The Commits panel
+  and the changed-files list mark the row whose details are shown. DONE for
+  File History (docked panel and popup window). Still open for any other
+  commit-history-style list that lacks it (submodule log, reflog?) - apply
+  the same selected-row styling (`--graph-row-selected-bg`, aria-current).
+
+- **File-history window: v2 candidates.** The window feature (see
+  `design`/spec `docs/superpowers/specs/2026-09-25-file-history-window-design.md`)
+  deliberately left out: a generic per-panel "open as window" setting (the
+  summon redirect and shell are built so a panel-id map can replace the
+  single boolean); cross-window jumps ("open this commit in the main
+  window"); live Theme Editor palette preview reaching open popups (they
+  catch up on the next persisted settings change). Small deferred cleanups
+  from review: a file-history summon with the setting on and no active repo
+  silently no-ops (currently unreachable); the window-context map entry
+  lingers if the window build fails (self-heals); the capabilities file
+  description still says "main window"; folder rows in the Files panel keep
+  their own menu layout (not the fenced copy/open block file rows have).
+
+- **Branch/tag chip ellipsis should truncate like file paths.** When a ref
+  name is too long, the chip currently ellipsizes end-first; for
+  slash-separated names the last segment (after the last `/`) is the most
+  important part, so truncate the leading path first - the same
+  middle/leading truncation style the file rows use.
+
 - **Stash-all button in Working Changes?** (open question, 2026-09-16) The
   sections have "Stage all" / "Unstage all" / "Discard all"; a "Stash all"
   alongside them would complete the set. The action already exists (the

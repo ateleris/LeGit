@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useRepoStore } from "../store/repos";
 import { api } from "../lib/commands";
-import { editorActionLabel, editorOpensFolder, effectiveEditorTemplate } from "../lib/editorAction";
+import { editorActionLabel, editorConfigured, effectiveEditorTemplate } from "../lib/editorAction";
 import { useSettingsStore } from "../store/settings";
 import { formatAppError } from "../lib/errors";
 import type { RepoSummary } from "../lib/types";
@@ -20,6 +20,7 @@ function RepoRow({
   editorTemplate,
   onActivate,
   onOpenEditor,
+  onOpenFolder,
   onClose,
 }: {
   repo: RepoSummary;
@@ -27,11 +28,12 @@ function RepoRow({
   editorTemplate: string;
   onActivate: () => void;
   onOpenEditor: () => void;
+  onOpenFolder: () => void;
   onClose: () => void;
 }) {
   const [hover, setHover] = useState(false);
   const editorLabel = editorActionLabel(editorTemplate);
-  const opensFolder = editorOpensFolder(editorTemplate);
+  const hasEditor = editorConfigured(editorTemplate);
   return (
     <div
       role="menuitem"
@@ -68,16 +70,29 @@ function RepoRow({
         </div>
       </div>
       <IconButton
-        aria-label={`${editorLabel}: ${repo.name}`}
-        title={editorLabel}
+        aria-label={`Open in folder: ${repo.name}`}
+        title="Open in folder"
         onClick={(e) => {
           e.stopPropagation();
-          onOpenEditor();
+          onOpenFolder();
         }}
         style={{ color: "inherit", fontSize: "inherit", padding: "0 0.333em" }}
       >
-        {opensFolder ? <FolderIcon /> : <ExternalEditorIcon />}
+        <FolderIcon />
       </IconButton>
+      {hasEditor && (
+        <IconButton
+          aria-label={`${editorLabel}: ${repo.name}`}
+          title={editorLabel}
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenEditor();
+          }}
+          style={{ color: "inherit", fontSize: "inherit", padding: "0 0.333em" }}
+        >
+          <ExternalEditorIcon />
+        </IconButton>
+      )}
       <IconButton
         aria-label={`Close ${repo.name}`}
         onClick={(e) => {
@@ -163,6 +178,10 @@ export function RepoOverflowMenu() {
                 onOpenEditor={() => {
                   setOpen(false);
                   api.repoOpenInEditor(r.id).catch((err) => notify.error(formatAppError(err)));
+                }}
+                onOpenFolder={() => {
+                  setOpen(false);
+                  api.repoOpenFolder(r.id).catch((err) => notify.error(formatAppError(err)));
                 }}
                 onClose={() => closeRepo(r.id)}
               />

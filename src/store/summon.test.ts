@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DockviewApi } from "dockview";
-import { addRepoPanelWithoutSplitting, resolveSummonPlacement, useSummonStore } from "./summon";
+import {
+  addRepoPanelWithoutSplitting,
+  fileHistoryWindowRequest,
+  resolveSummonPlacement,
+  useSummonStore,
+} from "./summon";
 import { useDockviewStore } from "./dockview";
 
 /** Minimal dockview API fake: tracks open panels and addPanel calls. */
@@ -233,5 +238,28 @@ describe("addRepoPanelWithoutSplitting", () => {
       }),
     ]);
     expect(unhidden).toEqual(["g-console"]);
+  });
+});
+
+describe("fileHistoryWindowRequest", () => {
+  it("routes a string payload when the setting is on", () => {
+    expect(fileHistoryWindowRequest("file-history", "src/a.ts", true))
+      .toEqual({ path: "src/a.ts", rev: null });
+  });
+
+  it("carries rev from a request payload", () => {
+    expect(fileHistoryWindowRequest("file-history", { path: "a.ts", rev: "deadbeef" }, true))
+      .toEqual({ path: "a.ts", rev: "deadbeef" });
+  });
+
+  it("never routes when the setting is off", () => {
+    expect(fileHistoryWindowRequest("file-history", "src/a.ts", false)).toBeNull();
+  });
+
+  it("ignores other panels and malformed payloads", () => {
+    expect(fileHistoryWindowRequest("diff", "src/a.ts", true)).toBeNull();
+    expect(fileHistoryWindowRequest("file-history", undefined, true)).toBeNull();
+    expect(fileHistoryWindowRequest("file-history", { rev: "x" }, true)).toBeNull();
+    expect(fileHistoryWindowRequest("file-history", 42, true)).toBeNull();
   });
 });

@@ -13,24 +13,18 @@ export function templateProgram(template: string): string {
   return t.split(/\s+/)[0] ?? "";
 }
 
-/** Label for the "open in editor" action given the effective template. */
+/** Label for the repo-level "open in editor" action. Empty when no editor is
+ * configured: the repo-level buttons/entries are HIDDEN then (the dedicated
+ * open-folder action stands on its own). */
 export function editorActionLabel(template: string | null | undefined): string {
   const program = templateProgram(template ?? "");
-  return program ? `Open in ${program}` : "Open folder (no editor configured)";
+  return program ? `Open in ${program}` : "";
 }
 
-/** Label for the FILE-row variant of the action (`repoOpenFileInEditor`):
- * its no-editor fallback reveals the file in the OS file manager, so the
- * fallback wording differs from the repo action's "Open folder". */
-export function editorFileActionLabel(template: string | null | undefined): string {
-  const program = templateProgram(template ?? "");
-  return program ? `Open in ${program}` : "Reveal in file manager (no editor configured)";
-}
-
-/** True when the action will open the repo FOLDER (no editor configured) -
- * the icon must follow the same rule as the label's folder wording. */
-export function editorOpensFolder(template: string | null | undefined): boolean {
-  return templateProgram(template ?? "") === "";
+/** True when an editor program is configured; the repo-level editor
+ * button/entries render only then. */
+export function editorConfigured(template: string | null | undefined): boolean {
+  return templateProgram(template ?? "") !== "";
 }
 
 /** The template the action will use: repo override when non-blank, else the
@@ -53,7 +47,7 @@ export function effectiveEditorTemplate(
  */
 export function useEditorAction(
   repoId?: string,
-): { label: string; fileLabel: string; opensFolder: boolean } {
+): { label: string; configured: boolean } {
   const globalTemplate = useSettingsStore((s) => s.settings?.external_editor_command ?? "");
   const repoTemplate = useRepoStore((s) =>
     repoId ? s.repoSettings[repoId]?.external_editor_command : null,
@@ -61,7 +55,6 @@ export function useEditorAction(
   const template = effectiveEditorTemplate(repoTemplate, globalTemplate);
   return {
     label: editorActionLabel(template),
-    fileLabel: editorFileActionLabel(template),
-    opensFolder: editorOpensFolder(template),
+    configured: editorConfigured(template),
   };
 }

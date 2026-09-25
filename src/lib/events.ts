@@ -167,6 +167,16 @@ export async function onAskpassClosed(
   return unlisten;
 }
 
+/** Tauri event channel fired after any persisted global-settings or theme
+ *  change. Matches `GLOBAL_SETTINGS_CHANGED_EVENT` in
+ *  `src-tauri/src/commands/persistence.rs`. */
+export const GLOBAL_SETTINGS_CHANGED_EVENT = "legit://global-settings-changed";
+
+/** Subscribe to settings-changed broadcasts. Returns an unsubscribe function. */
+export async function onGlobalSettingsChanged(handler: () => void): Promise<() => void> {
+  return listen<null>(GLOBAL_SETTINGS_CHANGED_EVENT, () => handler());
+}
+
 /** Tauri event channel for the git command log. Matches the event name emitted
  *  by the invocation observer in `src-tauri/src/lib.rs`. */
 export const GIT_INVOCATION_EVENT = "git_invocation";

@@ -112,6 +112,13 @@ pub fn migrate_legacy_wsl_repo_dir(repos_data_dir: &Path, locator: &RepoLocator)
 // Global-scope settings  (DESIGN-v0.2.md §D.2)
 // ---------------------------------------------------------------------------
 
+/// Logical (DPI-independent) window size.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct WindowSize {
+    pub width: f64,
+    pub height: f64,
+}
+
 /// UI region placement mode. See DESIGN-v0.2.md §C.2.
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Default, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -386,6 +393,14 @@ pub struct GlobalSettings {
     /// style); off = tracked changes only.
     #[serde(default)]
     pub stash_include_untracked: bool,
+    /// Open file-history summons in a separate OS window (history + diff)
+    /// instead of the docked panel.
+    #[serde(default)]
+    pub file_history_opens_window: bool,
+    /// Last-used history-window size; new history windows reuse it.
+    /// Written by the window-close handler, never by a settings patch.
+    #[serde(default)]
+    pub file_history_window_size: Option<WindowSize>,
     /// `git push --recurse-submodules` guard mode. `None` = off (no flag).
     #[serde(default)]
     pub push_recurse_submodules: Option<legit_core::PushRecurseMode>,
@@ -501,6 +516,8 @@ impl Default for GlobalSettings {
             checkout_remote_fast_forward: true,
             pull_strategy: None,
             stash_include_untracked: false,
+            file_history_opens_window: false,
+            file_history_window_size: None,
             push_recurse_submodules: None,
             auto_push_tags: false,
             submodule_attach_branch: false,
@@ -521,7 +538,8 @@ impl Default for GlobalSettings {
 /// Global settings owned by dedicated commands or flows (the probed git
 /// binary, theme name sanitizing, watcher start/stop side effects, session
 /// bookkeeping, profiles, accounts); a settings patch must never write them.
-const GLOBAL_SETTINGS_COMMAND_OWNED: [&str; 9] = [
+const GLOBAL_SETTINGS_COMMAND_OWNED: [&str; 10] = [
+    "file_history_window_size",
     "git_path_override",
     "active_theme",
     "watcher_enabled",
@@ -1283,6 +1301,23 @@ mod tests {
         assert!(current.with_patch(&serde_json::json!({ "show_remote_branchs": true })).is_err());
         assert!(current.with_patch(&serde_json::json!({ "auto_push_tags": "yes" })).is_err());
         assert!(current.with_patch(&serde_json::json!(["not", "an", "object"])).is_err());
+    }
+
+    #[test]
+    fn file_history_window_size_is_command_owned() {
+        assert!(GlobalSettings::default()
+            .with_patch(&serde_json::json!({
+                "file_history_window_size": { "width": 1.0, "height": 1.0 }
+            }))
+            .is_err());
+    }
+
+    #[test]
+    fn file_history_opens_window_is_patchable() {
+        let merged = GlobalSettings::default()
+            .with_patch(&serde_json::json!({ "file_history_opens_window": true }))
+            .unwrap();
+        assert!(merged.file_history_opens_window);
     }
 
     #[test]

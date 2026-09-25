@@ -1136,8 +1136,8 @@ async repoOpenInEditor(repoId: string) : Promise<Result<null, AppError>> {
 },
 /**
  * Open one working-tree file in the configured external editor (same
- * template, `$FILE` = absolute file path), or reveal it in the OS file
- * manager when no editor is configured. Errors clearly when the file is
+ * template, `$FILE` = absolute file path), or with the OS default
+ * application when no editor is configured. Errors clearly when the file is
  * gone from the working tree (e.g. a deleted row in Changed Files).
  */
 async repoOpenFileInEditor(repoId: string, path: string) : Promise<Result<null, AppError>> {
@@ -2443,6 +2443,50 @@ async unsetLaneLock(repoId: string, refName: string) : Promise<Result<LaneLock[]
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async openFileHistoryWindow(repoId: string, path: string, rev: string | null) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_file_history_window", { repoId, path, rev }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async historyWindowContext() : Promise<Result<HistoryWindowContext, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("history_window_context") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Open the file's content AT a revision in the configured external editor:
+ * the blob is written to a fresh host temp dir under a name that keeps the
+ * extension (editor language detection) and shows the short sha (tab
+ * title), then opened like any file. The copy is detached - edits go
+ * nowhere. No editor configured = the OS default application.
+ */
+async repoOpenFileAtRevisionInEditor(repoId: string, rev: string, path: string) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("repo_open_file_at_revision_in_editor", { repoId, rev, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Open the repo's root folder in the OS file manager (local directly, WSL
+ * through the share). The tab bar's folder button - independent of the
+ * external-editor setting.
+ */
+async repoOpenFolder(repoId: string) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("repo_open_folder", { repoId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -3296,6 +3340,16 @@ pull_strategy?: PullStrategy | null;
  */
 stash_include_untracked?: boolean; 
 /**
+ * Open file-history summons in a separate OS window (history + diff)
+ * instead of the docked panel.
+ */
+file_history_opens_window?: boolean; 
+/**
+ * Last-used history-window size; new history windows reuse it.
+ * Written by the window-close handler, never by a settings patch.
+ */
+file_history_window_size?: WindowSize | null; 
+/**
  * `git push --recurse-submodules` guard mode. `None` = off (no flag).
  */
 push_recurse_submodules?: PushRecurseMode | null; 
@@ -3367,6 +3421,16 @@ gitProfiles?: GitProfilesDoc;
  * `https://<host>` key; settings files hold no secrets.
  */
 connected_accounts?: ConnectedAccountMeta[] }
+/**
+ * What a history window shows, handed to its frontend on boot (keyed by
+ * window label; the label itself carries no decodable payload).
+ */
+export type HistoryWindowContext = { repo_id: string; path: string; rev: string | null; repo_name: string; 
+/**
+ * Repo root as the host prints it (RepoSummary::path) - the popup's
+ * copy-absolute-path entries resolve against it.
+ */
+repo_path: string }
 /**
  * The host part of a locator, as it crosses IPC in `RepoSummary`
  * (`None`/absent = local). Hand-mirrored in `src/lib/types.ts`.
@@ -4327,6 +4391,10 @@ ahead: number;
  */
 behind: number }
 export type WatchStatePayload = { repo_id: string; error: string | null }
+/**
+ * Logical (DPI-independent) window size.
+ */
+export type WindowSize = { width: number; height: number }
 /**
  * How `worktree add` populates the new worktree.
  */

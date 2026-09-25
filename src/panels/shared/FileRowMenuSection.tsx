@@ -3,9 +3,13 @@
 // (the StashMenuSection lesson). Panel-specific entries render around it.
 
 import React from "react";
-import { MenuItem, SectionLabel } from "../shared/menu/primitives";
+import { MenuItem, SectionLabel, Separator } from "../shared/menu/primitives";
 import { CopyPathMenuSection } from "./CopyPathMenuSection";
-import { OpenInEditorMenuItem } from "./OpenInEditorMenuItem";
+import {
+  OpenAtRevisionInEditorMenuItem,
+  OpenInEditorMenuItem,
+  OpenInFolderMenuItem,
+} from "./OpenInEditorMenuItem";
 import { AddToGitignoreMenuItem } from "./AddToGitignoreMenuItem";
 import { useSummonStore } from "../../store/summon";
 
@@ -104,12 +108,29 @@ export function FileRowMenuSection({
       >
         {blameLabel}
       </MenuItem>
+      {/* The copy + open block (user decision): copy relative/absolute, open
+          in folder, open file, open file at commit - its own menu group. */}
+      <Separator />
       <CopyPathMenuSection path={path} onClose={onClose} />
+      {editorPath !== null && !deleted && !submodule && (
+        <OpenInFolderMenuItem path={editorPath} onClose={onClose} />
+      )}
       {editorPath !== null && !deleted && !submodule && (
         <OpenInEditorMenuItem path={editorPath} onClose={onClose} />
       )}
+      {rev !== null && !deleted && !submodule && (
+        <OpenAtRevisionInEditorMenuItem
+          path={path}
+          rev={rev.value}
+          revLabel={rev.label}
+          onClose={onClose}
+        />
+      )}
       {gitignore !== null && (
-        <AddToGitignoreMenuItem path={path} isDir={gitignore === "dir"} onClose={onClose} />
+        <>
+          <Separator />
+          <AddToGitignoreMenuItem path={path} isDir={gitignore === "dir"} onClose={onClose} />
+        </>
       )}
     </>
   );

@@ -19,7 +19,7 @@ import { FileTree } from "../shared/FileTree/FileTree";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
 import { PanelContextMenuProvider, useDestructiveMenuConfirm } from "../shared/menu/PanelContextMenu";
-import { MenuItem, SectionLabel } from "../shared/menu/primitives";
+import { MenuItem, SectionLabel, Separator } from "../shared/menu/primitives";
 import { AddToGitignoreMenuItem } from "../shared/AddToGitignoreMenuItem";
 import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
 import { FileRowMenuSection } from "../shared/FileRowMenuSection";
@@ -458,14 +458,15 @@ function FileMenuSection({
         gitignore={!atRev && kind === "untracked" ? "file" : null}
         onClose={onClose}
       />
-      {!atRev && (
+      {!atRev && submodule && (
+        <MenuItem onClick={() => { onClose(); onReveal(); }}>Open in folder</MenuItem>
+      )}
+      {!atRev && tracked && !submodule && (
         <>
-          <MenuItem onClick={() => { onClose(); onReveal(); }}>Reveal in file manager</MenuItem>
-          {tracked && !submodule && (
-            <MenuItem onClick={requestUntrack}>
-              {confirmDestructive ? "Stop tracking & ignore…" : "Stop tracking & ignore"}
-            </MenuItem>
-          )}
+          <Separator />
+          <MenuItem onClick={requestUntrack}>
+            {confirmDestructive ? "Stop tracking & ignore…" : "Stop tracking & ignore"}
+          </MenuItem>
         </>
       )}
     </>
@@ -492,7 +493,7 @@ function DirMenuSection({
       {!atRev && <AddToGitignoreMenuItem path={dirPath} isDir onClose={onClose} />}
       <CopyPathMenuSection path={dirPath} onClose={onClose} />
       {!atRev && (
-        <MenuItem onClick={() => { onClose(); onReveal(); }}>Reveal in file manager</MenuItem>
+        <MenuItem onClick={() => { onClose(); onReveal(); }}>Open in folder</MenuItem>
       )}
     </>
   );

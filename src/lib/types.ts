@@ -56,6 +56,7 @@ export type {
   GitVersion,
   GitmodulesFinding,
   GlobalSettings,
+  HistoryWindowContext,
   HostRef,
   IdentityView,
   ImageFormat,
@@ -167,6 +168,15 @@ export interface LayoutDocument {
 }
 
 /** Summon payload delivered to the Diff panel when a file is selected. */
+/** Summon payload for showing a file's history (a bare string = the path,
+ *  walked from HEAD). `rev` walks from that revision instead - the Files
+ *  panel's browse-at-commit mode sends it so the history matches the tree
+ *  being browsed. */
+export interface FileHistoryRequest {
+  path: string;
+  rev?: string | null;
+}
+
 export interface DiffRequest {
   repoId: string;
   path: string;

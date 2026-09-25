@@ -12,6 +12,24 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- File history can open in its own window (commits left, diff right) via the
+  new "Open file history in a separate window" setting
+- The File History panel highlights the commit whose details it opened
+- File rows with a commit context (File History, its popup window, and other
+  rev-scoped menus) can open that version of the file in the external editor
+  (a detached temp copy)
+- File context menus gained "Open in folder" for the working-tree file
+
+### Changed
+
+- The tab bar's combined editor/folder button is split: an always-present
+  "Open in folder" button and an editor button shown only when an
+  external editor is configured (same split in the open-repositories dropdown)
+- With no external editor configured, "Open in editor" on a file now opens it
+  with the OS default application instead of revealing it in the file manager
+
 ### Fixed
 
 - Changing a repo setting no longer removes lane locks or the selected git profile set earlier in the session.

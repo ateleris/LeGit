@@ -12,6 +12,8 @@ pub(crate) enum OpenTarget<'a> {
     RevealFile(&'a Path),
     /// Open the directory itself in the OS file manager.
     Folder(&'a Path),
+    /// Open the file with the OS default application for its type.
+    File(&'a Path),
     /// Open the URL in the default browser.
     Url(&'a str),
 }
@@ -38,6 +40,10 @@ fn command_for(target: &OpenTarget) -> Command {
         OpenTarget::Folder(p) => {
             cmd.arg(explorer_path(p));
         }
+        // `explorer <file>` hands the file to its associated application.
+        OpenTarget::File(p) => {
+            cmd.arg(explorer_path(p));
+        }
         // `explorer <url>` hands the URL to the default browser without a
         // console window or cmd quoting quirks.
         OpenTarget::Url(u) => {
@@ -55,6 +61,9 @@ fn command_for(target: &OpenTarget) -> Command {
             cmd.args(["-R".as_ref(), p.as_os_str()]);
         }
         OpenTarget::Folder(p) => {
+            cmd.arg(p);
+        }
+        OpenTarget::File(p) => {
             cmd.arg(p);
         }
         OpenTarget::Url(u) => {
@@ -75,9 +84,33 @@ fn command_for(target: &OpenTarget) -> Command {
         OpenTarget::Folder(p) => {
             cmd.arg(p);
         }
+        OpenTarget::File(p) => {
+            cmd.arg(p);
+        }
         OpenTarget::Url(u) => {
             cmd.arg(u);
         }
     }
     cmd
+}
+
+#[cfg(all(test, not(any(target_os = "windows", target_os = "macos"))))]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn linux_file_target_opens_the_file_itself() {
+        let cmd = command_for(&OpenTarget::File(Path::new("/tmp/a.txt")));
+        assert_eq!(cmd.get_program(), "xdg-open");
+        let args: Vec<_> = cmd.get_args().collect();
+        assert_eq!(args, ["/tmp/a.txt"]);
+    }
+
+    #[test]
+    fn linux_reveal_opens_the_containing_directory() {
+        let cmd = command_for(&OpenTarget::RevealFile(Path::new("/tmp/a.txt")));
+        let args: Vec<_> = cmd.get_args().collect();
+        assert_eq!(args, ["/tmp"]);
+    }
 }

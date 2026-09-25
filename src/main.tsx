@@ -1,7 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { App } from "./App";
+import { HistoryWindowShell } from "./windows/HistoryWindowShell";
 import { initWindowFocusTracking } from "./lib/windowFocus";
 import { installCrashLogging } from "./lib/crashLog";
 // Vendor styles first: global.css overrides dockview's theme variables at
@@ -45,10 +47,20 @@ const queryClient = new QueryClient({
   },
 });
 
+// A history window boots the same bundle; the label decides which root
+// mounts (outside Tauri, e.g. vitest, there is no label - always main).
+function isHistoryWindow(): boolean {
+  try {
+    return getCurrentWindow().label.startsWith("fh-");
+  } catch {
+    return false;
+  }
+}
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <App />
+      {isHistoryWindow() ? <HistoryWindowShell /> : <App />}
     </QueryClientProvider>
   </React.StrictMode>
 );

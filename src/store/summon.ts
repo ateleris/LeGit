@@ -3,6 +3,11 @@ import { create } from "zustand";
 import type { DockviewApi } from "dockview-react";
 import { useDockviewStore } from "./dockview";
 import { useSettingsStore } from "./settings";
+import { useRepoStore } from "./repos";
+import { notify } from "./notifications";
+import { api as commandApi } from "../lib/commands";
+import { formatAppError } from "../lib/errors";
+import type { FileHistoryRequest } from "../lib/types";
 import { REPO_PANELS, SUPPRESSIBLE_SUMMON_PANELS } from "../layout/descriptors";
 
 /**
@@ -131,6 +136,27 @@ export function addRepoPanelWithoutSplitting(api: DockviewApi, targetId: string)
   if (panel && !panel.group.api.isVisible) panel.group.api.setVisible(true);
 }
 
+/**
+ * When the "file history in a separate window" setting is on, a file-history
+ * summon that carries a file is routed to an OS window instead of the dock.
+ * Null = keep the docked path (setting off, other panel, or no usable file).
+ */
+export function fileHistoryWindowRequest(
+  targetId: string,
+  payload: unknown,
+  opensWindow: boolean,
+): { path: string; rev: string | null } | null {
+  if (targetId !== "file-history" || !opensWindow) return null;
+  if (typeof payload === "string") return { path: payload, rev: null };
+  if (payload && typeof payload === "object") {
+    const p = payload as Partial<FileHistoryRequest>;
+    if (typeof p.path === "string") {
+      return { path: p.path, rev: typeof p.rev === "string" ? p.rev : null };
+    }
+  }
+  return null;
+}
+
 type Callback = (payload: unknown) => void;
 
 export interface FallbackPosition {
@@ -209,6 +235,21 @@ export const useSummonStore = create<SummonStore>((set, get) => ({
   },
 
   summon(targetId, payload) {
+    const windowed = fileHistoryWindowRequest(
+      targetId,
+      payload,
+      useSettingsStore.getState().settings?.file_history_opens_window ?? false,
+    );
+    if (windowed) {
+      const repoId = useRepoStore.getState().activeRepoId;
+      if (repoId) {
+        void commandApi
+          .openFileHistoryWindow(repoId, windowed.path, windowed.rev)
+          .catch((e: unknown) => notify.error(formatAppError(e)));
+      }
+      return;
+    }
+
     // Per-panel "don't auto-open" opt-out: degrade to a notify so the panel
     // updates only if already open and never pops into view.
     if (isSuppressed(targetId)) {

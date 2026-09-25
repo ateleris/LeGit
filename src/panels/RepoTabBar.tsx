@@ -163,6 +163,14 @@ export function RepoTabBar() {
       notify.error(formatAppError(e));
     }
   };
+  const onOpenFolder = async () => {
+    if (!activeRepoId) return;
+    try {
+      await api.repoOpenFolder(activeRepoId);
+    } catch (e) {
+      notify.error(formatAppError(e));
+    }
+  };
 
   // The remote web page of the active repo (null = no remote / no web form).
   // Keyed under the "remotes" domain so remote add/remove invalidations
@@ -295,12 +303,22 @@ export function RepoTabBar() {
             )}
             <button
               className="legit-tabs__icon"
-              onClick={onOpenInEditor}
-              aria-label={editorAction.label}
-              title={editorAction.label}
+              onClick={onOpenFolder}
+              aria-label="Open in folder"
+              title="Open in folder"
             >
-              {editorAction.opensFolder ? <FolderIcon /> : <ExternalEditorIcon />}
+              <FolderIcon />
             </button>
+            {editorAction.configured && (
+              <button
+                className="legit-tabs__icon"
+                onClick={onOpenInEditor}
+                aria-label={editorAction.label}
+                title={editorAction.label}
+              >
+                <ExternalEditorIcon />
+              </button>
+            )}
             <button
               className="legit-tabs__icon"
               onClick={onOpenRemotePage}

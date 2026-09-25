@@ -274,6 +274,40 @@ pub(crate) fn explorer_path(path: &std::path::Path) -> String {
     }
 }
 
+/// Open a repo file with the OS DEFAULT application (no editor template):
+/// local files directly, WSL files through the `\\wsl.localhost\` share.
+pub(crate) fn open_with_default_app(
+    session: &crate::state::RepoSession,
+    abs: &HostPath,
+) -> Result<(), AppError> {
+    use crate::os_open::{os_open, OpenTarget};
+    if let crate::remote::RepoLocator::Wsl { distro, .. } = &session.locator {
+        let unc = wsl_unc_path(distro, abs.as_str());
+        return os_open(OpenTarget::File(std::path::Path::new(&unc)), "open file");
+    }
+    let local = abs.as_local();
+    os_open(OpenTarget::File(&local), "open file")
+}
+
+/// Open the repo's root folder in the OS file manager (local directly, WSL
+/// through the share). The tab bar's folder button - independent of the
+/// external-editor setting.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_open_folder(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<(), AppError> {
+    use crate::os_open::{os_open, OpenTarget};
+    let session = state.get_session(&repo_id).await?;
+    if let crate::remote::RepoLocator::Wsl { distro, .. } = &session.locator {
+        let unc = wsl_unc_path(distro, session.root.as_str());
+        return os_open(OpenTarget::Folder(std::path::Path::new(&unc)), "open folder");
+    }
+    let local = session.root.as_local();
+    os_open(OpenTarget::Folder(&local), "open folder")
+}
+
 pub(crate) fn reveal_in_file_manager(abs: &std::path::Path) -> Result<(), AppError> {
     crate::os_open::os_open(crate::os_open::OpenTarget::RevealFile(abs), "open file manager")
 }

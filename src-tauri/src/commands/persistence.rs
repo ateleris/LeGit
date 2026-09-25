@@ -13,6 +13,11 @@ use std::path::PathBuf;
 
 const THEME_EXT: &str = ".legit-theme.json";
 
+/// Broadcast after any persisted settings/theme change so secondary windows
+/// re-apply theme and font. Matches `GLOBAL_SETTINGS_CHANGED_EVENT` in
+/// `src/lib/events.ts`.
+pub(crate) const GLOBAL_SETTINGS_CHANGED_EVENT: &str = "legit://global-settings-changed";
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct ThemeEntry {
     pub name: String,
@@ -38,6 +43,7 @@ pub async fn get_global_settings(
 #[tauri::command]
 #[specta::specta]
 pub async fn set_active_theme(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     name: String,
 ) -> Result<(), AppError> {
@@ -45,7 +51,10 @@ pub async fn set_active_theme(
     state.mutate_global(|s| {
         s.active_theme = Some(safe);
     })
-    .await
+    .await?;
+    use tauri::Emitter as _;
+    let _ = app.emit(GLOBAL_SETTINGS_CHANGED_EVENT, ());
+    Ok(())
 }
 
 /// Patch one or more global settings (JSON field names) in a single write and
@@ -56,6 +65,7 @@ pub async fn set_active_theme(
 #[tauri::command]
 #[specta::specta]
 pub async fn patch_global_settings(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     patch: serde_json::Value,
 ) -> Result<GlobalSettings, AppError> {
@@ -66,6 +76,8 @@ pub async fn patch_global_settings(
         next
     };
     state.persist_global_settings().await?;
+    use tauri::Emitter as _;
+    let _ = app.emit(GLOBAL_SETTINGS_CHANGED_EVENT, ());
     Ok(merged)
 }
 
@@ -129,6 +141,7 @@ pub async fn load_theme(
 #[tauri::command]
 #[specta::specta]
 pub async fn save_theme(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     name: String,
     contents: serde_json::Value,
@@ -140,6 +153,8 @@ pub async fn save_theme(
     let path = theme_file_path(&dir, &safe)?;
     let json = serde_json::to_string_pretty(&contents)?;
     crate::persist::write_atomic(&path, json).await?;
+    use tauri::Emitter as _;
+    let _ = app.emit(GLOBAL_SETTINGS_CHANGED_EVENT, ());
     Ok(ThemeEntry {
         name: safe,
         source: ThemeSource::User,

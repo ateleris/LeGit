@@ -751,9 +751,21 @@ pub async fn cancel_clone(
 #[tauri::command]
 #[specta::specta]
 pub async fn close_repo(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     repo_id: String,
 ) -> Result<(), AppError> {
+    {
+        // A history window is pinned to this repo: close its windows with it.
+        use tauri::Manager as _;
+        let prefix = format!("{}{}-", crate::commands::FILE_HISTORY_LABEL_PREFIX, repo_id);
+        for win in app.webview_windows().values() {
+            if win.label().starts_with(&prefix) {
+                let _ = win.close();
+            }
+        }
+    }
+
     let locator = state
         .repos
         .write()

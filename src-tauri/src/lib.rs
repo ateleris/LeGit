@@ -118,7 +118,52 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(PendingOpen(std::sync::Mutex::new(pending_open)))
+        .manage(commands::HistoryWindows::default())
         .invoke_handler(specta_builder.invoke_handler())
+        .on_window_event(|window, event| {
+            use tauri::{Manager, WindowEvent};
+            let label = window.label();
+            if label == "main" {
+                // History windows are unusable without the main window: close
+                // them with it so the process can exit.
+                if matches!(event, WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed) {
+                    for win in window.app_handle().webview_windows().values() {
+                        if win.label().starts_with(commands::FILE_HISTORY_LABEL_PREFIX) {
+                            let _ = win.close();
+                        }
+                    }
+                }
+                return;
+            }
+            if !label.starts_with(commands::FILE_HISTORY_LABEL_PREFIX) {
+                return;
+            }
+            match event {
+                WindowEvent::CloseRequested { .. } => {
+                    // Remember the size for the next history window (logical px).
+                    if let (Ok(size), Ok(scale)) = (window.inner_size(), window.scale_factor()) {
+                        let logical = size.to_logical::<f64>(scale);
+                        let app = window.app_handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            let state = app.state::<AppState>();
+                            let _ = state
+                                .mutate_global(|s| {
+                                    s.file_history_window_size = Some(state::WindowSize {
+                                        width: logical.width,
+                                        height: logical.height,
+                                    });
+                                })
+                                .await;
+                        });
+                    }
+                }
+                WindowEvent::Destroyed => {
+                    let windows = window.app_handle().state::<commands::HistoryWindows>();
+                    windows.0.lock().unwrap().remove(label);
+                }
+                _ => {}
+            }
+        })
         .setup(move |app| {
             specta_builder.mount_events(app);
 
@@ -467,6 +512,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::list_lane_locks,
         commands::set_lane_lock,
         commands::unset_lane_lock,
+        commands::open_file_history_window,
+        commands::history_window_context,
+        commands::repo_open_file_at_revision_in_editor,
+        commands::repo_open_folder,
     ])
 }
 

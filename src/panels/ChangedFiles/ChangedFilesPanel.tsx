@@ -18,7 +18,7 @@ import { FileTree } from "../shared/FileTree/FileTree";
 import { useFileRowMetrics } from "../shared/FileTree/useFileRowMetrics";
 import type { FileTreeEntry, ViewMode } from "../shared/FileTree/buildTree";
 import { PanelContextMenuProvider, useDestructiveMenuConfirm } from "../shared/menu/PanelContextMenu";
-import { MenuItem } from "../shared/menu/primitives";
+import { MenuItem, Separator } from "../shared/menu/primitives";
 import { FileRowMenuSection } from "../shared/FileRowMenuSection";
 import type { FileViewRequest } from "../FileView/FileViewPanel";
 import { STALE } from "../../lib/queryTiming";
@@ -377,6 +377,7 @@ function FileAtCommitMenuSection({
         onBlame={onBlame}
         onClose={onClose}
       />
+      <Separator />
       <MenuItem disabled={deleted} onClick={requestRestore}>
         {deleted
           ? stash

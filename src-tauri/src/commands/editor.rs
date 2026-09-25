@@ -185,8 +185,8 @@ async fn spawn_on_host(
 }
 
 /// Open one working-tree file in the configured external editor (same
-/// template, `$FILE` = absolute file path), or reveal it in the OS file
-/// manager when no editor is configured. Errors clearly when the file is
+/// template, `$FILE` = absolute file path), or with the OS default
+/// application when no editor is configured. Errors clearly when the file is
 /// gone from the working tree (e.g. a deleted row in Changed Files).
 #[tauri::command]
 #[specta::specta]
@@ -211,23 +211,89 @@ pub async fn repo_open_file_in_editor(
 
     let template = effective_editor_template(&state, &session).await;
     if template.trim().is_empty() {
-        return match &session.locator {
-            crate::remote::RepoLocator::Wsl { .. } => {
-                crate::commands::files::reveal_remote_in_explorer(&session, &abs)
-            }
-            crate::remote::RepoLocator::Local { .. } => {
-                crate::commands::files::reveal_in_file_manager(&abs.as_local())
-            }
-        };
+        // No editor configured: the OS default application for the file type
+        // (the dedicated reveal entry covers the file manager).
+        return crate::commands::files::open_with_default_app(&session, &abs);
     }
     let tokens =
         build_editor_file_invocation(&template, session.root.as_str(), abs.as_str()).map_err(AppError::Io)?;
     spawn_on_host(&session, &tokens).await
 }
 
+/// Temp-file name for a blob opened at a revision: keeps the extension (the
+/// editor's language detection) and shows the short sha in the tab title.
+fn revision_file_name(path: &str, rev: &str) -> String {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    let short: String = rev.chars().take(8).collect();
+    match file.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => format!("{stem}@{short}.{ext}"),
+        _ => format!("{file}@{short}"),
+    }
+}
+
+/// Open the file's content AT a revision in the configured external editor:
+/// the blob is written to a fresh host temp dir under a name that keeps the
+/// extension (editor language detection) and shows the short sha (tab
+/// title), then opened like any file. The copy is detached - edits go
+/// nowhere. No editor configured = the OS default application.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_open_file_at_revision_in_editor(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    rev: String,
+    path: String,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    let content = session
+        .backend
+        .file_at_revision(&rev, std::path::Path::new(&path))
+        .await
+        .map_err(AppError::Git)?;
+    let text = match content {
+        legit_core::FileAtRevision::Text(t) => t,
+        legit_core::FileAtRevision::Binary { .. } => {
+            let short: String = rev.chars().take(8).collect();
+            return Err(AppError::Io(format!(
+                "{path} is binary at {short} - nothing to open in an editor"
+            )));
+        }
+    };
+
+    let fs = session.host.fs();
+    let dir = fs
+        .temp_path("legit-rev-")
+        .await
+        .map_err(|e| AppError::Io(format!("create revision copy: {e}")))?;
+    fs.create_dir_all(&dir)
+        .await
+        .map_err(|e| AppError::Io(format!("create revision copy: {e}")))?;
+    let file = dir.join(&revision_file_name(&path, &rev));
+    fs.write(&file, text.as_bytes())
+        .await
+        .map_err(|e| AppError::Io(format!("write revision copy: {e}")))?;
+
+    let template = effective_editor_template(&state, &session).await;
+    if template.trim().is_empty() {
+        return crate::commands::files::open_with_default_app(&session, &file);
+    }
+    let tokens = build_editor_file_invocation(&template, session.root.as_str(), file.as_str())
+        .map_err(AppError::Io)?;
+    spawn_on_host(&session, &tokens).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn revision_file_name_keeps_stem_and_extension() {
+        assert_eq!(revision_file_name("src/parser.rs", "a1b2c3d4e5f6"), "parser@a1b2c3d4.rs");
+        assert_eq!(revision_file_name("Makefile", "deadbeef99"), "Makefile@deadbeef");
+        assert_eq!(revision_file_name("a/b/x.test.tsx", "0123456789ab"), "x.test@01234567.tsx");
+        assert_eq!(revision_file_name("f.rs", "ab"), "f@ab.rs");
+        assert_eq!(revision_file_name(".gitignore", "a1b2c3d4e5"), ".gitignore@a1b2c3d4");
+    }
 
     #[test]
     fn tokenizes_plain_words() {

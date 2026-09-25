@@ -68,6 +68,31 @@ export function AutoOpenPanelsSection() {
   );
 }
 
+export function FileHistoryWindowSection() {
+  const enabled = useSettingsStore((s) => s.settings?.file_history_opens_window ?? false);
+  const setEnabled = useSettingsStore((s) => s.setFileHistoryOpensWindow);
+  const { busy: saving, run } = useDelayedBusy();
+
+  return (
+    <ToggleSection
+      title="File history window"
+      writesNote="applies to all repos"
+      id="global-file-history-window"
+      label="Open file history in a separate window"
+      checked={enabled}
+      disabled={saving}
+      onToggle={() => void run(() => setEnabled(!enabled))}
+    >
+      <FieldNote>
+        Show a file's history in its own window - commits on the left, that
+        file's diff on the right - instead of the docked File History panel.
+        The window is independent of the main window and can sit on another
+        monitor. The View menu still opens the docked panel.
+      </FieldNote>
+    </ToggleSection>
+  );
+}
+
 export function AutoRefreshSection() {
   const enabled = useSettingsStore((s) => s.settings?.watcher_enabled ?? true);
   const setWatcherEnabled = useSettingsStore((s) => s.setWatcherEnabled);

@@ -104,6 +104,9 @@ export const useConfirmDestructive = () =>
 interface SettingsStore {
   settings: GlobalSettings | null;
   init: () => Promise<void>;
+  /** Refetch and re-apply; for secondary windows reacting to the
+   *  settings-changed broadcast. */
+  reload: () => Promise<void>;
   /** Persist a partial settings patch and cache the merged result the backend
    * returns. Every typed setter below routes through this; panels needing a
    * field without a setter may call it directly. Command-owned fields (git
@@ -150,6 +153,7 @@ interface SettingsStore {
   setLaneColoredBranchChips: (enabled: boolean) => Promise<void>;
   setStashBaseLaneColor: (enabled: boolean) => Promise<void>;
   setPushRecurseSubmodules: (mode: PushRecurseMode | null) => Promise<void>;
+  setFileHistoryOpensWindow: (enabled: boolean) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => {
@@ -164,6 +168,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 
     async init() {
       if (get().settings) return;
+      await get().reload();
+    },
+
+    async reload() {
       const settings = await api.getGlobalSettings();
       applyUiFontSize(settings.ui_font_size ?? UI_FONT_SIZE_DEFAULT);
       applyPanelChrome(
@@ -289,6 +297,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
     },
     async setPushRecurseSubmodules(mode) {
       await patch({ push_recurse_submodules: mode });
+    },
+    async setFileHistoryOpensWindow(enabled) {
+      await patch({ file_history_opens_window: enabled });
     },
 
     async setUiFontSize(size) {

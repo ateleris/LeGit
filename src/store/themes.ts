@@ -20,6 +20,10 @@ interface ThemeStore {
   draftOrigin: string | null;
 
   init: () => Promise<void>;
+  /** Refetch and re-apply the persisted active theme; for secondary windows
+   *  reacting to the settings-changed broadcast. Never persists (that would
+   *  re-emit the broadcast) and never touches the editor draft. */
+  reload: () => Promise<void>;
   refreshList: () => Promise<void>;
   setActive: (name: string) => Promise<void>;
   startEditing: () => void;
@@ -94,6 +98,25 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
   async refreshList() {
     const themes = await listThemes();
     set({ themes });
+  },
+
+  async reload() {
+    await get().refreshList();
+    const settings = useSettingsStore.getState().settings;
+    const candidate = pickInitialThemeName(settings?.active_theme, get().themes);
+    if (!candidate) return;
+    let doc: ThemeDocument;
+    try {
+      const raw = await loadTheme(candidate);
+      const validated = asTheme(raw);
+      if (!validated) throw new Error("invalid theme file");
+      doc = validated;
+    } catch (e) {
+      console.warn(`failed to load theme '${candidate}', falling back to default`, e);
+      doc = DEFAULT_THEME;
+    }
+    applyTheme(doc);
+    set({ activeThemeName: candidate, activeDocument: doc });
   },
 
   async setActive(name: string) {

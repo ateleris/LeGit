@@ -1,39 +1,37 @@
-import { useCallback, useMemo } from "react";
-import { PanelError } from "../shared/PanelError";
+import { useCallback } from "react";
 import { usePanelViewState } from "../../store/panelViewState";
-import { useQuery } from "@tanstack/react-query";
 import { useActiveRepo } from "../../store/repos";
 import { useConfirmDestructive } from "../../store/settings";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
-import { repoFileHistory, api } from "../../lib/commands";
-import type { DiffRequest, FileHistoryEntry } from "../../lib/types";
-import { formatAppError } from "../../lib/errors";
-import { formatRelative } from "../../lib/time";
-import { invalidateRepoDomains } from "../../lib/repoInvalidation";
+import type { DiffRequest, FileHistoryEntry, FileHistoryRequest } from "../../lib/types";
 import { useQueryClient } from "@tanstack/react-query";
-import { notify } from "../../store/notifications";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
-import { Button } from "../shared/buttons";
 import {
   PanelContextMenuProvider,
-  usePanelContextMenu,
   useDestructiveMenuConfirm,
 } from "../shared/menu/PanelContextMenu";
 import { MenuItem, Separator } from "../shared/menu/primitives";
 import { FileRowMenuSection } from "../shared/FileRowMenuSection";
-import { STALE } from "../../lib/queryTiming";
+import {
+  FILE_HISTORY_PAGE_SIZE,
+  FileHistoryList,
+  restoreFileAtRevision,
+  useFileHistoryQuery,
+} from "./FileHistoryList";
 
-/** Page size for the history walk; a "Load more" footer fetches the next page. */
-const PAGE_SIZE = 200;
-
-/** Summon payload for showing a file's history (a bare string = the path,
- *  walked from HEAD). `rev` walks from that revision instead - the Files
- *  panel's browse-at-commit mode sends it so the history matches the tree
- *  being browsed. */
-export interface FileHistoryRequest {
-  path: string;
-  rev?: string | null;
+/** Row-activation fan-out of the DOCKED panel (the history window deliberately
+ *  does not use it - it updates its own diff pane instead). */
+export function openCommitFromHistory(sha: string, path: string) {
+  const summon = useSummonStore.getState();
+  summon.summon("commit-details", sha);
+  // Carry the file's path so Changed Files pre-selects it (opening its diff)
+  // - we're browsing this file's history, so surface it without an extra click.
+  summon.swapSummon("changed-files", "working-changes", { commitId: sha, selectPath: path });
+  // Keep the Commits graph highlight in step (only if that panel is open).
+  summon.notifyIfOpen("log", sha);
+  // An open Files panel follows into browse-at-commit mode for this rev.
+  summon.notifyIfOpen("files", { rev: sha });
 }
 
 /**
@@ -54,6 +52,8 @@ export function FileHistoryPanel() {
 function FileHistoryBody() {
   const repo = useActiveRepo();
   const queryClient = useQueryClient();
+  const confirmDestructive = useConfirmDestructive();
+  const destructiveMenuConfirm = useDestructiveMenuConfirm();
   // Per-repo view state (store/panelViewState.ts): the shown file survives a
   // layout apply's dock rebuild and panel close/reopen, and each repo keeps
   // its own across tab switches - it also covers the summoned-for-the-new-
@@ -64,12 +64,19 @@ function FileHistoryBody() {
   const [rev, setRev] = usePanelViewState<string | null>("file-history.rev", null);
   // How many pages to request; "Load more" bumps it, a new file resets it.
   const [pageCount, setPageCount] = usePanelViewState("file-history.pageCount", 1);
+  // The commit whose details the last row click opened (highlight only) -
+  // aligned with the history window's selection.
+  const [selectedSha, setSelectedSha] = usePanelViewState<string | null>(
+    "file-history.selected",
+    null,
+  );
 
   const onReceive = useCallback((payload: unknown) => {
     if (typeof payload === "string") {
       setPath(payload);
       setRev(null);
       setPageCount(1);
+      setSelectedSha(null);
       return;
     }
     const p = payload as Partial<FileHistoryRequest> | null;
@@ -77,46 +84,67 @@ function FileHistoryBody() {
       setPath(p.path);
       setRev(typeof p.rev === "string" ? p.rev : null);
       setPageCount(1);
+      setSelectedSha(null);
     }
-  }, [setPath, setRev, setPageCount]);
+  }, [setPath, setRev, setPageCount, setSelectedSha]);
   useSummonTarget("file-history", onReceive);
 
-  const { data: entries = [], isFetching, isError, error, refetch } = useQuery<FileHistoryEntry[]>({
-    // Under the "log" domain: history changes exactly when the log/worktree do.
-    queryKey: [repo?.id, "log", "file-history", path, rev, pageCount],
-    queryFn: () => repoFileHistory(repo!.id, path!, PAGE_SIZE * pageCount, 0, rev ?? undefined),
-    enabled: !!repo && !!path,
-    staleTime: STALE.live,
-  });
+  const { data: entries = [], isFetching, isError, error, refetch } = useFileHistoryQuery(
+    repo?.id,
+    path,
+    rev,
+    pageCount,
+  );
   usePanelFocusEffect(useCallback(() => { refetch(); }, [refetch]));
 
-  // A full page implies there may be more; short page = end of history.
-  const maybeMore = entries.length === PAGE_SIZE * pageCount;
-
-  const openCommit = useCallback((sha: string, path: string) => {
-    const summon = useSummonStore.getState();
-    summon.summon("commit-details", sha);
-    // Carry the file's path so Changed Files pre-selects it (opening its diff)
-    // — we're browsing this file's history, so surface it without an extra click.
-    summon.swapSummon("changed-files", "working-changes", { commitId: sha, selectPath: path });
-    // Keep the Commits graph highlight in step (only if that panel is open).
-    summon.notifyIfOpen("log", sha);
-    // An open Files panel follows into browse-at-commit mode for this rev.
-    summon.notifyIfOpen("files", { rev: sha });
-  }, []);
-
-  const restore = useCallback(
-    async (entry: FileHistoryEntry) => {
-      if (!repo) return;
-      try {
-        await api.repoRestoreFileAtRevision(repo.id, entry.commit_id, entry.path);
-        invalidateRepoDomains(queryClient, repo.id, ["status", "log", "diff"]);
-        notify.success(`Restored ${entry.path} to ${entry.commit_id.slice(0, 8)} (staged)`);
-      } catch (e) {
-        notify.error(formatAppError(e));
-      }
+  const renderMenu = useCallback(
+    (entry: FileHistoryEntry, closeMenu: () => void) => {
+      if (!repo) return null;
+      const sha = entry.commit_id;
+      return (
+        <>
+          {/* The editor entry opens the current working-tree file (not the
+              content at this commit); for pre-rename entries the path may no
+              longer exist - the launch failure surfaces as a toast. */}
+          <FileRowMenuSection
+            path={entry.path}
+            header={`${sha.slice(0, 8)} · ${entry.path}`}
+            rev={{ value: sha, label: "this commit" }}
+            view
+            onClose={closeMenu}
+          />
+          <Separator />
+          <MenuItem
+            onClick={() => {
+              useSummonStore.getState().summon("diff", {
+                repoId: repo.id,
+                path: entry.path,
+                source: { kind: "commit", commit_id: sha },
+                oldPath: entry.old_path,
+              } satisfies DiffRequest);
+              closeMenu();
+            }}
+          >
+            Diff in this commit
+          </MenuItem>
+          <Separator />
+          <MenuItem
+            onClick={() =>
+              destructiveMenuConfirm(
+                `Restore ${entry.path} to its content at ${sha.slice(0, 8)}?`,
+                () => {
+                  closeMenu();
+                  void restoreFileAtRevision(queryClient, repo.id, entry);
+                },
+              )
+            }
+          >
+            {confirmDestructive ? "Restore file to this commit…" : "Restore file to this commit"}
+          </MenuItem>
+        </>
+      );
     },
-    [repo, queryClient],
+    [repo, queryClient, confirmDestructive, destructiveMenuConfirm],
   );
 
   if (!repo) {
@@ -172,140 +200,20 @@ function FileHistoryBody() {
       </div>
 
       <div className="legit-panel__body" style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 0 }}>
-        {isError ? (
-          <PanelError error={error} margin={8} />
-        ) : entries.length === 0 && !isFetching ? (
-          <span className="legit-subtle" style={{ display: "block", padding: "0.667em", fontSize: "var(--fz-md)" }}>
-            No history for this file.
-          </span>
-        ) : (
-          <>
-            {entries.map((entry) => (
-              <HistoryRow
-                key={`${entry.commit_id}-${entry.path}`}
-                entry={entry}
-                repoId={repo.id}
-                onOpen={() => openCommit(entry.commit_id, entry.path)}
-                onRestore={() => restore(entry)}
-              />
-            ))}
-            {maybeMore && (
-              <div style={{ padding: "0.667em", textAlign: "center" }}>
-                <Button disabled={isFetching} onClick={() => setPageCount((n) => n + 1)}>
-                  Load more
-                </Button>
-              </div>
-            )}
-          </>
-        )}
+        <FileHistoryList
+          entries={entries}
+          busy={isFetching}
+          error={isError ? error : null}
+          maybeMore={entries.length === FILE_HISTORY_PAGE_SIZE * pageCount}
+          onLoadMore={() => setPageCount((n) => n + 1)}
+          selectedSha={selectedSha}
+          onActivate={(entry) => {
+            setSelectedSha(entry.commit_id);
+            openCommitFromHistory(entry.commit_id, entry.path);
+          }}
+          renderMenu={renderMenu}
+        />
       </div>
     </div>
-  );
-}
-
-function HistoryRow({
-  entry,
-  repoId,
-  onOpen,
-  onRestore,
-}: {
-  entry: FileHistoryEntry;
-  repoId: string;
-  onOpen: () => void;
-  onRestore: () => void;
-}) {
-  const { openMenu, closeMenu } = usePanelContextMenu();
-  const confirmDestructive = useConfirmDestructive();
-  const destructiveMenuConfirm = useDestructiveMenuConfirm();
-  const sha = entry.commit_id;
-
-  const summon = useSummonStore.getState;
-
-  const menu = useMemo(
-    () => (
-      <>
-        {/* The editor entry opens the current working-tree file (not the
-            content at this commit); for pre-rename entries the path may no
-            longer exist - the launch failure surfaces as a toast. */}
-        <FileRowMenuSection
-          path={entry.path}
-          header={`${sha.slice(0, 8)} · ${entry.path}`}
-          rev={{ value: sha, label: "this commit" }}
-          view
-          onClose={closeMenu}
-        />
-        <MenuItem
-          onClick={() => {
-            summon().summon("diff", {
-              repoId,
-              path: entry.path,
-              source: { kind: "commit", commit_id: sha },
-              oldPath: entry.old_path,
-            } satisfies DiffRequest);
-            closeMenu();
-          }}
-        >
-          Diff in this commit
-        </MenuItem>
-        <Separator />
-        <MenuItem
-          onClick={() =>
-            destructiveMenuConfirm(`Restore ${entry.path} to its content at ${sha.slice(0, 8)}?`, () => {
-              closeMenu();
-              onRestore();
-            })
-          }
-        >
-          {confirmDestructive ? "Restore file to this commit…" : "Restore file to this commit"}
-        </MenuItem>
-      </>
-    ),
-    [entry, repoId, sha, confirmDestructive, destructiveMenuConfirm, closeMenu, onRestore, summon],
-  );
-
-  return (
-    <button
-      onClick={onOpen}
-      onContextMenu={(e) => openMenu(e, menu)}
-      title={`${sha.slice(0, 8)} · ${entry.author} · ${entry.summary}`}
-      style={{
-        display: "block",
-        width: "100%",
-        textAlign: "left",
-        background: "transparent",
-        border: "none",
-        borderBottom: "1px solid var(--panel-border)",
-        padding: "0.333em 0.667em",
-        cursor: "pointer",
-      }}
-    >
-      <span
-        style={{
-          display: "block",
-          fontSize: "var(--fz-md)",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {entry.summary}
-      </span>
-      <span
-        className="legit-subtle"
-        style={{
-          display: "block",
-          fontSize: "var(--fz-sm)",
-          fontFamily: "monospace",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {sha.slice(0, 8)} · {entry.author} · {formatRelative(entry.timestamp)}
-        {entry.old_path && (
-          <span style={{ fontStyle: "italic" }}> · renamed from {entry.old_path}</span>
-        )}
-      </span>
-    </button>
   );
 }

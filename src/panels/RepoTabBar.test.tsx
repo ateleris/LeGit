@@ -22,7 +22,7 @@ vi.mock("../lib/commands", () => ({
   repoOpenRemotePage: vi.fn(() => Promise.resolve()),
 }));
 vi.mock("../lib/editorAction", () => ({
-  useEditorAction: () => ({ label: "Open in editor", opensFolder: false }),
+  useEditorAction: () => ({ label: "Open in editor", configured: true }),
 }));
 vi.mock("./ViewMenu", () => ({ ViewMenu: () => null }));
 vi.mock("./RepoOverflowMenu", () => ({ RepoOverflowMenu: () => null }));
