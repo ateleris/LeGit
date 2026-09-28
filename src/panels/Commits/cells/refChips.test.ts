@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { branchesAt, buildChips, computeVisibleCount } from "./refChips";
+import { branchesAt, buildChips, computeVisibleCount, splitRefLabel } from "./refChips";
 import type { RefDecoration } from "../../../lib/types";
 
 const branch = (value: string): RefDecoration => ({ type: "branch", value });
@@ -229,5 +229,31 @@ describe("computeVisibleCount", () => {
     // 1 chip + gap + overflow = 30+3+24+3(gap before overflow) ≤ 100 → 2 fit: 30+3+30+3+24 = 90.
     expect(computeVisibleCount(widths, 100, 3, 24, 0)).toBe(2);
     expect(computeVisibleCount(widths, 129, 3, 24, 0)).toBe(4);
+  });
+});
+
+describe("splitRefLabel", () => {
+  it("splits at the last slash, keeping it in the prefix", () => {
+    expect(splitRefLabel("feature/auth/login")).toEqual({
+      prefix: "feature/auth/",
+      leaf: "login",
+    });
+  });
+
+  it("returns an empty prefix for a name without slashes", () => {
+    expect(splitRefLabel("main")).toEqual({ prefix: "", leaf: "main" });
+  });
+
+  it("keeps a remote name in the prefix", () => {
+    expect(splitRefLabel("origin/dev")).toEqual({ prefix: "origin/", leaf: "dev" });
+  });
+
+  it("treats a trailing slash as part of the leaf", () => {
+    // Malformed, but must not produce an empty leaf (the leaf never shrinks).
+    expect(splitRefLabel("odd/")).toEqual({ prefix: "", leaf: "odd/" });
+  });
+
+  it("handles the empty string", () => {
+    expect(splitRefLabel("")).toEqual({ prefix: "", leaf: "" });
   });
 });

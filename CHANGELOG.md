@@ -29,6 +29,8 @@ lives in the git log and the GitHub release notes.
   external editor is configured (same split in the open-repositories dropdown)
 - With no external editor configured, "Open in editor" on a file now opens it
   with the OS default application instead of revealing it in the file manager
+- Long branch/tag chip names truncate their leading path first, keeping the
+  last segment visible (like file paths)
 
 ### Fixed
 

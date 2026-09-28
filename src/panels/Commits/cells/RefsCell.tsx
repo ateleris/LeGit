@@ -9,7 +9,8 @@ import { BranchMenuSection, RemoteBranchMenuSection } from "../menu/BranchMenuSe
 import { TagMenuSection } from "../menu/TagMenuSection";
 import { InlineRenameInput } from "./InlineRenameInput";
 import { Popover } from "../../shared/Popover";
-import { buildChips, computeVisibleCount } from "./refChips";
+import { buildChips, computeVisibleCount, splitRefLabel } from "./refChips";
+import { ShrinkingPathText } from "../../shared/ShrinkingPathText";
 import type { WorktreeMark } from "../../Worktrees/worktreeRows";
 import { checkedOutInWorktreeMessage } from "../../../lib/switchFeedback";
 import { filterCssValue } from "../../../theme/filters";
@@ -567,21 +568,12 @@ function DirtyDot() {
 /** The chip's text, ellipsized when the chip hits its width limit. The
  *  ellipsis must live on a block-ish child: `textOverflow` on the chip span
  *  itself never applies (a flex container clips its items with a hard cut -
- *  exactly the bug this fixes). `minWidth: 0` lets the label shrink below its
- *  content width inside the flex row; the icons keep their 1em boxes. */
-function ChipLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <span
-      style={{
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-        minWidth: 0,
-      }}
-    >
-      {children}
-    </span>
-  );
+ *  exactly the bug this fixes). Slash-separated names truncate the leading
+ *  path first (the file-row style): the last segment is the telling part of
+ *  `feature/auth/login`, so it gives way only once the prefix is gone. */
+function ChipLabel({ text }: { text: string }) {
+  const { prefix, leaf } = splitRefLabel(text);
+  return <ShrinkingPathText prefix={prefix} leaf={leaf} />;
 }
 
 function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = null, worktreeMark = null, laneChip = null, unclamped = false, onContextMenu, onDoubleClickAction }: ChipProps) {
@@ -624,7 +616,7 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
           style={chipStyle({ variant: "head", textSize, unclamped })}
           title={`Worktree "${chip.name}" — detached HEAD at this commit (${chip.path})${chip.dirty ? " — uncommitted changes" : ""}`}
         >
-          <WorktreeIcon /> {chip.dirty && <DirtyDot />} <ChipLabel>{chip.name}</ChipLabel>
+          <WorktreeIcon /> {chip.dirty && <DirtyDot />} <ChipLabel text={chip.name} />
         </span>
       );
 
@@ -642,7 +634,7 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
         >
           {isCheckedOut && <CurrentDot />}
           <BranchIcon /> {worktreeMark && <WorktreeIndicator mark={worktreeMark} />}
-          <ChipLabel>{shortBranch(chip.value)}</ChipLabel>
+          <ChipLabel text={shortBranch(chip.value)} />
         </span>
       );
     }
@@ -663,7 +655,7 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
         >
           {isCheckedOut && <CurrentDot />}
           <BranchIcon /> {worktreeMark && <WorktreeIndicator mark={worktreeMark} />}
-          <RemoteIndicator remoteRef={chip.remote} /> <ChipLabel>{shortBranch(chip.local)}</ChipLabel>
+          <RemoteIndicator remoteRef={chip.remote} /> <ChipLabel text={shortBranch(chip.local)} />
         </span>
       );
     }
@@ -676,7 +668,7 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
           style={chipStyle({ variant: "remote", textSize, unclamped, laneChip })}
           title={`${chip.value}${checkoutHint}`}
         >
-          <RemoteIcon /> <ChipLabel>{shortRemote(chip.value)}</ChipLabel>
+          <RemoteIcon /> <ChipLabel text={shortRemote(chip.value)} />
         </span>
       );
 
@@ -695,7 +687,7 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
               <RemoteIcon />
             </span>
           )}{" "}
-          <ChipLabel>{chip.value.replace(/^refs\/tags\//, "")}</ChipLabel>
+          <ChipLabel text={chip.value.replace(/^refs\/tags\//, "")} />
         </span>
       );
 
@@ -706,7 +698,7 @@ function Chip({ chip, headOfTarget, textSize, tagPushed = false, tagRemote = nul
           style={chipStyle({ variant: "other", textSize, unclamped })}
           title={chip.value}
         >
-          <ChipLabel>{chip.value}</ChipLabel>
+          <ChipLabel text={chip.value} />
         </span>
       );
   }

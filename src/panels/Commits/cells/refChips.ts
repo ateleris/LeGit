@@ -196,6 +196,19 @@ export function branchesAt(decorations: RefDecoration[]): BranchesAtCommit {
 }
 
 /**
+ * Split a chip label for path-aware truncation: everything up to and
+ * including the last slash shrinks first, so a clipped
+ * `feature/auth/login` keeps its most telling segment ("…login" rather
+ * than "feature/auth/l…"). A trailing slash stays in the leaf so the leaf
+ * is never empty.
+ */
+export function splitRefLabel(label: string): { prefix: string; leaf: string } {
+  const cut = label.lastIndexOf("/");
+  if (cut < 0 || cut === label.length - 1) return { prefix: "", leaf: label };
+  return { prefix: label.slice(0, cut + 1), leaf: label.slice(cut + 1) };
+}
+
+/**
  * How many leading chips fit in `containerWidth`?
  *
  * Returns `widths.length` when everything fits without an overflow chip.
