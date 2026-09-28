@@ -76,19 +76,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 
 ## Smaller follow-ups
 
-- **File-history window: v2 candidates.** The window feature (see
-  `design`/spec `docs/superpowers/specs/2026-09-25-file-history-window-design.md`)
-  deliberately left out: a generic per-panel "open as window" setting (the
-  summon redirect and shell are built so a panel-id map can replace the
-  single boolean); cross-window jumps ("open this commit in the main
-  window"); live Theme Editor palette preview reaching open popups (they
-  catch up on the next persisted settings change). Small deferred cleanups
-  from review: a file-history summon with the setting on and no active repo
-  silently no-ops (currently unreachable); the window-context map entry
-  lingers if the window build fails (self-heals); the capabilities file
-  description still says "main window"; folder rows in the Files panel keep
-  their own menu layout (not the fenced copy/open block file rows have).
-
 - **Stash-all button in Working Changes?** (open question, 2026-09-16) The
   sections have "Stage all" / "Unstage all" / "Discard all"; a "Stash all"
   alongside them would complete the set. The action already exists (the
@@ -221,14 +208,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   (`search_commits` Content/ContentRegex kinds, `search_paths`) is kept
   and tested; re-adding is a small UI task if "when did this string
   change?" archaeology is missed.
-- **Diff viewer: ignore-whitespace toggle** (2026-08-20 review; Fork,
-  Sublime Merge, Git Extensions, Tower have it). A toolbar toggle mapping to
-  `git diff -w` / `--ignore-space-change` on the diff fetch (both inline and
-  split - action parity), persisted like the syntax-highlighting toggle.
-  NOTE: hunk stage/discard operate on the UNfiltered diff; simplest correct
-  v1 disables hunk/line actions while the toggle is on (view-only), like the
-  full-file mode. Word-wrap + Ctrl+F stay folded into the keyboard-shortcuts
-  item.
 - **Commit `--no-verify` (bypass hooks)** (2026-08-20 review; SourceTree,
   Fork, Git Extensions have it). Hooks run today because every op is a real
   git invocation, so a stuck/broken hook blocks committing entirely with no

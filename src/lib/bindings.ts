@@ -1797,11 +1797,12 @@ async repoRestoreFileAtRevision(repoId: string, rev: string, path: string) : Pro
  * The diff for `path` from one of the comparison sources (working unstaged,
  * working staged, or a commit vs its parent). `context` is the number of
  * surrounding context lines — small for the chunked view, very large for the
- * whole-file view.
+ * whole-file view. `ignore_whitespace` diffs with `-w` (display-only: the
+ * panel disables hunk/line actions while it is on).
  */
-async repoDiff(repoId: string, source: DiffSource, path: string, oldPath: string | null, context: number) : Promise<Result<DiffEntry, AppError>> {
+async repoDiff(repoId: string, source: DiffSource, path: string, oldPath: string | null, context: number, ignoreWhitespace: boolean) : Promise<Result<DiffEntry, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("repo_diff", { repoId, source, path, oldPath, context }) };
+    return { status: "ok", data: await TAURI_INVOKE("repo_diff", { repoId, source, path, oldPath, context, ignoreWhitespace }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1810,9 +1811,9 @@ async repoDiff(repoId: string, source: DiffSource, path: string, oldPath: string
 /**
  * Stage a single hunk of `path`'s unstaged diff (`git apply --cached`).
  */
-async repoStageHunk(repoId: string, path: string, hunkIndex: number) : Promise<Result<null, AppError>> {
+async repoStageHunk(repoId: string, path: string, hunkIndex: number, ignoreWhitespace: boolean) : Promise<Result<null, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("repo_stage_hunk", { repoId, path, hunkIndex }) };
+    return { status: "ok", data: await TAURI_INVOKE("repo_stage_hunk", { repoId, path, hunkIndex, ignoreWhitespace }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1821,9 +1822,9 @@ async repoStageHunk(repoId: string, path: string, hunkIndex: number) : Promise<R
 /**
  * Unstage a single hunk of `path`'s staged diff (`git apply --cached -R`).
  */
-async repoUnstageHunk(repoId: string, path: string, hunkIndex: number) : Promise<Result<null, AppError>> {
+async repoUnstageHunk(repoId: string, path: string, hunkIndex: number, ignoreWhitespace: boolean) : Promise<Result<null, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("repo_unstage_hunk", { repoId, path, hunkIndex }) };
+    return { status: "ok", data: await TAURI_INVOKE("repo_unstage_hunk", { repoId, path, hunkIndex, ignoreWhitespace }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1833,9 +1834,9 @@ async repoUnstageHunk(repoId: string, path: string, hunkIndex: number) : Promise
  * Discard a single hunk of `path`'s unstaged diff from the working tree
  * (`git apply -R`).
  */
-async repoDiscardHunk(repoId: string, path: string, hunkIndex: number) : Promise<Result<null, AppError>> {
+async repoDiscardHunk(repoId: string, path: string, hunkIndex: number, ignoreWhitespace: boolean) : Promise<Result<null, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("repo_discard_hunk", { repoId, path, hunkIndex }) };
+    return { status: "ok", data: await TAURI_INVOKE("repo_discard_hunk", { repoId, path, hunkIndex, ignoreWhitespace }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1845,9 +1846,9 @@ async repoDiscardHunk(repoId: string, path: string, hunkIndex: number) : Promise
  * Stage a subset of a hunk's lines (`line_indices` index into the hunk's diff
  * lines, context included).
  */
-async repoStageLines(repoId: string, path: string, hunkIndex: number, lineIndices: number[]) : Promise<Result<null, AppError>> {
+async repoStageLines(repoId: string, path: string, hunkIndex: number, lineIndices: number[], ignoreWhitespace: boolean) : Promise<Result<null, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("repo_stage_lines", { repoId, path, hunkIndex, lineIndices }) };
+    return { status: "ok", data: await TAURI_INVOKE("repo_stage_lines", { repoId, path, hunkIndex, lineIndices, ignoreWhitespace }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1856,9 +1857,9 @@ async repoStageLines(repoId: string, path: string, hunkIndex: number, lineIndice
 /**
  * Unstage a subset of a hunk's lines.
  */
-async repoUnstageLines(repoId: string, path: string, hunkIndex: number, lineIndices: number[]) : Promise<Result<null, AppError>> {
+async repoUnstageLines(repoId: string, path: string, hunkIndex: number, lineIndices: number[], ignoreWhitespace: boolean) : Promise<Result<null, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("repo_unstage_lines", { repoId, path, hunkIndex, lineIndices }) };
+    return { status: "ok", data: await TAURI_INVOKE("repo_unstage_lines", { repoId, path, hunkIndex, lineIndices, ignoreWhitespace }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1867,9 +1868,9 @@ async repoUnstageLines(repoId: string, path: string, hunkIndex: number, lineIndi
 /**
  * Discard a subset of a hunk's lines from the working tree.
  */
-async repoDiscardLines(repoId: string, path: string, hunkIndex: number, lineIndices: number[]) : Promise<Result<null, AppError>> {
+async repoDiscardLines(repoId: string, path: string, hunkIndex: number, lineIndices: number[], ignoreWhitespace: boolean) : Promise<Result<null, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("repo_discard_lines", { repoId, path, hunkIndex, lineIndices }) };
+    return { status: "ok", data: await TAURI_INVOKE("repo_discard_lines", { repoId, path, hunkIndex, lineIndices, ignoreWhitespace }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

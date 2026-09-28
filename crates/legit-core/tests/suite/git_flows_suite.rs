@@ -739,13 +739,292 @@ async fn diff_files_and_file_diff_work_across_branches() {
     };
     let entry = repo
         .backend
-        .file_diff(&source, std::path::Path::new("base.txt"), None, 3)
+        .file_diff(&source, std::path::Path::new("base.txt"), None, 3, false)
         .await
         .unwrap();
     match entry {
         DiffEntry::Text(t) => assert!(!t.hunks.is_empty()),
         other => panic!("expected text diff, got {other:?}"),
     }
+}
+
+// The encoded assumption behind the ignore-whitespace toggle: `-w` reduces a
+// whitespace-only change to ZERO hunks (the panel renders "No changes."),
+// while the unfiltered diff of the same file still shows them.
+#[tokio::test]
+async fn file_diff_ignore_whitespace_drops_whitespace_only_hunks() {
+    let repo = TestRepo::init().await;
+    repo.write("ws.txt", "alpha\nbeta\ngamma\n");
+    repo.commit_all("base").await;
+    repo.write("ws.txt", "alpha\nbeta  \n  gamma\n");
+
+    let plain = repo
+        .backend
+        .file_diff(
+            &DiffSource::WorkingUnstaged,
+            std::path::Path::new("ws.txt"),
+            None,
+            3,
+            false,
+        )
+        .await
+        .unwrap();
+    match plain {
+        DiffEntry::Text(t) => assert!(!t.hunks.is_empty(), "unfiltered diff must show hunks"),
+        other => panic!("expected text diff, got {other:?}"),
+    }
+
+    let filtered = repo
+        .backend
+        .file_diff(
+            &DiffSource::WorkingUnstaged,
+            std::path::Path::new("ws.txt"),
+            None,
+            3,
+            true,
+        )
+        .await
+        .unwrap();
+    match filtered {
+        DiffEntry::Text(t) => assert!(
+            t.hunks.is_empty(),
+            "-w must drop whitespace-only hunks: {t:?}"
+        ),
+        other => panic!("expected text diff, got {other:?}"),
+    }
+}
+
+// Staging from the ignore-whitespace VIEW: the shown hunk indices address
+// the -w diff, and applying must stage exactly the visible changes - the
+// whitespace-only edits (a separate ws-only hunk AND a ws-only line inside
+// the real hunk) stay unstaged.
+#[tokio::test]
+async fn ws_view_hunk_staging_applies_only_the_visible_changes() {
+    let repo = TestRepo::init().await;
+    repo.write(
+        "m.txt",
+        "alpha\nbeta\ngamma\nf1\nf2\nf3\nf4\nf5\nf6\nx\nd\ne\ny\n",
+    );
+    repo.commit_all("base").await;
+    repo.write(
+        "m.txt",
+        "alpha\nbeta  \ngamma\nf1\nf2\nf3\nf4\nf5\nf6\nx\n  d\nE\ny\n",
+    );
+
+    // Shown (-w) diff: exactly one hunk, the real change.
+    let shown = repo
+        .backend
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("m.txt"), None, 3, true)
+        .await
+        .unwrap();
+    let DiffEntry::Text(shown) = shown else { panic!("expected text diff") };
+    assert_eq!(shown.hunks.len(), 1, "{shown:?}");
+
+    repo.backend
+        .apply_hunk(Path::new("m.txt"), 0, legit_core::HunkOp::Stage, true)
+        .await
+        .unwrap();
+
+    let staged = repo
+        .backend
+        .file_diff(&DiffSource::WorkingStaged, Path::new("m.txt"), None, 3, false)
+        .await
+        .unwrap();
+    let DiffEntry::Text(staged) = staged else { panic!("expected text diff") };
+    let staged_adds: Vec<&str> = staged
+        .hunks
+        .iter()
+        .flat_map(|h| &h.lines)
+        .filter(|l| l.kind == legit_core::DiffLineKind::Added)
+        .map(|l| l.content.as_str())
+        .collect();
+    assert_eq!(staged_adds, vec!["E"], "only the real change is staged");
+
+    // The whitespace edits are still unstaged.
+    let unstaged = repo
+        .backend
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("m.txt"), None, 3, false)
+        .await
+        .unwrap();
+    let DiffEntry::Text(unstaged) = unstaged else { panic!("expected text diff") };
+    let unstaged_adds: Vec<&str> = unstaged
+        .hunks
+        .iter()
+        .flat_map(|h| &h.lines)
+        .filter(|l| l.kind == legit_core::DiffLineKind::Added)
+        .map(|l| l.content.as_str())
+        .collect();
+    assert_eq!(unstaged_adds, vec!["beta  ", "  d"], "{unstaged:?}");
+}
+
+/// The added-line contents of a text diff, across hunks in order - the
+/// compact fingerprint the ws-view tests compare index/worktree states by.
+fn added_lines(entry: &DiffEntry) -> Vec<String> {
+    let DiffEntry::Text(t) = entry else { panic!("expected text diff: {entry:?}") };
+    t.hunks
+        .iter()
+        .flat_map(|h| &h.lines)
+        .filter(|l| l.kind == legit_core::DiffLineKind::Added)
+        .map(|l| l.content.clone())
+        .collect()
+}
+
+// Unstaging from the ignore-whitespace view: the reverse patch runs against
+// the index - only the visible change leaves the index, the staged
+// whitespace-only edit stays staged.
+#[tokio::test]
+async fn ws_view_unstage_removes_only_the_visible_change_from_the_index() {
+    let repo = TestRepo::init().await;
+    repo.write("m.txt", "a\nb\nc\nf1\nf2\nf3\nf4\nf5\nf6\nd\ne\ny\n");
+    repo.commit_all("base").await;
+    repo.write("m.txt", "a\nb  \nc\nf1\nf2\nf3\nf4\nf5\nf6\nd\nE\ny\n");
+    repo.git(&["add", "m.txt"]).await;
+
+    let shown = repo
+        .backend
+        .file_diff(&DiffSource::WorkingStaged, Path::new("m.txt"), None, 3, true)
+        .await
+        .unwrap();
+    assert_eq!(added_lines(&shown), vec!["E"], "ws-filtered staged diff");
+
+    repo.backend
+        .apply_hunk(Path::new("m.txt"), 0, legit_core::HunkOp::Unstage, true)
+        .await
+        .unwrap();
+
+    let staged = repo
+        .backend
+        .file_diff(&DiffSource::WorkingStaged, Path::new("m.txt"), None, 3, false)
+        .await
+        .unwrap();
+    assert_eq!(added_lines(&staged), vec!["b  "], "ws-only edit stays staged");
+    let unstaged = repo
+        .backend
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("m.txt"), None, 3, false)
+        .await
+        .unwrap();
+    assert_eq!(added_lines(&unstaged), vec!["E"], "real change is back unstaged");
+}
+
+// Discarding from the ignore-whitespace view: the reverse patch runs against
+// the worktree - the visible change reverts, the whitespace-only edit
+// survives in the file.
+#[tokio::test]
+async fn ws_view_discard_reverts_only_the_visible_change_in_the_worktree() {
+    let repo = TestRepo::init().await;
+    repo.write("m.txt", "a\nb\nc\nf1\nf2\nf3\nf4\nf5\nf6\nd\ne\ny\n");
+    repo.commit_all("base").await;
+    repo.write("m.txt", "a\nb  \nc\nf1\nf2\nf3\nf4\nf5\nf6\nd\nE\ny\n");
+
+    repo.backend
+        .apply_hunk(Path::new("m.txt"), 0, legit_core::HunkOp::Discard, true)
+        .await
+        .unwrap();
+
+    let content = std::fs::read_to_string(repo.path.join("m.txt")).expect("read worktree file");
+    assert_eq!(
+        content, "a\nb  \nc\nf1\nf2\nf3\nf4\nf5\nf6\nd\ne\ny\n",
+        "E reverted, whitespace edit kept"
+    );
+}
+
+// The structural edge: TWO real changes chained into ONE unfiltered hunk by a
+// whitespace-only change between them, shown as TWO -w hunks. Staging shown
+// hunk 0 stages only its own change although all three share one plain hunk.
+#[tokio::test]
+async fn ws_view_staging_one_of_two_shown_hunks_sharing_a_plain_hunk() {
+    let repo = TestRepo::init().await;
+    repo.write("m.txt", "ctx0\nB\nc1\nc2\nc3\nw\nc4\nc5\nc6\nD\nctx9\n");
+    repo.commit_all("base").await;
+    repo.write("m.txt", "ctx0\nB2\nc1\nc2\nc3\nw  \nc4\nc5\nc6\nD2\nctx9\n");
+
+    let plain = repo
+        .backend
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("m.txt"), None, 3, false)
+        .await
+        .unwrap();
+    let DiffEntry::Text(plain) = plain else { panic!("expected text diff") };
+    assert_eq!(plain.hunks.len(), 1, "chained into one unfiltered hunk");
+
+    let shown = repo
+        .backend
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("m.txt"), None, 3, true)
+        .await
+        .unwrap();
+    let DiffEntry::Text(shown) = shown else { panic!("expected text diff") };
+    assert_eq!(shown.hunks.len(), 2, "split into two shown hunks");
+
+    repo.backend
+        .apply_hunk(Path::new("m.txt"), 0, legit_core::HunkOp::Stage, true)
+        .await
+        .unwrap();
+
+    let staged = repo
+        .backend
+        .file_diff(&DiffSource::WorkingStaged, Path::new("m.txt"), None, 3, false)
+        .await
+        .unwrap();
+    assert_eq!(added_lines(&staged), vec!["B2"], "only the first shown hunk staged");
+    let unstaged = repo
+        .backend
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("m.txt"), None, 3, false)
+        .await
+        .unwrap();
+    assert_eq!(added_lines(&unstaged), vec!["w  ", "D2"], "{unstaged:?}");
+}
+
+#[tokio::test]
+async fn ws_view_line_staging_maps_the_selected_line() {
+    let repo = TestRepo::init().await;
+    repo.write("m.txt", "alpha\nbeta\ngamma\nx\nd\ne\ny\n");
+    repo.commit_all("base").await;
+    repo.write("m.txt", "ALPHA\nbeta  \ngamma\nx\nd\nE\ny\n");
+
+    // Two real changes in the shown diff; pick out just "+E" by its
+    // diff-line index within its shown hunk.
+    let shown = repo
+        .backend
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("m.txt"), None, 3, true)
+        .await
+        .unwrap();
+    let DiffEntry::Text(shown) = shown else { panic!("expected text diff") };
+    let (hunk_idx, line_idx) = shown
+        .hunks
+        .iter()
+        .enumerate()
+        .find_map(|(hi, h)| {
+            h.lines
+                .iter()
+                .position(|l| l.kind == legit_core::DiffLineKind::Added && l.content == "E")
+                .map(|li| (hi, li))
+        })
+        .expect("shown diff contains +E");
+
+    repo.backend
+        .apply_lines(
+            Path::new("m.txt"),
+            hunk_idx,
+            &[line_idx],
+            legit_core::HunkOp::Stage,
+            true,
+        )
+        .await
+        .unwrap();
+
+    let staged = repo
+        .backend
+        .file_diff(&DiffSource::WorkingStaged, Path::new("m.txt"), None, 3, false)
+        .await
+        .unwrap();
+    let DiffEntry::Text(staged) = staged else { panic!("expected text diff") };
+    let staged_adds: Vec<&str> = staged
+        .hunks
+        .iter()
+        .flat_map(|h| &h.lines)
+        .filter(|l| l.kind == legit_core::DiffLineKind::Added)
+        .map(|l| l.content.as_str())
+        .collect();
+    assert_eq!(staged_adds, vec!["E"], "only the selected line is staged");
 }
 
 #[tokio::test]
@@ -1919,6 +2198,7 @@ async fn non_utf8_file_content_is_not_silently_dropped() {
             std::path::Path::new("latin1.txt"),
             None,
             3,
+            false,
         )
         .await
         .unwrap();
@@ -1942,7 +2222,7 @@ async fn hunk_staging_works_on_crlf_files() {
     repo.write("c.txt", "a\r\nB\r\nc\r\n");
 
     repo.backend
-        .apply_hunk(std::path::Path::new("c.txt"), 0, legit_core::HunkOp::Stage)
+        .apply_hunk(std::path::Path::new("c.txt"), 0, legit_core::HunkOp::Stage, false)
         .await
         .expect("staging a CRLF hunk must succeed");
 
@@ -2383,7 +2663,7 @@ async fn file_diff_returns_a_submodule_entry_for_a_pointer_move() {
 
     let entry = sup
         .backend
-        .file_diff(&DiffSource::WorkingUnstaged, Path::new("lib"), None, 3)
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("lib"), None, 3, false)
         .await
         .unwrap();
     let DiffEntry::Submodule(sub) = entry else { panic!("expected Submodule: {entry:?}") };
@@ -2421,7 +2701,7 @@ async fn file_diff_presents_an_untracked_nested_repo_as_a_submodule_add() {
     // Request the diff with exactly the row path, as the app does.
     let diff = repo
         .backend
-        .file_diff(&DiffSource::WorkingUnstaged, &entry.path, None, 3)
+        .file_diff(&DiffSource::WorkingUnstaged, &entry.path, None, 3, false)
         .await
         .unwrap();
     let DiffEntry::Submodule(sub) = diff else { panic!("expected Submodule: {diff:?}") };
@@ -5198,7 +5478,7 @@ async fn file_diff_of_a_rename_still_finds_hunks() {
     let source = DiffSource::Commit { commit_id: CommitId::new(&repo.head().await) };
     let entry = repo
         .backend
-        .file_diff(&source, Path::new("new.txt"), Some(Path::new("old.txt")), 3)
+        .file_diff(&source, Path::new("new.txt"), Some(Path::new("old.txt")), 3, false)
         .await
         .expect("file_diff");
     match entry {

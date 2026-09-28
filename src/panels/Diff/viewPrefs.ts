@@ -6,6 +6,7 @@ export type ContextMode = "chunked" | "full";
 // View-mode preferences are remembered client-side across panel re-opens.
 export const MODE_KEY = "legit.diff.viewMode";
 export const CONTEXT_KEY = "legit.diff.contextMode";
+export const IGNORE_WS_KEY = "legit.diff.ignoreWhitespace";
 export const FULL_FILE_CONTEXT = 100_000;
 export const CHUNKED_CONTEXT = 3;
 

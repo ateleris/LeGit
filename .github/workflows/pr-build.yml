@@ -140,6 +140,14 @@ jobs:
         run: echo '{"bundle":{"createUpdaterArtifacts":false}}' > pr-bundle.conf.json
 
       - name: Build bundles
+        # The PR envs bake `<headsha>.PR<n>` as the build hash (build.rs):
+        # the PR number marks the artifact's origin, and the HEAD sha is the
+        # commit the sticky comment names (the checkout itself is the
+        # ephemeral merge commit). Empty on workflow_dispatch - plain dev
+        # hash behavior then.
+        env:
+          LEGIT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          LEGIT_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: npm run tauri:build -- --config pr-bundle.conf.json ${{ matrix.args }}
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

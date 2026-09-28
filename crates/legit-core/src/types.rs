@@ -320,7 +320,7 @@ pub struct DiffHunk {
     pub lines: Vec<DiffLine>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 pub enum DiffLineKind {
     Context,
     Added,

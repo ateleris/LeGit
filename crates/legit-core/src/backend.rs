@@ -137,34 +137,44 @@ pub trait GitBackend: Send + Sync {
     /// `old_path` is the original path for a rename/copy (else `None`), so the
     /// diff pairs both sides: real content hunks for a modified rename, an empty
     /// diff for a pure rename.
+    /// `ignore_whitespace` diffs with `-w` — display-only: hunk indices of such
+    /// a diff do not match `apply_hunk`/`apply_lines`, which always operate on
+    /// the unfiltered diff.
     async fn file_diff(
         &self,
         source: &DiffSource,
         path: &Path,
         old_path: Option<&Path>,
         context: u32,
+        ignore_whitespace: bool,
     ) -> Result<DiffEntry, GitError>;
 
     /// Apply a single hunk of a file's working-tree diff to the index or
     /// working tree (stage / unstage / discard). `hunk_index` indexes the hunks
     /// of the relevant source diff (unstaged for stage/discard, staged for
-    /// unstage), in the order `file_diff` returns them.
+    /// unstage), in the order `file_diff` returns them. With
+    /// `ignore_whitespace`, the index addresses the `-w` diff the panel is
+    /// showing; the selection is mapped onto the unfiltered diff and only the
+    /// visible (non-whitespace) changes are applied.
     async fn apply_hunk(
         &self,
         path: &Path,
         hunk_index: usize,
         op: HunkOp,
+        ignore_whitespace: bool,
     ) -> Result<(), GitError>;
 
     /// Like `apply_hunk`, but for a subset of a hunk's changed lines.
     /// `line_indices` index into the hunk's diff lines (context included), in
-    /// `git diff` order. A no-op if `line_indices` is empty.
+    /// `git diff` order - the `-w` diff's lines when `ignore_whitespace` is
+    /// set. A no-op if `line_indices` is empty.
     async fn apply_lines(
         &self,
         path: &Path,
         hunk_index: usize,
         line_indices: &[usize],
         op: HunkOp,
+        ignore_whitespace: bool,
     ) -> Result<(), GitError>;
 
     async fn commit(&self, opts: CommitOptions) -> Result<CommitId, GitError>;

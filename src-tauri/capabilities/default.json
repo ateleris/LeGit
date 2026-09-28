@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capabilities granted to the main window in v0.1.",
+  "description": "Default capabilities granted to the main window and the file-history popup windows.",
   "windows": ["main", "fh-*"],
   "permissions": [
     "core:default",

@@ -21,6 +21,11 @@ lives in the git log and the GitHub release notes.
   rev-scoped menus) can open that version of the file in the external editor
   (a detached temp copy)
 - File context menus gained "Open in folder" for the working-tree file
+- The diff viewer has an "Ignore whitespace" toolbar toggle (`git diff -w`):
+  hunk and line staging/discarding act on exactly the visible changes
+  (whitespace-only edits stay untouched), editing pauses while it is on, and
+  a whitespace-only file says "No changes except whitespace" instead of
+  "No changes"
 
 ### Changed
 
@@ -31,9 +36,15 @@ lives in the git log and the GitHub release notes.
   with the OS default application instead of revealing it in the file manager
 - Long branch/tag chip names truncate their leading path first, keeping the
   last segment visible (like file paths)
+- Folder rows in the Files panel use the same copy/open menu block as file
+  rows (copy path, open in folder), with "Ignore folder" in its own group
+- PR builds identify themselves: the version hash reads `<commit>.PR<number>`
+  (the PR's head commit) and never carries the `.wip` marker
 
 ### Fixed
 
+- Staging or discarding from the diff's "Full file" view no longer silently applies only part of the change; the merged full-file view is display-only and the actions live in the Chunks view, whose hunks match what gets applied.
+- Panel toolbars wrap onto additional rows instead of hiding their controls when the panel is too narrow.
 - Changing a repo setting no longer removes lane locks or the selected git profile set earlier in the session.
 - Settings, themes, layouts and keybindings are saved atomically, so a crash mid-save can no longer leave a truncated file; a settings file that fails to load is kept as `*.corrupt-<time>` instead of being overwritten with defaults.
 - Errors that also report a failed recovery step (e.g. "checked out in another worktree" plus a failed stash restore) keep their specific guidance instead of turning into a generic error.

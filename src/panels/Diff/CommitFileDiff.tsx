@@ -18,6 +18,7 @@ import {
   CHUNKED_CONTEXT,
   CONTEXT_KEY,
   FULL_FILE_CONTEXT,
+  IGNORE_WS_KEY,
   MODE_KEY,
   loadPref,
   type ContextMode,
@@ -40,13 +41,17 @@ export function CommitFileDiff({ repoId, entry }: { repoId: string; entry: FileH
   const [contextMode, setContextMode] = useState<ContextMode>(() =>
     loadPref(CONTEXT_KEY, "chunked")
   );
+  const [ignoreWs, setIgnoreWs] = useState(
+    () => loadPref<"on" | "off">(IGNORE_WS_KEY, "off") === "on",
+  );
   const context = contextMode === "full" ? FULL_FILE_CONTEXT : CHUNKED_CONTEXT;
   const editorRef = useRef<DiffEditorHandle | null>(null);
   const syntaxEnabled = useSettingsStore((s) => s.settings?.diff_syntax_highlighting ?? false);
 
   const { data, isFetching, isError, error } = useQuery<DiffEntry>({
-    queryKey: [repoId, "diff", request.source, request.path, request.oldPath, context],
-    queryFn: () => api.repoDiff(repoId, request.source, request.path, request.oldPath ?? null, context),
+    queryKey: [repoId, "diff", request.source, request.path, request.oldPath, context, ignoreWs],
+    queryFn: () =>
+      api.repoDiff(repoId, request.source, request.path, request.oldPath ?? null, context, ignoreWs),
     staleTime: STALE.live,
   });
 
@@ -57,6 +62,10 @@ export function CommitFileDiff({ repoId, entry }: { repoId: string; entry: FileH
   const chooseContext = (next: ContextMode) => {
     setContextMode(next);
     localStorage.setItem(CONTEXT_KEY, next);
+  };
+  const chooseIgnoreWs = (next: boolean) => {
+    setIgnoreWs(next);
+    localStorage.setItem(IGNORE_WS_KEY, next ? "on" : "off");
   };
 
   return (
@@ -83,6 +92,14 @@ export function CommitFileDiff({ repoId, entry }: { repoId: string; entry: FileH
               Full file
             </button>
           </div>
+          <button
+            onClick={() => chooseIgnoreWs(!ignoreWs)}
+            aria-pressed={ignoreWs}
+            title="Hide whitespace-only changes (git diff -w)"
+            style={segStyle(ignoreWs, "solo")}
+          >
+            Ignore whitespace
+          </button>
           <span
             className="legit-subtle"
             style={{
@@ -116,6 +133,7 @@ export function CommitFileDiff({ repoId, entry }: { repoId: string; entry: FileH
             editorRef={editorRef}
             rebuildKey={0}
             syntaxPath={syntaxEnabled ? request.path : null}
+            ignoreWhitespace={ignoreWs}
           />
         </div>
       </div>

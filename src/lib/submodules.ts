@@ -73,7 +73,7 @@ export async function openSubmoduleRepo(
   let target: string | null = null;
   if (source) {
     try {
-      target = submoduleSelectTarget(await api.repoDiff(repoId, source, path, null, 0));
+      target = submoduleSelectTarget(await api.repoDiff(repoId, source, path, null, 0, false));
     } catch {
       target = null;
     }

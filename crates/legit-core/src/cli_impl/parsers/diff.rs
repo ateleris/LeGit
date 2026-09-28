@@ -306,6 +306,88 @@ pub fn build_line_patch(
     Some(out)
 }
 
+/// A changed line's identity across two diffs of the same file state: side,
+/// file line number, and content. Line numbers refer to the same old/new
+/// files in both the `-w` and the unfiltered diff, and every changed line of
+/// the `-w` diff appears verbatim in the unfiltered one.
+type ChangedLineKey = (DiffLineKind, u32, String);
+
+/// The changed (non-context) lines of `hunk` with their key and their index
+/// among the hunk's diff lines (the index space of `build_line_patch`).
+fn changed_line_keys(hunk: &DiffHunk) -> Vec<(ChangedLineKey, usize)> {
+    let mut out = Vec::new();
+    let mut old_no = hunk.old_start;
+    let mut new_no = hunk.new_start;
+    for (idx, line) in hunk.lines.iter().enumerate() {
+        match line.kind {
+            DiffLineKind::Context => {
+                old_no += 1;
+                new_no += 1;
+            }
+            DiffLineKind::Removed => {
+                out.push(((DiffLineKind::Removed, old_no, line.content.clone()), idx));
+                old_no += 1;
+            }
+            DiffLineKind::Added => {
+                out.push(((DiffLineKind::Added, new_no, line.content.clone()), idx));
+                new_no += 1;
+            }
+        }
+    }
+    out
+}
+
+/// Map a selection in the `-w` diff onto the unfiltered diff of the same
+/// file state, so the ignore-whitespace view can stage/unstage/discard: the
+/// result is the unfiltered hunk index plus the line indices within it that
+/// carry exactly the selected visible changes (whitespace-only changes stay
+/// untouched). `ws_lines` selects a subset of the ws hunk's diff lines
+/// (`build_line_patch` index space); `None` means the whole hunk.
+///
+/// Returns `None` when the selection cannot be mapped faithfully: no such ws
+/// hunk, a selected line missing from the unfiltered diff (the file changed
+/// between fetch and action), or the selection spanning several unfiltered
+/// hunks (impossible for diffs of the same state - both diffs merge blocks
+/// by the same file-line distances, and the ws diff's blocks are a subset).
+pub fn map_ws_selection(
+    ws_raw: &str,
+    plain_raw: &str,
+    ws_hunk_index: usize,
+    ws_lines: Option<&std::collections::HashSet<usize>>,
+) -> Option<(usize, std::collections::HashSet<usize>)> {
+    let DiffEntry::Text(ws) = parse_file_diff(ws_raw) else { return None };
+    let DiffEntry::Text(plain) = parse_file_diff(plain_raw) else { return None };
+    let ws_hunk = ws.hunks.get(ws_hunk_index)?;
+
+    let wanted: Vec<ChangedLineKey> = changed_line_keys(ws_hunk)
+        .into_iter()
+        .filter(|(_, idx)| ws_lines.map_or(true, |s| s.contains(idx)))
+        .map(|(key, _)| key)
+        .collect();
+    if wanted.is_empty() {
+        return None;
+    }
+
+    let mut lookup: std::collections::HashMap<ChangedLineKey, (usize, usize)> =
+        std::collections::HashMap::new();
+    for (pidx, hunk) in plain.hunks.iter().enumerate() {
+        for (key, line_idx) in changed_line_keys(hunk) {
+            lookup.insert(key, (pidx, line_idx));
+        }
+    }
+
+    let mut plain_hunk: Option<usize> = None;
+    let mut indices = std::collections::HashSet::new();
+    for key in &wanted {
+        let (pidx, line_idx) = *lookup.get(key)?;
+        if *plain_hunk.get_or_insert(pidx) != pidx {
+            return None;
+        }
+        indices.insert(line_idx);
+    }
+    Some((plain_hunk?, indices))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -716,6 +798,131 @@ diff --git a/n.txt b/n.txt
     #[test]
     fn line_patch_out_of_range_hunk_is_none() {
         assert!(build_line_patch(MIXED_DIFF, 5, &sel(&[1]), false).is_none());
+    }
+
+    // ---- map_ws_selection -------------------------------------------------
+
+    // Unfiltered diff: hunk 0 is whitespace-only (b -> "b  "), hunk 1 mixes a
+    // whitespace-only line ("d" -> "  d", indices 1/3) with a real change
+    // ("e" -> "E", indices 2/4).
+    const PLAIN_FOR_WS: &str = "\
+diff --git a/f.txt b/f.txt
+index 1111111..2222222 100644
+--- a/f.txt
++++ b/f.txt
+@@ -1,3 +1,3 @@
+ a
+-b
++b
+ c
+@@ -10,4 +10,4 @@
+ x
+-d
+-e
++  d
++E
+ y
+";
+
+    // The -w view of the same state: hunk 0 gone, only the real change left
+    // (whitespace-only pairs render as context, with the OLD spelling).
+    const WS_FOR_WS: &str = "\
+diff --git a/f.txt b/f.txt
+index 1111111..2222222 100644
+--- a/f.txt
++++ b/f.txt
+@@ -10,4 +10,4 @@
+ x
+ d
+-e
++E
+ y
+";
+
+    #[test]
+    fn ws_whole_hunk_maps_to_the_real_lines_of_the_later_plain_hunk() {
+        let (hunk, lines) = map_ws_selection(WS_FOR_WS, PLAIN_FOR_WS, 0, None).unwrap();
+        // Plain hunk 1; only the real change's lines ("-e" idx 2, "+E" idx 4) -
+        // the whitespace-only pair (idx 1/3) is NOT part of the selection.
+        assert_eq!(hunk, 1);
+        assert_eq!(lines, sel(&[2, 4]));
+    }
+
+    #[test]
+    fn ws_line_subset_maps_line_indices() {
+        // Select only "+E" in the ws hunk (its diff-line index there is 3).
+        let (hunk, lines) = map_ws_selection(WS_FOR_WS, PLAIN_FOR_WS, 0, Some(&sel(&[3]))).unwrap();
+        assert_eq!(hunk, 1);
+        assert_eq!(lines, sel(&[4]));
+    }
+
+    #[test]
+    fn ws_mapping_fails_safe_on_content_drift() {
+        // The worktree changed between fetch and action: "+E" is now "+Z" in
+        // the plain diff, so the shown selection no longer exists - None, not
+        // a wrong patch.
+        let drifted = PLAIN_FOR_WS.replace("+E", "+Z");
+        assert!(map_ws_selection(WS_FOR_WS, &drifted, 0, None).is_none());
+    }
+
+    // ONE unfiltered hunk (two real changes chained by a whitespace-only
+    // change between them) splits into TWO shown -w hunks. Each shown hunk
+    // must map to ITS OWN lines of that shared plain hunk - staging shown
+    // hunk 0 must not drag the other real change (or the ws pair) along.
+    const PLAIN_SPLIT: &str = "\
+diff --git a/f.txt b/f.txt
+--- a/f.txt
++++ b/f.txt
+@@ -1,11 +1,11 @@
+ ctx0
+-B
++B2
+ c1
+ c2
+ c3
+-w
++w
+ c4
+ c5
+ c6
+-D
++D2
+ ctx9
+";
+
+    const WS_SPLIT: &str = "\
+diff --git a/f.txt b/f.txt
+--- a/f.txt
++++ b/f.txt
+@@ -1,5 +1,5 @@
+ ctx0
+-B
++B2
+ c1
+ c2
+ c3
+@@ -7,5 +7,5 @@
+ c4
+ c5
+ c6
+-D
++D2
+ ctx9
+";
+
+    #[test]
+    fn ws_split_hunks_map_to_their_own_lines_of_the_shared_plain_hunk() {
+        let (hunk, lines) = map_ws_selection(WS_SPLIT, PLAIN_SPLIT, 0, None).unwrap();
+        assert_eq!((hunk, lines), (0, sel(&[1, 2])));
+        let (hunk, lines) = map_ws_selection(WS_SPLIT, PLAIN_SPLIT, 1, None).unwrap();
+        assert_eq!((hunk, lines), (0, sel(&[11, 12])));
+    }
+
+    #[test]
+    fn ws_mapping_out_of_range_or_context_only_is_none() {
+        assert!(map_ws_selection(WS_FOR_WS, PLAIN_FOR_WS, 1, None).is_none());
+        // A selection holding only context lines maps to nothing.
+        assert!(map_ws_selection(WS_FOR_WS, PLAIN_FOR_WS, 0, Some(&sel(&[0]))).is_none());
     }
 
     // CRLF file content: the `\r` is part of every diffed line and must

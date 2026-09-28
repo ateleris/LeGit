@@ -95,8 +95,11 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         path: &Path,
         old_path: Option<&Path>,
         context: u32,
+        ignore_whitespace: bool,
     ) -> Result<DiffEntry, GitError> {
-        let raw = self.run_diff_text(source, path, old_path, context).await?;
+        let raw = self
+            .run_diff_text(source, path, old_path, context, ignore_whitespace)
+            .await?;
         // Cap what reaches the webview: rendering a multi-MB diff moves
         // several copies of the content through IPC, JSON and the editor
         // (which crashed WebView2 with renderer OOM on minified multi-MB
@@ -126,11 +129,18 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         path: &Path,
         hunk_index: usize,
         op: HunkOp,
+        ignore_whitespace: bool,
     ) -> Result<(), GitError> {
-        // Always 3 lines of context - the panel's whole-file view doesn't change
-        // which hunk an index refers to.
+        if ignore_whitespace {
+            // The shown diff was -w: its indices don't address the unfiltered
+            // diff the patch must be built from - map the whole shown hunk.
+            return self.apply_ws_selection(path, hunk_index, None, op).await;
+        }
+        // The unfiltered -U3 diff: the same one the panel's chunked view
+        // shows, so its hunk indices address it directly. The whole-file view
+        // merges hunks and therefore offers no hunk actions.
         let raw = self
-            .run_diff_text(&Self::source_for_op(op), path, None, 3)
+            .run_diff_text(&Self::source_for_op(op), path, None, 3, false)
             .await?;
         let patch = parsers::diff::build_hunk_patch(&raw, hunk_index).ok_or_else(|| {
             GitError::Internal(format!("no hunk at index {hunk_index} for {}", path.display()))
@@ -144,21 +154,61 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         hunk_index: usize,
         line_indices: &[usize],
         op: HunkOp,
+        ignore_whitespace: bool,
     ) -> Result<(), GitError> {
         if line_indices.is_empty() {
             return Ok(());
         }
+        let selected: std::collections::HashSet<usize> = line_indices.iter().copied().collect();
+        if ignore_whitespace {
+            return self
+                .apply_ws_selection(path, hunk_index, Some(selected), op)
+                .await;
+        }
         let raw = self
-            .run_diff_text(&Self::source_for_op(op), path, None, 3)
+            .run_diff_text(&Self::source_for_op(op), path, None, 3, false)
             .await?;
         // Unstage/discard apply with `-R`, which flips how unselected +/- lines
         // are treated when building the partial patch.
         let reverse = !matches!(op, HunkOp::Stage);
-        let selected: std::collections::HashSet<usize> = line_indices.iter().copied().collect();
         let patch = parsers::diff::build_line_patch(&raw, hunk_index, &selected, reverse)
             .ok_or_else(|| {
                 GitError::Internal(format!(
                     "no hunk at index {hunk_index} for {}",
+                    path.display()
+                ))
+            })?;
+        self.apply_op_patch(op, &patch).await
+    }
+
+    /// Apply a hunk/line selection made in the ignore-whitespace VIEW: map it
+    /// onto the unfiltered diff (`map_ws_selection`) and apply exactly those
+    /// lines as a line patch - whitespace-only changes, hidden in that view,
+    /// are never applied. A selection that no longer maps (the file changed
+    /// underneath) errors instead of applying the wrong content.
+    async fn apply_ws_selection(
+        &self,
+        path: &Path,
+        ws_hunk_index: usize,
+        ws_lines: Option<std::collections::HashSet<usize>>,
+        op: HunkOp,
+    ) -> Result<(), GitError> {
+        let source = Self::source_for_op(op);
+        let ws_raw = self.run_diff_text(&source, path, None, 3, true).await?;
+        let plain_raw = self.run_diff_text(&source, path, None, 3, false).await?;
+        let (plain_hunk, lines) =
+            parsers::diff::map_ws_selection(&ws_raw, &plain_raw, ws_hunk_index, ws_lines.as_ref())
+                .ok_or_else(|| {
+                    GitError::Internal(format!(
+                        "whitespace-filtered hunk {ws_hunk_index} of {} no longer matches the diff",
+                        path.display()
+                    ))
+                })?;
+        let reverse = !matches!(op, HunkOp::Stage);
+        let patch = parsers::diff::build_line_patch(&plain_raw, plain_hunk, &lines, reverse)
+            .ok_or_else(|| {
+                GitError::Internal(format!(
+                    "no hunk at index {plain_hunk} for {}",
                     path.display()
                 ))
             })?;
@@ -403,6 +453,7 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         path: &Path,
         old_path: Option<&Path>,
         context: u32,
+        ignore_whitespace: bool,
     ) -> Result<String, GitError> {
         let runner = self.runner().await;
         let unified = format!("-U{context}");
@@ -420,6 +471,9 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
             "--no-ext-diff".into(),
             unified,
         ];
+        if ignore_whitespace {
+            args.push("-w".into());
+        }
 
         // For a rename/copy, pass BOTH paths with rename detection so git pairs
         // them: a modified rename yields real content hunks, a pure rename yields

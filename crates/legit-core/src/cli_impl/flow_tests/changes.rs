@@ -99,8 +99,58 @@ async fn file_diff_commit_range_passes_both_revs() {
         from: CommitId::new("main"),
         to: CommitId::new("feature"),
     };
-    let entry = b.file_diff(&source, Path::new("a.txt"), None, 3).await.unwrap();
+    let entry = b.file_diff(&source, Path::new("a.txt"), None, 3, false).await.unwrap();
     assert!(matches!(entry, DiffEntry::Text(_)), "{entry:?}");
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn file_diff_ignore_whitespace_adds_w() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["-c", "diff.submodule=short", "diff", "--no-color", "--no-ext-diff", "-U3", "-w", "--", "a.txt"],
+        ok("diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-x\n+y\n"),
+    );
+    let (b, exec) = backend(fake);
+
+    let entry = b
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("a.txt"), None, 3, true)
+        .await
+        .unwrap();
+    assert!(matches!(entry, DiffEntry::Text(_)), "{entry:?}");
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn apply_hunk_ignore_whitespace_maps_onto_the_unfiltered_diff() {
+    // The shown -w diff has ONE hunk (the real change); the unfiltered diff
+    // has a whitespace-only hunk before it plus a whitespace-only line pair
+    // inside the real hunk. Staging shown hunk 0 must fetch BOTH diffs, map
+    // onto unfiltered hunk 1, and apply a line patch carrying only the real
+    // change - every whitespace-only edit stays unstaged.
+    let ws = "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n\
+              @@ -10,4 +10,4 @@\n x\n d\n-e\n+E\n y\n";
+    let plain = "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n\
+                 @@ -1,3 +1,3 @@\n a\n-b\n+b  \n c\n\
+                 @@ -10,4 +10,4 @@\n x\n-d\n-e\n+  d\n+E\n y\n";
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["-c", "diff.submodule=short", "diff", "--no-color", "--no-ext-diff", "-U3", "-w", "--", "f.txt"],
+        ok(ws),
+    );
+    fake.expect(
+        &["-c", "diff.submodule=short", "diff", "--no-color", "--no-ext-diff", "-U3", "--", "f.txt"],
+        ok(plain),
+    );
+    fake.expect_stdin(
+        &["apply", "--cached", "--recount"],
+        "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n\
+         @@ -10,4 +10,4 @@\n x\n d\n-e\n+E\n y\n",
+        ok(""),
+    );
+    let (b, exec) = backend(fake);
+
+    b.apply_hunk(Path::new("f.txt"), 0, HunkOp::Stage, true).await.unwrap();
     exec.assert_done();
 }
 
@@ -119,7 +169,7 @@ async fn file_diff_untracked_probe_failure_is_an_error_not_untracked() {
     let (b, exec) = backend(fake);
 
     let res = b
-        .file_diff(&DiffSource::WorkingUnstaged, Path::new("a.txt"), None, 3)
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("a.txt"), None, 3, false)
         .await;
     assert!(
         matches!(res, Err(GitError::CommandFailed { exit_code: 128, .. })),
@@ -154,7 +204,7 @@ async fn file_diff_presents_an_untracked_nested_repo_as_a_submodule_add() {
     let (b, exec) = backend(fake);
 
     let entry = b
-        .file_diff(&DiffSource::WorkingUnstaged, Path::new("subs/declared-only"), None, 3)
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("subs/declared-only"), None, 3, false)
         .await
         .unwrap();
     let DiffEntry::Submodule(sub) = entry else { panic!("expected Submodule: {entry:?}") };
@@ -187,7 +237,7 @@ async fn file_diff_untracked_nested_repo_tolerates_a_trailing_slash() {
     let (b, exec) = backend(fake);
 
     let entry = b
-        .file_diff(&DiffSource::WorkingUnstaged, Path::new("subs/declared-only/"), None, 3)
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("subs/declared-only/"), None, 3, false)
         .await
         .unwrap();
     let DiffEntry::Submodule(sub) = entry else { panic!("expected Submodule: {entry:?}") };
@@ -218,7 +268,7 @@ async fn file_diff_untracked_plain_dir_stays_no_changes() {
     let (b, exec) = backend(fake);
 
     let entry = b
-        .file_diff(&DiffSource::WorkingUnstaged, Path::new("plain"), None, 3)
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("plain"), None, 3, false)
         .await
         .unwrap();
     let DiffEntry::Text(text) = entry else { panic!("expected Text: {entry:?}") };

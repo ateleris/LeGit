@@ -23,7 +23,6 @@ import {
   type DiffEditorHandle,
   type DiffViewMode,
   type HunkAction,
-  type LineActionOp,
 } from "./DiffEditor";
 import { spliceEdits, splitLines } from "./editModel";
 import { expandDiff, type HunkExpansion } from "./expandModel";
@@ -34,23 +33,12 @@ import {
   CHUNKED_CONTEXT,
   CONTEXT_KEY,
   FULL_FILE_CONTEXT,
+  IGNORE_WS_KEY,
   MODE_KEY,
   loadPref,
   type ContextMode,
 } from "./viewPrefs";
-
-/** Per-hunk actions offered for a given diff source. Commit diffs are read-only. */
-function actionsForSource(req: DiffRequest | null): HunkAction[] {
-  if (!req) return [];
-  switch (req.source.kind) {
-    case "working_unstaged":
-      return ["stage", "discard"];
-    case "working_staged":
-      return ["unstage"];
-    default:
-      return [];
-  }
-}
+import { diffCapabilities } from "./diffActions";
 
 /** Same file/source identity (a refetch of it must not count as a switch). */
 function sameTarget(a: DiffRequest | null, b: DiffRequest | null): boolean {
@@ -93,6 +81,9 @@ export function DiffPanel() {
   const [contextMode, setContextMode] = useState<ContextMode>(() =>
     loadPref(CONTEXT_KEY, "chunked")
   );
+  const [ignoreWs, setIgnoreWs] = useState(
+    () => loadPref<"on" | "off">(IGNORE_WS_KEY, "off") === "on",
+  );
   const editorRef = useRef<DiffEditorHandle | null>(null);
   const dataRef = useRef<DiffEntry | undefined>(undefined);
 
@@ -106,9 +97,9 @@ export function DiffPanel() {
   } = useQuery<DiffEntry>({
     // `oldPath` lets the backend pair a rename's two sides: a modified rename
     // returns real hunks; a pure rename returns an empty diff (→ rename notice).
-    queryKey: [request?.repoId, "diff", request?.source, request?.path, request?.oldPath, context],
+    queryKey: [request?.repoId, "diff", request?.source, request?.path, request?.oldPath, context, ignoreWs],
     queryFn: () =>
-      api.repoDiff(request!.repoId, request!.source, request!.path, request!.oldPath ?? null, context),
+      api.repoDiff(request!.repoId, request!.source, request!.path, request!.oldPath ?? null, context, ignoreWs),
     // Only diff the ACTIVE repo: the per-repo request key makes a mismatch
     // impossible after the switch renders, but this guards the render where
     // the store subscriptions have not caught up yet. While dirty,
@@ -209,28 +200,17 @@ export function DiffPanel() {
     });
   }, []);
 
-  // Editable only for the unstaged working diff: its new side IS the file on
-  // disk. Staged diffs (new side = index) and commit diffs stay read-only.
-  const editable = request?.source.kind === "working_unstaged";
-
   // Global opt-in for syntax highlighting; the path picks the language.
   const syntaxEnabled = useSettingsStore((s) => s.settings?.diff_syntax_highlighting ?? false);
   const syntaxPath = syntaxEnabled && request ? request.path : null;
 
-  const actions = useMemo(() => actionsForSource(request), [request?.source.kind]);
-
-  // The per-line hover affordance: stage a line in an unstaged diff, unstage one
-  // in a staged diff, nothing for read-only commit diffs.
-  const lineActionOp: LineActionOp = useMemo(() => {
-    switch (request?.source.kind) {
-      case "working_unstaged":
-        return "stage";
-      case "working_staged":
-        return "unstage";
-      default:
-        return null;
-    }
-  }, [request?.source.kind]);
+  // Hunk actions, per-line affordance and editability in one decision (see
+  // diffActions.ts): the full-file and ignore-whitespace views are
+  // index-incompatible with the backend's unfiltered diff.
+  const { actions, lineActionOp, editable } = useMemo(
+    () => diffCapabilities(request?.source.kind, contextMode === "chunked", ignoreWs),
+    [request?.source.kind, contextMode, ignoreWs],
+  );
 
   // Whole-hunk stage/unstage/discard (header buttons + context menu).
   const onAction = useCallback(
@@ -242,16 +222,18 @@ export function DiffPanel() {
       }
       const { repoId, path } = request;
       try {
-        if (action === "stage") await api.repoStageHunk(repoId, path, hunkIndex);
-        else if (action === "unstage") await api.repoUnstageHunk(repoId, path, hunkIndex);
-        else await api.repoDiscardHunk(repoId, path, hunkIndex);
+        // The flag tells the backend which diff the index addresses: with it
+        // set, the shown -w selection is mapped onto the unfiltered diff.
+        if (action === "stage") await api.repoStageHunk(repoId, path, hunkIndex, ignoreWs);
+        else if (action === "unstage") await api.repoUnstageHunk(repoId, path, hunkIndex, ignoreWs);
+        else await api.repoDiscardHunk(repoId, path, hunkIndex, ignoreWs);
         // Refresh the working-tree views and this diff so the new state shows.
         invalidateRepoDomains(queryClient, repoId, ["status", "log", "diff"]);
       } catch (e) {
         notify.error(formatAppError(e));
       }
     },
-    [request, queryClient]
+    [request, queryClient, ignoreWs]
   );
 
   // Line-level stage/unstage/discard: a single line from the hover
@@ -266,15 +248,15 @@ export function DiffPanel() {
       }
       const { repoId, path } = request;
       try {
-        if (action === "stage") await api.repoStageLines(repoId, path, hunkIndex, lines);
-        else if (action === "unstage") await api.repoUnstageLines(repoId, path, hunkIndex, lines);
-        else await api.repoDiscardLines(repoId, path, hunkIndex, lines);
+        if (action === "stage") await api.repoStageLines(repoId, path, hunkIndex, lines, ignoreWs);
+        else if (action === "unstage") await api.repoUnstageLines(repoId, path, hunkIndex, lines, ignoreWs);
+        else await api.repoDiscardLines(repoId, path, hunkIndex, lines, ignoreWs);
         invalidateRepoDomains(queryClient, repoId, ["status", "log", "diff"]);
       } catch (e) {
         notify.error(formatAppError(e));
       }
     },
-    [request, queryClient]
+    [request, queryClient, ignoreWs]
   );
 
   // Write the edited document back to the file: read the on-disk baseline
@@ -325,6 +307,10 @@ export function DiffPanel() {
     setContextMode(next);
     localStorage.setItem(CONTEXT_KEY, next);
   };
+  const chooseIgnoreWs = (next: boolean) => {
+    setIgnoreWs(next);
+    localStorage.setItem(IGNORE_WS_KEY, next ? "on" : "off");
+  };
 
   if (!request) {
     return (
@@ -367,6 +353,15 @@ export function DiffPanel() {
             Full file
           </button>
         </div>
+        <button
+          onClick={() => chooseIgnoreWs(!ignoreWs)}
+          aria-pressed={ignoreWs}
+          disabled={dirty}
+          title="Hide whitespace-only changes (git diff -w). Staging acts on the visible changes; editing is unavailable while on."
+          style={segStyle(ignoreWs, "solo")}
+        >
+          Ignore whitespace
+        </button>
         <span
           className="legit-subtle"
           style={{
@@ -447,6 +442,7 @@ export function DiffPanel() {
             editorRef={editorRef}
             rebuildKey={rebuildKey}
             syntaxPath={syntaxPath}
+            ignoreWhitespace={ignoreWs}
           />
       </div>
     </div>

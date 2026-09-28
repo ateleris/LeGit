@@ -303,6 +303,11 @@ button.legit-region-divider__toggle:hover {
 
 .legit-panel__toolbar {
   display: flex;
+  /* A toolbar must never clip its controls at narrow widths - it wraps onto
+     further rows instead (min-height below, so wrapping just grows the bar).
+     Inline toolbar styles set display/gap but never flex-wrap, so this
+     applies to every panel toolbar; pinned by toolbarControls.test.ts. */
+  flex-wrap: wrap;
   gap: calc(var(--ui-font-size) * 0.5);
   align-items: center;
   padding: calc(var(--ui-font-size) * 0.5) calc(var(--ui-font-size) * 0.667);

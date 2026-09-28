@@ -23,6 +23,7 @@ import { MenuItem, SectionLabel, Separator } from "../shared/menu/primitives";
 import { AddToGitignoreMenuItem } from "../shared/AddToGitignoreMenuItem";
 import { CopyPathMenuSection } from "../shared/CopyPathMenuSection";
 import { FileRowMenuSection } from "../shared/FileRowMenuSection";
+import { OpenInFolderMenuItem } from "../shared/OpenInEditorMenuItem";
 import { STALE } from "../../lib/queryTiming";
 import { useLfsStatus } from "../../lib/queries/useRepoQueries";
 
@@ -380,7 +381,6 @@ export function FilesPanel() {
                   <DirMenuSection
                     dirPath={dirPath}
                     atRev={rev !== null}
-                    onReveal={() => reveal(dirPath)}
                     onClose={closeMenu}
                   />,
                 )
@@ -473,27 +473,29 @@ function FileMenuSection({
   );
 }
 
-/** Context-menu section for a folder row: ignore the whole folder, copy,
- * reveal. In browse-at-commit mode only copy remains (the others act on the
- * working tree, where the folder may not exist). */
+/** Context-menu section for a folder row: the file rows' copy/open block
+ * (same entries, same order), then the fenced ignore-the-folder entry. In
+ * browse-at-commit mode only copy remains (the others act on the working
+ * tree, where the folder may not exist). */
 function DirMenuSection({
   dirPath,
   atRev,
-  onReveal,
   onClose,
 }: {
   dirPath: string;
   atRev: boolean;
-  onReveal: () => void;
   onClose: () => void;
 }) {
   return (
     <>
       <SectionLabel>{dirPath}/</SectionLabel>
-      {!atRev && <AddToGitignoreMenuItem path={dirPath} isDir onClose={onClose} />}
       <CopyPathMenuSection path={dirPath} onClose={onClose} />
+      {!atRev && <OpenInFolderMenuItem path={dirPath} onClose={onClose} />}
       {!atRev && (
-        <MenuItem onClick={() => { onClose(); onReveal(); }}>Open in folder</MenuItem>
+        <>
+          <Separator />
+          <AddToGitignoreMenuItem path={dirPath} isDir onClose={onClose} />
+        </>
       )}
     </>
   );

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -52,6 +52,38 @@ describe("toolbar control heights", () => {
     const inputHeight = heightOf(inputRules[0].body);
     expect(buttonHeight).toBeDefined();
     expect(inputHeight).toBe(buttonHeight);
+  });
+
+  it("toolbars wrap instead of clipping controls at narrow widths", () => {
+    const toolbarRules = rulesMatching(".legit-panel__toolbar").filter(
+      (r) => r.selectors.trim() === ".legit-panel__toolbar",
+    );
+    expect(toolbarRules).toHaveLength(1);
+    expect(toolbarRules[0].body).toMatch(/flex-wrap:\s*wrap/);
+    // The bar must be free to grow when it wraps: a fixed height would clip
+    // the second row, so only min-height is allowed on the toolbar itself.
+    expect(heightOf(toolbarRules[0].body)).toBeUndefined();
+  });
+
+  it("no component re-hardens a flex row with flexWrap nowrap", () => {
+    // The toolbar wrap above is only safe while nothing opts back into
+    // clipping; nothing in the app needs an explicit nowrap (the flex
+    // default) - clipping rows were exactly the bug.
+    const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.isDirectory()) walk(join(dir, e.name));
+        else if (/\.(?:tsx?|css)$/.test(e.name)) {
+          const text = readFileSync(join(dir, e.name), "utf8");
+          if (/flexWrap:\s*["']nowrap["']|flex-wrap:\s*nowrap/.test(text)) {
+            offenders.push(join(dir, e.name));
+          }
+        }
+      }
+    };
+    walk(root);
+    expect(offenders).toEqual([]);
   });
 
   it("legit-compact-controls shares the toolbar normalization rules", () => {

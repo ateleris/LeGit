@@ -174,7 +174,7 @@ async fn oversized_diff_classifies_as_too_large() {
     );
     let (b, exec) = backend(fake);
     let entry = b
-        .file_diff(&DiffSource::WorkingUnstaged, Path::new("big.svg"), None, 3)
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("big.svg"), None, 3, false)
         .await
         .unwrap();
     match entry {
@@ -205,7 +205,7 @@ async fn oversized_untracked_fallback_classifies_as_too_large() {
     );
     let (b, exec) = backend(fake);
     let entry = b
-        .file_diff(&DiffSource::WorkingUnstaged, Path::new("big.svg"), None, 3)
+        .file_diff(&DiffSource::WorkingUnstaged, Path::new("big.svg"), None, 3, false)
         .await
         .unwrap();
     assert!(

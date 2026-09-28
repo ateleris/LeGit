@@ -22,6 +22,7 @@ import { formatByteSize } from "../../lib/formatBytes";
 import { LfsPointerNotice } from "../shared/LfsPointerNotice";
 import { lfsPointerDiffSides } from "../../lib/lfsPointer";
 import type { DiffEntry, DiffRequest, TextDiff } from "../../lib/types";
+import { emptyDiffMessage } from "./diffActions";
 
 const ACTION_TITLE: Record<HunkAction, string> = {
   stage: "Stage chunk",
@@ -46,6 +47,7 @@ export function DiffBody({
   onExpandHunk,
   trailingExpander,
   syntaxPath,
+  ignoreWhitespace = false,
 }: {
   data: DiffEntry | undefined;
   mode: DiffViewMode;
@@ -63,6 +65,9 @@ export function DiffBody({
   onExpandHunk?: (hunkIndex: number, dir: "up" | "down") => void;
   trailingExpander?: boolean;
   syntaxPath: string | null;
+  /** The shown diff was fetched with -w; an empty one then means
+   *  "whitespace-only change", and the empty state says so. */
+  ignoreWhitespace?: boolean;
 }) {
   const { openMenu, closeMenu } = usePanelContextMenu();
   const destructiveMenuConfirm = useDestructiveMenuConfirm();
@@ -171,9 +176,10 @@ export function DiffBody({
     return (
       <div className="legit-panel__body">
         <span className="legit-subtle">
-          {isRename
-            ? `Renamed${request.oldPath ? ` from ${request.oldPath}` : ""} → ${request.path} (no content changes)`
-            : "No changes."}
+          {emptyDiffMessage(
+            isRename ? { oldPath: request.oldPath, path: request.path } : null,
+            ignoreWhitespace,
+          )}
         </span>
       </div>
     );

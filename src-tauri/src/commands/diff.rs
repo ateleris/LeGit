@@ -9,7 +9,8 @@ use std::path::PathBuf;
 /// The diff for `path` from one of the comparison sources (working unstaged,
 /// working staged, or a commit vs its parent). `context` is the number of
 /// surrounding context lines — small for the chunked view, very large for the
-/// whole-file view.
+/// whole-file view. `ignore_whitespace` diffs with `-w` (display-only: the
+/// panel disables hunk/line actions while it is on).
 #[tauri::command]
 #[specta::specta]
 pub async fn repo_diff(
@@ -19,12 +20,19 @@ pub async fn repo_diff(
     path: String,
     old_path: Option<String>,
     context: u32,
+    ignore_whitespace: bool,
 ) -> Result<DiffEntry, AppError> {
     let session = state.get_session(&repo_id).await?;
     let old = old_path.map(PathBuf::from);
     session
         .backend
-        .file_diff(&source, &PathBuf::from(path), old.as_deref(), context)
+        .file_diff(
+            &source,
+            &PathBuf::from(path),
+            old.as_deref(),
+            context,
+            ignore_whitespace,
+        )
         .await
         .map_err(AppError::Git)
 }
@@ -37,11 +45,12 @@ pub async fn repo_stage_hunk(
     repo_id: String,
     path: String,
     hunk_index: u32,
+    ignore_whitespace: bool,
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
     session
         .backend
-        .apply_hunk(&PathBuf::from(path), hunk_index as usize, HunkOp::Stage)
+        .apply_hunk(&PathBuf::from(path), hunk_index as usize, HunkOp::Stage, ignore_whitespace)
         .await
         .map_err(AppError::Git)
 }
@@ -54,11 +63,12 @@ pub async fn repo_unstage_hunk(
     repo_id: String,
     path: String,
     hunk_index: u32,
+    ignore_whitespace: bool,
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
     session
         .backend
-        .apply_hunk(&PathBuf::from(path), hunk_index as usize, HunkOp::Unstage)
+        .apply_hunk(&PathBuf::from(path), hunk_index as usize, HunkOp::Unstage, ignore_whitespace)
         .await
         .map_err(AppError::Git)
 }
@@ -72,11 +82,12 @@ pub async fn repo_discard_hunk(
     repo_id: String,
     path: String,
     hunk_index: u32,
+    ignore_whitespace: bool,
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
     session
         .backend
-        .apply_hunk(&PathBuf::from(path), hunk_index as usize, HunkOp::Discard)
+        .apply_hunk(&PathBuf::from(path), hunk_index as usize, HunkOp::Discard, ignore_whitespace)
         .await
         .map_err(AppError::Git)
 }
@@ -95,11 +106,12 @@ pub async fn repo_stage_lines(
     path: String,
     hunk_index: u32,
     line_indices: Vec<u32>,
+    ignore_whitespace: bool,
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
     session
         .backend
-        .apply_lines(&PathBuf::from(path), hunk_index as usize, &to_indices(line_indices), HunkOp::Stage)
+        .apply_lines(&PathBuf::from(path), hunk_index as usize, &to_indices(line_indices), HunkOp::Stage, ignore_whitespace)
         .await
         .map_err(AppError::Git)
 }
@@ -113,11 +125,12 @@ pub async fn repo_unstage_lines(
     path: String,
     hunk_index: u32,
     line_indices: Vec<u32>,
+    ignore_whitespace: bool,
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
     session
         .backend
-        .apply_lines(&PathBuf::from(path), hunk_index as usize, &to_indices(line_indices), HunkOp::Unstage)
+        .apply_lines(&PathBuf::from(path), hunk_index as usize, &to_indices(line_indices), HunkOp::Unstage, ignore_whitespace)
         .await
         .map_err(AppError::Git)
 }
@@ -131,11 +144,12 @@ pub async fn repo_discard_lines(
     path: String,
     hunk_index: u32,
     line_indices: Vec<u32>,
+    ignore_whitespace: bool,
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
     session
         .backend
-        .apply_lines(&PathBuf::from(path), hunk_index as usize, &to_indices(line_indices), HunkOp::Discard)
+        .apply_lines(&PathBuf::from(path), hunk_index as usize, &to_indices(line_indices), HunkOp::Discard, ignore_whitespace)
         .await
         .map_err(AppError::Git)
 }

@@ -118,6 +118,7 @@ async fn pure_rename_unstaged_diff_skips_the_untracked_fallbacks() {
             Path::new("Pricing.txt"),
             Some(Path::new("pricing.txt")),
             3,
+            false,
         )
         .await
         .unwrap();

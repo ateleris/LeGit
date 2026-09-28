@@ -13,13 +13,18 @@ fn main() {
 /// read via `option_env!`) so dev/PR artifacts identify their exact commit
 /// in About and the log banner - with a `.wip` suffix when tracked files
 /// have uncommitted changes (the `git describe --dirty` convention), since
-/// a bare hash would falsely claim "built from this commit". Official
+/// a bare hash would falsely claim "built from this commit". PR CI builds
+/// (`LEGIT_PR_NUMBER`, set by pr-build.yml) bake `<headsha>.PR<n>` instead:
+/// the PR HEAD sha rather than the checked-out ephemeral merge commit, and
+/// never `.wip` - a CI checkout is clean by construction. Official
 /// releases set `LEGIT_RELEASE_BUILD` to keep the clean version; a build
 /// without git (source tarball) is silently clean too. The bundle version
 /// itself is never touched: MSI rejects `+metadata` and the updater
 /// compares it.
 fn emit_build_hash() {
     println!("cargo:rerun-if-env-changed=LEGIT_RELEASE_BUILD");
+    println!("cargo:rerun-if-env-changed=LEGIT_PR_NUMBER");
+    println!("cargo:rerun-if-env-changed=LEGIT_PR_HEAD_SHA");
     // A stale baked value is worse than none: HEAD changes on checkout, the
     // ref directory on commit, and DIRTINESS changes on Rust edits - the
     // Rust trees are watched so the `.wip` flag re-evaluates exactly when
@@ -42,6 +47,21 @@ fn emit_build_hash() {
             .success()
             .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
     };
+    if let Some(pr) = std::env::var("LEGIT_PR_NUMBER")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        let head = std::env::var("LEGIT_PR_HEAD_SHA")
+            .ok()
+            .filter(|s| s.len() >= 7 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+            .map(|s| s[..7].to_string())
+            .or_else(|| git(&["rev-parse", "--short", "HEAD"]).filter(|h| !h.is_empty()));
+        match head {
+            Some(head) => println!("cargo:rustc-env=LEGIT_BUILD_HASH={head}.PR{pr}"),
+            None => println!("cargo:rustc-env=LEGIT_BUILD_HASH=PR{pr}"),
+        }
+        return;
+    }
     let Some(hash) = git(&["rev-parse", "--short", "HEAD"]).filter(|h| !h.is_empty()) else {
         return;
     };

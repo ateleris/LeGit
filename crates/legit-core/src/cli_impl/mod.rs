@@ -296,8 +296,10 @@ impl<E: GitExecutor + ?Sized> GitBackend for GitCliBackend<E> {
         path: &Path,
         old_path: Option<&Path>,
         context: u32,
+        ignore_whitespace: bool,
     ) -> Result<DiffEntry, GitError> {
-        self.file_diff(source, path, old_path, context).await
+        self.file_diff(source, path, old_path, context, ignore_whitespace)
+            .await
     }
 
     async fn apply_hunk(
@@ -305,8 +307,9 @@ impl<E: GitExecutor + ?Sized> GitBackend for GitCliBackend<E> {
         path: &Path,
         hunk_index: usize,
         op: HunkOp,
+        ignore_whitespace: bool,
     ) -> Result<(), GitError> {
-        self.apply_hunk(path, hunk_index, op).await
+        self.apply_hunk(path, hunk_index, op, ignore_whitespace).await
     }
 
     async fn apply_lines(
@@ -315,8 +318,10 @@ impl<E: GitExecutor + ?Sized> GitBackend for GitCliBackend<E> {
         hunk_index: usize,
         line_indices: &[usize],
         op: HunkOp,
+        ignore_whitespace: bool,
     ) -> Result<(), GitError> {
-        self.apply_lines(path, hunk_index, line_indices, op).await
+        self.apply_lines(path, hunk_index, line_indices, op, ignore_whitespace)
+            .await
     }
 
     async fn commit(&self, opts: CommitOptions) -> Result<CommitId, GitError> {
