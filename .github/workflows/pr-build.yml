@@ -75,23 +75,17 @@ jobs:
             args: "--target x86_64-apple-darwin"
             bundle-paths: |
               target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+          # Linux and Windows produce several installer formats from one
+          # build - uploaded as one artifact PER FORMAT below (no `artifact`
+          # field), so a download grabs exactly the installer needed.
           - platform: ubuntu-22.04 # .deb + .rpm + .AppImage
             label: Linux
-            artifact: LeGit-linux
             rust-targets: ""
             args: ""
-            bundle-paths: |
-              target/release/bundle/deb/*.deb
-              target/release/bundle/rpm/*.rpm
-              target/release/bundle/appimage/*.AppImage
           - platform: windows-latest # .msi + NSIS .exe
             label: Windows
-            artifact: LeGit-windows
             rust-targets: ""
             args: ""
-            bundle-paths: |
-              target/release/bundle/msi/*.msi
-              target/release/bundle/nsis/*.exe
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -151,9 +145,48 @@ jobs:
         run: npm run tauri:build -- --config pr-bundle.conf.json ${{ matrix.args }}
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: matrix.artifact != ''
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.bundle-paths }}
+          retention-days: 14
+          if-no-files-found: error
+
+      # One artifact per installer format (mirrors the release assets), so
+      # nobody downloads a second installer they don't need.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: matrix.platform == 'windows-latest'
+        with:
+          name: LeGit-windows-setup-exe
+          path: target/release/bundle/nsis/*.exe
+          retention-days: 14
+          if-no-files-found: error
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: matrix.platform == 'windows-latest'
+        with:
+          name: LeGit-windows-msi
+          path: target/release/bundle/msi/*.msi
+          retention-days: 14
+          if-no-files-found: error
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: matrix.platform == 'ubuntu-22.04'
+        with:
+          name: LeGit-linux-deb
+          path: target/release/bundle/deb/*.deb
+          retention-days: 14
+          if-no-files-found: error
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: matrix.platform == 'ubuntu-22.04'
+        with:
+          name: LeGit-linux-rpm
+          path: target/release/bundle/rpm/*.rpm
+          retention-days: 14
+          if-no-files-found: error
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: matrix.platform == 'ubuntu-22.04'
+        with:
+          name: LeGit-linux-appimage
+          path: target/release/bundle/appimage/*.AppImage
           retention-days: 14
           if-no-files-found: error
 
