@@ -79,8 +79,10 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         Ok(parse_ls_tree_files(&output.stdout))
     }
 
-    pub(super) async fn rm_cached(&self, paths: &[PathBuf]) -> Result<(), GitError> {
-        self.run_pathspec(&["rm", "--cached", "--"], paths).await
+    pub(super) async fn rm_cached(&self, paths: &[PathBuf], recursive: bool) -> Result<(), GitError> {
+        let prefix: &[&str] =
+            if recursive { &["rm", "--cached", "-r", "--"] } else { &["rm", "--cached", "--"] };
+        self.run_pathspec(prefix, paths).await
     }
 
     pub(super) async fn diff_files(&self, from: &str, to: &str) -> Result<Vec<CommitFileChange>, GitError> {

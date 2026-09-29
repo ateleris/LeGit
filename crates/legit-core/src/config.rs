@@ -108,7 +108,7 @@ pub async fn read_scope(exec: &dyn GitExecutor, scope: ConfigScope, key: &str) -
 
 /// The value git itself would use for `key` (no scope flag: git resolves
 /// across all scopes). Only meaningful inside a repo; global views must use
-/// `read_global_scopes` instead.
+/// `read_global_snapshot` instead.
 pub async fn read_effective(exec: &dyn GitExecutor, key: &str) -> Option<String> {
     match exec.run_expecting(&["config", "--get", key], &[1]).await {
         Ok(out) if out.success => Some(out.stdout.trim().to_string()).filter(|v| !v.is_empty()),
@@ -125,18 +125,116 @@ pub async fn read_all_scopes(exec: &dyn GitExecutor, key: &str) -> ScopedConfig 
     ScopedConfig { local, global, system, resolved }
 }
 
-/// `key` at global and system scope only; `local` is always unset.
+/// A scope's full config listing with git's key-case normalization applied,
+/// for keyed lookups without one process per key.
+#[derive(Debug, Clone, Default)]
+pub struct ConfigEntries(Vec<(String, Option<String>)>);
+
+/// git prints keys with the section and variable name lowercased and the
+/// subsection (the middle of a three-part key) verbatim; normalize lookup
+/// keys the same way so "gpg.ssh.allowedSignersFile" finds
+/// "gpg.ssh.allowedsignersfile".
+fn normalize_config_key(key: &str) -> String {
+    let Some((section, rest)) = key.split_once('.') else {
+        return key.to_ascii_lowercase();
+    };
+    match rest.rsplit_once('.') {
+        Some((subsection, var)) => {
+            format!("{}.{subsection}.{}", section.to_ascii_lowercase(), var.to_ascii_lowercase())
+        }
+        None => format!("{}.{}", section.to_ascii_lowercase(), rest.to_ascii_lowercase()),
+    }
+}
+
+impl ConfigEntries {
+    pub fn from_list(entries: Vec<(String, Option<String>)>) -> Self {
+        Self(entries.into_iter().map(|(k, v)| (normalize_config_key(&k), v)).collect())
+    }
+
+    fn matching<'a>(&'a self, key: &str) -> impl Iterator<Item = &'a Option<String>> {
+        let key = normalize_config_key(key);
+        self.0.iter().filter(move |(k, _)| *k == key).map(|(_, v)| v)
+    }
+
+    /// The value git resolves for a single-valued `key` at this scope: the
+    /// last entry wins. Mirrors `read_scope`: trimmed, and an empty or
+    /// valueless entry has no value.
+    pub fn value(&self, key: &str) -> Option<String> {
+        let value = self.matching(key).last()?.as_deref().unwrap_or("").trim();
+        (!value.is_empty()).then(|| value.to_string())
+    }
+
+    /// Every value of a multi-valued `key`, in file order. Mirrors
+    /// `read_multi`: trimmed, empty and valueless entries kept as `""` (the
+    /// credential-helper reset markers).
+    pub fn values(&self, key: &str) -> Vec<String> {
+        self.matching(key).map(|v| v.as_deref().unwrap_or("").trim().to_string()).collect()
+    }
+}
+
+/// The full listing at one scope (empty when the scope's file is missing or
+/// unreadable - the views degrade, never error).
+pub async fn read_scope_entries(exec: &dyn GitExecutor, scope: ConfigScope) -> ConfigEntries {
+    let Some(flag) = scope.flag() else {
+        return ConfigEntries::default();
+    };
+    // exit 128 = the scope's config file doesn't exist (fresh machine):
+    // an answer, not a failure - declared expected so the Git Log doesn't
+    // show a red row on every settings open.
+    match exec.run_expecting(&["config", flag, "--list", "-z"], &[128]).await {
+        Ok(out) if out.success => {
+            ConfigEntries::from_list(crate::cli_impl::parsers::config_list::parse_config_list_z(
+                &out.stdout,
+            ))
+        }
+        _ => ConfigEntries::default(),
+    }
+}
+
+/// Global + system listings in two invocations, replacing one process per
+/// key per scope - on a remote host every spawn crosses the agent pipe.
 ///
-/// Required (not just convenient) for every global view: those run on an
-/// UNBOUND runner, and an unbound runner still inherits the app process's
-/// working directory. If that directory lies inside some repo (`tauri dev`
-/// runs inside the LeGit source repo), a `--local` read would succeed against
-/// that unrelated repo and leak its config into the "global" view.
-pub async fn read_global_scopes(exec: &dyn GitExecutor, key: &str) -> ScopedConfig {
-    let global = read_scope(exec, ConfigScope::Global, key).await;
-    let system = read_scope(exec, ConfigScope::System, key).await;
-    let resolved = resolve_precedence(&[&global, &system]);
-    ScopedConfig { local: ConfigValue::unset(), global, system, resolved }
+/// Local scope is deliberately absent, and that is required (not just
+/// convenient) for every global view: those run on an UNBOUND runner, and an
+/// unbound runner still inherits the app process's working directory. If that
+/// directory lies inside some repo (`tauri dev` runs inside the LeGit source
+/// repo), a `--local` read would succeed against that unrelated repo and leak
+/// its config into the "global" view.
+pub struct GlobalConfigSnapshot {
+    pub global: ConfigEntries,
+    pub system: ConfigEntries,
+}
+
+pub async fn read_global_snapshot(exec: &dyn GitExecutor) -> GlobalConfigSnapshot {
+    GlobalConfigSnapshot {
+        global: read_scope_entries(exec, ConfigScope::Global).await,
+        system: read_scope_entries(exec, ConfigScope::System).await,
+    }
+}
+
+impl GlobalConfigSnapshot {
+    /// `key` across the snapshot's scopes, shaped like `read_global_scopes`
+    /// (a key absent at a scope is unset there, like a `read_scope` miss).
+    pub fn scoped(&self, key: &str) -> ScopedConfig {
+        let at = |entries: &ConfigEntries, scope| match entries.value(key) {
+            Some(v) => ConfigValue::from_git(Some(v), scope),
+            None => ConfigValue::unset(),
+        };
+        let global = at(&self.global, ConfigScope::Global);
+        let system = at(&self.system, ConfigScope::System);
+        let resolved = resolve_precedence(&[&global, &system]);
+        ScopedConfig { local: ConfigValue::unset(), global, system, resolved }
+    }
+
+    /// Multi-valued `key` at one scope, shaped like `read_multi` (empty for
+    /// scopes the snapshot does not hold).
+    pub fn multi(&self, scope: ConfigScope, key: &str) -> Vec<String> {
+        match scope {
+            ConfigScope::Global => self.global.values(key),
+            ConfigScope::System => self.system.values(key),
+            ConfigScope::Local | ConfigScope::Unset => Vec::new(),
+        }
+    }
 }
 
 /// Every value of a multi-valued `key` at one scope, in file order (empty
@@ -203,21 +301,6 @@ fn failed(out: &crate::runner::RunOutput) -> GitError {
 mod tests {
     use super::*;
     use crate::test_support::{fail, ok, FakeExecutor};
-
-    // Global views must read ONLY `--global` and `--system`: with a REMOTE
-    // host the agent's unbound runner inherits the distro-side translation of
-    // the app's working directory, which can lie inside a repo under /mnt/c -
-    // a `--local` read would report that unrelated repo's config.
-    #[tokio::test]
-    async fn global_scope_read_never_consults_local() {
-        let exec = FakeExecutor::default();
-        exec.expect(&["config", "--global", "--get", "user.name"], fail(1, ""))
-            .expect(&["config", "--system", "--get", "user.name"], ok("Sys\n"));
-        let c = read_global_scopes(&exec, "user.name").await;
-        assert_eq!(c.local, ConfigValue::unset());
-        assert_eq!(c.resolved, ConfigValue::from_git(Some("Sys".into()), ConfigScope::System));
-        exec.assert_done();
-    }
 
     #[tokio::test]
     async fn all_scopes_resolve_local_first() {
@@ -307,6 +390,101 @@ mod tests {
         assert_eq!(read_multi(&exec, ConfigScope::Local, "credential.helper").await, vec!["", "store"]);
         assert!(read_multi(&exec, ConfigScope::Global, "credential.helper").await.is_empty());
         exec.assert_done();
+    }
+
+    // The snapshot must read ONLY `--global` and `--system` (assert_done
+    // pins that nothing else ran): with a REMOTE host the agent's unbound
+    // runner inherits the distro-side translation of the app's working
+    // directory, which can lie inside a repo under /mnt/c - a `--local` read
+    // would report that unrelated repo's config.
+    #[tokio::test]
+    async fn snapshot_issues_one_list_per_scope_and_resolves_global_first() {
+        let exec = FakeExecutor::default();
+        exec.expect(
+            &["config", "--global", "--list", "-z"],
+            ok("user.name\nAda\0core.autocrlf\ninput\0"),
+        )
+        .expect(&["config", "--system", "--list", "-z"], ok("user.name\nSys\0core.eol\nlf\0"));
+        let snap = read_global_snapshot(&exec).await;
+        let name = snap.scoped("user.name");
+        assert_eq!(name.global, ConfigValue::from_git(Some("Ada".into()), ConfigScope::Global));
+        assert_eq!(name.system, ConfigValue::from_git(Some("Sys".into()), ConfigScope::System));
+        assert_eq!(name.resolved, name.global);
+        assert_eq!(name.local, ConfigValue::unset());
+        let eol = snap.scoped("core.eol");
+        assert_eq!(eol.resolved, ConfigValue::from_git(Some("lf".into()), ConfigScope::System));
+        // A key absent at a scope is UNSET there (never "at global scope
+        // with no value"), exactly like a per-key `read_scope` miss.
+        assert_eq!(snap.scoped("user.email").global, ConfigValue::unset());
+        assert_eq!(snap.scoped("user.email").resolved, ConfigValue::unset());
+        assert_eq!(snap.scoped("core.autocrlf").system, ConfigValue::unset());
+        exec.assert_done();
+    }
+
+    // A fresh machine has no ~/.gitconfig (and often no system file): git
+    // exits 128 for `--list` on a missing file - an answer, not a failure.
+    #[tokio::test]
+    async fn snapshot_treats_a_missing_config_file_as_empty() {
+        let exec = FakeExecutor::default();
+        exec.expect(
+            &["config", "--global", "--list", "-z"],
+            fail(128, "fatal: unable to read config file '/home/u/.gitconfig': No such file or directory\n"),
+        )
+        .expect(&["config", "--system", "--list", "-z"], fail(128, "fatal: unable to read config file '/etc/gitconfig': No such file or directory\n"));
+        let snap = read_global_snapshot(&exec).await;
+        assert_eq!(snap.scoped("user.name").resolved, ConfigValue::unset());
+        assert!(snap.multi(ConfigScope::Global, "credential.helper").is_empty());
+        exec.assert_done();
+    }
+
+    #[test]
+    fn entries_value_takes_the_last_entry_and_empty_or_valueless_is_unset() {
+        let e = ConfigEntries::from_list(vec![
+            ("user.name".into(), Some("First".into())),
+            ("user.name".into(), Some(" Last ".into())),
+            ("core.autocrlf".into(), Some("".into())),
+            ("commit.gpgsign".into(), None),
+        ]);
+        assert_eq!(e.value("user.name").as_deref(), Some("Last"));
+        assert_eq!(e.value("core.autocrlf"), None);
+        assert_eq!(e.value("commit.gpgsign"), None);
+        assert_eq!(e.value("user.email"), None);
+    }
+
+    #[test]
+    fn entries_values_keep_order_and_reset_markers() {
+        let e = ConfigEntries::from_list(vec![
+            ("credential.helper".into(), Some("".into())),
+            ("user.name".into(), Some("Ada".into())),
+            ("credential.helper".into(), Some("store".into())),
+        ]);
+        assert_eq!(e.values("credential.helper"), vec!["", "store"]);
+        assert!(e.values("credential.usehttppath").is_empty());
+    }
+
+    // git prints section and variable names lowercased ("gpg.ssh.
+    // allowedsignersfile") while our key constants keep the documented casing
+    // ("gpg.ssh.allowedSignersFile"); subsections stay case-sensitive.
+    #[test]
+    fn entries_lookups_normalize_key_case_like_git() {
+        let e = ConfigEntries::from_list(vec![
+            ("gpg.ssh.allowedsignersfile".into(), Some("/tmp/signers".into())),
+            ("section.MidDle.varname".into(), Some("v".into())),
+        ]);
+        assert_eq!(e.value("gpg.ssh.allowedSignersFile").as_deref(), Some("/tmp/signers"));
+        assert_eq!(e.value("SeCtIoN.MidDle.VarName").as_deref(), Some("v"));
+        assert_eq!(e.value("section.middle.varname"), None);
+    }
+
+    #[test]
+    fn snapshot_multi_only_answers_the_scopes_it_holds() {
+        let snap = GlobalConfigSnapshot {
+            global: ConfigEntries::from_list(vec![("credential.helper".into(), Some("store".into()))]),
+            system: ConfigEntries::default(),
+        };
+        assert_eq!(snap.multi(ConfigScope::Global, "credential.helper"), vec!["store"]);
+        assert!(snap.multi(ConfigScope::Local, "credential.helper").is_empty());
+        assert!(snap.multi(ConfigScope::Unset, "credential.helper").is_empty());
     }
 
     #[test]

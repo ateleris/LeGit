@@ -2844,8 +2844,8 @@ export type CredentialClosedPayload = { request_id: string }
 /**
  * The effective helper entry per scope (last non-empty entry at that scope;
  * `None` = no helper configured there). Local scope is deliberately absent:
- * this backs a global-settings editor (see `read_config_global_scopes` for
- * why global views must not consult local scope).
+ * this backs a global-settings editor (see `config::read_global_snapshot`
+ * for why global views must not consult local scope).
  */
 export type CredentialHelperView = { helper_global: string | null; helper_system: string | null }
 /**
@@ -3229,6 +3229,15 @@ commits_line_width?: number;
  * `None` until the user first toggles it.
  */
 changed_files_view_mode?: string | null; 
+/**
+ * Remembered view mode for the Files panel (`"tree"` | `"flat"`).
+ * `None` until the user first toggles it (the panel defaults to tree).
+ */
+files_view_mode?: string | null; 
+/**
+ * Whether the Files panel also lists ignored files. `None` = off.
+ */
+files_show_ignored?: boolean | null; 
 /**
  * Branches section list style (`"tree"` | `"flat"`). `None`/unknown =
  * flat. Toggled from the Branches section header, applies globally.

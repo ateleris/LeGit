@@ -21,6 +21,8 @@ lives in the git log and the GitHub release notes.
   rev-scoped menus) can open that version of the file in the external editor
   (a detached temp copy)
 - File context menus gained "Open in folder" for the working-tree file
+- Folder rows in the Files panel can "Stop tracking & ignore" the whole
+  folder (`git rm --cached -r`, files stay on disk), like file rows
 - The diff viewer has an "Ignore whitespace" toolbar toggle (`git diff -w`):
   hunk and line staging/discarding act on exactly the visible changes
   (whitespace-only edits stay untouched), editing pauses while it is on, and
@@ -40,6 +42,15 @@ lives in the git log and the GitHub release notes.
   rows (copy path, open in folder), with "Ignore folder" in its own group
 - PR builds identify themselves: the version hash reads `<commit>.PR<number>`
   (the PR's head commit) and never carries the `.wip` marker
+- The git settings sections (identity, signing, credential helper, line
+  endings) load their config in one listing per scope instead of one git
+  process per key - noticeably faster on WSL repositories
+- The Files panel remembers its tree/flat view and "show ignored" toggle
+  across restarts
+- Scrolling deeper into the commit graph (and jumping to an old ref) now
+  loads only the next page instead of refetching the whole loaded history,
+  so deep scrolling stays fast in large repositories; a jump now asks
+  before loading past 50,000 commits
 
 ### Fixed
 
@@ -53,6 +64,7 @@ lives in the git log and the GitHub release notes.
 - Live updates stay off when turned off while a repository's watcher is still starting, and closed repositories no longer keep a stale watcher error.
 - Credentials embedded in a remote URL are now masked in every git error message, not only in fetch/pull/push errors.
 - A file name containing "conflict (" can no longer make a failed merge, rebase or cherry-pick look like a conflict.
+- Ignoring a file whose name contains `*`, `?`, `[` or `\` writes an escaped `.gitignore` line instead of a glob that also ignored unrelated files.
 - A branch checked out in another worktree is recognised in both git wordings when switching, not only when deleting.
 - Checking out a branch from the Branches panel, or creating a branch from a stash, now offers the same clickable "open that worktree" toast as the Commits panel when the branch is checked out elsewhere.
 - Pushing or deleting tags and deleting remote branches show the specific authentication / rejected-push guidance instead of raw git output.

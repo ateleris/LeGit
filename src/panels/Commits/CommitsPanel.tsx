@@ -35,7 +35,9 @@ import { useSignatureStore } from "../../store/signatures";
 import { formatAbsolute, formatRelative } from "../../lib/time";
 import { laneColor } from "./cells/GraphCell";
 import { pickHeadCommitId } from "./headId";
-import { growJumpWindow, pendingJumpAction, shouldCenterScroll } from "./scrollToRow";
+import { growJumpWindow, JUMP_SEEK_STEP, pendingJumpAction, shouldCenterScroll } from "./scrollToRow";
+import { countRealCommits } from "./logPaging";
+import { confirmDialog } from "../../store/confirm";
 import { applyRowClickSelection, type SelectionState } from "./multiSelect";
 import type { LockMap } from "./graph/types";
 import { buildLockMap, WORKING_DIR_ID } from "./commitRows";
@@ -194,6 +196,15 @@ function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
   // A jump target (adoptSelection) not yet in the loaded window; the seek
   // effect below keeps growing the fetch window until it loads, then scrolls.
   const [pendingJump, setPendingJump] = useState<CommitId | null>(null);
+  // How deep the current seek may walk before asking the user to continue;
+  // each confirmation raises it by another step.
+  const [seekLimit, setSeekLimit] = useState(JUMP_SEEK_STEP);
+  useEffect(() => {
+    setSeekLimit(JUMP_SEEK_STEP);
+  }, [pendingJump]);
+  // The continue-question is pending: the seek effect must not re-ask while
+  // the dialog is open (its deps churn on unrelated data updates).
+  const seekAskOpenRef = useRef(false);
   // Toolbar search: a submitted query runs a full-history backend search
   // (`git log --grep/--author`, message OR author - a client-side scan of
   // the loaded window would silently miss unloaded commits) and Enter CYCLES
@@ -266,6 +277,7 @@ function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
     isFetching,
     isError,
     error,
+    hasMore,
     searchHits,
     searchFetching,
     branches,
@@ -577,20 +589,15 @@ function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
   // visible commit lane.
   const visibleItems = rowVirtualizer.getVirtualItems();
 
-  // More commits may exist when the backend returned a full page. Once it
-  // returns fewer than requested, the end of history has been reached. The
-  // injected stash nodes don't count toward the page — only real commits are
-  // capped by `--max-count`.
-  const hasMore = commits.length - stashSelectorById.size >= totalToFetch;
-
   // The "Loading more…" strip follows the delayed-busy rule: watcher-driven
   // background refetches settle well within the delay and must not flash it.
   const showLoadingMore = useDelayedFlag(hasMore && isFetching);
 
   // Infinite scroll: grow the fetch window when the user scrolls the last row
-  // into view. The growing queryKey turns `isFetching` true, which guards
-  // against re-triggering until the new page has arrived; once the taller list
-  // renders, the last row is no longer in view, so it won't auto-page forever.
+  // into view. The growth appends only the missing page (`useCommitsQueries`'
+  // load-more effect), during which `isFetching` is true and guards against
+  // re-triggering; once the taller list renders, the last row is no longer in
+  // view, so it won't auto-page forever.
   const lastVisibleIndex = visibleItems[visibleItems.length - 1]?.index ?? 0;
   useEffect(() => {
     if (hasMore && !isFetching && lastVisibleIndex >= rows.length - 1) {
@@ -601,13 +608,15 @@ function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
   // Seek for a jump target beyond the loaded window (Refs click on an old
   // tag/branch/stash): grow the fetch window until the commit is loaded, then
   // center it. `isFetching` gates each step so the decision only runs on
-  // settled data; the growth is exponential (see `growJumpWindow`). When the
-  // walk is exhausted without a hit the commit is unreachable in the walked
-  // refs (e.g. hidden remote branches) - stop and say so instead of silence.
+  // settled data; the growth is exponential (see `growJumpWindow`) and pauses
+  // at every `seekLimit` commits to ask before pulling more history into
+  // memory. When the walk is exhausted without a hit the commit is
+  // unreachable in the walked refs (e.g. hidden remote branches) - stop and
+  // say so instead of silence.
   useEffect(() => {
-    if (!pendingJump || isFetching) return;
+    if (!pendingJump || isFetching || seekAskOpenRef.current) return;
     const idx = rows.findIndex((c) => c.id === pendingJump);
-    const action = pendingJumpAction(idx >= 0, hasMore);
+    const action = pendingJumpAction(idx >= 0, hasMore, countRealCommits(commits), seekLimit);
     if (action === "scroll") {
       setPendingJump(null);
       if (shouldCenterScroll(idx, rowVirtualizer.range)) {
@@ -615,11 +624,23 @@ function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
       }
     } else if (action === "extend") {
       setExtraPages(growJumpWindow);
+    } else if (action === "askToContinue") {
+      seekAskOpenRef.current = true;
+      void confirmDialog({
+        title: "Commit not found yet",
+        message: `The commit is not among the first ${seekLimit.toLocaleString()} commits. Keep loading history to look for it?`,
+        confirmLabel: "Keep searching",
+        danger: false,
+      }).then((keepGoing) => {
+        seekAskOpenRef.current = false;
+        if (keepGoing) setSeekLimit((limit) => limit + JUMP_SEEK_STEP);
+        else setPendingJump(null);
+      });
     } else {
       setPendingJump(null);
       notify.info("This commit is not in the log - it may only be reachable from hidden remote branches.");
     }
-  }, [pendingJump, isFetching, rows, hasMore, rowVirtualizer]);
+  }, [pendingJump, isFetching, rows, hasMore, commits, seekLimit, rowVirtualizer]);
 
   // Land the selection on the toolbar search's current hit once results
   // settle or the hit index moves (Enter cycles it). Keyed so a background

@@ -12,6 +12,7 @@ pub mod branches;
 pub mod status;
 pub mod submodules;
 pub mod commit_files;
+pub mod config_list;
 pub mod diff;
 pub mod tracking;
 pub mod remotes;

@@ -37,13 +37,14 @@ pub struct SigningView {
 
 /// Global-settings variant: global + system scope only. The unbound runner's
 /// cwd may lie inside some repo, and an all-scopes read would leak that
-/// repo's local config into the view (see `read_config_global_scopes`).
+/// repo's local config into the view (see `config::read_global_snapshot`).
 pub(crate) async fn read_signing_view_global(runner: &dyn GitExecutor) -> SigningView {
+    let snapshot = config::read_global_snapshot(runner).await;
     SigningView {
-        gpgsign: config::read_global_scopes(runner, KEY_GPGSIGN).await,
-        format: config::read_global_scopes(runner, KEY_FORMAT).await,
-        signing_key: config::read_global_scopes(runner, KEY_SIGNING_KEY).await,
-        allowed_signers: config::read_global_scopes(runner, KEY_ALLOWED_SIGNERS).await,
+        gpgsign: snapshot.scoped(KEY_GPGSIGN),
+        format: snapshot.scoped(KEY_FORMAT),
+        signing_key: snapshot.scoped(KEY_SIGNING_KEY),
+        allowed_signers: snapshot.scoped(KEY_ALLOWED_SIGNERS),
     }
 }
 
@@ -61,6 +62,32 @@ pub(crate) async fn write_signing_global(
     config::write(runner, WriteScope::Global, KEY_SIGNING_KEY, signing_key).await?;
     config::write(runner, WriteScope::Global, KEY_ALLOWED_SIGNERS, allowed_signers).await?;
     Ok(read_signing_view_global(runner).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use legit_core::test_support::{ok, FakeExecutor};
+
+    // On a remote host every spawn crosses the agent pipe: the view must be
+    // built from ONE listing per scope, never one process per key. git lists
+    // keys lowercased, so `gpg.ssh.allowedSignersFile` must still be found.
+    #[tokio::test]
+    async fn global_view_is_built_from_one_listing_per_scope() {
+        let exec = FakeExecutor::default();
+        exec.expect(
+            &["config", "--global", "--list", "-z"],
+            ok("commit.gpgsign\ntrue\0gpg.format\nssh\0gpg.ssh.allowedsignersfile\n/home/u/.ssh/signers\0"),
+        )
+        .expect(&["config", "--system", "--list", "-z"], ok("user.signingkey\n/etc/key\0"));
+        let view = read_signing_view_global(&exec).await;
+        assert_eq!(view.gpgsign.resolved.value.as_deref(), Some("true"));
+        assert_eq!(view.format.global.value.as_deref(), Some("ssh"));
+        assert_eq!(view.allowed_signers.global.value.as_deref(), Some("/home/u/.ssh/signers"));
+        assert_eq!(view.signing_key.resolved.value.as_deref(), Some("/etc/key"));
+        assert_eq!(view.signing_key.global.value, None);
+        exec.assert_done();
+    }
 }
 
 /// Read the app machine's signing config at global scope (no repo required).

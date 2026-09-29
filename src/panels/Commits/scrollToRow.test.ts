@@ -34,16 +34,30 @@ describe("shouldCenterScroll", () => {
 
 describe("pendingJumpAction", () => {
   it("scrolls as soon as the commit is loaded, even at the end of the log", () => {
-    expect(pendingJumpAction(true, true)).toBe("scroll");
-    expect(pendingJumpAction(true, false)).toBe("scroll");
+    expect(pendingJumpAction(true, true, 500, 50_000)).toBe("scroll");
+    expect(pendingJumpAction(true, false, 500, 50_000)).toBe("scroll");
   });
 
   it("extends the walk while the backend still returns full pages", () => {
-    expect(pendingJumpAction(false, true)).toBe("extend");
+    expect(pendingJumpAction(false, true, 500, 50_000)).toBe("extend");
   });
 
   it("gives up once the log is exhausted - the commit is unreachable", () => {
-    expect(pendingJumpAction(false, false)).toBe("giveUp");
+    expect(pendingJumpAction(false, false, 500, 50_000)).toBe("giveUp");
+  });
+
+  it("asks before walking past the limit instead of loading unbounded", () => {
+    expect(pendingJumpAction(false, true, 50_000, 50_000)).toBe("askToContinue");
+    expect(pendingJumpAction(false, true, 64_000, 50_000)).toBe("askToContinue");
+  });
+
+  it("a raised limit lets the seek continue", () => {
+    expect(pendingJumpAction(false, true, 64_000, 100_000)).toBe("extend");
+  });
+
+  it("scrolling and exhaustion are never blocked by the limit", () => {
+    expect(pendingJumpAction(true, true, 64_000, 50_000)).toBe("scroll");
+    expect(pendingJumpAction(false, false, 64_000, 50_000)).toBe("giveUp");
   });
 });
 

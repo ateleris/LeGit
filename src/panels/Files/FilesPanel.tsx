@@ -2,11 +2,12 @@ import { useCallback, useMemo, useState } from "react";
 import { PanelError } from "../shared/PanelError";
 import { segStyle } from "../shared/segmented";
 import { usePanelViewState } from "../../store/panelViewState";
+import { canUntrackFolder } from "./dirUntrack";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileBox, FileCheck, FilePlus, FileX, GitFork } from "lucide-react";
 import type { ReactNode } from "react";
 import { useActiveRepo } from "../../store/repos";
-import { useConfirmDestructive } from "../../store/settings";
+import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
 import { useSummonStore, useSummonTarget } from "../../store/summon";
 import { usePanelFocusEffect } from "../PanelApiContext";
 import { api } from "../../lib/commands";
@@ -48,14 +49,20 @@ export interface FilesAtRevRequest {
 export function FilesPanel() {
   const repo = useActiveRepo();
   const queryClient = useQueryClient();
+  // Tree/flat and show-ignored are persisted global settings (the
+  // `changed_files_view_mode` pattern: patched from the toolbar, restored
+  // across restarts, shared by every repo).
+  const viewMode: ViewMode =
+    useSettingsStore((s) => s.settings?.files_view_mode) === "flat" ? "flat" : "tree";
+  const setViewMode = useSettingsStore((s) => s.setFilesViewMode);
+  const showIgnored = useSettingsStore((s) => s.settings?.files_show_ignored ?? false);
+  const setShowIgnored = useSettingsStore((s) => s.setFilesShowIgnored);
   // Per-repo view state (store/panelViewState.ts), not a persisted setting:
-  // the browsed rev, selection, and view toggles survive a layout apply's
-  // dock rebuild and panel close/reopen, and each repo keeps its own across
-  // tab switches - it also covers the summoned-for-the-new-repo delivery
-  // race that useRepoSwitchClear used to handle (writes key by the active
-  // repo at call time).
-  const [viewMode, setViewMode] = usePanelViewState<ViewMode>("files.viewMode", "tree");
-  const [showIgnored, setShowIgnored] = usePanelViewState("files.showIgnored", false);
+  // the browsed rev, selection, and filter survive a layout apply's dock
+  // rebuild and panel close/reopen, and each repo keeps its own across tab
+  // switches - it also covers the summoned-for-the-new-repo delivery race
+  // that useRepoSwitchClear used to handle (writes key by the active repo at
+  // call time).
   const [filter, setFilter] = usePanelViewState("files.filter", "");
   const [selectedPath, setSelectedPath] = usePanelViewState<string | null>(
     "files.selectedPath",
@@ -375,12 +382,18 @@ export function FilesPanel() {
                   />,
                 )
               }
-              onDirContextMenu={(_filePaths, dirPath, e) =>
+              onDirContextMenu={(filePaths, dirPath, e) =>
                 openMenu(
                   e,
                   <DirMenuSection
                     dirPath={dirPath}
                     atRev={rev !== null}
+                    canUntrack={canUntrackFolder(filePaths, kindByPath, submodulePaths)}
+                    onUntrack={() =>
+                      onIgnored(async () => {
+                        await api.repoUntrackPath(repo.id, dirPath, true);
+                      }, `Stopped tracking ${dirPath}/`)
+                    }
                     onClose={closeMenu}
                   />,
                 )
@@ -474,18 +487,35 @@ function FileMenuSection({
 }
 
 /** Context-menu section for a folder row: the file rows' copy/open block
- * (same entries, same order), then the fenced ignore-the-folder entry. In
+ * (same entries, same order), then the fenced ignore-the-folder entry and -
+ * when the folder holds tracked files and no submodule - the confirm-gated
+ * untrack (`git rm --cached -r`, like the file rows' entry). In
  * browse-at-commit mode only copy remains (the others act on the working
  * tree, where the folder may not exist). */
 function DirMenuSection({
   dirPath,
   atRev,
+  canUntrack,
+  onUntrack,
   onClose,
 }: {
   dirPath: string;
   atRev: boolean;
+  canUntrack: boolean;
+  onUntrack: () => void;
   onClose: () => void;
 }) {
+  const confirmDestructive = useConfirmDestructive();
+  const destructiveMenuConfirm = useDestructiveMenuConfirm();
+
+  const requestUntrack = () => {
+    const run = () => { onClose(); onUntrack(); };
+    destructiveMenuConfirm(
+      `Stop tracking everything in ${dirPath}/ (kept on disk) and ignore it?`,
+      run,
+    );
+  };
+
   return (
     <>
       <SectionLabel>{dirPath}/</SectionLabel>
@@ -495,6 +525,11 @@ function DirMenuSection({
         <>
           <Separator />
           <AddToGitignoreMenuItem path={dirPath} isDir onClose={onClose} />
+          {canUntrack && (
+            <MenuItem onClick={requestUntrack}>
+              {confirmDestructive ? "Stop tracking & ignore…" : "Stop tracking & ignore"}
+            </MenuItem>
+          )}
         </>
       )}
     </>

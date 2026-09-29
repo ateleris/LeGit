@@ -2307,12 +2307,35 @@ async fn rm_cached_untracks_but_keeps_file_on_disk() {
         Some(RepoFileKind::Tracked),
     );
 
-    repo.backend.rm_cached(&[PathBuf::from("secret.env")]).await.unwrap();
+    repo.backend.rm_cached(&[PathBuf::from("secret.env")], false).await.unwrap();
 
     // Still on disk, now untracked (would move to the Untracked group).
     assert!(repo.exists("secret.env"), "rm --cached deleted the file");
     let files = repo.backend.list_repo_files(false).await.unwrap();
     assert_eq!(kind_of(&files, "secret.env"), Some(RepoFileKind::Untracked));
+}
+
+/// Validates the assumption behind the recursive flag: `git rm --cached`
+/// REFUSES a directory pathspec without `-r`, and with it untracks the whole
+/// tree while every file stays on disk.
+#[tokio::test]
+async fn rm_cached_on_a_directory_needs_recursive_and_keeps_files_on_disk() {
+    let repo = TestRepo::init().await;
+    std::fs::create_dir_all(repo.path.join("vendor/lib")).unwrap();
+    repo.write("vendor/lib/a.js", "a\n");
+    repo.write("vendor/b.js", "b\n");
+    repo.commit_all("add vendor").await;
+
+    let err = repo.backend.rm_cached(&[PathBuf::from("vendor")], false).await;
+    assert!(err.is_err(), "plain rm --cached must refuse a directory");
+
+    repo.backend.rm_cached(&[PathBuf::from("vendor")], true).await.unwrap();
+
+    assert!(repo.exists("vendor/lib/a.js"), "recursive rm --cached deleted a file");
+    assert!(repo.exists("vendor/b.js"), "recursive rm --cached deleted a file");
+    let files = repo.backend.list_repo_files(false).await.unwrap();
+    assert_eq!(kind_of(&files, "vendor/lib/a.js"), Some(RepoFileKind::Untracked));
+    assert_eq!(kind_of(&files, "vendor/b.js"), Some(RepoFileKind::Untracked));
 }
 
 // ---------------------------------------------------------------------------
@@ -4348,8 +4371,70 @@ async fn config_replace_all_round_trips_multi_values() {
     replace_all(&runner, WriteScope::Local, key, &[]).await.unwrap();
 }
 
+/// The batched settings snapshot (`config::read_global_snapshot`) encodes
+/// three assumptions about `config <scope> --list -z`, validated here: exit
+/// 128 for a missing file; the `key\nvalue\0` entry shape (only the FIRST
+/// newline splits, an empty value keeps its `\n`, a valueless entry has
+/// none); and lowercased section/variable names in the listing.
+#[tokio::test]
+async fn config_list_z_matches_the_snapshot_assumptions() {
+    use legit_core::cli_impl::parsers::config_list::parse_config_list_z;
+    use legit_core::config::ConfigEntries;
+
+    let repo = TestRepo::init().await;
+    let gcfg = repo.path.join("fake-global-config");
+    let gcfg_s = gcfg.to_str().expect("utf8 tempdir path").to_string();
+    let env: &[(&str, &str)] = &[("GIT_CONFIG_GLOBAL", &gcfg_s)];
+    let runner = GitRunner::for_repo("git", &repo.path);
+
+    // Missing file: exit 128, the snapshot's declared-expected code.
+    let out =
+        runner.run_with_env(&["config", "--global", "--list", "-z"], env).await.expect("spawn git");
+    assert!(!out.success);
+    assert_eq!(out.exit_code, Some(128), "missing global file: {}", out.stderr);
+
+    // Arm the file with every shape the parser distinguishes: a plain value,
+    // a multi-valued key with an empty reset entry, a camelCase key, and a
+    // multiline value.
+    for args in [
+        &["config", "--global", "user.name", "Global Name"][..],
+        &["config", "--global", "--add", "credential.helper", ""],
+        &["config", "--global", "--add", "credential.helper", "store"],
+        &["config", "--global", "gpg.ssh.allowedSignersFile", "/tmp/signers"],
+        &["config", "--global", "user.note", "line1\nline2"],
+    ] {
+        let out = runner.run_with_env(args, env).await.expect("spawn git");
+        assert!(out.success, "{}", out.stderr);
+    }
+    // A valueless entry (`[alias] valueless`, git's implicit true) cannot be
+    // written through `git config`; append it as file text.
+    {
+        use std::io::Write as _;
+        let mut f = std::fs::OpenOptions::new().append(true).open(&gcfg).unwrap();
+        writeln!(f, "[alias]\n\tvalueless").unwrap();
+    }
+
+    let out =
+        runner.run_with_env(&["config", "--global", "--list", "-z"], env).await.expect("spawn git");
+    assert!(out.success, "{}", out.stderr);
+    let entries = ConfigEntries::from_list(parse_config_list_z(&out.stdout));
+
+    assert_eq!(entries.value("user.name").as_deref(), Some("Global Name"));
+    // git lists the key lowercased; the camelCase key constant still finds it.
+    assert!(out.stdout.contains("gpg.ssh.allowedsignersfile"), "git lowercases listed keys");
+    assert_eq!(entries.value("gpg.ssh.allowedSignersFile").as_deref(), Some("/tmp/signers"));
+    // The reset marker survives as a distinct empty entry, in file order.
+    assert_eq!(entries.values("credential.helper"), vec!["", "store"]);
+    // Only the first newline splits key from value.
+    assert_eq!(entries.value("user.note").as_deref(), Some("line1\nline2"));
+    // The valueless entry is listed but has no usable value (matching a
+    // per-key `--get` miss).
+    assert!(out.stdout.contains("alias.valueless"));
+    assert_eq!(entries.value("alias.valueless"), None);
+}
+
 /// Why the global-settings views read `--global`/`--system` only
-/// (`config_util::read_config_global_scopes`): an unbound runner inherits the
+/// (`config::read_global_snapshot`): an unbound runner inherits the
 /// app process's cwd, which can lie inside SOME repo (tauri dev runs inside
 /// the LeGit source repo). Run inside a repo, an unflagged `git config --get`
 /// resolves the repo's LOCAL value; only a `--global`-flagged read is immune.

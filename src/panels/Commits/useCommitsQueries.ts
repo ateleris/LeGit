@@ -1,10 +1,11 @@
-import { useEffect, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRepoStore } from "../../store/repos";
 import { useTagRemoteChoice } from "../../store/tagRemote";
 import { keepPreviousDataForRepo } from "../../lib/repoScopedPlaceholder";
 import { repoLog, api } from "../../lib/commands";
 import { pushedTagNames, resolveTagRemote } from "../../lib/tags";
+import { appendLogPage, countRealCommits } from "./logPaging";
 import { buildUpstreamMap } from "./commitRows";
 import { branchWorktreeMap, detachedWorktreeHeads } from "../Worktrees/worktreeRows";
 import { mergeSearchResults } from "./commitSearch";
@@ -60,15 +61,22 @@ export function useCommitsQueries(
   }, [repo?.id, repoSettings, loadRepoSettings]);
   const showRemoteBranches = repoSettings?.show_remote_branches ?? true;
 
-  const queryKey = [repo?.id, "log", totalToFetch, showRemoteBranches, branchFilter, authorFilter?.email];
+  // The window size is NOT part of the key: growing it appends only the
+  // missing tail (the load-more effect below) instead of refetching the
+  // whole window from offset 0 - O(n) instead of O(n^2) total work when
+  // scrolling deep into history.
+  const queryKey = useMemo(
+    () => [repo?.id, "log", showRemoteBranches, branchFilter, authorFilter?.email],
+    [repo?.id, showRemoteBranches, branchFilter, authorFilter?.email],
+  );
+  const queryClient = useQueryClient();
 
-  const { data: commits = [], isFetching, isError, error } = useQuery<Commit[]>({
-    queryKey,
-    queryFn: () =>
+  const fetchLog = useCallback(
+    (maxCount: number, skip: number) =>
       repoLog(
         repo!.id,
-        totalToFetch,
-        0,
+        maxCount,
+        skip,
         branchFilter ?? undefined,
         showRemoteBranches,
         authorFilter?.email,
@@ -76,15 +84,91 @@ export function useCommitsQueries(
         // (they hang off their base like in the full graph).
         branchFilter !== null ? true : undefined,
       ),
+    [repo?.id, branchFilter, showRemoteBranches, authorFilter?.email],
+  );
+
+  // The queryFn reads the CURRENT window size through a ref: a watcher or
+  // manual invalidation must reload everything the user has scrolled to, in
+  // one request (refs may have moved, so offsets into the old walk are void).
+  const totalRef = useRef(totalToFetch);
+  totalRef.current = totalToFetch;
+
+  // False until a fetch returns fewer real commits than it asked for - then
+  // the walk is exhausted and growing the window cannot load more (until a
+  // full fetch replaces the data and re-decides).
+  const [exhausted, setExhausted] = useState(false);
+
+  const {
+    data: commits = [],
+    isFetching: logFetching,
+    isError,
+    error,
+    dataUpdatedAt,
+  } = useQuery<Commit[]>({
+    queryKey,
+    queryFn: async () => {
+      const requested = totalRef.current;
+      const page = await fetchLog(requested, 0);
+      setExhausted(countRealCommits(page) < requested);
+      return page;
+    },
     enabled: !!repo,
     staleTime: STALE.live,
-    // Keep the current (smaller) page rendered while the larger page fetches.
-    // Without this, the new totalToFetch query key has no cached data, the list
-    // collapses to zero height, and the scroll position jumps back to the top.
-    // Scoped to the repo: an unscoped keepPreviousData flashed the previously
-    // selected repo's graph after a repo switch while the new walk loaded.
+    // Keep the previous rows rendered while a filter/setting change (new
+    // query key) fetches. Without this the new key has no cached data, the
+    // list collapses to zero height, and the scroll position jumps back to
+    // the top. Scoped to the repo: an unscoped keepPreviousData flashed the
+    // previously selected repo's graph after a repo switch while the new
+    // walk loaded.
     placeholderData: keepPreviousDataForRepo<Commit[]>(repo?.id),
   });
+
+  // Grow the window by appending: when the panel raises totalToFetch beyond
+  // what is loaded, fetch ONLY the missing tail at its offset and merge it
+  // into the cached window (`appendLogPage` reconciles the injected stash
+  // nodes at the seam). A full refetch that lands while the page is in
+  // flight wins - its dataUpdatedAt changes and the stale append is dropped.
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadingMoreRef = useRef(false);
+  useEffect(() => {
+    if (!repo || logFetching || loadingMoreRef.current || exhausted) return;
+    const loaded = countRealCommits(commits);
+    if (loaded === 0 || totalToFetch <= loaded) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    const need = totalToFetch - loaded;
+    void (async () => {
+      try {
+        const page = await fetchLog(need, loaded);
+        if (queryClient.getQueryState(queryKey)?.dataUpdatedAt !== dataUpdatedAt) return;
+        if (countRealCommits(page) < need) setExhausted(true);
+        queryClient.setQueryData<Commit[]>(queryKey, (old = []) => appendLogPage(old, page));
+      } catch {
+        // Growth is best-effort: fall back to a full refetch, which heals a
+        // transient failure or surfaces a persistent one as the query error.
+        void queryClient.invalidateQueries({ queryKey });
+      } finally {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
+    })();
+  }, [
+    repo,
+    logFetching,
+    exhausted,
+    commits,
+    totalToFetch,
+    fetchLog,
+    queryClient,
+    queryKey,
+    dataUpdatedAt,
+  ]);
+
+  const isFetching = logFetching || loadingMore;
+  // More commits may exist until some fetch came back short; the injected
+  // stash nodes never count toward a page (only real commits are capped by
+  // `--max-count`).
+  const hasMore = !exhausted;
 
   // Filter results: same walk universe and row shape as the graph (the
   // backend searches HEAD + all local branches with the log format), capped
@@ -205,6 +289,7 @@ export function useCommitsQueries(
     isFetching,
     isError,
     error,
+    hasMore,
     searchHits,
     searchFetching,
     branches,

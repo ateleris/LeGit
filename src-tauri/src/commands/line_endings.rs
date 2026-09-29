@@ -83,10 +83,11 @@ async fn build_repo_view(
 /// (it only exists inside a repo). Reads global + system only: the unbound
 /// runner's cwd may lie inside some repo, and an all-scopes read would leak
 /// that repo's local config into the resolved value
-/// (see `config::read_global_scopes`).
+/// (see `config::read_global_snapshot`).
 pub(crate) async fn build_global_line_endings_view(runner: &dyn GitExecutor) -> LineEndingsView {
-    let autocrlf = config::read_global_scopes(runner, "core.autocrlf").await;
-    let eol = config::read_global_scopes(runner, "core.eol").await;
+    let snapshot = config::read_global_snapshot(runner).await;
+    let autocrlf = snapshot.scoped("core.autocrlf");
+    let eol = snapshot.scoped("core.eol");
 
     LineEndingsView {
         autocrlf_local: ConfigValue::unset(),
@@ -471,9 +472,25 @@ fn insert_covers_all_rule(existing: Option<&str>, eol: Option<&str>) -> Result<S
 
 #[cfg(test)]
 mod tests {
-    use super::{insert_covers_all_rule, read_gitattributes};
+    use super::{build_global_line_endings_view, insert_covers_all_rule, read_gitattributes};
+    use legit_core::test_support::{ok, FakeExecutor};
     use legit_core::{FsDirEntry, FsError, FsProbe, FsStat, HostPath, RepoFs};
     use std::sync::Mutex;
+
+    // On a remote host every spawn crosses the agent pipe: the view must be
+    // built from ONE listing per scope, never one process per key.
+    #[tokio::test]
+    async fn global_view_is_built_from_one_listing_per_scope() {
+        let exec = FakeExecutor::default();
+        exec.expect(&["config", "--global", "--list", "-z"], ok("core.autocrlf\ninput\0"))
+            .expect(&["config", "--system", "--list", "-z"], ok("core.eol\nlf\0"));
+        let view = build_global_line_endings_view(&exec).await;
+        assert_eq!(view.autocrlf_resolved.value.as_deref(), Some("input"));
+        assert_eq!(view.eol_resolved.value.as_deref(), Some("lf"));
+        assert_eq!(view.autocrlf_local.value, None);
+        assert!(view.gitattributes.is_empty());
+        exec.assert_done();
+    }
 
     /// Records the paths read; every read answers with `.gitattributes`
     /// content. Any other filesystem access is a test failure.

@@ -122,13 +122,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
     `commands/wsl_config.rs`, and decide where an uploaded key's private
     half lives (the distro's `~/.ssh`, not the app machine's). The agent
     already relays askpass, so a distro key's passphrase prompt works.
-  - **Batched global-config reads for remote hosts.** Loading a distro's
-    identity + signing + helper + line-endings view issues ~18 separate
-    `git config --get` spawns inside the distro (one per key per scope).
-    Correct, and it mirrors the local path exactly, but each is a process
-    over the NDJSON pipe. Replace with one `config --global --list -z` plus
-    one `--system --list -z` and a pure parser in
-    `legit-core/cli_impl/parsers/`, with keyed lookups on top.
   - **Dedicated AgentGone error variant.** A dead connection surfaces as a
     RunnerError::Io/FsError message ("agent connection lost") — correct but
     unclassified; a `GitError` variant would let panels render "host
@@ -174,25 +167,8 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
     themes approach; the LIVE dock state stays localStorage and stays
     local), an export/import bundle file.
 
-- **Files panel:** untrack a folder (`rm_cached` needs `-r` for a
-  directory); persist view mode / show-ignored (ephemeral component state
-  today; mirror `changed_files_view_mode`); escape `*`, `?`, `[` in
-  `gitignore_line` (a filename containing them would become a glob).
 - **Git Log panel:** filter/search the log, copy a command, jump a toast to
   its specific log entry (today it just opens the panel).
-- **Commits panel: incremental log appending** (decided 2026-07-30). Today
-  every window growth (infinite scroll, and the jump-seek) refetches the
-  WHOLE window from offset 0 and re-parses it - O(n^2) total work,
-  mitigated for the seek by exponential window doubling (`growJumpWindow`).
-  The clean fix: fetch only the next page (`repoLog` already takes an
-  offset) and append - the lane algorithm was designed for this
-  (`previousAssignments` keeps existing rows stable; incremental == full
-  recompute is pinned by the "load-more … edge set" tests in
-  `lanes.test.ts`). Likely React Query infinite-query style. Caveats:
-  offset pages are only consistent while refs don't move (a watcher
-  invalidation mid-walk must restart the walk), and the auto-seek needs a
-  guardrail (~50k commits: stop and ask via toast). Keep-everything-loaded
-  stays the model; windowed unloading was rejected 2026-07-30.
 - **Worktrees, stages B2/B3** (2026-09-10; mode analysis in
   `design/2026-09-10-worktrees-parallel-graph.md`). Everything else
   shipped 2026-09-10 (pane with add/detach/lock/remove/prune, B1 graph
@@ -299,6 +275,28 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   silently changes the user's index).
 
 ## Only if it hurts in practice
+
+- **Multiple main windows (one per Windows virtual desktop)** (deferred
+  2026-09-29: nice-to-have, not important enough yet; workaround exists -
+  Task View > right-click the LeGit window > "Show this window on all
+  desktops"). Wanted shape when picked up: full peer windows in ONE
+  process (a second VS Code-style window with its own repo tabs, active
+  repo and dock layout), NOT a second OS process (shared app-data would
+  race) and NOT a pinned single-repo window. The fh-* history windows are
+  the precedent: same bundle, label check in `src/main.tsx` picks the
+  shell, each webview is its own JS realm so zustand/query state is
+  per-window for free; backend `RepoSession`s are shared and `open_repo`
+  is already idempotent. Known one-window assumptions to untangle
+  (surveyed 2026-09-29): `currently_open`/`active_open_repo` are single
+  global values and `repos.ts refresh()` adopts every backend session;
+  `close_repo` has no refcount (window A closing a repo breaks window B);
+  dock layouts persist to shared localStorage keys (last writer wins);
+  capabilities allow only `main`/`fh-*` labels; closing "main" closes all
+  fh-* windows; credential/askpass prompts broadcast to every window and
+  the losing dialog lingers; startup update check + auto-fetch run per
+  AppLayout mount; the macOS app menu binds to the realm that built it.
+  Open design question: restore all windows on relaunch (needs per-window
+  persisted tab sets) vs primary-only.
 
 - **Lane-colored branch chips: editor ContrastSection rows** (the one
   remainder; feature + AA enforcement shipped 2026-09-10). The armed

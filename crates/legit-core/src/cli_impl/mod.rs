@@ -282,8 +282,8 @@ impl<E: GitExecutor + ?Sized> GitBackend for GitCliBackend<E> {
         self.list_files_at_revision(rev).await
     }
 
-    async fn rm_cached(&self, paths: &[PathBuf]) -> Result<(), GitError> {
-        self.rm_cached(paths).await
+    async fn rm_cached(&self, paths: &[PathBuf], recursive: bool) -> Result<(), GitError> {
+        self.rm_cached(paths, recursive).await
     }
 
     async fn diff_files(&self, from: &str, to: &str) -> Result<Vec<CommitFileChange>, GitError> {

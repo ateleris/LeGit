@@ -82,7 +82,7 @@ pub async fn repo_untrack_path(
     resolve_repo_relative(session.host.fs().as_ref(), &session.root, &path).await?;
     session
         .backend
-        .rm_cached(&[PathBuf::from(&path)])
+        .rm_cached(&[PathBuf::from(&path)], is_dir)
         .await
         .map_err(AppError::Git)?;
     write_gitignore_line(session.host.fs().as_ref(), &session.root, &path, is_dir)
@@ -147,13 +147,15 @@ pub async fn repo_reveal_path(
 // gitignore line composition (pure)
 // ---------------------------------------------------------------------------
 
-/// The `.gitignore` line for a path. Directories get a trailing `/`. A
-/// leading `/` anchor is added only where it changes matching: single-segment
-/// names (unanchored, they'd match at any depth; a slash-containing pattern
-/// is root-anchored by git already) and names starting with `#`/`!`
-/// (comment/negation, special at line start only).
+/// The `.gitignore` line for a path. Directories get a trailing `/`. Glob
+/// metacharacters in the name are backslash-escaped so the line matches the
+/// path literally, never as a pattern. A leading `/` anchor is added only
+/// where it changes matching: single-segment names (unanchored, they'd match
+/// at any depth; a slash-containing pattern is root-anchored by git already)
+/// and names starting with `#`/`!` (comment/negation, special at line start
+/// only).
 fn gitignore_line(rel: &str, is_dir: bool) -> String {
-    let trimmed = rel.trim_end_matches('/');
+    let trimmed = escape_gitignore_globs(rel.trim_end_matches('/'));
     let anchor = if !trimmed.contains('/') || trimmed.starts_with('#') || trimmed.starts_with('!') {
         "/"
     } else {
@@ -164,6 +166,20 @@ fn gitignore_line(rel: &str, is_dir: bool) -> String {
     } else {
         format!("{anchor}{trimmed}")
     }
+}
+
+/// Backslash-escape the fnmatch metacharacters (`*`, `?`, `[`, and `\`
+/// itself, first) so a file NAMED like a glob gets a literal line. A bare
+/// `]` is literal without an opening `[`, so it needs no escape.
+fn escape_gitignore_globs(rel: &str) -> String {
+    let mut out = String::with_capacity(rel.len());
+    for c in rel.chars() {
+        if matches!(c, '\\' | '*' | '?' | '[') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// Compute the new `.gitignore` content after adding `line`, or `None` if the
@@ -382,6 +398,18 @@ mod tests {
     }
 
     #[test]
+    fn gitignore_line_escapes_glob_metacharacters() {
+        // A filename containing `*`, `?`, `[` or `\` must become a literal
+        // line, not a glob that also ignores unrelated files.
+        assert_eq!(gitignore_line("a*b.log", false), r"/a\*b.log");
+        assert_eq!(gitignore_line("what?.md", false), r"/what\?.md");
+        assert_eq!(gitignore_line("file[1].txt", false), r"/file\[1].txt");
+        assert_eq!(gitignore_line(r"back\slash", false), r"/back\\slash");
+        assert_eq!(gitignore_line("src/a*b", false), r"src/a\*b");
+        assert_eq!(gitignore_line("weird [dir]", true), r"/weird \[dir]/");
+    }
+
+    #[test]
     fn gitignore_line_anchors_comment_and_negation_leaders() {
         // `#`/`!` are special at line start even in a slash-containing line.
         assert_eq!(gitignore_line("#tags.md", false), "/#tags.md");
@@ -411,6 +439,8 @@ mod tests {
             gitignore_line("src/gen.rs", false),
             gitignore_line("build", true),
             gitignore_line("#tags.md", false),
+            gitignore_line("a*b.log", false),
+            gitignore_line("file[1].txt", false),
         ];
         std::fs::write(dir.path().join(".gitignore"), lines.join("\n") + "\n").unwrap();
 
@@ -427,6 +457,10 @@ mod tests {
         assert!(ignored("build/out.o"));
         assert!(!ignored("nested/build/out.o"), "anchor must stop any-depth matching");
         assert!(ignored("#tags.md"), "leading / must keep the line from parsing as a comment");
+        assert!(ignored("a*b.log"), "the literal starred name itself must match");
+        assert!(!ignored("axb.log"), "escaping must stop `*` from globbing");
+        assert!(ignored("file[1].txt"), "the literal bracketed name itself must match");
+        assert!(!ignored("file1.txt"), "escaping must stop `[1]` from matching as a class");
     }
 
     #[test]

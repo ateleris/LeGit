@@ -120,10 +120,11 @@ pub trait GitBackend: Send + Sync {
     /// flag (ls-tree type `commit`).
     async fn list_files_at_revision(&self, rev: &str) -> Result<Vec<RepoFileEntry>, GitError>;
 
-    /// Remove paths from the index but keep them on disk (`git rm --cached`).
-    /// Used to stop tracking a file without deleting it (Files tree "Stop
+    /// Remove paths from the index but keep them on disk (`git rm --cached`,
+    /// plus `-r` for directory paths - git refuses them otherwise). Used to
+    /// stop tracking a file or folder without deleting it (Files tree "Stop
     /// tracking & ignore").
-    async fn rm_cached(&self, paths: &[PathBuf]) -> Result<(), GitError>;
+    async fn rm_cached(&self, paths: &[PathBuf], recursive: bool) -> Result<(), GitError>;
 
     /// Files changed between two arbitrary revs (`git diff-tree <from> <to>`,
     /// rename-aware) — the Compare view's file list. Direct snapshot diff

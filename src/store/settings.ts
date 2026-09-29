@@ -121,6 +121,8 @@ interface SettingsStore {
     lineWidth: number
   ) => Promise<void>;
   setChangedFilesViewMode: (mode: "tree" | "flat") => Promise<void>;
+  setFilesViewMode: (mode: "tree" | "flat") => Promise<void>;
+  setFilesShowIgnored: (show: boolean) => Promise<void>;
   setBranchListView: (mode: "tree" | "flat") => Promise<void>;
   setRefsSortMode: (mode: RefsSortMode) => Promise<void>;
   setTagsSortMode: (mode: RefsSortMode) => Promise<void>;
@@ -199,6 +201,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 
     async setChangedFilesViewMode(mode) {
       await patch({ changed_files_view_mode: mode });
+    },
+    async setFilesViewMode(mode) {
+      await patch({ files_view_mode: mode });
+    },
+    async setFilesShowIgnored(show) {
+      await patch({ files_show_ignored: show });
     },
     async setBranchListView(mode) {
       await patch({ branch_list_view: mode });

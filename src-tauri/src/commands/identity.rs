@@ -34,9 +34,10 @@ pub struct IdentityView {
 pub(crate) async fn build_global_view(runner: &dyn GitExecutor) -> IdentityView {
     // Global + system only: the unbound runner's cwd may lie inside some
     // repo, so an all-scopes read would leak that repo's local config here
-    // (see `read_config_global_scopes`).
-    let name = config::read_global_scopes(runner, KEY_USER_NAME).await;
-    let email = config::read_global_scopes(runner, KEY_USER_EMAIL).await;
+    // (see `config::read_global_snapshot`).
+    let snapshot = config::read_global_snapshot(runner).await;
+    let name = snapshot.scoped(KEY_USER_NAME);
+    let email = snapshot.scoped(KEY_USER_EMAIL);
     IdentityView {
         name_global: name.global,
         name_system: name.system,
@@ -59,6 +60,33 @@ pub(crate) async fn write_identity_global(
     config::write(runner, WriteScope::Global, KEY_USER_NAME, name).await?;
     config::write(runner, WriteScope::Global, KEY_USER_EMAIL, email).await?;
     Ok(build_global_view(runner).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use legit_core::test_support::{fail, ok, FakeExecutor};
+
+    // On a remote host every spawn crosses the agent pipe: the view must be
+    // built from ONE listing per scope, never one process per key.
+    #[tokio::test]
+    async fn global_view_is_built_from_one_listing_per_scope() {
+        let exec = FakeExecutor::default();
+        exec.expect(
+            &["config", "--global", "--list", "-z"],
+            ok("user.name\nAda\0user.email\nada@example.invalid\0"),
+        )
+        .expect(
+            &["config", "--system", "--list", "-z"],
+            fail(128, "fatal: unable to read config file '/etc/gitconfig': No such file or directory\n"),
+        );
+        let view = build_global_view(&exec).await;
+        assert_eq!(view.name_global.value.as_deref(), Some("Ada"));
+        assert_eq!(view.name_resolved.value.as_deref(), Some("Ada"));
+        assert_eq!(view.email_resolved.value.as_deref(), Some("ada@example.invalid"));
+        assert_eq!(view.name_system.value, None);
+        exec.assert_done();
+    }
 }
 
 /// Read the app machine's global identity (no repo required).

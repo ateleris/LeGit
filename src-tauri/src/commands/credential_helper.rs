@@ -22,8 +22,8 @@ const KEY: &str = "credential.helper";
 
 /// The effective helper entry per scope (last non-empty entry at that scope;
 /// `None` = no helper configured there). Local scope is deliberately absent:
-/// this backs a global-settings editor (see `read_config_global_scopes` for
-/// why global views must not consult local scope).
+/// this backs a global-settings editor (see `config::read_global_snapshot`
+/// for why global views must not consult local scope).
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct CredentialHelperView {
     pub helper_global: Option<String>,
@@ -42,9 +42,10 @@ pub(crate) async fn read_helper_at(runner: &dyn GitExecutor, scope: ConfigScope)
 }
 
 pub(crate) async fn build_view(runner: &dyn GitExecutor) -> CredentialHelperView {
+    let snapshot = config::read_global_snapshot(runner).await;
     CredentialHelperView {
-        helper_global: read_helper_at(runner, ConfigScope::Global).await,
-        helper_system: read_helper_at(runner, ConfigScope::System).await,
+        helper_global: effective_helper(&snapshot.multi(ConfigScope::Global, KEY)),
+        helper_system: effective_helper(&snapshot.multi(ConfigScope::System, KEY)),
     }
 }
 
@@ -258,7 +259,27 @@ pub(crate) async fn list_helpers_for_host(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::{Path, PathBuf};
+    use legit_core::test_support::{fail, ok, FakeExecutor};
+
+    // On a remote host every spawn crosses the agent pipe: the view must be
+    // built from ONE listing per scope, never one process per key. Empty
+    // entries are reset markers, so the last NON-EMPTY entry wins.
+    #[tokio::test]
+    async fn view_is_built_from_one_listing_per_scope() {
+        let exec = FakeExecutor::default();
+        exec.expect(
+            &["config", "--global", "--list", "-z"],
+            ok("credential.helper\n\0credential.helper\nstore\0"),
+        )
+        .expect(
+            &["config", "--system", "--list", "-z"],
+            fail(128, "fatal: unable to read config file '/etc/gitconfig': No such file or directory\n"),
+        );
+        let view = build_view(&exec).await;
+        assert_eq!(view.helper_global.as_deref(), Some("store"));
+        assert_eq!(view.helper_system, None);
+        exec.assert_done();
+    }
 
     // The remote probe must never lean on the app process's PATH (that is
     // Windows'); it names distro-standard directories with absolute POSIX

@@ -304,6 +304,13 @@ pub struct GlobalSettings {
     /// `None` until the user first toggles it.
     #[serde(default)]
     pub changed_files_view_mode: Option<String>,
+    /// Remembered view mode for the Files panel (`"tree"` | `"flat"`).
+    /// `None` until the user first toggles it (the panel defaults to tree).
+    #[serde(default)]
+    pub files_view_mode: Option<String>,
+    /// Whether the Files panel also lists ignored files. `None` = off.
+    #[serde(default)]
+    pub files_show_ignored: Option<bool>,
     /// Branches section list style (`"tree"` | `"flat"`). `None`/unknown =
     /// flat. Toggled from the Branches section header, applies globally.
     #[serde(default)]
@@ -495,6 +502,8 @@ impl Default for GlobalSettings {
             commits_dot_radius: default_commits_dot_radius(),
             commits_line_width: default_commits_line_width(),
             changed_files_view_mode: None,
+            files_view_mode: None,
+            files_show_ignored: None,
             branch_list_view: None,
             refs_sort_mode: None,
             tags_sort_mode: None,

@@ -58,7 +58,18 @@ async fn rm_cached_runs_git_rm_cached_with_pathspec() {
     fake.expect(&["rm", "--cached", "--", "secret.env"], ok(""));
     let (b, exec) = backend(fake);
 
-    b.rm_cached(&[PathBuf::from("secret.env")]).await.unwrap();
+    b.rm_cached(&[PathBuf::from("secret.env")], false).await.unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn rm_cached_recursive_adds_r_for_directories() {
+    // Without `-r`, `git rm --cached` refuses a directory pathspec.
+    let fake = FakeExecutor::default();
+    fake.expect(&["rm", "--cached", "-r", "--", "vendor"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.rm_cached(&[PathBuf::from("vendor")], true).await.unwrap();
     exec.assert_done();
 }
 

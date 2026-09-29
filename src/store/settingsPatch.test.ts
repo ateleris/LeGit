@@ -41,6 +41,14 @@ describe("settings store patch path", () => {
     expect(useSettingsStore.getState().settings).toEqual(merged);
   });
 
+  it("the Files panel prefs send only their own field", async () => {
+    await useSettingsStore.getState().setFilesViewMode("flat");
+    expect(patchGlobalSettings.mock.calls[0]).toEqual([{ files_view_mode: "flat" }]);
+
+    await useSettingsStore.getState().setFilesShowIgnored(true);
+    expect(patchGlobalSettings.mock.calls[1]).toEqual([{ files_show_ignored: true }]);
+  });
+
   it("the auto-fetch interval is sent as an integer with a floor of 1", async () => {
     await useSettingsStore.getState().setAutoFetchIntervalMinutes(0.4);
 
