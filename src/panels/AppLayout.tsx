@@ -27,6 +27,7 @@ import { RepoTabBar } from "./RepoTabBar";
 import { CredentialPromptHost } from "./CredentialPrompt";
 import { AskpassPromptHost } from "./AskpassPrompt";
 import { ConfirmDialogHost } from "./ConfirmDialogHost";
+import { useRepoSlotSync } from "./shared/repoSlotSync";
 
 const DEFAULT_SIZE_TOP = 240;
 const DEFAULT_SIZE_LEFT = 280;
@@ -139,7 +140,7 @@ export function AppLayout() {
   // When the user switches to a different repository, surface the Commits
   // panel. Other panels react on their own: query-driven panels (Commits,
   // Working Changes) refetch via their repo-keyed query keys, and selection
-  // panels (Changed Files, Commit Details, Diff) clear their stale state.
+  // panels read their own repo's view state (store/panelViewState.ts).
   const activeRepoId = useRepoStore((s) => s.activeRepoId);
   const prevActiveRepo = useRef<string | null>(null);
 
@@ -163,6 +164,11 @@ export function AppLayout() {
     }
     prevActiveRepo.current = activeRepoId;
   }, [activeRepoId]);
+
+  // The shared Working Changes / Changed Files slot is global dock state while
+  // the selections are per repo: re-derive the slot from the activated repo's
+  // log selection.
+  useRepoSlotSync();
 
 
   const [placement, setPlacementState] = useState<RegionPlacement>("left");

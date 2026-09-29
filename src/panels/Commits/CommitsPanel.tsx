@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
 import { usePanelViewState } from "../../store/panelViewState";
+import { COMMITS_SELECTED_ID_KEY } from "../shared/repoSlotSync";
 import { useThemeStore } from "../../store/themes";
 import { effectiveLaneChipFilters } from "../../theme/filters";
 import {
@@ -176,7 +177,7 @@ function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
   // (store/panelViewState.ts): they survive a layout apply's dock rebuild
   // and panel close/reopen, and each repo keeps its own across tab switches.
   const [selectedId, setSelectedId] = usePanelViewState<CommitId | null>(
-    "commits.selectedId",
+    COMMITS_SELECTED_ID_KEY,
     null,
   );
   // Multi-selection (Ctrl/Shift click; see multiSelect.ts for the rules).

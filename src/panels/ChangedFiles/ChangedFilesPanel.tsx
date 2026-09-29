@@ -10,6 +10,7 @@ import { api } from "../../lib/commands";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { openSubmoduleRepo } from "../../lib/submodules";
 import { usePanelViewState } from "../../store/panelViewState";
+import { CHANGED_FILES_SELECTED_ID_KEY } from "../shared/repoSlotSync";
 import { notify } from "../../store/notifications";
 import type { CommitDetails, CommitFileChange, CommitId, DiffRequest } from "../../lib/types";
 import { formatAppError } from "../../lib/errors";
@@ -38,7 +39,7 @@ export function ChangedFilesPanel() {
   // the-new-repo delivery race that useRepoSwitchClear used to handle (writes
   // key by the active repo at call time).
   const [selectedId, setSelectedId] = usePanelViewState<CommitId | null>(
-    "changed-files.selectedId",
+    CHANGED_FILES_SELECTED_ID_KEY,
     null,
   );
   const [selectedPath, setSelectedPath] = usePanelViewState<string | null>(
