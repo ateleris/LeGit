@@ -18,9 +18,13 @@ export interface CommonSection {
 
 export interface ConflictBlock {
   kind: "conflict";
-  /** Text after `<<<<<<< ` (usually HEAD). */
+  /** Length of this block's marker runs. Git's default is 7, but rename
+   *  labels, nested merges and the conflict-marker-size attribute produce
+   *  longer runs; reconstruction must reuse the parsed length. */
+  markerLen: number;
+  /** Text after the `<<<<<<<` run (usually HEAD). */
   oursLabel: string;
-  /** Text after `>>>>>>> ` (the merged branch/commit). */
+  /** Text after the `>>>>>>>` run (the merged branch/commit). */
   theirsLabel: string;
   ours: string[];
   /** diff3 `|||||||` section, kept verbatim for reconstruction; not shown. */
@@ -38,17 +42,23 @@ export interface ParsedConflicts {
   trailingNewline: boolean;
 }
 
-const OURS_MARK = "<<<<<<<";
-const BASE_MARK = "|||||||";
-const SEP_MARK = "=======";
-const THEIRS_MARK = ">>>>>>>";
+const MIN_MARKER_LEN = 7;
 
-function markerLabel(line: string, mark: string): string {
-  return line.slice(mark.length).trim();
+function runLength(line: string, ch: string): number {
+  let n = 0;
+  while (n < line.length && line[n] === ch) n++;
+  return n;
 }
 
-function isMark(line: string, mark: string): boolean {
-  return line.startsWith(mark) && (line.length === mark.length || line[mark.length] === " ");
+function markerLabel(line: string, len: number): string {
+  return line.slice(len).trim();
+}
+
+/** A run of exactly `len` `ch`s followed by end-of-line or a space. All of a
+ *  block's markers share one length, so a longer run is content (a nested
+ *  inner-merge conflict), never this block's marker. */
+function isMark(line: string, ch: string, len: number): boolean {
+  return runLength(line, ch) === len && (line.length === len || line[len] === " ");
 }
 
 /** Parse a working-tree file's conflict markers. An unterminated conflict is
@@ -69,9 +79,11 @@ export function parseConflicts(text: string): ParsedConflicts {
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
-    if (isMark(line, OURS_MARK)) {
+    const markerLen = runLength(line, "<");
+    if (markerLen >= MIN_MARKER_LEN && (line.length === markerLen || line[markerLen] === " ")) {
       // Scan ahead for a complete block before committing to it.
-      const oursLabel = markerLabel(line, OURS_MARK);
+      const oursLabel = markerLabel(line, markerLen);
+      const sep = "=".repeat(markerLen);
       const ours: string[] = [];
       let base: string[] | null = null;
       let baseLabel: string | null = null;
@@ -81,18 +93,18 @@ export function parseConflicts(text: string): ParsedConflicts {
       let theirsLabel = "";
       for (let j = i + 1; j < lines.length; j++) {
         const l = lines[j];
-        if (phase !== "theirs" && isMark(l, BASE_MARK)) {
+        if (phase !== "theirs" && isMark(l, "|", markerLen)) {
           phase = "base";
           base = [];
-          baseLabel = markerLabel(l, BASE_MARK);
+          baseLabel = markerLabel(l, markerLen);
           continue;
         }
-        if (phase !== "theirs" && l === SEP_MARK) {
+        if (phase !== "theirs" && l === sep) {
           phase = "theirs";
           continue;
         }
-        if (phase === "theirs" && isMark(l, THEIRS_MARK)) {
-          theirsLabel = markerLabel(l, THEIRS_MARK);
+        if (phase === "theirs" && isMark(l, ">", markerLen)) {
+          theirsLabel = markerLabel(l, markerLen);
           end = j;
           break;
         }
@@ -102,7 +114,7 @@ export function parseConflicts(text: string): ParsedConflicts {
       }
       if (end !== -1) {
         flushCommon();
-        sections.push({ kind: "conflict", oursLabel, theirsLabel, ours, base, baseLabel, theirs });
+        sections.push({ kind: "conflict", markerLen, oursLabel, theirsLabel, ours, base, baseLabel, theirs });
         i = end + 1;
         continue;
       }
@@ -280,11 +292,12 @@ function joinLines(lines: string[], eol: Eol, trailingNewline: boolean): string 
 }
 
 function conflictMarkerLines(c: ConflictBlock, ours: string[], theirs: string[]): string[] {
-  const out = [`${OURS_MARK} ${c.oursLabel}`.trimEnd(), ...ours];
+  const mark = (ch: string) => ch.repeat(c.markerLen);
+  const out = [`${mark("<")} ${c.oursLabel}`.trimEnd(), ...ours];
   if (c.base !== null) {
-    out.push(`${BASE_MARK} ${c.baseLabel ?? ""}`.trimEnd(), ...c.base);
+    out.push(`${mark("|")} ${c.baseLabel ?? ""}`.trimEnd(), ...c.base);
   }
-  out.push(SEP_MARK, ...theirs, `${THEIRS_MARK} ${c.theirsLabel}`.trimEnd());
+  out.push(mark("="), ...theirs, `${mark(">")} ${c.theirsLabel}`.trimEnd());
   return out;
 }
 

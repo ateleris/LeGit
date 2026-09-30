@@ -54,6 +54,7 @@ lives in the git log and the GitHub release notes.
 
 ### Fixed
 
+- The Merge panel recognizes conflict markers longer than 7 characters (git writes them for renamed files, nested merges, and the conflict-marker-size attribute) instead of claiming the file has no conflict markers left.
 - A stash whose base commit was reworked away (rebased or amended after stashing) shows as a detached stash node in the graph instead of drawing a dangling line to the bottom of the window.
 - Switching repository tabs keeps the Working Changes / Changed Files panel in step with the repo's selected commit: a commit selection shows that commit's files again, and a working-directory selection brings Working Changes back instead of another repo's leftover view.
 - Staging or discarding from the diff's "Full file" view no longer silently applies only part of the change; the merged full-file view is display-only and the actions live in the Chunks view, whose hunks match what gets applied.

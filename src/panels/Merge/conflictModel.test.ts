@@ -47,6 +47,7 @@ describe("parseConflicts", () => {
       { kind: "common", lines: ["before"] },
       {
         kind: "conflict",
+        markerLen: 7,
         oursLabel: "HEAD",
         theirsLabel: "feature/x",
         ours: ["ours1", "ours2"],
@@ -95,6 +96,86 @@ describe("parseConflicts", () => {
     expect(p.conflictCount).toBe(2);
     expect((p.sections[0] as { ours: string[] }).ours).toEqual([]);
     expect((p.sections[2] as { theirs: string[] }).theirs).toEqual([]);
+  });
+
+  // Git writes markers longer than 7 for rename-labelled sides and under a
+  // conflict-marker-size attribute; those files are still conflicted.
+  it("parses longer markers (rename-labelled sides)", () => {
+    const text = [
+      "before",
+      "<<<<<<<< HEAD:app/dir/Renamed.cs",
+      "ours",
+      "========",
+      "theirs",
+      ">>>>>>>> 9c1100235 (subject line):app/dir/Other.cs",
+      "after",
+    ].join("\n") + "\n";
+    const p = parseConflicts(text);
+    expect(p.conflictCount).toBe(1);
+    expect(p.sections[1]).toEqual({
+      kind: "conflict",
+      markerLen: 8,
+      oursLabel: "HEAD:app/dir/Renamed.cs",
+      theirsLabel: "9c1100235 (subject line):app/dir/Other.cs",
+      ours: ["ours"],
+      base: null,
+      baseLabel: null,
+      theirs: ["theirs"],
+    });
+  });
+
+  it("parses longer diff3 markers", () => {
+    const text = [
+      "<<<<<<<<< HEAD",
+      "ours",
+      "||||||||| base123",
+      "orig",
+      "=========",
+      "theirs",
+      ">>>>>>>>> feature/x",
+    ].join("\n") + "\n";
+    const p = parseConflicts(text);
+    expect(p.conflictCount).toBe(1);
+    expect(p.sections[0]).toMatchObject({
+      kind: "conflict",
+      markerLen: 9,
+      base: ["orig"],
+      baseLabel: "base123",
+    });
+  });
+
+  it("requires the block's closing markers to match the opener's length", () => {
+    const text = [
+      "<<<<<<<< HEAD",
+      "ours",
+      "=======",
+      "theirs",
+      ">>>>>>> feature/x",
+    ].join("\n") + "\n";
+    expect(parseConflicts(text).conflictCount).toBe(0);
+  });
+
+  it("keeps a longer nested conflict verbatim inside the outer block", () => {
+    const text = [
+      "<<<<<<< HEAD",
+      "ours",
+      "=======",
+      "<<<<<<<<< Temporary merge branch 1",
+      "inner-a",
+      "=========",
+      "inner-b",
+      ">>>>>>>>> Temporary merge branch 2",
+      ">>>>>>> other",
+    ].join("\n") + "\n";
+    const p = parseConflicts(text);
+    expect(p.conflictCount).toBe(1);
+    expect((p.sections[0] as { theirs: string[] }).theirs).toEqual([
+      "<<<<<<<<< Temporary merge branch 1",
+      "inner-a",
+      "=========",
+      "inner-b",
+      ">>>>>>>>> Temporary merge branch 2",
+    ]);
   });
 });
 
@@ -302,6 +383,22 @@ describe("composeBlockLines / markerViewSpans (merge view model)", () => {
         theirs: [false],
       }),
     ).toEqual(["<<<<<<< HEAD", "o1", "o2", "=======", "t1", ">>>>>>> feature/x"]);
+  });
+
+  it("restores longer markers at their parsed length", () => {
+    const text = [
+      "<<<<<<<< HEAD:a/f.cs", "o1", "========", "t1", ">>>>>>>> sha:b/f.cs",
+    ].join("\n") + "\n";
+    const parsed = parseConflicts(text);
+    const regions = regionsFromParsed(parsed);
+    expect(
+      composeBlockLines(regions[0], blockSection(parsed, 0), {
+        ours: [false],
+        theirs: [false],
+      }),
+    ).toEqual([
+      "<<<<<<<< HEAD:a/f.cs", "o1", "========", "t1", ">>>>>>>> sha:b/f.cs",
+    ]);
   });
 
   it("markerViewSpans gives each block's start line and marker-view length", () => {
