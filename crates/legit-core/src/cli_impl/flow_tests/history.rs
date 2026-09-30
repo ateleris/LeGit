@@ -34,6 +34,143 @@ async fn log_all_branches_and_remotes_walks_remote_refs_too() {
 }
 
 // ---------------------------------------------------------------------------
+// log - detached stash bases (base reworked away after stashing)
+// ---------------------------------------------------------------------------
+
+const TIP_SHA: &str = "1111000011112222333344445555666677778888";
+const STASH_SHA_A: &str = "2222000011112222333344445555666677778888";
+const STASH_SHA_B: &str = "3333000011112222333344445555666677778888";
+const STASH_BASE: &str = "4444000011112222333344445555666677778888";
+const STASH_INDEX_SHA: &str = "5555000011112222333344445555666677778888";
+
+/// One STASH_FORMAT line (tab-separated; %P carries base + index parents).
+fn stash_record(sha: &str, selector: &str, base: &str) -> String {
+    format!(
+        "{sha}\t{selector}\t{base} {STASH_INDEX_SHA}\tAlice\ta@b.com\t2024-03-16T12:00:00+00:00\tWIP on main: msg\n"
+    )
+}
+
+fn stash_parents<'a>(commits: &'a [Commit], stash_sha: &str) -> &'a [CommitId] {
+    &commits.iter().find(|c| c.id.as_str() == stash_sha).expect("stash node injected").parents
+}
+
+/// A stash base absent from the walked window gets one batched reachability
+/// probe; bases it reports unreachable inject their stash nodes WITHOUT the
+/// parent edge (the graph would otherwise draw a line to the bottom of the
+/// window forever). A shared base is probed once.
+#[tokio::test]
+async fn log_full_graph_probes_missing_stash_bases_and_detaches_unreachable() {
+    let fmt = format!("--format={}", parsers::log::LOG_FORMAT);
+    let stash_fmt = format!("--format={}", parsers::stash::STASH_FORMAT);
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &[
+            "log", fmt.as_str(), "--max-count=500", "--date-order", "--decorate=full",
+            "--ignore-missing", "HEAD", "--branches", "--remotes",
+        ],
+        ok(&log_record(TIP_SHA, "tip")),
+    );
+    let stashes =
+        stash_record(STASH_SHA_A, "stash@{0}", STASH_BASE) + &stash_record(STASH_SHA_B, "stash@{1}", STASH_BASE);
+    fake.expect(&["stash", "list", stash_fmt.as_str()], ok(&stashes));
+    // The probe mirrors the walked refs (--remotes included here) and lists
+    // only the bases git reports unreachable.
+    fake.expect(
+        &["rev-list", "--no-walk", STASH_BASE, "--not", "HEAD", "--branches", "--remotes"],
+        ok(&format!("{STASH_BASE}\n")),
+    );
+    let (b, exec) = backend(fake);
+
+    let commits = b
+        .log(LogOptions { refs: RefSelector::AllBranchesAndRemotes, ..Default::default() })
+        .await
+        .unwrap();
+    assert!(stash_parents(&commits, STASH_SHA_A).is_empty());
+    assert!(stash_parents(&commits, STASH_SHA_B).is_empty());
+    exec.assert_done();
+}
+
+/// A base inside the window needs no probe: no rev-list runs at all.
+#[tokio::test]
+async fn log_full_graph_skips_reachability_probe_when_bases_are_in_window() {
+    let fmt = format!("--format={}", parsers::log::LOG_FORMAT);
+    let stash_fmt = format!("--format={}", parsers::stash::STASH_FORMAT);
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &[
+            "log", fmt.as_str(), "--max-count=500", "--date-order", "--decorate=full",
+            "--ignore-missing", "HEAD", "--branches",
+        ],
+        ok(&log_record(STASH_BASE, "base")),
+    );
+    fake.expect(&["stash", "list", stash_fmt.as_str()], ok(&stash_record(STASH_SHA_A, "stash@{0}", STASH_BASE)));
+    let (b, exec) = backend(fake);
+
+    let commits = b
+        .log(LogOptions { refs: RefSelector::AllLocalBranches, ..Default::default() })
+        .await
+        .unwrap();
+    assert_eq!(stash_parents(&commits, STASH_SHA_A), &[CommitId(STASH_BASE.into())]);
+    exec.assert_done();
+}
+
+/// A base missing from the window but reachable (it sits beyond the pagination
+/// boundary) keeps its parent edge: the line to the bottom of the window is
+/// correct there - the edge connects once the base loads.
+#[tokio::test]
+async fn log_full_graph_keeps_parent_edge_for_reachable_base_beyond_window() {
+    let fmt = format!("--format={}", parsers::log::LOG_FORMAT);
+    let stash_fmt = format!("--format={}", parsers::stash::STASH_FORMAT);
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &[
+            "log", fmt.as_str(), "--max-count=500", "--date-order", "--decorate=full",
+            "--ignore-missing", "HEAD", "--branches",
+        ],
+        ok(&log_record(TIP_SHA, "tip")),
+    );
+    fake.expect(&["stash", "list", stash_fmt.as_str()], ok(&stash_record(STASH_SHA_A, "stash@{0}", STASH_BASE)));
+    fake.expect(&["rev-list", "--no-walk", STASH_BASE, "--not", "HEAD", "--branches"], ok(""));
+    let (b, exec) = backend(fake);
+
+    let commits = b
+        .log(LogOptions { refs: RefSelector::AllLocalBranches, ..Default::default() })
+        .await
+        .unwrap();
+    assert_eq!(stash_parents(&commits, STASH_SHA_A), &[CommitId(STASH_BASE.into())]);
+    exec.assert_done();
+}
+
+/// Stash injection is best-effort; a failed probe must not break the log or
+/// change behaviour - the parent edge stays.
+#[tokio::test]
+async fn log_full_graph_keeps_parent_edge_when_reachability_probe_fails() {
+    let fmt = format!("--format={}", parsers::log::LOG_FORMAT);
+    let stash_fmt = format!("--format={}", parsers::stash::STASH_FORMAT);
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &[
+            "log", fmt.as_str(), "--max-count=500", "--date-order", "--decorate=full",
+            "--ignore-missing", "HEAD", "--branches",
+        ],
+        ok(&log_record(TIP_SHA, "tip")),
+    );
+    fake.expect(&["stash", "list", stash_fmt.as_str()], ok(&stash_record(STASH_SHA_A, "stash@{0}", STASH_BASE)));
+    fake.expect(
+        &["rev-list", "--no-walk", STASH_BASE, "--not", "HEAD", "--branches"],
+        fail(128, "fatal: bad object"),
+    );
+    let (b, exec) = backend(fake);
+
+    let commits = b
+        .log(LogOptions { refs: RefSelector::AllLocalBranches, ..Default::default() })
+        .await
+        .unwrap();
+    assert_eq!(stash_parents(&commits, STASH_SHA_A), &[CommitId(STASH_BASE.into())]);
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
 // signature_presence - batched pay-per-view scan, never a verifier
 // ---------------------------------------------------------------------------
 

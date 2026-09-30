@@ -102,16 +102,68 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         );
         if opts.author.is_none() && (full_graph || opts.include_stashes) {
             if let Ok(mut stashes) = self.stashes().await {
+                let ids: std::collections::HashSet<&str> =
+                    commits.iter().map(|c| c.id.as_str()).collect();
+                let mut detached = std::collections::HashSet::new();
                 if !full_graph {
-                    let ids: std::collections::HashSet<&str> =
-                        commits.iter().map(|c| c.id.as_str()).collect();
                     stashes.retain(|s| ids.contains(s.base_sha.as_str()));
+                } else {
+                    // A base absent from the window is either paginated out
+                    // (keep the edge; it connects on load-more) or unreachable
+                    // from the walked refs (reworked away after stashing - the
+                    // edge would render as a line to the bottom of the window
+                    // forever). One batched probe tells them apart; on probe
+                    // failure the edges stay, matching the best-effort policy
+                    // of the injection itself.
+                    let mut seen = std::collections::HashSet::new();
+                    let missing: Vec<&str> = stashes
+                        .iter()
+                        .map(|s| s.base_sha.as_str())
+                        .filter(|base| !ids.contains(base) && seen.insert(*base))
+                        .collect();
+                    if !missing.is_empty() {
+                        if let Ok(unreachable) =
+                            self.unreachable_commits(&missing, &opts.refs).await
+                        {
+                            detached = unreachable;
+                        }
+                    }
                 }
-                inject_stashes(&mut commits, stashes);
+                inject_stashes(&mut commits, stashes, &detached);
             }
         }
 
         Ok(commits)
+    }
+
+    /// Which of `ids` are unreachable from the refs the given selector walks.
+    /// `--no-walk` lists exactly the given commits, and the negated refs drop
+    /// every one reachable from them, so the output is the unreachable subset.
+    /// The negative-side walk prunes by commit date / generation number, so
+    /// the cost is roughly "commits newer than the probed base", not the whole
+    /// history. Only ever called with shas parsed from git's own output.
+    async fn unreachable_commits(
+        &self,
+        ids: &[&str],
+        refs: &RefSelector,
+    ) -> Result<std::collections::HashSet<String>, GitError> {
+        let runner = self.runner().await;
+        let mut args = vec!["rev-list", "--no-walk"];
+        args.extend_from_slice(ids);
+        args.push("--not");
+        args.push("HEAD");
+        args.push("--branches");
+        if matches!(refs, RefSelector::AllBranchesAndRemotes) {
+            args.push("--remotes");
+        }
+        let output = runner.run(&args).await?;
+        Self::ensure_success(&output)?;
+        Ok(output
+            .stdout
+            .lines()
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect())
     }
 
     pub(super) async fn signature_presence(&self, ids: &[CommitId]) -> Result<Vec<CommitId>, GitError> {
@@ -395,11 +447,14 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
 /// Build a synthetic graph node for a stash entry. The real stash object is a
 /// 2–3-parent merge (base, index, optional untracked); we keep ONLY the base as
 /// the parent so the lane graph hangs it cleanly off its base instead of drawing
-/// edges into git-internal index/untracked blobs.
-pub(super) fn stash_commit(entry: &StashEntry) -> Commit {
+/// edges into git-internal index/untracked blobs. A detached base (unreachable
+/// from the walked refs, e.g. reworked away after stashing) yields no parent at
+/// all: the graph would otherwise draw the edge to the bottom of the window
+/// forever, waiting for a commit that can never load.
+pub(super) fn stash_commit(entry: &StashEntry, detached: bool) -> Commit {
     Commit {
         id: entry.stash_sha.clone(),
-        parents: vec![entry.base_sha.clone()],
+        parents: if detached { vec![] } else { vec![entry.base_sha.clone()] },
         author: entry.author.clone(),
         committer: entry.author.clone(),
         message: entry.message.clone(),
@@ -424,9 +479,13 @@ pub(super) fn stash_commit(entry: &StashEntry) -> Commit {
 /// downward into it (just not necessarily adjacent). `git stash list` is
 /// most-recent first, so inserting in that order keeps `stash@{0}` highest when
 /// several stashes share a timestamp.
-pub(super) fn inject_stashes(commits: &mut Vec<Commit>, stashes: Vec<StashEntry>) {
+pub(super) fn inject_stashes(
+    commits: &mut Vec<Commit>,
+    stashes: Vec<StashEntry>,
+    detached_bases: &std::collections::HashSet<String>,
+) {
     for entry in &stashes {
-        let node = stash_commit(entry);
+        let node = stash_commit(entry, detached_bases.contains(entry.base_sha.as_str()));
         let pos = commits
             .iter()
             .position(|c| c.committer.timestamp < node.timestamp)
@@ -487,7 +546,7 @@ mod tests {
     #[test]
     fn stash_interleaves_by_committer_date() {
         let mut commits = vec![commit("c3", 300, 300), commit("c2", 200, 200), commit("c1", 100, 100)];
-        inject_stashes(&mut commits, vec![stash_entry("s", 250)]);
+        inject_stashes(&mut commits, vec![stash_entry("s", 250)], &Default::default());
         assert_eq!(ids(&commits), vec!["c3", "s", "c2", "c1"]);
     }
 
@@ -499,15 +558,28 @@ mod tests {
         // c2 was rebased: author ts 100 (old), committer ts 400 (new).
         let mut commits = vec![commit("c2", 100, 400), commit("c1", 150, 150)];
         // Stash from t=300: newer than c1, older than c2's *commit* date.
-        inject_stashes(&mut commits, vec![stash_entry("s", 300)]);
+        inject_stashes(&mut commits, vec![stash_entry("s", 300)], &Default::default());
         assert_eq!(ids(&commits), vec!["c2", "s", "c1"]);
     }
 
     #[test]
     fn stash_older_than_window_appends_at_end() {
         let mut commits = vec![commit("c2", 200, 200), commit("c1", 100, 100)];
-        inject_stashes(&mut commits, vec![stash_entry("s", 50)]);
+        inject_stashes(&mut commits, vec![stash_entry("s", 50)], &Default::default());
         assert_eq!(ids(&commits), vec!["c2", "c1", "s"]);
+    }
+
+    #[test]
+    fn stash_with_detached_base_gets_no_parent_edge() {
+        // A base reworked away (rebase/amend) is unreachable and never enters
+        // the log window; keeping the parent edge would draw a line to the
+        // bottom of the graph forever. The node renders detached instead.
+        let mut commits = vec![commit("c1", 100, 100)];
+        let detached: std::collections::HashSet<String> =
+            std::iter::once("base".to_string()).collect();
+        inject_stashes(&mut commits, vec![stash_entry("s", 200)], &detached);
+        assert_eq!(ids(&commits), vec!["s", "c1"]);
+        assert!(commits[0].parents.is_empty());
     }
 
     #[test]
@@ -518,6 +590,7 @@ mod tests {
         inject_stashes(
             &mut commits,
             vec![stash_entry("s0", 200), stash_entry("s1", 200)],
+            &Default::default(),
         );
         assert_eq!(ids(&commits), vec!["s0", "s1", "c1"]);
     }

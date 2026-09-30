@@ -1733,6 +1733,51 @@ async fn range_walk_injects_only_stashes_based_in_the_window() {
     assert!(!has_stash(&plain), "{plain:?}");
 }
 
+#[tokio::test]
+async fn full_graph_detaches_stash_whose_base_was_reworked_away() {
+    // Encodes the `rev-list --no-walk <bases> --not HEAD --branches`
+    // assumption: it lists exactly the unreachable subset of the given shas.
+    // A stash base amended away must inject its node WITHOUT the parent edge
+    // (the graph would draw a dangling line to the bottom of the window
+    // forever); a stash on a live base keeps the edge.
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.write("a.txt", "work\n");
+    repo.commit_all("work").await;
+
+    // Stash on the tip, then rework the tip: the base becomes unreachable.
+    let old_tip = repo.head().await;
+    repo.write("a.txt", "wip\n");
+    repo.git(&["stash", "push", "-m", "detached wip"]).await;
+    repo.git(&["commit", "--amend", "-m", "work reworked"]).await;
+
+    let new_tip = repo.head().await;
+    repo.write("a.txt", "wip2\n");
+    repo.git(&["stash", "push", "-m", "live wip"]).await;
+
+    let commits = repo
+        .backend
+        .log(LogOptions { refs: RefSelector::AllLocalBranches, ..Default::default() })
+        .await
+        .unwrap();
+    let parents_of = |msg: &str| {
+        commits
+            .iter()
+            .find(|c| c.message.contains(msg))
+            .unwrap_or_else(|| panic!("stash node {msg:?} not injected: {commits:?}"))
+            .parents
+            .clone()
+    };
+
+    assert!(parents_of("detached wip").is_empty(), "{commits:?}");
+    assert_eq!(parents_of("live wip"), vec![legit_core::types::CommitId(new_tip)]);
+    assert!(
+        !commits.iter().any(|c| c.id.as_str() == old_tip),
+        "reworked base must not be in the walk: {commits:?}"
+    );
+}
+
 /// Commit the worktree with a pinned author+committer date (ISO 8601). The
 /// runner scrubs inherited GIT_* vars, so the dates ride a per-invocation
 /// `run_with_env` override.
