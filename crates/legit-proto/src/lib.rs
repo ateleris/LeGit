@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 pub mod cred;
 pub use cred::{CredAnswer, ShimRelayRequest};
 
-pub const PROTO_VERSION: u32 = 1;
+pub const PROTO_VERSION: u32 = 2;
 
 /// First line the agent prints once it is ready to speak the protocol.
 pub const READY_PREFIX: &str = "LEGIT-AGENT-READY ";
@@ -127,13 +127,22 @@ impl std::fmt::Display for WireError {
 
 impl From<&RunnerError> for WireError {
     fn from(e: &RunnerError) -> Self {
-        let kind = match e {
-            RunnerError::Spawn(_) => WireErrorKind::Spawn,
-            RunnerError::Io(_) => WireErrorKind::Io,
-            RunnerError::GitNotFound(_) => WireErrorKind::GitNotFound,
-            RunnerError::DuplicateOperation(_) => WireErrorKind::DuplicateOperation,
-        };
-        WireError::new(kind, e.to_string())
+        match e {
+            RunnerError::Spawn(_) => WireError::new(WireErrorKind::Spawn, e.to_string()),
+            RunnerError::Io(_) => WireError::new(WireErrorKind::Io, e.to_string()),
+            // The receiving side rebuilds the typed variant FROM the message
+            // (`GitNotFound(message as path)`, `DuplicateOperation(message as
+            // id)`), and the variant's Display re-adds its prefix - so these
+            // two carry the bare payload, not `e.to_string()`, or the prefix
+            // doubles ("git executable not found at git executable not
+            // found at git").
+            RunnerError::GitNotFound(p) => {
+                WireError::new(WireErrorKind::GitNotFound, p.display().to_string())
+            }
+            RunnerError::DuplicateOperation(op) => {
+                WireError::new(WireErrorKind::DuplicateOperation, op.0.clone())
+            }
+        }
     }
 }
 
@@ -189,6 +198,11 @@ pub enum Method {
     WatchStop { watch_id: u64 },
     HostSpawn { program: String, args: Vec<String>, cwd: Option<HostPath> },
     GitProbe { git_path: HostPath },
+    /// Liveness probe: answered with `()`. A connection whose ping times out
+    /// is declared dead by the host side - a wedged transport (stalled WSL
+    /// VM, hung bridge) keeps the pipe open and would otherwise hang every
+    /// pending call forever.
+    Ping,
     Shutdown,
     // Agent → app (credential relay; see `credentials.rs`).
     CredRequest(CredRequestParams),
@@ -476,6 +490,15 @@ mod tests {
     }
 
     #[test]
+    fn ping_round_trips() {
+        let line = encode_frame(&Frame::Req { id: 7, method: Method::Ping });
+        assert!(matches!(
+            decode_frame(line.trim()).unwrap(),
+            Frame::Req { id: 7, method: Method::Ping }
+        ));
+    }
+
+    #[test]
     fn runner_and_fs_errors_map_to_wire_kinds() {
         let we: WireError = (&RunnerError::GitNotFound("/x/git".into())).into();
         assert_eq!(we.kind, WireErrorKind::GitNotFound);
@@ -483,5 +506,17 @@ mod tests {
         assert_eq!(we.kind, WireErrorKind::FsNotFound);
         let p = HostPath("/a".into());
         assert!(matches!(we.into_fs_error(&p), FsError::NotFound { .. }));
+    }
+
+    // The receiver rebuilds these variants from the message alone, and their
+    // Display re-adds the prefix: an encoded `e.to_string()` showed the user
+    // "git executable not found at git executable not found at git".
+    #[test]
+    fn reconstructed_runner_errors_carry_the_bare_payload() {
+        let we: WireError = (&RunnerError::GitNotFound("/x/git".into())).into();
+        assert_eq!(we.message, "/x/git");
+        let we: WireError =
+            (&RunnerError::DuplicateOperation(legit_core::OperationId("op-1".into()))).into();
+        assert_eq!(we.message, "op-1");
     }
 }

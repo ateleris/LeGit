@@ -48,7 +48,12 @@ async fn handshake_rejects_version_mismatch() {
         Ok(_) => panic!("mismatched app version must be refused"),
         Err(e) => e,
     };
-    // The deployer keys redeploys off this failure.
+    // The deployer keys the redeploy-and-retry off this exact variant: a
+    // stale agent behind the same version key would otherwise never heal.
+    assert!(
+        matches!(err, legit_host::HostError::VersionMismatch(_)),
+        "{err}"
+    );
     assert!(err.to_string().contains("does not match"), "{err}");
 }
 
@@ -328,6 +333,7 @@ async fn credential_relay_round_trips_through_real_git() {
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             base_env_extra: Vec::new(),
             enable_cred_relay: true,
+            ..Default::default()
         },
         sinks,
     )
@@ -378,4 +384,15 @@ async fn unknown_method_gets_an_error_response_not_a_hang() {
         .unwrap()
         .unwrap();
     assert!(res.contains("\"id\":99") && res.contains("unknown_method"), "{res}");
+}
+
+// The liveness probe's happy path: a healthy agent answers `ping` (the
+// host-side wedge detection in `legit-host` builds on this answer arriving).
+#[tokio::test]
+async fn ping_round_trips_through_a_live_agent() {
+    let (conn, _guard) = common::connect_agent().await;
+    tokio::time::timeout(Duration::from_secs(5), conn.call::<()>(Method::Ping))
+        .await
+        .expect("pong within deadline")
+        .expect("pong");
 }

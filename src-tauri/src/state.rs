@@ -973,6 +973,12 @@ impl AppState {
         true
     }
 
+    /// Clear a recorded watch failure (the watch recovered, e.g. a reconnect
+    /// re-established it). Returns whether one was recorded.
+    pub fn clear_watch_failure(&self, repo_id: &str) -> bool {
+        self.watch_errors.lock().unwrap().remove(repo_id).is_some()
+    }
+
     /// Drop the watch and any recorded watch failure of `repo_id`.
     pub fn forget_watch(&self, repo_id: &str) {
         self.watchers.lock().unwrap().remove(repo_id);

@@ -267,9 +267,9 @@ async restoreOpenRepos() : Promise<Result<RestoreResult, AppError>> {
 }
 },
 /**
- * Persist the repository tab order: reorder `currently_open` (paths) to match
- * the given repo-id order. Ids that aren't open are ignored; any open repo
- * missing from the list is kept at the end. Drives tab order on restore.
+ * Persist the repository tab order: reorder `currently_open` (locators) to
+ * match the given repo-id order. Ids that aren't open are ignored; any open
+ * repo missing from the list is kept at the end. Drives tab order on restore.
  */
 async setOpenReposOrder(repoIds: string[]) : Promise<Result<null, AppError>> {
     try {

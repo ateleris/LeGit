@@ -117,9 +117,14 @@ pub fn init_tracing(identifier: &str) {
             .with_thread_ids(false)
             .with_ansi(false)
             .with_writer(tracing_appender::rolling::daily(&dir, "legit.log"))
-            // Fixed at info in every profile: dev's debug firehose stays on
-            // stderr only, so the files remain small and greppable.
-            .with_filter(EnvFilter::new("info"));
+            // Info in every profile: dev's debug firehose stays on stderr
+            // only, so the files remain small and greppable. `LEGIT_FILE_LOG`
+            // overrides it for field debugging (e.g. `legit_app_lib=debug`) -
+            // a user can raise the file verbosity without a dev build.
+            .with_filter(
+                EnvFilter::try_from_env("LEGIT_FILE_LOG")
+                    .unwrap_or_else(|_| EnvFilter::new("info")),
+            );
         let _ = registry.with(file_layer).try_init();
     } else {
         let _ = registry.try_init();

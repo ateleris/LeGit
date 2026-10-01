@@ -51,6 +51,15 @@ lives in the git log and the GitHub release notes.
   loads only the next page instead of refetching the whole loaded history,
   so deep scrolling stays fast in large repositories; a jump now asks
   before loading past 50,000 commits
+- The log file now records what WSL repositories actually do: the agent's
+  diagnostics and git calls inside the distro, connection losses and
+  reconnect attempts, watcher starts, and whether each repository's watch
+  survived a reconnect - previously a WSL repo could stop live-updating
+  without a single log line
+- The log file also records repository open/close (with the full
+  `wsl://` locator), error toasts the user saw, a clean-exit marker, and
+  the `LEGIT_FILE_LOG` environment variable can raise the file log's
+  verbosity for field debugging
 
 ### Fixed
 
@@ -76,6 +85,13 @@ lives in the git log and the GitHub release notes.
 - If git could not confirm an auto-stash before switching branches, the error now says your changes may be in the stash instead of only reporting the git failure.
 - Line-ending indicators for files at a revision no longer read oversized blobs in full before skipping them.
 - Repo Settings now shows the `.gitattributes` line-ending rules of WSL repositories (the file was looked up at a wrong path on Windows).
+- A WSL repository whose filesystem watch could not be re-established after a reconnect now shows the live-updates-off badge on its tab instead of silently never refreshing again.
+- A WSL connection that wedges without closing (a stalled VM after Windows sleep/resume, a hung wsl.exe bridge) is now detected by a liveness ping and reconnected automatically; previously every panel of that repository froze on stale data until the app was restarted.
+- A stale agent left in a distro by an older build of the same version (PR/dev builds) is redeployed automatically when it refuses the handshake, instead of failing the WSL connection until the install is cleaned up by hand.
+- Reordering repository tabs no longer corrupts the persisted open-repository list for WSL repositories: the bare path written there lost the `wsl://` prefix, so those repos' tab order was forgotten on restart and stale entries accumulated.
+- A lost window-focus event can no longer permanently freeze live updates: interacting with the app (click, keypress, window focus) corrects the stale "unfocused" state that kept watcher refreshes and the focus catch-up from running.
+- Errors about a missing git binary on a WSL host no longer repeat themselves ("git executable not found at git executable not found at git").
+- The diff viewer's "Open submodule" button (shown for a submodule with uncommitted changes) now opens submodules of WSL repositories; it dropped the `wsl://` host and tried a local path, unlike the Working Changes menu and the Submodules pane.
 
 - Theme and layout names that Windows reserves (CON, NUL, COM1, ...) or that end with a dot are rejected on save instead of producing an unusable or silently renamed file.
 

@@ -262,8 +262,15 @@ pub fn run() {
             ));
             Ok(())
         })
-        .run(context)
-        .expect("error while running tauri application");
+        .build(context)
+        .expect("error while running tauri application")
+        // The exit marker separates a clean quit from a crash in the log: a
+        // file whose last session has no "LeGit exiting" line died hard.
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                tracing::info!("LeGit exiting");
+            }
+        });
 }
 
 fn specta_builder() -> Builder<tauri::Wry> {

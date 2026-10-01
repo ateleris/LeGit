@@ -231,6 +231,8 @@ async fn serve() {
 
     // READY line: the app discards login-shell banner noise until it sees it.
     let _ = out_tx.send(format!("{}\n", ready_line(AGENT_VERSION))).await;
+    // Timestamps agent (re)starts in the app's log, which forwards stderr.
+    tracing::info!(version = AGENT_VERSION, proto = PROTO_VERSION, "agent serving");
 
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     while let Ok(Some(line)) = lines.next_line().await {
@@ -442,7 +444,11 @@ async fn dispatch_post_handshake(
                     }));
                 }),
             )
-            .map_err(|e| WireError::new(WireErrorKind::Internal, e.to_string()))?;
+            .map_err(|e| {
+                tracing::warn!(watch_id, worktree = %worktree, err = %e, "watch start failed");
+                WireError::new(WireErrorKind::Internal, e.to_string())
+            })?;
+            tracing::info!(watch_id, worktree = %worktree, "watch started");
             agent
                 .watches
                 .lock()
@@ -451,6 +457,7 @@ async fn dispatch_post_handshake(
             Ok(to_value(&()))
         }
         Method::WatchStop { watch_id } => {
+            tracing::info!(watch_id, "watch stopped");
             agent
                 .watches
                 .lock()
@@ -491,6 +498,7 @@ async fn dispatch_post_handshake(
             })?;
             Ok(to_value(&v))
         }
+        Method::Ping => Ok(to_value(&())),
         Method::CredRequest(_) => Err(WireError::new(
             WireErrorKind::UnknownMethod,
             "cred.request flows agent → app, not app → agent",

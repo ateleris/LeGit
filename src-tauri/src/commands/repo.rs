@@ -95,7 +95,9 @@ pub async fn open_session(
         repos.insert(session.id.clone(), session.clone());
         session
     };
-    tracing::info!(path = %session.root, id = %session.id, "open: new session");
+    // The locator (not just the root) so a WSL repo is recognizable as one in
+    // the log - a bare `/home/...` path on a Windows host hid it.
+    tracing::info!(locator = %session.locator.to_persist_string(), id = %session.id, "open: new session");
     let summary = session.summary();
     // Starting the watcher must never gate opening the repo. `notify`'s
     // recursive registration walks the ENTIRE worktree up front (on Linux one
@@ -300,6 +302,7 @@ async fn start_repo_watcher(state: &AppState, app: &tauri::AppHandle, session: &
                 tracing::info!(repo_id = %session.id, "repo closed or watching disabled while its watcher was starting - dropping the watch");
                 return;
             }
+            tracing::info!(repo_id = %session.id, root = %session.root, "repo watcher live");
             // Clears a stale failure badge (e.g. a retry via the watcher toggle).
             crate::watcher::emit_watch_state(app, &session.id, None);
             // A watch only reports events from its registration onward, and the
@@ -775,6 +778,9 @@ pub async fn close_repo(
 
     state.forget_watch(&repo_id);
 
+    if let Some(locator) = &locator {
+        tracing::info!(locator = %locator.to_persist_string(), id = %repo_id, "close: session removed");
+    }
     if let Some(locator) = locator {
         let key = locator.to_persist_string();
         warn_if_bookkeeping_persist_failed(
@@ -848,6 +854,9 @@ pub async fn set_watcher_enabled(
             })
             .await,
     );
+    // The toggle explains later silence: a log without watcher activity reads
+    // completely differently when watching was deliberately off.
+    tracing::info!(enabled, "watcher toggle");
 
     if enabled {
         let sessions: Vec<Arc<RepoSession>> =
@@ -1126,22 +1135,32 @@ pub async fn restore_open_repos(
     })
 }
 
-/// Persist the repository tab order: reorder `currently_open` (paths) to match
-/// the given repo-id order. Ids that aren't open are ignored; any open repo
-/// missing from the list is kept at the end. Drives tab order on restore.
+/// The `currently_open` entries for `repo_ids`, in order (unknown ids are
+/// skipped). MUST be the LOCATOR persist form, never the summary's bare host
+/// path: a bare path drops the `wsl://<distro>` scheme, so the entry cannot
+/// be restored (skipped as a missing local path) and the repo's tab order is
+/// lost, while the real `wsl://` entry drifts to the end of the list.
+fn ordered_open_locators(
+    repos: &std::collections::HashMap<crate::state::RepoId, Arc<RepoSession>>,
+    repo_ids: &[String],
+) -> Vec<String> {
+    repo_ids
+        .iter()
+        .filter_map(|id| repos.get(id).map(|s| s.locator.to_persist_string()))
+        .collect()
+}
+
+/// Persist the repository tab order: reorder `currently_open` (locators) to
+/// match the given repo-id order. Ids that aren't open are ignored; any open
+/// repo missing from the list is kept at the end. Drives tab order on restore.
 #[tauri::command]
 #[specta::specta]
 pub async fn set_open_repos_order(
     state: tauri::State<'_, AppState>,
     repo_ids: Vec<String>,
 ) -> Result<(), AppError> {
-    let ordered_paths: Vec<String> = {
-        let repos = state.repos.read().await;
-        repo_ids
-            .iter()
-            .filter_map(|id| repos.get(id).map(|s| s.summary().path))
-            .collect()
-    };
+    let ordered_paths: Vec<String> =
+        ordered_open_locators(&*state.repos.read().await, &repo_ids);
     warn_if_bookkeeping_persist_failed(
         "record tab order",
         state
@@ -1249,6 +1268,37 @@ pub async fn unset_lane_lock(
 
 #[cfg(test)]
 mod tests {
+    // Tab-order persistence must write LOCATORS: the summary's bare host path
+    // loses the `wsl://` scheme, which corrupted `currently_open` on every
+    // tab reorder (WSL entries unrestorable, their tab order gone).
+    #[test]
+    fn tab_order_persists_locators_not_bare_host_paths() {
+        use std::sync::Arc;
+        let dir = tempfile::tempdir().unwrap();
+        let mut repos = std::collections::HashMap::new();
+        let mut ids = Vec::new();
+        for locator in [
+            crate::remote::RepoLocator::parse("wsl://Ubuntu/home/u/repo"),
+            crate::remote::RepoLocator::local(dir.path().to_path_buf()),
+        ] {
+            let session = Arc::new(crate::state::RepoSession::new(
+                locator,
+                Arc::new(legit_host::LocalHost),
+                Arc::new(legit_core::GitRunner::for_repo("git", dir.path())),
+                crate::state::RepoSettings::default(),
+                dir.path().join("settings.json"),
+            ));
+            ids.push(session.id.clone());
+            repos.insert(session.id.clone(), session);
+        }
+        let out = super::ordered_open_locators(&repos, &ids);
+        assert_eq!(out[0], "wsl://Ubuntu/home/u/repo");
+        assert_eq!(out[1], dir.path().to_string_lossy().into_owned());
+        // Unknown ids are skipped, order follows the input.
+        let out = super::ordered_open_locators(&repos, &["nope".into(), ids[0].clone()]);
+        assert_eq!(out, vec!["wsl://Ubuntu/home/u/repo".to_string()]);
+    }
+
     // The WSL open form's typed paths: `~` forms expand against the agent's
     // home; the `wsl://` locator scheme delivers them '/'-prefixed.
     #[test]

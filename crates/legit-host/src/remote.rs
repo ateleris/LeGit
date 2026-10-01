@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use async_trait::async_trait;
 use legit_core::{
@@ -80,7 +80,29 @@ pub struct HostConnectOpts {
     /// Have the agent host its Unix-socket credential relay (see
     /// `legit_proto::cred`); requires `HostSinks::on_cred_request` to answer.
     pub enable_cred_relay: bool,
+    /// Liveness probing (see `spawn_ping`). `None` (the default) disables it,
+    /// for tests that drive the transport by hand; production connects pass
+    /// [`PING_DEFAULTS`].
+    pub ping: Option<PingOpts>,
 }
+
+/// Liveness probe cadence.
+#[derive(Debug, Clone, Copy)]
+pub struct PingOpts {
+    /// Pause between probes.
+    pub interval: std::time::Duration,
+    /// How long a probe may take before the connection is declared dead. The
+    /// pong shares the ordered stream with in-flight responses, so this must
+    /// comfortably cover draining a large response (a full `git log` page).
+    pub timeout: std::time::Duration,
+}
+
+/// Detects a wedge within ~35s worst case; generous enough that a loaded
+/// WSL VM or a large in-flight response never false-positives.
+pub const PING_DEFAULTS: PingOpts = PingOpts {
+    interval: std::time::Duration::from_secs(20),
+    timeout: std::time::Duration::from_secs(15),
+};
 
 struct StreamEntry {
     events: mpsc::UnboundedSender<RunnerEvent>,
@@ -170,8 +192,12 @@ impl AgentConnection {
         });
         tracing::debug!(proto = ready_proto, version = %agent_version, "agent READY");
 
+        // Shared with the ping task, which must fire the same disconnect path.
+        let sinks = Arc::new(sinks);
+
         // Reader task: route responses to pending calls, notes to sinks.
         let reader_conn = conn.clone();
+        let reader_sinks = sinks.clone();
         tokio::spawn(async move {
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
@@ -179,14 +205,15 @@ impl AgentConnection {
                     continue;
                 }
                 match decode_frame(line.trim()) {
-                    Ok(frame) => reader_conn.route(frame, &sinks).await,
+                    Ok(frame) => reader_conn.route(frame, &reader_sinks).await,
                     Err(e) => {
                         tracing::warn!(err = %e, "dropping undecodable agent line");
                     }
                 }
             }
-            reader_conn.mark_dead();
-            (sinks.on_disconnect)();
+            if reader_conn.mark_dead() {
+                (reader_sinks.on_disconnect)();
+            }
         });
 
         // Handshake (exact version policy; the deployer reacts to mismatch).
@@ -199,10 +226,14 @@ impl AgentConnection {
             }))
             .await
             .map_err(|e| match e.kind {
-                WireErrorKind::VersionMismatch => HostError::GitProbe(e.message.clone()),
+                WireErrorKind::VersionMismatch => HostError::VersionMismatch(e.message.clone()),
                 _ => HostError::HostGone(e.message),
             })?;
         let _ = conn.info.set(info);
+
+        if let Some(ping) = opts.ping {
+            spawn_ping(Arc::downgrade(&conn), sinks, ping);
+        }
         Ok(conn)
     }
 
@@ -211,8 +242,15 @@ impl AgentConnection {
         self.info.get()
     }
 
-    fn mark_dead(&self) {
-        self.alive.store(false, Ordering::Release);
+    /// Fail everything pending and mark the connection dead. Returns whether
+    /// THIS call made the live->dead transition - the reader task (EOF) and
+    /// the ping task (wedge) can both get here, and `on_disconnect` (which
+    /// schedules a reconnect) must fire exactly once.
+    fn mark_dead(&self) -> bool {
+        let transitioned = self
+            .alive
+            .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok();
         let mut pending = self.pending.lock().expect("pending poisoned");
         for (_, tx) in pending.drain() {
             let _ = tx.send(Err(WireError::new(
@@ -222,6 +260,7 @@ impl AgentConnection {
         }
         // Streams end: drop senders so consumers see channel close.
         self.streams.lock().expect("streams poisoned").clear();
+        transitioned
     }
 
     pub fn is_alive(&self) -> bool {
@@ -331,6 +370,52 @@ impl AgentConnection {
             WireError::new(WireErrorKind::Internal, format!("bad response payload: {e}"))
         })
     }
+}
+
+/// Liveness probe: a wedged transport (pipe open, peer stalled - e.g. a WSL
+/// VM across a Windows sleep/resume, or a hung wsl.exe bridge) never EOFs,
+/// so the reader task alone cannot see it die and every pending call hangs
+/// forever - panels silently freeze until an app restart. A periodic ping
+/// with a deadline declares such a connection dead through the same path as
+/// an EOF (`mark_dead` + `on_disconnect`, exactly once between the two
+/// tasks), which fails the pending calls and lets the host app reconnect.
+/// Holds the connection weakly: the probe never keeps a dropped connection
+/// alive, and the task ends with it.
+fn spawn_ping(conn: Weak<AgentConnection>, sinks: Arc<HostSinks>, ping: PingOpts) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(ping.interval).await;
+            let Some(conn) = conn.upgrade() else { return };
+            if !conn.is_alive() {
+                return;
+            }
+            let probe =
+                tokio::time::timeout(ping.timeout, conn.call::<()>(Method::Ping)).await;
+            match probe {
+                Ok(Ok(())) => {}
+                // The reader saw EOF while our probe was in flight: its path
+                // already fired the disconnect.
+                _ if !conn.is_alive() => return,
+                Ok(Err(e)) => {
+                    tracing::warn!(err = %e, "agent ping failed - declaring the connection lost");
+                    if conn.mark_dead() {
+                        (sinks.on_disconnect)();
+                    }
+                    return;
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        timeout_ms = ping.timeout.as_millis() as u64,
+                        "agent unresponsive to ping - declaring the connection lost"
+                    );
+                    if conn.mark_dead() {
+                        (sinks.on_disconnect)();
+                    }
+                    return;
+                }
+            }
+        }
+    });
 }
 
 /// Swap-on-reconnect indirection: executors, fs handles, and sessions hold
@@ -682,6 +767,15 @@ struct WatchSpec {
     sink: Arc<dyn Fn(WatchBatch) + Send + Sync>,
 }
 
+/// Outcome of re-establishing one watch after a reconnect.
+pub struct WatchReattach {
+    pub worktree: HostPath,
+    /// `None` = watching again. `Some` = the agent refused the watch: the
+    /// repo has no live updates until the next reconnect retries it (the
+    /// spec stays registered), so the host app must surface this.
+    pub error: Option<String>,
+}
+
 struct RemoteHostInner {
     id: HostId,
     conn: Arc<HostConn>,
@@ -715,8 +809,10 @@ impl RemoteHost {
 
     /// Swap in a fresh connection (reconnect) and re-establish every
     /// registered watch on it. Sessions recover in place: their executors and
-    /// fs handles all go through the shared `HostConn`.
-    pub async fn reattach(&self, conn: Arc<AgentConnection>) -> Result<(), HostError> {
+    /// fs handles all go through the shared `HostConn`. Returns one outcome
+    /// per watch so the host app can badge repos whose watch did not come
+    /// back (and clear the badge on ones that did).
+    pub async fn reattach(&self, conn: Arc<AgentConnection>) -> Vec<WatchReattach> {
         self.inner.conn.swap(conn.clone());
         let specs: Vec<(u64, HostPath, HostPath, Arc<dyn Fn(WatchBatch) + Send + Sync>)> = {
             let table = self.inner.watch_table.lock().expect("watch table poisoned");
@@ -725,6 +821,7 @@ impl RemoteHost {
                 .map(|(id, s)| (*id, s.worktree.clone(), s.git_dir.clone(), s.sink.clone()))
                 .collect()
         };
+        let mut outcomes = Vec::with_capacity(specs.len());
         for (watch_id, worktree, git_dir, sink) in specs {
             conn.watches
                 .lock()
@@ -733,15 +830,23 @@ impl RemoteHost {
             let result: Result<(), WireError> = conn
                 .call(Method::WatchStart {
                     watch_id,
-                    worktree,
+                    worktree: worktree.clone(),
                     git_dir,
                 })
                 .await;
-            if let Err(e) = result {
-                tracing::warn!(watch_id, err = %e, "failed to re-establish watch after reconnect");
-            }
+            let error = match result {
+                Ok(()) => {
+                    tracing::info!(watch_id, worktree = %worktree, "watch re-established after reconnect");
+                    None
+                }
+                Err(e) => {
+                    tracing::warn!(watch_id, worktree = %worktree, err = %e, "failed to re-establish watch after reconnect");
+                    Some(e.message)
+                }
+            };
+            outcomes.push(WatchReattach { worktree, error });
         }
-        Ok(())
+        outcomes
     }
 }
 

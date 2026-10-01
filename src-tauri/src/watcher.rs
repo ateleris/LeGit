@@ -47,6 +47,9 @@ pub fn emit_sink(app: AppHandle, repo_id: String) -> WatchSink {
             trigger_paths: batch.trigger_paths,
             trigger_count: batch.trigger_count,
         };
+        // Debug: dev-stderr only (the file layer is info-capped) - batches
+        // are too chatty for the file; the Git Log panel shows them live.
+        tracing::debug!(repo_id = %payload.repo_id, domains = ?payload.domains, triggers = ?payload.trigger_paths, "repo-changed batch");
         if let Err(e) = app.emit(REPO_CHANGED_EVENT, payload) {
             tracing::warn!(err = %e, "failed to emit repo-changed event");
         }

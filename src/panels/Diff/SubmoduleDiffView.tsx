@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/commands";
 import type { SubmoduleChange, SubmoduleLog } from "../../lib/types";
 import { formatAppError } from "../../lib/errors";
+import { openSubmoduleRepo } from "../../lib/submodules";
 import { useRepoStore } from "../../store/repos";
 import { notify } from "../../store/notifications";
 import { Button } from "../shared/buttons";
@@ -13,10 +14,12 @@ import { STALE } from "../../lib/queryTiming";
  * the submodule's own repository. Explains that and offers to open it.
  */
 export function SubmoduleDirtyNotice({ repoId, path }: { repoId: string; path: string }) {
-  const openRepo = useRepoStore((s) => s.openRepo);
-  const repoPath = useRepoStore(
-    (s) => s.openRepos.find((r) => r.id === repoId)?.path ?? null,
-  );
+  // The LOCATOR, not the bare path: a WSL submodule must open as
+  // `wsl://<distro>/...` on the parent's host (the shared helper joins it).
+  const repoLocator = useRepoStore((s) => {
+    const repo = s.openRepos.find((r) => r.id === repoId);
+    return repo ? (repo.locator ?? repo.path) : null;
+  });
   return (
     <div
       className="legit-panel__body"
@@ -36,11 +39,12 @@ export function SubmoduleDirtyNotice({ repoId, path }: { repoId: string; path: s
       <div>
         <Button
           variant="primary"
-          disabled={!repoPath}
+          disabled={!repoLocator}
           onClick={() => {
-            if (!repoPath) return;
-            void openRepo(`${repoPath}/${path}`).catch((e: unknown) =>
-              notify.error(formatAppError(e)),
+            if (!repoLocator) return;
+            // Dirty with an unmoved pointer: nothing to select, plain open.
+            void openSubmoduleRepo(repoId, repoLocator, path, null).catch(
+              (e: unknown) => notify.error(formatAppError(e)),
             );
           }}
         >

@@ -18,7 +18,7 @@ pub mod remote;
 mod spawn;
 pub use remote::{
     AgentConnection, AgentPipes, HostConn, HostConnectOpts, HostSinks,
-    RemoteExecutor, RemoteFs, RemoteHost,
+    PingOpts, RemoteExecutor, RemoteFs, RemoteHost, WatchReattach, PING_DEFAULTS,
 };
 
 use async_trait::async_trait;
@@ -60,6 +60,13 @@ pub enum HostError {
 
     #[error("git probe failed: {0}")]
     GitProbe(String),
+
+    /// The agent refused the handshake over its proto/app version. The
+    /// install presence check is keyed by app version alone, so a stale
+    /// binary with the SAME package version (dev/PR builds, a proto bump)
+    /// passes it - the deployer must react to this by redeploying.
+    #[error("agent version mismatch: {0}")]
+    VersionMismatch(String),
 
     #[error("host connection lost: {0}")]
     HostGone(String),

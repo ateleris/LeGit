@@ -287,14 +287,71 @@ pub fn spawn_agent(
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| AppError::Io(format!("wsl.exe: {e}")))?;
+    forward_agent_stderr(
+        distro.to_string(),
+        child.stderr.take().expect("agent stderr piped"),
+    );
     let pipes = legit_host::AgentPipes {
         writer: Box::new(child.stdin.take().expect("agent stdin piped")),
         reader: Box::new(child.stdout.take().expect("agent stdout piped")),
     };
     Ok((pipes, child))
+}
+
+/// Forward the agent's stderr into the app's log, line by line. The agent's
+/// diagnostics (its tracing output: watcher warnings, remote git invocations)
+/// otherwise exist only inside the distro and vanish with the process - this
+/// is what makes WSL-side behavior debuggable from `legit.log`. The task ends
+/// at EOF (agent death), which the connection reader reports separately.
+fn forward_agent_stderr(
+    distro: String,
+    stderr: impl tokio::io::AsyncRead + Unpin + Send + 'static,
+) {
+    tokio::spawn(async move {
+        use tokio::io::AsyncBufReadExt;
+        let mut lines = tokio::io::BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if line.trim().is_empty() {
+                continue;
+            }
+            // The line keeps the agent's own format (timestamp, level,
+            // target) verbatim; only the level is lifted so filters apply.
+            match agent_line_level(&line) {
+                AgentLineLevel::Error => {
+                    tracing::error!(target: "agent", distro = %distro, "{line}")
+                }
+                AgentLineLevel::Warn => {
+                    tracing::warn!(target: "agent", distro = %distro, "{line}")
+                }
+                AgentLineLevel::Info => {
+                    tracing::info!(target: "agent", distro = %distro, "{line}")
+                }
+            }
+        }
+    });
+}
+
+#[derive(Debug, PartialEq)]
+enum AgentLineLevel {
+    Error,
+    Warn,
+    Info,
+}
+
+/// Level of a forwarded agent stderr line, read from the agent's tracing
+/// format. Non-tracing noise (login-shell banners, raw shell errors) carries
+/// no level marker and forwards at info.
+fn agent_line_level(line: &str) -> AgentLineLevel {
+    if line.contains(" ERROR ") {
+        AgentLineLevel::Error
+    } else if line.contains(" WARN ") {
+        AgentLineLevel::Warn
+    } else {
+        AgentLineLevel::Info
+    }
 }
 
 /// The `legit` launcher script installed into the distro: `legit [dir]` opens
@@ -422,6 +479,29 @@ mod tests {
         assert!(cmd.contains("-maxdepth 1"));
         assert!(cmd.contains("-type d"));
         assert!(!cmd.contains("legit/bin"));
+    }
+
+    #[test]
+    fn agent_stderr_lines_forward_at_their_own_level() {
+        assert_eq!(
+            agent_line_level("2026-09-30T08:00:00Z  WARN legit_watch: watcher error"),
+            AgentLineLevel::Warn
+        );
+        assert_eq!(
+            agent_line_level("2026-09-30T08:00:00Z ERROR legit_agent: boom"),
+            AgentLineLevel::Error
+        );
+        assert_eq!(
+            agent_line_level("2026-09-30T08:00:00Z  INFO legit_core::runner::invocation_log: git ok"),
+            AgentLineLevel::Info
+        );
+        // Shell banners / non-tracing noise must still land in the log.
+        assert_eq!(agent_line_level("motd: welcome"), AgentLineLevel::Info);
+        // A level word inside the MESSAGE must not escalate the line.
+        assert_eq!(
+            agent_line_level("2026-09-30T08:00:00Z  INFO x: user typed WARNING"),
+            AgentLineLevel::Info
+        );
     }
 
     #[test]

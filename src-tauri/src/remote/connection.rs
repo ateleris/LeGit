@@ -79,6 +79,9 @@ async fn report_host_git(app: &tauri::AppHandle, state: &AppState, distro: &str,
 }
 
 fn emit_status(app: &tauri::AppHandle, distro: &str, status: RemoteHostStatus) {
+    // The one chokepoint every connectivity transition passes through - the
+    // log must carry the same lifecycle trail the frontend toasts show.
+    tracing::info!(distro, ?status, "wsl host status");
     let _ = app.emit(
         REMOTE_HOST_STATUS_EVENT,
         RemoteHostStatusPayload {
@@ -193,15 +196,8 @@ async fn connect(
     // running the stale binary forever.
     let dev_override = std::env::var_os("LEGIT_AGENT_BIN").is_some();
     if dev_override || !super::wsl::agent_installed(distro, APP_VERSION).await? {
-        let arch = super::wsl::distro_arch(distro).await?;
-        let bytes = agent_binary(app, &arch).await?;
-        super::wsl::deploy_agent(distro, APP_VERSION, &bytes).await?;
-        tracing::info!(distro, version = APP_VERSION, dev_override, "agent deployed");
-        // Old version-keyed installs are useless after an upgrade — prune
-        // them (best-effort; scoped to the agent dir).
-        if let Err(e) = super::wsl::prune_stale_agents(distro, APP_VERSION).await {
-            tracing::warn!(distro, err = %e, "stale agent prune failed");
-        }
+        let reason = if dev_override { "dev-override" } else { "install" };
+        deploy_fresh_agent(app, distro, reason).await?;
     }
 
     // Refresh the `legit .` launcher + host-exe pointer on every connect
@@ -210,19 +206,37 @@ async fn connect(
         tracing::warn!(distro, err = %e, "launcher install failed");
     }
 
+    let opts = HostConnectOpts {
+        app_version: APP_VERSION.to_string(),
+        base_env_extra: Vec::new(),
+        enable_cred_relay: true,
+        // Wedge detection: a stalled VM/bridge keeps the pipe open; the
+        // ping is what turns that into a disconnect + reconnect.
+        ping: Some(legit_host::PING_DEFAULTS),
+    };
     let (pipes, child) = super::wsl::spawn_agent(distro, APP_VERSION)?;
     let sinks = build_sinks(app.clone(), distro.to_string());
-    let conn = AgentConnection::establish(
-        pipes,
-        &HostConnectOpts {
-            app_version: APP_VERSION.to_string(),
-            base_env_extra: Vec::new(),
-            enable_cred_relay: true,
-        },
-        sinks,
-    )
-    .await
-    .map_err(|e| AppError::Io(format!("agent connection to '{distro}': {e}")))?;
+    let (conn, child) = match AgentConnection::establish(pipes, &opts, sinks).await {
+        Ok(conn) => (conn, child),
+        // A STALE agent with the same version key: the presence check is
+        // keyed by package version alone, so a binary from an older build of
+        // the same version (dev/PR builds, a proto bump) passes it and fails
+        // the handshake instead. Redeploy over it and retry once.
+        Err(legit_host::HostError::VersionMismatch(msg)) => {
+            tracing::info!(distro, msg, "stale agent behind the version key - redeploying");
+            drop(child); // kill_on_drop tears down the stale bridge + agent
+            deploy_fresh_agent(app, distro, "version-mismatch").await?;
+            let (pipes, child) = super::wsl::spawn_agent(distro, APP_VERSION)?;
+            let sinks = build_sinks(app.clone(), distro.to_string());
+            let conn = AgentConnection::establish(pipes, &opts, sinks)
+                .await
+                .map_err(|e| AppError::Io(format!("agent connection to '{distro}': {e}")))?;
+            (conn, child)
+        }
+        Err(e) => {
+            return Err(AppError::Io(format!("agent connection to '{distro}': {e}")));
+        }
+    };
 
     // The connect gate serializes connects for this distro; `entries` is
     // locked only around lookup/insert so other distros never wait on the
@@ -238,9 +252,8 @@ async fn connect(
         // Reconnect: swap the connection into the existing host so sessions
         // recover in place, and re-establish its watches.
         Some(host) => {
-            host.reattach(conn)
-                .await
-                .map_err(|e| AppError::Io(format!("reattach to '{distro}': {e}")))?;
+            let watch_outcomes = host.reattach(conn).await;
+            sync_watch_badges(app, state, distro, &watch_outcomes).await;
             let mut entries = state.wsl_hosts.entries.lock().await;
             match entries.get_mut(distro) {
                 Some(entry) => entry.child = child,
@@ -302,6 +315,65 @@ async fn connect(
         }
     };
     Ok(host)
+}
+
+/// Deploy the bundled agent into `distro` (and prune older version-keyed
+/// installs, best-effort). `reason` names what triggered it in the log.
+async fn deploy_fresh_agent(
+    app: &tauri::AppHandle,
+    distro: &str,
+    reason: &str,
+) -> Result<(), AppError> {
+    let arch = super::wsl::distro_arch(distro).await?;
+    let bytes = agent_binary(app, &arch).await?;
+    super::wsl::deploy_agent(distro, APP_VERSION, &bytes).await?;
+    tracing::info!(distro, version = APP_VERSION, reason, "agent deployed");
+    if let Err(e) = super::wsl::prune_stale_agents(distro, APP_VERSION).await {
+        tracing::warn!(distro, err = %e, "stale agent prune failed");
+    }
+    Ok(())
+}
+
+/// Mirror the per-repo watch outcomes of a reconnect's `reattach` into the
+/// tab badges: a watch the agent refused leaves its repo without live
+/// updates (until the next reconnect retries it), which used to be a silent
+/// `warn` - the user saw a repo that just stopped refreshing. A watch that
+/// came back clears a stale badge.
+async fn sync_watch_badges(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    distro: &str,
+    outcomes: &[legit_host::WatchReattach],
+) {
+    if outcomes.is_empty() {
+        return;
+    }
+    let sessions: Vec<(String, legit_core::HostPath)> = state
+        .repos
+        .read()
+        .await
+        .values()
+        .filter(|s| matches!(&s.locator, RepoLocator::Wsl { distro: d, .. } if d == distro))
+        .map(|s| (s.id.clone(), s.root.clone()))
+        .collect();
+    for outcome in outcomes {
+        let Some((repo_id, _)) = sessions.iter().find(|(_, root)| *root == outcome.worktree)
+        else {
+            continue;
+        };
+        match &outcome.error {
+            Some(msg) => {
+                if state.record_watch_failure(repo_id, msg.clone()).await {
+                    crate::watcher::emit_watch_state(app, repo_id, Some(msg));
+                }
+            }
+            None => {
+                if state.clear_watch_failure(repo_id) {
+                    crate::watcher::emit_watch_state(app, repo_id, None);
+                }
+            }
+        }
+    }
 }
 
 /// Drop a distro's host (last repo tab closed): the entry drop kills the
@@ -404,6 +476,7 @@ fn build_sinks(app: tauri::AppHandle, distro: String) -> HostSinks {
                 tracing::debug!(distro = %dc_distro, "wsl host released - ignoring EOF");
                 return;
             }
+            tracing::warn!(distro = %dc_distro, "agent connection lost");
             let app = dc_app.clone();
             let distro = dc_distro.clone();
             tokio::spawn(async move {
@@ -493,10 +566,22 @@ async fn reconnect_with_backoff(app: tauri::AppHandle, distro: String) {
             }
             Ok(_) => {}
             Err(e) => {
-                tracing::debug!(distro, err = %e, attempt, "wsl reconnect attempt failed");
+                if reconnect_failure_logs_at_warn(attempt) {
+                    tracing::warn!(distro, err = %e, attempt, "wsl reconnect attempt failed");
+                } else {
+                    tracing::debug!(distro, err = %e, attempt, "wsl reconnect attempt failed");
+                }
             }
         }
     }
+}
+
+/// Whether a reconnect failure logs at warn (the file layer drops debug): the
+/// first attempts always, then one in twenty (~5 minutes at the 15s cadence),
+/// so an unreachable distro leaves a visible trail without flooding the file.
+/// Pure; unit-tested.
+pub(crate) fn reconnect_failure_logs_at_warn(attempt: usize) -> bool {
+    attempt <= 3 || attempt % 20 == 0
 }
 
 #[cfg(test)]
@@ -568,6 +653,20 @@ mod tests {
         )
         .await
         .is_err());
+    }
+
+    // Early failures must be visible in the info-capped log file; the 15s
+    // steady state must not flood it (one warn per ~5 minutes).
+    #[test]
+    fn reconnect_failures_log_at_warn_early_then_sampled() {
+        assert!(reconnect_failure_logs_at_warn(1));
+        assert!(reconnect_failure_logs_at_warn(2));
+        assert!(reconnect_failure_logs_at_warn(3));
+        assert!(!reconnect_failure_logs_at_warn(4));
+        assert!(!reconnect_failure_logs_at_warn(19));
+        assert!(reconnect_failure_logs_at_warn(20));
+        assert!(!reconnect_failure_logs_at_warn(21));
+        assert!(reconnect_failure_logs_at_warn(40));
     }
 
     // A settings-only connection (the Git (WSL) group probed a distro with no
