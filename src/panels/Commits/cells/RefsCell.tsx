@@ -9,7 +9,7 @@ import { BranchMenuSection, RemoteBranchMenuSection } from "../menu/BranchMenuSe
 import { TagMenuSection } from "../menu/TagMenuSection";
 import { InlineRenameInput } from "./InlineRenameInput";
 import { Popover } from "../../shared/Popover";
-import { buildChips, computeVisibleCount, splitRefLabel } from "./refChips";
+import { buildChips, computeVisibleCount, overflowChipFits, splitRefLabel } from "./refChips";
 import { ShrinkingPathText } from "../../shared/ShrinkingPathText";
 import type { WorktreeMark } from "../../Worktrees/worktreeRows";
 import { checkedOutInWorktreeMessage } from "../../../lib/switchFeedback";
@@ -81,6 +81,7 @@ export function RefsCell({ decorations, worktreeHeads, laneChip, creatingBranch,
   const onBranchRebaseOnto = rowCtx.actions.handleRebaseOnto;
   const { openMenu, closeMenu } = usePanelContextMenu();
   const [visibleCount, setVisibleCount] = useState(Number.MAX_SAFE_INTEGER);
+  const [showOverflowChip, setShowOverflowChip] = useState(true);
   const [popover, setPopover] = useState<{ x: number; y: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
@@ -141,17 +142,15 @@ export function RefsCell({ decorations, worktreeHeads, laneChip, creatingBranch,
     // An open creation input takes priority over chips: reserve its width
     // (plus the gap separating it from the chips), and allow every chip to
     // collapse behind "+N" if that's what it takes to keep the input visible.
+    // When not even the bare "+N" fits beside the input, hide it too - the
+    // input owns the column (it shrinks via maxWidth once alone).
     const creation = creationRef.current;
     const reserved = creation ? creation.offsetWidth + CHIP_GAP : 0;
+    const available = container.clientWidth - reserved;
     setVisibleCount(
-      computeVisibleCount(
-        widths,
-        container.clientWidth - reserved,
-        CHIP_GAP,
-        overflowWidth,
-        creation ? 0 : 1,
-      ),
+      computeVisibleCount(widths, available, CHIP_GAP, overflowWidth, creation ? 0 : 1),
     );
+    setShowOverflowChip(!creation || overflowChipFits(available, CHIP_GAP, overflowWidth));
   }, []);
 
   useLayoutEffect(() => {
@@ -393,15 +392,18 @@ export function RefsCell({ decorations, worktreeHeads, laneChip, creatingBranch,
           and always makes a lightweight tag - annotated tags (with a message)
           are created via the Refs panel's Tags section. The wrapper is
           measured so `remeasure` can reserve its width (the input must never
-          be clipped by the right-anchored cell; chips collapse instead). */}
+          be clipped by the right-anchored cell; chips collapse instead), and
+          is capped at the cell width so a narrow column shrinks the input
+          instead of clipping it away. */}
       {(creatingBranch || creatingTag) && (
         <span
           ref={creationRef}
-          style={{ display: "inline-flex", gap: CHIP_GAP, flexShrink: 0 }}
+          style={{ display: "inline-flex", gap: CHIP_GAP, flexShrink: 0, maxWidth: "100%", minWidth: 0 }}
         >
           {creatingBranch && (
             <InlineRenameInput
               initialValue=""
+              pulse
               placeholder="branch name…"
               title="Enter to create · Esc to cancel"
               onSave={(name) => onCreateBranchSave?.(name)}
@@ -411,13 +413,15 @@ export function RefsCell({ decorations, worktreeHeads, laneChip, creatingBranch,
                 padding: "0.083em 0.417em",
                 borderRadius: 10,
                 width: "16ch",
-                flexShrink: 0,
+                flexShrink: 1,
+                minWidth: 0,
               }}
             />
           )}
           {creatingTag && (
             <InlineRenameInput
               initialValue=""
+              pulse
               placeholder="tag name…"
               title="Enter to create · Esc to cancel"
               onSave={(name) => onCreateTagSave?.(name)}
@@ -427,7 +431,8 @@ export function RefsCell({ decorations, worktreeHeads, laneChip, creatingBranch,
                 padding: "0.083em 0.417em",
                 borderRadius: 3, // tag chips are squarer than branch chips
                 width: "16ch",
-                flexShrink: 0,
+                flexShrink: 1,
+                minWidth: 0,
               }}
             />
           )}
@@ -436,7 +441,10 @@ export function RefsCell({ decorations, worktreeHeads, laneChip, creatingBranch,
 
       {visibleChips.map((dec, i) => renderChip(dec, i))}
 
-      {hiddenChips.length > 0 && (
+      {/* `showOverflowChip` goes false only while a creation input is open in
+          a column too narrow for both: there the chip would take the exact
+          space the input needs. */}
+      {hiddenChips.length > 0 && showOverflowChip && (
         <span
           style={overflowChipStyle}
           onMouseEnter={(e) => openPopoverAt(e.currentTarget)}

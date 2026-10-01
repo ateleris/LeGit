@@ -12,6 +12,18 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Changed
+
+- The inline branch/tag creation input in the commit list pulses briefly when
+  it appears, so it is easier to spot
+
+### Fixed
+
+- The inline branch/tag creation input now shrinks to fit a narrow Refs
+  column instead of being clipped out of view behind the "+N" chip
+
+## [1.4.0] - 2026-10-01
+
 ### Added
 
 - File history can open in its own window (commits left, diff right) via the

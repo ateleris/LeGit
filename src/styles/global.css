@@ -611,6 +611,29 @@ button.legit-tab__close:hover {
   }
 }
 
+/* One-shot attention pulse: draws the eye to an input that appears away from
+ * where the user clicked (e.g. the create-branch input in a commit row's refs
+ * cell). Finite so it never nags; em-based so it scales with the UI font.
+ * The ring expands 0.75em past the element, so inside overflow-hidden
+ * ancestors apply it to an unclipped overlay (see AttentionPulse), not the
+ * element itself. */
+.legit-attention-pulse {
+  animation: legit-attention-pulse 0.7s ease-out 3;
+}
+@keyframes legit-attention-pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--accent);
+  }
+  100% {
+    box-shadow: 0 0 0 0.75em transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .legit-attention-pulse {
+    animation: none;
+  }
+}
+
 /* Indeterminate top-edge progress bar — pinned to the positioned `.legit-panel`
  * root to signal background fetches/reloads without affecting layout (no shift).
  * Render via <PanelLoadingBar/>. */

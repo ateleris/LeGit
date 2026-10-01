@@ -219,6 +219,19 @@ export function splitRefLabel(label: string): { prefix: string; leaf: string } {
  * (the create-branch/-tag input) passes `minVisible` 0 to let every chip
  * collapse behind "+N".
  */
+/**
+ * Mirror of `computeVisibleCount`'s zero-chips condition: does the bare "+N"
+ * chip fit in the width left next to a reserved creation input? When it does
+ * not, the caller hides "+N" entirely - the input owns the column.
+ */
+export function overflowChipFits(
+  availableWidth: number,
+  gap: number,
+  overflowChipWidth: number,
+): boolean {
+  return gap + overflowChipWidth <= availableWidth;
+}
+
 export function computeVisibleCount(
   widths: number[],
   containerWidth: number,

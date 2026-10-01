@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { branchesAt, buildChips, computeVisibleCount, splitRefLabel } from "./refChips";
+import { branchesAt, buildChips, computeVisibleCount, overflowChipFits, splitRefLabel } from "./refChips";
 import type { RefDecoration } from "../../../lib/types";
 
 const branch = (value: string): RefDecoration => ({ type: "branch", value });
@@ -229,6 +229,19 @@ describe("computeVisibleCount", () => {
     // 1 chip + gap + overflow = 30+3+24+3(gap before overflow) ≤ 100 → 2 fit: 30+3+30+3+24 = 90.
     expect(computeVisibleCount(widths, 100, 3, 24, 0)).toBe(2);
     expect(computeVisibleCount(widths, 129, 3, 24, 0)).toBe(4);
+  });
+});
+
+describe("overflowChipFits", () => {
+  it("matches computeVisibleCount's zero-chips budget", () => {
+    // gap 3 + chip 24 = 27 is the exact floor.
+    expect(overflowChipFits(27, 3, 24)).toBe(true);
+    expect(overflowChipFits(26, 3, 24)).toBe(false);
+  });
+
+  it("rejects the space a reserved input already consumed", () => {
+    expect(overflowChipFits(0, 3, 24)).toBe(false);
+    expect(overflowChipFits(-3, 3, 24)).toBe(false);
   });
 });
 
