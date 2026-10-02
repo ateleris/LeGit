@@ -137,7 +137,17 @@ pub async fn rebase_in_progress(exec: &dyn GitExecutor) -> Result<bool, GitError
 }
 
 pub async fn sync_pull(exec: &dyn GitExecutor) -> Result<SyncPullOutcome, GitError> {
-    let out = exec.run_expecting(&["pull", "--rebase"], &[1, 128]).await?;
+    // The rebase replays sync commits, so it needs the identity env just
+    // like the commit: a machine without user.name/user.email must not
+    // break the pull.
+    let out = exec
+        .execute(
+            GitRequest::new(&["pull", "--rebase"])
+                .env(&SYNC_COMMIT_ENV)
+                .expect_exit_codes(&[1, 128]),
+        )
+        .await?
+        .into_text();
     if out.success {
         return Ok(SyncPullOutcome::Pulled);
     }
@@ -328,9 +338,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pull_runs_rebase_and_reports_outcomes() {
+    async fn pull_runs_rebase_with_fixed_identity_and_reports_outcomes() {
+        // The rebase replays sync commits, which needs a committer identity:
+        // without the env identity, pull fails on machines with no
+        // user.name/user.email configured (caught on a bare CI runner).
         let fake = FakeExecutor::default();
-        fake.expect(&["pull", "--rebase"], ok("Updating abc..def"));
+        fake.expect_env(&["pull", "--rebase"], &SYNC_COMMIT_ENV, ok("Updating abc..def"));
         assert_eq!(sync_pull(&fake).await.unwrap(), SyncPullOutcome::Pulled);
         fake.assert_done();
     }
@@ -338,8 +351,9 @@ mod tests {
     #[tokio::test]
     async fn pull_classifies_a_conflicted_rebase() {
         let fake = FakeExecutor::default();
-        fake.expect(
+        fake.expect_env(
             &["pull", "--rebase"],
+            &SYNC_COMMIT_ENV,
             fail(1, "CONFLICT (content): Merge conflict in legit-sync.json"),
         );
         assert_eq!(sync_pull(&fake).await.unwrap(), SyncPullOutcome::Conflict);
