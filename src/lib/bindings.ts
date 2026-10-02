@@ -393,6 +393,41 @@ async gitStatusCheck() : Promise<Result<GitStatus, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async probeSettingsSyncPath(path: string) : Promise<Result<SyncProbe, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("probe_settings_sync_path", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Designate (adopt or seed), or clear with `None`.
+ */
+async setSettingsSyncPath(path: string | null) : Promise<Result<SyncStatusPayload, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_settings_sync_path", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async settingsSyncNow() : Promise<Result<SyncStatusPayload, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("settings_sync_now") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async settingsSyncStatus() : Promise<Result<SyncStatusPayload, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("settings_sync_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async setGitPath(path: string | null) : Promise<Result<GitStatus, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_git_path", { path }) };
@@ -3430,7 +3465,12 @@ gitProfiles?: GitProfilesDoc;
  * METADATA ONLY: the token lives in the OS keychain under the broker's
  * `https://<host>` key; settings files hold no secrets.
  */
-connected_accounts?: ConnectedAccountMeta[] }
+connected_accounts?: ConnectedAccountMeta[]; 
+/**
+ * Local checkout of the settings-sync git repository (`sync` module);
+ * `None` = sync off.
+ */
+settings_sync_path?: string | null }
 /**
  * What a history window shows, handed to its frontend on boot (keyed by
  * window label; the label itself carries no decodable payload).
@@ -4345,6 +4385,9 @@ export type SwitchOutcome = { kind: "clean" } |
  * behind (see `LfsStubs`).
  */
 export type SwitchResult = { outcome: SwitchOutcome; lfs_stubs: LfsStubs | null }
+export type SyncProbe = { valid: boolean; reason: string | null; hasSyncDoc: boolean }
+export type SyncStatusKind = "disabled" | "inSync" | "ahead" | "offline" | "conflict" | "error"
+export type SyncStatusPayload = { kind: SyncStatusKind; message: string | null; lastSync: string | null }
 /**
  * A local tag from `git for-each-ref refs/tags`.
  */

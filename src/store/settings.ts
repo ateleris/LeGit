@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import { api } from "../lib/commands";
+import { shouldToastSyncStatus, syncStatusText } from "../lib/syncStatus";
+import { notify } from "./notifications";
 import { reapplyPanelConstraints } from "./dockview";
 import type {
   PushRecurseMode,
@@ -7,6 +9,8 @@ import type {
   PullStrategy,
   RegionPlacement,
   SwitchDirtyBehavior,
+  SyncProbe,
+  SyncStatusPayload,
 } from "../lib/types";
 import type { CommitDateFormat } from "../lib/time";
 import type { RefsSortMode } from "../lib/refSort";
@@ -103,7 +107,16 @@ export const useConfirmDestructive = () =>
 
 interface SettingsStore {
   settings: GlobalSettings | null;
+  /** Last received settings-sync status (event-fed; null until known). */
+  syncStatus: SyncStatusPayload | null;
   init: () => Promise<void>;
+  /** Cache a pushed sync status and toast on entering conflict/error. */
+  applySyncStatus: (status: SyncStatusPayload) => void;
+  loadSyncStatus: () => Promise<void>;
+  probeSyncPath: (path: string) => Promise<SyncProbe>;
+  /** Designate (adopt/seed) or clear (`null`) the sync repository. */
+  setSyncPath: (path: string | null) => Promise<SyncStatusPayload>;
+  syncNow: () => Promise<SyncStatusPayload>;
   /** Refetch and re-apply; for secondary windows reacting to the
    *  settings-changed broadcast. */
   reload: () => Promise<void>;
@@ -167,10 +180,41 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 
   return {
     settings: null,
+    syncStatus: null,
 
     async init() {
       if (get().settings) return;
       await get().reload();
+    },
+
+    applySyncStatus(status) {
+      const prev = get().syncStatus?.kind ?? null;
+      set({ syncStatus: status });
+      if (shouldToastSyncStatus(prev, status.kind)) {
+        notify.error(`Settings sync: ${status.message ?? syncStatusText(status)}`);
+      }
+    },
+
+    async loadSyncStatus() {
+      get().applySyncStatus(await api.settingsSyncStatus());
+    },
+
+    async probeSyncPath(path) {
+      return api.probeSettingsSyncPath(path);
+    },
+
+    async setSyncPath(path) {
+      const status = await api.setSettingsSyncPath(path);
+      // The path lives in settings; refetch so the section shows it.
+      await get().reload();
+      get().applySyncStatus(status);
+      return status;
+    },
+
+    async syncNow() {
+      const status = await api.settingsSyncNow();
+      get().applySyncStatus(status);
+      return status;
     },
 
     async reload() {

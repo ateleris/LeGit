@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::PathBuf;
 
-const THEME_EXT: &str = ".legit-theme.json";
+pub(crate) const THEME_EXT: &str = ".legit-theme.json";
 
 /// Broadcast after any persisted settings/theme change so secondary windows
 /// re-apply theme and font. Matches `GLOBAL_SETTINGS_CHANGED_EVENT` in
@@ -155,6 +155,9 @@ pub async fn save_theme(
     crate::persist::write_atomic(&path, json).await?;
     use tauri::Emitter as _;
     let _ = app.emit(GLOBAL_SETTINGS_CHANGED_EVENT, ());
+    if let Some(tx) = state.sync_nudge.get() {
+        let _ = tx.send(());
+    }
     Ok(ThemeEntry {
         name: safe,
         source: ThemeSource::User,
@@ -171,6 +174,9 @@ pub async fn delete_theme(
     let path = theme_file_path(&state.user_themes_dir, &name)?;
     if path.exists() {
         tokio::fs::remove_file(path).await?;
+    }
+    if let Some(tx) = state.sync_nudge.get() {
+        let _ = tx.send(());
     }
     Ok(())
 }
