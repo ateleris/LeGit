@@ -13,6 +13,7 @@ mod os_open;
 mod persist;
 mod remote;
 mod state;
+mod sync;
 mod watcher;
 
 use std::path::PathBuf;
@@ -243,6 +244,13 @@ pub fn run() {
                 }
             }
 
+            // Settings sync: debounced export on settings/theme writes, plus
+            // the bounded startup import. After the broker so pushes can
+            // prompt for credentials.
+            let sync_engine = sync::tauri_engine::SettingsSyncEngine::start(app.handle().clone());
+            sync_engine.startup();
+            app.manage(sync::tauri_engine::SyncHandle(sync_engine));
+
             // Forward every git invocation to the UI as a live command log.
             let handle = app.handle().clone();
             legit_core::runner::set_invocation_observer(std::sync::Arc::new(move |inv| {
@@ -288,6 +296,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         .typ::<crate::credentials::AskpassRequestPayload>()
         .typ::<crate::commands::console::ConsoleEventPayload>()
         .typ::<legit_core::GitInvocation>()
+        .typ::<crate::sync::engine::SyncStatusPayload>()
         .commands(collect_commands![
         logging::frontend_log,
         logging::open_log_dir,
@@ -325,6 +334,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::askpass_respond,
         commands::askpass_cancel,
         commands::git_status_check,
+        commands::probe_settings_sync_path,
+        commands::set_settings_sync_path,
+        commands::settings_sync_now,
+        commands::settings_sync_status,
         commands::set_git_path,
         commands::set_repo_git_path,
         commands::get_global_settings,

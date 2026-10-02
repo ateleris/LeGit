@@ -2149,6 +2149,7 @@ version = "1.4.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
+ "chrono",
  "dirs",
  "keyring",
  "legit-core",

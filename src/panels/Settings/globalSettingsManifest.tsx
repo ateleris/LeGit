@@ -35,6 +35,7 @@ import {
   WslEolSection,
   WslGitExecutableSection,
 } from "./WslGitGroup";
+import { SettingsSyncSection } from "./SettingsSyncSection";
 import { AboutSection } from "./AboutSection";
 
 export function buildGlobalSettingsGroups(hasWsl: boolean): SettingsGroupDef[] {
@@ -170,6 +171,12 @@ export function buildGlobalSettingsGroups(hasWsl: boolean): SettingsGroupDef[] {
           title: "Auto-refresh",
           keywords: ["watcher", "filesystem", "refresh"],
           render: () => <AutoRefreshSection />,
+        },
+        {
+          id: "settings-sync",
+          title: "Settings sync",
+          keywords: ["sync", "share", "machines", "computers", "git", "repository", "theme"],
+          render: () => <SettingsSyncSection />,
         },
         {
           id: "confirm-discard",

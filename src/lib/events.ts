@@ -9,6 +9,7 @@ import type {
   RemoteHostStatusPayload,
   RemoteProgressPayload,
   RepoChangedPayload,
+  SyncStatusPayload,
   WatchStatePayload,
 } from "./types";
 export type { AskpassRequestPayload, CredentialRequestPayload };
@@ -175,6 +176,26 @@ export const GLOBAL_SETTINGS_CHANGED_EVENT = "legit://global-settings-changed";
 /** Subscribe to settings-changed broadcasts. Returns an unsubscribe function. */
 export async function onGlobalSettingsChanged(handler: () => void): Promise<() => void> {
   return listen<null>(GLOBAL_SETTINGS_CHANGED_EVENT, () => handler());
+}
+
+/** Tauri event channel for settings-sync status updates. Matches
+ *  `SETTINGS_SYNC_STATUS_EVENT` in `src-tauri/src/sync/tauri_engine.rs`. */
+export const SETTINGS_SYNC_STATUS_EVENT = "legit://settings-sync-status";
+
+/** Subscribe to settings-sync status updates. Returns an unsubscribe function. */
+export async function onSettingsSyncStatus(
+  handler: (payload: SyncStatusPayload) => void
+): Promise<() => void> {
+  return listen<SyncStatusPayload>(SETTINGS_SYNC_STATUS_EVENT, (event) => handler(event.payload));
+}
+
+/** Tauri event channel fired after a sync import changed theme files on disk.
+ *  Matches `THEMES_CHANGED_EVENT` in `src-tauri/src/sync/tauri_engine.rs`. */
+export const THEMES_CHANGED_EVENT = "legit://themes-changed";
+
+/** Subscribe to theme-files-changed broadcasts. Returns an unsubscribe function. */
+export async function onThemesChanged(handler: () => void): Promise<() => void> {
+  return listen<null>(THEMES_CHANGED_EVENT, () => handler());
 }
 
 /** Tauri event channel for the git command log. Matches the event name emitted

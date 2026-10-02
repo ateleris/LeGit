@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import logoUrl from "./assets/legit-logo.png";
 import { useAppVersion } from "./lib/appVersion";
 import { revealAndSignal } from "./lib/windowReveal";
+import { onSettingsSyncStatus, onThemesChanged } from "./lib/events";
 import { useThemeStore } from "./store/themes";
 import { useLayoutsStore } from "./store/layouts";
 import { useSettingsStore } from "./store/settings";
@@ -84,6 +85,17 @@ export function App() {
         // strand the user on the splash.
         setBootPhase("done");
       }
+      // Settings sync: live status for the settings section, and a full
+      // settings+themes reload after an import adopted another machine's
+      // configuration (THEMES_CHANGED fires only on such imports).
+      void onSettingsSyncStatus((status) =>
+        useSettingsStore.getState().applySyncStatus(status),
+      );
+      void onThemesChanged(() => {
+        void useSettingsStore.getState().reload();
+        void useThemeStore.getState().reload();
+      });
+      void useSettingsStore.getState().loadSyncStatus().catch(() => {});
     })();
   }, [initSettings, initThemes, initGitStatus, initRepos, initLayouts]);
 

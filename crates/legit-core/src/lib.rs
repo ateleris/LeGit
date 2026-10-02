@@ -12,6 +12,7 @@ pub mod executor;
 pub mod fs;
 pub mod progress;
 pub mod runner;
+pub mod sync;
 pub mod types;
 
 #[cfg(any(test, feature = "test-support"))]

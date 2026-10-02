@@ -14,6 +14,9 @@ lives in the git log and the GitHub release notes.
 
 ### Added
 
+- Settings sync: designate a git repository (Settings > Application >
+  Settings sync) and LeGit mirrors shareable settings and themes across
+  machines - imports at startup, commits and pushes changes automatically
 - Settings > Appearance now explains when animations (like the attention
   pulse) are disabled because the OS requests reduced motion, and names the
   Windows setting that controls it

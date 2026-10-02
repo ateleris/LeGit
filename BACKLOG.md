@@ -133,39 +133,19 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
     same broker as local (passphrase cache included); confirmations show
     ssh's raw prompt text — fine, but the dialog could name the distro.
 
-- **Settings sync via a user-configured directory path** (2026-08-21,
-  scope sharpened 2026-08-21 after design review; demand-driven - do not
-  build before someone asks). A read-only "inherit from path" layer so one
-  configuration (prefs + themes) can be shared across installations or a
-  team. V1 design:
-  - One optional global setting `settings_sync_path` - a plain directory
-    (network share / Dropbox / a checked-out git repo). REJECTED for v1:
-    HTTP(S)/WebDAV endpoints (auth needs the keychain broker for little
-    gain over a synced folder) and two-way sync (conflict handling swamp;
-    last-write-wins would corrupt a team setup). Read at startup + a
-    manual "Reload synced settings" button; no file watching.
-  - The directory holds `legit-sync.json` (shareable prefs subset) and
-    optionally `themes/*.legit-theme.json`.
-  - Layered resolution: built-in default -> synced -> local, LOCAL WINS.
-    Requires moving the shareable prefs to `Option<T> +
-    #[serde(default)]` in the local file (None = inherit), the existing
-    RepoSettings convention; existing installs' concrete values then
-    parse as explicit local overrides - the correct migration for free.
-  - Shareable: theme choice + font size + graph metrics + date format +
-    pull strategy + confirm toggle + column prefs + region placement.
-    Never synced: open-repo state, last-dirs, `git_path_override`, git
-    profiles (identities + machine-bound key paths), repo settings
-    (local-path-hash keyed).
-  - Themes ARE included - the most shareable artifact (portable JSON,
-    stable TOKEN_CONTRACT, resolveTheme falls back over DEFAULT_THEME).
-    Implementation seam exists: a third `ThemeSource::Synced` next to
-    Builtin/User in `read_theme_dir`, read-only in the Theme Editor like
-    builtins (duplicate-to-edit) - sidesteps name-collision and
-    upstream-deletion semantics. `active_theme` syncs as a normal pref.
-  - Phase 2 candidates: named layouts (since 2026-09-07 they are files
-    under `<app-data>/layouts/`, so a synced `layouts/` dir mirrors the
-    themes approach; the LIVE dock state stays localStorage and stays
-    local), an export/import bundle file.
+- **Settings sync: open remainders** (the git-repo writable mode shipped
+  2026-10-02 - `design/2026-10-02-settings-sync-git.md`; a designated git
+  repo mirrors shareable settings + themes, imports at startup, commits
+  and pushes on change):
+  - **Read-only "inherit from a plain folder" team variant** (the
+    original 2026-08-21 design): a network share / Dropbox folder as a
+    read-only settings layer with LOCAL WINS (`Option<T>` +
+    `#[serde(default)]` migration). Rejected then and still rejected:
+    HTTP(S)/WebDAV endpoints and two-way sync via a plain folder.
+    Build when a team asks; the sync-doc format is already shared.
+  - **Phase 2 candidates**: named layouts (files under
+    `<app-data>/layouts/`, so syncing mirrors the themes approach; LIVE
+    dock state stays localStorage), an export/import bundle file.
 
 - **Git Log panel:** filter/search the log, copy a command, jump a toast to
   its specific log entry (today it just opens the panel).

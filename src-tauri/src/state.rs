@@ -467,6 +467,10 @@ pub struct GlobalSettings {
     /// `https://<host>` key; settings files hold no secrets.
     #[serde(default)]
     pub connected_accounts: Vec<ConnectedAccountMeta>,
+    /// Local checkout of the settings-sync git repository (`sync` module);
+    /// `None` = sync off.
+    #[serde(default)]
+    pub settings_sync_path: Option<String>,
 }
 
 /// One connected platform account (see `commands/accounts.rs`).
@@ -540,6 +544,7 @@ impl Default for GlobalSettings {
             working_changes_section_order: vec![],
             git_profiles_doc: GitProfilesDoc::default(),
             connected_accounts: vec![],
+            settings_sync_path: None,
         }
     }
 }
@@ -547,7 +552,7 @@ impl Default for GlobalSettings {
 /// Global settings owned by dedicated commands or flows (the probed git
 /// binary, theme name sanitizing, watcher start/stop side effects, session
 /// bookkeeping, profiles, accounts); a settings patch must never write them.
-const GLOBAL_SETTINGS_COMMAND_OWNED: [&str; 10] = [
+const GLOBAL_SETTINGS_COMMAND_OWNED: [&str; 11] = [
     "file_history_window_size",
     "git_path_override",
     "active_theme",
@@ -558,6 +563,7 @@ const GLOBAL_SETTINGS_COMMAND_OWNED: [&str; 10] = [
     "last_clone_parent_dir",
     "gitProfiles",
     "connected_accounts",
+    "settings_sync_path",
 ];
 
 impl GlobalSettings {
@@ -588,7 +594,7 @@ impl GlobalSettings {
 
     /// Enforce every value invariant on the merged result, so a patch cannot
     /// store an out-of-range value regardless of which fields it combines.
-    fn normalized(mut self) -> Self {
+    pub(crate) fn normalized(mut self) -> Self {
         self.ui_font_size = self.ui_font_size.clamp(8.0, 24.0);
         self.panel_gap = self.panel_gap.clamp(0.0, 16.0);
         self.panel_corner_radius = self.panel_corner_radius.clamp(0.0, 16.0);
@@ -880,6 +886,9 @@ pub struct AppState {
     pub keybindings_path: PathBuf,
     /// Cached per-host settings, keyed by distro (lazily loaded).
     pub host_settings: RwLock<HashMap<String, HostSettings>>,
+    /// Nudges the settings-sync engine after a settings/theme write (set once
+    /// at startup by `sync::tauri_engine`; unset in tests).
+    pub sync_nudge: std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<()>>,
 }
 
 /// An in-flight session-less git operation (see `AppState::transient_ops`).
@@ -934,6 +943,7 @@ impl AppState {
             layouts_dir,
             keybindings_path,
             host_settings: RwLock::new(HashMap::new()),
+            sync_nudge: std::sync::OnceLock::new(),
         }
     }
 
@@ -1036,6 +1046,9 @@ impl AppState {
         }
         let json = serde_json::to_string_pretty(&settings)?;
         crate::persist::write_atomic(&self.global_settings_path, json).await?;
+        if let Some(tx) = self.sync_nudge.get() {
+            let _ = tx.send(());
+        }
         Ok(())
     }
 
