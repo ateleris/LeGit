@@ -12,6 +12,12 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- Settings > Appearance now explains when animations (like the attention
+  pulse) are disabled because the OS requests reduced motion, and names the
+  Windows setting that controls it
+
 ### Changed
 
 - The inline branch/tag creation input in the commit list pulses briefly when

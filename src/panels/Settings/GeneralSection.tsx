@@ -14,6 +14,7 @@ import {
   PANEL_RADIUS_MAX,
 } from "../../store/settings";
 import { Section, WritesTo } from "./primitives";
+import { ReducedMotionNote } from "./ReducedMotionNote";
 import { NumberField, SETTINGS_GRID_COLS } from "./NumberField";
 
 /** localStorage key for the panel spacing / corner radius link (default on). */
@@ -161,6 +162,7 @@ export function GeneralSection() {
           </button>
         </div>
       )}
+      <ReducedMotionNote />
     </Section>
   );
 }

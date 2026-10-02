@@ -47,7 +47,7 @@ export function buildGlobalSettingsGroups(hasWsl: boolean): SettingsGroupDef[] {
         {
           id: "general",
           title: "General",
-          keywords: ["font", "size", "zoom", "layout", "orientation", "spacing", "corner", "radius", "border"],
+          keywords: ["font", "size", "zoom", "layout", "orientation", "spacing", "corner", "radius", "border", "animation", "motion", "pulse", "reduced"],
           render: () => <GeneralSection />,
         },
         {
