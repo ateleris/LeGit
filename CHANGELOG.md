@@ -42,6 +42,8 @@ lives in the git log and the GitHub release notes.
   highlight back to the previous category; the clicked entry stays active
   until you scroll, and at the bottom of the page the last category is the
   current one
+- The tab strip's View, open-repositories, and add-repository dropdowns no
+  longer run off the bottom of a short window; they scroll internally instead
 
 ## [1.4.0] - 2026-10-01
 

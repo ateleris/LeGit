@@ -8,6 +8,7 @@ import type { RepoSummary } from "../lib/types";
 import { notify } from "../store/notifications";
 import { ExternalEditorIcon, FolderIcon } from "../icons";
 import { SectionLabel } from "./shared/menu/primitives";
+import { AnchoredDropdown } from "./shared/AnchoredDropdown";
 import { IconButton } from "./shared/buttons";
 import { useDismissable } from "./shared/useDismissable";
 
@@ -131,7 +132,7 @@ export function RepoOverflowMenu() {
   if (repos.length === 0) return null;
 
   return (
-    <div ref={ref} style={{ position: "relative" }}>
+    <div ref={ref}>
       <button
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
@@ -141,24 +142,7 @@ export function RepoOverflowMenu() {
         ⋯ {repos.length}
       </button>
       {open && (
-        <div
-          role="menu"
-          style={{
-            position: "absolute",
-            top: "calc(100% + 4px)",
-            right: 0,
-            minWidth: 280,
-            maxHeight: 400,
-            overflowY: "auto",
-            background: "var(--panel-bg)",
-            color: "var(--panel-fg)",
-            border: "1px solid var(--panel-border)",
-            borderRadius: 4,
-            boxShadow: "0 4px 10px var(--shadow-color)",
-            zIndex: 1000,
-            padding: "0.333em",
-          }}
-        >
+        <AnchoredDropdown role="menu" style={{ minWidth: 280, padding: "0.333em" }}>
           <SectionLabel>Open repositories</SectionLabel>
           {repos.map((r) => {
             const editorTemplate = effectiveEditorTemplate(
@@ -187,7 +171,7 @@ export function RepoOverflowMenu() {
               />
             );
           })}
-        </div>
+        </AnchoredDropdown>
       )}
     </div>
   );
