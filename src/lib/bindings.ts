@@ -720,6 +720,59 @@ async repoRenormalize(repoId: string) : Promise<Result<RenormalizeOutcome, AppEr
 }
 },
 /**
+ * The repo's installed git hooks: resolved hooks directory (honoring
+ * `core.hooksPath`) and its listing.
+ */
+async repoHooksReport(repoId: string) : Promise<Result<HooksReport, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("repo_hooks_report", { repoId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Open an installed hook file in the configured external editor (OS default
+ * application when none is configured). The hooks directory is resolved via
+ * the backend (it honors `core.hooksPath` and relocated gitdirs, and may sit
+ * outside the worktree, which the repo-relative file command refuses); the
+ * name must be one the hooks report lists, so traversal cannot reach here.
+ */
+async repoOpenHookInEditor(repoId: string, name: string) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("repo_open_hook_in_editor", { repoId, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Open the repo's resolved hooks directory in the OS file manager (WSL repos
+ * through the `\\wsl.localhost\` share). Resolved via the backend so
+ * `core.hooksPath` and relocated gitdirs (worktrees, submodules) are honored.
+ */
+async repoOpenHooksFolder(repoId: string) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("repo_open_hooks_folder", { repoId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Delete an installed hook from the default hooks directory (refused for a
+ * `core.hooksPath`-redirected setup). Destructive - the confirmation gate
+ * lives in the UI.
+ */
+async repoRemoveHook(repoId: string, name: string) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("repo_remove_hook", { repoId, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * LFS usage/availability for the repo. A missing binary or unset config is
  * an answer (status fields), never an error - only a broken repo errors.
  */
@@ -2202,11 +2255,12 @@ async repoConflictReopen(repoId: string, path: string) : Promise<Result<null, Ap
 },
 /**
  * Commit the staged changes with the given message; returns the new commit id.
- * When `amend` is set, rewrites HEAD instead of creating a new commit.
+ * When `amend` is set, rewrites HEAD instead of creating a new commit; when
+ * `no_verify` is set, the pre-commit and commit-msg hooks are skipped.
  */
-async repoCommit(repoId: string, message: string, amend: boolean) : Promise<Result<CommitId, AppError>> {
+async repoCommit(repoId: string, message: string, amend: boolean, noVerify: boolean) : Promise<Result<CommitId, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("repo_commit", { repoId, message, amend }) };
+    return { status: "ok", data: await TAURI_INVOKE("repo_commit", { repoId, message, amend, noVerify }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3090,7 +3144,13 @@ export type GitError = { kind: "RefNotFound"; details: string } | { kind: "AuthF
  * the commit must `git lfs push`); otherwise the download itself failed
  * (network/auth).
  */
-{ kind: "LfsDownloadFailed"; details: { files: string[]; missing_on_remote: boolean; stderr: string } } | { kind: "CommandFailed"; details: { exit_code: number; stderr: string } } | 
+{ kind: "LfsDownloadFailed"; details: { files: string[]; missing_on_remote: boolean; stderr: string } } | 
+/**
+ * A local hook rejected the commit. `hooks` names the installed hooks
+ * that `--no-verify` would skip (pre-commit / commit-msg), so the UI can
+ * offer a bypass retry; `stderr` carries the hook's own output.
+ */
+{ kind: "CommitHookDeclined"; details: { hooks: string[]; exit_code: number; stderr: string } } | { kind: "CommandFailed"; details: { exit_code: number; stderr: string } } | 
 /**
  * A clone the user cancelled: an expected outcome the UI stays silent
  * about - unless removing the partial clone's files failed, in which
@@ -3481,6 +3541,28 @@ export type HistoryWindowContext = { repo_id: string; path: string; rev: string 
  * copy-absolute-path entries resolve against it.
  */
 repo_path: string }
+/**
+ * One file in the hooks directory (`.sample` templates excluded).
+ */
+export type HookEntry = { name: string; 
+/**
+ * False for a file git never runs as a hook (helper scripts, tool
+ * internals).
+ */
+known: boolean }
+/**
+ * The repository's installed git hooks, for the repo-settings hooks view.
+ */
+export type HooksReport = { 
+/**
+ * The resolved hooks directory, absolute as the repo's host prints it.
+ */
+dir: string; 
+/**
+ * The raw `core.hooksPath` value when it redirects the directory
+ * (husky & co.), `None` for the default `<gitdir>/hooks`.
+ */
+hooks_path: string | null; hooks: HookEntry[] }
 /**
  * The host part of a locator, as it crosses IPC in `RepoSummary`
  * (`None`/absent = local). Hand-mirrored in `src/lib/types.ts`.

@@ -60,6 +60,16 @@ pub enum GitError {
         stderr: String,
     },
 
+    /// A local hook rejected the commit. `hooks` names the installed hooks
+    /// that `--no-verify` would skip (pre-commit / commit-msg), so the UI can
+    /// offer a bypass retry; `stderr` carries the hook's own output.
+    #[error("commit rejected by a hook: {stderr}")]
+    CommitHookDeclined {
+        hooks: Vec<String>,
+        exit_code: i32,
+        stderr: String,
+    },
+
     #[error("git command failed (exit {exit_code}): {stderr}")]
     CommandFailed { exit_code: i32, stderr: String },
 

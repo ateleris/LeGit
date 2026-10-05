@@ -20,16 +20,28 @@ lives in the git log and the GitHub release notes.
 - Settings > Appearance now explains when animations (like the attention
   pulse) are disabled because the OS requests reduced motion, and names the
   Windows setting that controls it
+- A commit rejected by a pre-commit or commit-msg hook now says so (with the
+  hook's output) and offers a one-click "Commit anyway (skip hooks)" retry
+- Repo Settings > Git > Git hooks shows the repository's installed hooks,
+  including where `core.hooksPath` redirects them (husky and similar tools),
+  can open a hook in the external editor, delete a hook from `.git/hooks`
+  (with confirmation), and open the hooks folder in the file manager
 
 ### Changed
 
 - The inline branch/tag creation input in the commit list pulses briefly when
   it appears, so it is easier to spot
+- Buttons for destructive actions consistently use the destructive style
+  ("Reset all" in Keyboard Shortcuts, "Delete" in Git hooks)
 
 ### Fixed
 
 - The inline branch/tag creation input now shrinks to fit a narrow Refs
   column instead of being clipped out of view behind the "+N" chip
+- Clicking a settings category near the end of the page no longer snaps the
+  highlight back to the previous category; the clicked entry stays active
+  until you scroll, and at the bottom of the page the last category is the
+  current one
 
 ## [1.4.0] - 2026-10-01
 

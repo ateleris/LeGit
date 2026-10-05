@@ -283,6 +283,9 @@ pub(super) fn append_error_note(e: GitError, note: &str) -> GitError {
         GitError::LfsDownloadFailed { files, missing_on_remote, stderr } => {
             GitError::LfsDownloadFailed { files, missing_on_remote, stderr: add(stderr) }
         }
+        GitError::CommitHookDeclined { hooks, exit_code, stderr } => {
+            GitError::CommitHookDeclined { hooks, exit_code, stderr: add(stderr) }
+        }
         GitError::CommandFailed { exit_code, stderr } => {
             GitError::CommandFailed { exit_code, stderr: add(stderr) }
         }
@@ -430,6 +433,35 @@ pub fn classify_remote_error(exit_code: i32, stderr: &str) -> GitError {
         };
     }
     command_failed(exit_code, stderr)
+}
+
+/// Map a failed `git commit` to a specific `GitError`. A rejecting hook is
+/// invisible in git's own output (the hook's text is relayed verbatim, with
+/// no marker naming it), so the call site passes which bypassable hooks are
+/// installed and the decision is by elimination: a failure git itself
+/// explains (`fatal:`, gpg signing, nothing staged) is a `CommandFailed`;
+/// anything else with a pre-commit / commit-msg hook installed is that hook
+/// declining → `CommitHookDeclined`.
+pub(super) fn classify_commit_failure(
+    exit_code: i32,
+    stdout: &str,
+    stderr: &str,
+    installed_hooks: &[String],
+) -> GitError {
+    let err_lc = stderr.to_lowercase();
+    let out_lc = stdout.to_lowercase();
+    let explained_by_git = err_lc.contains("fatal:")
+        || err_lc.contains("gpg failed to sign")
+        || out_lc.contains("nothing to commit")
+        || out_lc.contains("no changes added to commit");
+    if installed_hooks.is_empty() || explained_by_git {
+        return GitError::CommandFailed { exit_code, stderr: compose_output(stdout, stderr) };
+    }
+    GitError::CommitHookDeclined {
+        hooks: installed_hooks.to_vec(),
+        exit_code,
+        stderr: compose_output(stdout, stderr),
+    }
 }
 
 #[cfg(test)]
@@ -1071,5 +1103,71 @@ fatal: feat.bin: smudge filter lfs failed\n";
         assert!(take_side_means_delete("error: path 'a.txt' does not have their version\n"));
         assert!(take_side_means_delete("error: path 'a.txt' does not have our version\n"));
         assert!(!take_side_means_delete("error: pathspec 'a.txt' did not match any files\n"));
+    }
+
+    // --- commit failure classification ---------------------------------------
+    // A rejecting hook leaves no marker in git's output, so the classifier
+    // works by elimination over the failures git itself explains.
+
+    fn hooks(names: &[&str]) -> Vec<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn commit_failure_with_installed_hook_is_hook_declined() {
+        let r = classify_commit_failure(1, "", "LINT FAILED: fix a.ts\n", &hooks(&["pre-commit"]));
+        match r {
+            GitError::CommitHookDeclined { hooks, exit_code, stderr } => {
+                assert_eq!(hooks, vec!["pre-commit"]);
+                assert_eq!(exit_code, 1);
+                assert!(stderr.contains("LINT FAILED"), "{stderr}");
+            }
+            other => panic!("expected CommitHookDeclined, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn commit_failure_without_hooks_is_command_failed() {
+        let r = classify_commit_failure(1, "", "some unexplained failure\n", &[]);
+        assert!(matches!(r, GitError::CommandFailed { exit_code: 1, .. }), "{r:?}");
+    }
+
+    #[test]
+    fn commit_failure_gpg_is_not_blamed_on_hooks() {
+        let r = classify_commit_failure(
+            128,
+            "",
+            "error: gpg failed to sign the data\nfatal: failed to write commit object\n",
+            &hooks(&["pre-commit"]),
+        );
+        assert!(matches!(r, GitError::CommandFailed { .. }), "{r:?}");
+    }
+
+    #[test]
+    fn commit_failure_fatal_is_not_blamed_on_hooks() {
+        let r = classify_commit_failure(
+            128,
+            "",
+            "fatal: unable to auto-detect email address\n",
+            &hooks(&["commit-msg"]),
+        );
+        assert!(matches!(r, GitError::CommandFailed { .. }), "{r:?}");
+    }
+
+    #[test]
+    fn commit_failure_nothing_to_commit_is_not_blamed_on_hooks() {
+        // The status text is on STDOUT and must survive into the message.
+        let r = classify_commit_failure(
+            1,
+            "On branch main\nnothing to commit, working tree clean\n",
+            "",
+            &hooks(&["pre-commit"]),
+        );
+        match r {
+            GitError::CommandFailed { stderr, .. } => {
+                assert!(stderr.contains("nothing to commit"), "{stderr}");
+            }
+            other => panic!("expected CommandFailed, got {other:?}"),
+        }
     }
 }

@@ -59,6 +59,8 @@ export type {
   HistoryWindowContext,
   HostRef,
   IdentityView,
+  HookEntry,
+  HooksReport,
   ImageFormat,
   JsonValue,
   KeyDiff,

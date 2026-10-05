@@ -19,9 +19,9 @@
 // autocrlf) locally, so a developer's global config cannot skew outcomes.
 
 use legit_core::{
-    BlobBytes, CommitId, GitError, ConflictKind, ConflictSide, DiffEntry, DiffSource, FastForwardResult,
+    BlobBytes, CommitId, CommitOptions, GitError, ConflictKind, ConflictSide, DiffEntry, DiffSource, FastForwardResult,
     FetchOptions, FileState, GitmodulesFinding,
-    GitBackend, GitExecutor, GitRunner, LogOptions, MergeOptions, MergeOutcome, OperationId,
+    GitBackend, GitExecutor, GitRunner, HooksReport, LogOptions, MergeOptions, MergeOutcome, OperationId,
     PullOptions, PullStrategy, PushOptions, PushRecurseMode, RebaseOutcome, RefDecoration,
     RefSelector, RemoteProgress, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode,
     SequenceOutcome, SignatureStatus, StashApplyOutcome, StashOutcome, SubmoduleAutoUpdateStatus,
@@ -216,6 +216,153 @@ async fn merge_rejected_by_hook_on_conflict_named_file_is_an_error_not_conflicts
         other => panic!("expected CommandFailed, got {other:?}"),
     }
     assert!(repo.backend.conflict_entries().await.unwrap().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// commit: hook rejection classification + --no-verify bypass
+// ---------------------------------------------------------------------------
+
+/// Install a rejecting hook at `rel` (repo-relative), creating parent dirs.
+fn write_rejecting_hook(repo: &TestRepo, rel: &str, message: &str) {
+    let hook = repo.path.join(rel);
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    std::fs::write(&hook, format!("#!/bin/sh\necho '{message}' >&2\nexit 1\n")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn commit_rejected_by_pre_commit_hook_is_hook_declined() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("base").await;
+    repo.write("a.txt", "two\n");
+    repo.git(&["add", "a.txt"]).await;
+    write_rejecting_hook(&repo, ".git/hooks/pre-commit", "LINT FAILED: a.txt");
+
+    let err = repo
+        .backend
+        .commit(CommitOptions { message: "msg".into(), ..Default::default() })
+        .await
+        .unwrap_err();
+    match err {
+        GitError::CommitHookDeclined { hooks, stderr, .. } => {
+            assert_eq!(hooks, vec!["pre-commit"]);
+            assert!(stderr.contains("LINT FAILED"), "{stderr}");
+        }
+        other => panic!("expected CommitHookDeclined, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn commit_hook_blame_honors_hooks_path_redirection() {
+    // husky & co. point core.hooksPath into the worktree; the probe must
+    // find the hook there, not in .git/hooks.
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("base").await;
+    repo.write("a.txt", "two\n");
+    repo.git(&["add", "a.txt"]).await;
+    repo.git(&["config", "core.hooksPath", ".husky"]).await;
+    write_rejecting_hook(&repo, ".husky/commit-msg", "bad message");
+
+    let err = repo
+        .backend
+        .commit(CommitOptions { message: "msg".into(), ..Default::default() })
+        .await
+        .unwrap_err();
+    match err {
+        GitError::CommitHookDeclined { hooks, stderr, .. } => {
+            assert_eq!(hooks, vec!["commit-msg"]);
+            assert!(stderr.contains("bad message"), "{stderr}");
+        }
+        other => panic!("expected CommitHookDeclined, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn hooks_report_lists_installed_hooks_and_honors_redirection() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "x\n");
+    repo.commit_all("base").await;
+
+    // Default dir: a real hook is listed, git's *.sample templates are not.
+    write_rejecting_hook(&repo, ".git/hooks/pre-commit", "no");
+    let report: HooksReport = repo.backend.hooks_report().await.unwrap();
+    assert_eq!(report.hooks_path, None);
+    assert!(
+        report.hooks.iter().any(|h| h.name == "pre-commit" && h.known),
+        "{:?}",
+        report.hooks
+    );
+    assert!(report.hooks.iter().all(|h| !h.name.ends_with(".sample")), "{:?}", report.hooks);
+
+    // core.hooksPath redirection: only the redirected dir's files count, and
+    // a non-hook file in it is listed but not known.
+    repo.git(&["config", "core.hooksPath", ".husky"]).await;
+    write_rejecting_hook(&repo, ".husky/commit-msg", "no");
+    repo.write(".husky/helper.sh", "#!/bin/sh\n");
+    let report = repo.backend.hooks_report().await.unwrap();
+    assert_eq!(report.hooks_path.as_deref(), Some(".husky"));
+    let names: Vec<(&str, bool)> =
+        report.hooks.iter().map(|h| (h.name.as_str(), h.known)).collect();
+    assert_eq!(names, vec![("commit-msg", true), ("helper.sh", false)]);
+}
+
+#[tokio::test]
+async fn remove_hook_deletes_it_and_commits_pass_again() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("base").await;
+    repo.write("a.txt", "two\n");
+    repo.git(&["add", "a.txt"]).await;
+    write_rejecting_hook(&repo, ".git/hooks/pre-commit", "no");
+
+    repo.backend.remove_hook("pre-commit").await.unwrap();
+    assert!(!repo.exists(".git/hooks/pre-commit"));
+    let id = repo
+        .backend
+        .commit(CommitOptions { message: "unhooked".into(), ..Default::default() })
+        .await
+        .unwrap();
+    assert_eq!(repo.head().await, id.as_str());
+}
+
+#[tokio::test]
+async fn remove_hook_refuses_redirected_hooks_and_leaves_the_file() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("base").await;
+    repo.git(&["config", "core.hooksPath", ".husky"]).await;
+    write_rejecting_hook(&repo, ".husky/pre-commit", "no");
+
+    let err = repo.backend.remove_hook("pre-commit").await.unwrap_err();
+    assert!(matches!(err, GitError::Internal(_)), "{err:?}");
+    assert!(repo.exists(".husky/pre-commit"));
+}
+
+#[tokio::test]
+async fn no_verify_commit_bypasses_a_rejecting_pre_commit_hook() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("base").await;
+    repo.write("a.txt", "two\n");
+    repo.git(&["add", "a.txt"]).await;
+    write_rejecting_hook(&repo, ".git/hooks/pre-commit", "LINT FAILED: a.txt");
+
+    let id = repo
+        .backend
+        .commit(CommitOptions {
+            message: "hooked anyway".into(),
+            no_verify: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(repo.head().await, id.as_str());
 }
 
 #[tokio::test]

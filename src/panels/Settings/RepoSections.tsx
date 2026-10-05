@@ -7,11 +7,12 @@ import { useCallback, useEffect, useState } from "react";
 import { usePanelFocusEffect, usePanelDirty } from "../PanelApiContext";
 import { formatAppError } from "../../lib/errors";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { LineEndingsView, GitAttrRule, LfsPatternsView, RepoSettings } from "../../lib/types";
+import type { HooksReport, LineEndingsView, GitAttrRule, LfsPatternsView, RepoSettings } from "../../lib/types";
 import { api } from "../../lib/commands";
+import { confirmDestructiveAction } from "../../store/confirm";
 import { useGitStatusStore } from "../../store/git-status";
 import { useRepoStore } from "../../store/repos";
-import { useSettingsStore } from "../../store/settings";
+import { useConfirmDestructive, useSettingsStore } from "../../store/settings";
 import { summonGlobalPanel } from "../../layout/globalSummon";
 import { NormalizeLineEndingsBlock } from "./NormalizeLineEndingsBlock";
 import { ConfigRow, RadioGroup, ResolvedBadge } from "./SigningSettings";
@@ -805,6 +806,123 @@ export function LineEndingsRepoSection({ repoId }: { repoId: string }) {
         }}
       />
 
+    </Section>
+  );
+}
+
+/** The repo's installed git hooks: where they resolve (honoring
+ * core.hooksPath), which files git will actually run, and removal. Removal is
+ * offered only in the DEFAULT hooks dir - a redirected dir (husky & co.)
+ * usually holds tracked, team-shared files, managed in the working tree. */
+export function GitHooksRepoSection({ repoId }: { repoId: string }) {
+  const queryClient = useQueryClient();
+  const { data: report, error, refetch } = useQuery<HooksReport>({
+    queryKey: [repoId, "hooks"],
+    queryFn: () => api.repoHooksReport(repoId),
+    staleTime: STALE.appDefault,
+  });
+  usePanelFocusEffect(useCallback(() => { void refetch(); }, [refetch]));
+  const { busy, run } = useDelayedBusy();
+  const [actionError, setActionError] = useState<string | null>(null);
+  const confirmDestructive = useConfirmDestructive();
+
+  const removable = report != null && report.hooks_path == null;
+  const removeHook = async (name: string) => {
+    const ok = await confirmDestructiveAction({
+      title: "Delete hook",
+      message:
+        "Delete this hook file? Hooks in .git/hooks exist only in this clone; git cannot restore the file.",
+      detail: name,
+      confirmLabel: "Delete hook",
+    });
+    if (!ok) return;
+    void run(async () => {
+      setActionError(null);
+      try {
+        await api.repoRemoveHook(repoId, name);
+        await queryClient.invalidateQueries({ queryKey: [repoId, "hooks"] });
+      } catch (e) {
+        setActionError(formatAppError(e));
+      }
+    });
+  };
+
+  return (
+    <Section title="Git hooks (this repo)">
+      {error ? (
+        <FieldNote>{formatAppError(error)}</FieldNote>
+      ) : !report ? null : (
+        <>
+          {report.hooks_path != null && (
+            <div style={{ fontSize: "var(--fz-md)", marginBottom: "0.5em" }}>
+              <code>core.hooksPath</code> redirects hooks to{" "}
+              <code>{report.hooks_path}</code> - those files belong to the
+              repository's content and are managed like any other file.
+            </div>
+          )}
+          {report.hooks.length === 0 ? (
+            <div className="legit-subtle" style={{ fontSize: "var(--fz-md)" }}>
+              No hooks are installed in this repository.
+            </div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--fz-md)" }}>
+              <tbody>
+                {report.hooks.map((h) => {
+                  const cell: React.CSSProperties = {
+                    padding: "0.333em 1.5em 0.333em 0",
+                    borderBottom: "1px solid var(--panel-border)",
+                    verticalAlign: "middle",
+                  };
+                  return (
+                    <tr key={h.name}>
+                      <td style={{ ...cell, fontFamily: "monospace", whiteSpace: "nowrap" }}>
+                        {h.name}
+                      </td>
+                      <td className="legit-subtle" style={{ ...cell, width: "100%" }}>
+                        {!h.known && "not a hook git runs"}
+                      </td>
+                      <td style={{ ...cell, paddingRight: "0.5em", whiteSpace: "nowrap" }}>
+                        <Button
+                          onClick={() => {
+                            setActionError(null);
+                            api.repoOpenHookInEditor(repoId, h.name).catch((e) =>
+                              setActionError(formatAppError(e)),
+                            );
+                          }}
+                        >
+                          Open in editor
+                        </Button>
+                      </td>
+                      <td style={{ ...cell, paddingRight: 0, whiteSpace: "nowrap" }}>
+                        {removable && h.known && (
+                          <Button variant="danger" disabled={busy} onClick={() => void removeHook(h.name)}>
+                            {confirmDestructive ? "Delete…" : "Delete"}
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+          {actionError && <FieldNote>{actionError}</FieldNote>}
+          <div style={{ marginTop: "0.667em" }}>
+            <Button
+              onClick={() => {
+                setActionError(null);
+                api.repoOpenHooksFolder(repoId).catch((e) => setActionError(formatAppError(e)));
+              }}
+            >
+              Open hooks folder
+            </Button>
+          </div>
+          <FieldNote>
+            Hooks directory: <code>{report.dir}</code>. A commit rejected by a
+            hook offers a one-time skip.
+          </FieldNote>
+        </>
+      )}
     </Section>
   );
 }

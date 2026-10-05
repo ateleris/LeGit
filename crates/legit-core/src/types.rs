@@ -98,6 +98,8 @@ pub struct CommitOptions {
     pub sign: SignMode,
     pub allow_empty: bool,
     pub amend: bool,
+    /// Skip the pre-commit and commit-msg hooks (`--no-verify`).
+    pub no_verify: bool,
 }
 
 impl Default for CommitOptions {
@@ -107,6 +109,7 @@ impl Default for CommitOptions {
             sign: SignMode::Default,
             allow_empty: false,
             amend: false,
+            no_verify: false,
         }
     }
 }
@@ -1225,4 +1228,24 @@ pub struct SubmoduleAutoUpdateResult {
     pub status: SubmoduleAutoUpdateStatus,
     /// LFS pointer stubs the move left inside the submodule (see `LfsStubs`).
     pub lfs_stubs: Option<LfsStubs>,
+}
+
+/// The repository's installed git hooks, for the repo-settings hooks view.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct HooksReport {
+    /// The resolved hooks directory, absolute as the repo's host prints it.
+    pub dir: String,
+    /// The raw `core.hooksPath` value when it redirects the directory
+    /// (husky & co.), `None` for the default `<gitdir>/hooks`.
+    pub hooks_path: Option<String>,
+    pub hooks: Vec<HookEntry>,
+}
+
+/// One file in the hooks directory (`.sample` templates excluded).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct HookEntry {
+    pub name: String,
+    /// False for a file git never runs as a hook (helper scripts, tool
+    /// internals).
+    pub known: bool,
 }

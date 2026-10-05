@@ -17,7 +17,7 @@ use crate::types::{
     BlameHunk, BlobBytes, Branch, BranchMergeAnalysis, CaseDriftEntry, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
     FastForwardResult, FetchOptions, FfMode, FileAtRevision, FileHistoryEntry, FileState, FileStatus,
-    GitmodulesFinding,
+    GitmodulesFinding, HooksReport,
     HunkOp, LfsStatus, LfsStubs, LogOptions, MergeOptions, MergeOutcome, PullOptions, PullOutcome, PullStrategy, PushOptions, PushRecurseMode,
     RebaseAction, RebaseOutcome, RebaseRangeInfo, RebaseStep, RefDecoration, RefSelector,
     ReflogEntry, Remote,
@@ -62,6 +62,7 @@ mod case_drift;
 mod classify;
 use classify::*;
 mod history;
+mod hooks;
 mod changes;
 use changes::*;
 mod commits;
@@ -430,6 +431,12 @@ impl<E: GitExecutor + ?Sized> GitBackend for GitCliBackend<E> {
     }
     async fn lfs_status(&self) -> Result<LfsStatus, GitError> {
         self.lfs_status().await
+    }
+    async fn hooks_report(&self) -> Result<HooksReport, GitError> {
+        self.hooks_report().await
+    }
+    async fn remove_hook(&self, name: &str) -> Result<(), GitError> {
+        self.remove_hook(name).await
     }
 
     async fn lfs_tracked_subset(&self, paths: &[String]) -> Result<Vec<String>, GitError> {

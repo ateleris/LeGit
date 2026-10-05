@@ -109,4 +109,17 @@ describe("pickActiveGroup", () => {
   it("tolerates unsorted input", () => {
     expect(pickActiveGroup([tops[2], tops[0], tops[1]], 250)).toBe("b");
   });
+
+  it("activates the bottom-most group when scrolled to the bottom", () => {
+    // The last group's header can sit below the spy line even at the maximum
+    // scroll position (scroll clamps before its top is reached), so at the
+    // bottom it wins regardless of the reference line.
+    expect(pickActiveGroup(tops, 250, true)).toBe("c");
+    expect(pickActiveGroup([tops[2], tops[0], tops[1]], 250, true)).toBe("c");
+    expect(pickActiveGroup([], 0, true)).toBeNull();
+  });
+
+  it("not at the bottom, the reference line decides as before", () => {
+    expect(pickActiveGroup(tops, 250, false)).toBe("b");
+  });
 });

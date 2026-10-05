@@ -24,6 +24,7 @@ export const FRONTEND_DOMAINS = [
   "identity",
   "remote-tags",
   "lfs",
+  "hooks",
   "case_drift",
   "commit-files",
   "commit-details",

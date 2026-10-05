@@ -220,6 +220,34 @@ pub async fn repo_open_file_in_editor(
     spawn_on_host(&session, &tokens).await
 }
 
+/// Open an installed hook file in the configured external editor (OS default
+/// application when none is configured). The hooks directory is resolved via
+/// the backend (it honors `core.hooksPath` and relocated gitdirs, and may sit
+/// outside the worktree, which the repo-relative file command refuses); the
+/// name must be one the hooks report lists, so traversal cannot reach here.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_open_hook_in_editor(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+    name: String,
+) -> Result<(), AppError> {
+    let session = state.get_session(&repo_id).await?;
+    let report = session.backend.hooks_report().await.map_err(AppError::Git)?;
+    if !report.hooks.iter().any(|h| h.name == name) {
+        return Err(AppError::Io(format!("{name} is not in the hooks directory")));
+    }
+    let abs = legit_core::HostPath(report.dir).join(&name);
+
+    let template = effective_editor_template(&state, &session).await;
+    if template.trim().is_empty() {
+        return crate::commands::files::open_with_default_app(&session, &abs);
+    }
+    let tokens = build_editor_file_invocation(&template, session.root.as_str(), abs.as_str())
+        .map_err(AppError::Io)?;
+    spawn_on_host(&session, &tokens).await
+}
+
 /// Temp-file name for a blob opened at a revision: keeps the extension (the
 /// editor's language detection) and shows the short sha in the tab title.
 fn revision_file_name(path: &str, rev: &str) -> String {

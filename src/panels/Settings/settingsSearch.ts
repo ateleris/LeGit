@@ -42,13 +42,19 @@ export function filterSettingsGroups<G extends SearchableGroup>(
   return result;
 }
 
-/** The group whose header was scrolled past last (the "current" group). */
+/** The group whose header was scrolled past last (the "current" group).
+ * `atBottom` wins outright: the last group's header can sit below the
+ * reference line even at the maximum scroll position (the scroll clamps
+ * before its top is reached), so at the bottom the bottom-most group is the
+ * one being looked at. */
 export function pickActiveGroup(
   tops: readonly { id: string; top: number }[],
   scrollTop: number,
+  atBottom = false,
 ): string | null {
   if (tops.length === 0) return null;
   const sorted = [...tops].sort((a, b) => a.top - b.top);
+  if (atBottom) return sorted[sorted.length - 1].id;
   let active = sorted[0].id;
   for (const { id, top } of sorted) {
     if (top <= scrollTop) active = id;

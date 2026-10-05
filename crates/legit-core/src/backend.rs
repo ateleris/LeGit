@@ -11,7 +11,7 @@ use crate::runner::OperationId;
 use crate::types::{
     BlameHunk, BlobBytes, Branch, BranchMergeAnalysis, CaseDriftEntry, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
-    FetchOptions, FileAtRevision, FileHistoryEntry, FileStatus, GitmodulesFinding, HunkOp,
+    FetchOptions, FileAtRevision, FileHistoryEntry, FileStatus, GitmodulesFinding, HooksReport, HunkOp,
     LfsStatus, LfsStubs, LogOptions,
     MergeOptions, MergeOutcome, PullOptions, PullOutcome, PushOptions, RebaseOutcome, RebaseStep,
     RebaseRangeInfo, ReflogEntry, Remote, RemoteCheckoutOutcome, RemoteTag, RenormalizeOutcome,
@@ -265,6 +265,16 @@ pub trait GitBackend: Send + Sync {
     /// available. Missing binary / unset config are ANSWERS (status fields),
     /// never errors; probes are skipped when the repo does not use LFS.
     async fn lfs_status(&self) -> Result<LfsStatus, GitError>;
+
+    /// The repo's installed git hooks: the resolved hooks directory (honoring
+    /// `core.hooksPath`) and its listing. A missing directory is an empty
+    /// listing, not an error.
+    async fn hooks_report(&self) -> Result<HooksReport, GitError>;
+
+    /// Delete the named hook from the DEFAULT hooks directory. Refused when
+    /// `core.hooksPath` redirects hooks (those files are usually tracked,
+    /// team-shared content) and for names outside git's hook set.
+    async fn remove_hook(&self, name: &str) -> Result<(), GitError>;
 
     /// The subset of `paths` whose effective `filter` attribute is `lfs`
     /// (`git check-attr -z --stdin filter`), in input order. Worktree

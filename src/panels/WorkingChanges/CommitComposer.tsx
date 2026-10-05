@@ -32,6 +32,7 @@ import {
   type CommitPushTarget,
 } from "./commitButtonMode";
 import { gitmodulesFindingLabel } from "./gitmodulesWarning";
+import { commitHookRejection, hookNamesLabel } from "./hookWarning";
 import { applyMergePrefill } from "./mergePrefill";
 import { useOpState } from "../../lib/useOpState";
 import { formatEolChanges, type StagedEolChange } from "./lineEndingWarning";
@@ -108,6 +109,14 @@ export function CommitComposer({
   const [confirmEolCommit, setConfirmEolCommit] = useState(false);
   // Non-empty = the .gitmodules consistency warning banner is up.
   const [gitmodulesFindings, setGitmodulesFindings] = useState<GitmodulesFinding[]>([]);
+  // A commit a local hook rejected: the banner shows the hook's output and
+  // offers a --no-verify retry. Carries the push leg of the failed attempt
+  // so a retried Commit & Push still pushes.
+  const [hookDeclined, setHookDeclined] = useState<{
+    hooks: string[];
+    output: string;
+    push: CommitPushTarget | null;
+  } | null>(null);
   const [commitMenuOpen, setCommitMenuOpen] = useState(false);
 
   // A pending .gitmodules gate from the previous repo must not fire against
@@ -117,6 +126,7 @@ export function CommitComposer({
     if (prevRepoId.current === repo.id) return;
     prevRepoId.current = repo.id;
     setGitmodulesFindings([]);
+    setHookDeclined(null);
   }, [repo.id]);
 
   // The latest commit — drives amend message prefill and the "has commits"
@@ -162,11 +172,21 @@ export function CommitComposer({
   // plan, consumed by commit). A ref, not state: the confirm banners defer
   // commit() to a later click and the value must survive that gap unchanged.
   const pendingPushRef = useRef<CommitPushTarget | null>(null);
-  const commit = () =>
+  const commit = (noVerify = false) =>
     run(async () => {
       const push = pendingPushRef.current;
       pendingPushRef.current = null;
-      await repoCommit(repo.id, message, amend);
+      try {
+        await repoCommit(repo.id, message, amend, noVerify);
+      } catch (e) {
+        // A hook rejection gets the inline banner (with the --no-verify
+        // retry) instead of run()'s error toast; everything else rethrows.
+        const rejection = commitHookRejection(e);
+        if (!rejection) throw e;
+        setHookDeclined({ ...rejection, push });
+        return;
+      }
+      setHookDeclined(null);
       setMessage("");
       setAmend(false);
       if (push) {
@@ -334,7 +354,47 @@ export function CommitComposer({
         rows={3}
         style={{ resize: "vertical", fontFamily: "inherit", fontSize: "var(--fz-md)" }}
       />
-      {confirmDetachedCommit ? (
+      {hookDeclined ? (
+        <div style={bannerStyle}>
+          <div style={{ fontSize: "var(--fz-md)" }}>
+            <span style={{ display: "inline-flex", verticalAlign: "-0.125em", marginRight: "0.5em", color: "var(--warning-fg)" }}>
+              <WarningIcon />
+            </span>
+            The commit was rejected by the repository's{" "}
+            <strong>{hookNamesLabel(hookDeclined.hooks)}</strong>:
+          </div>
+          {hookDeclined.output && (
+            <pre
+              style={{
+                margin: "0.5em 0 0",
+                maxHeight: "10em",
+                overflow: "auto",
+                whiteSpace: "pre-wrap",
+                fontSize: "var(--fz-sm)",
+                color: "var(--subtle-fg)",
+              }}
+            >
+              {hookDeclined.output}
+            </pre>
+          )}
+          <div style={{ display: "flex", gap: "0.5em", marginTop: "0.667em" }}>
+            <Button
+              variant="danger"
+              disabled={busy}
+              onClick={() => {
+                pendingPushRef.current = hookDeclined.push;
+                setHookDeclined(null);
+                void commit(true);
+              }}
+            >
+              Commit anyway (skip hooks)
+            </Button>
+            <button disabled={busy} onClick={() => setHookDeclined(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : confirmDetachedCommit ? (
         <div style={bannerStyle}>
           <div style={{ marginBottom: "0.667em", fontSize: "var(--fz-md)" }}>
             HEAD is <strong>detached</strong> — no branch points here, so once you
