@@ -47,6 +47,10 @@ lives in the git log and the GitHub release notes.
 - Expanding a Refs section (Branches, Worktrees, Reflog, ...) no longer
   squashes another expanded section to a zero-height body; every expanded
   section keeps a minimum visible height
+- Removing a worktree that contains an initialized submodule no longer dead-ends
+  in an error: LeGit now explains git's refusal and offers a force-remove, with
+  a warning naming what it deletes (the submodule checkout and any uncommitted
+  changes inside it)
 
 ## [1.4.0] - 2026-10-01
 

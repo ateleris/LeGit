@@ -5954,6 +5954,47 @@ async fn worktree_add_list_remove_round_trip() {
 }
 
 #[tokio::test]
+async fn worktree_remove_with_initialized_submodule_needs_exactly_one_force() {
+    // Git refuses to remove a worktree whose submodule is initialized, even
+    // when everything is clean: it does not inspect submodule state. Unlike
+    // the dirty-worktree refusal, the message never mentions --force - the
+    // frontend's classifyWorktreeRemoveRefusal keys on exactly that - yet a
+    // SINGLE --force does remove it. (A never-initialized submodule, an
+    // empty directory, does not block removal at all.)
+    let (sup, _lib) = repo_with_submodule().await;
+    let wt = sup.path.join("..").join(format!(
+        "wts-{}",
+        sup.path.file_name().unwrap().to_string_lossy()
+    ));
+    let wt_str = wt.to_string_lossy().into_owned();
+    sup.backend
+        .worktree_add(&wt_str, &WorktreeAddMode::Detach { rev: None })
+        .await
+        .expect("worktree_add");
+    sup.git(&[
+        "-C", &wt_str,
+        "-c", "protocol.file.allow=always",
+        "submodule", "update", "--init",
+    ])
+    .await;
+
+    match sup.backend.worktree_remove(&wt_str, false).await {
+        Err(GitError::CommandFailed { stderr, .. }) => {
+            assert!(stderr.contains("containing submodules"), "{stderr}");
+            assert!(
+                !stderr.contains("--force"),
+                "the force offer keys on the absence of --force in this message: {stderr}"
+            );
+        }
+        other => panic!("expected the submodule refusal, got {other:?}"),
+    }
+
+    sup.backend.worktree_remove(&wt_str, true).await.expect("a single --force removes it");
+    let list = sup.backend.worktree_list().await.expect("list after remove");
+    assert_eq!(list.len(), 1, "{list:?}");
+}
+
+#[tokio::test]
 async fn worktree_list_in_a_submodule_names_the_checkout_not_the_gitdir() {
     // Real git reports an absorbed submodule's GITDIR (.git/modules/...) as
     // the main worktree's path; the backend must rewrite it to the checkout,
