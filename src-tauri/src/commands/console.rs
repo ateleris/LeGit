@@ -290,12 +290,23 @@ pub async fn console_feed(op_id: String, lines: u32) -> Result<bool, AppError> {
     match op {
         Some(op) => {
             // Saturating: a feed must never overflow an unlimited
-            // (i64::MAX) credit into a negative, paused one.
-            let _ = op.stdout_credit.fetch_update(
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-                |credit| Some(credit.saturating_add(i64::from(lines))),
-            );
+            // (i64::MAX) credit into a negative, paused one. CAS loop
+            // instead of fetch_update/try_update: the rename straddles
+            // toolchains (try_update needs a far newer Rust than the 1.77
+            // MSRV, fetch_update deprecates on current ones).
+            let mut credit = op.stdout_credit.load(Ordering::Relaxed);
+            loop {
+                let next = credit.saturating_add(i64::from(lines));
+                match op.stdout_credit.compare_exchange_weak(
+                    credit,
+                    next,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => break,
+                    Err(current) => credit = current,
+                }
+            }
             op.wake.notify_one();
             Ok(true)
         }

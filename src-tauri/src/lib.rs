@@ -543,6 +543,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
     ])
 }
 
+// Called only from the debug-build startup path and the bindings test, so a
+// release build sees it as dead code.
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
 fn export_bindings(builder: &Builder<tauri::Wry>, path: &str) -> Result<(), String> {
     use specta_typescript::{BigIntExportBehavior, Typescript};
     builder
