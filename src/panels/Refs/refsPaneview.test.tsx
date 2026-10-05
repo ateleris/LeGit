@@ -17,6 +17,7 @@ import { createRoot } from "react-dom/client";
 import {
   PaneviewReact,
   type IPaneviewPanelProps,
+  type PaneviewApi,
   type PaneviewReadyEvent,
 } from "dockview-react";
 import { sanitizePaneviewLayout } from "./refsLayout";
@@ -61,6 +62,8 @@ function savedView(id: string) {
   };
 }
 
+const MIN_BODY = 60;
+
 /** Mirrors RefsPanel.onReady: sanitize + restore, else defaults; then append
  * any default panes the restored layout didn't contain. */
 function Panel({
@@ -80,6 +83,7 @@ function Panel({
             savedLayout,
             (name) => name in PANE_COMPONENTS,
             headerSize,
+            MIN_BODY,
           );
           if (json) {
             api.fromJSON(json as Parameters<typeof api.fromJSON>[0]);
@@ -102,6 +106,7 @@ function Panel({
           title: p.title,
           isExpanded: p.isExpanded,
           headerSize,
+          minimumBodySize: MIN_BODY,
         });
       }
     },
@@ -172,6 +177,65 @@ describe("Refs paneview restore (StrictMode, real dockview)", () => {
     };
     await mount(<Panel headerSize={22} savedLayout={layout} />);
     expect(headerTitles()).toEqual(ALL_TITLES);
+  });
+
+  it("expanding a pane must not squash another expanded pane's body to zero", async () => {
+    // Regression: expanding a third section (Reflog) requested its width as
+    // extra height (dockview fires onDidChange {size: width} on expand) and
+    // the splitview took that space from the expanded neighbour above first
+    // (Worktrees), clamped only by its minimumSize - with dockview's default
+    // minimumBodySize of 0 that left the neighbour "expanded" per its caret
+    // but exactly header-tall with a zero-height body. The minimumBodySize
+    // passed on every pane is the fix: the neighbour keeps a visible body
+    // and further space comes from the panes beyond it.
+    const HEADER = 22;
+    let api: PaneviewApi | null = null;
+    const onReady = (event: PaneviewReadyEvent) => {
+      api = event.api;
+      for (const p of [
+        { id: "branches", isExpanded: true },
+        { id: "stashes", isExpanded: true },
+        { id: "reflog", isExpanded: false },
+      ]) {
+        api.addPanel({
+          id: p.id,
+          component: p.id,
+          headerComponent: "default",
+          title: p.id,
+          isExpanded: p.isExpanded,
+          headerSize: HEADER,
+          minimumBodySize: MIN_BODY,
+        });
+      }
+    };
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <PaneviewReact
+          components={PANE_COMPONENTS}
+          headerComponents={HEADER_COMPONENTS}
+          onReady={onReady}
+        />,
+      );
+    });
+    await act(async () => {
+      api!.layout(300, 800);
+      // The shape from the bug report: one huge pane, one small one above
+      // the pane about to expand.
+      api!.getPanel("stashes")!.api.setSize({ size: HEADER + MIN_BODY });
+    });
+    await act(async () => {
+      api!.getPanel("reflog")!.api.setExpanded(true);
+      await new Promise((r) => setTimeout(r, 250));
+    });
+    const stashes = api!.getPanel("stashes")!;
+    expect(stashes.api.isExpanded).toBe(true);
+    expect(stashes.height).toBeGreaterThanOrEqual(HEADER + MIN_BODY);
+    // The expanded pane actually got body space (taken from "branches").
+    expect(api!.getPanel("reflog")!.height).toBeGreaterThan(HEADER);
+    await act(async () => root.unmount());
   });
 
   it("a layout with an unknown pane component must not duplicate panes", async () => {

@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { defaultPaneSizes, sanitizePaneviewLayout } from "./refsLayout";
+import {
+  defaultPaneSizes,
+  paneMinimumBodySize,
+  sanitizePaneviewLayout,
+} from "./refsLayout";
 
 const KNOWN = new Set(["branches", "remotes", "tags", "stashes", "reflog"]);
 const isKnown = (name: string) => KNOWN.has(name);
@@ -25,6 +29,7 @@ describe("sanitizePaneviewLayout", () => {
       { views: [view("branches"), view("stashes")], size: 1302 },
       isKnown,
       30,
+      60,
     );
     expect(result).not.toBeNull();
     expect(result!.views.map((v) => v.data?.id)).toEqual([
@@ -36,6 +41,22 @@ describe("sanitizePaneviewLayout", () => {
       result!.views.every((v) => v.data?.headerComponent === "default"),
     ).toBe(true);
     expect(result!.size).toBe(1302);
+  });
+
+  it("patches every view's minimumSize so an expanded pane can't restore squashable", () => {
+    // Layouts saved before the minimum existed carry none (dockview then
+    // restores minimumBodySize 0), and a layout saved under another font
+    // size carries a stale value - the current font-derived one must win.
+    const result = sanitizePaneviewLayout(
+      {
+        views: [view("branches"), view("stashes", { minimumSize: 13 })],
+        size: 1302,
+      },
+      isKnown,
+      30,
+      60,
+    );
+    expect(result!.views.map((v) => v.minimumSize)).toEqual([60, 60]);
   });
 
   it("drops views whose component is no longer registered", () => {
@@ -56,6 +77,7 @@ describe("sanitizePaneviewLayout", () => {
       },
       isKnown,
       22,
+      60,
     );
     expect(result!.views.map((v) => v.data?.id)).toEqual([
       "branches",
@@ -77,6 +99,7 @@ describe("sanitizePaneviewLayout", () => {
       },
       isKnown,
       22,
+      60,
     );
     expect(result!.views.map((v) => v.data?.id)).toEqual([
       "branches",
@@ -99,15 +122,16 @@ describe("sanitizePaneviewLayout", () => {
       },
       isKnown,
       22,
+      60,
     );
     expect(result!.views.map((v) => v.data?.id)).toEqual(["stashes"]);
   });
 
   it("returns null for unusable input", () => {
-    expect(sanitizePaneviewLayout(null, isKnown, 22)).toBeNull();
-    expect(sanitizePaneviewLayout("nope", isKnown, 22)).toBeNull();
-    expect(sanitizePaneviewLayout({}, isKnown, 22)).toBeNull();
-    expect(sanitizePaneviewLayout({ views: "x" }, isKnown, 22)).toBeNull();
+    expect(sanitizePaneviewLayout(null, isKnown, 22, 60)).toBeNull();
+    expect(sanitizePaneviewLayout("nope", isKnown, 22, 60)).toBeNull();
+    expect(sanitizePaneviewLayout({}, isKnown, 22, 60)).toBeNull();
+    expect(sanitizePaneviewLayout({ views: "x" }, isKnown, 22, 60)).toBeNull();
   });
 
   it("returns null when no views survive (caller falls back to defaults)", () => {
@@ -116,6 +140,7 @@ describe("sanitizePaneviewLayout", () => {
         { views: [view("submodules"), view("gone")] },
         isKnown,
         22,
+        60,
       ),
     ).toBeNull();
   });
@@ -125,6 +150,7 @@ describe("sanitizePaneviewLayout", () => {
       { views: [view("branches")], size: "big" },
       isKnown,
       22,
+      60,
     );
     expect(result).not.toBeNull();
     expect("size" in result!).toBe(false);
@@ -175,5 +201,12 @@ describe("defaultPaneSizes", () => {
     // header-only sizes and stop the caller's retry loop.
     expect(defaultPaneSizes(74, 22, panes).size).toBe(0);
     expect(defaultPaneSizes(50, 22, panes).size).toBe(0);
+  });
+});
+
+describe("paneMinimumBodySize", () => {
+  it("scales with the UI font size", () => {
+    expect(paneMinimumBodySize(12)).toBe(120);
+    expect(paneMinimumBodySize(16)).toBe(160);
   });
 });

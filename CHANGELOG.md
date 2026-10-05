@@ -44,6 +44,9 @@ lives in the git log and the GitHub release notes.
   current one
 - The tab strip's View, open-repositories, and add-repository dropdowns no
   longer run off the bottom of a short window; they scroll internally instead
+- Expanding a Refs section (Branches, Worktrees, Reflog, ...) no longer
+  squashes another expanded section to a zero-height body; every expanded
+  section keeps a minimum visible height
 
 ## [1.4.0] - 2026-10-01
 

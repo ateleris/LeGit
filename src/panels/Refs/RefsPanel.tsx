@@ -21,7 +21,11 @@ import { SubmodulesSection } from "../Submodules/SubmodulesSection";
 import { TagsSection } from "../Tags/TagsSection";
 import { WorktreesSection } from "../Worktrees/WorktreesSection";
 import { ReflogSection } from "../Reflog/ReflogSection";
-import { defaultPaneSizes, sanitizePaneviewLayout } from "./refsLayout";
+import {
+  defaultPaneSizes,
+  paneMinimumBodySize,
+  sanitizePaneviewLayout,
+} from "./refsLayout";
 
 const LAYOUT_KEY = "legit.refs-paneview";
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -117,6 +121,7 @@ export function RefsPanel() {
     (s) => s.settings?.ui_font_size ?? UI_FONT_SIZE_DEFAULT,
   );
   const headerSize = Math.round(uiFontSize * 1.8);
+  const minimumBodySize = paneMinimumBodySize(uiFontSize);
 
   // PaneviewReact measures its element exactly ONCE, at mount, right before
   // onReady - it has no ResizeObserver (unlike DockviewReact). When the
@@ -170,6 +175,7 @@ export function RefsPanel() {
           JSON.parse(raw),
           (name) => name in PANE_COMPONENTS,
           headerSize,
+          minimumBodySize,
         );
         if (json) {
           api.fromJSON(json as Parameters<typeof api.fromJSON>[0]);
@@ -198,6 +204,7 @@ export function RefsPanel() {
           title: p.title,
           isExpanded: p.isExpanded,
           headerSize,
+          minimumBodySize,
         });
       }
       // The panes above were added while the container is typically still
@@ -237,6 +244,7 @@ export function RefsPanel() {
             title: p.title,
             isExpanded: p.isExpanded,
             headerSize,
+            minimumBodySize,
           });
         }
       }
@@ -246,7 +254,7 @@ export function RefsPanel() {
       try { persistLayout(api.toJSON()); } catch { /* ignore */ }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [headerSize]);
+  }, [headerSize, minimumBodySize]);
 
   return (
     // The theme class only supplies dockview's structural defaults (sash
