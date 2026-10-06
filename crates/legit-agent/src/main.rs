@@ -468,6 +468,12 @@ async fn dispatch_post_handshake(
         Method::HostSpawn { program, args, cwd } => {
             let mut cmd = tokio::process::Command::new(&program);
             cmd.args(&args);
+            // A detached helper must never touch the agent's stdio: inherited
+            // stdout would write straight into the protocol stream, inherited
+            // stdin would consume frames.
+            cmd.stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
             if let Some(cwd) = cwd {
                 cmd.current_dir(cwd.as_local());
             }

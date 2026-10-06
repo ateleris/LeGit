@@ -16,6 +16,25 @@ use std::process::Stdio;
 
 use crate::error::AppError;
 
+/// Bound one step of the connect path. A wedged WSL service (after
+/// sleep/resume, or a stuck session) leaves new wsl.exe invocations pending
+/// FOREVER while existing terminal sessions keep working - without a
+/// deadline that one pending step turns into an app-wide "Connecting" with
+/// no error, no log trail, and a reconnect loop stuck on its first attempt.
+pub async fn bounded<T>(
+    step: &str,
+    limit: std::time::Duration,
+    fut: impl std::future::Future<Output = Result<T, AppError>>,
+) -> Result<T, AppError> {
+    match tokio::time::timeout(limit, fut).await {
+        Ok(result) => result,
+        Err(_) => Err(AppError::Io(format!(
+            "{step} did not finish within {}s - WSL appears stuck (a `wsl --shutdown` or a reboot usually clears it)",
+            limit.as_secs()
+        ))),
+    }
+}
+
 /// One WSL distribution as shown in the picker.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct WslDistro {
@@ -502,6 +521,40 @@ mod tests {
             agent_line_level("2026-09-30T08:00:00Z  INFO x: user typed WARNING"),
             AgentLineLevel::Info
         );
+    }
+
+    #[tokio::test]
+    async fn bounded_names_the_step_on_timeout() {
+        let err = bounded::<()>(
+            "agent install check in 'ubuntu'",
+            std::time::Duration::from_millis(20),
+            std::future::pending(),
+        )
+        .await
+        .expect_err("a pending step must time out");
+        let msg = err.to_string();
+        assert!(msg.contains("agent install check in 'ubuntu'"), "{msg}");
+        assert!(msg.contains("wsl --shutdown"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn bounded_passes_a_finished_step_through() {
+        let ok = bounded(
+            "step",
+            std::time::Duration::from_secs(5),
+            std::future::ready(Ok(42)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(ok, 42);
+        let err = bounded::<()>(
+            "step",
+            std::time::Duration::from_secs(5),
+            std::future::ready(Err(AppError::Io("boom".into()))),
+        )
+        .await
+        .expect_err("inner errors pass through");
+        assert!(err.to_string().contains("boom"));
     }
 
     #[test]

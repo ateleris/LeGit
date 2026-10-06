@@ -1012,9 +1012,19 @@ pub async fn restore_open_repos(
                     }
                 }
                 // Connecting is serialized per distro inside ensure_wsl_host;
-                // concurrent probes are fine.
+                // concurrent probes are fine. The frontend holds the splash
+                // until restore completes, so a remote host gets a hard
+                // startup budget: a wedged WSL must cost a bounded wait and a
+                // kept entry, never an app that hangs on launch (the connect
+                // itself keeps running behind the per-distro gate).
                 let state = app.state::<AppState>();
-                let lh = match locator_host(&state, &app, &locator).await {
+                let lh = match crate::remote::wsl::bounded(
+                    &format!("connecting '{raw}' during startup"),
+                    std::time::Duration::from_secs(30),
+                    locator_host(&state, &app, &locator),
+                )
+                .await
+                {
                     Ok(lh) => lh,
                     Err(e) => {
                         tracing::warn!(path = %raw, err = %e, "restore: host unavailable - keeping the entry for next launch");

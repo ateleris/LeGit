@@ -309,6 +309,27 @@ async fn discard_restores_tracked_and_cleans_untracked() {
     exec.assert_done();
 }
 
+#[tokio::test]
+async fn discard_unstages_and_removes_staged_new_files() {
+    // A staged-new file (`A.`, e.g. what `stash pop` leaves for a previously
+    // staged add) has no worktree diff against the index, so `restore
+    // --worktree` matches nothing - discard must unstage it and then remove
+    // it as untracked. `AM` (added with further edits) takes the same route.
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        ok("1 A. N... 000000 100644 100644 0000000 bbbbbbb -\u{0}1 AM N... 000000 100644 100644 0000000 ccccccc new.txt\u{0}"),
+    );
+    fake.expect(&["restore", "--staged", "--", "-", "new.txt"], ok(""));
+    fake.expect(&["clean", "-f", "--", "-", "new.txt"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.discard(&[PathBuf::from("-"), PathBuf::from("new.txt")])
+        .await
+        .unwrap();
+    exec.assert_done();
+}
+
 // ---------------------------------------------------------------------------
 // status - numstat count enrichment
 // ---------------------------------------------------------------------------

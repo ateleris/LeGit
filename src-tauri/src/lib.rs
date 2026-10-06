@@ -274,8 +274,12 @@ pub fn run() {
         .expect("error while running tauri application")
         // The exit marker separates a clean quit from a crash in the log: a
         // file whose last session has no "LeGit exiting" line died hard.
-        .run(|_app, event| {
+        .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
+                // Process teardown does not reliably run `kill_on_drop`; a
+                // leaked wsl.exe bridge keeps its agent alive in the distro.
+                let state = app.state::<crate::state::AppState>();
+                tauri::async_runtime::block_on(state.wsl_hosts.kill_all_bridges());
                 tracing::info!("LeGit exiting");
             }
         });

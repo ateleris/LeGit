@@ -58,6 +58,33 @@ async fn handshake_rejects_version_mismatch() {
 }
 
 #[tokio::test]
+async fn a_git_child_without_stdin_data_never_inherits_the_protocol_pipe() {
+    let (conn, _guard) = common::connect_agent().await;
+    let dir = tempfile::tempdir().unwrap();
+    let exec = git_exec(&conn, dir.path()).await;
+    temp_repo(&exec).await;
+
+    // `hash-object --stdin` reads stdin to EOF. The agent's own stdin is the
+    // protocol pipe, which stays open for the connection's lifetime - a child
+    // inheriting it blocks forever and eats frames meant for the agent. A
+    // request without stdin data must hand the child a closed stdin instead.
+    let out = tokio::time::timeout(
+        Duration::from_secs(10),
+        exec.run(&["hash-object", "--stdin"]),
+    )
+    .await
+    .expect("git child wedged on inherited agent stdin")
+    .unwrap();
+    assert!(out.success, "{}", out.stderr);
+
+    // The connection must remain fully usable.
+    tokio::time::timeout(Duration::from_secs(5), conn.call::<()>(Method::Ping))
+        .await
+        .expect("ping wedged")
+        .expect("ping failed");
+}
+
+#[tokio::test]
 async fn concurrent_requests_interleave_over_one_connection() {
     let (conn, _guard) = common::connect_agent().await;
     let dir = tempfile::tempdir().unwrap();

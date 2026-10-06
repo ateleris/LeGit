@@ -1053,6 +1053,31 @@ async fn ws_view_unstage_removes_only_the_visible_change_from_the_index() {
     assert_eq!(added_lines(&unstaged), vec!["E"], "real change is back unstaged");
 }
 
+// A staged-new file has no worktree diff against the index, so a discard
+// routed through `restore --worktree` exits 0 while removing nothing. The
+// `stash push`/`pop` round trip is the natural way to land in that state (a
+// pop re-stages a previously staged add), and the file is literally named
+// `-` to also pin pathspec safety for that name.
+#[tokio::test]
+async fn discard_removes_a_staged_new_file() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.write("-", "dash content\n");
+    repo.git(&["add", "--", "-"]).await;
+    repo.git(&["stash", "push"]).await;
+    repo.git(&["stash", "pop"]).await;
+
+    repo.backend
+        .discard(&[PathBuf::from("-")])
+        .await
+        .expect("discard");
+
+    assert!(!repo.exists("-"), "the staged-new file must be removed");
+    let status = repo.git(&["status", "--porcelain"]).await;
+    assert_eq!(status.trim(), "", "tree must be clean after the discard");
+}
+
 // Discarding from the ignore-whitespace view: the reverse patch runs against
 // the worktree - the visible change reverts, the whitespace-only edit
 // survives in the file.

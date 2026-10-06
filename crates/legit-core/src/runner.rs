@@ -283,9 +283,15 @@ impl GitRunner {
         let started = Instant::now();
         let op_id = req.op_id.clone().unwrap_or_default();
         let mut cmd = self.build_command_with_env(req.args, req.env);
-        if req.stdin.is_some() {
-            cmd.stdin(Stdio::piped());
-        }
+        // Without stdin data the child gets a CLOSED stdin, never the
+        // inherited one: inside the agent the inherited fd is the NDJSON
+        // protocol pipe, and a stdin-reading git child would block on it
+        // forever while eating frames meant for the agent.
+        cmd.stdin(if req.stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         let (mut child, tree) = self.spawn_child(&mut cmd)?;
@@ -391,6 +397,9 @@ impl GitRunner {
     ) -> Result<i32, RunnerError> {
         let started = Instant::now();
         let mut cmd = self.build_command(args);
+        // Closed stdin for the same reason as `execute`: a streamed child
+        // must never inherit the agent's protocol pipe.
+        cmd.stdin(Stdio::null());
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         let (mut child, tree) = self.spawn_child(&mut cmd)?;

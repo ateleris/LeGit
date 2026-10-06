@@ -308,15 +308,23 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         if paths.is_empty() {
             return Ok(());
         }
-        // Classify paths: untracked ones must be removed with `clean`, moved
-        // submodule pointers reset via `submodule update` (restore does not
-        // touch gitlink worktrees), the rest reverted with `restore
-        // --worktree` (restore errors on untracked). Raw entries suffice - no
-        // need to pay for the numstat enrichment here.
+        // Classify paths: untracked ones must be removed with `clean`, staged-
+        // new ones (`A.`/`AM` - the file is not in HEAD, so `restore
+        // --worktree` matches nothing and silently keeps it) unstaged first
+        // and then removed with `clean`, moved submodule pointers reset via
+        // `submodule update` (restore does not touch gitlink worktrees), the
+        // rest reverted with `restore --worktree` (restore errors on
+        // untracked). Raw entries suffice - no need to pay for the numstat
+        // enrichment here.
         let status = self.status_entries().await?;
         let untracked: std::collections::HashSet<&std::path::Path> = status
             .iter()
             .filter(|f| f.state == FileState::Untracked)
+            .map(|f| f.path.as_path())
+            .collect();
+        let added: std::collections::HashSet<&std::path::Path> = status
+            .iter()
+            .filter(|f| f.state == FileState::Added)
             .map(|f| f.path.as_path())
             .collect();
         let submodules: std::collections::HashSet<&std::path::Path> = status
@@ -326,11 +334,14 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
             .collect();
 
         let mut untracked_paths = Vec::new();
+        let mut added_paths = Vec::new();
         let mut submodule_paths = Vec::new();
         let mut tracked_paths = Vec::new();
         for p in paths {
             if untracked.contains(p.as_path()) {
                 untracked_paths.push(p.clone());
+            } else if added.contains(p.as_path()) {
+                added_paths.push(p.clone());
             } else if submodules.contains(p.as_path()) {
                 submodule_paths.push(p.clone());
             } else {
@@ -342,8 +353,14 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
             self.run_pathspec(&["restore", "--worktree", "--"], &tracked_paths)
                 .await?;
         }
-        if !untracked_paths.is_empty() {
-            self.run_pathspec(&["clean", "-f", "--"], &untracked_paths)
+        if !added_paths.is_empty() {
+            self.run_pathspec(&["restore", "--staged", "--"], &added_paths)
+                .await?;
+        }
+        let mut clean_paths = added_paths;
+        clean_paths.extend(untracked_paths);
+        if !clean_paths.is_empty() {
+            self.run_pathspec(&["clean", "-f", "--"], &clean_paths)
                 .await?;
         }
         if !submodule_paths.is_empty() {

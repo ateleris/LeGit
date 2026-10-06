@@ -36,6 +36,20 @@ lives in the git log and the GitHub release notes.
 
 ### Fixed
 
+- Discarding a file that is staged as new (the state a stash pop leaves a
+  previously staged new file in) now actually removes it - it used to report
+  success while changing nothing
+- A stuck WSL no longer hangs the app: every step of connecting to a distro
+  now has a deadline and fails with a clear error naming the step (and
+  suggesting `wsl --shutdown`), startup finishes even when a remembered WSL
+  repository's distro cannot be reached, and the reconnect loop keeps
+  retrying instead of silently stopping on a hung first attempt
+- A lost WSL connection now terminates its wsl.exe bridge process (and with
+  it the agent in the distro) instead of leaving both running; on app exit
+  all bridges are terminated as well
+- Git helpers and editors launched inside a WSL distro no longer share the
+  agent's communication pipes, which a stdin-reading git command could
+  block and garble (wedging the connection)
 - The inline branch/tag creation input now shrinks to fit a narrow Refs
   column instead of being clipped out of view behind the "+N" chip
 - Clicking a settings category near the end of the page no longer snaps the
