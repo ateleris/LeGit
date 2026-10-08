@@ -14,6 +14,11 @@ lives in the git log and the GitHub release notes.
 
 ### Added
 
+- "Push up to this commit" in the commit graph's context menu pushes the
+  current branch to its upstream only up to that commit, leaving the newer
+  local commits unpublished (offered on commits where the push is a
+  guaranteed fast-forward)
+
 - Settings sync: designate a git repository (Settings > Application >
   Settings sync) and LeGit mirrors shareable settings and themes across
   machines - imports at startup, commits and pushes changes automatically

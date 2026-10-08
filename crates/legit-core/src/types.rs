@@ -959,6 +959,12 @@ pub struct PushOptions {
     /// flag (git default / user config).
     #[serde(default)]
     pub recurse_submodules: Option<PushRecurseMode>,
+    /// Push only up to this commit (`<sha>:refs/heads/<branch>`): the remote
+    /// branch moves there, the local branch stays put. Must be a first-parent
+    /// ancestor of the local tip ahead of the remote tip (see
+    /// `pushable_commits`), or git rejects the push as non-fast-forward.
+    #[serde(default)]
+    pub to_commit: Option<CommitId>,
 }
 
 /// `git push --recurse-submodules` mode - the pre-push guard against

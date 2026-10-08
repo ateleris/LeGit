@@ -167,6 +167,30 @@ export const pushBranch = (ctx: RefActionContext, branch: string, remote: string
     invalidate(ctx, SYNC_DOMAINS);
   }, reportRemoteError);
 
+/** Partial push: move the remote branch up to `commitId` (a member of the
+ *  backend's pushable set, so a guaranteed fast-forward); the local branch
+ *  stays put. */
+export const pushToCommit = (ctx: RefActionContext, branch: string, remote: string, commitId: string) =>
+  attempt(async () => {
+    await pushWithTagFollowUp(
+      ctx.queryClient,
+      ctx.repo.id,
+      {
+        remote,
+        branch,
+        set_upstream: false,
+        force_with_lease: false,
+        recurse_submodules: useSettingsStore.getState().settings?.push_recurse_submodules ?? null,
+        to_commit: commitId,
+      },
+      crypto.randomUUID(),
+    );
+    notify.success(`Pushed '${branch}' to ${remote} up to ${commitId.slice(0, 8)}`);
+    // The eligibility sets gate the menu entry the user just used - refresh
+    // them with the sync domains instead of waiting for the watcher backstop.
+    invalidate(ctx, [...SYNC_DOMAINS, "unpushed", "pushable"]);
+  }, reportRemoteError);
+
 /** Delete the branch ON THE REMOTE only; a local counterpart is untouched. */
 export async function deleteRemoteBranch(ctx: RefActionContext, remoteRef: string): Promise<boolean> {
   const split = splitRemoteRef(remoteRef, [...(ctx.remoteNames ?? [])]);

@@ -21,6 +21,7 @@ export const FRONTEND_DOMAINS = [
   "remotes",
   "tracking",
   "unpushed",
+  "pushable",
   "identity",
   "remote-tags",
   "lfs",

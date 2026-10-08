@@ -3325,6 +3325,7 @@ async fn push_recurse_check_blocks_unpushed_submodule_commits() {
         set_upstream: true,
         force_with_lease: false,
         recurse_submodules: Some(PushRecurseMode::Check),
+        to_commit: None,
     };
     let err = sup
         .backend
@@ -3394,6 +3395,7 @@ fn push_opts(branch: &str, set_upstream: bool, force_with_lease: bool) -> PushOp
         set_upstream,
         force_with_lease,
         recurse_submodules: None,
+        to_commit: None,
     }
 }
 
@@ -3495,6 +3497,98 @@ async fn push_flips_the_tag_lists_target_on_remote_flag() {
         tags.iter().find(|t| t.name == "v1").unwrap().target_on_remote,
         "the push must flip target_on_remote without a fetch"
     );
+}
+
+#[tokio::test]
+async fn push_to_commit_moves_the_remote_branch_and_leaves_local_alone() {
+    let (_keep, remote_path, url) = bare_remote().await;
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["remote", "add", "origin", &url]).await;
+    repo.backend
+        .push(push_opts("main", true, false), OperationId::new())
+        .await
+        .unwrap();
+
+    repo.write("a.txt", "one\n");
+    repo.commit_all("one").await;
+    let c1 = repo.git(&["rev-parse", "HEAD"]).await.trim().to_string();
+    repo.write("a.txt", "two\n");
+    repo.commit_all("two").await;
+    let c2 = repo.git(&["rev-parse", "HEAD"]).await.trim().to_string();
+    repo.write("a.txt", "three\n");
+    repo.commit_all("three").await;
+    let c3 = repo.git(&["rev-parse", "HEAD"]).await.trim().to_string();
+
+    let pushable = repo.backend.pushable_commits().await.unwrap();
+    assert_eq!(
+        pushable,
+        vec![CommitId::new(&c3), CommitId::new(&c2), CommitId::new(&c1)],
+        "the whole unpushed first-parent chain, newest first"
+    );
+
+    let mut opts = push_opts("main", false, false);
+    opts.to_commit = Some(CommitId::new(&c2));
+    repo.backend.push(opts, OperationId::new()).await.unwrap();
+
+    let remote_runner = GitRunner::for_repo("git", &remote_path);
+    let tip = remote_runner.run(&["rev-parse", "refs/heads/main"]).await.expect("spawn git");
+    assert!(tip.success, "{}", tip.stderr);
+    assert_eq!(tip.stdout.trim(), c2, "remote branch moved to the selected commit");
+
+    assert_eq!(
+        repo.git(&["rev-parse", "HEAD"]).await.trim(),
+        c3,
+        "local branch must not move"
+    );
+    let t = repo.backend.tracking_status().await.unwrap().unwrap();
+    assert_eq!((t.ahead, t.behind), (1, 0));
+    assert_eq!(
+        repo.backend.pushable_commits().await.unwrap(),
+        vec![CommitId::new(&c3)],
+        "only the still-unpushed commit remains eligible"
+    );
+}
+
+// Encodes the assumption behind the first-parent restriction: a commit on a
+// merged side lane can sit inside `@{upstream}..HEAD` without containing the
+// remote tip (fork point older than the tip) - pushing it is rejected as
+// non-fast-forward, so `pushable_commits` must exclude side lanes.
+#[tokio::test]
+async fn push_to_commit_on_a_merged_side_lane_is_rejected_non_fast_forward() {
+    let (_keep, _, url) = bare_remote().await;
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    let base = repo.git(&["rev-parse", "HEAD"]).await.trim().to_string();
+    repo.git(&["remote", "add", "origin", &url]).await;
+    repo.write("a.txt", "main work\n");
+    repo.commit_all("main work").await;
+    repo.backend
+        .push(push_opts("main", true, false), OperationId::new())
+        .await
+        .unwrap();
+
+    // Side lane forked BEFORE the pushed tip: it does not contain the remote
+    // tip, yet the merge puts it inside `@{upstream}..HEAD`.
+    repo.git(&["switch", "-c", "side", &base]).await;
+    repo.write("side.txt", "side work\n");
+    repo.commit_all("side work").await;
+    let side = repo.git(&["rev-parse", "HEAD"]).await.trim().to_string();
+    repo.git(&["switch", "main"]).await;
+    repo.git(&["merge", "--no-ff", "--no-edit", "side"]).await;
+
+    let pushable = repo.backend.pushable_commits().await.unwrap();
+    assert!(
+        !pushable.contains(&CommitId::new(&side)),
+        "side-lane commit must not be offered: {pushable:?}"
+    );
+
+    let mut opts = push_opts("main", false, false);
+    opts.to_commit = Some(CommitId::new(&side));
+    let err = repo.backend.push(opts, OperationId::new()).await.unwrap_err();
+    assert!(matches!(err, GitError::PushRejected { .. }), "{err:?}");
 }
 
 // Pins the real `git branch -d` refusal (exit code + "not fully merged"

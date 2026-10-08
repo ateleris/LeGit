@@ -219,6 +219,17 @@ export function useCommitsQueries(
   });
   const unpushedSet = useMemo(() => new Set<CommitId>(unpushedIds), [unpushedIds]);
 
+  // Partial-push eligibility (first-parent chain of `@{upstream}..HEAD`):
+  // gates the "Push up to this commit" menu entry - every member fast-forwards
+  // the upstream branch.
+  const { data: pushableIds = [] } = useQuery<CommitId[]>({
+    queryKey: [repo?.id, "pushable"],
+    queryFn: () => api.repoPushableCommits(repo!.id),
+    enabled: !!repo,
+    staleTime: STALE.live,
+  });
+  const pushableSet = useMemo(() => new Set<CommitId>(pushableIds), [pushableIds]);
+
   // Worktree list — drives the branch chips' "checked out in another
   // worktree" indicator (kept fresh by the watcher's worktrees domain).
   const { data: worktrees = [] } = useWorktrees(repo?.id);
@@ -299,6 +310,7 @@ export function useCommitsQueries(
     worktreeBranches,
     worktreeHeadsBySha,
     unpushedSet,
+    pushableSet,
     currentBranchName,
     tags,
     remotesList,

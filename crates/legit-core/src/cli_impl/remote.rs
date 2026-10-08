@@ -22,6 +22,36 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         self.run_remote(&runner, &args, op_id).await
     }
 
+    pub(super) async fn pushable_commits(&self) -> Result<Vec<CommitId>, GitError> {
+        let runner = self.runner().await;
+
+        // Probe for an upstream first: detached HEAD / untracked branch means
+        // nothing is pushable (and `@{upstream}..` would fail confusingly).
+        let up = runner
+            .run(&[
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{upstream}",
+            ])
+            .await?;
+        if !up.success || up.stdout.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let out = runner
+            .run(&["rev-list", "--first-parent", "@{upstream}..HEAD"])
+            .await?;
+        Self::ensure_success(&out)?;
+        Ok(out
+            .stdout
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(CommitId::new)
+            .collect())
+    }
+
     pub(super) async fn tracking_status(&self) -> Result<Option<TrackingStatus>, GitError> {
         let runner = self.runner().await;
 
@@ -242,7 +272,12 @@ pub(super) fn build_push_args(opts: &PushOptions) -> Result<Vec<String>, GitErro
     // `git push --receive-pack=<cmd>` is the push-side counterpart of
     // `fetch --upload-pack` (see `safe_ref`).
     args.push(safe_ref_owned("remote", &opts.remote)?);
-    args.push(format!("refs/heads/{}", opts.branch));
+    args.push(match &opts.to_commit {
+        Some(commit) => {
+            format!("{}:refs/heads/{}", safe_ref("revision", commit.as_str())?, opts.branch)
+        }
+        None => format!("refs/heads/{}", opts.branch),
+    });
     Ok(args)
 }
 
@@ -269,6 +304,7 @@ mod tests {
             set_upstream,
             force_with_lease,
             recurse_submodules: None,
+            to_commit: None,
         }
     }
 
@@ -310,6 +346,29 @@ mod tests {
             build_push_args(&push_opts(true, true)).unwrap(),
             vec!["push", "--progress", "--force-with-lease", "--set-upstream", "origin", "refs/heads/main"]
         );
+    }
+
+    // Pushing "up to" a commit uses an explicit `<sha>:refs/heads/<branch>`
+    // refspec: the remote branch moves to that commit while the local branch
+    // stays put.
+    #[test]
+    fn push_args_to_commit_uses_sha_refspec() {
+        let mut opts = push_opts(false, false);
+        opts.to_commit = Some(CommitId::new("abc123"));
+        assert_eq!(
+            build_push_args(&opts).unwrap(),
+            vec!["push", "--progress", "origin", "abc123:refs/heads/main"]
+        );
+    }
+
+    #[test]
+    fn push_args_refuse_option_like_to_commit() {
+        let mut opts = push_opts(false, false);
+        opts.to_commit = Some(CommitId::new("--upload-pack=evil"));
+        assert!(matches!(
+            build_push_args(&opts),
+            Err(GitError::UnsafeArgument(_))
+        ));
     }
 
     #[test]

@@ -102,6 +102,7 @@ async fn option_like_refs_are_refused_before_git_runs() {
                 set_upstream: false,
                 force_with_lease: false,
                 recurse_submodules: None,
+                to_commit: None,
             },
             OperationId::new()
         ),

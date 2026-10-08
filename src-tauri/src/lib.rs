@@ -530,6 +530,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::repo_fetch,
         commands::repo_pull,
         commands::repo_push,
+        commands::repo_pushable_commits,
         commands::repo_tracking_status,
         commands::repo_list_remotes,
         commands::repo_add_remote,

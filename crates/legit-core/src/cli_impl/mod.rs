@@ -563,6 +563,10 @@ impl<E: GitExecutor + ?Sized> GitBackend for GitCliBackend<E> {
         self.push(opts, op_id).await
     }
 
+    async fn pushable_commits(&self) -> Result<Vec<CommitId>, GitError> {
+        self.pushable_commits().await
+    }
+
     async fn tracking_status(&self) -> Result<Option<TrackingStatus>, GitError> {
         self.tracking_status().await
     }

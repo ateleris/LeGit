@@ -419,6 +419,14 @@ pub trait GitBackend: Send + Sync {
     /// Push the current branch to its remote. Cancellable via `op_id`.
     async fn push(&self, opts: PushOptions, op_id: OperationId) -> Result<(), GitError>;
 
+    /// Commits eligible for a partial push (`PushOptions::to_commit`): the
+    /// first-parent chain `@{upstream}..HEAD`, newest first. Every entry is
+    /// guaranteed to fast-forward the upstream branch; commits on merged
+    /// side lanes are deliberately excluded (pushing one would move the
+    /// remote branch to a commit that may not contain its current tip).
+    /// Empty when HEAD is detached or has no upstream.
+    async fn pushable_commits(&self) -> Result<Vec<CommitId>, GitError>;
+
     /// Ahead/behind status of the current branch vs its upstream. `None` when
     /// HEAD is detached or the current branch has no upstream configured.
     async fn tracking_status(&self) -> Result<Option<TrackingStatus>, GitError>;

@@ -2423,6 +2423,19 @@ async repoPush(repoId: string, opts: PushOptions, opId: string) : Promise<Result
 }
 },
 /**
+ * Commits eligible for a partial push (`PushOptions::to_commit`): the
+ * first-parent chain `@{upstream}..HEAD`, newest first. Empty when HEAD is
+ * detached or has no upstream.
+ */
+async repoPushableCommits(repoId: string) : Promise<Result<CommitId[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("repo_pushable_commits", { repoId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Ahead/behind status of the current branch vs its upstream. `None` when HEAD
  * is detached or the current branch has no upstream configured.
  */
@@ -3801,7 +3814,14 @@ force_with_lease: boolean;
  * Submodule guard (`--recurse-submodules=check|on-demand`); `None` = no
  * flag (git default / user config).
  */
-recurse_submodules?: PushRecurseMode | null }
+recurse_submodules?: PushRecurseMode | null; 
+/**
+ * Push only up to this commit (`<sha>:refs/heads/<branch>`): the remote
+ * branch moves there, the local branch stays put. Must be a first-parent
+ * ancestor of the local tip ahead of the remote tip (see
+ * `pushable_commits`), or git rejects the push as non-fast-forward.
+ */
+to_commit?: CommitId | null }
 /**
  * `git push --recurse-submodules` mode - the pre-push guard against
  * publishing a superproject that references unpushed submodule commits.

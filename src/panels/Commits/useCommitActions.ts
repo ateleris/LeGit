@@ -26,6 +26,7 @@ import {
   popStash,
   pushBranch,
   pushTag,
+  pushToCommit,
   rebaseOnto,
   renameBranch,
   setUpstream,
@@ -231,6 +232,11 @@ export function useCommitActions(repo: RepoSummary | null, remoteNames: string[]
       handleBranchPush: async (branch: string, remote: string, setUpstream: boolean) => {
         const c = actionCtx();
         if (c) await pushBranch(c, branch, remote, setUpstream);
+      },
+
+      handlePushToCommit: async (commitId: CommitId, remote: string, branch: string) => {
+        const c = actionCtx();
+        if (c) await pushToCommit(c, branch, remote, commitId);
       },
 
       handleRemoteBranchDelete: async (remoteRef: string) => {
