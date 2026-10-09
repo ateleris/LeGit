@@ -14,6 +14,9 @@
 //! not offer setting one yet (see BACKLOG "Platform integrations").
 
 use crate::error::AppError;
+use crate::state::AppState;
+use legit_core::{HostPath, RepoFs};
+use legit_host::Host;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::{Path, PathBuf};
@@ -79,6 +82,67 @@ fn valid_key_file_name(name: &str) -> bool {
         && !name.contains("..")
 }
 
+/// The private-key file names of the key pairs among `~/.ssh` entries: every
+/// `<name>.pub` with a valid key-file base name (the private side may be
+/// missing; the status reports that). A private key without a `.pub` is not
+/// listed: nothing could be copied or uploaded from it. Defaults first, then
+/// alphabetical.
+fn key_pair_names(file_names: &[String]) -> Vec<String> {
+    let mut names: Vec<&str> = file_names
+        .iter()
+        .filter_map(|n| n.strip_suffix(".pub"))
+        .filter(|base| valid_key_file_name(base))
+        .collect();
+    names.sort_by_key(|n| {
+        let rank = match *n {
+            "id_ed25519" => 0,
+            "id_rsa" => 1,
+            _ => 2,
+        };
+        (rank, n.to_string())
+    });
+    names.into_iter().map(str::to_string).collect()
+}
+
+/// A `<principal> <type> <blob>` allowed-signers line, or `None` when the
+/// email or key cannot be written safely (whitespace or a comma in the
+/// principal would corrupt the file's syntax).
+/// The identity of an authorized-keys line: type + base64 blob (comments
+/// differ freely between copies of the same key).
+pub(crate) fn key_material(public_key: &str) -> Option<(String, String)> {
+    let mut fields = public_key.split_whitespace();
+    Some((fields.next()?.to_string(), fields.next()?.to_string()))
+}
+
+pub(crate) fn allowed_signer_line(email: &str, public_key: &str) -> Option<String> {
+    let email = email.trim();
+    if email.is_empty() || email.chars().any(|c| c.is_whitespace()) || email.contains(',') {
+        return None;
+    }
+    let mut fields = public_key.split_whitespace();
+    let kind = fields.next()?;
+    let blob = fields.next()?;
+    Some(format!("{email} {kind} {blob}"))
+}
+
+/// The file content with `line` ensured, or `None` when an entry with the
+/// same principal and key material is already there (trailing comments on
+/// hand-written lines are ignored for the comparison).
+pub(crate) fn with_signer_line(existing: &str, line: &str) -> Option<String> {
+    let material = |l: &str| l.split_whitespace().take(3).collect::<Vec<_>>().join(" ");
+    let target = material(line);
+    if existing.lines().any(|l| material(l) == target) {
+        return None;
+    }
+    let mut out = existing.to_string();
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(line);
+    out.push('\n');
+    Some(out)
+}
+
 /// Hosts land in `git@<host>` as a process arg: hostname characters only, so
 /// nothing option-like can be smuggled in.
 fn valid_ssh_host(host: &str) -> bool {
@@ -135,7 +199,7 @@ fn platform_add_key_url(platform: &str) -> Option<&'static str> {
 // Filesystem helpers
 // ---------------------------------------------------------------------------
 
-fn home_dir() -> Result<PathBuf, AppError> {
+pub(crate) fn home_dir() -> Result<PathBuf, AppError> {
     #[cfg(target_os = "windows")]
     let var = "USERPROFILE";
     #[cfg(not(target_os = "windows"))]
@@ -150,7 +214,7 @@ fn ssh_dir() -> Result<PathBuf, AppError> {
 }
 
 /// Expand a leading `~/` so key paths stored in profiles work either way.
-fn expand_home(path: &str) -> Result<PathBuf, AppError> {
+pub(crate) fn expand_home(path: &str) -> Result<PathBuf, AppError> {
     if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
         Ok(home_dir()?.join(rest))
     } else {
@@ -213,6 +277,55 @@ pub async fn default_ssh_keys_status() -> Result<Vec<SshKeyStatus>, AppError> {
         out.push(read_key_status(&dir.join(name)).await);
     }
     Ok(out)
+}
+
+/// Every key pair found in `~/.ssh` (see `key_pair_names`), for the
+/// SSH keys settings section. A missing `~/.ssh` is an empty list, not an
+/// error.
+#[tauri::command]
+#[specta::specta]
+pub async fn scan_ssh_keys() -> Result<Vec<SshKeyStatus>, AppError> {
+    let dir = ssh_dir()?;
+    let mut file_names: Vec<String> = Vec::new();
+    if let Ok(mut rd) = tokio::fs::read_dir(&dir).await {
+        while let Ok(Some(entry)) = rd.next_entry().await {
+            if let Ok(name) = entry.file_name().into_string() {
+                file_names.push(name);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for name in key_pair_names(&file_names) {
+        out.push(read_key_status(&dir.join(name)).await);
+    }
+    Ok(out)
+}
+
+/// Ensure `<email> <type> <blob>` is in `~/.ssh/allowed_signers` (created
+/// when missing) and return the file's path: the file
+/// `gpg.ssh.allowedSignersFile` points at, which local verification of SSH
+/// signatures needs.
+#[tauri::command]
+#[specta::specta]
+pub async fn register_allowed_signer(
+    email: String,
+    public_key: String,
+) -> Result<String, AppError> {
+    let line = allowed_signer_line(&email, &public_key).ok_or_else(|| {
+        AppError::Io("cannot build an allowed-signers entry from this identity".to_string())
+    })?;
+    let dir = ssh_dir()?;
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| AppError::Io(format!("cannot create ~/.ssh: {e}")))?;
+    let path = dir.join("allowed_signers");
+    let existing = tokio::fs::read_to_string(&path).await.unwrap_or_default();
+    if let Some(updated) = with_signer_line(&existing, &line) {
+        tokio::fs::write(&path, updated)
+            .await
+            .map_err(|e| AppError::Io(format!("cannot write {}: {e}", path.display())))?;
+    }
+    Ok(path.display().to_string())
 }
 
 /// Generate a key pair in `~/.ssh` via `ssh-keygen`, without a passphrase
@@ -338,6 +451,281 @@ pub async fn test_ssh_auth(
     Ok(classify_ssh_probe(&combined))
 }
 
+// ---------------------------------------------------------------------------
+// Distro-side (WSL) variants: the same pure logic, with fs and helper spawns
+// routed through the distro's Host. Deliberately a parallel `wsl_*` surface
+// (the settings-host fail-closed pattern): these commands take a required
+// distro and have no local branch to fall into.
+// ---------------------------------------------------------------------------
+
+async fn wsl_host(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    distro: &str,
+) -> Result<std::sync::Arc<legit_host::RemoteHost>, AppError> {
+    let distro = distro.trim();
+    if distro.is_empty() {
+        return Err(AppError::ParseArgs("a WSL distribution name is required".into()));
+    }
+    crate::remote::connection::ensure_wsl_host(app, state, distro).await
+}
+
+/// `~/.ssh` on the host, from the home directory it reported.
+fn host_ssh_dir(host: &dyn Host) -> Result<HostPath, AppError> {
+    let home = host
+        .home_dir()
+        .ok_or_else(|| AppError::Io("the host reported no home directory".to_string()))?;
+    Ok(HostPath(format!("{}/.ssh", home.0.trim_end_matches('/'))))
+}
+
+async fn read_key_status_host(fs: &dyn RepoFs, private_key: &HostPath) -> SshKeyStatus {
+    let exists = matches!(fs.stat(private_key).await, Ok(Some(_)));
+    let pub_path = HostPath(format!("{}.pub", private_key.0));
+    let public_key = match fs.read(&pub_path, Some(64 * 1024)).await {
+        Ok(bytes) => {
+            let t = String::from_utf8_lossy(&bytes).trim().to_string();
+            if t.is_empty() { None } else { Some(t) }
+        }
+        Err(_) => None,
+    };
+    SshKeyStatus { private_key_path: private_key.0.clone(), exists, public_key }
+}
+
+/// Every key pair in the distro's `~/.ssh`; a missing directory is an empty
+/// list, not an error.
+#[tauri::command]
+#[specta::specta]
+pub async fn wsl_scan_ssh_keys(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    distro: String,
+) -> Result<Vec<SshKeyStatus>, AppError> {
+    let host = wsl_host(&app, &state, &distro).await?;
+    let dir = host_ssh_dir(host.as_ref())?;
+    let fs = host.fs();
+    let file_names: Vec<String> = match fs.read_dir(&dir).await {
+        Ok(entries) => entries.into_iter().filter(|e| !e.is_dir).map(|e| e.name).collect(),
+        Err(_) => return Ok(vec![]),
+    };
+    let mut out = Vec::new();
+    for name in key_pair_names(&file_names) {
+        out.push(read_key_status_host(fs.as_ref(), &HostPath(format!("{}/{name}", dir.0))).await);
+    }
+    Ok(out)
+}
+
+/// Generate a key pair in the distro's `~/.ssh` via its own `ssh-keygen`.
+/// Same contract as the local command: no passphrase, never overwrites.
+#[tauri::command]
+#[specta::specta]
+pub async fn wsl_generate_ssh_key(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    distro: String,
+    file_name: String,
+    key_type: String,
+    comment: String,
+) -> Result<SshKeyStatus, AppError> {
+    if !valid_key_file_name(&file_name) {
+        return Err(AppError::Io(format!(
+            "invalid key file name {file_name:?}: use letters, digits, '.', '_' or '-'"
+        )));
+    }
+    if key_type != "ed25519" && key_type != "rsa" {
+        return Err(AppError::Io(format!("unsupported key type {key_type:?}")));
+    }
+    let comment = comment.replace(['\n', '\r'], " ").trim().to_string();
+
+    let host = wsl_host(&app, &state, &distro).await?;
+    let dir = host_ssh_dir(host.as_ref())?;
+    let fs = host.fs();
+    fs.create_dir_all(&dir).await.map_err(|e| AppError::Io(format!("create {}: {e}", dir.0)))?;
+    // ssh refuses a group/world-accessible ~/.ssh; the agent's mkdir takes
+    // the umask, so tighten explicitly (best-effort).
+    let _ = host.run_captured("chmod", &["700".into(), dir.0.clone()], None, &[], 10).await;
+
+    let key_path = HostPath(format!("{}/{file_name}", dir.0));
+    let pub_path = HostPath(format!("{}.pub", key_path.0));
+    if matches!(fs.stat(&key_path).await, Ok(Some(_)))
+        || matches!(fs.stat(&pub_path).await, Ok(Some(_)))
+    {
+        return Err(AppError::Io(format!("{} already exists: choose another file name", key_path.0)));
+    }
+
+    let mut args: Vec<String> = vec!["-q".into(), "-t".into(), key_type.clone()];
+    if key_type == "rsa" {
+        args.push("-b".into());
+        args.push("4096".into());
+    }
+    if !comment.is_empty() {
+        args.push("-C".into());
+        args.push(comment);
+    }
+    args.extend(["-N".into(), "".into(), "-f".into(), key_path.0.clone()]);
+
+    let out = host
+        .run_captured("ssh-keygen", &args, None, &[], 30)
+        .await
+        .map_err(|e| AppError::Io(format!("cannot run ssh-keygen in {distro}: {e}")))?;
+    if out.timed_out {
+        return Err(AppError::Io("ssh-keygen timed out".to_string()));
+    }
+    if !out.success {
+        return Err(AppError::Io(format!("ssh-keygen failed: {}", out.stderr.trim())));
+    }
+    Ok(read_key_status_host(fs.as_ref(), &key_path).await)
+}
+
+/// `ssh -T git@<host>` run INSIDE the distro, so it probes with the distro's
+/// keys and known_hosts. Prompts relay through the agent's askpass shim.
+#[tauri::command]
+#[specta::specta]
+pub async fn wsl_test_ssh_auth(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    distro: String,
+    host_name: String,
+    private_key_path: Option<String>,
+) -> Result<SshTestOutcome, AppError> {
+    if !valid_ssh_host(&host_name) {
+        return Err(AppError::Io(format!("invalid SSH host {host_name:?}")));
+    }
+    let host = wsl_host(&app, &state, &distro).await?;
+    let key = match private_key_path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) => Some(PathBuf::from(p)),
+        None => None,
+    };
+    // The agent's base env carries the askpass relay (its handshake sets it
+    // up), so the broker=true argument shape applies: no BatchMode, and the
+    // human gets time to answer a passphrase or host-key prompt.
+    let args: Vec<String> = build_probe_args(&host_name, key.as_deref(), true)
+        .into_iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let out = host
+        .run_captured("ssh", &args, None, &[], 320)
+        .await
+        .map_err(|e| AppError::Io(format!("cannot run ssh in {distro}: {e}")))?;
+    if out.timed_out {
+        return Ok(SshTestOutcome::CannotConnect { detail: "timed out after 320 seconds".into() });
+    }
+    Ok(classify_ssh_probe(&format!("{}\n{}", out.stdout, out.stderr)))
+}
+
+/// Ensure `<email> <type> <blob>` is in the DISTRO's `~/.ssh/allowed_signers`
+/// and return that file's distro path (for the distro's
+/// `gpg.ssh.allowedSignersFile`).
+#[tauri::command]
+#[specta::specta]
+pub async fn wsl_register_allowed_signer(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    distro: String,
+    email: String,
+    public_key: String,
+) -> Result<String, AppError> {
+    let line = allowed_signer_line(&email, &public_key).ok_or_else(|| {
+        AppError::Io("cannot build an allowed-signers entry from this identity".to_string())
+    })?;
+    let host = wsl_host(&app, &state, &distro).await?;
+    let dir = host_ssh_dir(host.as_ref())?;
+    let fs = host.fs();
+    fs.create_dir_all(&dir).await.map_err(|e| AppError::Io(format!("create {}: {e}", dir.0)))?;
+    let path = HostPath(format!("{}/allowed_signers", dir.0));
+    let existing = match fs.read(&path, Some(256 * 1024)).await {
+        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        Err(_) => String::new(),
+    };
+    if let Some(updated) = with_signer_line(&existing, &line) {
+        fs.write(&path, updated.as_bytes())
+            .await
+            .map_err(|e| AppError::Io(format!("cannot write {}: {e}", path.0)))?;
+    }
+    Ok(path.0)
+}
+
+/// Copy an app-machine key pair into the distro's `~/.ssh` (the "Copy key
+/// into the distribution" offer after a profile apply resolved to a missing
+/// key). A deliberate, confirmed transfer to a machine the user owns.
+/// Refuses to overwrite an existing key in the distro unless `overwrite` -
+/// the confirmed "Replace key" choice when a DIFFERENT key sits under the
+/// profile's file name there.
+#[tauri::command]
+#[specta::specta]
+pub async fn wsl_install_ssh_key(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    distro: String,
+    source_private_key_path: String,
+    overwrite: bool,
+) -> Result<SshKeyStatus, AppError> {
+    let source = expand_home(source_private_key_path.trim())?;
+    let name = source
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|n| valid_key_file_name(n))
+        .ok_or_else(|| AppError::Io(format!("invalid key path {source_private_key_path:?}")))?
+        .to_string();
+    let private = tokio::fs::read(&source)
+        .await
+        .map_err(|e| AppError::Io(format!("cannot read {}: {e}", source.display())))?;
+    let public = tokio::fs::read(format!("{}.pub", source.display()))
+        .await
+        .map_err(|e| AppError::Io(format!("cannot read {}.pub: {e}", source.display())))?;
+
+    let host = wsl_host(&app, &state, &distro).await?;
+    let dir = host_ssh_dir(host.as_ref())?;
+    let fs = host.fs();
+    fs.create_dir_all(&dir).await.map_err(|e| AppError::Io(format!("create {}: {e}", dir.0)))?;
+    let _ = host.run_captured("chmod", &["700".into(), dir.0.clone()], None, &[], 10).await;
+
+    let target = HostPath(format!("{}/{name}", dir.0));
+    let target_pub = HostPath(format!("{}.pub", target.0));
+    if !overwrite && matches!(fs.stat(&target).await, Ok(Some(_))) {
+        return Err(AppError::Io(format!("{} already exists in {distro}", target.0)));
+    }
+    fs.write(&target, &private)
+        .await
+        .map_err(|e| AppError::Io(format!("cannot write {}: {e}", target.0)))?;
+    fs.write(&target_pub, &public)
+        .await
+        .map_err(|e| AppError::Io(format!("cannot write {}: {e}", target_pub.0)))?;
+    // ssh refuses a private key readable by others; the agent's write takes
+    // the umask, so tighten explicitly. The private key's chmod must succeed.
+    let out = host
+        .run_captured("chmod", &["600".into(), target.0.clone()], None, &[], 10)
+        .await
+        .map_err(|e| AppError::Io(format!("cannot chmod the copied key: {e}")))?;
+    if !out.success {
+        return Err(AppError::Io(format!("chmod 600 failed: {}", out.stderr.trim())));
+    }
+    let _ = host.run_captured("chmod", &["644".into(), target_pub.0.clone()], None, &[], 10).await;
+    Ok(read_key_status_host(fs.as_ref(), &target).await)
+}
+
+/// A short label for THIS computer, used in platform key titles so uploads
+/// of same-named keys from different machines stay tellable apart.
+#[tauri::command]
+#[specta::specta]
+pub async fn machine_label() -> Result<String, AppError> {
+    for var in ["COMPUTERNAME", "HOSTNAME"] {
+        if let Ok(name) = std::env::var(var) {
+            let name = name.trim().to_string();
+            if !name.is_empty() {
+                return Ok(name);
+            }
+        }
+    }
+    // Unix shells export HOSTNAME, non-interactive processes often don't.
+    if let Ok(contents) = tokio::fs::read_to_string("/etc/hostname").await {
+        let name = contents.trim().to_string();
+        if !name.is_empty() {
+            return Ok(name);
+        }
+    }
+    Ok("unknown-host".to_string())
+}
+
 /// Open the platform's "add an SSH key" settings page in the browser. Takes a
 /// platform id, never a URL, so the frontend cannot open arbitrary pages.
 #[tauri::command]
@@ -355,6 +743,57 @@ pub async fn open_platform_key_settings(platform: String) -> Result<(), AppError
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn allowed_signer_line_builds_safe_entries_only() {
+        assert_eq!(
+            allowed_signer_line("s@x.ch", "ssh-ed25519 AAAA simon@home").as_deref(),
+            Some("s@x.ch ssh-ed25519 AAAA")
+        );
+        // Whitespace or a comma in the principal would corrupt the file.
+        assert_eq!(allowed_signer_line("a b@x.ch", "ssh-ed25519 AAAA"), None);
+        assert_eq!(allowed_signer_line("a,b@x.ch", "ssh-ed25519 AAAA"), None);
+        assert_eq!(allowed_signer_line("", "ssh-ed25519 AAAA"), None);
+        assert_eq!(allowed_signer_line("s@x.ch", "garbage"), None);
+    }
+
+    #[test]
+    fn with_signer_line_is_idempotent_and_newline_safe() {
+        let line = "s@x.ch ssh-ed25519 AAAA";
+        assert_eq!(with_signer_line("", line).as_deref(), Some("s@x.ch ssh-ed25519 AAAA\n"));
+        // Appends to a file missing its final newline without merging lines.
+        assert_eq!(
+            with_signer_line("other@x.ch ssh-rsa BBBB", line).as_deref(),
+            Some("other@x.ch ssh-rsa BBBB\ns@x.ch ssh-ed25519 AAAA\n")
+        );
+        // Already present: exact, and with a trailing comment on the line.
+        assert_eq!(with_signer_line("s@x.ch ssh-ed25519 AAAA\n", line), None);
+        assert_eq!(with_signer_line("s@x.ch ssh-ed25519 AAAA laptop\n", line), None);
+        // Same email, different key: a second entry is correct.
+        assert!(with_signer_line("s@x.ch ssh-ed25519 OTHER\n", line).is_some());
+    }
+
+    #[test]
+    fn key_pair_names_filters_and_orders() {
+        let names: Vec<String> = [
+            "known_hosts",
+            "config",
+            "id_rsa",             // private side alone: paired via its .pub below
+            "id_rsa.pub",
+            "work_key.pub",
+            "id_ed25519.pub",
+            ".hidden.pub",        // dotfile: rejected
+            "weird name.pub",     // space: rejected
+            "double.pub.pub",     // base ends in .pub: rejected
+            "orphan_private",     // no .pub: not a listable pair
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        // Defaults first, then alphabetical.
+        assert_eq!(key_pair_names(&names), vec!["id_ed25519", "id_rsa", "work_key"]);
+        assert!(key_pair_names(&[]).is_empty());
+    }
 
     // `ssh -T git@<host>` succeeds with DIFFERENT exit codes and phrasings per
     // platform (GitHub exits 1 on success!), so the outcome is classified from

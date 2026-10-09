@@ -60,6 +60,7 @@ export interface CommitsRowContextValue {
   tagTargetsOnRemote: ReadonlySet<string>;
   tagRemote: string | null;
   unpushedSet: ReadonlySet<CommitId>;
+  pushableSet: ReadonlySet<CommitId>;
   commitMessageById: Map<string, string>;
   stashSelectorById: ReadonlyMap<string, string>;
   signedSet: ReadonlySet<string>;

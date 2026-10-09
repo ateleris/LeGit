@@ -417,8 +417,9 @@ button.legit-region-divider__toggle:hover {
    divs. Flex-center the button there too - as an inline-level box it would
    baseline-align inside the wrapper's line box, sitting ~1px off compared to
    the directly flex-centered icon buttons (and the offset varies with the
-   button's content: SVG icon vs text). The dropdowns are absolutely
-   positioned, so the flex display doesn't affect them. */
+   button's content: SVG icon vs text). The dropdown surfaces portal to
+   document.body (AnchoredDropdown), so the flex display doesn't affect
+   them. */
 .legit-tabs__actions > div {
   display: flex;
   align-items: center;

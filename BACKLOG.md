@@ -36,10 +36,21 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   and broker HTTPS auth shipped 2026-07-13; scope = GitHub/GitLab/ADO,
   SSH-first, per 2026-07-13 decision; code lives in
   `crates/legit-providers` + `commands/accounts.rs` / `ssh_keys.rs`):
-  - **OAuth device flows** (GitHub client-id-only, GitLab device grant,
-    Entra device code for ADO) - blocked on registering app client IDs
-    (needs the maintainer's forge account/org); the code seam is
-    `legit_providers::validate_token`.
+  - **OAuth device flows, GitLab + ADO remainder** (GitHub shipped
+    2026-10-08, refresh-token handling for expiring tokens 2026-10-09:
+    `design/2026-10-08-github-oauth-device-flow.md`).
+    - **GitLab app registration** - the ONLY missing piece for the
+      GitLab connect button (endpoints, scope `api`, and the 2h-token
+      refresh are all in place). Deferred 2026-10-09: no current GitLab
+      use; register when someone needs it. Steps are in the design
+      note (gitlab.com Applications, non-confidential, scope api,
+      filler redirect URI; prefer an Ateleris group-owned app); then
+      paste the client ID into `Platform::device_flow_client_id` and
+      add the CHANGELOG bullet for the GitLab browser sign-in.
+    - **ADO**: needs an Entra app registration and the Microsoft
+      device code flow.
+    - Transfer of the GitHub OAuth app from the personal account to
+      the company org (client ID survives).
   - **Self-hosted GitLab hosts** (gitlab.com fixed for now).
   - `ssh -T` connection test could surface WHICH account authenticated
     (parse the "Hi <user>!" line).
@@ -111,17 +122,10 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
     Windows file picker (2026-09-01, `supportsRepoGitOverride`). To lift it:
     probe the candidate through the session's host and make the picker not
     browse the app machine.
-  - **Distro-side SSH keys.** LeGit's `~/.ssh` tools (list / generate /
-    upload) are app-machine-only: `commands/ssh_keys.rs` uses `std::fs` and
-    a local `ssh-keygen`. The WSL identity form therefore omits the
-    "Default SSH keys" field entirely (2026-09-01, with the Git (WSL)
-    settings group), so a WSL repo on an SSH remote needs its key managed
-    inside the distro by hand. To lift: route those commands through a
-    host's `fs()` / `spawn_detached` (as the config commands now do via
-    `settings_host.rs`), add a `distro` parameter mirroring
-    `commands/wsl_config.rs`, and decide where an uploaded key's private
-    half lives (the distro's `~/.ssh`, not the app machine's). The agent
-    already relays askpass, so a distro key's passphrase prompt works.
+  - **Distro-side SSH keys**: shipped 2026-10-09 (WSL key section, matrix
+    rows, apply-time resolution of auth + ssh-signing paths with copy /
+    replace offers and allowed-signers sync; the `HostRun` captured spawn
+    op carries it).
   - **Dedicated AgentGone error variant.** A dead connection surfaces as a
     RunnerError::Io/FsError message ("agent connection lost") — correct but
     unclassified; a `GitError` variant would let panels render "host
@@ -133,39 +137,36 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
     same broker as local (passphrase cache included); confirmations show
     ssh's raw prompt text — fine, but the dialog could name the distro.
 
-- **Settings sync via a user-configured directory path** (2026-08-21,
-  scope sharpened 2026-08-21 after design review; demand-driven - do not
-  build before someone asks). A read-only "inherit from path" layer so one
-  configuration (prefs + themes) can be shared across installations or a
-  team. V1 design:
-  - One optional global setting `settings_sync_path` - a plain directory
-    (network share / Dropbox / a checked-out git repo). REJECTED for v1:
-    HTTP(S)/WebDAV endpoints (auth needs the keychain broker for little
-    gain over a synced folder) and two-way sync (conflict handling swamp;
-    last-write-wins would corrupt a team setup). Read at startup + a
-    manual "Reload synced settings" button; no file watching.
-  - The directory holds `legit-sync.json` (shareable prefs subset) and
-    optionally `themes/*.legit-theme.json`.
-  - Layered resolution: built-in default -> synced -> local, LOCAL WINS.
-    Requires moving the shareable prefs to `Option<T> +
-    #[serde(default)]` in the local file (None = inherit), the existing
-    RepoSettings convention; existing installs' concrete values then
-    parse as explicit local overrides - the correct migration for free.
-  - Shareable: theme choice + font size + graph metrics + date format +
-    pull strategy + confirm toggle + column prefs + region placement.
-    Never synced: open-repo state, last-dirs, `git_path_override`, git
-    profiles (identities + machine-bound key paths), repo settings
-    (local-path-hash keyed).
-  - Themes ARE included - the most shareable artifact (portable JSON,
-    stable TOKEN_CONTRACT, resolveTheme falls back over DEFAULT_THEME).
-    Implementation seam exists: a third `ThemeSource::Synced` next to
-    Builtin/User in `read_theme_dir`, read-only in the Theme Editor like
-    builtins (duplicate-to-edit) - sidesteps name-collision and
-    upstream-deletion semantics. `active_theme` syncs as a normal pref.
-  - Phase 2 candidates: named layouts (since 2026-09-07 they are files
-    under `<app-data>/layouts/`, so a synced `layouts/` dir mirrors the
-    themes approach; the LIVE dock state stays localStorage and stays
-    local), an export/import bundle file.
+- **Settings sync: open remainders** (the git-repo writable mode shipped
+  2026-10-02 - `design/2026-10-02-settings-sync-git.md`; a designated git
+  repo mirrors shareable settings + themes, imports at startup, commits
+  and pushes on change):
+  - **Read-only "inherit from a plain folder" team variant** (the
+    original 2026-08-21 design): a network share / Dropbox folder as a
+    read-only settings layer with LOCAL WINS (`Option<T>` +
+    `#[serde(default)]` migration). Rejected then and still rejected:
+    HTTP(S)/WebDAV endpoints and two-way sync via a plain folder.
+    Build when a team asks; the sync-doc format is already shared.
+  - **Phase 2 candidates**: named layouts (files under
+    `<app-data>/layouts/`, so syncing mirrors the themes approach; LIVE
+    dock state stays localStorage), an export/import bundle file.
+  - **Encrypted SSH-key sync** (requested 2026-10-08; deferred: needs
+    its own design note and threat model before building; profile sync
+    itself shipped 2026-10-09 as the "Sync git profiles" opt-in, keys
+    referenced by `~/.ssh/<file>` name - build this only if the
+    per-machine create-and-upload flow proves insufficient). A second
+    opt-in ON TOP of the sync opt-in and of profile sync: store
+    `keys/<id>.age` in the sync repo, passphrase-based age encryption
+    (`age` crate), decrypt on import into a LeGit-managed key dir
+    (0600 on Unix; Windows OpenSSH checks ACLs, needs per-OS
+    handling), never write plaintext into the repo or the synced
+    JSON. Must present the trade-offs explicitly in the opt-in UI:
+    encrypted private keys live forever in the remote's git history
+    guarded only by the passphrase's strength, and the passphrase
+    itself still moves between machines out of band. This reverses
+    the "LeGit stores no secrets" principle, which is why it is a
+    separate, loudly-labelled opt-in rather than part of profile
+    sync.
 
 - **Git Log panel:** filter/search the log, copy a command, jump a toast to
   its specific log entry (today it just opens the panel).

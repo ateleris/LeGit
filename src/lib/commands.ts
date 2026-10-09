@@ -474,8 +474,12 @@ export const repoCherryPick = (repoId: string, shas: string[], mainline?: number
 
 
 
-export const repoCommit = (repoId: string, message: string, amend = false) =>
-  invoke<string>("repo_commit", { repoId, message, amend });
+export const repoCommit = (
+  repoId: string,
+  message: string,
+  amend = false,
+  noVerify = false,
+) => invoke<string>("repo_commit", { repoId, message, amend, noVerify });
 
 
 

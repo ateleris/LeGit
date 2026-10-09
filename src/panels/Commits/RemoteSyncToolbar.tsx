@@ -54,6 +54,7 @@ export function RemoteSyncToolbar({
   repoId,
   branches,
   onCreateBranch,
+  noCommits,
   onStash,
   hasUncommittedChanges,
   trailing,
@@ -62,6 +63,9 @@ export function RemoteSyncToolbar({
   branches: Branch[];
   /** Opens the create-new-branch input on the HEAD row (see CommitsPanel). */
   onCreateBranch: () => void;
+  /** Unborn HEAD (no commits yet): branch creation is impossible, so the
+   *  Branch button is disabled with an explanation. */
+  noCommits: boolean;
   /** Stashes the working tree (same action as the uncommitted-changes row's menu). */
   onStash: (includeUntracked: boolean) => void;
   /** Whether the working tree has anything to stash (drives the disabled state). */
@@ -341,8 +345,12 @@ export function RemoteSyncToolbar({
       {/* Create a new branch at HEAD — opens an inline name input on the
           HEAD row's ref chips (local op; independent of the sync busy state). */}
       <ToolbarButton
-        title="Create a new branch at HEAD"
-        disabled={false}
+        title={
+          noCommits
+            ? "No commits yet - the first commit creates the branch"
+            : "Create a new branch at HEAD"
+        }
+        disabled={noCommits}
         loading={false}
         icon={<BranchPlusIcon />}
         label="Branch"

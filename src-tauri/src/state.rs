@@ -467,6 +467,30 @@ pub struct GlobalSettings {
     /// `https://<host>` key; settings files hold no secrets.
     #[serde(default)]
     pub connected_accounts: Vec<ConnectedAccountMeta>,
+    /// Last-known SSH keys registered on each platform account (PUBLIC keys
+    /// only), keyed by platform id: lets the Connected accounts matrix keep
+    /// showing the last-verified state while the account is disconnected.
+    /// Machine state, never synced.
+    #[serde(default)]
+    pub platform_key_cache: std::collections::HashMap<String, PlatformKeyCache>,
+    /// Local checkout of the settings-sync git repository (`sync` module);
+    /// `None` = sync off.
+    #[serde(default)]
+    pub settings_sync_path: Option<String>,
+    /// Whether this machine exports and imports git profiles through the
+    /// settings sync. Per-machine participation choice, so it never syncs
+    /// itself; key paths cross machines in `~/.ssh/<file>` form while the
+    /// keys themselves stay local (`sync/model.rs`).
+    #[serde(default)]
+    pub sync_git_profiles: bool,
+    /// Which profile each repository uses, keyed by the remote's canonical
+    /// web URL (machine-neutral, unlike local paths - see
+    /// `browser::canonical_remote_key`). Recorded on apply, removed on
+    /// clear; syncs with `sync_git_profiles` so other machines can suggest
+    /// the profile for the same clone. BTreeMap: the sync doc must
+    /// serialize deterministically or every export would commit.
+    #[serde(default)]
+    pub profile_assignments: std::collections::BTreeMap<String, String>,
 }
 
 /// One connected platform account (see `commands/accounts.rs`).
@@ -479,6 +503,28 @@ pub struct ConnectedAccountMeta {
     /// Account username (doubles as the git basic-auth username).
     pub username: String,
     pub display_name: Option<String>,
+}
+
+/// Snapshot of one platform account's registered SSH keys (public keys only;
+/// see `GlobalSettings::platform_key_cache`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct PlatformKeyCache {
+    pub keys: Vec<CachedPlatformKey>,
+    /// Registered SIGNING keys; `None` = the list could not be read (a token
+    /// without the signing scope), so signing status is unknown.
+    #[serde(default)]
+    pub signing_keys: Option<Vec<CachedPlatformKey>>,
+    /// RFC 3339 timestamp of the successful fetch.
+    pub checked_at: String,
+}
+
+/// One registered key: the platform's key id (stringified - it is opaque to
+/// the frontend and must not lose precision as a JS number) plus the raw
+/// `<type> <blob> [comment]` string.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct CachedPlatformKey {
+    pub id: String,
+    pub key: String,
 }
 
 impl Default for GlobalSettings {
@@ -540,6 +586,10 @@ impl Default for GlobalSettings {
             working_changes_section_order: vec![],
             git_profiles_doc: GitProfilesDoc::default(),
             connected_accounts: vec![],
+            platform_key_cache: std::collections::HashMap::new(),
+            settings_sync_path: None,
+            sync_git_profiles: false,
+            profile_assignments: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -547,7 +597,7 @@ impl Default for GlobalSettings {
 /// Global settings owned by dedicated commands or flows (the probed git
 /// binary, theme name sanitizing, watcher start/stop side effects, session
 /// bookkeeping, profiles, accounts); a settings patch must never write them.
-const GLOBAL_SETTINGS_COMMAND_OWNED: [&str; 10] = [
+const GLOBAL_SETTINGS_COMMAND_OWNED: [&str; 13] = [
     "file_history_window_size",
     "git_path_override",
     "active_theme",
@@ -558,6 +608,9 @@ const GLOBAL_SETTINGS_COMMAND_OWNED: [&str; 10] = [
     "last_clone_parent_dir",
     "gitProfiles",
     "connected_accounts",
+    "platform_key_cache",
+    "settings_sync_path",
+    "profile_assignments",
 ];
 
 impl GlobalSettings {
@@ -588,7 +641,7 @@ impl GlobalSettings {
 
     /// Enforce every value invariant on the merged result, so a patch cannot
     /// store an out-of-range value regardless of which fields it combines.
-    fn normalized(mut self) -> Self {
+    pub(crate) fn normalized(mut self) -> Self {
         self.ui_font_size = self.ui_font_size.clamp(8.0, 24.0);
         self.panel_gap = self.panel_gap.clamp(0.0, 16.0);
         self.panel_corner_radius = self.panel_corner_radius.clamp(0.0, 16.0);
@@ -880,6 +933,9 @@ pub struct AppState {
     pub keybindings_path: PathBuf,
     /// Cached per-host settings, keyed by distro (lazily loaded).
     pub host_settings: RwLock<HashMap<String, HostSettings>>,
+    /// Nudges the settings-sync engine after a settings/theme write (set once
+    /// at startup by `sync::tauri_engine`; unset in tests).
+    pub sync_nudge: std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<()>>,
 }
 
 /// An in-flight session-less git operation (see `AppState::transient_ops`).
@@ -934,6 +990,7 @@ impl AppState {
             layouts_dir,
             keybindings_path,
             host_settings: RwLock::new(HashMap::new()),
+            sync_nudge: std::sync::OnceLock::new(),
         }
     }
 
@@ -1036,6 +1093,9 @@ impl AppState {
         }
         let json = serde_json::to_string_pretty(&settings)?;
         crate::persist::write_atomic(&self.global_settings_path, json).await?;
+        if let Some(tx) = self.sync_nudge.get() {
+            let _ = tx.send(());
+        }
         Ok(())
     }
 

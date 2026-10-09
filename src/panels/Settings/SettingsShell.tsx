@@ -53,20 +53,37 @@ export function SettingsShell({
     return () => ro.disconnect();
   }, [uiFontSize]);
 
+  // A clicked nav entry stays active (overriding the spy) until the user
+  // interacts with the scroller again: the jump's own scroll can clamp at
+  // the bottom without reaching the group's top, and re-activating the
+  // previous group right after the click reads as the click not working.
+  const pinnedGroup = useRef<string | null>(null);
+
   const updateActive = useCallback(() => {
+    if (pinnedGroup.current) return;
     const scroller = scrollerRef.current;
     if (!scroller) return;
     const tops: { id: string; top: number }[] = [];
     for (const [id, el] of groupEls.current) {
       if (el.isConnected) tops.push({ id, top: el.offsetTop });
     }
+    // 2px slack: scroll positions are fractional under display scaling.
+    const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2;
     // Small slack so a group scrolled exactly to the top counts as reached.
-    setActiveGroup(pickActiveGroup(tops, scroller.scrollTop + uiFontSize));
+    setActiveGroup(pickActiveGroup(tops, scroller.scrollTop + uiFontSize, atBottom));
   }, [uiFontSize]);
 
-  // Re-evaluate when the visible groups change (filtering, WSL probe).
+  const unpin = () => {
+    if (pinnedGroup.current === null) return;
+    pinnedGroup.current = null;
+    updateActive();
+  };
+
+  // Re-evaluate when the visible groups change (filtering, WSL probe); a
+  // pinned group may have moved or vanished, so the pin is dropped.
   const visibleIds = filtered.map((g) => g.id).join("\u0000");
   useLayoutEffect(() => {
+    pinnedGroup.current = null;
     updateActive();
   }, [visibleIds, updateActive]);
 
@@ -81,6 +98,7 @@ export function SettingsShell({
   };
 
   const jumpTo = (id: string) => {
+    pinnedGroup.current = id;
     setActiveGroup(id);
     const scroller = scrollerRef.current;
     const el = groupEls.current.get(id);
@@ -169,6 +187,12 @@ export function SettingsShell({
           ref={scrollerRef}
           className="legit-panel__body"
           onScroll={onScroll}
+          // Any direct interaction with the scroller hands the highlight back
+          // to the spy (wheel, scrollbar drag, touch, keyboard scrolling).
+          onWheel={unpin}
+          onPointerDown={unpin}
+          onTouchMove={unpin}
+          onKeyDown={unpin}
           // No top padding on the scroller itself: sticky group headers pin
           // flush against the top edge, with no strip above them where the
           // scrolled content would stay visible. The spacing moves into the

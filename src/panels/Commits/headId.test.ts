@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pickHeadCommitId } from "./headId";
+import { pickHeadCommitId, repoHasNoCommits } from "./headId";
 import type { Commit, RefDecoration, Signature } from "../../lib/types";
 
 const SIG: Signature = { name: "t", email: "t@t", timestamp: 0, tz_offset_minutes: 0 };
@@ -51,5 +51,23 @@ describe("pickHeadCommitId", () => {
     expect(
       pickHeadCommitId([commit("s", [{ type: "stash", value: "stash@{0}" }])]),
     ).toBeNull();
+  });
+});
+
+describe("repoHasNoCommits", () => {
+  it("is true only for a loaded, unfiltered, headless log", () => {
+    expect(repoHasNoCommits(true, false, null)).toBe(true);
+  });
+
+  it("is false while the log is still loading", () => {
+    expect(repoHasNoCommits(false, false, null)).toBe(false);
+  });
+
+  it("is false when a filter empties the window of a repo with commits", () => {
+    expect(repoHasNoCommits(true, true, null)).toBe(false);
+  });
+
+  it("is false once a HEAD commit is known", () => {
+    expect(repoHasNoCommits(true, false, "abc")).toBe(false);
   });
 });

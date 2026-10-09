@@ -19,9 +19,9 @@
 // autocrlf) locally, so a developer's global config cannot skew outcomes.
 
 use legit_core::{
-    BlobBytes, CommitId, GitError, ConflictKind, ConflictSide, DiffEntry, DiffSource, FastForwardResult,
+    BlobBytes, CommitId, CommitOptions, GitError, ConflictKind, ConflictSide, DiffEntry, DiffSource, FastForwardResult,
     FetchOptions, FileState, GitmodulesFinding,
-    GitBackend, GitExecutor, GitRunner, LogOptions, MergeOptions, MergeOutcome, OperationId,
+    GitBackend, GitExecutor, GitRunner, HooksReport, LogOptions, MergeOptions, MergeOutcome, OperationId,
     PullOptions, PullStrategy, PushOptions, PushRecurseMode, RebaseOutcome, RefDecoration,
     RefSelector, RemoteProgress, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode,
     SequenceOutcome, SignatureStatus, StashApplyOutcome, StashOutcome, SubmoduleAutoUpdateStatus,
@@ -216,6 +216,153 @@ async fn merge_rejected_by_hook_on_conflict_named_file_is_an_error_not_conflicts
         other => panic!("expected CommandFailed, got {other:?}"),
     }
     assert!(repo.backend.conflict_entries().await.unwrap().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// commit: hook rejection classification + --no-verify bypass
+// ---------------------------------------------------------------------------
+
+/// Install a rejecting hook at `rel` (repo-relative), creating parent dirs.
+fn write_rejecting_hook(repo: &TestRepo, rel: &str, message: &str) {
+    let hook = repo.path.join(rel);
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    std::fs::write(&hook, format!("#!/bin/sh\necho '{message}' >&2\nexit 1\n")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn commit_rejected_by_pre_commit_hook_is_hook_declined() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("base").await;
+    repo.write("a.txt", "two\n");
+    repo.git(&["add", "a.txt"]).await;
+    write_rejecting_hook(&repo, ".git/hooks/pre-commit", "LINT FAILED: a.txt");
+
+    let err = repo
+        .backend
+        .commit(CommitOptions { message: "msg".into(), ..Default::default() })
+        .await
+        .unwrap_err();
+    match err {
+        GitError::CommitHookDeclined { hooks, stderr, .. } => {
+            assert_eq!(hooks, vec!["pre-commit"]);
+            assert!(stderr.contains("LINT FAILED"), "{stderr}");
+        }
+        other => panic!("expected CommitHookDeclined, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn commit_hook_blame_honors_hooks_path_redirection() {
+    // husky & co. point core.hooksPath into the worktree; the probe must
+    // find the hook there, not in .git/hooks.
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("base").await;
+    repo.write("a.txt", "two\n");
+    repo.git(&["add", "a.txt"]).await;
+    repo.git(&["config", "core.hooksPath", ".husky"]).await;
+    write_rejecting_hook(&repo, ".husky/commit-msg", "bad message");
+
+    let err = repo
+        .backend
+        .commit(CommitOptions { message: "msg".into(), ..Default::default() })
+        .await
+        .unwrap_err();
+    match err {
+        GitError::CommitHookDeclined { hooks, stderr, .. } => {
+            assert_eq!(hooks, vec!["commit-msg"]);
+            assert!(stderr.contains("bad message"), "{stderr}");
+        }
+        other => panic!("expected CommitHookDeclined, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn hooks_report_lists_installed_hooks_and_honors_redirection() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "x\n");
+    repo.commit_all("base").await;
+
+    // Default dir: a real hook is listed, git's *.sample templates are not.
+    write_rejecting_hook(&repo, ".git/hooks/pre-commit", "no");
+    let report: HooksReport = repo.backend.hooks_report().await.unwrap();
+    assert_eq!(report.hooks_path, None);
+    assert!(
+        report.hooks.iter().any(|h| h.name == "pre-commit" && h.known),
+        "{:?}",
+        report.hooks
+    );
+    assert!(report.hooks.iter().all(|h| !h.name.ends_with(".sample")), "{:?}", report.hooks);
+
+    // core.hooksPath redirection: only the redirected dir's files count, and
+    // a non-hook file in it is listed but not known.
+    repo.git(&["config", "core.hooksPath", ".husky"]).await;
+    write_rejecting_hook(&repo, ".husky/commit-msg", "no");
+    repo.write(".husky/helper.sh", "#!/bin/sh\n");
+    let report = repo.backend.hooks_report().await.unwrap();
+    assert_eq!(report.hooks_path.as_deref(), Some(".husky"));
+    let names: Vec<(&str, bool)> =
+        report.hooks.iter().map(|h| (h.name.as_str(), h.known)).collect();
+    assert_eq!(names, vec![("commit-msg", true), ("helper.sh", false)]);
+}
+
+#[tokio::test]
+async fn remove_hook_deletes_it_and_commits_pass_again() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("base").await;
+    repo.write("a.txt", "two\n");
+    repo.git(&["add", "a.txt"]).await;
+    write_rejecting_hook(&repo, ".git/hooks/pre-commit", "no");
+
+    repo.backend.remove_hook("pre-commit").await.unwrap();
+    assert!(!repo.exists(".git/hooks/pre-commit"));
+    let id = repo
+        .backend
+        .commit(CommitOptions { message: "unhooked".into(), ..Default::default() })
+        .await
+        .unwrap();
+    assert_eq!(repo.head().await, id.as_str());
+}
+
+#[tokio::test]
+async fn remove_hook_refuses_redirected_hooks_and_leaves_the_file() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("base").await;
+    repo.git(&["config", "core.hooksPath", ".husky"]).await;
+    write_rejecting_hook(&repo, ".husky/pre-commit", "no");
+
+    let err = repo.backend.remove_hook("pre-commit").await.unwrap_err();
+    assert!(matches!(err, GitError::Internal(_)), "{err:?}");
+    assert!(repo.exists(".husky/pre-commit"));
+}
+
+#[tokio::test]
+async fn no_verify_commit_bypasses_a_rejecting_pre_commit_hook() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\n");
+    repo.commit_all("base").await;
+    repo.write("a.txt", "two\n");
+    repo.git(&["add", "a.txt"]).await;
+    write_rejecting_hook(&repo, ".git/hooks/pre-commit", "LINT FAILED: a.txt");
+
+    let id = repo
+        .backend
+        .commit(CommitOptions {
+            message: "hooked anyway".into(),
+            no_verify: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(repo.head().await, id.as_str());
 }
 
 #[tokio::test]
@@ -904,6 +1051,31 @@ async fn ws_view_unstage_removes_only_the_visible_change_from_the_index() {
         .await
         .unwrap();
     assert_eq!(added_lines(&unstaged), vec!["E"], "real change is back unstaged");
+}
+
+// A staged-new file has no worktree diff against the index, so a discard
+// routed through `restore --worktree` exits 0 while removing nothing. The
+// `stash push`/`pop` round trip is the natural way to land in that state (a
+// pop re-stages a previously staged add), and the file is literally named
+// `-` to also pin pathspec safety for that name.
+#[tokio::test]
+async fn discard_removes_a_staged_new_file() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.write("-", "dash content\n");
+    repo.git(&["add", "--", "-"]).await;
+    repo.git(&["stash", "push"]).await;
+    repo.git(&["stash", "pop"]).await;
+
+    repo.backend
+        .discard(&[PathBuf::from("-")])
+        .await
+        .expect("discard");
+
+    assert!(!repo.exists("-"), "the staged-new file must be removed");
+    let status = repo.git(&["status", "--porcelain"]).await;
+    assert_eq!(status.trim(), "", "tree must be clean after the discard");
 }
 
 // Discarding from the ignore-whitespace view: the reverse patch runs against
@@ -3153,6 +3325,7 @@ async fn push_recurse_check_blocks_unpushed_submodule_commits() {
         set_upstream: true,
         force_with_lease: false,
         recurse_submodules: Some(PushRecurseMode::Check),
+        to_commit: None,
     };
     let err = sup
         .backend
@@ -3222,6 +3395,7 @@ fn push_opts(branch: &str, set_upstream: bool, force_with_lease: bool) -> PushOp
         set_upstream,
         force_with_lease,
         recurse_submodules: None,
+        to_commit: None,
     }
 }
 
@@ -3323,6 +3497,98 @@ async fn push_flips_the_tag_lists_target_on_remote_flag() {
         tags.iter().find(|t| t.name == "v1").unwrap().target_on_remote,
         "the push must flip target_on_remote without a fetch"
     );
+}
+
+#[tokio::test]
+async fn push_to_commit_moves_the_remote_branch_and_leaves_local_alone() {
+    let (_keep, remote_path, url) = bare_remote().await;
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["remote", "add", "origin", &url]).await;
+    repo.backend
+        .push(push_opts("main", true, false), OperationId::new())
+        .await
+        .unwrap();
+
+    repo.write("a.txt", "one\n");
+    repo.commit_all("one").await;
+    let c1 = repo.git(&["rev-parse", "HEAD"]).await.trim().to_string();
+    repo.write("a.txt", "two\n");
+    repo.commit_all("two").await;
+    let c2 = repo.git(&["rev-parse", "HEAD"]).await.trim().to_string();
+    repo.write("a.txt", "three\n");
+    repo.commit_all("three").await;
+    let c3 = repo.git(&["rev-parse", "HEAD"]).await.trim().to_string();
+
+    let pushable = repo.backend.pushable_commits().await.unwrap();
+    assert_eq!(
+        pushable,
+        vec![CommitId::new(&c3), CommitId::new(&c2), CommitId::new(&c1)],
+        "the whole unpushed first-parent chain, newest first"
+    );
+
+    let mut opts = push_opts("main", false, false);
+    opts.to_commit = Some(CommitId::new(&c2));
+    repo.backend.push(opts, OperationId::new()).await.unwrap();
+
+    let remote_runner = GitRunner::for_repo("git", &remote_path);
+    let tip = remote_runner.run(&["rev-parse", "refs/heads/main"]).await.expect("spawn git");
+    assert!(tip.success, "{}", tip.stderr);
+    assert_eq!(tip.stdout.trim(), c2, "remote branch moved to the selected commit");
+
+    assert_eq!(
+        repo.git(&["rev-parse", "HEAD"]).await.trim(),
+        c3,
+        "local branch must not move"
+    );
+    let t = repo.backend.tracking_status().await.unwrap().unwrap();
+    assert_eq!((t.ahead, t.behind), (1, 0));
+    assert_eq!(
+        repo.backend.pushable_commits().await.unwrap(),
+        vec![CommitId::new(&c3)],
+        "only the still-unpushed commit remains eligible"
+    );
+}
+
+// Encodes the assumption behind the first-parent restriction: a commit on a
+// merged side lane can sit inside `@{upstream}..HEAD` without containing the
+// remote tip (fork point older than the tip) - pushing it is rejected as
+// non-fast-forward, so `pushable_commits` must exclude side lanes.
+#[tokio::test]
+async fn push_to_commit_on_a_merged_side_lane_is_rejected_non_fast_forward() {
+    let (_keep, _, url) = bare_remote().await;
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.commit_all("base").await;
+    let base = repo.git(&["rev-parse", "HEAD"]).await.trim().to_string();
+    repo.git(&["remote", "add", "origin", &url]).await;
+    repo.write("a.txt", "main work\n");
+    repo.commit_all("main work").await;
+    repo.backend
+        .push(push_opts("main", true, false), OperationId::new())
+        .await
+        .unwrap();
+
+    // Side lane forked BEFORE the pushed tip: it does not contain the remote
+    // tip, yet the merge puts it inside `@{upstream}..HEAD`.
+    repo.git(&["switch", "-c", "side", &base]).await;
+    repo.write("side.txt", "side work\n");
+    repo.commit_all("side work").await;
+    let side = repo.git(&["rev-parse", "HEAD"]).await.trim().to_string();
+    repo.git(&["switch", "main"]).await;
+    repo.git(&["merge", "--no-ff", "--no-edit", "side"]).await;
+
+    let pushable = repo.backend.pushable_commits().await.unwrap();
+    assert!(
+        !pushable.contains(&CommitId::new(&side)),
+        "side-lane commit must not be offered: {pushable:?}"
+    );
+
+    let mut opts = push_opts("main", false, false);
+    opts.to_commit = Some(CommitId::new(&side));
+    let err = repo.backend.push(opts, OperationId::new()).await.unwrap_err();
+    assert!(matches!(err, GitError::PushRejected { .. }), "{err:?}");
 }
 
 // Pins the real `git branch -d` refusal (exit code + "not fully merged"
@@ -4160,6 +4426,49 @@ async fn stashed_untracked_file_can_be_applied_per_file() {
 // branch / tag / remote management against the real binary — validates the
 // exit-code and behavior assumptions the flow tests encode
 // ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn bulk_stage_of_an_argv_busting_path_list_works() {
+    // ~350 files whose combined path length far exceeds the Windows 32,767
+    // char command-line cap: the pathspec rides stdin
+    // (--pathspec-from-file), never argv, so the list length cannot break
+    // the spawn. Also pins spaces and non-ASCII through the NUL framing.
+    let repo = TestRepo::init().await;
+    repo.write("base.txt", "x\n");
+    repo.commit_all("base").await;
+
+    let dir = "dir with späces";
+    std::fs::create_dir_all(repo.path.join(dir)).expect("mkdir");
+    let mut paths = Vec::new();
+    for i in 0..350 {
+        let rel = format!("{dir}/file-{i:03}-{}.txt", "x".repeat(80));
+        repo.write(&rel, "content\n");
+        paths.push(PathBuf::from(rel));
+    }
+    assert!(paths.iter().map(|p| p.as_os_str().len()).sum::<usize>() > 32_767);
+
+    repo.backend.stage(&paths).await.unwrap();
+    let staged = repo.git(&["diff", "--cached", "--name-only"]).await;
+    assert_eq!(staged.lines().count(), 350, "all files staged in one call");
+
+    repo.backend.unstage(&paths).await.unwrap();
+    let staged = repo.git(&["diff", "--cached", "--name-only"]).await;
+    assert_eq!(staged.trim(), "", "all files unstaged in one call");
+}
+
+#[tokio::test]
+async fn branch_create_on_unborn_head_is_classified() {
+    // Fresh init: HEAD resolves to no commit, so `git branch` has nothing to
+    // point the new branch at. With a start point the same wording names the
+    // bad ref instead and must not classify as unborn.
+    let repo = TestRepo::init().await;
+
+    let err = repo.backend.create_branch("feat", None).await.unwrap_err();
+    assert!(matches!(err, GitError::UnbornHead), "{err:?}");
+
+    let err = repo.backend.create_branch("feat", Some("bogus")).await.unwrap_err();
+    assert!(matches!(err, GitError::CommandFailed { .. }), "{err:?}");
+}
 
 #[tokio::test]
 async fn branch_create_rename_delete_roundtrip() {
@@ -5804,6 +6113,47 @@ async fn worktree_add_list_remove_round_trip() {
     let list = repo.backend.worktree_list().await.expect("list detached");
     assert!(list[1].detached && list[1].branch.is_none(), "{list:?}");
     repo.backend.worktree_remove(&wt2_str, true).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn worktree_remove_with_initialized_submodule_needs_exactly_one_force() {
+    // Git refuses to remove a worktree whose submodule is initialized, even
+    // when everything is clean: it does not inspect submodule state. Unlike
+    // the dirty-worktree refusal, the message never mentions --force - the
+    // frontend's classifyWorktreeRemoveRefusal keys on exactly that - yet a
+    // SINGLE --force does remove it. (A never-initialized submodule, an
+    // empty directory, does not block removal at all.)
+    let (sup, _lib) = repo_with_submodule().await;
+    let wt = sup.path.join("..").join(format!(
+        "wts-{}",
+        sup.path.file_name().unwrap().to_string_lossy()
+    ));
+    let wt_str = wt.to_string_lossy().into_owned();
+    sup.backend
+        .worktree_add(&wt_str, &WorktreeAddMode::Detach { rev: None })
+        .await
+        .expect("worktree_add");
+    sup.git(&[
+        "-C", &wt_str,
+        "-c", "protocol.file.allow=always",
+        "submodule", "update", "--init",
+    ])
+    .await;
+
+    match sup.backend.worktree_remove(&wt_str, false).await {
+        Err(GitError::CommandFailed { stderr, .. }) => {
+            assert!(stderr.contains("containing submodules"), "{stderr}");
+            assert!(
+                !stderr.contains("--force"),
+                "the force offer keys on the absence of --force in this message: {stderr}"
+            );
+        }
+        other => panic!("expected the submodule refusal, got {other:?}"),
+    }
+
+    sup.backend.worktree_remove(&wt_str, true).await.expect("a single --force removes it");
+    let list = sup.backend.worktree_list().await.expect("list after remove");
+    assert_eq!(list.len(), 1, "{list:?}");
 }
 
 #[tokio::test]

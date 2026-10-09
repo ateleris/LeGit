@@ -94,7 +94,12 @@ fn emit_status(app: &tauri::AppHandle, distro: &str, status: RemoteHostStatus) {
 /// Live WSL host registry (one entry per connected distro).
 #[derive(Default)]
 pub struct WslHosts {
-    entries: tokio::sync::Mutex<HashMap<String, WslEntry>>,
+    entries: tokio::sync::Mutex<HashMap<String, Arc<RemoteHost>>>,
+    /// The wsl.exe bridge processes, keyed by distro. Separate from `entries`
+    /// so a lost connection can kill its wedged bridge while the host object
+    /// survives for the in-place reconnect. The agent exits on the stdin EOF
+    /// a bridge kill causes.
+    bridges: tokio::sync::Mutex<HashMap<String, tokio::process::Child>>,
     /// One connect gate per distro: connects to the SAME distro serialize on
     /// it, while `entries` is only ever held for lookup/insert - so one
     /// distro's slow first connect (boot, deploy, handshake) never blocks
@@ -108,8 +113,8 @@ impl WslHosts {
             .lock()
             .await
             .get(distro)
-            .filter(|e| e.host.is_alive())
-            .map(|e| e.host.clone())
+            .filter(|h| h.is_alive())
+            .cloned()
     }
 
     async fn connect_lock(&self, distro: &str) -> Arc<tokio::sync::Mutex<()>> {
@@ -120,13 +125,32 @@ impl WslHosts {
             .or_default()
             .clone()
     }
-}
 
-struct WslEntry {
-    host: Arc<RemoteHost>,
-    /// The wsl.exe bridge process. Kept so dropping the entry kills it
-    /// (`kill_on_drop`); the agent also exits on stdin EOF.
-    child: tokio::process::Child,
+    /// Kill (and reap) a distro's wsl.exe bridge. A connection declared lost
+    /// must take its bridge down with it: left alone, a wedged bridge keeps a
+    /// wedged agent alive in the distro for as long as the app runs. Returns
+    /// whether a bridge was registered.
+    pub async fn kill_bridge(&self, distro: &str) -> bool {
+        let child = self.bridges.lock().await.remove(distro);
+        match child {
+            Some(mut child) => {
+                let _ = child.kill().await;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Kill every bridge (app exit): process teardown does not reliably run
+    /// `kill_on_drop`, and a leaked bridge keeps its agent alive in the
+    /// distro.
+    pub async fn kill_all_bridges(&self) {
+        let bridges: Vec<tokio::process::Child> =
+            self.bridges.lock().await.drain().map(|(_, c)| c).collect();
+        for mut child in bridges {
+            let _ = child.kill().await;
+        }
+    }
 }
 
 /// Resolve the Linux agent binary to deploy: the `LEGIT_AGENT_BIN` dev
@@ -190,19 +214,35 @@ async fn connect(
     state: &AppState,
     distro: &str,
 ) -> Result<Arc<RemoteHost>, AppError> {
+    use super::wsl::bounded;
+    use std::time::Duration;
+
     // Deploy when the version-keyed path is absent (first run or upgrade).
     // Under the `LEGIT_AGENT_BIN` dev override ALWAYS deploy: a rebuilt dev
     // agent keeps the same version key, so the presence check would keep
     // running the stale binary forever.
     let dev_override = std::env::var_os("LEGIT_AGENT_BIN").is_some();
-    if dev_override || !super::wsl::agent_installed(distro, APP_VERSION).await? {
+    let installed = !dev_override
+        && bounded(
+            &format!("agent install check in '{distro}'"),
+            Duration::from_secs(60),
+            super::wsl::agent_installed(distro, APP_VERSION),
+        )
+        .await?;
+    if !installed {
         let reason = if dev_override { "dev-override" } else { "install" };
         deploy_fresh_agent(app, distro, reason).await?;
     }
 
     // Refresh the `legit .` launcher + host-exe pointer on every connect
     // (self-heals a moved app). Best-effort: the connection matters more.
-    if let Err(e) = super::wsl::install_launcher(distro).await {
+    if let Err(e) = bounded(
+        &format!("launcher install in '{distro}'"),
+        Duration::from_secs(60),
+        super::wsl::install_launcher(distro),
+    )
+    .await
+    {
         tracing::warn!(distro, err = %e, "launcher install failed");
     }
 
@@ -216,7 +256,7 @@ async fn connect(
     };
     let (pipes, child) = super::wsl::spawn_agent(distro, APP_VERSION)?;
     let sinks = build_sinks(app.clone(), distro.to_string());
-    let (conn, child) = match AgentConnection::establish(pipes, &opts, sinks).await {
+    let (conn, child) = match establish_bounded(pipes, &opts, sinks).await {
         Ok(conn) => (conn, child),
         // A STALE agent with the same version key: the presence check is
         // keyed by package version alone, so a binary from an older build of
@@ -228,7 +268,7 @@ async fn connect(
             deploy_fresh_agent(app, distro, "version-mismatch").await?;
             let (pipes, child) = super::wsl::spawn_agent(distro, APP_VERSION)?;
             let sinks = build_sinks(app.clone(), distro.to_string());
-            let conn = AgentConnection::establish(pipes, &opts, sinks)
+            let conn = establish_bounded(pipes, &opts, sinks)
                 .await
                 .map_err(|e| AppError::Io(format!("agent connection to '{distro}': {e}")))?;
             (conn, child)
@@ -241,44 +281,29 @@ async fn connect(
     // The connect gate serializes connects for this distro; `entries` is
     // locked only around lookup/insert so other distros never wait on the
     // reattach/handshake work.
-    let existing = state
-        .wsl_hosts
-        .entries
-        .lock()
-        .await
-        .get(distro)
-        .map(|e| e.host.clone());
+    let existing = state.wsl_hosts.entries.lock().await.get(distro).cloned();
     let host = match existing {
         // Reconnect: swap the connection into the existing host so sessions
         // recover in place, and re-establish its watches.
         Some(host) => {
             let watch_outcomes = host.reattach(conn).await;
             sync_watch_badges(app, state, distro, &watch_outcomes).await;
+            // Released while the handshake ran (last tab on the distro
+            // closed): the caller still wants a live host - re-register it
+            // like a fresh connect.
             let mut entries = state.wsl_hosts.entries.lock().await;
-            match entries.get_mut(distro) {
-                Some(entry) => entry.child = child,
-                // Released while the handshake ran (last tab on the distro
-                // closed): the caller still wants a live host - re-register
-                // it like a fresh connect.
-                None => {
-                    entries.insert(
-                        distro.to_string(),
-                        WslEntry {
-                            host: host.clone(),
-                            child,
+            if !entries.contains_key(distro) {
+                entries.insert(distro.to_string(), host.clone());
+                state
+                    .hosts
+                    .lock()
+                    .expect("hosts map poisoned")
+                    .insert(
+                        HostId::Wsl {
+                            distro: distro.to_string(),
                         },
+                        host.clone(),
                     );
-                    state
-                        .hosts
-                        .lock()
-                        .expect("hosts map poisoned")
-                        .insert(
-                            HostId::Wsl {
-                                distro: distro.to_string(),
-                            },
-                            host.clone(),
-                        );
-                }
             }
             host
         }
@@ -294,13 +319,7 @@ async fn connect(
                 .entries
                 .lock()
                 .await
-                .insert(
-                    distro.to_string(),
-                    WslEntry {
-                        host: host.clone(),
-                        child,
-                    },
-                );
+                .insert(distro.to_string(), host.clone());
             state
                 .hosts
                 .lock()
@@ -314,7 +333,40 @@ async fn connect(
             host
         }
     };
+    // Register the fresh bridge; a replaced one (reconnect) is killed, never
+    // leaked - its agent exits on the resulting stdin EOF.
+    if let Some(mut old) = state
+        .wsl_hosts
+        .bridges
+        .lock()
+        .await
+        .insert(distro.to_string(), child)
+    {
+        let _ = old.kill().await;
+    }
     Ok(host)
+}
+
+/// Bound the agent spawn + READY wait + handshake: a wedged WSL session can
+/// also stall here (the login shell never reaches the agent), which without
+/// a deadline is an eternal "Connecting".
+async fn establish_bounded(
+    pipes: legit_host::AgentPipes,
+    opts: &HostConnectOpts,
+    sinks: HostSinks,
+) -> Result<Arc<legit_host::AgentConnection>, legit_host::HostError> {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        AgentConnection::establish(pipes, opts, sinks),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(legit_host::HostError::HostGone(
+            "no READY/handshake within 60s - WSL appears stuck (a `wsl --shutdown` or a reboot usually clears it)"
+                .into(),
+        )),
+    }
 }
 
 /// Deploy the bundled agent into `distro` (and prune older version-keyed
@@ -324,11 +376,31 @@ async fn deploy_fresh_agent(
     distro: &str,
     reason: &str,
 ) -> Result<(), AppError> {
-    let arch = super::wsl::distro_arch(distro).await?;
+    use super::wsl::bounded;
+    use std::time::Duration;
+    // The arch probe doubles as the distro boot, so it gets the largest
+    // budget of the connect path.
+    let arch = bounded(
+        &format!("starting distro '{distro}'"),
+        Duration::from_secs(120),
+        super::wsl::distro_arch(distro),
+    )
+    .await?;
     let bytes = agent_binary(app, &arch).await?;
-    super::wsl::deploy_agent(distro, APP_VERSION, &bytes).await?;
+    bounded(
+        &format!("agent deploy into '{distro}'"),
+        Duration::from_secs(180),
+        super::wsl::deploy_agent(distro, APP_VERSION, &bytes),
+    )
+    .await?;
     tracing::info!(distro, version = APP_VERSION, reason, "agent deployed");
-    if let Err(e) = super::wsl::prune_stale_agents(distro, APP_VERSION).await {
+    if let Err(e) = bounded(
+        &format!("stale agent prune in '{distro}'"),
+        Duration::from_secs(60),
+        super::wsl::prune_stale_agents(distro, APP_VERSION),
+    )
+    .await
+    {
         tracing::warn!(distro, err = %e, "stale agent prune failed");
     }
     Ok(())
@@ -376,8 +448,8 @@ async fn sync_watch_badges(
     }
 }
 
-/// Drop a distro's host (last repo tab closed): the entry drop kills the
-/// wsl.exe bridge, the agent exits on stdin EOF, and the WSL VM may idle out.
+/// Drop a distro's host (last repo tab closed): the bridge is killed, the
+/// agent exits on stdin EOF, and the WSL VM may idle out.
 pub async fn release_wsl_host(state: &AppState, distro: &str) {
     let removed = state.wsl_hosts.entries.lock().await.remove(distro);
     if removed.is_some() {
@@ -388,6 +460,7 @@ pub async fn release_wsl_host(state: &AppState, distro: &str) {
             .remove(&HostId::Wsl {
                 distro: distro.to_string(),
             });
+        state.wsl_hosts.kill_bridge(distro).await;
         tracing::info!(distro, "wsl host released");
     }
 }
@@ -480,11 +553,16 @@ fn build_sinks(app: tauri::AppHandle, distro: String) -> HostSinks {
             let app = dc_app.clone();
             let distro = dc_distro.clone();
             tokio::spawn(async move {
+                let state = app.state::<AppState>();
+                // Take the dead connection's bridge down with it: a wedged
+                // bridge would otherwise keep a wedged agent alive in the
+                // distro for as long as the app runs (a reconnect spawns a
+                // fresh bridge either way).
+                state.wsl_hosts.kill_bridge(&distro).await;
                 // "disconnected" promises a reconnect - only emit it when the
                 // loop will actually run. A settings-only host (no repo open
                 // on the distro) is never auto-reconnected: its loss is
                 // terminal until the user reconnects by hand.
-                let state = app.state::<AppState>();
                 let locators: Vec<RepoLocator> = state
                     .repos
                     .read()
@@ -616,6 +694,46 @@ mod tests {
         assert!(git_needs_attention(&status(Some((2, 20, 1)))));
         assert!(!git_needs_attention(&status(Some(MIN_SUPPORTED_GIT_VERSION))));
         assert!(!git_needs_attention(&status(Some((2, 51, 0)))));
+    }
+
+    fn long_running_child() -> tokio::process::Child {
+        #[cfg(windows)]
+        let mut cmd = {
+            let mut c = tokio::process::Command::new("cmd");
+            c.args(["/C", "ping -n 60 127.0.0.1 >NUL"]);
+            c
+        };
+        #[cfg(not(windows))]
+        let mut cmd = {
+            let mut c = tokio::process::Command::new("sleep");
+            c.arg("60");
+            c
+        };
+        cmd.spawn().expect("spawn long-running child")
+    }
+
+    // A connection declared lost must take its wsl.exe bridge down with it:
+    // the agent only exits on the stdin EOF the kill causes, so a surviving
+    // wedged bridge keeps a wedged agent alive across the reconnect.
+    #[tokio::test]
+    async fn kill_bridge_terminates_the_bridge_and_forgets_it() {
+        let hosts = WslHosts::default();
+        hosts
+            .bridges
+            .lock()
+            .await
+            .insert("ubuntu".into(), long_running_child());
+        let killed = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            hosts.kill_bridge("ubuntu"),
+        )
+        .await
+        .expect("kill_bridge wedged");
+        assert!(killed, "the registered bridge must be killed");
+        assert!(
+            !hosts.kill_bridge("ubuntu").await,
+            "the killed bridge must be forgotten"
+        );
     }
 
     fn wsl(distro: &str) -> RepoLocator {

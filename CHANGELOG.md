@@ -14,19 +14,153 @@ lives in the git log and the GitHub release notes.
 
 ### Added
 
-- Settings > Appearance now explains when animations (like the attention
-  pulse) are disabled because the OS requests reduced motion, and names the
-  Windows setting that controls it
+- Git profiles can now be shared between computers through settings sync:
+  an opt-in "Sync git profiles" toggle in the Settings sync section (enable
+  it on each computer). Profiles reference their SSH keys by file name
+  under ~/.ssh; the keys themselves never leave a machine - use "Create &
+  upload key" in Connected accounts to give a profile a key on another
+  computer
+- Which repository uses which profile travels with profile sync (matched by
+  remote URL): a clone of the same repository on another computer suggests
+  the profile used elsewhere, with a one-click "Review & apply" in the
+  repository's identity settings
 
-### Changed
+- SSH keys inside WSL distributions are now managed by LeGit: a new
+  Settings > Git (WSL) > SSH keys section lists, generates, and
+  connection-tests keys in the distro's own ~/.ssh, and each running
+  distribution gets its own row in the Connected accounts key matrix with
+  the same one-click upload, create-and-upload, and signing setup
+- SSH keys uploaded to a platform are titled with the computer's name (and
+  WSL distro, where applicable), e.g. "id_ed25519_work (LeGit, SIMON-PC)",
+  so the same profile's keys from different machines stay tellable apart in
+  the platform's key list
+- Applying a profile to a WSL repo now resolves its SSH key by file name
+  into the distro's ~/.ssh (an app-machine path would be unusable there);
+  if the key is missing, LeGit offers to copy the key pair into the
+  distribution, and if a DIFFERENT key sits under that name, it warns and
+  offers replacing it
+- Profiles with SSH signing also work on WSL repos: the signing key and
+  allowed-signers paths resolve into the distro the same way, and the
+  profile's identity is added to the distro's allowed_signers so its
+  signatures verify there
 
-- The inline branch/tag creation input in the commit list pulses briefly when
-  it appears, so it is easier to spot
+- Connect a GitHub account by signing in with the browser (OAuth device
+  flow): no manually created token needed; pasting a PAT remains available
+  as the fallback and for GitLab / Azure DevOps
+- Each connected account (now with its platform logo) lists every git
+  profile plus the default ~/.ssh keys and shows which of them are
+  registered on that account, with one-click "Upload key" and
+  "Create & upload key" actions per identity
+- Registered SSH keys can be revoked from the account right from that list
+  (with confirmation)
+- One-click commit-signing setup per identity in Connected accounts: creates
+  the key if needed, registers it for authentication and signing on the
+  account (Verified badge on the forge), adds it to ~/.ssh/allowed_signers
+  for local verification, and configures the profile (or the global git
+  config) to sign commits with it; registered signing keys show their own
+  badge and can be revoked. Existing GitHub connections need a one-time
+  reconnect to grant the signing-key permission
 
 ### Fixed
 
+- Staging, unstaging, discarding, or stashing hundreds of files at once no
+  longer fails with "failed to spawn git" on Windows: file lists are passed
+  to git via stdin (or split into batches for commands that cannot read
+  them from stdin) instead of one overlong command line
+
+- A git launch that fails before git runs (e.g. a missing binary) now shows
+  up as a failed entry in the Git Command Log and as a warning in the log
+  file instead of leaving no trace
+
+- A `gpg.ssh.program` set to an empty value in the git config (which makes
+  every signed commit fail with "cannot spawn") is now flagged with a warning
+  in the signing settings; a one-click fix removes the broken global entry,
+  and saving signing settings cleans it up automatically
+
+- In a repository without commits the toolbar's Branch button is disabled
+  with an explanation instead of silently doing nothing, and creating a
+  branch from the Branches panel explains that the first commit is needed
+  instead of showing a raw git error
+
+- Uploading an SSH key that is already on the connected account now reports
+  "already added" instead of failing; upload errors show the platform's
+  message as a toast instead of a raw API response in the panel
+
+- "Push up to this commit" in the commit graph's context menu pushes the
+  current branch to its upstream only up to that commit, leaving the newer
+  local commits unpublished (offered on commits where the push is a
+  guaranteed fast-forward)
+
+- Settings sync: designate a git repository (Settings > Application >
+  Settings sync) and LeGit mirrors shareable settings and themes across
+  machines - imports at startup, commits and pushes changes automatically
+- Settings > Appearance now explains when animations (like the attention
+  pulse) are disabled because the OS requests reduced motion, and names the
+  Windows setting that controls it
+- A commit rejected by a pre-commit or commit-msg hook now says so (with the
+  hook's output) and offers a one-click "Commit anyway (skip hooks)" retry
+- Repo Settings > Git > Git hooks shows the repository's installed hooks,
+  including where `core.hooksPath` redirects them (husky and similar tools),
+  can open a hook in the external editor, delete a hook from `.git/hooks`
+  (with confirmation), and open the hooks folder in the file manager
+
+### Changed
+
+- Git identity profiles and Connected accounts moved to a new top-level
+  "Identity & accounts" settings group: they apply to local and WSL repos
+  alike, while the Git group keeps this machine's git configuration
+  (mirrored by Git (WSL)). Uploading SSH keys to a platform lives only in
+  the Connected accounts block - the "Add the key" buttons in the key tools
+  are gone
+- Connected accounts shows one block per platform (GitHub, GitLab, Azure
+  DevOps) with the connect controls inside the block; the separate
+  platform-picker form below the list is gone
+- A new Settings > Git > SSH keys section lists every key pair in ~/.ssh
+  (copy public key, connection test with a key picker) and generates new
+  pairs of both types; it replaces the "Default SSH keys" block that sat
+  inside the identity form
+- Disconnecting an account keeps its entry and shows the last verified key
+  state ("as of last check") until you reconnect; the separate Remove action
+  forgets the account entirely - neither ever deletes keys on the platform
+- The inline branch/tag creation input in the commit list pulses briefly when
+  it appears, so it is easier to spot
+- Buttons for destructive actions consistently use the destructive style
+  ("Reset all" in Keyboard Shortcuts, "Delete" in Git hooks)
+
+### Fixed
+
+- Commits panel: the Author/Date columns no longer drift out of line with
+  their headers when the vertical scrollbar is visible (the header now
+  reserves the scrollbar's width)
+- Discarding a file that is staged as new (the state a stash pop leaves a
+  previously staged new file in) now actually removes it - it used to report
+  success while changing nothing
+- A stuck WSL no longer hangs the app: every step of connecting to a distro
+  now has a deadline and fails with a clear error naming the step (and
+  suggesting `wsl --shutdown`), startup finishes even when a remembered WSL
+  repository's distro cannot be reached, and the reconnect loop keeps
+  retrying instead of silently stopping on a hung first attempt
+- A lost WSL connection now terminates its wsl.exe bridge process (and with
+  it the agent in the distro) instead of leaving both running; on app exit
+  all bridges are terminated as well
+- Git helpers and editors launched inside a WSL distro no longer share the
+  agent's communication pipes, which a stdin-reading git command could
+  block and garble (wedging the connection)
 - The inline branch/tag creation input now shrinks to fit a narrow Refs
   column instead of being clipped out of view behind the "+N" chip
+- Clicking a settings category near the end of the page no longer snaps the
+  highlight back to the previous category; the clicked entry stays active
+  until you scroll, and at the bottom of the page the last category is the
+  current one
+- The tab strip's View, open-repositories, and add-repository dropdowns no
+  longer run off the bottom of a short window; they scroll internally instead
+- Expanding a Refs section (Branches, Worktrees, Reflog, ...) no longer
+  squashes another expanded section to a zero-height body; every expanded
+  section keeps a minimum visible height
+- Removing a worktree that contains an initialized submodule no longer dead-ends
+  in an error: LeGit now explains git's refusal and offers a force-remove, with
+  a warning naming what it deletes (the submodule checkout and any uncommitted
+  changes inside it)
 
 ## [1.4.0] - 2026-10-01
 

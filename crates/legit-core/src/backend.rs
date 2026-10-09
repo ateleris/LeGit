@@ -11,7 +11,7 @@ use crate::runner::OperationId;
 use crate::types::{
     BlameHunk, BlobBytes, Branch, BranchMergeAnalysis, CaseDriftEntry, Commit, CommitDetails, CommitFileChange, CommitId, CommitOptions,
     CommitSearchKind, ConflictEntry, ConflictFileSides, ConflictSide, DiffEntry, DiffSource,
-    FetchOptions, FileAtRevision, FileHistoryEntry, FileStatus, GitmodulesFinding, HunkOp,
+    FetchOptions, FileAtRevision, FileHistoryEntry, FileStatus, GitmodulesFinding, HooksReport, HunkOp,
     LfsStatus, LfsStubs, LogOptions,
     MergeOptions, MergeOutcome, PullOptions, PullOutcome, PushOptions, RebaseOutcome, RebaseStep,
     RebaseRangeInfo, ReflogEntry, Remote, RemoteCheckoutOutcome, RemoteTag, RenormalizeOutcome,
@@ -266,6 +266,16 @@ pub trait GitBackend: Send + Sync {
     /// never errors; probes are skipped when the repo does not use LFS.
     async fn lfs_status(&self) -> Result<LfsStatus, GitError>;
 
+    /// The repo's installed git hooks: the resolved hooks directory (honoring
+    /// `core.hooksPath`) and its listing. A missing directory is an empty
+    /// listing, not an error.
+    async fn hooks_report(&self) -> Result<HooksReport, GitError>;
+
+    /// Delete the named hook from the DEFAULT hooks directory. Refused when
+    /// `core.hooksPath` redirects hooks (those files are usually tracked,
+    /// team-shared content) and for names outside git's hook set.
+    async fn remove_hook(&self, name: &str) -> Result<(), GitError>;
+
     /// The subset of `paths` whose effective `filter` attribute is `lfs`
     /// (`git check-attr -z --stdin filter`), in input order. Worktree
     /// attributes - callers must not apply the result to at-revision views.
@@ -408,6 +418,14 @@ pub trait GitBackend: Send + Sync {
 
     /// Push the current branch to its remote. Cancellable via `op_id`.
     async fn push(&self, opts: PushOptions, op_id: OperationId) -> Result<(), GitError>;
+
+    /// Commits eligible for a partial push (`PushOptions::to_commit`): the
+    /// first-parent chain `@{upstream}..HEAD`, newest first. Every entry is
+    /// guaranteed to fast-forward the upstream branch; commits on merged
+    /// side lanes are deliberately excluded (pushing one would move the
+    /// remote branch to a commit that may not contain its current tip).
+    /// Empty when HEAD is detached or has no upstream.
+    async fn pushable_commits(&self) -> Result<Vec<CommitId>, GitError>;
 
     /// Ahead/behind status of the current branch vs its upstream. `None` when
     /// HEAD is detached or the current branch has no upstream configured.

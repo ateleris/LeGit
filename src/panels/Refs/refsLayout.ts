@@ -8,6 +8,8 @@ export interface SerializedPaneviewView {
   size?: number;
   expanded?: boolean;
   headerSize?: number;
+  /** Restored by dockview as the pane's minimumBodySize. */
+  minimumSize?: number;
   data?: {
     id?: unknown;
     component?: unknown;
@@ -34,9 +36,11 @@ export interface SerializedPaneviewLike {
  *
  * Also deduplicates views by id (a corrupt layout must not yield duplicate
  * panes) and patches each surviving view's `headerSize` (font-size derived,
- * so the value saved under another font size must not win) and
- * `headerComponent` (layouts saved before the custom header existed must not
- * resurrect dockview's default header).
+ * so the value saved under another font size must not win), `headerComponent`
+ * (layouts saved before the custom header existed must not resurrect
+ * dockview's default header), and `minimumSize` (restored as the pane's
+ * minimumBodySize; layouts saved before the minimum existed carry none and
+ * would restore squashable-to-zero panes).
  *
  * Returns null when nothing usable survives - the caller falls back to the
  * default pane set.
@@ -45,6 +49,7 @@ export function sanitizePaneviewLayout(
   raw: unknown,
   isKnownComponent: (name: string) => boolean,
   headerSize: number,
+  minimumBodySize: number,
 ): SerializedPaneviewLike | null {
   if (typeof raw !== "object" || raw === null) return null;
   const layout = raw as { views?: unknown; size?: unknown };
@@ -62,6 +67,7 @@ export function sanitizePaneviewLayout(
     if (seen.has(id)) continue;
     seen.add(id);
     view.headerSize = headerSize;
+    view.minimumSize = minimumBodySize;
     view.data!.headerComponent = "default";
     views.push(view);
   }
@@ -90,6 +96,20 @@ export function sanitizePaneviewLayout(
  * transient header-only height as "distributed" left the real height to
  * dockview's default all-to-the-last-pane behaviour.
  */
+/**
+ * Minimum body height for an EXPANDED pane (collapsed panes shrink to their
+ * header; dockview only enforces the minimum while expanded). Without it
+ * (dockview's default is 0) expanding a section steals space from the
+ * expanded neighbour above until that pane is exactly header-tall: its caret
+ * still says "expanded" but the body is invisible. A few content rows,
+ * font-scaled like the header height. Kept moderate deliberately: when the
+ * panel is too short for every expanded pane's minimum, the overflow is
+ * clipped at the bottom instead of panes squashing.
+ */
+export function paneMinimumBodySize(uiFontSize: number): number {
+  return Math.round(uiFontSize * 10);
+}
+
 export function defaultPaneSizes(
   containerHeight: number,
   headerSize: number,

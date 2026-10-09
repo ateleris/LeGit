@@ -9,6 +9,7 @@ import { notify } from "../store/notifications";
 import { GLOBAL_PANELS, REPO_PANELS } from "./registry";
 import { summonGlobalPanel } from "../layout/globalSummon";
 import { openRepoPanel } from "./RepoDock";
+import { AnchoredDropdown } from "./shared/AnchoredDropdown";
 import { useDismissable } from "./shared/useDismissable";
 import { LayoutShortcutChip } from "./Layouts/LayoutShortcutChip";
 import {
@@ -91,27 +92,12 @@ export function ViewMenu() {
   );
 
   return (
-    <div ref={ref} style={{ position: "relative" }}>
+    <div ref={ref}>
       <button data-testid="view-menu-button" onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}>
         View ▾
       </button>
       {open && (
-        <div
-          role="menu"
-          style={{
-            position: "absolute",
-            top: "calc(100% + 4px)",
-            right: 0,
-            minWidth: 240,
-            background: "var(--panel-bg)",
-            color: "var(--panel-fg)",
-            border: "1px solid var(--panel-border)",
-            borderRadius: 4,
-            boxShadow: "0 4px 10px var(--shadow-color)",
-            zIndex: 1000,
-            padding: "0.333em",
-          }}
-        >
+        <AnchoredDropdown role="menu" style={{ minWidth: 240, padding: "0.333em" }}>
           <MenuLevelProvider>
             <SectionLabel>Global panels</SectionLabel>
             {GLOBAL_PANELS.map((p) =>
@@ -171,7 +157,7 @@ export function ViewMenu() {
               </span>
             </MenuItem>
           </MenuLevelProvider>
-        </div>
+        </AnchoredDropdown>
       )}
     </div>
   );

@@ -9,10 +9,12 @@ mod credentials;
 mod error;
 mod git_resolve;
 mod logging;
+mod oauth;
 mod os_open;
 mod persist;
 mod remote;
 mod state;
+mod sync;
 mod watcher;
 
 use std::path::PathBuf;
@@ -243,6 +245,13 @@ pub fn run() {
                 }
             }
 
+            // Settings sync: debounced export on settings/theme writes, plus
+            // the bounded startup import. After the broker so pushes can
+            // prompt for credentials.
+            let sync_engine = sync::tauri_engine::SettingsSyncEngine::start(app.handle().clone());
+            sync_engine.startup();
+            app.manage(sync::tauri_engine::SyncHandle(sync_engine));
+
             // Forward every git invocation to the UI as a live command log.
             let handle = app.handle().clone();
             legit_core::runner::set_invocation_observer(std::sync::Arc::new(move |inv| {
@@ -266,8 +275,12 @@ pub fn run() {
         .expect("error while running tauri application")
         // The exit marker separates a clean quit from a crash in the log: a
         // file whose last session has no "LeGit exiting" line died hard.
-        .run(|_app, event| {
+        .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
+                // Process teardown does not reliably run `kill_on_drop`; a
+                // leaked wsl.exe bridge keeps its agent alive in the distro.
+                let state = app.state::<crate::state::AppState>();
+                tauri::async_runtime::block_on(state.wsl_hosts.kill_all_bridges());
                 tracing::info!("LeGit exiting");
             }
         });
@@ -288,6 +301,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         .typ::<crate::credentials::AskpassRequestPayload>()
         .typ::<crate::commands::console::ConsoleEventPayload>()
         .typ::<legit_core::GitInvocation>()
+        .typ::<crate::sync::engine::SyncStatusPayload>()
         .commands(collect_commands![
         logging::frontend_log,
         logging::open_log_dir,
@@ -325,6 +339,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::askpass_respond,
         commands::askpass_cancel,
         commands::git_status_check,
+        commands::probe_settings_sync_path,
+        commands::set_settings_sync_path,
+        commands::settings_sync_now,
+        commands::settings_sync_status,
         commands::set_git_path,
         commands::set_repo_git_path,
         commands::get_global_settings,
@@ -353,6 +371,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::global_write_line_endings,
         commands::repo_renormalize_preview,
         commands::repo_renormalize,
+        commands::repo_hooks_report,
+        commands::repo_open_hook_in_editor,
+        commands::repo_open_hooks_folder,
+        commands::repo_remove_hook,
         commands::repo_lfs_status,
         commands::repo_lfs_files,
         commands::repo_lfs_patterns,
@@ -373,6 +395,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::preview_apply_profile,
         commands::apply_profile_to_repo,
         commands::clear_repo_profile,
+        commands::suggested_profile_for_repo,
         commands::create_profile_from_repo,
         commands::repo_resolved_identity,
         commands::global_identity_view,
@@ -382,13 +405,29 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::list_available_credential_helpers,
         commands::ssh_key_status,
         commands::default_ssh_keys_status,
+        commands::scan_ssh_keys,
+        commands::wsl_scan_ssh_keys,
+        commands::wsl_generate_ssh_key,
+        commands::wsl_test_ssh_auth,
+        commands::wsl_register_allowed_signer,
+        commands::wsl_install_ssh_key,
+        commands::machine_label,
         commands::generate_ssh_key,
         commands::test_ssh_auth,
         commands::open_platform_key_settings,
         commands::list_connected_accounts,
         commands::connect_account_pat,
+        commands::list_device_flow_platforms,
+        commands::connect_account_oauth_start,
+        commands::connect_account_oauth_poll,
         commands::disconnect_account,
         commands::upload_ssh_key_to_platform,
+        commands::upload_ssh_signing_key_to_platform,
+        commands::platform_registered_keys,
+        commands::revoke_platform_key,
+        commands::revoke_platform_signing_key,
+        commands::register_allowed_signer,
+        commands::remove_account,
         commands::open_platform_token_settings,
         commands::repo_open_in_editor,
         commands::repo_open_file_in_editor,
@@ -509,6 +548,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::repo_fetch,
         commands::repo_pull,
         commands::repo_push,
+        commands::repo_pushable_commits,
         commands::repo_tracking_status,
         commands::repo_list_remotes,
         commands::repo_add_remote,
@@ -526,6 +566,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
     ])
 }
 
+// Called only from the debug-build startup path and the bindings test, so a
+// release build sees it as dead code.
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
 fn export_bindings(builder: &Builder<tauri::Wry>, path: &str) -> Result<(), String> {
     use specta_typescript::{BigIntExportBehavior, Typescript};
     builder

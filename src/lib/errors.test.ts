@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { gitErrorDetails, gitErrorKind } from "./errors";
+import { formatAppError, gitErrorDetails, gitErrorKind } from "./errors";
 import type { AppError } from "./types";
 
 const worktree: AppError = {
@@ -19,6 +19,13 @@ describe("gitErrorKind", () => {
     expect(gitErrorKind({ kind: "Io", details: "disk full" })).toBeNull();
     expect(gitErrorKind(new Error("x"))).toBeNull();
     expect(gitErrorKind(null)).toBeNull();
+  });
+});
+
+describe("formatAppError", () => {
+  it("explains an unborn-HEAD branch-create refusal in user terms", () => {
+    const e: AppError = { kind: "Git", details: { kind: "UnbornHead" } };
+    expect(formatAppError(e)).toMatch(/no commits yet/i);
   });
 });
 

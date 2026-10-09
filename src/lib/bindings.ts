@@ -393,6 +393,41 @@ async gitStatusCheck() : Promise<Result<GitStatus, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async probeSettingsSyncPath(path: string) : Promise<Result<SyncProbe, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("probe_settings_sync_path", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Designate (adopt or seed), or clear with `None`.
+ */
+async setSettingsSyncPath(path: string | null) : Promise<Result<SyncStatusPayload, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_settings_sync_path", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async settingsSyncNow() : Promise<Result<SyncStatusPayload, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("settings_sync_now") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async settingsSyncStatus() : Promise<Result<SyncStatusPayload, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("settings_sync_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async setGitPath(path: string | null) : Promise<Result<GitStatus, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_git_path", { path }) };
@@ -685,6 +720,59 @@ async repoRenormalize(repoId: string) : Promise<Result<RenormalizeOutcome, AppEr
 }
 },
 /**
+ * The repo's installed git hooks: resolved hooks directory (honoring
+ * `core.hooksPath`) and its listing.
+ */
+async repoHooksReport(repoId: string) : Promise<Result<HooksReport, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("repo_hooks_report", { repoId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Open an installed hook file in the configured external editor (OS default
+ * application when none is configured). The hooks directory is resolved via
+ * the backend (it honors `core.hooksPath` and relocated gitdirs, and may sit
+ * outside the worktree, which the repo-relative file command refuses); the
+ * name must be one the hooks report lists, so traversal cannot reach here.
+ */
+async repoOpenHookInEditor(repoId: string, name: string) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("repo_open_hook_in_editor", { repoId, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Open the repo's resolved hooks directory in the OS file manager (WSL repos
+ * through the `\\wsl.localhost\` share). Resolved via the backend so
+ * `core.hooksPath` and relocated gitdirs (worktrees, submodules) are honored.
+ */
+async repoOpenHooksFolder(repoId: string) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("repo_open_hooks_folder", { repoId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Delete an installed hook from the default hooks directory (refused for a
+ * `core.hooksPath`-redirected setup). Destructive - the confirmation gate
+ * lives in the UI.
+ */
+async repoRemoveHook(repoId: string, name: string) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("repo_remove_hook", { repoId, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * LFS usage/availability for the repo. A missing binary or unset config is
  * an answer (status fields), never an error - only a broken repo errors.
  */
@@ -902,7 +990,7 @@ async previewApplyProfile(repoId: string, profileId: string) : Promise<Result<Ke
  * Apply a profile: write all 8 managed keys to local config and record the
  * selection. Returns the refreshed status (should be `Active`).
  */
-async applyProfileToRepo(repoId: string, profileId: string) : Promise<Result<ProfileStatus, AppError>> {
+async applyProfileToRepo(repoId: string, profileId: string) : Promise<Result<ProfileApplyResult, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("apply_profile_to_repo", { repoId, profileId }) };
 } catch (e) {
@@ -917,6 +1005,20 @@ async applyProfileToRepo(repoId: string, profileId: string) : Promise<Result<Pro
 async clearRepoProfile(repoId: string) : Promise<Result<ProfileStatus, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("clear_repo_profile", { repoId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Read-only: the profile the synced assignment map records for this repo's
+ * remote - the "on your other machines this clone uses X" suggestion.
+ * `None` when the repo has no mappable remote, no entry exists, or the
+ * mapped profile does not (or no longer does) exist here.
+ */
+async suggestedProfileForRepo(repoId: string) : Promise<Result<string | null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("suggested_profile_for_repo", { repoId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1022,6 +1124,96 @@ async defaultSshKeysStatus() : Promise<Result<SshKeyStatus[], AppError>> {
 }
 },
 /**
+ * Every key pair found in `~/.ssh` (see `key_pair_names`), for the
+ * SSH keys settings section. A missing `~/.ssh` is an empty list, not an
+ * error.
+ */
+async scanSshKeys() : Promise<Result<SshKeyStatus[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("scan_ssh_keys") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Every key pair in the distro's `~/.ssh`; a missing directory is an empty
+ * list, not an error.
+ */
+async wslScanSshKeys(distro: string) : Promise<Result<SshKeyStatus[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("wsl_scan_ssh_keys", { distro }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Generate a key pair in the distro's `~/.ssh` via its own `ssh-keygen`.
+ * Same contract as the local command: no passphrase, never overwrites.
+ */
+async wslGenerateSshKey(distro: string, fileName: string, keyType: string, comment: string) : Promise<Result<SshKeyStatus, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("wsl_generate_ssh_key", { distro, fileName, keyType, comment }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `ssh -T git@<host>` run INSIDE the distro, so it probes with the distro's
+ * keys and known_hosts. Prompts relay through the agent's askpass shim.
+ */
+async wslTestSshAuth(distro: string, hostName: string, privateKeyPath: string | null) : Promise<Result<SshTestOutcome, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("wsl_test_ssh_auth", { distro, hostName, privateKeyPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ensure `<email> <type> <blob>` is in the DISTRO's `~/.ssh/allowed_signers`
+ * and return that file's distro path (for the distro's
+ * `gpg.ssh.allowedSignersFile`).
+ */
+async wslRegisterAllowedSigner(distro: string, email: string, publicKey: string) : Promise<Result<string, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("wsl_register_allowed_signer", { distro, email, publicKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Copy an app-machine key pair into the distro's `~/.ssh` (the "Copy key
+ * into the distribution" offer after a profile apply resolved to a missing
+ * key). A deliberate, confirmed transfer to a machine the user owns.
+ * Refuses to overwrite an existing key in the distro unless `overwrite` -
+ * the confirmed "Replace key" choice when a DIFFERENT key sits under the
+ * profile's file name there.
+ */
+async wslInstallSshKey(distro: string, sourcePrivateKeyPath: string, overwrite: boolean) : Promise<Result<SshKeyStatus, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("wsl_install_ssh_key", { distro, sourcePrivateKeyPath, overwrite }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A short label for THIS computer, used in platform key titles so uploads
+ * of same-named keys from different machines stay tellable apart.
+ */
+async machineLabel() : Promise<Result<string, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("machine_label") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Generate a key pair in `~/.ssh` via `ssh-keygen`, without a passphrase
  * (see module doc). Refuses to overwrite an existing key.
  */
@@ -1074,8 +1266,7 @@ async listConnectedAccounts() : Promise<Result<ConnectedAccountStatus[], AppErro
 }
 },
 /**
- * Validate a PAT against the platform, store it in the OS keychain under
- * the broker's key, and record the account metadata.
+ * Connect with a user-created PAT.
  */
 async connectAccountPat(platform: string, token: string) : Promise<Result<ConnectedAccountMeta, AppError>> {
     try {
@@ -1086,7 +1277,46 @@ async connectAccountPat(platform: string, token: string) : Promise<Result<Connec
 }
 },
 /**
- * Remove the account: delete the keychain entry and the metadata.
+ * Platforms with a registered OAuth app, i.e. where the device-flow connect
+ * is offered (drives which platforms get a "Connect" button vs PAT-only).
+ */
+async listDeviceFlowPlatforms() : Promise<Result<string[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_device_flow_platforms") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Start the OAuth device flow and open the verification page in the
+ * browser; the frontend shows the user code and polls to completion.
+ */
+async connectAccountOauthStart(platform: string) : Promise<Result<DeviceFlowStart, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("connect_account_oauth_start", { platform }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * One device-flow token poll; on success the token is stored exactly like a
+ * connected PAT.
+ */
+async connectAccountOauthPoll(platform: string, deviceCode: string) : Promise<Result<DeviceFlowPollResult, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("connect_account_oauth_poll", { platform, deviceCode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Disconnect the account: delete the keychain token but KEEP the account
+ * metadata and the cached key list, so the matrix can keep showing the
+ * last-verified state ("as of last check") until the user reconnects or
+ * removes the entry.
  */
 async disconnectAccount(platform: string) : Promise<Result<null, AppError>> {
     try {
@@ -1100,9 +1330,87 @@ async disconnectAccount(platform: string) : Promise<Result<null, AppError>> {
  * Add an SSH public key to the connected account (GitHub/GitLab; ADO has no
  * SSH-key API and reports that as an error message).
  */
-async uploadSshKeyToPlatform(platform: string, title: string, publicKey: string) : Promise<Result<null, AppError>> {
+async uploadSshKeyToPlatform(platform: string, title: string, publicKey: string) : Promise<Result<SshKeyUploadResult, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("upload_ssh_key_to_platform", { platform, title, publicKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Register an SSH public key as a SIGNING key on the connected account
+ * (what makes commits signed with it show as Verified on the forge).
+ */
+async uploadSshSigningKeyToPlatform(platform: string, title: string, publicKey: string) : Promise<Result<SshKeyUploadResult, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("upload_ssh_signing_key_to_platform", { platform, title, publicKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The SSH public keys registered on the connected account - drives the
+ * per-identity "connected" state in the Connected accounts section
+ * (GitHub/GitLab; ADO has no SSH-key API). A live fetch updates the cache;
+ * when the account has no token (disconnected) or the fetch fails, the
+ * cached last-verified state answers instead.
+ */
+async platformRegisteredKeys(platform: string) : Promise<Result<PlatformKeysView, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("platform_registered_keys", { platform }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Remove a registered authentication key from the connected account, then
+ * return the refreshed (live) key lists.
+ */
+async revokePlatformKey(platform: string, keyId: string) : Promise<Result<PlatformKeysView, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("revoke_platform_key", { platform, keyId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Remove a registered SIGNING key from the connected account, then return
+ * the refreshed (live) key lists.
+ */
+async revokePlatformSigningKey(platform: string, keyId: string) : Promise<Result<PlatformKeysView, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("revoke_platform_signing_key", { platform, keyId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ensure `<email> <type> <blob>` is in `~/.ssh/allowed_signers` (created
+ * when missing) and return the file's path: the file
+ * `gpg.ssh.allowedSignersFile` points at, which local verification of SSH
+ * signatures needs.
+ */
+async registerAllowedSigner(email: string, publicKey: string) : Promise<Result<string, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("register_allowed_signer", { email, publicKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Forget the account entirely: token, metadata, and the cached key list.
+ * Registered keys on the PLATFORM are never touched - revoking is a
+ * separate per-key action.
+ */
+async removeAccount(platform: string) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_account", { platform }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2167,11 +2475,12 @@ async repoConflictReopen(repoId: string, path: string) : Promise<Result<null, Ap
 },
 /**
  * Commit the staged changes with the given message; returns the new commit id.
- * When `amend` is set, rewrites HEAD instead of creating a new commit.
+ * When `amend` is set, rewrites HEAD instead of creating a new commit; when
+ * `no_verify` is set, the pre-commit and commit-msg hooks are skipped.
  */
-async repoCommit(repoId: string, message: string, amend: boolean) : Promise<Result<CommitId, AppError>> {
+async repoCommit(repoId: string, message: string, amend: boolean, noVerify: boolean) : Promise<Result<CommitId, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("repo_commit", { repoId, message, amend }) };
+    return { status: "ok", data: await TAURI_INVOKE("repo_commit", { repoId, message, amend, noVerify }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2328,6 +2637,19 @@ async repoPull(repoId: string, opts: PullOptions, opId: string) : Promise<Result
 async repoPush(repoId: string, opts: PushOptions, opId: string) : Promise<Result<null, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("repo_push", { repoId, opts, opId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Commits eligible for a partial push (`PushOptions::to_commit`): the
+ * first-parent chain `@{upstream}..HEAD`, newest first. Empty when HEAD is
+ * detached or has no upstream.
+ */
+async repoPushableCommits(repoId: string) : Promise<Result<CommitId[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("repo_pushable_commits", { repoId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2616,6 +2938,12 @@ merged_into: string[];
  */
 equivalent_in: string | null }
 /**
+ * One registered key: the platform's key id (stringified - it is opaque to
+ * the frontend and must not lose precision as a JS number) plus the raw
+ * `<type> <blob> [comment]` string.
+ */
+export type CachedPlatformKey = { id: string; key: string }
+/**
  * A tracked path whose on-disk spelling differs from the index only by
  * letter case. On a case-insensitive filesystem (`core.ignorecase=true`)
  * `git status` cannot see such a rename - the index path still resolves to
@@ -2858,6 +3186,18 @@ export type CredentialRequestPayload = { request_id: string; protocol: string; h
  * - not used for any decision.
  */
 repo_dir: string | null }
+/**
+ * One device-flow poll, as data: only `kind: "connected"` ends the flow
+ * successfully; `pending`/`slow_down` mean keep polling (slow_down = add 5s
+ * to the interval); `denied`/`expired` are terminal.
+ */
+export type DeviceFlowPollResult = { kind: "pending" } | { kind: "slow_down" } | { kind: "denied" } | { kind: "expired" } | { kind: "connected"; account: ConnectedAccountMeta }
+/**
+ * Device-flow start data for the connect UI. `device_code` is the opaque
+ * polling handle (held only by the frontend for the flow's lifetime);
+ * `user_code` is what the user enters on the verification page.
+ */
+export type DeviceFlowStart = { device_code: string; user_code: string; verification_uri: string; interval_secs: number; expires_in_secs: number }
 export type DiffEntry = { Text: TextDiff } | { Binary: BinaryDiff } | { Submodule: SubmoduleChange } | 
 /**
  * The raw diff text exceeded the display cap. Rendering it would move
@@ -2894,6 +3234,34 @@ export type DiffSource =
  * `CommitId` for IPC uniformity.
  */
 { kind: "commit_range"; from: CommitId; to: CommitId }
+/**
+ * Apply a profile to an open session: write its managed keys to local config and
+ * record it as the repo's selected profile (`git_profile_id`). Shared by
+ * `apply_profile_to_repo` and the clone/init flows so a freshly created repo
+ * shows the chosen profile as active in Repo Settings.
+ * What applying a profile did about its auth key on a REMOTE host: the key
+ * is resolved BY FILE NAME into the host's own `~/.ssh` (an app-machine
+ * path in `core.sshCommand` would hand the distro's ssh a key it cannot
+ * read - and a `/mnt/c` translation is a trap: 0777 permissions, which ssh
+ * refuses). `exists` = the resolved file is already in the distro; when it
+ * is not, the UI offers copying it over.
+ */
+export type DistroKeyResolution = { distro: string; 
+/**
+ * The profile's app-machine private-key path (the copy source).
+ */
+source_path: string; 
+/**
+ * The resolved distro path `core.sshCommand` now points at.
+ */
+target_path: string; exists: boolean; 
+/**
+ * The target exists but holds a DIFFERENT key than the profile's
+ * (public material compared) - pushes would authenticate as whatever
+ * that key is, so the UI offers replacing it. False when either public
+ * half is unreadable (no comparison possible, no false alarm).
+ */
+mismatch: boolean }
 /**
  * What the optional local fast-forward step of `checkout_remote_branch` did.
  * The step is `git merge --ff-only <remote-ref>` against the already-fetched
@@ -3042,6 +3410,12 @@ export type GitError = { kind: "RefNotFound"; details: string } | { kind: "AuthF
  */
 { kind: "BranchNotFullyMerged"; details: { branch: string; stderr: string } } | 
 /**
+ * Branch creation refused because HEAD resolves to no commit (fresh
+ * `git init` or an orphan branch): there is nothing for the new branch
+ * to point at until the first commit exists.
+ */
+{ kind: "UnbornHead" } | 
+/**
  * A branch operation was refused because the branch is checked out in
  * another worktree (git allows a branch in only one worktree at a
  * time). `branch`/`path` are best-effort extractions from git's
@@ -3055,7 +3429,13 @@ export type GitError = { kind: "RefNotFound"; details: string } | { kind: "AuthF
  * the commit must `git lfs push`); otherwise the download itself failed
  * (network/auth).
  */
-{ kind: "LfsDownloadFailed"; details: { files: string[]; missing_on_remote: boolean; stderr: string } } | { kind: "CommandFailed"; details: { exit_code: number; stderr: string } } | 
+{ kind: "LfsDownloadFailed"; details: { files: string[]; missing_on_remote: boolean; stderr: string } } | 
+/**
+ * A local hook rejected the commit. `hooks` names the installed hooks
+ * that `--no-verify` would skip (pre-commit / commit-msg), so the UI can
+ * offer a bypass retry; `stderr` carries the hook's own output.
+ */
+{ kind: "CommitHookDeclined"; details: { hooks: string[]; exit_code: number; stderr: string } } | { kind: "CommandFailed"; details: { exit_code: number; stderr: string } } | 
 /**
  * A clone the user cancelled: an expected outcome the UI stays silent
  * about - unless removing the partial clone's files failed, in which
@@ -3430,7 +3810,35 @@ gitProfiles?: GitProfilesDoc;
  * METADATA ONLY: the token lives in the OS keychain under the broker's
  * `https://<host>` key; settings files hold no secrets.
  */
-connected_accounts?: ConnectedAccountMeta[] }
+connected_accounts?: ConnectedAccountMeta[]; 
+/**
+ * Last-known SSH keys registered on each platform account (PUBLIC keys
+ * only), keyed by platform id: lets the Connected accounts matrix keep
+ * showing the last-verified state while the account is disconnected.
+ * Machine state, never synced.
+ */
+platform_key_cache?: Partial<{ [key in string]: PlatformKeyCache }>; 
+/**
+ * Local checkout of the settings-sync git repository (`sync` module);
+ * `None` = sync off.
+ */
+settings_sync_path?: string | null; 
+/**
+ * Whether this machine exports and imports git profiles through the
+ * settings sync. Per-machine participation choice, so it never syncs
+ * itself; key paths cross machines in `~/.ssh/<file>` form while the
+ * keys themselves stay local (`sync/model.rs`).
+ */
+sync_git_profiles?: boolean; 
+/**
+ * Which profile each repository uses, keyed by the remote's canonical
+ * web URL (machine-neutral, unlike local paths - see
+ * `browser::canonical_remote_key`). Recorded on apply, removed on
+ * clear; syncs with `sync_git_profiles` so other machines can suggest
+ * the profile for the same clone. BTreeMap: the sync doc must
+ * serialize deterministically or every export would commit.
+ */
+profile_assignments?: Partial<{ [key in string]: string }> }
 /**
  * What a history window shows, handed to its frontend on boot (keyed by
  * window label; the label itself carries no decodable payload).
@@ -3441,6 +3849,28 @@ export type HistoryWindowContext = { repo_id: string; path: string; rev: string 
  * copy-absolute-path entries resolve against it.
  */
 repo_path: string }
+/**
+ * One file in the hooks directory (`.sample` templates excluded).
+ */
+export type HookEntry = { name: string; 
+/**
+ * False for a file git never runs as a hook (helper scripts, tool
+ * internals).
+ */
+known: boolean }
+/**
+ * The repository's installed git hooks, for the repo-settings hooks view.
+ */
+export type HooksReport = { 
+/**
+ * The resolved hooks directory, absolute as the repo's host prints it.
+ */
+dir: string; 
+/**
+ * The raw `core.hooksPath` value when it redirects the directory
+ * (husky & co.), `None` for the default `<gitdir>/hooks`.
+ */
+hooks_path: string | null; hooks: HookEntry[] }
 /**
  * The host part of a locator, as it crosses IPC in `RepoSummary`
  * (`None`/absent = local). Hand-mirrored in `src/lib/types.ts`.
@@ -3611,6 +4041,41 @@ export type MergeOutcome = { kind: "fast_forwarded" } | { kind: "merged" } |
  */
 { kind: "squashed" } | { kind: "already_up_to_date" } | { kind: "conflicts"; message: string }
 /**
+ * Snapshot of one platform account's registered SSH keys (public keys only;
+ * see `GlobalSettings::platform_key_cache`).
+ */
+export type PlatformKeyCache = { keys: CachedPlatformKey[]; 
+/**
+ * Registered SIGNING keys; `None` = the list could not be read (a token
+ * without the signing scope), so signing status is unknown.
+ */
+signing_keys?: CachedPlatformKey[] | null; 
+/**
+ * RFC 3339 timestamp of the successful fetch.
+ */
+checked_at: string }
+/**
+ * The account's registered SSH keys for the Connected accounts matrix.
+ * `live` = fetched from the platform just now; otherwise the keys are the
+ * cached last-verified state (`checked_at` says when), served while the
+ * account is disconnected or the platform is unreachable.
+ */
+export type PlatformKeysView = { keys: CachedPlatformKey[]; 
+/**
+ * Registered SIGNING keys; `None` = unknown (the token lacks the
+ * signing scope: reconnecting grants it).
+ */
+signing_keys: CachedPlatformKey[] | null; live: boolean; 
+/**
+ * RFC 3339; only meaningful when `live` is false.
+ */
+checked_at: string | null }
+/**
+ * `apply_profile_to_repo`'s result: the refreshed status plus, for a repo on
+ * a remote host, how the profile's auth key resolved there.
+ */
+export type ProfileApplyResult = { status: ProfileStatus; distro_key: DistroKeyResolution | null }
+/**
  * How the repo's live local config relates to the defined profiles.
  */
 export type ProfileMatch = 
@@ -3679,7 +4144,14 @@ force_with_lease: boolean;
  * Submodule guard (`--recurse-submodules=check|on-demand`); `None` = no
  * flag (git default / user config).
  */
-recurse_submodules?: PushRecurseMode | null }
+recurse_submodules?: PushRecurseMode | null; 
+/**
+ * Push only up to this commit (`<sha>:refs/heads/<branch>`): the remote
+ * branch moves there, the local branch stays put. Must be a first-parent
+ * ancestor of the local tip ahead of the remote tip (see
+ * `pushable_commits`), or git rejects the push as non-fast-forward.
+ */
+to_commit?: CommitId | null }
 /**
  * `git push --recurse-submodules` mode - the pre-push guard against
  * publishing a superproject that references unpushed submodule commits.
@@ -4070,7 +4542,16 @@ signing_key: ScopedConfig;
  * `gpg.ssh.allowedSignersFile` — required for SSH signatures to verify
  * as trusted rather than merely valid.
  */
-allowed_signers: ScopedConfig }
+allowed_signers: ScopedConfig; 
+/**
+ * Scope whose effective `gpg.ssh.program` entry is EMPTY. An empty value
+ * overrides git's bundled ssh-keygen fallback with "", so every signed
+ * commit fails with "cannot spawn : No such file or directory". `None`
+ * when the key is absent or names a real program. An empty global entry
+ * is removed by the next `write_signing_global`; a system one can only
+ * be fixed outside LeGit.
+ */
+ssh_program_broken: ConfigScope | null }
 /**
  * One key pair on disk (private key + `<path>.pub`).
  */
@@ -4083,6 +4564,11 @@ private_key_path: string; exists: boolean;
  * Content of `<path>.pub`, when readable.
  */
 public_key: string | null }
+/**
+ * What an SSH-key upload achieved: a key that is already on the connected
+ * account is the goal state, so it crosses as data, not as an error.
+ */
+export type SshKeyUploadResult = { kind: "added" } | { kind: "already_present" }
 /**
  * Result of an `ssh -T git@<host>` authentication probe.
  */
@@ -4345,6 +4831,9 @@ export type SwitchOutcome = { kind: "clean" } |
  * behind (see `LfsStubs`).
  */
 export type SwitchResult = { outcome: SwitchOutcome; lfs_stubs: LfsStubs | null }
+export type SyncProbe = { valid: boolean; reason: string | null; hasSyncDoc: boolean }
+export type SyncStatusKind = "disabled" | "inSync" | "ahead" | "offline" | "conflict" | "error"
+export type SyncStatusPayload = { kind: SyncStatusKind; message: string | null; lastSync: string | null }
 /**
  * A local tag from `git for-each-ref refs/tags`.
  */

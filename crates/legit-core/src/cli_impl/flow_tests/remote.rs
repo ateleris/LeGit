@@ -184,6 +184,59 @@ async fn delete_remote_tag_pushes_a_delete_refspec() {
 }
 
 #[tokio::test]
+async fn push_to_commit_sends_the_sha_refspec() {
+    let fake = FakeExecutor::default();
+    fake.expect(&["push", "--progress", "origin", "abc123:refs/heads/main"], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.push(
+        PushOptions {
+            remote: "origin".into(),
+            branch: "main".into(),
+            set_upstream: false,
+            force_with_lease: false,
+            recurse_submodules: None,
+            to_commit: Some(CommitId::new("abc123")),
+        },
+        OperationId("op".into()),
+    )
+    .await
+    .unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn pushable_commits_lists_the_first_parent_chain_ahead_of_upstream() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+        ok("origin/main\n"),
+    );
+    fake.expect(&["rev-list", "--first-parent", "@{upstream}..HEAD"], ok("c3\nc2\nc1\n"));
+    let (b, exec) = backend(fake);
+
+    let ids = b.pushable_commits().await.unwrap();
+    assert_eq!(ids, vec![CommitId::new("c3"), CommitId::new("c2"), CommitId::new("c1")]);
+    exec.assert_done();
+}
+
+// No upstream (or detached HEAD): nothing is pushable and the rev-list must
+// NOT run - `@{upstream}` would make it fail with a confusing error.
+#[tokio::test]
+async fn pushable_commits_without_upstream_is_empty_and_skips_rev_list() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+        fail(128, "fatal: no upstream configured for branch 'main'"),
+    );
+    let (b, exec) = backend(fake);
+
+    let ids = b.pushable_commits().await.unwrap();
+    assert!(ids.is_empty());
+    exec.assert_done();
+}
+
+#[tokio::test]
 async fn remote_management_argv_contracts() {
     let fake = FakeExecutor::default();
     fake.expect(&["remote", "add", "upstream", "https://x.invalid/r.git"], ok(""));

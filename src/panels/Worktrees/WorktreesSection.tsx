@@ -11,6 +11,7 @@ import { confirmDestructiveAction, confirmDialog, promptDialog } from "../../sto
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { ToolbarButton } from "../shared/ToolbarButton";
+import { classifyWorktreeRemoveRefusal } from "./worktreeRemoveRefusal";
 import { worktreeBadges, worktreeLabel } from "./worktreeRows";
 import { useBranches, useWorktrees } from "../../lib/queries/useRepoQueries";
 
@@ -89,17 +90,29 @@ export function WorktreesSection() {
       try {
         await api.repoWorktreeRemove(repo.id, w.path, false);
       } catch (e) {
-        // Dirty worktree: git refuses without --force. Always confirm the
-        // force (data loss), independent of the confirm setting - this is a
-        // data-loss warning, not a routine destructive confirm.
-        const msg = formatAppError(e);
-        if (!msg.includes("--force")) throw e;
-        const ok = await confirmDialog({
-          title: "Worktree has local changes",
-          message: "Force-removing deletes its uncommitted changes permanently.",
-          detail: w.path,
-          confirmLabel: "Force remove",
-        });
+        // Dirty worktree or one with an initialized submodule: git refuses
+        // without --force. Always confirm the force (data loss), independent
+        // of the confirm setting - this is a data-loss warning, not a
+        // routine destructive confirm. Locked worktrees stay a plain error
+        // (a single --force would not remove them; unlocking is the path).
+        const refusal = classifyWorktreeRemoveRefusal(formatAppError(e));
+        if (!refusal) throw e;
+        const ok = await confirmDialog(
+          refusal === "submodules"
+            ? {
+                title: "Worktree contains a submodule",
+                message:
+                  "Git refuses to remove it as-is. Force-removing deletes the submodule checkout, including any uncommitted changes inside the submodule.",
+                detail: w.path,
+                confirmLabel: "Force remove",
+              }
+            : {
+                title: "Worktree has local changes",
+                message: "Force-removing deletes its uncommitted changes permanently.",
+                detail: w.path,
+                confirmLabel: "Force remove",
+              },
+        );
         if (!ok) return;
         await api.repoWorktreeRemove(repo.id, w.path, true);
       }

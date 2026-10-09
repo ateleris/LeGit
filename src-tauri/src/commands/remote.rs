@@ -63,6 +63,23 @@ pub async fn repo_push(
         .map_err(AppError::Git)
 }
 
+/// Commits eligible for a partial push (`PushOptions::to_commit`): the
+/// first-parent chain `@{upstream}..HEAD`, newest first. Empty when HEAD is
+/// detached or has no upstream.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_pushable_commits(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<Vec<legit_core::CommitId>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .backend
+        .pushable_commits()
+        .await
+        .map_err(AppError::Git)
+}
+
 /// Ahead/behind status of the current branch vs its upstream. `None` when HEAD
 /// is detached or the current branch has no upstream configured.
 #[tauri::command]

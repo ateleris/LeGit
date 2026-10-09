@@ -8,6 +8,7 @@ import { useCloneStore } from "../store/clone";
 import { useRepoStore } from "../store/repos";
 import { notify } from "../store/notifications";
 import { SectionLabel } from "./shared/menu/primitives";
+import { AnchoredDropdown } from "./shared/AnchoredDropdown";
 import { AddRepoIcon } from "../icons";
 import { CloneForm, InitForm } from "./Repositories/forms";
 import { HostBadge } from "./shared/HostBadge";
@@ -77,7 +78,7 @@ export function RepoAddMenu() {
   };
 
   return (
-    <div ref={ref} style={{ position: "relative" }}>
+    <div ref={ref}>
       <button
         className="legit-tabs__icon"
         onClick={() => (open ? close() : setOpen(true))}
@@ -89,21 +90,10 @@ export function RepoAddMenu() {
         <AddRepoIcon />
       </button>
       {open && (
-        <div
+        <AnchoredDropdown
           role="menu"
           style={{
-            position: "absolute",
-            top: "calc(100% + 4px)",
-            right: 0,
             width: mode === "menu" ? 320 : 380,
-            maxHeight: 480,
-            overflowY: "auto",
-            background: "var(--panel-bg)",
-            color: "var(--panel-fg)",
-            border: "1px solid var(--panel-border)",
-            borderRadius: 4,
-            boxShadow: "0 4px 10px var(--shadow-color)",
-            zIndex: 1000,
             padding: mode === "menu" ? 4 : 8,
           }}
         >
@@ -165,7 +155,7 @@ export function RepoAddMenu() {
               }}
             />
           )}
-        </div>
+        </AnchoredDropdown>
       )}
     </div>
   );

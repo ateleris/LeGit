@@ -13,6 +13,8 @@ type DetailsByKind = {
 export type GitErrorDetails<K extends GitErrorKindWithDetails> = DetailsByKind[K];
 
 const GIT_ERROR_LABELS: Partial<Record<GitErrorKind, string>> = {
+  UnbornHead:
+    "The current branch has no commits yet. Create the first commit, then branches can be created.",
   RewordNotHead: "Only the latest commit (HEAD) can be reworded.",
   RewordPushed:
     "This commit has already been pushed; rewording would rewrite published history.",

@@ -58,6 +58,33 @@ async fn handshake_rejects_version_mismatch() {
 }
 
 #[tokio::test]
+async fn a_git_child_without_stdin_data_never_inherits_the_protocol_pipe() {
+    let (conn, _guard) = common::connect_agent().await;
+    let dir = tempfile::tempdir().unwrap();
+    let exec = git_exec(&conn, dir.path()).await;
+    temp_repo(&exec).await;
+
+    // `hash-object --stdin` reads stdin to EOF. The agent's own stdin is the
+    // protocol pipe, which stays open for the connection's lifetime - a child
+    // inheriting it blocks forever and eats frames meant for the agent. A
+    // request without stdin data must hand the child a closed stdin instead.
+    let out = tokio::time::timeout(
+        Duration::from_secs(10),
+        exec.run(&["hash-object", "--stdin"]),
+    )
+    .await
+    .expect("git child wedged on inherited agent stdin")
+    .unwrap();
+    assert!(out.success, "{}", out.stderr);
+
+    // The connection must remain fully usable.
+    tokio::time::timeout(Duration::from_secs(5), conn.call::<()>(Method::Ping))
+        .await
+        .expect("ping wedged")
+        .expect("ping failed");
+}
+
+#[tokio::test]
 async fn concurrent_requests_interleave_over_one_connection() {
     let (conn, _guard) = common::connect_agent().await;
     let dir = tempfile::tempdir().unwrap();
@@ -301,6 +328,51 @@ async fn watch_events_cross_the_wire() {
         .expect("watch batch arrives over the wire");
     assert!(batch.domains.contains(&legit_watch::ChangeDomain::Status));
     drop(handle);
+}
+
+#[tokio::test]
+async fn host_run_captures_output_exit_code_and_timeout() {
+    let (conn, _guard) = common::connect_agent().await;
+    let host = legit_host::RemoteHost::new(
+        legit_host::HostId::Wsl { distro: "loopback".into() },
+        conn,
+    );
+
+    // Output and env both cross the wire (env is what the distro ssh spawns
+    // will need for HOME-relative config).
+    let out = legit_host::Host::run_captured(
+        &host,
+        "/bin/sh",
+        &["-c".into(), "echo -n \"out $LEGIT_TEST_VAR\"; echo -n err >&2".into()],
+        None,
+        &[("LEGIT_TEST_VAR".into(), "v".into())],
+        10,
+    )
+    .await
+    .expect("host run succeeds");
+    assert!(out.success);
+    assert_eq!(out.stdout, "out v");
+    assert_eq!(out.stderr, "err");
+    assert!(!out.timed_out);
+
+    // A failing command is a RESULT (exit code + stderr), not a wire error.
+    let fail = legit_host::Host::run_captured(&host, "/bin/sh", &["-c".into(), "exit 3".into()], None, &[], 10)
+        .await
+        .expect("failing run still answers");
+    assert!(!fail.success);
+    assert_eq!(fail.exit_code, Some(3));
+
+    // A hung command is killed at the timeout and reported as such.
+    let hung = legit_host::Host::run_captured(&host, "/bin/sh", &["-c".into(), "sleep 30".into()], None, &[], 1)
+        .await
+        .expect("timeout is a result");
+    assert!(hung.timed_out);
+    assert!(!hung.success);
+
+    // A nonexistent program IS a spawn error.
+    assert!(legit_host::Host::run_captured(&host, "/no/such/program", &[], None, &[], 5)
+        .await
+        .is_err());
 }
 
 #[cfg(unix)]

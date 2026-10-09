@@ -81,6 +81,23 @@ pub(super) fn classify_branch_delete_error(exit_code: i32, stderr: &str, branch:
     command_failed(exit_code, stderr)
 }
 
+/// Map a failed `git branch <name> [<start>]` to a specific `GitError`.
+/// Without a start point the branch is created at HEAD, so a "not a valid
+/// object name" refusal means HEAD itself resolves to no commit (unborn:
+/// fresh init or orphan branch) -> `UnbornHead`. With a start point the same
+/// wording names that ref instead, so it stays `CommandFailed`. Validated
+/// against the real binary in the git-flows suite.
+pub(super) fn classify_branch_create_error(
+    exit_code: i32,
+    stderr: &str,
+    has_start_point: bool,
+) -> GitError {
+    if !has_start_point && stderr.to_lowercase().contains("not a valid object name") {
+        return GitError::UnbornHead;
+    }
+    command_failed(exit_code, stderr)
+}
+
 /// Compose a user-facing message from a command's streams (stdout carries
 /// git's conflict summary, stderr the hints).
 pub(super) fn compose_output(stdout: &str, stderr: &str) -> String {
@@ -283,6 +300,9 @@ pub(super) fn append_error_note(e: GitError, note: &str) -> GitError {
         GitError::LfsDownloadFailed { files, missing_on_remote, stderr } => {
             GitError::LfsDownloadFailed { files, missing_on_remote, stderr: add(stderr) }
         }
+        GitError::CommitHookDeclined { hooks, exit_code, stderr } => {
+            GitError::CommitHookDeclined { hooks, exit_code, stderr: add(stderr) }
+        }
         GitError::CommandFailed { exit_code, stderr } => {
             GitError::CommandFailed { exit_code, stderr: add(stderr) }
         }
@@ -296,7 +316,9 @@ pub(super) fn append_error_note(e: GitError, note: &str) -> GitError {
         GitError::Parse(m) => GitError::Parse(add(m)),
         GitError::GitUnavailable(m) => GitError::GitUnavailable(add(m)),
         GitError::Internal(m) => GitError::Internal(add(m)),
-        GitError::RewordNotHead | GitError::RewordPushed => GitError::Internal(add(e.to_string())),
+        GitError::RewordNotHead | GitError::RewordPushed | GitError::UnbornHead => {
+            GitError::Internal(add(e.to_string()))
+        }
     }
 }
 
@@ -432,10 +454,59 @@ pub fn classify_remote_error(exit_code: i32, stderr: &str) -> GitError {
     command_failed(exit_code, stderr)
 }
 
+/// Map a failed `git commit` to a specific `GitError`. A rejecting hook is
+/// invisible in git's own output (the hook's text is relayed verbatim, with
+/// no marker naming it), so the call site passes which bypassable hooks are
+/// installed and the decision is by elimination: a failure git itself
+/// explains (`fatal:`, gpg signing, nothing staged) is a `CommandFailed`;
+/// anything else with a pre-commit / commit-msg hook installed is that hook
+/// declining → `CommitHookDeclined`.
+pub(super) fn classify_commit_failure(
+    exit_code: i32,
+    stdout: &str,
+    stderr: &str,
+    installed_hooks: &[String],
+) -> GitError {
+    let err_lc = stderr.to_lowercase();
+    let out_lc = stdout.to_lowercase();
+    let explained_by_git = err_lc.contains("fatal:")
+        || err_lc.contains("gpg failed to sign")
+        || out_lc.contains("nothing to commit")
+        || out_lc.contains("no changes added to commit");
+    if installed_hooks.is_empty() || explained_by_git {
+        return GitError::CommandFailed { exit_code, stderr: compose_output(stdout, stderr) };
+    }
+    GitError::CommitHookDeclined {
+        hooks: installed_hooks.to_vec(),
+        exit_code,
+        stderr: compose_output(stdout, stderr),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use super::super::*;
+
+    // --- branch create classification ----------------------------------------
+
+    #[test]
+    fn branch_create_without_start_point_on_unborn_head_is_unborn_head() {
+        let e = classify_branch_create_error(128, "fatal: not a valid object name: 'main'", false);
+        assert!(matches!(e, GitError::UnbornHead), "{e:?}");
+    }
+
+    #[test]
+    fn branch_create_with_start_point_keeps_the_bad_ref_failure() {
+        let e = classify_branch_create_error(128, "fatal: not a valid object name: 'bogus'", true);
+        assert!(matches!(e, GitError::CommandFailed { .. }), "{e:?}");
+    }
+
+    #[test]
+    fn branch_create_other_failure_stays_command_failed() {
+        let e = classify_branch_create_error(128, "fatal: a branch named 'x' already exists", false);
+        assert!(matches!(e, GitError::CommandFailed { .. }), "{e:?}");
+    }
 
     // --- sequencer (cherry-pick / revert) output classification --------------
     // The exit-1 ambiguity: a paused sequencer (conflicts) is an OUTCOME, a
@@ -1071,5 +1142,71 @@ fatal: feat.bin: smudge filter lfs failed\n";
         assert!(take_side_means_delete("error: path 'a.txt' does not have their version\n"));
         assert!(take_side_means_delete("error: path 'a.txt' does not have our version\n"));
         assert!(!take_side_means_delete("error: pathspec 'a.txt' did not match any files\n"));
+    }
+
+    // --- commit failure classification ---------------------------------------
+    // A rejecting hook leaves no marker in git's output, so the classifier
+    // works by elimination over the failures git itself explains.
+
+    fn hooks(names: &[&str]) -> Vec<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn commit_failure_with_installed_hook_is_hook_declined() {
+        let r = classify_commit_failure(1, "", "LINT FAILED: fix a.ts\n", &hooks(&["pre-commit"]));
+        match r {
+            GitError::CommitHookDeclined { hooks, exit_code, stderr } => {
+                assert_eq!(hooks, vec!["pre-commit"]);
+                assert_eq!(exit_code, 1);
+                assert!(stderr.contains("LINT FAILED"), "{stderr}");
+            }
+            other => panic!("expected CommitHookDeclined, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn commit_failure_without_hooks_is_command_failed() {
+        let r = classify_commit_failure(1, "", "some unexplained failure\n", &[]);
+        assert!(matches!(r, GitError::CommandFailed { exit_code: 1, .. }), "{r:?}");
+    }
+
+    #[test]
+    fn commit_failure_gpg_is_not_blamed_on_hooks() {
+        let r = classify_commit_failure(
+            128,
+            "",
+            "error: gpg failed to sign the data\nfatal: failed to write commit object\n",
+            &hooks(&["pre-commit"]),
+        );
+        assert!(matches!(r, GitError::CommandFailed { .. }), "{r:?}");
+    }
+
+    #[test]
+    fn commit_failure_fatal_is_not_blamed_on_hooks() {
+        let r = classify_commit_failure(
+            128,
+            "",
+            "fatal: unable to auto-detect email address\n",
+            &hooks(&["commit-msg"]),
+        );
+        assert!(matches!(r, GitError::CommandFailed { .. }), "{r:?}");
+    }
+
+    #[test]
+    fn commit_failure_nothing_to_commit_is_not_blamed_on_hooks() {
+        // The status text is on STDOUT and must survive into the message.
+        let r = classify_commit_failure(
+            1,
+            "On branch main\nnothing to commit, working tree clean\n",
+            "",
+            &hooks(&["pre-commit"]),
+        );
+        match r {
+            GitError::CommandFailed { stderr, .. } => {
+                assert!(stderr.contains("nothing to commit"), "{stderr}");
+            }
+            other => panic!("expected CommandFailed, got {other:?}"),
+        }
     }
 }

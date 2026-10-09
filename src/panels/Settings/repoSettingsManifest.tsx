@@ -11,6 +11,7 @@ import {
   AutoPushTagsRepoSection,
   CommitTreeRepoSection,
   ExternalEditorRepoSection,
+  GitHooksRepoSection,
   LfsWarningRepoSection,
   LineEndingChangesRepoSection,
   LineEndingsRepoSection,
@@ -138,6 +139,12 @@ export const REPO_SETTINGS_GROUPS: readonly RepoGroupDef[] = [
         render: ({ repo, repoSettings }) => (
           <LfsWarningRepoSection repoId={repo.id} repoSettings={repoSettings} />
         ),
+      },
+      {
+        id: "repo-hooks",
+        title: "Git hooks",
+        keywords: ["hooks", "pre-commit", "commit-msg", "husky", "hookspath", "lint", "remove", "delete"],
+        render: ({ repo }) => <GitHooksRepoSection repoId={repo.id} />,
       },
     ],
   },

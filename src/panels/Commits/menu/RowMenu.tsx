@@ -5,6 +5,7 @@ import { BranchIcon, RemoteIcon, TagIcon } from "../../../icons";
 import { openStashDiff } from "../../Stashes/StashesPanel";
 import { branchesAt } from "../cells/refChips";
 import { mainlineChoices } from "../mainline";
+import { pushUpToTarget } from "../pushUpTo";
 import { undoLastCommitPlan } from "../undoLastCommit";
 import type { BulkPlan } from "../multiSelect";
 import { useDestructiveMenuConfirm, usePanelContextMenu } from "../../shared/menu/PanelContextMenu";
@@ -180,6 +181,8 @@ export interface CommitRowMenuProps {
   currentBranchName: string | null;
   branches: Branch[];
   remoteNames: string[];
+  /** Partial-push eligibility (first-parent chain of `@{upstream}..HEAD`). */
+  pushableSet: ReadonlySet<CommitId>;
   pushedTags: ReadonlySet<string>;
   tagTargetsOnRemote: ReadonlySet<string>;
   tagRemote: string | null;
@@ -200,6 +203,7 @@ export interface CommitRowMenuProps {
   handleBranchCheckout: (name: string) => void;
   handleBranchRename: (name: string) => void;
   handleBranchPush: (name: string, remote: string, setUpstream: boolean) => void;
+  handlePushToCommit: (id: CommitId, remote: string, branch: string) => void;
   handleSetUpstream: (name: string, upstream: string | null) => void;
   handleBranchDelete: (name: string, force: boolean) => void;
   handleRemoteCheckout: (name: string) => void;
@@ -230,6 +234,7 @@ export function CommitRowMenu(props: CommitRowMenuProps) {
     currentBranchName,
     branches,
     remoteNames,
+    pushableSet,
     pushedTags,
     tagTargetsOnRemote,
     tagRemote,
@@ -250,6 +255,7 @@ export function CommitRowMenu(props: CommitRowMenuProps) {
     handleBranchCheckout,
     handleBranchRename,
     handleBranchPush,
+    handlePushToCommit,
     handleSetUpstream,
     handleBranchDelete,
     handleRemoteCheckout,
@@ -292,6 +298,15 @@ export function CommitRowMenu(props: CommitRowMenuProps) {
   // Merge commits need a mainline parent for cherry-pick / revert (-m N);
   // null = regular commit, run directly.
   const mainline = mainlineChoices(commit, (id) => commitMessageById.get(id) ?? null);
+  // Partial push: offered only for commits the backend guarantees to
+  // fast-forward the upstream (first-parent chain of `@{upstream}..HEAD`).
+  const pushUpTo = pushUpToTarget({
+    commitId: commit.id,
+    pushable: pushableSet,
+    branchName: currentBranchName,
+    upstream: branches.find((b) => !b.is_remote && b.is_current)?.upstream ?? null,
+    remotes: remoteNames,
+  });
   const undoPlan = undoLastCommitPlan({
     isHeadRow: commit.id === headSha,
     hasParent: (commit.parents?.length ?? 0) > 0,
@@ -326,6 +341,16 @@ export function CommitRowMenu(props: CommitRowMenuProps) {
       >
         Browse files at this commit
       </MenuItem>
+      {pushUpTo && (
+        <MenuItem
+          onClick={() => {
+            closeMenu();
+            handlePushToCommit(commit.id, pushUpTo.remote, pushUpTo.branch);
+          }}
+        >
+          Push up to this commit ({pushUpTo.remote})
+        </MenuItem>
+      )}
       {inAuthorCell && (
         <MenuItem
           onClick={() => {

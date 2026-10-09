@@ -37,6 +37,12 @@ pub enum GitError {
     #[error("branch not fully merged: {stderr}")]
     BranchNotFullyMerged { branch: String, stderr: String },
 
+    /// Branch creation refused because HEAD resolves to no commit (fresh
+    /// `git init` or an orphan branch): there is nothing for the new branch
+    /// to point at until the first commit exists.
+    #[error("cannot create a branch: the current branch has no commits yet")]
+    UnbornHead,
+
     /// A branch operation was refused because the branch is checked out in
     /// another worktree (git allows a branch in only one worktree at a
     /// time). `branch`/`path` are best-effort extractions from git's
@@ -57,6 +63,16 @@ pub enum GitError {
     LfsDownloadFailed {
         files: Vec<String>,
         missing_on_remote: bool,
+        stderr: String,
+    },
+
+    /// A local hook rejected the commit. `hooks` names the installed hooks
+    /// that `--no-verify` would skip (pre-commit / commit-msg), so the UI can
+    /// offer a bypass retry; `stderr` carries the hook's own output.
+    #[error("commit rejected by a hook: {stderr}")]
+    CommitHookDeclined {
+        hooks: Vec<String>,
+        exit_code: i32,
         stderr: String,
     },
 

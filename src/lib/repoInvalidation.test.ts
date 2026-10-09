@@ -142,6 +142,7 @@ describe("withDerivedDomains", () => {
       "submodules",
       "tracking",
       "unpushed",
+      "pushable",
       "tags",
     ]);
   });
@@ -161,8 +162,14 @@ describe("withDerivedDomains", () => {
   test("external ref moves refresh the ahead/behind counter", () => {
     // An external `git fetch` classifies as branches only; the tracking
     // query domain must be derived or the sync toolbar goes stale.
-    expect(withDerivedDomains(["branches"])).toEqual(["branches", "submodules", "tracking", "unpushed", "tags"]);
+    expect(withDerivedDomains(["branches"])).toEqual(["branches", "submodules", "tracking", "unpushed", "pushable", "tags"]);
     expect(withDerivedDomains(["status"])).not.toContain("tracking");
+  });
+  test("ref moves refresh the partial-push eligibility set", () => {
+    // Commits and ref moves (ours or external) change which commits sit in
+    // `@{upstream}..HEAD`; `pushable` is a frontend query domain only.
+    expect(withDerivedDomains(["branches"])).toContain("pushable");
+    expect(withDerivedDomains(["status"])).not.toContain("pushable");
   });
   test("remote ref moves refresh the tags' on-remote flags", () => {
     // target_on_remote is `rev-list --tags --not --remotes`: a fetch that

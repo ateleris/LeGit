@@ -21,7 +21,16 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         if let Some(sp) = start_point {
             args.push(safe_ref("start point", sp)?);
         }
-        self.run_simple(&args).await
+        let runner = self.runner().await;
+        let output = runner.run(&args).await?;
+        if output.success {
+            return Ok(());
+        }
+        Err(classify::classify_branch_create_error(
+            output.exit_code.unwrap_or(-1),
+            &output.stderr,
+            start_point.is_some(),
+        ))
     }
 
     pub(super) async fn switch_branch(&self, name: &str, behavior: SwitchDirtyBehavior) -> Result<SwitchResult, GitError> {

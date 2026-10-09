@@ -1,6 +1,38 @@
 use super::*;
 
 // ---------------------------------------------------------------------------
+// create_branch - failure classification
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn create_branch_on_unborn_head_classifies_unborn_head() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["branch", "--end-of-options", "feature"],
+        fail(128, "fatal: not a valid object name: 'main'"),
+    );
+    let (b, exec) = backend(fake);
+
+    let err = b.create_branch("feature", None).await.unwrap_err();
+    assert!(matches!(err, GitError::UnbornHead), "{err:?}");
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn create_branch_bad_start_point_stays_command_failed() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["branch", "--end-of-options", "feature", "bogus"],
+        fail(128, "fatal: not a valid object name: 'bogus'"),
+    );
+    let (b, exec) = backend(fake);
+
+    let err = b.create_branch("feature", Some("bogus")).await.unwrap_err();
+    assert!(matches!(err, GitError::CommandFailed { .. }), "{err:?}");
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
 // run_with_auto_stash (via switch_branch) - full sequencing
 // ---------------------------------------------------------------------------
 

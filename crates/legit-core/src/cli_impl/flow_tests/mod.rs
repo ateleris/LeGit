@@ -28,6 +28,7 @@ mod changes;
 mod commits;
 mod conflicts;
 mod history;
+mod hooks;
 mod lfs;
 mod remote;
 mod sequencer;

@@ -7,7 +7,10 @@ export default defineConfig({
   plugins: [react()],
   clearScreen: false,
   server: {
-    port: 1420,
+    // Not Tauri's default 1420: that collides with any other Tauri project's
+    // dev server running at the same time. Must match `devUrl` in
+    // `src-tauri/tauri.conf.json`.
+    port: 1430,
     strictPort: true,
     host: "127.0.0.1",
     watch: {

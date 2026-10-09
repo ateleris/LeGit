@@ -70,9 +70,13 @@ export function withDerivedDomains(domains: readonly QueryDomain[]): QueryDomain
     out.push("case_drift");
   }
   // Commits and ref moves (local or remote) change which commits are
-  // unpublished; `unpushed` is a frontend query domain only.
+  // unpublished (`unpushed`) and which are eligible for a partial push
+  // (`pushable`); both are frontend query domains only.
   if (out.includes("branches") && !out.includes("unpushed")) {
     out.push("unpushed");
+  }
+  if (out.includes("branches") && !out.includes("pushable")) {
+    out.push("pushable");
   }
   // Each tag's `target_on_remote` is computed against the remote-tracking
   // refs, which a fetch moves (classified as `branches`).

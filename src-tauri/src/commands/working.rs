@@ -143,7 +143,8 @@ pub async fn repo_discard_case_rename(
 }
 
 /// Commit the staged changes with the given message; returns the new commit id.
-/// When `amend` is set, rewrites HEAD instead of creating a new commit.
+/// When `amend` is set, rewrites HEAD instead of creating a new commit; when
+/// `no_verify` is set, the pre-commit and commit-msg hooks are skipped.
 #[tauri::command]
 #[specta::specta]
 pub async fn repo_commit(
@@ -151,11 +152,13 @@ pub async fn repo_commit(
     repo_id: String,
     message: String,
     amend: bool,
+    no_verify: bool,
 ) -> Result<CommitId, AppError> {
     let session = state.get_session(&repo_id).await?;
     let opts = CommitOptions {
         message,
         amend,
+        no_verify,
         ..Default::default()
     };
     session.backend.commit(opts).await.map_err(AppError::Git)

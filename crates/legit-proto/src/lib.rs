@@ -197,6 +197,17 @@ pub enum Method {
     WatchStart { watch_id: u64, worktree: HostPath, git_dir: HostPath },
     WatchStop { watch_id: u64 },
     HostSpawn { program: String, args: Vec<String>, cwd: Option<HostPath> },
+    /// Run a helper program to completion and return its captured output
+    /// (distro-side `ssh-keygen` / `ssh -T`). The agent appends its base-env
+    /// extras (after `env`), so the askpass relay works like a git-spawned
+    /// ssh. Not for git - git goes through `GitRun`'s executor semantics.
+    HostRun {
+        program: String,
+        args: Vec<String>,
+        cwd: Option<HostPath>,
+        env: Vec<(String, String)>,
+        timeout_secs: u64,
+    },
     GitProbe { git_path: HostPath },
     /// Liveness probe: answered with `()`. A connection whose ping times out
     /// is declared dead by the host side - a wedged transport (stalled WSL
@@ -291,6 +302,23 @@ pub struct GitStreamParams {
 pub struct GitStreamDone {
     pub exit_code: i32,
 }
+
+/// `HostRun`'s captured result. Output is lossy UTF-8 and truncated by the
+/// agent (`HOST_RUN_OUTPUT_CAP` bytes per stream): helper diagnostics, not a
+/// data channel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostRunResult {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: Option<i32>,
+    pub success: bool,
+    /// True when the run was killed at `timeout_secs`.
+    #[serde(default)]
+    pub timed_out: bool,
+}
+
+/// Per-stream output cap for `HostRun` (bytes, after lossy UTF-8).
+pub const HOST_RUN_OUTPUT_CAP: usize = 256 * 1024;
 
 /// Wire form of `FsProbe` — file bytes as base64, not a JSON int array.
 #[derive(Debug, Clone, Serialize, Deserialize)]

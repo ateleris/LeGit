@@ -11,6 +11,7 @@ import {
   setAndPersistDiff,
 } from "../../keys/persistence";
 import { COMMANDS, COMMAND_ID_ALIASES, type Command, type Scope } from "../../keys/registry";
+import { Button } from "../shared/buttons";
 import { confirmDestructiveAction, confirmDialog } from "../../store/confirm";
 import { useLayer } from "../../store/layers";
 import { notify } from "../../store/notifications";
@@ -192,9 +193,13 @@ export function KeyboardShortcutsPanel() {
         />
         <button onClick={() => void onImport()}>Import…</button>
         <button onClick={() => void onExport()}>Export…</button>
-        <button onClick={() => void onResetAll()} disabled={Object.keys(diff).length === 0}>
+        <Button
+          variant="danger"
+          onClick={() => void onResetAll()}
+          disabled={Object.keys(diff).length === 0}
+        >
           Reset all
-        </button>
+        </Button>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "0.333em 0 1em" }}>

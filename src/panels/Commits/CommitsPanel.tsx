@@ -35,7 +35,7 @@ import { SignedIcon } from "../../icons";
 import { useSignatureStore } from "../../store/signatures";
 import { formatAbsolute, formatRelative } from "../../lib/time";
 import { laneColor } from "./cells/GraphCell";
-import { pickHeadCommitId } from "./headId";
+import { pickHeadCommitId, repoHasNoCommits } from "./headId";
 import { growJumpWindow, JUMP_SEEK_STEP, pendingJumpAction, shouldCenterScroll } from "./scrollToRow";
 import { countRealCommits } from "./logPaging";
 import { confirmDialog } from "../../store/confirm";
@@ -242,6 +242,21 @@ function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
   // the end and the columns drift apart on the final few pixels.
   const [headerShift, setHeaderShift] = useState(0);
 
+  // The header grid lives OUTSIDE the scroller, so when the vertical
+  // scrollbar appears the rows' elastic Subject column is narrower than the
+  // header's by the scrollbar width and every column right of it drifts.
+  // Reserving that width in the header keeps the grids identical.
+  const [scrollbarWidth, setScrollbarWidth] = useState(0);
+  useEffect(() => {
+    const el = parentRef.current;
+    if (!el) return;
+    const update = () => setScrollbarWidth(el.offsetWidth - el.clientWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   // Column ordering, hiding, and widths — read from global settings on mount
   // and persisted (debounced) via `patch_global_settings`.
   const { state: colState, setOrder, setHidden, setWidth } = useColumnState();
@@ -278,6 +293,7 @@ function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
     isFetching,
     isError,
     error,
+    logLoaded,
     hasMore,
     searchHits,
     searchFetching,
@@ -288,6 +304,7 @@ function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
     worktreeBranches,
     worktreeHeadsBySha,
     unpushedSet,
+    pushableSet,
     currentBranchName,
     tagRemote,
     remoteNames,
@@ -418,6 +435,14 @@ function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
 
   // HEAD commit id — the parent of the synthetic working-dir row.
   const headId = useMemo((): CommitId | null => pickHeadCommitId(commits), [commits]);
+
+  // Unborn HEAD (fresh init): branch creation is impossible until the first
+  // commit, so the toolbar's Branch button is disabled with an explanation.
+  const noCommits = repoHasNoCommits(
+    logLoaded,
+    branchFilter !== null || authorFilter !== null,
+    headId,
+  );
 
   // Synthetic "uncommitted changes" row, present only when the working tree is
   // dirty and a HEAD commit is known. Its node renders as a hollow ring.
@@ -826,6 +851,7 @@ function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
       tagTargetsOnRemote,
       tagRemote: tagRemote ?? null,
       unpushedSet,
+      pushableSet,
       commitMessageById,
       stashSelectorById,
       signedSet,
@@ -879,6 +905,7 @@ function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
       tagTargetsOnRemote,
       tagRemote,
       unpushedSet,
+      pushableSet,
       commitMessageById,
       stashSelectorById,
       signedSet,
@@ -932,6 +959,7 @@ function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
         repoId={repo.id}
         branches={branches}
         onCreateBranch={handleCreateBranchStart}
+        noCommits={noCommits}
         onStash={handleCreateStash}
         hasUncommittedChanges={status.length > 0}
         trailing={
@@ -1052,7 +1080,7 @@ function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
       {/* Column headers - fixed above the virtualised list; the grid is
           translated by the list's horizontal scroll offset so the header
           columns stay exactly over their cells (see headerShift). */}
-      <div style={{ overflow: "hidden", flexShrink: 0 }}>
+      <div style={{ overflow: "hidden", flexShrink: 0, paddingRight: scrollbarWidth }}>
       <div
         style={{
           display: "grid",
