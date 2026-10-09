@@ -4542,7 +4542,16 @@ signing_key: ScopedConfig;
  * `gpg.ssh.allowedSignersFile` — required for SSH signatures to verify
  * as trusted rather than merely valid.
  */
-allowed_signers: ScopedConfig }
+allowed_signers: ScopedConfig; 
+/**
+ * Scope whose effective `gpg.ssh.program` entry is EMPTY. An empty value
+ * overrides git's bundled ssh-keygen fallback with "", so every signed
+ * commit fails with "cannot spawn : No such file or directory". `None`
+ * when the key is absent or names a real program. An empty global entry
+ * is removed by the next `write_signing_global`; a system one can only
+ * be fixed outside LeGit.
+ */
+ssh_program_broken: ConfigScope | null }
 /**
  * One key pair on disk (private key + `<path>.pub`).
  */

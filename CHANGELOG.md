@@ -72,6 +72,11 @@ lives in the git log and the GitHub release notes.
   up as a failed entry in the Git Command Log and as a warning in the log
   file instead of leaving no trace
 
+- A `gpg.ssh.program` set to an empty value in the git config (which makes
+  every signed commit fail with "cannot spawn") is now flagged with a warning
+  in the signing settings; a one-click fix removes the broken global entry,
+  and saving signing settings cleans it up automatically
+
 - In a repository without commits the toolbar's Branch button is disabled
   with an explanation instead of silently doing nothing, and creating a
   branch from the Branches panel explains that the first commit is needed

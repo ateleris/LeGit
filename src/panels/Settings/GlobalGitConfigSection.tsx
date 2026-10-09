@@ -35,6 +35,7 @@ import {
   GPGSIGN_OPTIONS,
   FORMAT_OPTIONS,
 } from "./SigningSettings";
+import { sshProgramWarning } from "./sshProgramWarning";
 
 interface ChangeItem { key: string; before: string | null; after: string | null }
 
@@ -204,6 +205,27 @@ export function GlobalGitConfigSection({
 
   const handleCancel = () => resetDrafts(identity, signing, helperView);
 
+  const programWarning = sshProgramWarning(signing.ssh_program_broken);
+
+  // Re-writes the PERSISTED signing values (not the drafts): the backend
+  // removes the empty gpg.ssh.program on any signing write, so this heals
+  // without saving unrelated edits.
+  const handleRemoveBrokenProgram = () =>
+    run(async () => {
+      setError(null);
+      try {
+        const sg = await scope.api.writeSigning(
+          globalVal(signing.gpgsign),
+          globalVal(signing.format),
+          globalVal(signing.signing_key),
+          globalVal(signing.allowed_signers)
+        );
+        setSigning(sg);
+      } catch (e) {
+        setError(formatAppError(e));
+      }
+    });
+
   const browseInto = async (set: (v: string) => void) => {
     const selected = await openDialog({ multiple: false });
     if (typeof selected === "string") set(selected);
@@ -300,6 +322,18 @@ export function GlobalGitConfigSection({
           <ResolvedBadge label="system" value={signing.format.system.value} source={signing.format.system.source} />
           <ResolvedBadge label="resolved" value={signing.format.resolved.value} source={signing.format.resolved.source} isResolved />
         </Field>
+
+        {programWarning && (
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5em", fontSize: "var(--fz-sm)", color: "var(--warning-fg)" }}>
+            <WarningIcon />
+            <span style={{ flex: 1 }}>{programWarning.text}</span>
+            {programWarning.fixable && (
+              <button onClick={handleRemoveBrokenProgram} disabled={saving}>
+                Remove entry
+              </button>
+            )}
+          </div>
+        )}
 
         <Field label="user.signingkey">
           {pathField(
