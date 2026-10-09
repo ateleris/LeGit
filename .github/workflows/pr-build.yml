@@ -158,10 +158,15 @@ jobs:
         env:
           PR: ${{ github.event.pull_request.number }}
           SHA: ${{ github.event.pull_request.head.sha }}
+        # find, not a globstar loop: macOS runners run Apple's bash 3.2,
+        # which has no globstar (it needs bash >= 4).
         run: |
           suffix="-pr${PR}-${SHA:0:7}"
-          shopt -s nullglob globstar
-          for f in target/**/release/bundle/**/*.{dmg,msi,exe,deb,rpm,AppImage}; do
+          find target -type f -path '*/release/bundle/*' \
+            \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \
+               -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) \
+            -print0 |
+          while IFS= read -r -d '' f; do
             base="${f%.*}"
             ext="${f##*.}"
             mv "$f" "${base}${suffix}.${ext}"
