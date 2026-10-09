@@ -12,6 +12,8 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-09
+
 ### Added
 
 - Git profiles can now be shared between computers through settings sync:
@@ -61,36 +63,10 @@ lives in the git log and the GitHub release notes.
   badge and can be revoked. Existing GitHub connections need a one-time
   reconnect to grant the signing-key permission
 
-### Fixed
-
-- Staging, unstaging, discarding, or stashing hundreds of files at once no
-  longer fails with "failed to spawn git" on Windows: file lists are passed
-  to git via stdin (or split into batches for commands that cannot read
-  them from stdin) instead of one overlong command line
-
-- A git launch that fails before git runs (e.g. a missing binary) now shows
-  up as a failed entry in the Git Command Log and as a warning in the log
-  file instead of leaving no trace
-
-- A `gpg.ssh.program` set to an empty value in the git config (which makes
-  every signed commit fail with "cannot spawn") is now flagged with a warning
-  in the signing settings; a one-click fix removes the broken global entry,
-  and saving signing settings cleans it up automatically
-
-- In a repository without commits the toolbar's Branch button is disabled
-  with an explanation instead of silently doing nothing, and creating a
-  branch from the Branches panel explains that the first commit is needed
-  instead of showing a raw git error
-
-- Uploading an SSH key that is already on the connected account now reports
-  "already added" instead of failing; upload errors show the platform's
-  message as a toast instead of a raw API response in the panel
-
 - "Push up to this commit" in the commit graph's context menu pushes the
   current branch to its upstream only up to that commit, leaving the newer
   local commits unpublished (offered on commits where the push is a
   guaranteed fast-forward)
-
 - Settings sync: designate a git repository (Settings > Application >
   Settings sync) and LeGit mirrors shareable settings and themes across
   machines - imports at startup, commits and pushes changes automatically
@@ -128,6 +104,29 @@ lives in the git log and the GitHub release notes.
   ("Reset all" in Keyboard Shortcuts, "Delete" in Git hooks)
 
 ### Fixed
+
+- Staging, unstaging, discarding, or stashing hundreds of files at once no
+  longer fails with "failed to spawn git" on Windows: file lists are passed
+  to git via stdin (or split into batches for commands that cannot read
+  them from stdin) instead of one overlong command line
+
+- A git launch that fails before git runs (e.g. a missing binary) now shows
+  up as a failed entry in the Git Command Log and as a warning in the log
+  file instead of leaving no trace
+
+- A `gpg.ssh.program` set to an empty value in the git config (which makes
+  every signed commit fail with "cannot spawn") is now flagged with a warning
+  in the signing settings; a one-click fix removes the broken global entry,
+  and saving signing settings cleans it up automatically
+
+- In a repository without commits the toolbar's Branch button is disabled
+  with an explanation instead of silently doing nothing, and creating a
+  branch from the Branches panel explains that the first commit is needed
+  instead of showing a raw git error
+
+- Uploading an SSH key that is already on the connected account now reports
+  "already added" instead of failing; upload errors show the platform's
+  message as a toast instead of a raw API response in the panel
 
 - Commits panel: the Author/Date columns no longer drift out of line with
   their headers when the vertical scrollbar is visible (the header now
