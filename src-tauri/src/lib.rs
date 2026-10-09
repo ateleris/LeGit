@@ -9,6 +9,7 @@ mod credentials;
 mod error;
 mod git_resolve;
 mod logging;
+mod oauth;
 mod os_open;
 mod persist;
 mod remote;

@@ -499,6 +499,11 @@ async fn handle_get(
     let Some(key) = cred_key(fields) else { return cancel };
     let wanted_user = fields.get("username").cloned();
 
+    // 0. An expiring OAuth token behind this host? Refresh it first (which
+    // also evicts the stale session-cache entry), so git never dials out
+    // with a token that is already dead. No-op for hosts without one.
+    crate::oauth::ensure_fresh(&key).await;
+
     // 1. Session cache (this app run).
     if let Some(hit) = lock(&broker.session_cache).get(&key) {
         if wanted_user.as_deref().is_none_or(|u| u == hit.username) {
@@ -778,6 +783,16 @@ pub(crate) fn keychain_read(key: &str) -> Option<(String, String)> {
 
 pub(crate) fn keychain_delete(key: &str) -> Result<(), keyring::Error> {
     keyring::Entry::new(KEYRING_SERVICE, key)?.delete_credential()
+}
+
+/// Raw secret access for entries that are NOT broker credentials (the OAuth
+/// refresh records, `oauth` module): same service, caller-owned format.
+pub(crate) fn keychain_store_secret(key: &str, secret: &str) -> Result<(), keyring::Error> {
+    keyring::Entry::new(KEYRING_SERVICE, key)?.set_password(secret)
+}
+
+pub(crate) fn keychain_read_secret(key: &str) -> Option<String> {
+    keyring::Entry::new(KEYRING_SERVICE, key).ok()?.get_password().ok()
 }
 
 /// Evict a host's session-cache entry so the next `fill` re-reads the

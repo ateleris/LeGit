@@ -37,14 +37,20 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   SSH-first, per 2026-07-13 decision; code lives in
   `crates/legit-providers` + `commands/accounts.rs` / `ssh_keys.rs`):
   - **OAuth device flows, GitLab + ADO remainder** (GitHub shipped
-    2026-10-08: `design/2026-10-08-github-oauth-device-flow.md`). GitLab
-    needs a registered app plus refresh-token handling in the credential
-    broker (its OAuth tokens expire after 2h); ADO needs an Entra app
-    registration and the Microsoft device code flow. The seams:
-    `Platform::device_flow_client_id` / `device_flow_config`
-    (`legit-providers`), and the platform-agnostic commands already
-    gate on them. Also pending: transfer of the GitHub OAuth app from
-    the personal account to the company org (client ID survives).
+    2026-10-08, refresh-token handling for expiring tokens 2026-10-09:
+    `design/2026-10-08-github-oauth-device-flow.md`).
+    - **GitLab app registration** - the ONLY missing piece for the
+      GitLab connect button (endpoints, scope `api`, and the 2h-token
+      refresh are all in place). Deferred 2026-10-09: no current GitLab
+      use; register when someone needs it. Steps are in the design
+      note (gitlab.com Applications, non-confidential, scope api,
+      filler redirect URI; prefer an Ateleris group-owned app); then
+      paste the client ID into `Platform::device_flow_client_id` and
+      add the CHANGELOG bullet for the GitLab browser sign-in.
+    - **ADO**: needs an Entra app registration and the Microsoft
+      device code flow.
+    - Transfer of the GitHub OAuth app from the personal account to
+      the company org (client ID survives).
   - **Self-hosted GitLab hosts** (gitlab.com fixed for now).
   - `ssh -T` connection test could surface WHICH account authenticated
     (parse the "Hi <user>!" line).

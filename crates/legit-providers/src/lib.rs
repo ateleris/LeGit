@@ -64,14 +64,26 @@ impl Platform {
     /// OAuth device-flow client ID of the registered LeGit app. A client ID
     /// is a public identifier (the device flow needs no secret), so it is
     /// committed. `None` = no registered app: the UI offers only the PAT
-    /// path. GitLab would additionally need refresh-token handling (its
-    /// OAuth tokens expire after 2h), ADO an Entra app registration.
-    /// Registration requirements and rotation notes:
+    /// path. Expiring tokens are handled (`refresh_oauth_token` + the app's
+    /// `oauth` module), so registering a GitLab app is all GitLab still
+    /// needs; ADO needs an Entra app registration and the Microsoft device
+    /// code flow. Registration requirements and rotation notes:
     /// `design/2026-10-08-github-oauth-device-flow.md`.
     pub fn device_flow_client_id(self) -> Option<&'static str> {
         match self {
             Self::GitHub => Some("Ov23li7pmZgTzR9LHVIt"),
             Self::GitLab | Self::AzureDevOps => None,
+        }
+    }
+
+    /// The git basic-auth USERNAME an OAuth (device-flow) token requires.
+    /// GitLab only accepts OAuth tokens over HTTPS as `oauth2:<token>`
+    /// (a PAT works with any username); GitHub accepts any username with
+    /// the token as password (`None` = use the account username).
+    pub fn oauth_git_username(self) -> Option<&'static str> {
+        match self {
+            Self::GitLab => Some("oauth2"),
+            Self::GitHub | Self::AzureDevOps => None,
         }
     }
 }
@@ -99,6 +111,16 @@ pub struct DeviceAuthorization {
     pub expires_in_secs: u64,
 }
 
+/// A token response's payload (RFC 6749 §5.1). `refresh_token`/`expires_in`
+/// are absent for non-expiring tokens (GitHub apps with expiration off);
+/// GitLab OAuth tokens always expire (2h) and carry both.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenSet {
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub expires_in_secs: Option<u64>,
+}
+
 /// One device-flow token poll, classified (RFC 8628 §3.5).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DevicePollOutcome {
@@ -110,7 +132,7 @@ pub enum DevicePollOutcome {
     Denied,
     /// The codes expired before the user finished: restart the flow.
     Expired,
-    AccessToken(String),
+    Token(TokenSet),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -210,6 +232,37 @@ fn parse_device_authorization(body: &str) -> Result<DeviceAuthorization, Provide
     })
 }
 
+/// A successful token response (device-flow completion or a refresh grant).
+fn parse_token_response(body: &str) -> Result<TokenSet, ProviderError> {
+    #[derive(Deserialize)]
+    struct Response {
+        access_token: Option<String>,
+        refresh_token: Option<String>,
+        expires_in: Option<u64>,
+    }
+    let r: Response =
+        serde_json::from_str(body).map_err(|e| ProviderError::Parse(e.to_string()))?;
+    let access_token = r
+        .access_token
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| ProviderError::Parse("no `access_token` in the token response".into()))?;
+    Ok(TokenSet {
+        access_token,
+        refresh_token: r.refresh_token.filter(|t| !t.is_empty()),
+        expires_in_secs: r.expires_in,
+    })
+}
+
+/// Whether a failed token request's body names the refresh token itself as
+/// dead (`invalid_grant`: expired, already rotated, or revoked) - the one
+/// failure where retrying is pointless and the account must reconnect.
+fn is_invalid_grant(body: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(|e| e == "invalid_grant"))
+        .unwrap_or(false)
+}
+
 /// GitHub answers device-flow polls with HTTP 200 and signals the flow state
 /// via an `error` code in the body - classification must read the body, never
 /// the status.
@@ -222,8 +275,8 @@ fn classify_device_poll(body: &str) -> Result<DevicePollOutcome, ProviderError> 
     }
     let r: Response =
         serde_json::from_str(body).map_err(|e| ProviderError::Parse(e.to_string()))?;
-    if let Some(token) = r.access_token.filter(|t| !t.is_empty()) {
-        return Ok(DevicePollOutcome::AccessToken(token));
+    if r.access_token.as_deref().is_some_and(|t| !t.is_empty()) {
+        return Ok(DevicePollOutcome::Token(parse_token_response(body)?));
     }
     match r.error.as_deref() {
         Some("authorization_pending") => Ok(DevicePollOutcome::Pending),
@@ -248,8 +301,8 @@ fn client() -> Result<reqwest::Client, ProviderError> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .user_agent("LeGit")
-        // Every endpoint is a fixed https URL; a redirect would carry the
-        // token header (GitLab's PRIVATE-TOKEN is not one reqwest strips).
+        // Every endpoint is a fixed https URL; a redirect must never carry
+        // the Authorization header anywhere else.
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| ProviderError::Http(e.to_string()))
@@ -412,10 +465,9 @@ pub async fn validate_token(platform: Platform, token: &str) -> Result<AccountIn
             parse_github_user(&body)
         }
         Platform::GitLab => {
-            let resp = send(
-                c.get("https://gitlab.com/api/v4/user").header("PRIVATE-TOKEN", token),
-            )
-            .await?;
+            // Bearer, not PRIVATE-TOKEN: GitLab accepts PATs under both
+            // headers but OAuth (device-flow) tokens ONLY as Bearer.
+            let resp = send(c.get("https://gitlab.com/api/v4/user").bearer_auth(token)).await?;
             let (status, body) = read_body(resp).await;
             if !status.is_success() {
                 return Err(status_error(status, &body));
@@ -467,7 +519,17 @@ fn device_flow_config(platform: Platform) -> Result<DeviceFlowConfig, ProviderEr
             token_url: "https://github.com/login/oauth/access_token",
             scope: "repo admin:public_key admin:ssh_signing_key",
         }),
-        Platform::GitLab | Platform::AzureDevOps => Err(unsupported()),
+        // Reachable once a client ID is registered (gated above). GitLab's
+        // `api` scope covers git over HTTPS and the key/user endpoints; its
+        // OAuth tokens expire after 2h with a single-use rotating refresh
+        // token (`refresh_oauth_token`).
+        Platform::GitLab => Ok(DeviceFlowConfig {
+            client_id,
+            code_url: "https://gitlab.com/oauth/authorize_device",
+            token_url: "https://gitlab.com/oauth/token",
+            scope: "api",
+        }),
+        Platform::AzureDevOps => Err(unsupported()),
     }
 }
 
@@ -512,6 +574,50 @@ pub async fn device_flow_poll(
         return Err(status_error(status, &body));
     }
     classify_device_poll(&body)
+}
+
+/// Exchange a refresh token for a fresh token pair (RFC 6749 §6). The old
+/// refresh token is single-use on GitLab (the response rotates it), so the
+/// caller must persist the returned set before using the access token - and
+/// must never run two refreshes for one account concurrently. An
+/// `invalid_grant` answer means the refresh token itself is dead: the
+/// account has to be reconnected.
+pub async fn refresh_oauth_token(
+    platform: Platform,
+    refresh_token: &str,
+) -> Result<TokenSet, ProviderError> {
+    let cfg = device_flow_config(platform)?;
+    let c = client()?;
+    let resp = c
+        .post(cfg.token_url)
+        .header("Accept", "application/json")
+        .form(&[
+            ("client_id", cfg.client_id),
+            ("refresh_token", refresh_token),
+            ("grant_type", "refresh_token"),
+        ])
+        .send()
+        .await
+        .map_err(|e| ProviderError::Http(e.to_string()))?;
+    let (status, body) = read_body(resp).await;
+    if !status.is_success() {
+        if is_invalid_grant(&body) {
+            return Err(ProviderError::Auth(format!(
+                "the {} session expired: reconnect the account",
+                platform.label()
+            )));
+        }
+        return Err(status_error(status, &body));
+    }
+    // GitHub reports token errors in a 200 body (like the poll): an
+    // invalid_grant there must classify the same way as an HTTP error.
+    if is_invalid_grant(&body) {
+        return Err(ProviderError::Auth(format!(
+            "the {} session expired: reconnect the account",
+            platform.label()
+        )));
+    }
+    parse_token_response(&body)
 }
 
 /// What adding an SSH key achieved. An upload rejected because the key is
@@ -595,9 +701,7 @@ pub async fn add_ssh_key(
             .bearer_auth(token)
             .header("Accept", "application/vnd.github+json")
             .json(&body),
-        Platform::GitLab => {
-            c.post(keys_endpoint(platform, usage)).header("PRIVATE-TOKEN", token).json(&body)
-        }
+        Platform::GitLab => c.post(keys_endpoint(platform, usage)).bearer_auth(token).json(&body),
         Platform::AzureDevOps => unreachable!("guarded above"),
     };
     let resp = req.send().await.map_err(|e| ProviderError::Http(e.to_string()))?;
@@ -670,7 +774,7 @@ pub async fn delete_ssh_key(
         Platform::GitHub => {
             c.delete(url).bearer_auth(token).header("Accept", "application/vnd.github+json")
         }
-        Platform::GitLab => c.delete(url).header("PRIVATE-TOKEN", token),
+        Platform::GitLab => c.delete(url).bearer_auth(token),
         Platform::AzureDevOps => unreachable!("guarded above"),
     };
     let resp = req.send().await.map_err(|e| ProviderError::Http(e.to_string()))?;
@@ -692,7 +796,7 @@ async fn list_ssh_keys_body(
         Platform::GitHub => {
             c.get(url).bearer_auth(token).header("Accept", "application/vnd.github+json")
         }
-        Platform::GitLab => c.get(url).header("PRIVATE-TOKEN", token),
+        Platform::GitLab => c.get(url).bearer_auth(token),
         Platform::AzureDevOps => unreachable!("guarded by supports_key_upload"),
     };
     let resp = req.send().await.map_err(|e| ProviderError::Http(e.to_string()))?;
@@ -912,10 +1016,41 @@ mod tests {
         assert_eq!(case(r#"{"error":"slow_down","interval":10}"#), DevicePollOutcome::SlowDown);
         assert_eq!(case(r#"{"error":"access_denied"}"#), DevicePollOutcome::Denied);
         assert_eq!(case(r#"{"error":"expired_token"}"#), DevicePollOutcome::Expired);
+        // GitHub shape, non-expiring app token: no refresh fields.
         assert_eq!(
             case(r#"{"access_token":"gho_16C7e42F292c6912E7710c838347Ae178B4a","token_type":"bearer","scope":"repo,admin:public_key"}"#),
-            DevicePollOutcome::AccessToken("gho_16C7e42F292c6912E7710c838347Ae178B4a".into())
+            DevicePollOutcome::Token(TokenSet {
+                access_token: "gho_16C7e42F292c6912E7710c838347Ae178B4a".into(),
+                refresh_token: None,
+                expires_in_secs: None,
+            })
         );
+        // GitLab shape: expiring token with a rotating refresh token.
+        assert_eq!(
+            case(r#"{"access_token":"glat-abc","token_type":"bearer","expires_in":7200,"refresh_token":"glrt-def","scope":"api","created_at":1760000000}"#),
+            DevicePollOutcome::Token(TokenSet {
+                access_token: "glat-abc".into(),
+                refresh_token: Some("glrt-def".into()),
+                expires_in_secs: Some(7200),
+            })
+        );
+    }
+
+    #[test]
+    fn token_response_requires_an_access_token_and_drops_empty_refresh() {
+        assert!(matches!(parse_token_response(r#"{"token_type":"bearer"}"#), Err(ProviderError::Parse(_))));
+        let set = parse_token_response(r#"{"access_token":"a","refresh_token":""}"#).unwrap();
+        assert_eq!(set.refresh_token, None);
+    }
+
+    #[test]
+    fn invalid_grant_is_recognized_in_error_bodies() {
+        assert!(is_invalid_grant(
+            r#"{"error":"invalid_grant","error_description":"The provided authorization grant is invalid"}"#
+        ));
+        assert!(!is_invalid_grant(r#"{"error":"invalid_client"}"#));
+        assert!(!is_invalid_grant("not json"));
+        assert!(!is_invalid_grant(r#"{"access_token":"a"}"#));
     }
 
     #[test]

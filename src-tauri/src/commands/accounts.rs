@@ -76,22 +76,30 @@ pub async fn list_connected_accounts(
     .map_err(|e| AppError::Io(format!("keychain task failed: {e}")))
 }
 
-/// Validate a token, store it in the OS keychain under the broker's key, and
+/// Validate a token set, store it in the OS keychain under the broker's key
+/// (plus the refresh sidecar when the set expires - `crate::oauth`), and
 /// record the account metadata: the shared tail of the PAT and OAuth connect
-/// paths.
+/// paths. `oauth` steers the stored git username: GitLab rejects OAuth
+/// tokens over HTTPS unless the username is `oauth2`.
 async fn store_connected_token(
     state: &tauri::State<'_, AppState>,
     p: Platform,
-    token: String,
+    tokens: legit_providers::TokenSet,
+    oauth: bool,
 ) -> Result<ConnectedAccountMeta, AppError> {
-    let info = legit_providers::validate_token(p, &token).await.map_err(provider_err)?;
+    let info =
+        legit_providers::validate_token(p, &tokens.access_token).await.map_err(provider_err)?;
 
     let key = broker_key(p);
-    let username = info.username.clone();
+    let git_username = if oauth {
+        p.oauth_git_username().map(str::to_string).unwrap_or_else(|| info.username.clone())
+    } else {
+        info.username.clone()
+    };
     {
         let key = key.clone();
         tauri::async_runtime::spawn_blocking(move || {
-            crate::credentials::keychain_store(&key, &username, &token)
+            crate::oauth::store_token_set(&key, p, &git_username, &tokens)
         })
         .await
         .map_err(|e| AppError::Io(format!("keychain task failed: {e}")))?
@@ -130,7 +138,12 @@ pub async fn connect_account_pat(
     if token.is_empty() {
         return Err(AppError::Io("the token is empty".to_string()));
     }
-    store_connected_token(&state, p, token).await
+    let tokens = legit_providers::TokenSet {
+        access_token: token,
+        refresh_token: None,
+        expires_in_secs: None,
+    };
+    store_connected_token(&state, p, tokens, false).await
 }
 
 /// Device-flow start data for the connect UI. `device_code` is the opaque
@@ -205,8 +218,8 @@ pub async fn connect_account_oauth_poll(
         DevicePollOutcome::SlowDown => DeviceFlowPollResult::SlowDown,
         DevicePollOutcome::Denied => DeviceFlowPollResult::Denied,
         DevicePollOutcome::Expired => DeviceFlowPollResult::Expired,
-        DevicePollOutcome::AccessToken(token) => DeviceFlowPollResult::Connected {
-            account: store_connected_token(&state, p, token).await?,
+        DevicePollOutcome::Token(tokens) => DeviceFlowPollResult::Connected {
+            account: store_connected_token(&state, p, tokens, true).await?,
         },
     })
 }
@@ -215,9 +228,12 @@ async fn delete_platform_token(p: Platform) -> Result<(), AppError> {
     let key = broker_key(p);
     let deleted = {
         let key = key.clone();
-        tauri::async_runtime::spawn_blocking(move || crate::credentials::keychain_delete(&key))
-            .await
-            .map_err(|e| AppError::Io(format!("keychain task failed: {e}")))?
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::oauth::clear_refresh(&key);
+            crate::credentials::keychain_delete(&key)
+        })
+        .await
+        .map_err(|e| AppError::Io(format!("keychain task failed: {e}")))?
     };
     match deleted {
         Ok(()) | Err(keyring::Error::NoEntry) => {}
@@ -307,9 +323,11 @@ async fn add_key_with_usage(
     }
 }
 
-/// The connected account's token from the keychain.
+/// The connected account's token from the keychain, refreshed first when it
+/// is an expiring OAuth token that is (about to be) stale.
 async fn read_platform_token(p: Platform) -> Result<String, AppError> {
     let key = broker_key(p);
+    crate::oauth::ensure_fresh(&key).await;
     let stored =
         tauri::async_runtime::spawn_blocking(move || crate::credentials::keychain_read(&key))
             .await

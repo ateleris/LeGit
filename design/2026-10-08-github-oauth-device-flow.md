@@ -21,9 +21,10 @@ Developer settings > OAuth Apps). Its registration must have:
 
 - **Device Flow: enabled.** Without it every poll answers
   `device_flow_disabled`.
-- **"Expire user access tokens": OFF.** LeGit has no refresh-token
-  handling; with expiration on, tokens die after 8 hours and HTTPS pushes
-  silently start failing mid-day.
+- **"Expire user access tokens": OFF is recommended** (fewer moving
+  parts), but no longer required: since 2026-10-09 LeGit refreshes
+  expiring tokens automatically (see "Expiring tokens and refresh"
+  below), so an app with expiration on also works.
 - The callback URL is required by the form but unused by the device flow
   (set to the homepage).
 
@@ -58,12 +59,62 @@ registration, which rotation does not delete).
   `classify_device_poll` reads the body, never the status, and is
   unit-tested against canned responses.
 
-## Why not GitLab / Azure DevOps yet
+## Expiring tokens and refresh (added 2026-10-09)
 
-- GitLab supports the device grant, but its OAuth tokens expire after 2
-  hours: shipping it needs refresh-token handling in the credential broker
-  first.
-- Azure DevOps needs a Microsoft Entra app registration and the device
-  code flow against the Microsoft identity platform.
+Token responses are parsed as a full set (`TokenSet`: access token +
+optional refresh token + optional `expires_in`). When a refresh token is
+present, `crate::oauth` (src-tauri) persists it in a SIDECAR keychain
+entry (`oauth-refresh:https://<host>`, same keyring service) holding
+`{platform, username, refresh_token, expires_at}`; the access token stays
+in the broker's normal `https://<host>` entry, so settings files still
+hold no secrets and PATs/non-expiring tokens have no sidecar at all.
 
-Both stay on the BACKLOG platform-integrations entry.
+`oauth::ensure_fresh(broker_key)` runs before BOTH token uses - the
+platform API calls (`read_platform_token`) and the credential broker's
+`get` (git over HTTPS, including requests relayed from the WSL agent).
+When the stored expiry is within a 2-minute margin it exchanges the
+refresh token (`refresh_oauth_token`, RFC 6749 §6) and re-stores both
+entries, evicting the broker's session cache. Constraints encoded there:
+
+- **Refresh tokens are single-use on GitLab** (rotated per exchange, and
+  reuse can revoke the whole token family): refreshes are serialized by a
+  global lock and the record is RE-read under it before exchanging.
+- `invalid_grant` means the refresh token itself is dead: the sidecar is
+  dropped (stop re-trying), the stale access token stays, and its next
+  rejection surfaces the normal "reconnect" classification. Transient
+  failures (offline) change nothing.
+- git `erase`s rejected credentials, which deletes the access entry of an
+  expired token: the sidecar carries the git username so `ensure_fresh`
+  can recreate the entry from a refresh alone.
+- The stored git USERNAME for an OAuth connect comes from
+  `Platform::oauth_git_username`: GitLab only accepts OAuth tokens over
+  HTTPS as `oauth2:<token>` (PATs take any username); GitHub uses the
+  account username as before.
+
+GitLab API calls authenticate with `Authorization: Bearer` (switched from
+`PRIVATE-TOKEN`): PATs work under both headers, OAuth tokens only as
+Bearer.
+
+## GitLab: only the app registration is missing
+
+`device_flow_config` already carries the GitLab endpoints
+(`/oauth/authorize_device`, `/oauth/token`, scope `api`); the connect
+button appears as soon as `device_flow_client_id` returns an ID for
+GitLab. To register (gitlab.com > User settings > Applications - or a
+group-owned application under the Ateleris group, preferred for the same
+reason as the GitHub org transfer):
+
+- Name "LeGit"; scope **api** (git over HTTPS + user/key endpoints).
+- **Confidential: OFF** - the device flow runs without a client secret.
+- The redirect URI field is required by the form but unused by the device
+  flow (`urn:ietf:wg:oauth:2.0:oob` is the conventional filler).
+- GitLab.com supports the device grant (RFC 8628) since GitLab 17.2; no
+  per-app opt-in needed.
+
+Tokens expire after 2h and refresh automatically (section above).
+
+## Why not Azure DevOps yet
+
+Azure DevOps needs a Microsoft Entra app registration and the device code
+flow against the Microsoft identity platform. Stays on the BACKLOG
+platform-integrations entry.
