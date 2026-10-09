@@ -41,6 +41,7 @@ describe("global settings manifest", () => {
       "submodules",
       "working-tree",
       "application",
+      "identity-accounts",
       "git",
       "about",
     ]);

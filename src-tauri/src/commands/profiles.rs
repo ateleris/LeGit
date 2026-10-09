@@ -339,11 +339,74 @@ pub fn clone_auth_config_args(profile: &GitProfile) -> Vec<String> {
 /// record it as the repo's selected profile (`git_profile_id`). Shared by
 /// `apply_profile_to_repo` and the clone/init flows so a freshly created repo
 /// shows the chosen profile as active in Repo Settings.
+/// What applying a profile did about its auth key on a REMOTE host: the key
+/// is resolved BY FILE NAME into the host's own `~/.ssh` (an app-machine
+/// path in `core.sshCommand` would hand the distro's ssh a key it cannot
+/// read - and a `/mnt/c` translation is a trap: 0777 permissions, which ssh
+/// refuses). `exists` = the resolved file is already in the distro; when it
+/// is not, the UI offers copying it over.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct DistroKeyResolution {
+    pub distro: String,
+    /// The profile's app-machine private-key path (the copy source).
+    pub source_path: String,
+    /// The resolved distro path `core.sshCommand` now points at.
+    pub target_path: String,
+    pub exists: bool,
+    /// The target exists but holds a DIFFERENT key than the profile's
+    /// (public material compared) - pushes would authenticate as whatever
+    /// that key is, so the UI offers replacing it. False when either public
+    /// half is unreadable (no comparison possible, no false alarm).
+    pub mismatch: bool,
+}
+
+/// The file-name part of a key path, either separator convention.
+fn key_file_basename(path: &str) -> Option<&str> {
+    path.rsplit(['/', '\\']).next().filter(|n| !n.is_empty())
+}
+
+/// Rewrite the path-valued managed keys for a repo on a WSL host: the auth
+/// key always, and - for ssh signing - the signing key and allowed-signers
+/// file, each resolved BY FILE NAME into the distro's `~/.ssh`. Returns the
+/// rewritten keys plus the auth key's (source, target) pair. Pure.
+fn resolve_managed_paths_for_distro(
+    keys: &ManagedKeys,
+    home: &str,
+) -> (ManagedKeys, Option<(String, String)>) {
+    let ssh_dir = format!("{}/.ssh", home.trim_end_matches('/'));
+    let mut out = keys.clone();
+    let mut auth = None;
+    if let Some(src) = &keys.auth_ssh_key {
+        if let Some(name) = key_file_basename(src) {
+            let target = format!("{ssh_dir}/{name}");
+            out.auth_ssh_key = Some(target.clone());
+            auth = Some((src.clone(), target));
+        }
+    }
+    if keys.gpg_format.as_deref() == Some("ssh") {
+        // The signing key is only a PATH when it contains a separator; a
+        // literal `ssh-ed25519 AAAA…` or a GPG key id stays untouched.
+        if let Some(sk) = &keys.signing_key {
+            if sk.contains(['/', '\\']) {
+                if let Some(name) = key_file_basename(sk) {
+                    out.signing_key = Some(format!("{ssh_dir}/{name}"));
+                }
+            }
+        }
+        if let Some(asf) = &keys.allowed_signers_file {
+            if let Some(name) = key_file_basename(asf) {
+                out.allowed_signers_file = Some(format!("{ssh_dir}/{name}"));
+            }
+        }
+    }
+    (out, auth)
+}
+
 pub async fn apply_profile_core(
     state: &AppState,
     session: &crate::state::RepoSession,
     profile_id: &str,
-) -> Result<(), AppError> {
+) -> Result<Option<DistroKeyResolution>, AppError> {
     let runner = session.runner.read().await.clone();
     let profile = state
         .global_settings
@@ -355,8 +418,122 @@ pub async fn apply_profile_core(
         .find(|p| p.id == profile_id)
         .cloned()
         .ok_or_else(|| AppError::UnknownProfile(profile_id.to_string()))?;
-    write_managed(runner.as_ref(), &projection(&profile)).await?;
+    let mut keys = projection(&profile);
+    let mut resolution = None;
+    if let legit_host::HostId::Wsl { distro } = session.host.id() {
+        let home = session.host.home_dir().ok_or_else(|| {
+            AppError::Io("the distribution reported no home directory".to_string())
+        })?;
+        let original = keys.clone();
+        let (resolved, auth) = resolve_managed_paths_for_distro(&keys, &home.0);
+        keys = resolved;
+        let fs = session.host.fs();
+        if let Some((source_path, target_path)) = auth {
+            let exists =
+                matches!(fs.stat(&legit_core::HostPath(target_path.clone())).await, Ok(Some(_)));
+            // Same file name does not mean same key: compare public material
+            // so a foreign key under the profile's name is flagged instead of
+            // silently authenticating as someone else.
+            let mismatch = exists
+                && match (
+                    read_local_public_key(&source_path).await,
+                    read_distro_public_key(fs.as_ref(), &target_path).await,
+                ) {
+                    (Some(src), Some(dst)) => {
+                        crate::commands::ssh_keys::key_material(&src)
+                            != crate::commands::ssh_keys::key_material(&dst)
+                    }
+                    _ => false,
+                };
+            resolution = Some(DistroKeyResolution {
+                distro,
+                source_path,
+                target_path,
+                exists,
+                mismatch,
+            });
+        }
+        // Best-effort: put the profile's identity into the distro's
+        // allowed-signers file, so its ssh signatures verify there. A failure
+        // only costs verification (commits still sign), never the apply.
+        if let (Some(target_signers), Some(email), Some(sk)) =
+            (keys.allowed_signers_file.clone(), keys.user_email.clone(), original.signing_key)
+        {
+            if original.gpg_format.as_deref() == Some("ssh") && sk.contains(['/', '\\']) {
+                if let Some(pub_key) = read_local_public_key_file(&sk).await {
+                    let _ =
+                        ensure_distro_allowed_signer(fs.as_ref(), &target_signers, &email, &pub_key)
+                            .await;
+                }
+            }
+        }
+    }
+    write_managed(runner.as_ref(), &keys).await?;
     set_repo_profile_id(state, session, Some(profile_id.to_string())).await?;
+    // Bookkeeping for other machines (suggestion on their clone of the same
+    // remote); the apply itself is done, so a recording failure stays silent.
+    if let Some(key) = repo_assignment_key(session).await {
+        let _ = state
+            .mutate_global(|s| {
+                s.profile_assignments.insert(key, profile_id.to_string());
+            })
+            .await;
+    }
+    Ok(resolution)
+}
+
+/// Best-effort machine-neutral key for the repo's picked remote (`None`:
+/// no remote, or one without a web form).
+async fn repo_assignment_key(session: &crate::state::RepoSession) -> Option<String> {
+    let remotes = session.backend.list_remotes().await.ok()?;
+    let remote = crate::commands::browser::pick_remote(&remotes)?;
+    crate::commands::browser::canonical_remote_key(&remote.fetch_url)
+}
+
+/// The `.pub` beside an app-machine PRIVATE key path, when readable.
+async fn read_local_public_key(private_key_path: &str) -> Option<String> {
+    let path = crate::commands::ssh_keys::expand_home(private_key_path).ok()?;
+    let text = tokio::fs::read_to_string(format!("{}.pub", path.display())).await.ok()?;
+    let t = text.trim().to_string();
+    if t.is_empty() { None } else { Some(t) }
+}
+
+/// An app-machine PUBLIC key file's content (the profile's `.pub`-valued
+/// signing key), when readable.
+async fn read_local_public_key_file(pub_path: &str) -> Option<String> {
+    let path = crate::commands::ssh_keys::expand_home(pub_path).ok()?;
+    let text = tokio::fs::read_to_string(&path).await.ok()?;
+    let t = text.trim().to_string();
+    if t.is_empty() { None } else { Some(t) }
+}
+
+/// The `.pub` beside a distro private key path, when readable.
+async fn read_distro_public_key(fs: &dyn legit_core::RepoFs, private_key_path: &str) -> Option<String> {
+    let bytes =
+        fs.read(&legit_core::HostPath(format!("{private_key_path}.pub")), Some(64 * 1024)).await.ok()?;
+    let t = String::from_utf8_lossy(&bytes).trim().to_string();
+    if t.is_empty() { None } else { Some(t) }
+}
+
+/// Ensure `<email> <material>` is in the distro's allowed-signers file.
+async fn ensure_distro_allowed_signer(
+    fs: &dyn legit_core::RepoFs,
+    signers_path: &str,
+    email: &str,
+    public_key: &str,
+) -> Result<(), AppError> {
+    let line = crate::commands::ssh_keys::allowed_signer_line(email, public_key)
+        .ok_or_else(|| AppError::Io("cannot build an allowed-signers entry".to_string()))?;
+    let path = legit_core::HostPath(signers_path.to_string());
+    let existing = match fs.read(&path, Some(256 * 1024)).await {
+        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        Err(_) => String::new(),
+    };
+    if let Some(updated) = crate::commands::ssh_keys::with_signer_line(&existing, &line) {
+        fs.write(&path, updated.as_bytes())
+            .await
+            .map_err(|e| AppError::Io(format!("cannot write {}: {e}", path.0)))?;
+    }
     Ok(())
 }
 
@@ -615,12 +792,20 @@ pub async fn apply_profile_to_repo(
     state: tauri::State<'_, AppState>,
     repo_id: String,
     profile_id: String,
-) -> Result<ProfileStatus, AppError> {
+) -> Result<ProfileApplyResult, AppError> {
     let session = state.get_session(&repo_id).await?;
-    apply_profile_core(&state, &session, &profile_id).await?;
+    let distro_key = apply_profile_core(&state, &session, &profile_id).await?;
     let runner = session.runner.read().await.clone();
     let stored = session.settings.read().await.git_profile_id.clone();
-    Ok(status_for(&state, runner.as_ref(), stored).await)
+    Ok(ProfileApplyResult { status: status_for(&state, runner.as_ref(), stored).await, distro_key })
+}
+
+/// `apply_profile_to_repo`'s result: the refreshed status plus, for a repo on
+/// a remote host, how the profile's auth key resolved there.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct ProfileApplyResult {
+    pub status: ProfileStatus,
+    pub distro_key: Option<DistroKeyResolution>,
 }
 
 /// Clear the repo's profile: unset all 8 managed keys locally and drop the
@@ -635,7 +820,35 @@ pub async fn clear_repo_profile(
     let runner = session.runner.read().await.clone();
     write_managed(runner.as_ref(), &ManagedKeys::all_unset()).await?;
     set_repo_profile_id(&state, &session, None).await?;
+    if let Some(key) = repo_assignment_key(&session).await {
+        let _ = state
+            .mutate_global(|s| {
+                s.profile_assignments.remove(&key);
+            })
+            .await;
+    }
     Ok(status_for(&state, runner.as_ref(), None).await)
+}
+
+/// Read-only: the profile the synced assignment map records for this repo's
+/// remote - the "on your other machines this clone uses X" suggestion.
+/// `None` when the repo has no mappable remote, no entry exists, or the
+/// mapped profile does not (or no longer does) exist here.
+#[tauri::command]
+#[specta::specta]
+pub async fn suggested_profile_for_repo(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<Option<String>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    let Some(key) = repo_assignment_key(&session).await else {
+        return Ok(None);
+    };
+    let s = state.global_settings.read().await;
+    Ok(s.profile_assignments
+        .get(&key)
+        .filter(|id| s.git_profiles_doc.profiles.iter().any(|p| &p.id == *id))
+        .cloned())
 }
 
 /// Custom-mode save: write only the keys the draft changes (relative to the
@@ -747,6 +960,71 @@ impl ManagedKeys {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn distro_path_resolution_rewrites_paths_only() {
+        let keys = ManagedKeys {
+            user_name: Some("Simon".into()),
+            user_email: Some("s@x.ch".into()),
+            gpg_format: Some("ssh".into()),
+            signing_key: Some("C:/Users/s/.ssh/id_ed25519_work.pub".into()),
+            commit_gpgsign: Some("true".into()),
+            allowed_signers_file: Some("C:/Users/s/.ssh/allowed_signers".into()),
+            auth_ssh_key: Some("C:/Users/s/.ssh/id_ed25519_work".into()),
+            credential_helper: None,
+        };
+        let (out, auth) = resolve_managed_paths_for_distro(&keys, "/home/u/");
+        assert_eq!(out.auth_ssh_key.as_deref(), Some("/home/u/.ssh/id_ed25519_work"));
+        assert_eq!(out.signing_key.as_deref(), Some("/home/u/.ssh/id_ed25519_work.pub"));
+        assert_eq!(out.allowed_signers_file.as_deref(), Some("/home/u/.ssh/allowed_signers"));
+        assert_eq!(
+            auth,
+            Some((
+                "C:/Users/s/.ssh/id_ed25519_work".to_string(),
+                "/home/u/.ssh/id_ed25519_work".to_string()
+            ))
+        );
+        // Identity fields pass through untouched.
+        assert_eq!(out.user_email, keys.user_email);
+    }
+
+    #[test]
+    fn distro_path_resolution_leaves_non_path_signing_values_alone() {
+        // A GPG key id and a literal ssh public key are not paths.
+        let gpg = ManagedKeys {
+            gpg_format: Some("openpgp".into()),
+            signing_key: Some("ABC123DEF".into()),
+            allowed_signers_file: Some("C:/s/allowed".into()),
+            auth_ssh_key: None,
+            user_name: None,
+            user_email: None,
+            commit_gpgsign: None,
+            credential_helper: None,
+        };
+        let (out, auth) = resolve_managed_paths_for_distro(&gpg, "/home/u");
+        assert_eq!(out.signing_key.as_deref(), Some("ABC123DEF"));
+        // Non-ssh formats keep their allowed-signers value too.
+        assert_eq!(out.allowed_signers_file.as_deref(), Some("C:/s/allowed"));
+        assert_eq!(auth, None);
+
+        let literal = ManagedKeys {
+            gpg_format: Some("ssh".into()),
+            signing_key: Some("ssh-ed25519 AAAAC3NzaC1lZDI1 s@x.ch".into()),
+            ..gpg.clone()
+        };
+        let (out, _) = resolve_managed_paths_for_distro(&literal, "/home/u");
+        assert_eq!(out.signing_key.as_deref(), Some("ssh-ed25519 AAAAC3NzaC1lZDI1 s@x.ch"));
+    }
+
+    #[test]
+    fn key_file_basename_handles_both_separators() {
+        assert_eq!(key_file_basename("C:/Users/s/.ssh/id_ed25519_work"), Some("id_ed25519_work"));
+        assert_eq!(key_file_basename(r"C:\Users\s\.ssh\id_rsa"), Some("id_rsa"));
+        assert_eq!(key_file_basename("/home/u/.ssh/key"), Some("key"));
+        assert_eq!(key_file_basename("bare_name"), Some("bare_name"));
+        assert_eq!(key_file_basename("ends/with/"), None);
+        assert_eq!(key_file_basename(""), None);
+    }
 
     fn profile(id: &str, name: &str) -> GitProfile {
         GitProfile {

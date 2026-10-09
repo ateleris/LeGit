@@ -184,6 +184,13 @@ pub fn set_global_base_env(vars: Vec<(String, String)>) {
     let _ = GLOBAL_BASE_ENV.set(vars);
 }
 
+/// The registered process-wide extras alone (no hardened git defaults) - for
+/// non-git helper spawns that must still reach the credential/askpass relay
+/// riding in the extras (the agent's `HostRun`).
+pub fn global_base_env_extras() -> Vec<(String, String)> {
+    GLOBAL_BASE_ENV.get().cloned().unwrap_or_default()
+}
+
 /// The hardened defaults plus any registered process-wide extras.
 fn base_env_with_globals() -> Vec<(String, String)> {
     let mut env = default_base_env();

@@ -30,7 +30,8 @@ pub use error::GitError;
 pub use progress::RemoteProgress;
 pub use runner::{
     GitRequest,
-    set_global_base_env, set_invocation_observer, set_progress_observer, GitInvocation, GitRunner,
+    global_base_env_extras, set_global_base_env, set_invocation_observer, set_progress_observer,
+    GitInvocation, GitRunner,
     GitVersion, OperationId, RunOutput, RunOutputBytes, RunnerError, RunnerEvent,
     MIN_SUPPORTED_GIT_VERSION,
 };

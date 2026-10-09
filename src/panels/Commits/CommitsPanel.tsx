@@ -242,6 +242,21 @@ function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
   // the end and the columns drift apart on the final few pixels.
   const [headerShift, setHeaderShift] = useState(0);
 
+  // The header grid lives OUTSIDE the scroller, so when the vertical
+  // scrollbar appears the rows' elastic Subject column is narrower than the
+  // header's by the scrollbar width and every column right of it drifts.
+  // Reserving that width in the header keeps the grids identical.
+  const [scrollbarWidth, setScrollbarWidth] = useState(0);
+  useEffect(() => {
+    const el = parentRef.current;
+    if (!el) return;
+    const update = () => setScrollbarWidth(el.offsetWidth - el.clientWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   // Column ordering, hiding, and widths — read from global settings on mount
   // and persisted (debounced) via `patch_global_settings`.
   const { state: colState, setOrder, setHidden, setWidth } = useColumnState();
@@ -1055,7 +1070,7 @@ function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
       {/* Column headers - fixed above the virtualised list; the grid is
           translated by the list's horizontal scroll offset so the header
           columns stay exactly over their cells (see headerShift). */}
-      <div style={{ overflow: "hidden", flexShrink: 0 }}>
+      <div style={{ overflow: "hidden", flexShrink: 0, paddingRight: scrollbarWidth }}>
       <div
         style={{
           display: "grid",

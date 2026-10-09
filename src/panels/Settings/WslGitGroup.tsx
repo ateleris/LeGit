@@ -24,6 +24,7 @@ import { Section, Row, FieldNote } from "./primitives";
 import { GitStatusReadout } from "./GitStatusReadout";
 import { GlobalGitConfigSection } from "./GlobalGitConfigSection";
 import { LineEndingsGlobalSection } from "./LineEndingsGlobalSection";
+import { SshKeysSection, wslSshKeysApi } from "./SshKeyTools";
 import { useWslHost } from "./WslHostContext";
 
 /** One cheap `wsl --list` probe; empty on machines without WSL. */
@@ -111,6 +112,21 @@ export function WslEolSection() {
       disabled={status === "disconnected"}
     />
   );
+}
+
+/** Key pairs in the selected distribution's own `~/.ssh`. */
+export function WslSshKeysSection() {
+  const { distro, everConnected } = useWslHost();
+  if (!everConnected) {
+    return (
+      <FieldNote>
+        Connect the distribution (under Distribution above) to manage its SSH keys.
+      </FieldNote>
+    );
+  }
+  // `key={distro}` remounts on a distro switch so one distribution's keys
+  // are never shown under another's name.
+  return <SshKeysSection key={`ssh-${distro}`} hostApi={wslSshKeysApi(distro)} />;
 }
 
 /** Connectivity of the selected distribution, in words (never colour alone). */

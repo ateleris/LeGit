@@ -36,10 +36,15 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   and broker HTTPS auth shipped 2026-07-13; scope = GitHub/GitLab/ADO,
   SSH-first, per 2026-07-13 decision; code lives in
   `crates/legit-providers` + `commands/accounts.rs` / `ssh_keys.rs`):
-  - **OAuth device flows** (GitHub client-id-only, GitLab device grant,
-    Entra device code for ADO) - blocked on registering app client IDs
-    (needs the maintainer's forge account/org); the code seam is
-    `legit_providers::validate_token`.
+  - **OAuth device flows, GitLab + ADO remainder** (GitHub shipped
+    2026-10-08: `design/2026-10-08-github-oauth-device-flow.md`). GitLab
+    needs a registered app plus refresh-token handling in the credential
+    broker (its OAuth tokens expire after 2h); ADO needs an Entra app
+    registration and the Microsoft device code flow. The seams:
+    `Platform::device_flow_client_id` / `device_flow_config`
+    (`legit-providers`), and the platform-agnostic commands already
+    gate on them. Also pending: transfer of the GitHub OAuth app from
+    the personal account to the company org (client ID survives).
   - **Self-hosted GitLab hosts** (gitlab.com fixed for now).
   - `ssh -T` connection test could surface WHICH account authenticated
     (parse the "Hi <user>!" line).
@@ -111,17 +116,10 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
     Windows file picker (2026-09-01, `supportsRepoGitOverride`). To lift it:
     probe the candidate through the session's host and make the picker not
     browse the app machine.
-  - **Distro-side SSH keys.** LeGit's `~/.ssh` tools (list / generate /
-    upload) are app-machine-only: `commands/ssh_keys.rs` uses `std::fs` and
-    a local `ssh-keygen`. The WSL identity form therefore omits the
-    "Default SSH keys" field entirely (2026-09-01, with the Git (WSL)
-    settings group), so a WSL repo on an SSH remote needs its key managed
-    inside the distro by hand. To lift: route those commands through a
-    host's `fs()` / `spawn_detached` (as the config commands now do via
-    `settings_host.rs`), add a `distro` parameter mirroring
-    `commands/wsl_config.rs`, and decide where an uploaded key's private
-    half lives (the distro's `~/.ssh`, not the app machine's). The agent
-    already relays askpass, so a distro key's passphrase prompt works.
+  - **Distro-side SSH keys**: shipped 2026-10-09 (WSL key section, matrix
+    rows, apply-time resolution of auth + ssh-signing paths with copy /
+    replace offers and allowed-signers sync; the `HostRun` captured spawn
+    op carries it).
   - **Dedicated AgentGone error variant.** A dead connection surfaces as a
     RunnerError::Io/FsError message ("agent connection lost") — correct but
     unclassified; a `GitError` variant would let panels render "host
@@ -146,6 +144,23 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   - **Phase 2 candidates**: named layouts (files under
     `<app-data>/layouts/`, so syncing mirrors the themes approach; LIVE
     dock state stays localStorage), an export/import bundle file.
+  - **Encrypted SSH-key sync** (requested 2026-10-08; deferred: needs
+    its own design note and threat model before building; profile sync
+    itself shipped 2026-10-09 as the "Sync git profiles" opt-in, keys
+    referenced by `~/.ssh/<file>` name - build this only if the
+    per-machine create-and-upload flow proves insufficient). A second
+    opt-in ON TOP of the sync opt-in and of profile sync: store
+    `keys/<id>.age` in the sync repo, passphrase-based age encryption
+    (`age` crate), decrypt on import into a LeGit-managed key dir
+    (0600 on Unix; Windows OpenSSH checks ACLs, needs per-OS
+    handling), never write plaintext into the repo or the synced
+    JSON. Must present the trade-offs explicitly in the opt-in UI:
+    encrypted private keys live forever in the remote's git history
+    guarded only by the passphrase's strength, and the passphrase
+    itself still moves between machines out of band. This reverses
+    the "LeGit stores no secrets" principle, which is why it is a
+    separate, loudly-labelled opt-in rather than part of profile
+    sync.
 
 - **Git Log panel:** filter/search the log, copy a command, jump a toast to
   its specific log entry (today it just opens the panel).

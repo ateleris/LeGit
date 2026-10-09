@@ -33,12 +33,10 @@ describe("scopes", () => {
     expect(wslGitConfigScope("Ubuntu").id).not.toBe(wslGitConfigScope("Debian").id);
   });
 
-  // Both affordances reach the APP MACHINE: `~/.ssh` key tools and the Tauri
-  // file dialog. Offered for a distro they would hand a Linux git a C:\ path.
-  it("offer app-machine affordances only locally", () => {
-    expect(localGitConfigScope.showSshKeys).toBe(true);
+  // The file dialog browses the APP MACHINE: offered for a distro it would
+  // hand a Linux git a C:\ path.
+  it("offers the file browser only locally", () => {
     expect(localGitConfigScope.showBrowse).toBe(true);
-    expect(wslGitConfigScope("Ubuntu").showSshKeys).toBe(false);
     expect(wslGitConfigScope("Ubuntu").showBrowse).toBe(false);
   });
 

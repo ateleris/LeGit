@@ -65,11 +65,26 @@ fn remote_web_url(remote: &str) -> Option<String> {
 }
 
 /// The remote whose page to open: `origin` when present, else the first one.
-fn pick_remote(remotes: &[Remote]) -> Option<&Remote> {
+pub(crate) fn pick_remote(remotes: &[Remote]) -> Option<&Remote> {
     remotes
         .iter()
         .find(|r| r.name == "origin")
         .or_else(|| remotes.first())
+}
+
+/// Machine-neutral identity of a remote for the synced profile-assignment
+/// map: the web form with scheme and host lowercased, so the https, ssh and
+/// scp spellings of one remote all key the same entry. `None` for remotes
+/// without a web form (local paths).
+pub(crate) fn canonical_remote_key(remote: &str) -> Option<String> {
+    let url = remote_web_url(remote)?;
+    let host_end = url
+        .find("://")
+        .map(|i| i + 3)
+        .map(|start| url[start..].find('/').map(|slash| start + slash).unwrap_or(url.len()))
+        .unwrap_or(url.len());
+    let (scheme_host, path) = url.split_at(host_end);
+    Some(format!("{}{}", scheme_host.to_lowercase(), path))
 }
 
 /// Open a URL in the default browser (fire-and-forget).
@@ -174,6 +189,21 @@ mod tests {
         assert_eq!(web(r"C:\repos\thing"), None);
         assert_eq!(web("C:/repos/thing"), None);
         assert_eq!(web("file:///srv/git/repo.git"), None);
+    }
+
+    #[test]
+    fn canonical_remote_key_unifies_url_spellings() {
+        // The three ways one GitHub remote is commonly spelled must collide.
+        for url in [
+            "https://GitHub.com/Org/Repo.git",
+            "ssh://git@github.com:22/Org/Repo",
+            "git@github.com:Org/Repo.git",
+        ] {
+            assert_eq!(canonical_remote_key(url).as_deref(), Some("https://github.com/Org/Repo"));
+        }
+        // Path case is part of the identity (only scheme+host fold).
+        assert_ne!(canonical_remote_key("git@github.com:org/repo"), canonical_remote_key("git@github.com:Org/Repo"));
+        assert_eq!(canonical_remote_key("/srv/git/repo.git"), None);
     }
 
     #[test]

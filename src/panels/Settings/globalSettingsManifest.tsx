@@ -25,6 +25,7 @@ import {
 } from "./BehaviorSections";
 import { GitExecutableSection } from "./GitExecutableSection";
 import { ConnectedAccountsSection } from "./ConnectedAccountsSection";
+import { SshKeysSection } from "./SshKeyTools";
 import { GlobalGitConfigSection } from "./GlobalGitConfigSection";
 import { LineEndingsGlobalSection } from "./LineEndingsGlobalSection";
 import { GlobalProfilesSection } from "./GlobalProfilesSection";
@@ -34,6 +35,7 @@ import {
   WslConnectionSection,
   WslEolSection,
   WslGitExecutableSection,
+  WslSshKeysSection,
 } from "./WslGitGroup";
 import { SettingsSyncSection } from "./SettingsSyncSection";
 import { AboutSection } from "./AboutSection";
@@ -175,7 +177,7 @@ export function buildGlobalSettingsGroups(hasWsl: boolean): SettingsGroupDef[] {
         {
           id: "settings-sync",
           title: "Settings sync",
-          keywords: ["sync", "share", "machines", "computers", "git", "repository", "theme"],
+          keywords: ["sync", "share", "machines", "computers", "git", "repository", "theme", "profiles", "identity"],
           render: () => <SettingsSyncSection />,
         },
         {
@@ -193,6 +195,29 @@ export function buildGlobalSettingsGroups(hasWsl: boolean): SettingsGroupDef[] {
       ],
     },
     {
+      // Host-agnostic LeGit-level identity: profiles apply to local AND WSL
+      // repos (through the host seam), and connected accounts serve both
+      // (the agent relays credentials to the app machine). Machine-scoped
+      // git config stays in "Git" / "Git (WSL)".
+      id: "identity-accounts",
+      title: "Identity & accounts",
+      caption: "Profiles & platform accounts",
+      sections: [
+        {
+          id: "profiles",
+          title: "Git identity profiles",
+          keywords: ["profile", "identity", "ssh key", "email"],
+          render: () => <GlobalProfilesSection />,
+        },
+        {
+          id: "connected-accounts",
+          title: "Connected accounts",
+          keywords: ["account", "auth", "credentials", "sign in", "oauth", "token", "github", "gitlab", "upload", "ssh key", "signing"],
+          render: () => <ConnectedAccountsSection />,
+        },
+      ],
+    },
+    {
       id: "git",
       title: "Git",
       caption: "Integration & configuration",
@@ -204,28 +229,22 @@ export function buildGlobalSettingsGroups(hasWsl: boolean): SettingsGroupDef[] {
           render: () => <GitExecutableSection />,
         },
         {
-          id: "connected-accounts",
-          title: "Connected accounts",
-          keywords: ["account", "auth", "credentials", "sign in"],
-          render: () => <ConnectedAccountsSection />,
-        },
-        {
           id: "git-config",
           title: "Identity, signing & credentials",
           keywords: ["gpg", "ssh", "signing", "user.name", "user.email", "credential", "helper"],
           render: () => <GlobalGitConfigSection scope={localGitConfigScope} />,
         },
         {
+          id: "ssh-keys",
+          title: "SSH keys",
+          keywords: ["ssh", "key", "keygen", "generate", "ed25519", "rsa", "public key", "key pair"],
+          render: () => <SshKeysSection />,
+        },
+        {
           id: "line-endings-global",
           title: "Line endings",
           keywords: ["autocrlf", "eol", "crlf"],
           render: () => <LineEndingsGlobalSection scope={localGitConfigScope} />,
-        },
-        {
-          id: "profiles",
-          title: "Git identity profiles",
-          keywords: ["profile", "identity", "ssh key", "email"],
-          render: () => <GlobalProfilesSection />,
         },
       ],
     },
@@ -254,6 +273,12 @@ export function buildGlobalSettingsGroups(hasWsl: boolean): SettingsGroupDef[] {
           title: "Identity, signing & credentials (WSL)",
           keywords: ["gpg", "ssh", "signing", "credential", "helper"],
           render: () => <WslConfigSection />,
+        },
+        {
+          id: "wsl-ssh-keys",
+          title: "SSH keys (WSL)",
+          keywords: ["ssh", "key", "keygen", "generate", "ed25519", "rsa", "public key", "key pair"],
+          render: () => <WslSshKeysSection />,
         },
         {
           id: "wsl-line-endings",

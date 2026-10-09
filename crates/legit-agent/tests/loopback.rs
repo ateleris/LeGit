@@ -330,6 +330,51 @@ async fn watch_events_cross_the_wire() {
     drop(handle);
 }
 
+#[tokio::test]
+async fn host_run_captures_output_exit_code_and_timeout() {
+    let (conn, _guard) = common::connect_agent().await;
+    let host = legit_host::RemoteHost::new(
+        legit_host::HostId::Wsl { distro: "loopback".into() },
+        conn,
+    );
+
+    // Output and env both cross the wire (env is what the distro ssh spawns
+    // will need for HOME-relative config).
+    let out = legit_host::Host::run_captured(
+        &host,
+        "/bin/sh",
+        &["-c".into(), "echo -n \"out $LEGIT_TEST_VAR\"; echo -n err >&2".into()],
+        None,
+        &[("LEGIT_TEST_VAR".into(), "v".into())],
+        10,
+    )
+    .await
+    .expect("host run succeeds");
+    assert!(out.success);
+    assert_eq!(out.stdout, "out v");
+    assert_eq!(out.stderr, "err");
+    assert!(!out.timed_out);
+
+    // A failing command is a RESULT (exit code + stderr), not a wire error.
+    let fail = legit_host::Host::run_captured(&host, "/bin/sh", &["-c".into(), "exit 3".into()], None, &[], 10)
+        .await
+        .expect("failing run still answers");
+    assert!(!fail.success);
+    assert_eq!(fail.exit_code, Some(3));
+
+    // A hung command is killed at the timeout and reported as such.
+    let hung = legit_host::Host::run_captured(&host, "/bin/sh", &["-c".into(), "sleep 30".into()], None, &[], 1)
+        .await
+        .expect("timeout is a result");
+    assert!(hung.timed_out);
+    assert!(!hung.success);
+
+    // A nonexistent program IS a spawn error.
+    assert!(legit_host::Host::run_captured(&host, "/no/such/program", &[], None, &[], 5)
+        .await
+        .is_err());
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn credential_relay_round_trips_through_real_git() {

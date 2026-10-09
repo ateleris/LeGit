@@ -942,6 +942,49 @@ impl Host for RemoteHost {
         })
     }
 
+    async fn run_captured(
+        &self,
+        program: &str,
+        args: &[String],
+        cwd: Option<&HostPath>,
+        env: &[(String, String)],
+        timeout_secs: u64,
+    ) -> Result<crate::CapturedRun, HostError> {
+        let result: Result<legit_proto::HostRunResult, WireError> = self
+            .inner
+            .conn
+            .get()
+            .call(Method::HostRun {
+                program: program.to_string(),
+                args: args.to_vec(),
+                cwd: cwd.cloned(),
+                env: env.to_vec(),
+                timeout_secs,
+            })
+            .await;
+        let r = result.map_err(|e| HostError::Spawn {
+            program: program.to_string(),
+            message: e.message,
+        })?;
+        Ok(crate::CapturedRun {
+            stdout: r.stdout,
+            stderr: r.stderr,
+            exit_code: r.exit_code,
+            success: r.success,
+            timed_out: r.timed_out,
+        })
+    }
+
+    fn home_dir(&self) -> Option<HostPath> {
+        self.inner
+            .conn
+            .get()
+            .info()
+            .map(|i| i.home.clone())
+            .filter(|h| !h.is_empty())
+            .map(HostPath)
+    }
+
     async fn probe_git(&self, git_path: &HostPath) -> Result<GitVersion, HostError> {
         let result: Result<GitVersion, WireError> = self
             .inner

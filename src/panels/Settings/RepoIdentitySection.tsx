@@ -15,6 +15,8 @@ import { WarningIcon } from "../../icons";
 import { formatAppError } from "../../lib/errors";
 import type { KeyDiff, ManagedConfigView, ProfileStatus, ResolvedIdentity } from "../../lib/types";
 import { api } from "../../lib/commands";
+import { confirmDialog } from "../../store/confirm";
+import { notify } from "../../store/notifications";
 import { useGitProfiles, invalidateGitProfiles } from "../../lib/useGitProfiles";
 import { Button } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
@@ -33,6 +35,7 @@ export function RepoIdentitySection({ repoId, repoName }: { repoId: string; repo
   const [status, setStatus] = useState<ProfileStatus | null>(null);
   const [view, setView] = useState<ManagedConfigView | null>(null);
   const [resolvedIdentity, setResolvedIdentity] = useState<ResolvedIdentity | null>(null);
+  const [suggested, setSuggested] = useState<string | null>(null);
   const [pending, setPending] = useState<{ profileId: string; diffs: KeyDiff[] } | null>(null);
   const [clearPending, setClearPending] = useState(false);
   const [customPicked, setCustomPicked] = useState(false);
@@ -51,6 +54,9 @@ export function RepoIdentitySection({ repoId, repoName }: { repoId: string; repo
     ])
       .then(([s, r, v]) => { setStatus(s); setResolvedIdentity(r); setView(v); })
       .catch((e) => setError(formatAppError(e)));
+    // The synced assignment hint is decoration: a failure must not block the
+    // section.
+    api.suggestedProfileForRepo(repoId).then(setSuggested).catch(() => setSuggested(null));
   }, [repoId]);
 
   useEffect(() => { setCustomPicked(false); }, [repoId]);
@@ -119,9 +125,47 @@ export function RepoIdentitySection({ repoId, repoName }: { repoId: string; repo
     return run(async () => {
       setError(null);
       try {
-        const s = await api.applyProfileToRepo(repoId, pending.profileId);
-        applyResult(s);
+        const r = await api.applyProfileToRepo(repoId, pending.profileId);
+        applyResult(r.status);
         setPending(null);
+        // Workflow prompts (always shown, not gated): the profile's key was
+        // resolved by file name into the distro's ~/.ssh and is either not
+        // there (offer copying it) or a DIFFERENT key sits under that name
+        // (offer replacing it - otherwise pushes authenticate as that key).
+        if (r.distro_key && !r.distro_key.exists) {
+          const ok = await confirmDialog({
+            title: "SSH key not in the distribution",
+            message: `The profile's SSH key is not in ${r.distro_key.distro}'s ~/.ssh, so SSH pushes and pulls will fail there. Copy the key pair into the distribution?`,
+            detail: r.distro_key.target_path,
+            confirmLabel: "Copy key",
+            danger: false,
+          });
+          if (ok) {
+            try {
+              await api.wslInstallSshKey(r.distro_key.distro, r.distro_key.source_path, false);
+              notify.success(`Key copied into ${r.distro_key.distro}`);
+            } catch (e) {
+              notify.error(formatAppError(e));
+            }
+          }
+        } else if (r.distro_key?.mismatch) {
+          const ok = await confirmDialog({
+            title: "Different key in the distribution",
+            message: `${r.distro_key.distro} already has a DIFFERENT key under the profile's file name, so SSH there authenticates with that key, not the profile's. Replace it with the profile's key pair?`,
+            detail: r.distro_key.target_path,
+            warning: "Replacing overwrites the distribution's existing key pair.",
+            confirmLabel: "Replace key",
+            cancelLabel: "Keep existing",
+          });
+          if (ok) {
+            try {
+              await api.wslInstallSshKey(r.distro_key.distro, r.distro_key.source_path, true);
+              notify.success(`Key replaced in ${r.distro_key.distro}`);
+            } catch (e) {
+              notify.error(formatAppError(e));
+            }
+          }
+        }
       } catch (e) {
         setError(formatAppError(e));
       }
@@ -177,6 +221,18 @@ export function RepoIdentitySection({ repoId, repoName }: { repoId: string; repo
           <option value={CUSTOM_VALUE}>Custom (this repo)</option>
         </select>
       </div>
+
+      {m.kind === "inherit" && !pending && !clearPending && !customPicked && suggested &&
+        profiles.some((p) => p.id === suggested) && (
+          <div style={{ display: "flex", alignItems: "center", gap: "0.667em", marginTop: "0.667em", flexWrap: "wrap" }}>
+            <span className="legit-subtle" style={{ fontSize: "var(--fz-md)" }}>
+              This repository uses the profile "{profileName(suggested)}" on your other computers.
+            </span>
+            <button disabled={busy} onClick={() => void handleSelect(suggested)}>
+              Review &amp; apply
+            </button>
+          </div>
+        )}
 
       {pending && (
         <ConfirmPanel

@@ -487,6 +487,53 @@ async fn dispatch_post_handshake(
             });
             Ok(to_value(&()))
         }
+        Method::HostRun { program, args, cwd, env, timeout_secs } => {
+            let mut cmd = tokio::process::Command::new(&program);
+            cmd.args(&args);
+            // stdin nulled for the same reason as HostSpawn; stdout/stderr
+            // are piped and returned, never inherited into the protocol
+            // stream.
+            cmd.stdin(std::process::Stdio::null());
+            if let Some(cwd) = cwd {
+                cmd.current_dir(cwd.as_local());
+            }
+            for (k, v) in env {
+                cmd.env(k, v);
+            }
+            // The base-env extras carry the credential/askpass relay, so a
+            // helper-spawned ssh prompts in-app like a git-spawned one. They
+            // are applied last and win over caller env.
+            for (k, v) in legit_core::global_base_env_extras() {
+                cmd.env(k, v);
+            }
+            cmd.kill_on_drop(true);
+            let timeout = std::time::Duration::from_secs(timeout_secs.clamp(1, 600));
+            match tokio::time::timeout(timeout, cmd.output()).await {
+                Err(_) => Ok(to_value(&legit_proto::HostRunResult {
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    exit_code: None,
+                    success: false,
+                    timed_out: true,
+                })),
+                Ok(Err(e)) => Err(WireError::new(WireErrorKind::Spawn, e.to_string())),
+                Ok(Ok(out)) => {
+                    // Truncate the BYTES before the lossy conversion:
+                    // String::truncate panics off a char boundary.
+                    let cap = |bytes: &[u8]| {
+                        let end = bytes.len().min(legit_proto::HOST_RUN_OUTPUT_CAP);
+                        String::from_utf8_lossy(&bytes[..end]).into_owned()
+                    };
+                    Ok(to_value(&legit_proto::HostRunResult {
+                        stdout: cap(&out.stdout),
+                        stderr: cap(&out.stderr),
+                        exit_code: out.status.code(),
+                        success: out.status.success(),
+                        timed_out: false,
+                    }))
+                }
+            }
+        }
         Method::GitProbe { git_path } => {
             let runner = runner_for(&git_path, None);
             let out = runner.run(&["--version"]).await.map_err(|e| we2(&e))?;

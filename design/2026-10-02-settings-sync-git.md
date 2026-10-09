@@ -91,10 +91,41 @@ Never synced (machine/session state, machine-bound paths, identity):
   `last_clone_parent_dir`
 - `global_region_size_top`, `global_region_size_left`,
   `global_dock_collapsed`, `file_history_window_size`
-- `gitProfiles` (identities + machine-bound key paths),
-  `connected_accounts` (keychain-backed; metadata alone is a lie)
+- `connected_accounts` (keychain-backed; metadata alone is a lie),
+  `platform_key_cache` (this machine's last-verified view of an account)
 - `settings_sync_path` itself (a local path; syncing it would overwrite
-  every machine's pointer with one machine's path)
+  every machine's pointer with one machine's path), and
+  `sync_git_profiles` (a per-machine participation choice, see below)
+
+`gitProfiles` is in NEITHER list: it syncs opt-in (2026-10-09), gated on
+each machine by the `sync_git_profiles` toggle in the Settings sync
+section. Export (toggle on) rewrites a profile's key paths
+(`auth_ssh_key`, `signing_key`, `allowed_signers_file`) to the
+machine-neutral `~/.ssh/<file>` form when they point directly into this
+machine's `~/.ssh`; import (toggle on) expands that form into the local
+`~/.ssh`. The guard is the prefix match alone, so custom key locations,
+literal SSH keys, and GPG key ids cross verbatim. The keys themselves
+NEVER sync: on a machine where a profile's key file is missing, the
+Connected accounts matrix shows the missing/create state and
+"Create & upload key" generates a per-machine key under the same file
+name (deterministic `id_ed25519_<profile-slug>` naming is what makes
+the file-name contract line up across machines - the same contract the
+WSL distro apply relies on). A machine with the toggle off neither
+exports its profiles nor adopts synced ones.
+
+`profile_assignments` syncs under the same toggle: a map of canonical
+remote URL (`browser::canonical_remote_key` - the web form with scheme
+and host lowercased, so https/ssh/scp spellings collide) to profile id,
+recorded when a profile is applied to a repo and removed on clear. It
+exists because per-repo settings are keyed by LOCAL path hashes and
+never sync; the remote URL is the machine-neutral repo identity. Other
+machines use it only as a SUGGESTION ("this clone uses profile X
+elsewhere" in the repo identity section, flowing through the normal
+preview-and-apply path) - applying still writes `.git/config`
+explicitly, never automatically. Repos without a web-formed remote
+(local-path remotes, no remote yet) record nothing. The map is a
+`BTreeMap` deliberately: a `HashMap`'s nondeterministic serialization
+order would dirty `legit-sync.json` on every export cycle.
 
 Everything else syncs, including the remembered view toggles
 (`files_view_mode`, `changed_files_view_mode`, `files_show_ignored`,

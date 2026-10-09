@@ -8,11 +8,13 @@ import { useRepoStore } from "../../store/repos";
 import { useSettingsStore } from "../../store/settings";
 import { Button } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
-import { FieldNote, Section, WritesTo } from "./primitives";
+import { FieldNote, Section, SettingCheckbox, WritesTo } from "./primitives";
 
 export function SettingsSyncSection() {
   const syncPath = useSettingsStore((s) => s.settings?.settings_sync_path ?? null);
   const syncStatus = useSettingsStore((s) => s.syncStatus);
+  const syncProfiles = useSettingsStore((s) => s.settings?.sync_git_profiles ?? false);
+  const patchSettings = useSettingsStore((s) => s.patchSettings);
   const probeSyncPath = useSettingsStore((s) => s.probeSyncPath);
   const setSyncPath = useSettingsStore((s) => s.setSyncPath);
   const syncNow = useSettingsStore((s) => s.syncNow);
@@ -90,6 +92,23 @@ export function SettingsSyncSection() {
             Sync runs both ways: local changes are committed and pushed, and
             changes from your other machines are pulled in at startup and on
             "Sync now".
+          </FieldNote>
+          <SettingCheckbox
+            id="sync-git-profiles"
+            label="Sync git profiles"
+            checked={syncProfiles}
+            disabled={busy}
+            onChange={() =>
+              act(() => patchSettings({ sync_git_profiles: !syncProfiles }))
+            }
+          />
+          <FieldNote>
+            Profiles sync by key file name; the SSH keys themselves never
+            leave a machine. On a computer where a profile's key is missing,
+            use "Create &amp; upload key" in Connected accounts to give it one
+            there. Which repository uses which profile also syncs (by remote
+            URL), so other computers suggest the right profile for the same
+            clone. Enable this on every computer that should share profiles.
           </FieldNote>
         </>
       ) : (

@@ -81,8 +81,6 @@ export interface GitConfigScope {
   hostWhere: string;
   /** The "these changes affect …" paragraph of the save confirmation. */
   confirmBlurb: ReactNode;
-  /** The app machine's `~/.ssh` tools — local only (distro keys: BACKLOG). */
-  showSshKeys: boolean;
   /** `openDialog` browses the WINDOWS filesystem — local only. */
   showBrowse: boolean;
   /** Extra note under the credential-helper field. */
@@ -139,7 +137,6 @@ export const localGitConfigScope: GitConfigScope = {
       Git (WSL).
     </>
   ),
-  showSshKeys: true,
   showBrowse: true,
   api: LOCAL_API,
 };
@@ -163,7 +160,6 @@ export function wslGitConfigScope(distro: string): GitConfigScope {
         git in the WSL terminal. Repositories on this machine are not affected.
       </>
     ),
-    showSshKeys: false,
     showBrowse: false,
     credentialHelperNote: (
       <>

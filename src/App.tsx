@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import logoUrl from "./assets/legit-logo.png";
 import { useAppVersion } from "./lib/appVersion";
+import { invalidateGitProfiles } from "./lib/useGitProfiles";
 import { revealAndSignal } from "./lib/windowReveal";
 import { onSettingsSyncStatus, onThemesChanged } from "./lib/events";
 import { useThemeStore } from "./store/themes";
@@ -55,6 +57,7 @@ export function App() {
   const initLayouts = useLayoutsStore((s) => s.init);
   const gitStatus = useGitStatusStore((s) => s.status);
   const remoteHostsAvailable = useGitStatusStore((s) => s.remoteHostsAvailable);
+  const queryClient = useQueryClient();
   const [bootPhase, setBootPhase] = useState<BootPhase>("git");
 
   useEffect(() => {
@@ -94,10 +97,12 @@ export function App() {
       void onThemesChanged(() => {
         void useSettingsStore.getState().reload();
         void useThemeStore.getState().reload();
+        // The adopted settings may carry another machine's profile edits.
+        invalidateGitProfiles(queryClient);
       });
       void useSettingsStore.getState().loadSyncStatus().catch(() => {});
     })();
-  }, [initSettings, initThemes, initGitStatus, initRepos, initLayouts]);
+  }, [initSettings, initThemes, initGitStatus, initRepos, initLayouts, queryClient]);
 
   // Block the app until we know whether git is available (DESIGN-v0.1.md §7.6) AND
   // the persisted repos + theme are restored, so the first real paint shows a

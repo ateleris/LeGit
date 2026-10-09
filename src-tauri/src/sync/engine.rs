@@ -406,6 +406,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn profiles_cross_machines_opted_in_by_ssh_file_name() {
+        let home = crate::commands::ssh_keys::home_dir().unwrap();
+        let mut seed = GlobalSettings::default();
+        seed.sync_git_profiles = true;
+        seed.git_profiles_doc.profiles.push(crate::state::GitProfile {
+            id: "p1".into(),
+            name: "Work".into(),
+            user_name: Some("Simon".into()),
+            user_email: Some("simon@example.com".into()),
+            gpg_format: None,
+            signing_key: None,
+            commit_gpgsign: None,
+            allowed_signers_file: None,
+            auth_ssh_key: Some(home.join(".ssh").join("id_work").display().to_string()),
+            credential_helper: None,
+        });
+        let f = fixture(&seed).await;
+        let mut receiver = GlobalSettings::default();
+        receiver.sync_git_profiles = true;
+        let (adopted, status) = f.b.core.import_cycle(&receiver).await;
+        assert_eq!(status.kind, SyncStatusKind::InSync, "{:?}", status.message);
+        let merged = import_synced_settings(&receiver, &adopted.unwrap().0).unwrap();
+        let p = &merged.git_profiles_doc.profiles[0];
+        assert_eq!(
+            p.auth_ssh_key.as_deref(),
+            Some(home.join(".ssh").join("id_work").display().to_string().as_str())
+        );
+        // The same doc adopted without the opt-in leaves profiles alone.
+        let merged =
+            import_synced_settings(&GlobalSettings::default(), &export_synced_settings(&seed))
+                .unwrap();
+        assert!(merged.git_profiles_doc.profiles.is_empty());
+    }
+
+    #[tokio::test]
     async fn capturing_import_preserves_unexported_local_drift() {
         let f = fixture(&GlobalSettings::default()).await;
         // Remote moves ahead (b pushes a row-height change)...

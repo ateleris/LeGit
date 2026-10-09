@@ -27,7 +27,6 @@ import { useDelayedBusy } from "../shared/useDelayedBusy";
 import { useDelayedFlag } from "../shared/useDelayedFlag";
 import { Section, FieldNote } from "./primitives";
 import { CredentialHelperField } from "./CredentialHelperField";
-import { DefaultSshKeysField } from "./SshKeyTools";
 import { Field, WithBrowse } from "./GlobalProfilesSection";
 import type { GitConfigScope } from "./gitConfigHost";
 import {
@@ -341,12 +340,6 @@ export function GlobalGitConfigSection({
           )}
           {scope.credentialHelperNote && <FieldNote>{scope.credentialHelperNote}</FieldNote>}
         </Field>
-
-        {scope.showSshKeys && (
-          <Field label="Default SSH keys (~/.ssh)">
-            <DefaultSshKeysField />
-          </Field>
-        )}
 
         {confirmPending && (
           <div style={{ padding: "0.833em 1em", background: "var(--button-hover-bg)", border: "1px solid var(--panel-border)", borderRadius: 4 }}>

@@ -460,7 +460,7 @@ pub async fn repo_init(
     let summary = probe_and_open(&state, &app, git_path, target.locator).await?;
     if let Some(pid) = profile_id {
         let session = state.get_session(&summary.id).await?;
-        crate::commands::profiles::apply_profile_core(&state, &session, &pid).await?;
+        let _ = crate::commands::profiles::apply_profile_core(&state, &session, &pid).await?;
     }
     Ok(Some(summary))
 }
@@ -722,7 +722,7 @@ pub async fn repo_clone(
     );
     if let Some(pid) = profile_id {
         let session = state.get_session(&summary.id).await?;
-        crate::commands::profiles::apply_profile_core(&state, &session, &pid).await?;
+        let _ = crate::commands::profiles::apply_profile_core(&state, &session, &pid).await?;
     }
     // git can exit 0 while LFS downloads failed (lfs.skipdownloaderrors,
     // non-required filter), leaving pointer stubs in the fresh clone - the

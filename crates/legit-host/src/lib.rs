@@ -116,8 +116,37 @@ pub trait Host: Send + Sync + 'static {
         cwd: Option<&HostPath>,
     ) -> Result<(), HostError>;
 
+    /// Run a helper program on the host to completion and return its captured
+    /// output (`ssh-keygen`, the `ssh -T` probe). Remote hosts append their
+    /// askpass/credential relay env after `env`, so prompts reach the app.
+    /// Not for git - that is `executor_for`'s job.
+    async fn run_captured(
+        &self,
+        program: &str,
+        args: &[String],
+        cwd: Option<&HostPath>,
+        env: &[(String, String)],
+        timeout_secs: u64,
+    ) -> Result<CapturedRun, HostError>;
+
+    /// The host user's home directory (local: the process env; remote: from
+    /// the agent handshake). `None` = the host did not report one.
+    fn home_dir(&self) -> Option<HostPath>;
+
     /// The host's git version at `git_path` (per-host minimum-version check).
     async fn probe_git(&self, git_path: &HostPath) -> Result<GitVersion, HostError>;
+}
+
+/// A `run_captured` result: lossy-UTF-8 output (remote hosts truncate it; see
+/// `legit_proto::HOST_RUN_OUTPUT_CAP`).
+#[derive(Debug, Clone)]
+pub struct CapturedRun {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: Option<i32>,
+    pub success: bool,
+    /// True when the run was killed at `timeout_secs`.
+    pub timed_out: bool,
 }
 
 /// The app machine itself.
@@ -158,6 +187,60 @@ impl Host for LocalHost {
         cwd: Option<&HostPath>,
     ) -> Result<(), HostError> {
         spawn::spawn_detached(program, args, cwd.map(HostPath::as_local).as_deref())
+    }
+
+    async fn run_captured(
+        &self,
+        program: &str,
+        args: &[String],
+        cwd: Option<&HostPath>,
+        env: &[(String, String)],
+        timeout_secs: u64,
+    ) -> Result<CapturedRun, HostError> {
+        let mut cmd = tokio::process::Command::new(program);
+        cmd.args(args);
+        cmd.stdin(std::process::Stdio::null());
+        #[cfg(target_os = "windows")]
+        {
+            // CREATE_NO_WINDOW: no console flash.
+            cmd.creation_flags(0x0800_0000);
+        }
+        if let Some(cwd) = cwd {
+            cmd.current_dir(cwd.as_local());
+        }
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        cmd.kill_on_drop(true);
+        let timeout = std::time::Duration::from_secs(timeout_secs.clamp(1, 600));
+        match tokio::time::timeout(timeout, cmd.output()).await {
+            Err(_) => Ok(CapturedRun {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: None,
+                success: false,
+                timed_out: true,
+            }),
+            Ok(Err(e)) => Err(HostError::Spawn {
+                program: program.to_string(),
+                message: e.to_string(),
+            }),
+            Ok(Ok(out)) => Ok(CapturedRun {
+                stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+                exit_code: out.status.code(),
+                success: out.status.success(),
+                timed_out: false,
+            }),
+        }
+    }
+
+    fn home_dir(&self) -> Option<HostPath> {
+        #[cfg(target_os = "windows")]
+        let var = "USERPROFILE";
+        #[cfg(not(target_os = "windows"))]
+        let var = "HOME";
+        std::env::var(var).ok().filter(|h| !h.is_empty()).map(HostPath)
     }
 
     async fn probe_git(&self, git_path: &HostPath) -> Result<GitVersion, HostError> {
