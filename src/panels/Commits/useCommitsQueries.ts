@@ -103,6 +103,7 @@ export function useCommitsQueries(
     isFetching: logFetching,
     isError,
     error,
+    isSuccess: logLoaded,
     dataUpdatedAt,
   } = useQuery<Commit[]>({
     queryKey,
@@ -300,6 +301,7 @@ export function useCommitsQueries(
     isFetching,
     isError,
     error,
+    logLoaded,
     hasMore,
     searchHits,
     searchFetching,

@@ -21,3 +21,17 @@ export function pickHeadCommitId(commits: Commit[]): CommitId | null {
   );
   return firstReal?.id ?? null;
 }
+
+/**
+ * Whether the repo verifiably has no commits (unborn HEAD): the log finished
+ * loading, no branch/author filter emptied the window, and no HEAD commit is
+ * known. Drives the toolbar's disabled "Branch" button - a filtered-empty
+ * window must not claim "no commits yet".
+ */
+export function repoHasNoCommits(
+  logLoaded: boolean,
+  filtered: boolean,
+  headId: CommitId | null,
+): boolean {
+  return logLoaded && !filtered && headId === null;
+}

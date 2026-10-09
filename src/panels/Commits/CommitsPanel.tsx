@@ -35,7 +35,7 @@ import { SignedIcon } from "../../icons";
 import { useSignatureStore } from "../../store/signatures";
 import { formatAbsolute, formatRelative } from "../../lib/time";
 import { laneColor } from "./cells/GraphCell";
-import { pickHeadCommitId } from "./headId";
+import { pickHeadCommitId, repoHasNoCommits } from "./headId";
 import { growJumpWindow, JUMP_SEEK_STEP, pendingJumpAction, shouldCenterScroll } from "./scrollToRow";
 import { countRealCommits } from "./logPaging";
 import { confirmDialog } from "../../store/confirm";
@@ -293,6 +293,7 @@ function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
     isFetching,
     isError,
     error,
+    logLoaded,
     hasMore,
     searchHits,
     searchFetching,
@@ -434,6 +435,14 @@ function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
 
   // HEAD commit id — the parent of the synthetic working-dir row.
   const headId = useMemo((): CommitId | null => pickHeadCommitId(commits), [commits]);
+
+  // Unborn HEAD (fresh init): branch creation is impossible until the first
+  // commit, so the toolbar's Branch button is disabled with an explanation.
+  const noCommits = repoHasNoCommits(
+    logLoaded,
+    branchFilter !== null || authorFilter !== null,
+    headId,
+  );
 
   // Synthetic "uncommitted changes" row, present only when the working tree is
   // dirty and a HEAD commit is known. Its node renders as a hollow ring.
@@ -950,6 +959,7 @@ function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
         repoId={repo.id}
         branches={branches}
         onCreateBranch={handleCreateBranchStart}
+        noCommits={noCommits}
         onStash={handleCreateStash}
         hasUncommittedChanges={status.length > 0}
         trailing={

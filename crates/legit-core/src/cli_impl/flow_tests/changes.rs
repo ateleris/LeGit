@@ -55,7 +55,7 @@ async fn list_repo_files_with_ignored_adds_third_ls_files() {
 #[tokio::test]
 async fn rm_cached_runs_git_rm_cached_with_pathspec() {
     let fake = FakeExecutor::default();
-    fake.expect(&["rm", "--cached", "--", "secret.env"], ok(""));
+    fake.expect_stdin(&["rm", "--cached", "--pathspec-from-file=-", "--pathspec-file-nul"], "secret.env\0", ok(""));
     let (b, exec) = backend(fake);
 
     b.rm_cached(&[PathBuf::from("secret.env")], false).await.unwrap();
@@ -66,7 +66,7 @@ async fn rm_cached_runs_git_rm_cached_with_pathspec() {
 async fn rm_cached_recursive_adds_r_for_directories() {
     // Without `-r`, `git rm --cached` refuses a directory pathspec.
     let fake = FakeExecutor::default();
-    fake.expect(&["rm", "--cached", "-r", "--", "vendor"], ok(""));
+    fake.expect_stdin(&["rm", "--cached", "-r", "--pathspec-from-file=-", "--pathspec-file-nul"], "vendor\0", ok(""));
     let (b, exec) = backend(fake);
 
     b.rm_cached(&[PathBuf::from("vendor")], true).await.unwrap();
@@ -288,6 +288,55 @@ async fn file_diff_untracked_plain_dir_stays_no_changes() {
 }
 
 // ---------------------------------------------------------------------------
+// bulk pathspecs - stdin transport and the chunked fallback
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn stage_sends_paths_over_stdin_never_argv() {
+    // Paths ride stdin (--pathspec-from-file): argv length is capped on
+    // Windows (32,767 chars), and a bulk stage of a few hundred files
+    // failed to spawn at all when the list was inlined.
+    let fake = FakeExecutor::default();
+    fake.expect_stdin(
+        &["add", "--pathspec-from-file=-", "--pathspec-file-nul"],
+        "a.txt\0dir/b c.txt\0",
+        ok(""),
+    );
+    let (b, exec) = backend(fake);
+
+    b.stage(&[PathBuf::from("a.txt"), PathBuf::from("dir/b c.txt")])
+        .await
+        .unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn clean_fallback_chunks_an_oversized_path_list() {
+    // `git clean` has no --pathspec-from-file: an oversized list must split
+    // into several invocations instead of one overlong command line.
+    let long_a = "a".repeat(9_000);
+    let long_b = "b".repeat(9_000);
+    let long_c = "c".repeat(9_000);
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        ok(&format!("? {long_a}\0? {long_b}\0? {long_c}\0")),
+    );
+    fake.expect(&["clean", "-f", "--", &long_a, &long_b], ok(""));
+    fake.expect(&["clean", "-f", "--", &long_c], ok(""));
+    let (b, exec) = backend(fake);
+
+    b.discard(&[
+        PathBuf::from(&long_a),
+        PathBuf::from(&long_b),
+        PathBuf::from(&long_c),
+    ])
+    .await
+    .unwrap();
+    exec.assert_done();
+}
+
+// ---------------------------------------------------------------------------
 // discard - tracked/untracked partitioning
 // ---------------------------------------------------------------------------
 
@@ -299,7 +348,7 @@ async fn discard_restores_tracked_and_cleans_untracked() {
         &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
         ok("1 .M N... 100644 100644 100644 aaaaaaa bbbbbbb tracked.txt\0? untracked.txt\0"),
     );
-    fake.expect(&["restore", "--worktree", "--", "tracked.txt"], ok(""));
+    fake.expect_stdin(&["restore", "--worktree", "--pathspec-from-file=-", "--pathspec-file-nul"], "tracked.txt\0", ok(""));
     fake.expect(&["clean", "-f", "--", "untracked.txt"], ok(""));
     let (b, exec) = backend(fake);
 
@@ -320,7 +369,7 @@ async fn discard_unstages_and_removes_staged_new_files() {
         &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
         ok("1 A. N... 000000 100644 100644 0000000 bbbbbbb -\u{0}1 AM N... 000000 100644 100644 0000000 ccccccc new.txt\u{0}"),
     );
-    fake.expect(&["restore", "--staged", "--", "-", "new.txt"], ok(""));
+    fake.expect_stdin(&["restore", "--staged", "--pathspec-from-file=-", "--pathspec-file-nul"], "-\0new.txt\0", ok(""));
     fake.expect(&["clean", "-f", "--", "-", "new.txt"], ok(""));
     let (b, exec) = backend(fake);
 
@@ -451,7 +500,7 @@ fn binary_sniff_checks_only_the_leading_window() {
 async fn restore_file_present_in_rev_checks_out_directly() {
     let fake = FakeExecutor::default();
     fake.expect(&["rev-parse", "-q", "--verify", "abc123:a.txt"], ok("blobsha\n"));
-    fake.expect(&["checkout", "abc123", "--", "a.txt"], ok(""));
+    fake.expect_stdin(&["checkout", "abc123", "--pathspec-from-file=-", "--pathspec-file-nul"], "a.txt\0", ok(""));
     let (b, exec) = backend(fake);
 
     b.restore_file_at_revision("abc123", Path::new("a.txt")).await.unwrap();
@@ -477,7 +526,7 @@ async fn restore_stash_untracked_file_falls_back_to_the_third_parent() {
         &["rev-parse", "-q", "--verify", &format!("{untracked}:new.txt")],
         ok("blobsha\n"),
     );
-    fake.expect(&["checkout", untracked, "--", "new.txt"], ok(""));
+    fake.expect_stdin(&["checkout", untracked, "--pathspec-from-file=-", "--pathspec-file-nul"], "new.txt\0", ok(""));
     let (b, exec) = backend(fake);
 
     b.restore_file_at_revision(stash, Path::new("new.txt")).await.unwrap();
@@ -491,8 +540,9 @@ async fn apply_stash_file_restores_worktree_only() {
     let stash = "cccccccccccccccccccccccccccccccccccccccc";
     let fake = FakeExecutor::default();
     fake.expect(&["rev-parse", "-q", "--verify", &format!("{stash}:a.txt")], ok("blobsha\n"));
-    fake.expect(
-        &["restore", &format!("--source={stash}"), "--worktree", "--", "a.txt"],
+    fake.expect_stdin(
+        &["restore", &format!("--source={stash}"), "--worktree", "--pathspec-from-file=-", "--pathspec-file-nul"],
+        "a.txt\0",
         ok(""),
     );
     let (b, exec) = backend(fake);
@@ -518,8 +568,9 @@ async fn apply_stash_file_untracked_falls_back_to_the_third_parent() {
         &["rev-parse", "-q", "--verify", &format!("{untracked}:new.txt")],
         ok("blobsha\n"),
     );
-    fake.expect(
-        &["restore", &format!("--source={untracked}"), "--worktree", "--", "new.txt"],
+    fake.expect_stdin(
+        &["restore", &format!("--source={untracked}"), "--worktree", "--pathspec-from-file=-", "--pathspec-file-nul"],
+        "new.txt\0",
         ok(""),
     );
     let (b, exec) = backend(fake);

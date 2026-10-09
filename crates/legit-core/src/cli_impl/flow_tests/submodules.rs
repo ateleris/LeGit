@@ -354,7 +354,7 @@ async fn discard_resets_submodule_pointers_via_submodule_update() {
         &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
         ok("1 .M SC.. 160000 160000 160000 aaaaaaa bbbbbbb lib\01 .M N... 100644 100644 100644 aaaaaaa bbbbbbb tracked.txt\0? untracked.txt\0"),
     );
-    fake.expect(&["restore", "--worktree", "--", "tracked.txt"], ok(""));
+    fake.expect_stdin(&["restore", "--worktree", "--pathspec-from-file=-", "--pathspec-file-nul"], "tracked.txt\0", ok(""));
     fake.expect(&["clean", "-f", "--", "untracked.txt"], ok(""));
     // The gitlink is NOT restore-able: it goes through submodule update.
     // --no-fetch: discarding must never touch the network; --checkout is the
@@ -442,7 +442,7 @@ async fn submodule_update_remote_integrates_then_stages_pointers() {
     fake.expect(&["-C", "lib", "rev-parse", "--abbrev-ref", "HEAD"], ok("main\n"));
     // -- clean: per-path remote move with the strategy flag, then stage --
     fake.expect(&["submodule", "update", "--remote", "--rebase", "--", "lib"], ok(""));
-    fake.expect(&["add", "--", "lib"], ok(""));
+    fake.expect_stdin(&["add", "--pathspec-from-file=-", "--pathspec-file-nul"], "lib\0", ok(""));
     let (b, exec) = backend(fake);
 
     let results = b
@@ -795,7 +795,7 @@ async fn submodule_update_remote_attach_skips_attached_and_survives_checkout_fai
         fail(1, "fatal: 'main' is already used by worktree"),
     );
     // -- both moved: stage both pointers --
-    fake.expect(&["add", "--", "lib", "vendor"], ok(""));
+    fake.expect_stdin(&["add", "--pathspec-from-file=-", "--pathspec-file-nul"], "lib\0vendor\0", ok(""));
     let (b, exec) = backend(fake);
 
     let results = b
@@ -844,7 +844,7 @@ async fn submodule_update_remote_exit_zero_with_lfs_errors_reports_stubs() {
             "Error downloading object: assets/big.bin (8f786a0): Smudge error: [404] Object does not exist on the server\n",
         ),
     );
-    fake.expect(&["add", "--", "lib"], ok(""));
+    fake.expect_stdin(&["add", "--pathspec-from-file=-", "--pathspec-file-nul"], "lib\0", ok(""));
     let (b, exec) = backend(fake);
 
     let results = b

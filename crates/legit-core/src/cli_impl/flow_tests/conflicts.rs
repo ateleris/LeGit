@@ -32,7 +32,7 @@ async fn conflict_sides_read_the_three_stages_and_tolerate_missing_ones() {
 async fn take_side_checks_out_and_stages() {
     let fake = FakeExecutor::default();
     fake.expect(&["checkout", "--ours", "--", "a.txt"], ok(""));
-    fake.expect(&["add", "--", "a.txt"], ok(""));
+    fake.expect_stdin(&["add", "--pathspec-from-file=-", "--pathspec-file-nul"], "a.txt\0", ok(""));
     let (b, exec) = backend(fake);
 
     b.resolve_take_side(Path::new("a.txt"), ConflictSide::Ours)

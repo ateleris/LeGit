@@ -81,6 +81,23 @@ pub(super) fn classify_branch_delete_error(exit_code: i32, stderr: &str, branch:
     command_failed(exit_code, stderr)
 }
 
+/// Map a failed `git branch <name> [<start>]` to a specific `GitError`.
+/// Without a start point the branch is created at HEAD, so a "not a valid
+/// object name" refusal means HEAD itself resolves to no commit (unborn:
+/// fresh init or orphan branch) -> `UnbornHead`. With a start point the same
+/// wording names that ref instead, so it stays `CommandFailed`. Validated
+/// against the real binary in the git-flows suite.
+pub(super) fn classify_branch_create_error(
+    exit_code: i32,
+    stderr: &str,
+    has_start_point: bool,
+) -> GitError {
+    if !has_start_point && stderr.to_lowercase().contains("not a valid object name") {
+        return GitError::UnbornHead;
+    }
+    command_failed(exit_code, stderr)
+}
+
 /// Compose a user-facing message from a command's streams (stdout carries
 /// git's conflict summary, stderr the hints).
 pub(super) fn compose_output(stdout: &str, stderr: &str) -> String {
@@ -299,7 +316,9 @@ pub(super) fn append_error_note(e: GitError, note: &str) -> GitError {
         GitError::Parse(m) => GitError::Parse(add(m)),
         GitError::GitUnavailable(m) => GitError::GitUnavailable(add(m)),
         GitError::Internal(m) => GitError::Internal(add(m)),
-        GitError::RewordNotHead | GitError::RewordPushed => GitError::Internal(add(e.to_string())),
+        GitError::RewordNotHead | GitError::RewordPushed | GitError::UnbornHead => {
+            GitError::Internal(add(e.to_string()))
+        }
     }
 }
 
@@ -468,6 +487,26 @@ pub(super) fn classify_commit_failure(
 mod tests {
     use super::*;
     use super::super::*;
+
+    // --- branch create classification ----------------------------------------
+
+    #[test]
+    fn branch_create_without_start_point_on_unborn_head_is_unborn_head() {
+        let e = classify_branch_create_error(128, "fatal: not a valid object name: 'main'", false);
+        assert!(matches!(e, GitError::UnbornHead), "{e:?}");
+    }
+
+    #[test]
+    fn branch_create_with_start_point_keeps_the_bad_ref_failure() {
+        let e = classify_branch_create_error(128, "fatal: not a valid object name: 'bogus'", true);
+        assert!(matches!(e, GitError::CommandFailed { .. }), "{e:?}");
+    }
+
+    #[test]
+    fn branch_create_other_failure_stays_command_failed() {
+        let e = classify_branch_create_error(128, "fatal: a branch named 'x' already exists", false);
+        assert!(matches!(e, GitError::CommandFailed { .. }), "{e:?}");
+    }
 
     // --- sequencer (cherry-pick / revert) output classification --------------
     // The exit-1 ambiguity: a paused sequencer (conflicts) is an OUTCOME, a

@@ -448,17 +448,34 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
     /// Run a git subcommand (`prefix`) followed by a list of pathspecs. Paths
     /// are passed after the prefix verbatim; the prefix should end with `--` so
     /// they are always treated as pathspecs. Errors on a non-zero exit.
+    /// Run `prefix` against `paths`. Paths ride stdin via
+    /// `--pathspec-from-file=-` wherever the command supports it - argv
+    /// length is capped on Windows (32,767 chars for the whole command
+    /// line), so a bulk operation must never inline an unbounded path list.
+    /// Commands without that flag fall back to chunked argv invocations.
     pub(super) async fn run_pathspec(&self, prefix: &[&str], paths: &[PathBuf]) -> Result<(), GitError> {
         let runner = self.runner().await;
-        let mut args: Vec<String> = prefix.iter().map(|s| s.to_string()).collect();
-        for p in paths {
-            args.push(p.to_string_lossy().into_owned());
+        if pathspec_via_stdin(prefix) {
+            let mut args: Vec<&str> = prefix.to_vec();
+            if args.last() == Some(&"--") {
+                args.pop();
+            }
+            args.push("--pathspec-from-file=-");
+            args.push("--pathspec-file-nul");
+            let payload = pathspec_stdin_payload(paths);
+            let output = runner.run_with_stdin(&args, &payload).await?;
+            Self::ensure_success(&output)?;
+            return Ok(());
         }
-        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        let output = runner
-            .run(&arg_refs)
-            .await?;
-        Self::ensure_success(&output)?;
+        for chunk in chunk_paths(paths, PATHSPEC_CHUNK_MAX_CHARS) {
+            let mut args: Vec<String> = prefix.iter().map(|s| s.to_string()).collect();
+            for p in chunk {
+                args.push(p.to_string_lossy().into_owned());
+            }
+            let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            let output = runner.run(&arg_refs).await?;
+            Self::ensure_success(&output)?;
+        }
         Ok(())
     }
 
@@ -885,9 +902,106 @@ pub(super) fn filter_paths(ls_files_stdout: &str, query: &str, max: usize) -> Ve
         .collect()
 }
 
+/// Whether `prefix`'s git command accepts `--pathspec-from-file=-` (so the
+/// paths can ride stdin instead of argv). `clean` and `submodule` do not and
+/// fall back to chunked argv invocations. Argv length is capped on Windows
+/// (32,767 chars for the whole command line), so bulk operations must never
+/// put an unbounded path list into argv.
+fn pathspec_via_stdin(prefix: &[&str]) -> bool {
+    matches!(
+        prefix.first().copied(),
+        Some("add" | "restore" | "checkout" | "rm" | "reset" | "stash")
+    )
+}
+
+/// NUL-separated payload for `--pathspec-file-nul` stdin.
+fn pathspec_stdin_payload(paths: &[PathBuf]) -> String {
+    let mut payload = String::new();
+    for p in paths {
+        payload.push_str(&p.to_string_lossy());
+        payload.push('\0');
+    }
+    payload
+}
+
+/// Per-chunk budget for the chunked-argv fallback: the path portion of one
+/// invocation. Well under the Windows cap, leaving room for the git binary
+/// path, the prefix args, and quoting.
+const PATHSPEC_CHUNK_MAX_CHARS: usize = 20_000;
+
+/// Greedy split keeping each chunk's summed path length (plus per-arg
+/// overhead) under `max_chars`; always at least one path per chunk.
+fn chunk_paths(paths: &[PathBuf], max_chars: usize) -> Vec<&[PathBuf]> {
+    // Per-path overhead: the separating space plus quoting on Windows.
+    const OVERHEAD: usize = 3;
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    let mut used = 0;
+    for (i, p) in paths.iter().enumerate() {
+        let cost = p.to_string_lossy().len() + OVERHEAD;
+        if i > start && used + cost > max_chars {
+            chunks.push(&paths[start..i]);
+            start = i;
+            used = 0;
+        }
+        used += cost;
+    }
+    if start < paths.len() {
+        chunks.push(&paths[start..]);
+    }
+    chunks
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- bulk pathspec plumbing ---------------------------------------------
+
+    #[test]
+    fn pathspec_via_stdin_knows_the_supported_commands() {
+        assert!(pathspec_via_stdin(&["add", "--"]));
+        assert!(pathspec_via_stdin(&["restore", "--staged", "--"]));
+        assert!(pathspec_via_stdin(&["restore", "--source=abc", "--worktree", "--"]));
+        assert!(pathspec_via_stdin(&["checkout", "abc123", "--"]));
+        assert!(pathspec_via_stdin(&["rm", "--cached", "-r", "--"]));
+        assert!(pathspec_via_stdin(&["reset", "-q", "--"]));
+        assert!(pathspec_via_stdin(&["stash", "push", "--include-untracked", "-m", "x", "--"]));
+        // No --pathspec-from-file support: chunked argv fallback.
+        assert!(!pathspec_via_stdin(&["clean", "-f", "--"]));
+        assert!(!pathspec_via_stdin(&["submodule", "sync", "--recursive", "--"]));
+    }
+
+    #[test]
+    fn pathspec_stdin_payload_is_nul_separated() {
+        let paths = [PathBuf::from("a.txt"), PathBuf::from("dir/späce d.txt")];
+        assert_eq!(pathspec_stdin_payload(&paths), "a.txt\0dir/späce d.txt\0");
+    }
+
+    #[test]
+    fn chunk_paths_splits_by_accumulated_length() {
+        let paths: Vec<PathBuf> =
+            (0..4).map(|i| PathBuf::from(format!("{i}0123456789"))).collect();
+        // 11 chars + overhead each; a 30-char budget fits two per chunk.
+        let chunks = chunk_paths(&paths, 30);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0], &paths[..2]);
+        assert_eq!(chunks[1], &paths[2..]);
+    }
+
+    #[test]
+    fn chunk_paths_keeps_an_oversized_path_in_its_own_chunk() {
+        let paths = [PathBuf::from("x".repeat(50)), PathBuf::from("y.txt")];
+        let chunks = chunk_paths(&paths, 10);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0], &paths[..1]);
+        assert_eq!(chunks[1], &paths[1..]);
+    }
+
+    #[test]
+    fn chunk_paths_of_nothing_is_no_chunks() {
+        assert!(chunk_paths(&[], 10).is_empty());
+    }
 
     // --- repo-wide file classification (Files tree) -------------------------
 

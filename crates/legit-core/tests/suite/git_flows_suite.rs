@@ -4428,6 +4428,49 @@ async fn stashed_untracked_file_can_be_applied_per_file() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+async fn bulk_stage_of_an_argv_busting_path_list_works() {
+    // ~350 files whose combined path length far exceeds the Windows 32,767
+    // char command-line cap: the pathspec rides stdin
+    // (--pathspec-from-file), never argv, so the list length cannot break
+    // the spawn. Also pins spaces and non-ASCII through the NUL framing.
+    let repo = TestRepo::init().await;
+    repo.write("base.txt", "x\n");
+    repo.commit_all("base").await;
+
+    let dir = "dir with späces";
+    std::fs::create_dir_all(repo.path.join(dir)).expect("mkdir");
+    let mut paths = Vec::new();
+    for i in 0..350 {
+        let rel = format!("{dir}/file-{i:03}-{}.txt", "x".repeat(80));
+        repo.write(&rel, "content\n");
+        paths.push(PathBuf::from(rel));
+    }
+    assert!(paths.iter().map(|p| p.as_os_str().len()).sum::<usize>() > 32_767);
+
+    repo.backend.stage(&paths).await.unwrap();
+    let staged = repo.git(&["diff", "--cached", "--name-only"]).await;
+    assert_eq!(staged.lines().count(), 350, "all files staged in one call");
+
+    repo.backend.unstage(&paths).await.unwrap();
+    let staged = repo.git(&["diff", "--cached", "--name-only"]).await;
+    assert_eq!(staged.trim(), "", "all files unstaged in one call");
+}
+
+#[tokio::test]
+async fn branch_create_on_unborn_head_is_classified() {
+    // Fresh init: HEAD resolves to no commit, so `git branch` has nothing to
+    // point the new branch at. With a start point the same wording names the
+    // bad ref instead and must not classify as unborn.
+    let repo = TestRepo::init().await;
+
+    let err = repo.backend.create_branch("feat", None).await.unwrap_err();
+    assert!(matches!(err, GitError::UnbornHead), "{err:?}");
+
+    let err = repo.backend.create_branch("feat", Some("bogus")).await.unwrap_err();
+    assert!(matches!(err, GitError::CommandFailed { .. }), "{err:?}");
+}
+
+#[tokio::test]
 async fn branch_create_rename_delete_roundtrip() {
     let repo = TestRepo::init().await;
     repo.write("a.txt", "x\n");

@@ -3410,6 +3410,12 @@ export type GitError = { kind: "RefNotFound"; details: string } | { kind: "AuthF
  */
 { kind: "BranchNotFullyMerged"; details: { branch: string; stderr: string } } | 
 /**
+ * Branch creation refused because HEAD resolves to no commit (fresh
+ * `git init` or an orphan branch): there is nothing for the new branch
+ * to point at until the first commit exists.
+ */
+{ kind: "UnbornHead" } | 
+/**
  * A branch operation was refused because the branch is checked out in
  * another worktree (git allows a branch in only one worktree at a
  * time). `branch`/`path` are best-effort extractions from git's

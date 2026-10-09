@@ -63,6 +63,20 @@ lives in the git log and the GitHub release notes.
 
 ### Fixed
 
+- Staging, unstaging, discarding, or stashing hundreds of files at once no
+  longer fails with "failed to spawn git" on Windows: file lists are passed
+  to git via stdin (or split into batches for commands that cannot read
+  them from stdin) instead of one overlong command line
+
+- A git launch that fails before git runs (e.g. a missing binary) now shows
+  up as a failed entry in the Git Command Log and as a warning in the log
+  file instead of leaving no trace
+
+- In a repository without commits the toolbar's Branch button is disabled
+  with an explanation instead of silently doing nothing, and creating a
+  branch from the Branches panel explains that the first commit is needed
+  instead of showing a raw git error
+
 - Uploading an SSH key that is already on the connected account now reports
   "already added" instead of failing; upload errors show the platform's
   message as a toast instead of a raw API response in the panel

@@ -128,10 +128,10 @@ async fn stash_paths_isolates_the_index_around_the_push() {
     fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], fail(1, ""));
     fake.expect(&["write-tree"], ok(&format!("{tree}\n")));
     fake.expect(&["read-tree", "HEAD"], ok(""));
-    fake.expect(&["stash", "push", "--include-untracked", "--", "a.txt", "b.txt"], ok("Saved"));
+    fake.expect_stdin(&["stash", "push", "--include-untracked", "--pathspec-from-file=-", "--pathspec-file-nul"], "a.txt\0b.txt\0", ok("Saved"));
     fake.expect(&["read-tree", tree], ok(""));
     fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], ok(&format!("{stash}\n")));
-    fake.expect(&["reset", "-q", "--", "a.txt", "b.txt"], ok(""));
+    fake.expect_stdin(&["reset", "-q", "--pathspec-from-file=-", "--pathspec-file-nul"], "a.txt\0b.txt\0", ok(""));
     let (b, exec) = backend(fake);
 
     let outcome = b
@@ -152,8 +152,9 @@ async fn stash_paths_clean_pathspec_is_nothing_to_stash() {
     fake.expect(&["read-tree", "HEAD"], ok(""));
     // Exit 0 with "No local changes to save" - the tip not moving is the
     // only reliable signal that nothing was stashed.
-    fake.expect(
-        &["stash", "push", "--include-untracked", "-m", "msg", "--", "a.txt"],
+    fake.expect_stdin(
+        &["stash", "push", "--include-untracked", "-m", "msg", "--pathspec-from-file=-", "--pathspec-file-nul"],
+        "a.txt\0",
         ok("No local changes to save\n"),
     );
     fake.expect(&["read-tree", tree], ok(""));
@@ -177,8 +178,9 @@ async fn stash_paths_push_failure_still_restores_the_index() {
     fake.expect(&["rev-parse", "-q", "--verify", "refs/stash"], fail(1, ""));
     fake.expect(&["write-tree"], ok(&format!("{tree}\n")));
     fake.expect(&["read-tree", "HEAD"], ok(""));
-    fake.expect(
-        &["stash", "push", "--include-untracked", "--", "a.txt"],
+    fake.expect_stdin(
+        &["stash", "push", "--include-untracked", "--pathspec-from-file=-", "--pathspec-file-nul"],
+        "a.txt\0",
         fail(1, "error: pathspec did not match"),
     );
     // The saved index is restored even though the push failed.

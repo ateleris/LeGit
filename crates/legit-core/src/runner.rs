@@ -301,7 +301,7 @@ impl GitRunner {
         });
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-        let (mut child, tree) = self.spawn_child(&mut cmd)?;
+        let (mut child, tree) = self.spawn_child_logged(&mut cmd, req.args, started)?;
 
         let (kill_tx, kill_rx) = oneshot::channel();
         self.try_insert_running(op_id.clone(), kill_tx)?;
@@ -409,7 +409,7 @@ impl GitRunner {
         cmd.stdin(Stdio::null());
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-        let (mut child, tree) = self.spawn_child(&mut cmd)?;
+        let (mut child, tree) = self.spawn_child_logged(&mut cmd, args, started)?;
 
         let (kill_tx, kill_rx) = oneshot::channel();
         self.try_insert_running(op_id.clone(), kill_tx)?;
@@ -622,6 +622,28 @@ impl GitRunner {
         let tree = ProcTree::new(&child);
         Ok((child, tree))
     }
+
+    /// `spawn_child`, with a failed LAUNCH reported to the command log: the
+    /// run never produced a git exit, but the user must still see what was
+    /// attempted and why it never ran (e.g. an argv exceeding Windows'
+    /// command-line cap, or a missing binary).
+    fn spawn_child_logged(
+        &self,
+        cmd: &mut Command,
+        args: &[&str],
+        started: Instant,
+    ) -> Result<(tokio::process::Child, ProcTree), RunnerError> {
+        self.spawn_child(cmd).map_err(|e| {
+            // The file log records failures only at debug (log_invocation), so
+            // a spawn failure needs its own visible line: unlike a non-zero
+            // exit it is never an expected outcome.
+            let redacted: Vec<_> =
+                args.iter().map(|a| invocation_log::redact_url_credentials(a)).collect();
+            warn!(args = ?redacted, error = %e, "git spawn failed");
+            log_invocation(self.cwd.as_deref(), args, started, None, false, &e.to_string());
+            e
+        })
+    }
 }
 
 /// Default base environment applied to every `git` invocation (DESIGN-v0.1.md §3.2).
@@ -777,6 +799,32 @@ mod tests {
     fn rejects_junk() {
         assert!(GitVersion::parse("hello").is_none());
         assert!(GitVersion::parse("git version xyz").is_none());
+    }
+
+    /// A failed LAUNCH must reach the command log like any failed run: the
+    /// user otherwise sees "failed to spawn git" with no log trace of what
+    /// was attempted (e.g. an argv exceeding Windows' command-line cap).
+    /// The observer is process-global (OnceLock), so this is the one test
+    /// that installs it; it records everything and filters by a marker arg.
+    #[tokio::test]
+    async fn failed_spawn_still_reaches_the_command_log() {
+        static SEEN: std::sync::Mutex<Vec<GitInvocation>> = std::sync::Mutex::new(Vec::new());
+        set_invocation_observer(std::sync::Arc::new(|inv| {
+            SEEN.lock().unwrap().push(inv);
+        }));
+
+        let runner = GitRunner::unbound("/nonexistent/legit-test-git-binary");
+        let err = runner.run(&["status", "--legit-spawn-log-marker"]).await;
+        assert!(err.is_err());
+
+        let seen = SEEN.lock().unwrap();
+        let entry = seen
+            .iter()
+            .find(|i| i.args.iter().any(|a| a == "--legit-spawn-log-marker"))
+            .expect("failed spawn produced no command-log entry");
+        assert!(!entry.success);
+        assert_eq!(entry.exit_code, None);
+        assert!(entry.stderr.contains("not found"), "{}", entry.stderr);
     }
 
     /// The runner must inherit OS environment variables (e.g. Windows'
