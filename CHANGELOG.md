@@ -12,6 +12,8 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-10-12
+
 ### Fixed
 
 - Editing a git profile now re-applies it to the repositories that use it

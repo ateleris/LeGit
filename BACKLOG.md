@@ -185,12 +185,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   (`search_commits` Content/ContentRegex kinds, `search_paths`) is kept
   and tested; re-adding is a small UI task if "when did this string
   change?" archaeology is missed.
-- **Commit `--no-verify` (bypass hooks)** (2026-08-20 review; SourceTree,
-  Fork, Git Extensions have it). Hooks run today because every op is a real
-  git invocation, so a stuck/broken hook blocks committing entirely with no
-  escape short of the Console. A small "bypass commit hooks" caret/checkbox
-  on the commit composer (per-invocation, never persisted - silently
-  skipping hooks by default is a footgun) mapping to `commit --no-verify`.
 - **Cherry-pick: "record origin" option (`-x`)** (split out 2026-08-20 - a
   genuinely new, tiny feature, unlike the merge-commit support above).
   Appends "(cherry picked from commit <sha>)" to the message - the
