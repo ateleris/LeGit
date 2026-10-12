@@ -30,6 +30,7 @@ import { AzureDevOpsIcon, GitHubIcon, GitLabIcon, type CustomIconProps } from ".
 import { Button } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
 import { Section, FieldNote } from "./primitives";
+import { handleProfilePropagation } from "./distroKeyOffers";
 import { SSH_PLATFORMS, keyTitle } from "./SshKeyTools";
 import { profileNameSlug } from "./GlobalProfilesSection";
 
@@ -256,14 +257,16 @@ export function ConnectedAccountsSection() {
               : await api.registerAllowedSigner(email, status.public_key);
         const pubPath = `${status.private_key_path}.pub`;
         if (profile) {
-          await api.updateGitProfile({
-            ...profile,
-            authSshKey: status.private_key_path,
-            gpgFormat: "ssh",
-            signingKey: pubPath,
-            commitGpgsign: "true",
-            allowedSignersFile: signersPath ?? profile.allowedSignersFile,
-          });
+          await handleProfilePropagation(
+            await api.updateGitProfile({
+              ...profile,
+              authSshKey: status.private_key_path,
+              gpgFormat: "ssh",
+              signingKey: pubPath,
+              commitGpgsign: "true",
+              allowedSignersFile: signersPath ?? profile.allowedSignersFile,
+            }),
+          );
         } else if (distro) {
           // Same preserve-on-null rule as the local global config below.
           const current = (await wslSigningConfig(distro)).allowed_signers.global.value;
@@ -293,7 +296,9 @@ export function ConnectedAccountsSection() {
           const fileName = profile ? `id_ed25519_${profileNameSlug(profile.name)}` : "id_ed25519";
           status = await api.generateSshKey(fileName, "ed25519", profile?.userEmail ?? "");
           if (profile) {
-            await api.updateGitProfile({ ...profile, authSshKey: status.private_key_path });
+            await handleProfilePropagation(
+              await api.updateGitProfile({ ...profile, authSshKey: status.private_key_path }),
+            );
           }
         }
         if (status.public_key) {

@@ -752,11 +752,18 @@ pub struct RepoSettings {
     /// (None = plain commit). Set only via the button's caret menu.
     #[serde(default)]
     pub commit_button_mode: Option<CommitButtonMode>,
+    /// The managed keys the last profile apply wrote to local config (resolved
+    /// for the repo's host). Propagating a profile edit overwrites the local
+    /// config only while it still equals this snapshot; a hand-edited config
+    /// is the user's and stays (see `commands/profiles.rs`).
+    #[serde(default)]
+    pub applied_profile_keys: Option<crate::commands::profiles::ManagedKeys>,
 }
 
 /// Repo settings owned by dedicated commands (lane locks, profile selection,
 /// the probed git binary); a settings patch must never write them.
-const REPO_SETTINGS_COMMAND_OWNED: [&str; 3] = ["laneLocks", "git_profile_id", "git_path_override"];
+const REPO_SETTINGS_COMMAND_OWNED: [&str; 4] =
+    ["laneLocks", "git_profile_id", "git_path_override", "applied_profile_keys"];
 
 impl RepoSettings {
     /// `self` with the fields named in `patch` (JSON field names) replaced.
@@ -1365,6 +1372,7 @@ mod tests {
             serde_json::json!({ "laneLocks": { "format": "x", "formatVersion": 1, "locks": [] } }),
             serde_json::json!({ "git_profile_id": null }),
             serde_json::json!({ "git_path_override": "/evil" }),
+            serde_json::json!({ "applied_profile_keys": null }),
         ] {
             assert!(current.with_patch(&patch).is_err(), "accepted {patch}");
         }

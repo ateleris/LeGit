@@ -165,15 +165,32 @@ impl SettingsSyncEngine {
             // Re-merge over the LIVE settings under the write lock: a value
             // the user changed while the pull ran must not be reverted by the
             // pre-pull snapshot.
+            let mut profile_edits = Vec::new();
             {
                 let mut settings = state.global_settings.write().await;
                 match import_synced_settings(&settings, &adopted.0) {
-                    Ok(merged) => *settings = merged,
+                    Ok(merged) => {
+                        profile_edits = crate::commands::profiles::changed_profiles(
+                            &settings.git_profiles_doc.profiles,
+                            &merged.git_profiles_doc.profiles,
+                        );
+                        *settings = merged;
+                    }
                     Err(e) => status = SyncStatusPayload::error(e.to_string()),
                 }
             }
             if let Err(e) = state.persist_global_settings().await {
                 tracing::warn!(err = %e, "imported synced settings could not be persisted");
+            }
+            // Imported profile edits reach open repos like a local edit does
+            // (closed repos reconcile on their next open). Best-effort: a
+            // failing repo must not fail the import.
+            for (old, new) in profile_edits {
+                let result =
+                    crate::commands::profiles::propagate_profile_update(&state, &old, &new).await;
+                for err in result.errors {
+                    tracing::warn!(profile = %new.name, %err, "synced profile edit could not be re-applied");
+                }
             }
             let _ = self.app.emit(GLOBAL_SETTINGS_CHANGED_EVENT, ());
             let _ = self.app.emit(THEMES_CHANGED_EVENT, ());

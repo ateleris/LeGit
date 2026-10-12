@@ -113,6 +113,15 @@ pub async fn open_session(
         let state = watcher_app.state::<AppState>();
         start_repo_watcher(&state, &watcher_app, &watcher_session).await;
     });
+    // Catch up with profile edits made while the repo was closed. In the
+    // background: it reads (and only on a stale match writes) git config, and
+    // must never gate opening.
+    let reconcile_app = app.clone();
+    let reconcile_session = session.clone();
+    tokio::spawn(async move {
+        let state = reconcile_app.state::<AppState>();
+        crate::commands::profiles::reconcile_profile_on_open(&state, &reconcile_session).await;
+    });
     summary
 }
 

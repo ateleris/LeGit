@@ -903,9 +903,10 @@ async createGitProfile(profile: GitProfile) : Promise<Result<GitProfile, AppErro
 }
 },
 /**
- * Replace an existing profile (matched by id).
+ * Replace an existing profile (matched by id) and re-apply it to the open
+ * repos that select it and whose config is still what the apply wrote.
  */
-async updateGitProfile(profile: GitProfile) : Promise<Result<null, AppError>> {
+async updateGitProfile(profile: GitProfile) : Promise<Result<ProfilePropagation, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("update_git_profile", { profile }) };
 } catch (e) {
@@ -2825,6 +2826,19 @@ async repoOpenFolder(repoId: string) : Promise<Result<null, AppError>> {
 
 export type AppError = { kind: "UnknownRepo"; details: string } | { kind: "NotARepo"; details: string } | { kind: "Io"; details: string } | { kind: "Git"; details: GitError } | { kind: "GitUnavailable"; details: string } | { kind: "ForbiddenArg"; details: string } | { kind: "InvalidTheme"; details: string } | { kind: "InvalidLayout"; details: string } | { kind: "Settings"; details: string } | { kind: "ParseArgs"; details: string } | { kind: "InvalidLockIndex"; details: number } | { kind: "UnknownProfile"; details: string }
 /**
+ * One repo a profile edit was re-applied to.
+ */
+export type AppliedPropagation = { 
+/**
+ * Repo display name (folder name).
+ */
+repo: string; 
+/**
+ * For a repo on a WSL host: how the profile's auth key resolved there
+ * (same offer semantics as `apply_profile_to_repo`).
+ */
+distro_key: DistroKeyResolution | null }
+/**
  * Wire form of the askpass prompt kind.
  */
 export type AskpassPromptKind = "passphrase" | "confirmation" | "other"
@@ -4093,6 +4107,15 @@ export type ProfileMatch =
  * externally made) repo-specific configuration.
  */
 { kind: "custom" }
+/**
+ * What propagating a profile edit did across the open repos.
+ */
+export type ProfilePropagation = { applied: AppliedPropagation[]; 
+/**
+ * Per-repo propagation failures ("repo: message"); the definition update
+ * itself already succeeded.
+ */
+errors: string[] }
 export type ProfileStatus = { 
 /**
  * Live LOCAL value of each managed key (None = unset locally).
@@ -4448,7 +4471,14 @@ suppress_lfs_warning?: boolean | null;
  * Commit button default: plain commit vs commit-and-push
  * (None = plain commit). Set only via the button's caret menu.
  */
-commit_button_mode?: CommitButtonMode | null }
+commit_button_mode?: CommitButtonMode | null; 
+/**
+ * The managed keys the last profile apply wrote to local config (resolved
+ * for the repo's host). Propagating a profile edit overwrites the local
+ * config only while it still equals this snapshot; a hand-edited config
+ * is the user's and stays (see `commands/profiles.rs`).
+ */
+applied_profile_keys?: ManagedKeys | null }
 export type RepoSummary = { id: string; 
 /**
  * The repo root as the repo's HOST sees it (display + copy affordances).

@@ -271,6 +271,51 @@ fn is_all_unset(mk: &ManagedKeys) -> bool {
         && mk.credential_helper.is_none()
 }
 
+/// What a profile edit may do to one repo's local config.
+#[derive(Debug, PartialEq)]
+enum PropagationAction {
+    /// Local config already equals the new projection. `backfill` = no (or a
+    /// stale) applied-keys snapshot is recorded; persist one so the next edit
+    /// can propagate.
+    UpToDate { backfill: bool },
+    Reapply,
+    /// Local config diverged from what the apply wrote (hand-edited): the
+    /// user's config wins and detection shows Custom.
+    Skip,
+}
+
+/// Decide whether a profile edit may overwrite a repo's local config (pure).
+/// `snapshot` is the persisted applied projection; `old_resolved` the pre-edit
+/// projection resolved for the repo's host, known only at update time (the
+/// stand-in for repos applied before snapshots existed).
+fn propagation_decision(
+    local: &ManagedKeys,
+    snapshot: Option<&ManagedKeys>,
+    old_resolved: Option<&ManagedKeys>,
+    new_resolved: &ManagedKeys,
+) -> PropagationAction {
+    if local == new_resolved {
+        return PropagationAction::UpToDate { backfill: snapshot != Some(new_resolved) };
+    }
+    match (snapshot, old_resolved) {
+        (Some(s), _) if s == local => PropagationAction::Reapply,
+        (Some(_), _) => PropagationAction::Skip,
+        (None, Some(o)) if o == local => PropagationAction::Reapply,
+        (None, _) => PropagationAction::Skip,
+    }
+}
+
+/// The (old, new) pairs of profiles that exist in both lists under the same
+/// id with different content (pure). Created and deleted profiles have no
+/// old state to propagate from.
+pub fn changed_profiles(old: &[GitProfile], new: &[GitProfile]) -> Vec<(GitProfile, GitProfile)> {
+    new.iter()
+        .filter_map(|n| {
+            old.iter().find(|o| o.id == n.id).filter(|o| *o != n).map(|o| (o.clone(), n.clone()))
+        })
+        .collect()
+}
+
 /// Compute the active/custom/inherit relationship (pure; unit-tested).
 fn compute_match(
     local: &ManagedKeys,
@@ -469,7 +514,7 @@ pub async fn apply_profile_core(
         }
     }
     write_managed(runner.as_ref(), &keys).await?;
-    set_repo_profile_id(state, session, Some(profile_id.to_string())).await?;
+    set_repo_profile_selection(state, session, Some(profile_id.to_string()), Some(keys)).await?;
     // Bookkeeping for other machines (suggestion on their clone of the same
     // remote); the apply itself is done, so a recording failure stays silent.
     if let Some(key) = repo_assignment_key(session).await {
@@ -603,17 +648,196 @@ async fn status_for(
     ProfileStatus { local, stored_profile_id, r#match }
 }
 
-/// Persist the repo's `git_profile_id` and return the updated settings.
-async fn set_repo_profile_id(
+/// Persist the repo's `git_profile_id` together with the applied-keys
+/// snapshot (what the apply wrote to local config, resolved for the repo's
+/// host): the snapshot is what lets a later profile edit tell "still as
+/// applied" from "hand-edited" (see `propagation_decision`).
+async fn set_repo_profile_selection(
     state: &AppState,
     session: &crate::state::RepoSession,
     profile_id: Option<String>,
+    applied_keys: Option<ManagedKeys>,
 ) -> Result<(), AppError> {
     {
         let mut s = session.settings.write().await;
         s.git_profile_id = profile_id;
+        s.applied_profile_keys = applied_keys;
     }
     state.persist_session_settings(session).await
+}
+
+/// Persist only the applied-keys snapshot (backfill for repos applied before
+/// the snapshot existed, once their config is confirmed current).
+async fn record_applied_snapshot(
+    state: &AppState,
+    session: &crate::state::RepoSession,
+    keys: ManagedKeys,
+) -> Result<(), AppError> {
+    {
+        session.settings.write().await.applied_profile_keys = Some(keys);
+    }
+    state.persist_session_settings(session).await
+}
+
+/// A profile's projection as it would be written into this session's local
+/// config (path-valued keys resolved into the distro for a WSL host).
+fn resolve_projection_for_session(
+    session: &crate::state::RepoSession,
+    profile: &GitProfile,
+) -> Result<ManagedKeys, AppError> {
+    let keys = projection(profile);
+    match session.host.id() {
+        legit_host::HostId::Wsl { .. } => {
+            let home = session.host.home_dir().ok_or_else(|| {
+                AppError::Io("the distribution reported no home directory".to_string())
+            })?;
+            Ok(resolve_managed_paths_for_distro(&keys, &home.0).0)
+        }
+        _ => Ok(keys),
+    }
+}
+
+/// One repo a profile edit was re-applied to.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct AppliedPropagation {
+    /// Repo display name (folder name).
+    pub repo: String,
+    /// For a repo on a WSL host: how the profile's auth key resolved there
+    /// (same offer semantics as `apply_profile_to_repo`).
+    pub distro_key: Option<DistroKeyResolution>,
+}
+
+/// What propagating a profile edit did across the open repos.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct ProfilePropagation {
+    pub applied: Vec<AppliedPropagation>,
+    /// Per-repo propagation failures ("repo: message"); the definition update
+    /// itself already succeeded.
+    pub errors: Vec<String>,
+}
+
+impl ProfilePropagation {
+    fn empty() -> Self {
+        ProfilePropagation { applied: vec![], errors: vec![] }
+    }
+}
+
+enum SessionPropagation {
+    Applied(Option<DistroKeyResolution>),
+    Unchanged,
+}
+
+/// Re-apply an edited profile to one session when its local config is still
+/// what the apply wrote; backfill a missing snapshot when the config already
+/// equals the new projection.
+async fn propagate_to_session(
+    state: &AppState,
+    session: &crate::state::RepoSession,
+    old: Option<&GitProfile>,
+    new: &GitProfile,
+) -> Result<SessionPropagation, AppError> {
+    let runner = session.runner.read().await.clone();
+    let local = read_local_managed(runner.as_ref()).await;
+    let snapshot = session.settings.read().await.applied_profile_keys.clone();
+    let old_resolved = match old {
+        Some(o) => Some(resolve_projection_for_session(session, o)?),
+        None => None,
+    };
+    let new_resolved = resolve_projection_for_session(session, new)?;
+    match propagation_decision(&local, snapshot.as_ref(), old_resolved.as_ref(), &new_resolved) {
+        PropagationAction::Reapply => {
+            let resolution = apply_profile_core(state, session, &new.id).await?;
+            Ok(SessionPropagation::Applied(resolution))
+        }
+        PropagationAction::UpToDate { backfill: true } => {
+            record_applied_snapshot(state, session, new_resolved).await?;
+            Ok(SessionPropagation::Unchanged)
+        }
+        _ => Ok(SessionPropagation::Unchanged),
+    }
+}
+
+/// Propagate a profile edit to every OPEN session that selects it (closed
+/// repos reconcile lazily on their next open). A failing repo never fails the
+/// others: failures are reported in the result.
+pub async fn propagate_profile_update(
+    state: &AppState,
+    old: &GitProfile,
+    new: &GitProfile,
+) -> ProfilePropagation {
+    let mut result = ProfilePropagation::empty();
+    let sessions: Vec<_> = state.repos.read().await.values().cloned().collect();
+    for session in sessions {
+        let selected = session.settings.read().await.git_profile_id.clone();
+        if selected.as_deref() != Some(new.id.as_str()) {
+            continue;
+        }
+        let repo = session.summary().name;
+        match propagate_to_session(state, &session, Some(old), new).await {
+            Ok(SessionPropagation::Applied(distro_key)) => {
+                result.applied.push(AppliedPropagation { repo, distro_key });
+            }
+            Ok(SessionPropagation::Unchanged) => {}
+            Err(e) => result.errors.push(format!("{repo}: {e}")),
+        }
+    }
+    result
+}
+
+/// Catch up a just-opened repo with profile edits made while it was closed:
+/// re-apply its selected profile when the local config is still what the last
+/// apply wrote but no longer matches the (possibly edited) definition.
+pub async fn reconcile_profile_on_open(state: &AppState, session: &crate::state::RepoSession) {
+    let Some(profile_id) = session.settings.read().await.git_profile_id.clone() else {
+        return;
+    };
+    let profile = state
+        .global_settings
+        .read()
+        .await
+        .git_profiles_doc
+        .profiles
+        .iter()
+        .find(|p| p.id == profile_id)
+        .cloned();
+    let Some(profile) = profile else { return };
+    match propagate_to_session(state, session, None, &profile).await {
+        Ok(SessionPropagation::Applied(_)) => {
+            tracing::info!(repo = %session.root.0, profile = %profile.name,
+                "profile re-applied on open (definition changed while the repo was closed)");
+        }
+        Ok(SessionPropagation::Unchanged) => {}
+        Err(e) => {
+            tracing::warn!(repo = %session.root.0, err = %e, "profile reconcile on open failed");
+        }
+    }
+}
+
+/// `update_git_profile`'s body (testable without a tauri handle): replace the
+/// definition, then propagate to the open repos that select it.
+pub async fn update_git_profile_core(
+    state: &AppState,
+    profile: GitProfile,
+) -> Result<ProfilePropagation, AppError> {
+    let old = {
+        // Not `mutate_global`: the unknown-profile early return must happen
+        // BEFORE anything persists.
+        let mut s = state.global_settings.write().await;
+        let slot = s
+            .git_profiles_doc
+            .profiles
+            .iter_mut()
+            .find(|p| p.id == profile.id)
+            .ok_or_else(|| AppError::UnknownProfile(profile.id.clone()))?;
+        let old = slot.clone();
+        *slot = profile.clone();
+        old
+    };
+    state.persist_global_settings().await?;
+    if old == profile {
+        return Ok(ProfilePropagation::empty());
+    }
+    Ok(propagate_profile_update(state, &old, &profile).await)
 }
 
 // ---------------------------------------------------------------------------
@@ -643,26 +867,15 @@ pub async fn create_git_profile(
     Ok(created)
 }
 
-/// Replace an existing profile (matched by id).
+/// Replace an existing profile (matched by id) and re-apply it to the open
+/// repos that select it and whose config is still what the apply wrote.
 #[tauri::command]
 #[specta::specta]
 pub async fn update_git_profile(
     state: tauri::State<'_, AppState>,
     profile: GitProfile,
-) -> Result<(), AppError> {
-    // Not `mutate_global`: the unknown-profile early return must happen
-    // BEFORE anything persists.
-    {
-        let mut s = state.global_settings.write().await;
-        let slot = s
-            .git_profiles_doc
-            .profiles
-            .iter_mut()
-            .find(|p| p.id == profile.id)
-            .ok_or_else(|| AppError::UnknownProfile(profile.id.clone()))?;
-        *slot = profile;
-    }
-    state.persist_global_settings().await
+) -> Result<ProfilePropagation, AppError> {
+    update_git_profile_core(&state, profile).await
 }
 
 /// Delete a profile definition. Does NOT touch any repo's `.git/config`.
@@ -819,7 +1032,7 @@ pub async fn clear_repo_profile(
     let session = state.get_session(&repo_id).await?;
     let runner = session.runner.read().await.clone();
     write_managed(runner.as_ref(), &ManagedKeys::all_unset()).await?;
-    set_repo_profile_id(&state, &session, None).await?;
+    set_repo_profile_selection(&state, &session, None, None).await?;
     if let Some(key) = repo_assignment_key(&session).await {
         let _ = state
             .mutate_global(|s| {
@@ -934,7 +1147,9 @@ pub async fn create_profile_from_repo(
         s.git_profiles_doc.profiles.push(profile.clone());
     })
     .await?;
-    set_repo_profile_id(&state, &session, Some(profile.id.clone())).await?;
+    // Nothing was written: the snapshot is the live local state the profile
+    // was built from.
+    set_repo_profile_selection(&state, &session, Some(profile.id.clone()), Some(local)).await?;
     Ok(profile)
 }
 
@@ -1253,5 +1468,296 @@ mod tests {
         let local = email_only_local(Some("orphan@z.com"));
         let m = compute_match(&local, &profiles, Some("deleted-id"));
         assert!(matches!(m, ProfileMatch::Custom));
+    }
+
+    // --- propagation decision ---
+
+    #[test]
+    fn propagation_up_to_date_when_local_equals_new_projection() {
+        let keys = email_only_local(Some("new@x.com"));
+        let d = propagation_decision(&keys, Some(&keys), None, &keys);
+        assert_eq!(d, PropagationAction::UpToDate { backfill: false });
+    }
+
+    #[test]
+    fn propagation_backfills_snapshot_when_missing_but_current() {
+        // Repo applied before snapshots existed, config still current: record
+        // the snapshot so the NEXT edit can propagate.
+        let keys = email_only_local(Some("new@x.com"));
+        let d = propagation_decision(&keys, None, None, &keys);
+        assert_eq!(d, PropagationAction::UpToDate { backfill: true });
+    }
+
+    #[test]
+    fn propagation_reapplies_when_local_matches_snapshot() {
+        let old = email_only_local(Some("old@x.com"));
+        let new = email_only_local(Some("new@x.com"));
+        let d = propagation_decision(&old, Some(&old), None, &new);
+        assert_eq!(d, PropagationAction::Reapply);
+    }
+
+    #[test]
+    fn propagation_reapplies_without_snapshot_when_local_matches_old_projection() {
+        // Pre-snapshot repo: at update time the pre-edit projection is known
+        // and stands in for the snapshot.
+        let old = email_only_local(Some("old@x.com"));
+        let new = email_only_local(Some("new@x.com"));
+        let d = propagation_decision(&old, None, Some(&old), &new);
+        assert_eq!(d, PropagationAction::Reapply);
+    }
+
+    #[test]
+    fn propagation_skips_hand_edited_local() {
+        // Local diverged from what the apply wrote: the user's config wins.
+        let applied = email_only_local(Some("old@x.com"));
+        let edited = email_only_local(Some("mine@y.com"));
+        let new = email_only_local(Some("new@x.com"));
+        assert_eq!(
+            propagation_decision(&edited, Some(&applied), Some(&applied), &new),
+            PropagationAction::Skip
+        );
+        // Without a snapshot and no old-projection match: ambiguous, never
+        // overwrite.
+        assert_eq!(propagation_decision(&edited, None, None, &new), PropagationAction::Skip);
+        assert_eq!(
+            propagation_decision(&edited, None, Some(&applied), &new),
+            PropagationAction::Skip
+        );
+    }
+
+    mod propagation_flow {
+        use super::*;
+        use crate::state::{AppState, GlobalSettings, RepoSession, RepoSettings};
+        use crate::remote::RepoLocator;
+        use legit_core::test_support::{fail, ok, FakeExecutor};
+        use legit_host::LocalHost;
+        use std::path::Path;
+        use std::sync::Arc;
+
+        fn old_profile() -> GitProfile {
+            GitProfile {
+                user_name: Some("Old Name".into()),
+                user_email: Some("old@x.com".into()),
+                ..profile("p1", "Work")
+            }
+        }
+
+        fn edited_profile() -> GitProfile {
+            GitProfile { user_email: Some("new@x.com".into()), ..old_profile() }
+        }
+
+        fn state_with_profile(dir: &Path, p: GitProfile) -> AppState {
+            let mut settings = GlobalSettings::default();
+            settings.git_profiles_doc.profiles.push(p);
+            AppState::new(
+                std::path::PathBuf::from("git"),
+                settings,
+                dir.join("global-settings.json"),
+                dir.join("repos"),
+                dir.join("themes"),
+                dir.join("builtin-themes"),
+            )
+        }
+
+        async fn insert_session(
+            state: &AppState,
+            dir: &Path,
+            exec: Arc<FakeExecutor>,
+            settings: RepoSettings,
+        ) -> Arc<RepoSession> {
+            let session = Arc::new(RepoSession::new(
+                RepoLocator::local(dir.join("repo")),
+                Arc::new(LocalHost),
+                exec,
+                settings,
+                dir.join("settings.json"),
+            ));
+            state.repos.write().await.insert(session.id.clone(), session.clone());
+            session
+        }
+
+        /// Script `read_local_managed`: name/email as given, everything else
+        /// unset.
+        fn script_local_read(exec: &FakeExecutor, name: &str, email: &str) {
+            exec.expect(&["config", "--local", "--get", "core.sshCommand"], fail(1, ""))
+                .expect(&["config", "--local", "--get", "user.name"], ok(&format!("{name}\n")))
+                .expect(&["config", "--local", "--get", "user.email"], ok(&format!("{email}\n")))
+                .expect(&["config", "--local", "--get", "gpg.format"], fail(1, ""))
+                .expect(&["config", "--local", "--get", "user.signingkey"], fail(1, ""))
+                .expect(&["config", "--local", "--get", "commit.gpgsign"], fail(1, ""))
+                .expect(&["config", "--local", "--get", "gpg.ssh.allowedSignersFile"], fail(1, ""))
+                .expect(&["config", "--local", "--get-all", "credential.helper"], fail(1, ""));
+        }
+
+        /// Script `write_managed` for a name+email-only key set.
+        fn script_apply_write(exec: &FakeExecutor, name: &str, email: &str) {
+            exec.expect(&["config", "--local", "user.name", name], ok(""))
+                .expect(&["config", "--local", "user.email", email], ok(""))
+                .expect(&["config", "--local", "--unset", "gpg.format"], fail(5, ""))
+                .expect(&["config", "--local", "--unset", "user.signingkey"], fail(5, ""))
+                .expect(&["config", "--local", "--unset", "commit.gpgsign"], fail(5, ""))
+                .expect(
+                    &["config", "--local", "--unset", "gpg.ssh.allowedSignersFile"],
+                    fail(5, ""),
+                )
+                .expect(&["config", "--local", "--unset", "core.sshCommand"], fail(5, ""))
+                .expect(&["config", "--local", "--unset-all", "credential.helper"], fail(5, ""));
+        }
+
+        fn selected(applied: Option<ManagedKeys>) -> RepoSettings {
+            RepoSettings {
+                git_profile_id: Some("p1".into()),
+                applied_profile_keys: applied,
+                ..RepoSettings::default()
+            }
+        }
+
+        #[tokio::test]
+        async fn profile_edit_reapplies_to_open_repo_still_on_the_applied_keys() {
+            let dir = tempfile::tempdir().unwrap();
+            let state = state_with_profile(dir.path(), old_profile());
+            let exec = Arc::new(FakeExecutor::default());
+            script_local_read(&exec, "Old Name", "old@x.com");
+            script_apply_write(&exec, "Old Name", "new@x.com");
+            // apply_profile_core's best-effort assignment bookkeeping.
+            exec.expect(&["remote", "-v"], ok(""));
+            let session =
+                insert_session(&state, dir.path(), exec.clone(), selected(Some(projection(&old_profile())))).await;
+
+            let result = update_git_profile_core(&state, edited_profile()).await.unwrap();
+
+            assert_eq!(result.applied.len(), 1);
+            assert_eq!(result.applied[0].repo, "repo");
+            assert!(result.errors.is_empty());
+            exec.assert_done();
+            assert_eq!(
+                session.settings.read().await.applied_profile_keys,
+                Some(projection(&edited_profile()))
+            );
+        }
+
+        #[tokio::test]
+        async fn profile_edit_reapplies_without_snapshot_when_local_matches_old_projection() {
+            // Repo applied before snapshots existed: the pre-edit projection
+            // stands in.
+            let dir = tempfile::tempdir().unwrap();
+            let state = state_with_profile(dir.path(), old_profile());
+            let exec = Arc::new(FakeExecutor::default());
+            script_local_read(&exec, "Old Name", "old@x.com");
+            script_apply_write(&exec, "Old Name", "new@x.com");
+            exec.expect(&["remote", "-v"], ok(""));
+            insert_session(&state, dir.path(), exec.clone(), selected(None)).await;
+
+            let result = update_git_profile_core(&state, edited_profile()).await.unwrap();
+
+            assert_eq!(result.applied.len(), 1);
+            exec.assert_done();
+        }
+
+        #[tokio::test]
+        async fn profile_edit_leaves_hand_edited_repo_config_alone() {
+            let dir = tempfile::tempdir().unwrap();
+            let state = state_with_profile(dir.path(), old_profile());
+            let exec = Arc::new(FakeExecutor::default());
+            // Local config diverged from the applied snapshot: no writes follow.
+            script_local_read(&exec, "Old Name", "mine@y.com");
+            let session =
+                insert_session(&state, dir.path(), exec.clone(), selected(Some(projection(&old_profile())))).await;
+
+            let result = update_git_profile_core(&state, edited_profile()).await.unwrap();
+
+            assert!(result.applied.is_empty());
+            assert!(result.errors.is_empty());
+            exec.assert_done();
+            // The stale snapshot stays; detection shows Custom.
+            assert_eq!(
+                session.settings.read().await.applied_profile_keys,
+                Some(projection(&old_profile()))
+            );
+        }
+
+        #[tokio::test]
+        async fn profile_edit_ignores_repos_selecting_another_profile() {
+            let dir = tempfile::tempdir().unwrap();
+            let state = state_with_profile(dir.path(), old_profile());
+            let exec = Arc::new(FakeExecutor::default());
+            let settings = RepoSettings {
+                git_profile_id: Some("other".into()),
+                ..RepoSettings::default()
+            };
+            insert_session(&state, dir.path(), exec.clone(), settings).await;
+
+            let result = update_git_profile_core(&state, edited_profile()).await.unwrap();
+
+            assert!(result.applied.is_empty());
+            exec.assert_done();
+        }
+
+        #[tokio::test]
+        async fn reconcile_on_open_reapplies_a_stale_profile() {
+            let dir = tempfile::tempdir().unwrap();
+            // The DEFINITION already holds the new email; the repo's config
+            // still holds what the apply wrote (the snapshot).
+            let state = state_with_profile(dir.path(), edited_profile());
+            let exec = Arc::new(FakeExecutor::default());
+            script_local_read(&exec, "Old Name", "old@x.com");
+            script_apply_write(&exec, "Old Name", "new@x.com");
+            exec.expect(&["remote", "-v"], ok(""));
+            let session =
+                insert_session(&state, dir.path(), exec.clone(), selected(Some(projection(&old_profile())))).await;
+
+            reconcile_profile_on_open(&state, &session).await;
+
+            exec.assert_done();
+            assert_eq!(
+                session.settings.read().await.applied_profile_keys,
+                Some(projection(&edited_profile()))
+            );
+        }
+
+        #[tokio::test]
+        async fn reconcile_on_open_backfills_the_snapshot_when_config_is_current() {
+            let dir = tempfile::tempdir().unwrap();
+            let state = state_with_profile(dir.path(), edited_profile());
+            let exec = Arc::new(FakeExecutor::default());
+            script_local_read(&exec, "Old Name", "new@x.com");
+            let session = insert_session(&state, dir.path(), exec.clone(), selected(None)).await;
+
+            reconcile_profile_on_open(&state, &session).await;
+
+            exec.assert_done();
+            assert_eq!(
+                session.settings.read().await.applied_profile_keys,
+                Some(projection(&edited_profile()))
+            );
+        }
+
+        #[tokio::test]
+        async fn reconcile_on_open_leaves_hand_edited_config_alone() {
+            let dir = tempfile::tempdir().unwrap();
+            let state = state_with_profile(dir.path(), edited_profile());
+            let exec = Arc::new(FakeExecutor::default());
+            script_local_read(&exec, "Old Name", "mine@y.com");
+            let session =
+                insert_session(&state, dir.path(), exec.clone(), selected(Some(projection(&old_profile())))).await;
+
+            reconcile_profile_on_open(&state, &session).await;
+
+            exec.assert_done();
+        }
+    }
+
+    #[test]
+    fn changed_profiles_pairs_edits_by_id() {
+        let old = vec![signing_profile("p1", "a@x.com"), signing_profile("p2", "b@x.com")];
+        let new = vec![
+            signing_profile("p1", "a@x.com"),      // unchanged
+            signing_profile("p2", "edited@x.com"), // edited
+            signing_profile("p3", "c@x.com"),      // created (nothing to propagate from)
+        ];
+        let changed = changed_profiles(&old, &new);
+        assert_eq!(changed.len(), 1);
+        assert_eq!(changed[0].0.user_email.as_deref(), Some("b@x.com"));
+        assert_eq!(changed[0].1.user_email.as_deref(), Some("edited@x.com"));
     }
 }

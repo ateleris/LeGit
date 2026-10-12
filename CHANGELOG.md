@@ -12,6 +12,14 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Editing a git profile now re-applies it to the repositories that use it
+  (open ones immediately, closed ones when next opened), so commits no
+  longer keep using the pre-edit identity; a repository whose local config
+  was hand-edited after the apply is left untouched. Profile edits arriving
+  via settings sync propagate the same way
+
 ## [1.5.0] - 2026-10-09
 
 ### Added

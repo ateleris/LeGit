@@ -5,6 +5,7 @@
 
 export type {
   AppError,
+  AppliedPropagation,
   AskpassPromptKind,
   AskpassRequestPayload,
   AvailableHelper,
@@ -42,6 +43,7 @@ export type {
   DiffLine,
   DiffLineKind,
   DiffSource,
+  DistroKeyResolution,
   FastForwardResult,
   FetchOptions,
   FfMode,
@@ -84,6 +86,7 @@ export type {
   MergeOutcome,
   PlatformKeysView,
   ProfileMatch,
+  ProfilePropagation,
   ProfileStatus,
   PullOptions,
   PullOutcome,

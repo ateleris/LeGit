@@ -9,6 +9,7 @@ import { useGitProfiles, invalidateGitProfiles } from "../../lib/useGitProfiles"
 import { useConfirmDestructive } from "../../store/settings";
 import { Button } from "../shared/buttons";
 import { Section, FieldNote } from "./primitives";
+import { handleProfilePropagation } from "./distroKeyOffers";
 import { CredentialHelperField } from "./CredentialHelperField";
 import { GenerateSshKeyForm, SshKeyActions } from "./SshKeyTools";
 
@@ -54,11 +55,17 @@ export function GlobalProfilesSection() {
     try {
       if (p.id === "") {
         await api.createGitProfile(p);
+        setEditing(null);
+        invalidateGitProfiles(queryClient);
       } else {
-        await api.updateGitProfile(p);
+        // An edit re-applies to the open repos that still carry the applied
+        // keys; surface per-repo failures and the distro key offers after
+        // the list refreshed.
+        const propagation = await api.updateGitProfile(p);
+        setEditing(null);
+        invalidateGitProfiles(queryClient);
+        await handleProfilePropagation(propagation);
       }
-      setEditing(null);
-      invalidateGitProfiles(queryClient);
     } catch (e) {
       setError(formatAppError(e));
     }
