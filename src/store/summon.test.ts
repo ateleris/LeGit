@@ -91,6 +91,21 @@ describe("summon slot sharing (diff <-> merge)", () => {
     expect(added[0].id).toBe("diff");
     expect(closed).toEqual([]);
   });
+
+  it("summoning working-changes while changed-files is open takes over its group and closes it", () => {
+    const { api, closed, added } = fakeApi({ "changed-files": { groupId: "g3" } });
+    useDockviewStore.setState({ repoApi: api });
+
+    useSummonStore.getState().summon("working-changes");
+
+    expect(added).toEqual([
+      expect.objectContaining({
+        id: "working-changes",
+        position: { referenceGroup: "g3", direction: "within" },
+      }),
+    ]);
+    expect(closed).toEqual(["changed-files"]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -189,6 +204,7 @@ describe("addRepoPanelWithoutSplitting", () => {
   ) {
     const added: { id: string; position?: unknown }[] = [];
     const unhidden: string[] = [];
+    const closed: string[] = [];
     const panels: Record<string, { groupId: string }> = { ...openPanels };
     const groupApi = (groupId: string) => ({
       close: vi.fn(),
@@ -202,7 +218,12 @@ describe("addRepoPanelWithoutSplitting", () => {
       getPanel: (id: string) => {
         const p = panels[id];
         if (!p) return undefined;
-        return { id, group: { id: p.groupId, api: groupApi(p.groupId) }, focus: vi.fn() };
+        return {
+          id,
+          group: { id: p.groupId, api: groupApi(p.groupId) },
+          focus: vi.fn(),
+          api: { close: () => closed.push(id) },
+        };
       },
       addPanel: (opts: { id: string; position?: { referencePanel?: string; referenceGroup?: string } }) => {
         added.push(opts);
@@ -213,8 +234,36 @@ describe("addRepoPanelWithoutSplitting", () => {
         panels[opts.id] = { groupId };
       },
     };
-    return { api: api as unknown as DockviewApi, added, unhidden };
+    return { api: api as unknown as DockviewApi, added, unhidden, closed };
   }
+
+  it("takes over the slot sibling's group and closes it (View-menu path)", () => {
+    const { api, added, closed } = visApi({ "changed-files": { groupId: "g-cf" } });
+    addRepoPanelWithoutSplitting(api, "working-changes");
+    expect(added).toEqual([
+      expect.objectContaining({
+        id: "working-changes",
+        position: { referenceGroup: "g-cf", direction: "within" },
+      }),
+    ]);
+    expect(closed).toEqual(["changed-files"]);
+  });
+
+  it("slot takeover beats placement memory (the slot is wherever the sibling is)", () => {
+    useSummonStore.setState({ placements: { merge: "g-elsewhere" } });
+    const { api, added, closed } = visApi({
+      diff: { groupId: "g-diff" },
+      log: { groupId: "g-elsewhere" },
+    });
+    addRepoPanelWithoutSplitting(api, "merge");
+    expect(added).toEqual([
+      expect.objectContaining({
+        id: "merge",
+        position: { referenceGroup: "g-diff", direction: "within" },
+      }),
+    ]);
+    expect(closed).toEqual(["diff"]);
+  });
 
   it("joins the default reference's group instead of splitting (View-menu path)", () => {
     const { api, added } = visApi({ log: { groupId: "g-log" } });

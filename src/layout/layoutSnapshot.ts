@@ -15,7 +15,7 @@ import {
 // Only the RepoLayoutEnvelope TYPE flows back into defaultLayouts - no
 // runtime cycle.
 import { DEFAULT_GLOBAL_LAYOUT, DEFAULT_REPO_LAYOUT } from "./defaultLayouts";
-import { GLOBAL_PANELS, PANEL_TITLES, REPO_PANELS } from "./descriptors";
+import { GLOBAL_PANELS, PANEL_TITLES, REPO_PANELS, SLOT_PAIRS } from "./descriptors";
 
 // Legacy "saved default" snapshot keys - written by the retired
 // "Save as default layout" menu entry, read only by the one-time migration
@@ -162,27 +162,15 @@ export function sanitizeDockviewLayout(
 }
 
 /**
- * Panels sharing one dock slot, shown one at a time. A layout naming one
- * member means "the slot": on apply, the member CURRENTLY showing keeps it -
- * with a commit selected, Changed Files stays even though the layout was
- * saved with Working Changes (and vice versa); an in-progress Merge stays
- * where the layout has Diff. Diff/Merge derive from the descriptors'
- * `swapsWith`; Working Changes / Changed Files swap per selection at their
- * `swapSummon` call sites (not via `swapsWith`, which would make a plain
- * summon of one close the other), so that pair is declared here.
- */
-export const SLOT_PAIRS: ReadonlyArray<readonly [string, string]> = [
-  ["working-changes", "changed-files"],
-  ...REPO_PANELS.flatMap((p) =>
-    p.swapsWith && p.id < p.swapsWith ? [[p.id, p.swapsWith] as const] : [],
-  ),
-];
-
-/**
- * Rewrite a persisted dockview layout so each slot pair shows the member
- * that is currently open (see SLOT_PAIRS). Substitutes only when the layout
- * names exactly one member and the dock currently shows exactly the other;
- * a layout naming both, or a dock showing both/neither, is left as saved.
+ * Rewrite a persisted dockview layout so each slot pair (SLOT_PAIRS) shows
+ * exactly one member. A layout naming one member means "the slot": on apply,
+ * the member CURRENTLY showing keeps it - with a commit selected, Changed
+ * Files stays even though the layout was saved with Working Changes (and vice
+ * versa); an in-progress Merge stays where the layout has Diff. The rename
+ * happens only when the dock shows exactly the other member; a dock showing
+ * both/neither leaves the saved member as-is. A layout naming BOTH members
+ * (bug-era double-slot state, or hand-edited) keeps the open member, else the
+ * pair's primary, and drops the other - a group emptied by the drop collapses.
  * Returns the input unchanged when there is nothing to do, and never throws
  * on foreign shapes (sanitizeDockviewLayout deals with those). The renamed
  * panel's persisted title is dropped - sanitize re-titles from the registry.
@@ -199,18 +187,25 @@ export function substituteSlotPanels(
   if (!layout || typeof layout !== "object" || !layout.grid || !layout.panels) return json;
 
   const renames = new Map<string, string>();
+  const drops = new Set<string>();
   for (const [a, b] of pairs) {
     const hasA = a in layout.panels;
     const hasB = b in layout.panels;
-    if (hasA === hasB) continue;
+    if (hasA && hasB) {
+      const keep = isOpen(a) !== isOpen(b) ? (isOpen(a) ? a : b) : a;
+      drops.add(keep === a ? b : a);
+      continue;
+    }
+    if (!hasA && !hasB) continue;
     const from = hasA ? a : b;
     const to = hasA ? b : a;
     if (isOpen(to) && !isOpen(from)) renames.set(from, to);
   }
-  if (renames.size === 0) return json;
+  if (renames.size === 0 && drops.size === 0) return json;
 
   const panels: Record<string, unknown> = {};
   for (const [id, p] of Object.entries(layout.panels)) {
+    if (drops.has(id)) continue;
     const to = renames.get(id);
     if (to === undefined) {
       panels[id] = p;
@@ -222,28 +217,40 @@ export function substituteSlotPanels(
   }
 
   type Node = { type?: unknown; data?: unknown };
-  const renameNode = (node: Node | null | undefined): unknown => {
+  const rewriteNode = (node: Node | null | undefined): unknown => {
     if (!node || typeof node !== "object") return node;
     if (node.type === "leaf") {
       const data = (node.data ?? {}) as { views?: unknown; activeView?: unknown };
       const views = Array.isArray(data.views)
-        ? data.views.map((v) => (typeof v === "string" ? (renames.get(v) ?? v) : v))
+        ? data.views
+            .filter((v) => !(typeof v === "string" && drops.has(v)))
+            .map((v) => (typeof v === "string" ? (renames.get(v) ?? v) : v))
         : data.views;
-      const activeView =
+      if (Array.isArray(views) && views.length === 0) return null;
+      let activeView =
         typeof data.activeView === "string"
           ? (renames.get(data.activeView) ?? data.activeView)
           : data.activeView;
+      if (typeof activeView === "string" && drops.has(activeView) && Array.isArray(views)) {
+        activeView = views[0];
+      }
       return { ...node, data: { ...data, views, activeView } };
     }
     if (node.type === "branch" && Array.isArray(node.data)) {
-      return { ...node, data: node.data.map((c) => renameNode(c as Node)) };
+      const children = node.data.map((c) => rewriteNode(c as Node)).filter((c) => c !== null);
+      if (children.length === 0) return null;
+      return { ...node, data: children };
     }
     return node;
   };
 
+  const root = rewriteNode(layout.grid.root as Node);
+  // A grid holding only dropped views is malformed beyond repair here; hand
+  // the original to sanitize, which decides whether anything usable remains.
+  if (root === null) return json;
   return {
     ...layout,
-    grid: { ...layout.grid, root: renameNode(layout.grid.root as Node) },
+    grid: { ...layout.grid, root },
     panels,
   };
 }

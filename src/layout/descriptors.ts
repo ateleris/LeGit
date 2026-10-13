@@ -16,8 +16,9 @@ export interface PanelDescriptor {
   scope: "global" | "repo";
   /** Where to open the panel the first time it's ever opened. */
   defaultPlacement?: DefaultPlacement;
-  /** Panel this one shares a dock slot with: summoning one while the other is
-   *  open takes over its group and closes it (enforced by `summon()`). */
+  /** Panel this one shares a dock slot with (feeds SLOT_PAIRS): opening one
+   *  while the other is open takes over its group and closes it, whatever the
+   *  entry point (enforced by `addRepoPanelWithoutSplitting`). */
   swapsWith?: string;
   /** Transient panel whose ONLY entry point is a summon: it has no View-menu
    *  entry and must never be suppressible (a suppressed summon degrades to
@@ -149,6 +150,31 @@ export const ALL_PANELS = [...GLOBAL_PANELS, ...REPO_PANELS];
 export const PANEL_TITLES: Readonly<Record<string, string>> = Object.fromEntries(
   ALL_PANELS.map((p) => [p.id, p.title]),
 );
+
+/**
+ * Panels sharing one dock slot, shown one at a time - the invariant holds on
+ * EVERY open path (summon, View/mac menu, layout apply). Diff/Merge derive
+ * from the descriptors' `swapsWith`; Working Changes / Changed Files swap per
+ * selection at their `swapSummon` call sites (`swapsWith` would also reroute
+ * their summon payload semantics), so that pair is declared here. The FIRST
+ * member is the pair's primary: the one kept when a persisted layout names
+ * both (only bug-era or hand-edited layouts do).
+ */
+export const SLOT_PAIRS: ReadonlyArray<readonly [string, string]> = [
+  ["working-changes", "changed-files"],
+  ...REPO_PANELS.flatMap((p) =>
+    p.swapsWith && p.id < p.swapsWith ? [[p.id, p.swapsWith] as const] : [],
+  ),
+];
+
+/** The panel sharing `id`'s dock slot, if any (see SLOT_PAIRS). */
+export function slotSiblingOf(id: string): string | undefined {
+  for (const [a, b] of SLOT_PAIRS) {
+    if (a === id) return b;
+    if (b === id) return a;
+  }
+  return undefined;
+}
 
 /**
  * Panels that pop open as a SIDE EFFECT of selecting data (a commit, a file

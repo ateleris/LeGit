@@ -12,6 +12,13 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Panels that share a dock slot (Diff / Merge, Working Changes / Changed
+  Files) can no longer end up open side by side: opening one from the View
+  menu (or any other way) now replaces the other, and applying a layout
+  saved with both keeps only one
+
 ## [1.5.1] - 2026-10-12
 
 ### Fixed

@@ -8,7 +8,7 @@ import { notify } from "./notifications";
 import { api as commandApi } from "../lib/commands";
 import { formatAppError } from "../lib/errors";
 import type { FileHistoryRequest } from "../lib/types";
-import { REPO_PANELS, SUPPRESSIBLE_SUMMON_PANELS } from "../layout/descriptors";
+import { REPO_PANELS, SUPPRESSIBLE_SUMMON_PANELS, slotSiblingOf } from "../layout/descriptors";
 
 /**
  * True when the user has opted this panel out of auto-opening (Settings →
@@ -105,6 +105,25 @@ export function resolveSummonPlacement(
 export function addRepoPanelWithoutSplitting(api: DockviewApi, targetId: string) {
   const desc = REPO_PANELS.find((p) => p.id === targetId);
   if (!desc) return;
+  // Slot exclusivity: a pair member never opens next to its sibling - it takes
+  // over the sibling's group and the sibling closes, whatever the entry point
+  // (summon, View menu, mac menu). Checked before placement memory, because
+  // the slot is wherever the sibling currently is.
+  const siblingId = slotSiblingOf(targetId);
+  const sibling = siblingId ? api.getPanel(siblingId) : undefined;
+  if (sibling?.group) {
+    api.addPanel({
+      id: targetId,
+      component: targetId,
+      title: desc.title,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      position: { referenceGroup: sibling.group.id as any, direction: "within" },
+    });
+    sibling.api.close();
+    const panel = api.getPanel(targetId);
+    if (panel && !panel.group.api.isVisible) panel.group.api.setVisible(true);
+    return;
+  }
   const { placements, fallbackPositions } = useSummonStore.getState();
   const placement = resolveSummonPlacement(
     targetId,
@@ -280,20 +299,15 @@ export const useSummonStore = create<SummonStore>((set, get) => ({
       return;
     }
 
-    // Slot sharing: if this panel's swap sibling is open, take over its spot
-    // instead of placing a second panel next to it (e.g. Diff <-> Merge).
-    if (desc.swapsWith && api.getPanel(desc.swapsWith)) {
-      get().swapSummon(targetId, desc.swapsWith, payload);
-      return;
-    }
-
     // Panel is not open — queue payload so it's ready when the panel mounts.
     if (payload !== undefined) {
       set((s) => ({ payloadQueue: { ...s.payloadQueue, [targetId]: payload } }));
     }
 
     // Case 2: closed panel — join an existing group (never split the layout;
-    // see resolveSummonPlacement for the priority cascade).
+    // see resolveSummonPlacement for the priority cascade). An open slot
+    // sibling (Diff <-> Merge, Working Changes <-> Changed Files) is taken
+    // over and closed there.
     addRepoPanelWithoutSplitting(api, targetId);
   },
 

@@ -9,8 +9,8 @@ import {
   parseRepoLayoutEnvelope,
   sanitizeDockviewLayout,
   substituteSlotPanels,
-  SLOT_PAIRS,
 } from "./layoutSnapshot";
+import { SLOT_PAIRS } from "./descriptors";
 
 describe("parseRepoLayoutEnvelope", () => {
   it("parses the envelope format", () => {
@@ -227,15 +227,63 @@ describe("substituteSlotPanels", () => {
     expect(substituteSlotPanels(layout, open("working-changes", "log"))).toBe(layout);
   });
 
-  it("does not substitute when the layout names both members", () => {
+  // A layout naming BOTH members of a pair can only come from the bug era
+  // (both opened into separate slots) or a hand-edited file; applying it must
+  // not resurrect the double-slot state.
+  it("drops the closed member when the layout names both pair members", () => {
     const layout = {
-      grid: { root: leaf("1", ["working-changes", "changed-files"]) },
+      grid: { root: leaf("1", ["working-changes", "changed-files"], "working-changes") },
       panels: {
         "working-changes": panel("working-changes"),
         "changed-files": panel("changed-files"),
       },
     };
-    expect(substituteSlotPanels(layout, open("changed-files"))).toBe(layout);
+    const out = substituteSlotPanels(layout, open("changed-files")) as {
+      grid: { root: { data: { views: string[]; activeView: string } } };
+      panels: Record<string, unknown>;
+    };
+    expect(Object.keys(out.panels)).toEqual(["changed-files"]);
+    expect(out.grid.root.data.views).toEqual(["changed-files"]);
+    expect(out.grid.root.data.activeView).toBe("changed-files");
+  });
+
+  it("keeps the pair's primary when both are named and neither is open, collapsing the emptied group", () => {
+    const layout = {
+      grid: {
+        root: {
+          type: "branch",
+          data: [
+            leaf("1", ["log"]),
+            leaf("2", ["working-changes"]),
+            leaf("3", ["changed-files"]),
+          ],
+          size: 300,
+        },
+      },
+      panels: {
+        log: panel("log"),
+        "working-changes": panel("working-changes"),
+        "changed-files": panel("changed-files"),
+      },
+    };
+    const out = substituteSlotPanels(layout, open("log")) as {
+      grid: { root: { data: { data: { views: string[] } }[] } };
+      panels: Record<string, unknown>;
+    };
+    expect(Object.keys(out.panels).sort()).toEqual(["log", "working-changes"]);
+    expect(out.grid.root.data).toHaveLength(2);
+    expect(out.grid.root.data.map((l) => l.data.views)).toEqual([["log"], ["working-changes"]]);
+  });
+
+  it("prefers diff over merge when both are named and neither is open", () => {
+    const layout = {
+      grid: { root: leaf("1", ["diff", "merge"]) },
+      panels: { diff: panel("diff"), merge: panel("merge") },
+    };
+    const out = substituteSlotPanels(layout, open("log")) as {
+      panels: Record<string, unknown>;
+    };
+    expect(Object.keys(out.panels)).toEqual(["diff"]);
   });
 
   it("does not substitute when neither or both members are currently open", () => {
