@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface PaletteEditorProps {
   palette: Record<string, string>;
   /** Palette entries currently referenced by a token (not removable). */
   usedNames: Set<string>;
-  disabled: boolean;
+  disabled?: boolean;
   onChange: (name: string, value: string) => void;
   onRename: (oldName: string, newName: string) => void;
   onRemove: (name: string) => void;
@@ -37,7 +37,7 @@ interface PaletteRowProps {
   name: string;
   value: string;
   inUse: boolean;
-  disabled: boolean;
+  disabled?: boolean;
   onChange: (name: string, value: string) => void;
   onRename: (oldName: string, newName: string) => void;
   onRemove: (name: string) => void;
@@ -51,9 +51,10 @@ function PaletteRow(p: PaletteRowProps) {
   // intermediate value. The committed value is applied only on the native
   // `change` event below.
   const [picker, setPicker] = useState(() => hexForPicker(p.value));
-  const pickerRef = useRef<HTMLInputElement>(null);
   const commit = useRef(p.onChange);
   commit.current = p.onChange;
+  const nameRef = useRef(p.name);
+  nameRef.current = p.name;
 
   // Keep the swatch in sync when the value changes elsewhere (hex field edit,
   // theme switch) — but not mid-drag.
@@ -62,14 +63,19 @@ function PaletteRow(p: PaletteRowProps) {
   }, [p.value]);
 
   // `change` fires only when a colour is selected/committed, unlike React's
-  // `onChange` (the DOM `input` event) which fires continuously while picking.
-  useEffect(() => {
-    const el = pickerRef.current;
+  // `onChange` (the DOM `input` event) which fires continuously while
+  // picking. Attached via a callback ref, NOT a mount-time effect: the input
+  // is conditionally rendered (view mode shows a static span), so a row
+  // mounted read-only and switched editable later must still get it.
+  const detach = useRef<(() => void) | null>(null);
+  const attachPicker = useCallback((el: HTMLInputElement | null) => {
+    detach.current?.();
+    detach.current = null;
     if (!el) return;
-    const onCommit = () => commit.current(p.name, el.value);
+    const onCommit = () => commit.current(nameRef.current, el.value);
     el.addEventListener("change", onCommit);
-    return () => el.removeEventListener("change", onCommit);
-  }, [p.name]);
+    detach.current = () => el.removeEventListener("change", onCommit);
+  }, []);
 
   return (
     <div className="palette-row">
@@ -101,9 +107,9 @@ function PaletteRow(p: PaletteRowProps) {
         />
       ) : (
         <input
-          ref={pickerRef}
+          ref={attachPicker}
           type="color"
-          className="palette-row__picker"
+          className="palette-row__picker legit-color-swatch"
           value={picker}
           onChange={(e) => setPicker(e.target.value)}
         />

@@ -4,7 +4,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { formatAppError } from "../../lib/errors";
 import { partitionThemes, useThemeStore } from "../../store/themes";
 import { notify } from "../../store/notifications";
-import { confirmDestructiveAction } from "../../store/confirm";
+import { confirmDestructiveAction, promptDialog } from "../../store/confirm";
 import { DEFAULT_THEME } from "../../theme/defaults";
 import { TOKEN_CONTRACT } from "../../theme/tokens";
 import {
@@ -20,10 +20,12 @@ import * as draftOps from "../../theme/draftOps";
 import { validateTheme } from "../../theme/validate";
 import type { ThemeDocument, TokenFilterId } from "../../lib/types";
 import { Button } from "../shared/buttons";
-import { SettingsGroup } from "../Settings/primitives";
+import { AdvancedSettings, SettingsGroup } from "../Settings/primitives";
+import { fingerprintMatches } from "../../theme/simple";
 import { ContrastSection } from "./ContrastSection";
 import { PaletteEditor } from "./PaletteEditor";
 import { PanelOverridesSection } from "./PanelOverridesSection";
+import { SeedRow } from "./SeedRow";
 
 export function ThemeEditorPanel() {
   const themes = useThemeStore((s) => s.themes);
@@ -31,8 +33,10 @@ export function ThemeEditorPanel() {
   const activeDoc = useThemeStore((s) => s.activeDocument);
   const draft = useThemeStore((s) => s.draft);
   const draftDirty = useThemeStore((s) => s.draftDirty);
+  const draftOrigin = useThemeStore((s) => s.draftOrigin);
   const setActive = useThemeStore((s) => s.setActive);
   const startEditing = useThemeStore((s) => s.startEditing);
+  const replaceDraft = useThemeStore((s) => s.replaceDraft);
   const startNewTheme = useThemeStore((s) => s.startNewTheme);
   const cancelEditing = useThemeStore((s) => s.cancelEditing);
   const updateDraftPalette = useThemeStore((s) => s.updateDraftPalette);
@@ -48,26 +52,15 @@ export function ThemeEditorPanel() {
   const editing = draft != null;
   const working = (draft ?? activeDoc) as ThemeDocument | null;
 
-  // User themes edit implicitly: the controls stay live in view mode and the
-  // first change starts the draft (the toolbar flips to Save/Cancel). Only
-  // built-in themes are truly read-only.
-  const activeIsBuiltin = themes.find((t) => t.name === activeName)?.source === "builtin";
-  const readOnly = !editing && activeIsBuiltin;
-
-  // Clicking around a read-only built-in must not feel broken: explain and
-  // point at the fix. Rate-limited so a burst of clicks yields one toast.
-  const lastHintRef = useRef(0);
-  const onReadOnlyPointerDown = (e: React.PointerEvent) => {
-    if (!readOnly) return;
-    // Live controls (section headers, a panel whose data query failed, ...)
-    // handle their own clicks - no hint for those.
-    const target = e.target as HTMLElement;
-    if (target.closest("button:enabled, select:enabled, input:enabled, textarea:enabled")) return;
-    const now = Date.now();
-    if (now - lastHintRef.current < 4000) return;
-    lastHintRef.current = now;
-    notify.info("Built-in themes are read-only. Use New to create an editable copy.");
-  };
+  // EVERY theme edits implicitly: the controls stay live in view mode and
+  // the first change starts the draft. A draft that originates from a
+  // built-in can only be saved as a COPY (the toolbar hides Save), so the
+  // shipped files are never overwritten; a new theme (origin null) saves
+  // normally.
+  const originIsBuiltin =
+    editing &&
+    draftOrigin !== null &&
+    themes.find((t) => t.name === draftOrigin)?.source === "builtin";
 
   const groups = useMemo(() => {
     const map = new Map<string, typeof TOKEN_CONTRACT[number][]>();
@@ -88,7 +81,6 @@ export function ThemeEditorPanel() {
   }
 
   const setMeta = (patch: { name?: string; author?: string; description?: string; laneChipFilters?: ThemeDocument["laneChipFilters"] }) => {
-    if (readOnly) return;
     if (!draft) startEditing();
     updateDraftMeta(patch);
   };
@@ -138,7 +130,6 @@ export function ThemeEditorPanel() {
     paletteRef: string | null,
     filter: TokenFilterId | null,
   ) => {
-    if (readOnly) return;
     if (!draft) startEditing();
     const current = (draft ?? activeDoc)!;
     updateDraftPanelOverrides(
@@ -160,28 +151,57 @@ export function ThemeEditorPanel() {
     updateDraftTokens(draftOps.resetToken(current, token));
   };
 
+  /** Shared validation for both save paths; returns the error or null. */
+  const saveBlocker = (name: string): string | null => {
+    if (!draft) return "no draft";
+    if (!name) return "Theme name is required";
+    // Built-ins are read-only; a user theme under the same name would shadow
+    // (or ambiguously duplicate) the shipped one.
+    if (themes.some((t) => t.name === name && t.source === "builtin")) {
+      return `"${name}" is a built-in theme — choose a different name.`;
+    }
+    const result = validateTheme({ ...draft, name });
+    if (!result.ok) return result.errors.map((e) => `${e.field}: ${e.message}`).join("\n");
+    return null;
+  };
+
   // Saves under the draft's name — rename via the Metadata "Name" field.
   const onSave = async () => {
     setError(null);
     if (!draft) return;
     const name = draft.name.trim();
-    if (!name) {
-      setError("Theme name is required");
-      return;
-    }
-    // Built-ins are read-only; a user theme under the same name would shadow
-    // (or ambiguously duplicate) the shipped one.
-    if (themes.some((t) => t.name === name && t.source === "builtin")) {
-      setError(`"${name}" is a built-in theme — choose a different name.`);
-      return;
-    }
-    const result = validateTheme({ ...draft, name });
-    if (!result.ok) {
-      setError(result.errors.map((e) => `${e.field}: ${e.message}`).join("\n"));
+    const blocker = saveBlocker(name);
+    if (blocker) {
+      setError(blocker);
       return;
     }
     try {
       await saveDraftAs(name);
+    } catch (e) {
+      setError(formatAppError(e));
+    }
+  };
+
+  // Save the edited state as a NEW theme, keeping the origin untouched.
+  const onSaveAs = async () => {
+    setError(null);
+    if (!draft) return;
+    const suggested = `${draft.name.trim() || "Theme"} copy`;
+    const input = await promptDialog({
+      title: "Save as new theme",
+      message: "Saves a copy under this name; the original theme is kept.",
+      confirmLabel: "Save copy",
+      input: { initialValue: suggested },
+    });
+    if (input === null) return;
+    const name = input.trim();
+    const blocker = saveBlocker(name);
+    if (blocker) {
+      setError(blocker);
+      return;
+    }
+    try {
+      await saveDraftAs(name, "copy");
     } catch (e) {
       setError(formatAppError(e));
     }
@@ -267,24 +287,24 @@ export function ThemeEditorPanel() {
           </select>
         </label>
         {!editing ? (
-          <>
-            {/* Built-in themes are read-only — duplicate via New to customise. */}
-            {activeName && isUserTheme(activeName) ? (
-              <button onClick={startEditing}>Edit</button>
-            ) : (
-              <button
-                disabled
-                title="Built-in themes can't be edited — use New to create an editable copy"
-              >
-                Edit
-              </button>
-            )}
-            <button onClick={startNewTheme}>New</button>
-          </>
+          // No Edit button: every theme (built-ins included) edits
+          // implicitly - the first change to any control starts the draft
+          // and flips this toolbar to the save actions.
+          <button onClick={startNewTheme}>New</button>
         ) : (
           <>
-            <Button variant="primary" onClick={onSave} disabled={!draftDirty}>
-              Save
+            {/* A draft from a built-in can only be saved as a copy. */}
+            {!originIsBuiltin && (
+              <Button variant="primary" onClick={onSave} disabled={!draftDirty}>
+                Save
+              </Button>
+            )}
+            <Button
+              variant={originIsBuiltin ? "primary" : "default"}
+              onClick={onSaveAs}
+              title="Save a copy under a new name; the original theme is kept"
+            >
+              Save as…
             </Button>
             <button onClick={cancelEditing}>Cancel</button>
           </>
@@ -299,7 +319,6 @@ export function ThemeEditorPanel() {
       </div>
       <div
         className="legit-panel__body"
-        onPointerDown={onReadOnlyPointerDown}
         // No top padding on the scroller: the sticky group headers pin flush
         // against the top edge (see SettingsGroup); the spacer below scrolls
         // away with the content instead.
@@ -316,30 +335,44 @@ export function ThemeEditorPanel() {
             <input
               value={working.name}
               onChange={(e) => setMeta({ name: e.target.value })}
-              disabled={readOnly}
             />
             <label>Author</label>
             <input
               value={working.author ?? ""}
               onChange={(e) => setMeta({ author: e.target.value })}
-              disabled={readOnly}
             />
             <label>Description</label>
             <input
               value={working.description ?? ""}
               onChange={(e) => setMeta({ description: e.target.value })}
-              disabled={readOnly}
             />
           </div>
         </SettingsGroup>
 
+        <SettingsGroup id="theme-editor.seeds" title="Quick colors">
+          <SeedRow
+            working={working}
+            onApply={(next) => {
+              if (!draft) startEditing();
+              replaceDraft(next);
+            }}
+          />
+        </SettingsGroup>
+
+        {/* The detailed editor is expert surface: hidden behind Advanced,
+            auto-open while the theme is expert-shaped (never generated, or
+            fine-tuned since) so existing themes open looking like before.
+            Keyed per theme so switching themes re-evaluates the default. */}
+        <AdvancedSettings
+          key={activeName ?? "new"}
+          defaultOpen={!working.seeds || !fingerprintMatches(working)}
+        >
         <ContrastSection working={working} />
 
         <SettingsGroup id="theme-editor.palette" title="Palette">
           <PaletteEditor
             palette={working.palette}
             usedNames={draftOps.paletteRefsInUse(working)}
-            disabled={readOnly}
             onChange={setPaletteValue}
             onRename={renamePaletteEntry}
             onRemove={removePaletteEntry}
@@ -395,7 +428,6 @@ export function ThemeEditorPanel() {
                             },
                           })
                         }
-                        disabled={readOnly}
                       >
                         <option value="">Lane color</option>
                         {TOKEN_FILTERS.map((f) => (
@@ -452,7 +484,6 @@ export function ThemeEditorPanel() {
                   <select
                     value={currentRef}
                     onChange={(e) => setTokenBinding(t.name, e.target.value, currentFilter)}
-                    disabled={readOnly}
                   >
                     {!working.palette[currentRef] && (
                       // The default binding references a palette entry this
@@ -477,7 +508,7 @@ export function ThemeEditorPanel() {
                         (e.target.value || null) as TokenFilterId | null,
                       )
                     }
-                    disabled={readOnly || !currentRef}
+                    disabled={!currentRef}
                   >
                     <option value="">No filter</option>
                     {TOKEN_FILTERS.map((f) => (
@@ -491,7 +522,6 @@ export function ThemeEditorPanel() {
                   {bound !== undefined ? (
                     <button
                       onClick={() => resetToken(t.name)}
-                      disabled={readOnly}
                       title="Reset to built-in default"
                       aria-label={`Reset ${t.name} to built-in default`}
                       style={{
@@ -504,7 +534,7 @@ export function ThemeEditorPanel() {
                         border: "1px solid var(--panel-border)",
                         borderRadius: 3,
                         color: "var(--subtle-fg)",
-                        cursor: readOnly ? "default" : "pointer",
+                        cursor: "pointer",
                       }}
                     >
                       ↺
@@ -530,7 +560,8 @@ export function ThemeEditorPanel() {
         ))}
         </SettingsGroup>
 
-        <PanelOverridesSection working={working} readOnly={readOnly} onSet={setPanelOverride} />
+        <PanelOverridesSection working={working} readOnly={false} onSet={setPanelOverride} />
+        </AdvancedSettings>
       </div>
     </div>
   );

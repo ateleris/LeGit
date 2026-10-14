@@ -108,6 +108,27 @@ export function validateTheme(value: unknown, knownFormatVersion = 1): Validatio
     checkBinding(`tokens.${token}`, binding);
   }
 
+  const seeds = obj.seeds;
+  if (seeds !== undefined) {
+    if (seeds === null || typeof seeds !== "object" || Array.isArray(seeds)) {
+      push("seeds", "`seeds` must be an object of seed-name -> color");
+    } else {
+      const SEED_KEYS = ["background", "text", "primary", "error", "warning", "success", "diffAdded", "diffRemoved"];
+      for (const key of SEED_KEYS) {
+        const color = (seeds as Record<string, unknown>)[key];
+        // Hex only (stricter than palette values): the derivation engine and
+        // the seed swatches operate on hex; a functional color would derive
+        // a silently broken theme.
+        if (typeof color !== "string" || !COLOR_HEX.test(color.trim())) {
+          push(`seeds.${key}`, `Missing or invalid seed color (hex required): ${JSON.stringify(color)}`);
+        }
+      }
+    }
+  }
+  if (obj.seedFingerprint !== undefined && typeof obj.seedFingerprint !== "string") {
+    push("seedFingerprint", "`seedFingerprint` must be a string");
+  }
+
   const panelOverrides = obj.panelOverrides;
   if (panelOverrides !== undefined) {
     if (panelOverrides === null || typeof panelOverrides !== "object" || Array.isArray(panelOverrides)) {

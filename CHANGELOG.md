@@ -14,6 +14,14 @@ lives in the git log and the GitHub release notes.
 
 ### Added
 
+- Theme Editor: "Save as…" while editing saves the changes as a new theme
+  and keeps the original (Save with a changed name still renames)
+- Theme Editor: quick colors - pick eight seed colors (background, text,
+  accent, error/warning/success, diff added/removed) and the full
+  theme is generated
+  from them with readable (AA) contrast enforced automatically; the
+  detailed palette/token editor moved behind an Advanced toggle and
+  opens automatically for hand-tuned themes
 - The repository tab strip's tabs can be restyled (Global Settings >
   Appearance > Repository tabs): the classic flush look, rounded pills, or
   browser-style tabs with outward-curving bottom corners. The style picker
@@ -26,12 +34,19 @@ lives in the git log and the GitHub release notes.
 
 ### Changed
 
+- Built-in themes can now be edited directly in the Theme Editor (live
+  preview like user themes); their changes can only be saved as a copy
+  ("Save as..."), so the shipped themes are never overwritten
+
 - Expert knobs in Global Settings moved behind "Advanced" toggles (General's
   panel spacing/radius/border, the Commits graph geometry); they open
   automatically when a value was customized
 
 ### Fixed
 
+- The collapse arrow on the divider between the global and repo panels no
+  longer scales with the UI font size (the divider bar itself is fixed, so
+  a scaled arrow outgrew it)
 - Checkboxes and radio buttons now show a visible focus ring when reached
   with the keyboard (e.g. tabbing to the amend checkbox)
 - Panels that share a dock slot (Diff / Merge, Working Changes / Changed

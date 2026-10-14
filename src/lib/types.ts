@@ -256,4 +256,22 @@ export interface ThemeDocument {
    * absent = no overrides; tokens outside the allowlist and malformed panel
    * ids are preserved but never applied. */
   panelOverrides?: Record<string, Record<string, ThemeTokenBinding>>;
+  /** Seed colors a simple-mode theme derives from (spec:
+   * design/2026-10-14-theme-simple-mode.md). Optional and additive. */
+  seeds?: ThemeSeeds;
+  /** Hash of the generated palette+tokens; a mismatch with the current
+   * content means the theme was fine-tuned in the full editor since. */
+  seedFingerprint?: string;
+}
+
+/** The simple-mode seed colors (all opaque hex). */
+export interface ThemeSeeds {
+  background: string;
+  text: string;
+  primary: string;
+  error: string;
+  warning: string;
+  success: string;
+  diffAdded: string;
+  diffRemoved: string;
 }

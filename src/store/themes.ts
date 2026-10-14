@@ -35,7 +35,13 @@ interface ThemeStore {
   updateDraftTokens: (tokens: ThemeDocument["tokens"]) => void;
   updateDraftPanelOverrides: (overrides: ThemeDocument["panelOverrides"]) => void;
   updateDraftMeta: (patch: Partial<Pick<ThemeDocument, "name" | "description" | "author" | "laneChipFilters">>) => void;
-  saveDraftAs: (name: string) => Promise<void>;
+  /** Replace the whole draft (simple-mode regeneration): applies live and
+   *  marks it dirty. Requires an existing draft. */
+  replaceDraft: (next: ThemeDocument) => void;
+  /** Save the draft under `name`. Default mode "rename": a changed name
+   *  moves the origin theme (its old file is removed). Mode "copy" keeps
+   *  the origin untouched (the toolbar's "Save as…"). */
+  saveDraftAs: (name: string, mode?: "rename" | "copy") => Promise<void>;
   deleteUserTheme: (name: string) => Promise<void>;
   importThemeFromJson: (json: unknown, suggestedName?: string) => Promise<ThemeEntry>;
 }
@@ -209,7 +215,13 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
     set({ draft: { ...draft, ...patch }, draftDirty: true });
   },
 
-  async saveDraftAs(name) {
+  replaceDraft(next) {
+    if (!get().draft) return;
+    applyTheme(next);
+    set({ draft: next, draftDirty: true });
+  },
+
+  async saveDraftAs(name, mode = "rename") {
     const draft = get().draft;
     if (!draft) throw new Error("no draft to save");
     const doc: ThemeDocument = { ...draft, name };
@@ -218,11 +230,12 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
       throw new Error(result.errors.map((e) => `${e.field}: ${e.message}`).join("; "));
     }
     const entry = await saveTheme(name, doc);
-    // A changed name is a RENAME of the origin theme, not a copy — remove the
-    // old file (duplication is `startNewTheme`'s job). Only ever deletes user
+    // In "rename" mode a changed name MOVES the origin theme - remove the
+    // old file; "copy" (Save as…) leaves it in place. Only ever deletes user
     // themes; built-ins aren't editable and are guarded again here.
     const origin = get().draftOrigin;
     if (
+      mode === "rename" &&
       origin &&
       origin !== entry.name &&
       get().themes.some((t) => t.name === origin && t.source === "user")

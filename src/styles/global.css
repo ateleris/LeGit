@@ -113,6 +113,22 @@ button:disabled {
 button.legit-eol-chip {
   background: transparent;
 }
+/* Native colour inputs draw the colour as a small pill inside button
+   chrome; this class makes the colour fill the whole control (the inner
+   swatch padding is only reachable via the -webkit pseudo-elements). */
+input[type="color"].legit-color-swatch {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0;
+}
+input[type="color"].legit-color-swatch::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+input[type="color"].legit-color-swatch::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+
 /* The commit composer's "Committing as ..." line: plain subtle text at rest,
    the shared button:hover tint is the clickable affordance (like the eol
    chip). Ellipsized - long identities must not wrap the composer. */
@@ -258,7 +274,8 @@ input[type="radio"]:focus-visible {
   background: transparent;
   border: none;
   color: var(--subtle-fg);
-  font-size: calc(var(--ui-font-size) * 0.75);
+  /* The chevron is a fixed-size SVG (AppLayout): the divider bar is a 12px
+     geometric constant, so its glyph deliberately does not scale. */
   padding: 0 calc(var(--ui-font-size) * 0.333);
   cursor: pointer;
   border-radius: 2px;

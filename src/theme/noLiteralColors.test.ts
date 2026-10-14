@@ -19,6 +19,9 @@ const ALLOWED_FILES = new Set([
   // Token-filter machinery: colour math + color-mix recipes are the theme
   // system itself, not UI chrome.
   "theme/filters.ts",
+  // Simple-mode derivation: seed fallbacks and black/white anchors are
+  // palette *data* the generator writes into theme documents.
+  "theme/simple.ts",
   // The Theme Editor manipulates literal colours as *data* (default value for
   // a new palette entry, hex normalization fallbacks) — not UI chrome.
   "panels/ThemeEditor/PaletteEditor.tsx",

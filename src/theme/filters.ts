@@ -11,7 +11,7 @@
 
 import type { ThemeTokenBinding, TokenFilterId } from "../lib/types";
 
-interface Rgba {
+export interface Rgba {
   r: number;
   g: number;
   b: number;
@@ -233,7 +233,7 @@ export function parseHexColor(color: string): Rgba | null {
   };
 }
 
-function formatHex(c: Rgba): string {
+export function formatHex(c: Rgba): string {
   const h = (n: number) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0");
   const rgb = `#${h(c.r)}${h(c.g)}${h(c.b)}`;
   return c.a >= 1 ? rgb : `${rgb}${h(c.a * 255)}`;

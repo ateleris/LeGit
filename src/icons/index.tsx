@@ -16,7 +16,9 @@ import {
   ArrowUpToLine,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Cloud,
   CornerLeftUp,
   EyeOff,
@@ -100,7 +102,9 @@ export const FetchIcon = withDefaults(RefreshCw, "FetchIcon");
 export const PullIcon = withDefaults(ArrowDownToLine, "PullIcon");
 export const PushIcon = withDefaults(ArrowUpToLine, "PushIcon");
 export const ChevronDownIcon = withDefaults(ChevronDown, "ChevronDownIcon");
+export const ChevronLeftIcon = withDefaults(ChevronLeft, "ChevronLeftIcon");
 export const ChevronRightIcon = withDefaults(ChevronRight, "ChevronRightIcon");
+export const ChevronUpIcon = withDefaults(ChevronUp, "ChevronUpIcon");
 // Layouts panel row actions.
 export const RenameIcon = withDefaults(SquarePen, "RenameIcon");
 export const DeleteIcon = withDefaults(Trash2, "DeleteIcon");

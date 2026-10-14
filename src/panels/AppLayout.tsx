@@ -5,6 +5,7 @@ import { useRepoStore } from "../store/repos";
 import { useSummonStore } from "../store/summon";
 import { useGlobalRegionStore } from "../store/globalRegion";
 import { KeyDispatcher } from "../keys/Dispatcher";
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ChevronUpIcon } from "../icons";
 import { useCommandAction } from "../keys/actions";
 import { useGitLogStore } from "../store/gitLog";
 import { useConsoleStore } from "../store/console";
@@ -335,9 +336,12 @@ export function AppLayout() {
       onClick={toggleCollapsed}
       title={collapsed ? "Expand global panels" : "Collapse global panels"}
     >
+      {/* Fixed size: the divider bar itself is a 12px geometric constant,
+          so its glyph must not scale with the UI font (it would outgrow
+          the bar). */}
       {placement === "top"
-        ? collapsed ? "▼" : "▲"
-        : collapsed ? "▶" : "◀"}
+        ? collapsed ? <ChevronDownIcon size={12} /> : <ChevronUpIcon size={12} />
+        : collapsed ? <ChevronRightIcon size={12} /> : <ChevronLeftIcon size={12} />}
     </button>
   );
 

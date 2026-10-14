@@ -110,6 +110,37 @@ describe("importThemeFromJson", () => {
   });
 });
 
+describe("saveDraftAs rename vs copy", () => {
+  const mineEntry = { name: "Mine", source: "user" as const, path: "themes/Mine.legit-theme.json" };
+  const setupDraft = (savedName: string) => {
+    const entry = { name: savedName, source: "user" as const, path: `themes/${savedName}.legit-theme.json` };
+    vi.mocked(saveTheme).mockResolvedValue(entry);
+    vi.mocked(listThemes).mockResolvedValue([mineEntry, entry]);
+    vi.mocked(loadTheme).mockResolvedValue({ ...DEFAULT_THEME, name: savedName });
+    useThemeStore.setState({
+      themes: [mineEntry],
+      activeThemeName: "Mine",
+      activeDocument: { ...DEFAULT_THEME, name: "Mine" },
+      draft: { ...DEFAULT_THEME, name: savedName },
+      draftDirty: true,
+      draftOrigin: "Mine",
+    });
+  };
+
+  test("default (rename): saving under a new name removes the origin theme", async () => {
+    setupDraft("Mine 2");
+    await useThemeStore.getState().saveDraftAs("Mine 2");
+    expect(deleteTheme).toHaveBeenCalledWith("Mine");
+  });
+
+  test("copy: saving under a new name keeps the origin theme", async () => {
+    setupDraft("Mine 2");
+    await useThemeStore.getState().saveDraftAs("Mine 2", "copy");
+    expect(saveTheme).toHaveBeenCalledWith("Mine 2", expect.objectContaining({ name: "Mine 2" }));
+    expect(deleteTheme).not.toHaveBeenCalled();
+  });
+});
+
 describe("panel overrides in the editor draft", () => {
   test("updateDraftPanelOverrides sets the draft and live-applies it", () => {
     useThemeStore.setState({ activeDocument: { ...DEFAULT_THEME }, activeThemeName: "Dark" });

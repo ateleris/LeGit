@@ -13,6 +13,57 @@ const valid = () => ({
   tokens: { "panel.bg": "base", "accent": { ref: "accent", filter: "subtle" } },
 });
 
+const SEEDS = {
+  background: "#1e1e1e",
+  text: "#e0e0e0",
+  primary: "#4a9eff",
+  error: "#e06c3c",
+  warning: "#d9a033",
+  success: "#4a90d9",
+  diffAdded: "#4a90d9",
+  diffRemoved: "#e06c3c",
+};
+
+describe("seed fields", () => {
+  test("accepts and preserves seeds + fingerprint", () => {
+    const doc = { ...valid(), seeds: SEEDS, seedFingerprint: "abc123" };
+    expect(validateTheme(doc).ok).toBe(true);
+    expect(asTheme(doc)?.seeds).toEqual(SEEDS);
+    expect(asTheme(doc)?.seedFingerprint).toBe("abc123");
+  });
+
+  test("still validates without the fields", () => {
+    expect(validateTheme(valid()).ok).toBe(true);
+  });
+
+  test("rejects a malformed seed color, naming the seed", () => {
+    const doc = { ...valid(), seeds: { ...SEEDS, primary: "blue" } };
+    const r = validateTheme(doc);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.field === "seeds.primary")).toBe(true);
+  });
+
+  test("rejects functional-color seeds (hex only - the engine derives from hex)", () => {
+    const doc = { ...valid(), seeds: { ...SEEDS, background: "rgb(30,30,30)" } };
+    const r = validateTheme(doc);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.field === "seeds.background")).toBe(true);
+  });
+
+  test("rejects a seeds object missing a key", () => {
+    const { success: _dropped, ...partial } = SEEDS;
+    const r = validateTheme({ ...valid(), seeds: partial });
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.field === "seeds.success")).toBe(true);
+  });
+
+  test("rejects a non-string fingerprint", () => {
+    const r = validateTheme({ ...valid(), seedFingerprint: 42 });
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.field === "seedFingerprint")).toBe(true);
+  });
+});
+
 describe("isValidColor", () => {
   test("accepts hex (3/4/6/8) and functional colors", () => {
     for (const c of [
