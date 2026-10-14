@@ -26,12 +26,16 @@ export function SettingsShell({
   groups,
   toolbarLead,
   legend,
+  jump,
 }: {
   groups: readonly SettingsGroupDef[];
   /** Leading toolbar content before the search field (e.g. the repo name). */
   toolbarLead?: ReactNode;
   /** Trailing toolbar content (e.g. the Git-config pill legend). */
   legend?: ReactNode;
+  /** External scroll-to-group request (summon payload); the nonce makes a
+   *  repeated request for the same group jump again. */
+  jump?: { group: string; nonce: number } | null;
 }) {
   const uiFontSize = useSettingsStore((s) => s.settings?.ui_font_size ?? UI_FONT_SIZE_DEFAULT);
   const [query, setQuery] = useState("");
@@ -97,13 +101,17 @@ export function SettingsShell({
     });
   };
 
-  const jumpTo = (id: string) => {
+  const jumpTo = useCallback((id: string) => {
     pinnedGroup.current = id;
     setActiveGroup(id);
     const scroller = scrollerRef.current;
     const el = groupEls.current.get(id);
     if (scroller && el) scroller.scrollTo({ top: el.offsetTop });
-  };
+  }, []);
+
+  useLayoutEffect(() => {
+    if (jump) jumpTo(jump.group);
+  }, [jump, jumpTo]);
 
   const registerGroup = (id: string) => (el: HTMLDivElement | null) => {
     if (el) groupEls.current.set(id, el);

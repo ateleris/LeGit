@@ -189,6 +189,11 @@ export interface FileHistoryRequest {
   rev?: string | null;
 }
 
+/** Summon payload for the settings panels: scroll to a manifest group. */
+export interface SettingsJumpRequest {
+  group: string;
+}
+
 export interface DiffRequest {
   repoId: string;
   path: string;

@@ -8,8 +8,10 @@ import type {
   Commit,
   CommitButtonMode,
   GitmodulesFinding,
+  ProfileStatus,
   RepoSummary,
   ResolvedIdentity,
+  SettingsJumpRequest,
 } from "../../lib/types";
 import { useCommitDraftStore } from "../../store/commitDraft";
 import { notify } from "../../store/notifications";
@@ -39,6 +41,9 @@ import { formatEolChanges, type StagedEolChange } from "./lineEndingWarning";
 import { STALE } from "../../lib/queryTiming";
 import { useCommandAction } from "../../keys/actions";
 import { useBindingLabel, withBinding } from "../../keys/useBindingLabel";
+import { useGitProfiles } from "../../lib/useGitProfiles";
+import { useSummonStore } from "../../store/summon";
+import { identityLineText } from "./identityLine";
 
 /** Shared chrome of the composer's inline confirm banners. */
 const bannerStyle: React.CSSProperties = {
@@ -167,6 +172,16 @@ export function CommitComposer({
     staleTime: STALE.appDefault,
   });
   const identityMissing = !!identity && (!identity.user_name || !identity.user_email);
+
+  // Which profile (if any) the local config matches - the identity line's
+  // suffix. Shares the "identity" domain so one invalidation refreshes both.
+  const { data: profileStatus } = useQuery<ProfileStatus>({
+    queryKey: [repo.id, "identity", "profile"],
+    queryFn: () => api.detectActiveProfileForRepo(repo.id),
+    staleTime: STALE.appDefault,
+  });
+  const { data: profiles = [] } = useGitProfiles();
+  const identityLine = identityLineText(identity, profileStatus?.match, profiles);
 
   // The push leg the in-flight commit chains (set by requestCommit from the
   // plan, consumed by commit). A ref, not state: the confirm banners defer
@@ -354,6 +369,23 @@ export function CommitComposer({
         rows={3}
         style={{ resize: "vertical", fontFamily: "inherit", fontSize: "var(--fz-md)" }}
       />
+      {identityLine && (
+        <button
+          type="button"
+          className="legit-identity-line"
+          // Out of the tab order: message box -> amend -> commit must stay
+          // adjacent; this line is pointer-only decoration.
+          tabIndex={-1}
+          title="Identity for the next commit - click to change it in Repo Settings"
+          onClick={() =>
+            useSummonStore
+              .getState()
+              .summon("repo-settings", { group: "repo-git" } satisfies SettingsJumpRequest)
+          }
+        >
+          {identityLine}
+        </button>
+      )}
       {hookDeclined ? (
         <div style={bannerStyle}>
           <div style={{ fontSize: "var(--fz-md)" }}>

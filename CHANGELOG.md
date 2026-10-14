@@ -12,8 +12,16 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- The commit composer shows the identity the next commit will use
+  ("Committing as ...", with the matching git profile when one is active);
+  clicking it opens the repo's identity settings
+
 ### Fixed
 
+- Checkboxes and radio buttons now show a visible focus ring when reached
+  with the keyboard (e.g. tabbing to the amend checkbox)
 - Panels that share a dock slot (Diff / Merge, Working Changes / Changed
   Files) can no longer end up open side by side: opening one from the View
   menu (or any other way) now replaces the other, and applying a layout

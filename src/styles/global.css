@@ -105,6 +105,21 @@ button:disabled {
 button.legit-eol-chip {
   background: transparent;
 }
+/* The commit composer's "Committing as ..." line: plain subtle text at rest,
+   the shared button:hover tint is the clickable affordance (like the eol
+   chip). Ellipsized - long identities must not wrap the composer. */
+button.legit-identity-line {
+  background: transparent;
+  border: none;
+  padding: 0 calc(var(--ui-font-size) * 0.167);
+  color: var(--subtle-fg);
+  font-size: var(--fz-sm);
+  text-align: left;
+  align-self: flex-start;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 button.primary {
   background: var(--button-primary-bg);
   color: var(--button-primary-fg);
@@ -159,6 +174,14 @@ input[type="radio"] {
 input[type="checkbox"]:disabled,
 input[type="radio"]:disabled {
   cursor: default;
+}
+/* The generic input:focus rule above swaps the border color, which a
+ * native-drawn toggle ignores - keyboard focus would be invisible. A ring
+ * only for :focus-visible, so mouse clicks stay chrome-free. */
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible {
+  outline: calc(var(--ui-font-size) * 0.167) solid var(--input-focus-border);
+  outline-offset: 1px;
 }
 
 .legit-app-root {

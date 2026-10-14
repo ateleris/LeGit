@@ -16,6 +16,7 @@ import { formatAppError } from "../../lib/errors";
 import type { KeyDiff, ManagedConfigView, ProfileStatus, ResolvedIdentity } from "../../lib/types";
 import { api } from "../../lib/commands";
 import { offerDistroKeyInstall } from "./distroKeyOffers";
+import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { useGitProfiles, invalidateGitProfiles } from "../../lib/useGitProfiles";
 import { Button } from "../shared/buttons";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
@@ -75,7 +76,10 @@ export function RepoIdentitySection({ repoId, repoName }: { repoId: string; repo
   const applyResult = useCallback((s: ProfileStatus) => {
     setStatus(s);
     api.repoManagedConfigView(repoId).then(setView).catch((e) => setError(formatAppError(e)));
-  }, [repoId]);
+    // Other consumers of the repo's identity (the commit composer's
+    // "Committing as" line) refresh with the mutation, not on staleTime.
+    invalidateRepoDomains(queryClient, repoId, ["identity"]);
+  }, [repoId, queryClient]);
 
   if (!status || !view) {
     return <Section title={TITLE} scope="git"><span className="legit-subtle">Loading…</span></Section>;
@@ -163,6 +167,7 @@ export function RepoIdentitySection({ repoId, repoName }: { repoId: string; repo
         // List invalidation refetches the shared query; the effect above then
         // re-detects (now Active on the new profile).
         invalidateGitProfiles(queryClient);
+        invalidateRepoDomains(queryClient, repoId, ["identity"]);
       } catch (e) {
         setError(formatAppError(e));
       }

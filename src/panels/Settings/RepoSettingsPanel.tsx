@@ -1,5 +1,7 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useActiveRepo, useRepoStore } from "../../store/repos";
+import { useSummonTarget } from "../../store/summon";
+import type { SettingsJumpRequest } from "../../lib/types";
 import { GitConfigPill } from "./primitives";
 import { SettingsShell, type SettingsGroupDef } from "./SettingsShell";
 import { REPO_SETTINGS_GROUPS, type RepoSettingsCtx } from "./repoSettingsManifest";
@@ -20,6 +22,18 @@ export function RepoSettingsPanel() {
       loadRepoSettings(activeRepo.id);
     }
   }, [activeRepo?.id, repoSettings, loadRepoSettings]);
+
+  // Scroll-to-group requests arriving via summon (e.g. the commit composer's
+  // identity line targets the Git group).
+  const [jump, setJump] = useState<{ group: string; nonce: number } | null>(null);
+  useSummonTarget<SettingsJumpRequest>(
+    "repo-settings",
+    useCallback((payload) => {
+      if (payload && typeof payload.group === "string") {
+        setJump((prev) => ({ group: payload.group, nonce: (prev?.nonce ?? 0) + 1 }));
+      }
+    }, []),
+  );
 
   // Bind the manifest's renders to the active repo. Referentially stable per
   // repo/settings so the shell doesn't re-filter on unrelated renders.
@@ -54,6 +68,7 @@ export function RepoSettingsPanel() {
     <SettingsShell
       key={activeRepo.id}
       groups={groups}
+      jump={jump}
       toolbarLead={
         <>
           <strong style={{ whiteSpace: "nowrap" }}>Repo Settings — {activeRepo.name}</strong>
