@@ -18,7 +18,7 @@ import {
   maxCommitsLineWidth,
   minCommitsRowHeight,
 } from "../../store/settings";
-import { FieldNote, Section, SettingCheckbox, WritesTo } from "./primitives";
+import { AdvancedSettings, FieldNote, Section, SettingCheckbox, WritesTo } from "./primitives";
 import { NumberField, SETTINGS_GRID_COLS } from "./NumberField";
 
 /** localStorage key for the line-height / lane-width link toggle (default on). */
@@ -128,92 +128,18 @@ export function CommitsGraphSection() {
   const dotMax = maxCommitsDotRadius(effectiveRowHeight, effectiveLaneWidth);
   const lineMax = maxCommitsLineWidth(effectiveRowHeight, effectiveLaneWidth);
 
+  // Geometry differing from the defaults opens the Advanced block, so
+  // customised metrics never look lost. Compared on the stored values (the
+  // effective ones can drift with the font-derived floor).
+  const hasCustomMetrics =
+    rowHeight !== COMMITS_ROW_HEIGHT_DEFAULT ||
+    laneWidth !== COMMITS_LANE_WIDTH_DEFAULT ||
+    dotRadius !== COMMITS_DOT_RADIUS_DEFAULT ||
+    lineWidth !== COMMITS_LINE_WIDTH_DEFAULT;
+
   return (
     <Section title="Commits graph">
       <WritesTo note="affects the Commits panel for all repos" />
-      <div
-        style={{
-          display: "grid",
-          // label · link-gutter · input · range: shared widths with General
-          // (see SETTINGS_GRID_COLS) so the input column aligns across sections.
-          gridTemplateColumns: SETTINGS_GRID_COLS,
-          gap: "0.5em 0.833em",
-          alignItems: "center",
-          marginTop: "0.667em",
-          width: "fit-content",
-          fontSize: "var(--fz-lg)",
-        }}
-      >
-        <NumberField
-          grid
-          row={1}
-          label="Line height"
-          value={effectiveRowHeight}
-          min={rowHeightMin}
-          max={COMMITS_ROW_HEIGHT_MAX}
-          disabled={saving}
-          onCommit={(v) => save(v, linked ? v : effectiveLaneWidth, dotRadius, lineWidth)}
-        />
-        {/* Chain-link spanning the two inputs it governs (rows 1-2), in the
-            gutter column just left of the inputs - Photoshop style. */}
-        <IconButton
-          aria-pressed={linked}
-          title={
-            linked
-              ? "Linked: lane width follows line height; click to set it separately"
-              : "Unlinked: lane width is set separately; click to link it to line height"
-          }
-          onClick={toggleLink}
-          disabled={saving}
-          style={{
-            gridColumn: 2,
-            gridRow: "1 / span 2",
-            justifySelf: "center",
-            alignSelf: "center",
-            width: "1.9em",
-            height: "1.7em",
-            padding: 0,
-            fontSize: "inherit",
-            background: linked ? "var(--accent)" : "transparent",
-            color: linked ? "var(--accent-fg)" : "var(--subtle-fg)",
-            border: `1px solid ${linked ? "var(--accent)" : "transparent"}`,
-          }}
-        >
-          {linked ? <LinkIcon /> : <UnlinkIcon />}
-        </IconButton>
-        <NumberField
-          grid
-          row={2}
-          label="Graph lane width"
-          value={shownLaneWidth}
-          // Same font-derived floor as the line height.
-          min={rowHeightMin}
-          max={COMMITS_LANE_WIDTH_MAX}
-          disabled={saving || linked}
-          onCommit={(v) => save(effectiveRowHeight, v, dotRadius, lineWidth)}
-        />
-        <NumberField
-          grid
-          row={3}
-          label="Commit dot radius"
-          value={dotRadius}
-          min={COMMITS_DOT_RADIUS_MIN}
-          max={dotMax}
-          disabled={saving}
-          onCommit={(v) => save(effectiveRowHeight, effectiveLaneWidth, v, lineWidth)}
-        />
-        <NumberField
-          grid
-          row={4}
-          label="Line width"
-          value={lineWidth}
-          min={COMMITS_LINE_WIDTH_MIN}
-          max={lineMax}
-          step={0.5}
-          disabled={saving}
-          onCommit={(v) => save(effectiveRowHeight, effectiveLaneWidth, dotRadius, v)}
-        />
-      </div>
       <SettingCheckbox
         id="global-commit-date-absolute"
         label="Show the full date in the Date column instead of relative time"
@@ -287,6 +213,91 @@ export function CommitsGraphSection() {
         Initials are computed locally; nothing is sent anywhere. With Gravatar
         avatars also on, initials appear only for authors without a Gravatar.
       </FieldNote>
+      <AdvancedSettings defaultOpen={hasCustomMetrics}>
+        <div
+          style={{
+            display: "grid",
+            // label · link-gutter · input · range: shared widths with General
+            // (see SETTINGS_GRID_COLS) so the input column aligns across sections.
+            gridTemplateColumns: SETTINGS_GRID_COLS,
+            gap: "0.5em 0.833em",
+            alignItems: "center",
+            marginTop: "0.667em",
+            width: "fit-content",
+            fontSize: "var(--fz-lg)",
+          }}
+        >
+          <NumberField
+            grid
+            row={1}
+            label="Line height"
+            value={effectiveRowHeight}
+            min={rowHeightMin}
+            max={COMMITS_ROW_HEIGHT_MAX}
+            disabled={saving}
+            onCommit={(v) => save(v, linked ? v : effectiveLaneWidth, dotRadius, lineWidth)}
+          />
+          {/* Chain-link spanning the two inputs it governs (rows 1-2), in the
+              gutter column just left of the inputs - Photoshop style. */}
+          <IconButton
+            aria-pressed={linked}
+            title={
+              linked
+                ? "Linked: lane width follows line height; click to set it separately"
+                : "Unlinked: lane width is set separately; click to link it to line height"
+            }
+            onClick={toggleLink}
+            disabled={saving}
+            style={{
+              gridColumn: 2,
+              gridRow: "1 / span 2",
+              justifySelf: "center",
+              alignSelf: "center",
+              width: "1.9em",
+              height: "1.7em",
+              padding: 0,
+              fontSize: "inherit",
+              background: linked ? "var(--accent)" : "transparent",
+              color: linked ? "var(--accent-fg)" : "var(--subtle-fg)",
+              border: `1px solid ${linked ? "var(--accent)" : "transparent"}`,
+            }}
+          >
+            {linked ? <LinkIcon /> : <UnlinkIcon />}
+          </IconButton>
+          <NumberField
+            grid
+            row={2}
+            label="Graph lane width"
+            value={shownLaneWidth}
+            // Same font-derived floor as the line height.
+            min={rowHeightMin}
+            max={COMMITS_LANE_WIDTH_MAX}
+            disabled={saving || linked}
+            onCommit={(v) => save(effectiveRowHeight, v, dotRadius, lineWidth)}
+          />
+          <NumberField
+            grid
+            row={3}
+            label="Commit dot radius"
+            value={dotRadius}
+            min={COMMITS_DOT_RADIUS_MIN}
+            max={dotMax}
+            disabled={saving}
+            onCommit={(v) => save(effectiveRowHeight, effectiveLaneWidth, v, lineWidth)}
+          />
+          <NumberField
+            grid
+            row={4}
+            label="Line width"
+            value={lineWidth}
+            min={COMMITS_LINE_WIDTH_MIN}
+            max={lineMax}
+            step={0.5}
+            disabled={saving}
+            onCommit={(v) => save(effectiveRowHeight, effectiveLaneWidth, dotRadius, v)}
+          />
+        </div>
+      </AdvancedSettings>
     </Section>
   );
 }

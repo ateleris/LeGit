@@ -3667,6 +3667,42 @@ panel_corner_radius?: number;
  */
 panel_border_width?: number; 
 /**
+ * Repo tab strip style; `flush` keeps the classic look and ignores the
+ * repo-tab gap/radius/border values below.
+ */
+repo_tab_style?: RepoTabStyle; 
+/**
+ * Gap between repo tabs (px).
+ */
+repo_tab_gap?: number; 
+/**
+ * Inset between the tabs and the strip edges (px). The browser style
+ * keeps the bottom inset at 0 - its tabs sit on the strip's bottom line.
+ */
+repo_tab_inset?: number; 
+/**
+ * Repo tab height (px). Pill/browser tabs take it directly (the strip
+ * grows around them by the insets); flush tabs fill the strip, whose
+ * height this sets.
+ */
+repo_tab_height?: number; 
+/**
+ * Corner radius of repo tabs (px); the browser style rounds the top
+ * corners and uses the same radius for the outward bottom flare.
+ */
+repo_tab_corner_radius?: number; 
+/**
+ * Border thickness of repo tabs (px); only the pill style draws tab
+ * borders (browser tabs are deliberately borderless).
+ */
+repo_tab_border_width?: number; 
+/**
+ * Thickness of the separator between the repo tab strip and the panels
+ * below it (px), for every tab style; its colour is the
+ * `tab.strip.border` theme token.
+ */
+repo_tab_strip_border_width?: number; 
+/**
  * Colour branch chips in the Commits graph from their row's lane instead
  * of the theme's static ref tokens (the theme contributes the per-part
  * filters via `laneChipFilters`).
@@ -4501,6 +4537,12 @@ locator?: string;
  * `AppState::attach_watch_error` fills it where state is at hand.
  */
 watch_error?: string | null }
+/**
+ * Repo tab strip style. Flush = full-height tabs with separator lines;
+ * Pill and Browser style each tab via the repo-tab gap/radius/border
+ * settings (rendering lives in `global.css`, keyed by a root attribute).
+ */
+export type RepoTabStyle = "flush" | "pill" | "browser"
 /**
  * Mode for `git reset <target>` — what happens to the index and worktree.
  * `Soft` moves HEAD only (changes stay staged), `Mixed` also resets the

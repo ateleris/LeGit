@@ -246,6 +246,7 @@
     "tab.active.fg": "accent-fg",
     "tab.bg": "panel-bg",
     "tab.border": "panel-border",
+    "tab.strip.border": "panel-border",
     "tab.fg": "subtle-fg",
     "warning.fg": "warning",
     "merge.fold.bg": "merge-fold",

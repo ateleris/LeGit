@@ -2,7 +2,7 @@
 // the field/section layout is defined once instead of duplicated per panel.
 
 import { useState, type CSSProperties, type ReactNode } from "react";
-import { ChevronDownIcon } from "../../icons";
+import { ChevronDownIcon, ChevronRightIcon } from "../../icons";
 
 function readStoredOpen(key: string, fallback: boolean): boolean {
   try {
@@ -180,6 +180,44 @@ export function Row({ label, value }: { label: string; value: ReactNode }) {
     <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: "0.5em", padding: "0.167em 0" }}>
       <div className="legit-subtle">{label}</div>
       <div>{value}</div>
+    </div>
+  );
+}
+
+/** Progressive-disclosure block for a section's expert knobs: collapsed by
+ * default behind an "Advanced" toggle. Pass `defaultOpen` when any wrapped
+ * value differs from its default, so customised settings never look lost. */
+export function AdvancedSettings({
+  defaultOpen = false,
+  children,
+}: {
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{ marginTop: "0.667em" }}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "0.333em",
+          background: "transparent",
+          border: "none",
+          padding: 0,
+          color: "var(--subtle-fg)",
+          fontSize: "var(--fz-md)",
+        }}
+      >
+        <span style={{ display: "inline-flex" }}>
+          {open ? <ChevronDownIcon /> : <ChevronRightIcon />}
+        </span>
+        Advanced
+      </button>
+      {open && children}
     </div>
   );
 }

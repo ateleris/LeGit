@@ -14,9 +14,21 @@ lives in the git log and the GitHub release notes.
 
 ### Added
 
+- The repository tab strip's tabs can be restyled (Global Settings >
+  Appearance > Repository tabs): the classic flush look, rounded pills, or
+  browser-style tabs with outward-curving bottom corners. The style picker
+  is the whole default UI; tab height, spacing, outer spacing, corner
+  radius, border thickness, and the strip separator thickness (with its
+  own theme token) sit behind an Advanced toggle with tuned defaults
 - The commit composer shows the identity the next commit will use
   ("Committing as ...", with the matching git profile when one is active);
   clicking it opens the repo's identity settings
+
+### Changed
+
+- Expert knobs in Global Settings moved behind "Advanced" toggles (General's
+  panel spacing/radius/border, the Commits graph geometry); they open
+  automatically when a value was customized
 
 ### Fixed
 

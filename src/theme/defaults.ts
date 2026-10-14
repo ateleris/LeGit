@@ -119,6 +119,7 @@ export const DEFAULT_THEME: ThemeDocument = {
     "tab.active.bg": "accent",
     "tab.active.fg": "accent-fg",
     "tab.border": "panel-border",
+    "tab.strip.border": "panel-border",
     "panel.tab.bg": "panel-bg",
     "panel.tab.fg": "subtle-fg",
     "panel.tab.active.bg": "input-bg",

@@ -115,6 +115,7 @@ export type {
   RepoOpState,
   RepoSettings,
   RepoSummary,
+  RepoTabStyle,
   ResetMode,
   ResolvedIdentity,
   RestoreResult,

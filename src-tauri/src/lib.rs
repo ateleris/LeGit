@@ -582,7 +582,10 @@ fn export_bindings(builder: &Builder<tauri::Wry>, path: &str) -> Result<(), Stri
 }
 
 fn load_global_settings_sync(path: &std::path::Path) -> GlobalSettings {
-    persist::load_json_or_default(path)
+    // Normalize on load too: clamps evolve between versions, and a stored
+    // (or hand-edited) file may hold values a patch could never produce.
+    let settings: GlobalSettings = persist::load_json_or_default(path);
+    settings.normalized()
 }
 
 

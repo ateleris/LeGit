@@ -43,6 +43,14 @@
   --legit-panel-gap: 0px;
   --legit-panel-radius: 0px;
   --legit-panel-border-width: 1px;
+  /* Repo tab chrome (settings store overwrites all of these); mirror the
+     backend `default_repo_tab_*` values. */
+  --legit-tab-gap: 6px;
+  --legit-tab-inset: 6px;
+  --legit-tab-height: 34px;
+  --legit-tab-radius: 12px;
+  --legit-tab-border-width: 0px;
+  --legit-tab-strip-border-width: 1px;
   --fz-xs: calc(var(--ui-font-size) - 2px);
   --fz-sm: calc(var(--ui-font-size) - 1px);
   --fz-md: var(--ui-font-size);
@@ -388,12 +396,15 @@ button.legit-region-divider__toggle:hover {
 .legit-tabs {
   display: flex;
   align-items: stretch;
-  border-bottom: 1px solid var(--tab-border);
+  /* Separator toward the panels below: thickness is a setting (all tab
+     styles), colour its own theme token. */
+  border-bottom: var(--legit-tab-strip-border-width) solid var(--tab-strip-border);
   background: var(--tab-strip-bg);
-  /* Repository tab text inherits the scaling body font size; the row height
-     scales with it too (32px at the default 12px base) so it never clips. */
+  /* Repository tab text inherits the scaling body font size. Flush tabs
+     fill the strip, so the tab-height setting is the bar height here (its
+     backend floor is font-derived, and the content floors it anyway). */
   font-size: var(--fz-lg);
-  min-height: calc(var(--ui-font-size) + 20px);
+  min-height: var(--legit-tab-height);
 }
 .legit-tabs__scroll {
   flex: 1 1 0;
@@ -495,6 +506,96 @@ button.legit-tab__close:hover {
   opacity: 1;
   background: transparent;
 }
+/* Repo tab styles beyond the flush default, selected by the root's
+   data-repo-tab-style attribute (settings store). Pill = bordered rounded
+   tabs centered in the strip; browser = bottom-anchored tabs with rounded
+   top corners sitting on the strip's bottom border. The per-tab border
+   replaces the flush separator (border-right) in both. */
+/* In the styled modes the strip's height derives from the tab chrome (tab
+   height plus insets) instead of the flush min-height, so the space above
+   the tabs is exactly the outer spacing (the actions cluster still sets a
+   content floor). */
+:root[data-repo-tab-style="pill"] .legit-tabs,
+:root[data-repo-tab-style="browser"] .legit-tabs {
+  min-height: 0;
+}
+:root[data-repo-tab-style="pill"] .legit-tabs__scroll,
+:root[data-repo-tab-style="browser"] .legit-tabs__scroll {
+  gap: var(--legit-tab-gap);
+}
+:root[data-repo-tab-style="pill"] .legit-tabs__scroll {
+  padding: var(--legit-tab-inset);
+}
+/* No bottom inset for the browser style - its tabs sit on the strip's
+   bottom line; the top inset is what gives them their height. */
+:root[data-repo-tab-style="browser"] .legit-tabs__scroll {
+  padding: var(--legit-tab-inset) var(--legit-tab-inset) 0;
+}
+/* The configured tab height excludes the tab border (border-box would let a
+   thick border eat the tab body): pills carry a top and bottom border. */
+:root[data-repo-tab-style="pill"] .legit-tab {
+  align-self: center;
+  height: calc(var(--legit-tab-height) + 2 * var(--legit-tab-border-width));
+  border: var(--legit-tab-border-width) solid var(--tab-border);
+  border-radius: var(--legit-tab-radius);
+}
+/* Browser tabs are BORDERLESS (like real browser tabs - a stroke would end
+   tangent at the strip line and never flow into a differently-sized strip
+   border), keep the configured tab height, and sit on the strip's bottom
+   line; the outer spacing grows the bar around them instead of squashing
+   them, so the radius ceiling depends on the tab height alone. */
+:root[data-repo-tab-style="browser"] .legit-tab {
+  height: var(--legit-tab-height);
+  align-self: flex-end;
+  border: none;
+  border-radius: var(--legit-tab-radius) var(--legit-tab-radius) 0 0;
+  position: relative;
+  --legit-tab-fillet-bg: var(--tab-bg);
+}
+:root[data-repo-tab-style="browser"] .legit-tab.is-active {
+  --legit-tab-fillet-bg: var(--tab-active-bg);
+  /* The active tab's outward flares paint over the neighbouring tabs. */
+  z-index: 1;
+}
+/* Each flare is REAL GEOMETRY, not a gradient (hard gradient stops don't
+   anti-alias and crossing gradient rects left slivers in the notch): an
+   r x r box outside the bottom corner whose inner-bottom corner is fully
+   rounded, so the box's shape is the quarter disc the strip shows through,
+   and the box-shadow - painted outside the rounded shape - fills the
+   outward flare in the tab's colour. The shadow is OFFSET toward the tab's
+   bottom corner with a reduced spread so its shape stays clear of the
+   box's top and outer edges: a centred spread reaches past them, and
+   wherever the clip edge lands on a fractional device pixel (display
+   scaling, per-tab x offsets) the clip's anti-aliasing blends that
+   outside-the-box shadow into the edge row as a fill-coloured hairline.
+   clip-path keeps the shadow inside the box with a half-pixel bleed into
+   the tab so no hairline seam can open against the tab body. */
+:root[data-repo-tab-style="browser"] .legit-tab::before,
+:root[data-repo-tab-style="browser"] .legit-tab::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: var(--legit-tab-radius);
+  height: var(--legit-tab-radius);
+  pointer-events: none;
+}
+:root[data-repo-tab-style="browser"] .legit-tab::before {
+  left: calc(-1 * var(--legit-tab-radius));
+  border-bottom-right-radius: 100%;
+  box-shadow:
+    calc(var(--legit-tab-radius) / 3 + 1px) calc(var(--legit-tab-radius) / 3 + 1px)
+    0 calc(var(--legit-tab-radius) / 3) var(--legit-tab-fillet-bg);
+  clip-path: inset(0 -0.5px 0 0);
+}
+:root[data-repo-tab-style="browser"] .legit-tab::after {
+  right: calc(-1 * var(--legit-tab-radius));
+  border-bottom-left-radius: 100%;
+  box-shadow:
+    calc(-1 * (var(--legit-tab-radius) / 3 + 1px)) calc(var(--legit-tab-radius) / 3 + 1px)
+    0 calc(var(--legit-tab-radius) / 3) var(--legit-tab-fillet-bg);
+  clip-path: inset(0 0 0 -0.5px);
+}
+
 /* "Cloning" tabs (a running clone, see CloneTab.tsx): the spinner scales with
    the tab text instead of the global spinner's fixed 14px. */
 .legit-tab--cloning .legit-spinner {

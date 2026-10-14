@@ -8,12 +8,13 @@ import {
   UI_FONT_SIZE_DEFAULT,
   UI_FONT_SIZE_MIN,
   UI_FONT_SIZE_MAX,
+  panelChromeArmed,
   PANEL_BORDER_WIDTH_DEFAULT,
   PANEL_BORDER_WIDTH_MAX,
   PANEL_GAP_MAX,
   PANEL_RADIUS_MAX,
 } from "../../store/settings";
-import { Section, WritesTo } from "./primitives";
+import { AdvancedSettings, Section, WritesTo } from "./primitives";
 import { ReducedMotionNote } from "./ReducedMotionNote";
 import { NumberField, SETTINGS_GRID_COLS } from "./NumberField";
 
@@ -94,67 +95,81 @@ export function GeneralSection() {
           disabled={saving}
           onCommit={saveFont}
         />
-        <NumberField
-          grid
-          row={3}
-          label="Panel spacing"
-          value={panelGap}
-          min={0}
-          max={PANEL_GAP_MAX}
-          disabled={saving}
-          onCommit={(v) =>
-            run(() => setPanelChrome(v, chromeLinked ? linkedRadius(v) : panelRadius, panelBorder))
-          }
-        />
-        {/* Chain-link spanning the two inputs it governs (rows 3-4), in the
-            gutter column just left of the inputs - same pattern as the
-            Commits graph's line-height/lane-width link. */}
-        <IconButton
-          aria-pressed={chromeLinked}
-          title={
-            chromeLinked
-              ? "Linked: corner radius follows panel spacing; click to set it separately"
-              : "Unlinked: corner radius is set separately; click to link it to panel spacing"
-          }
-          onClick={toggleChromeLink}
-          disabled={saving}
+      </div>
+      <AdvancedSettings defaultOpen={panelChromeArmed(panelGap, panelRadius, panelBorder)}>
+        <div
           style={{
-            gridColumn: 2,
-            gridRow: "3 / span 2",
-            justifySelf: "center",
-            alignSelf: "center",
-            width: "1.9em",
-            height: "1.7em",
-            padding: 0,
-            fontSize: "inherit",
-            background: chromeLinked ? "var(--accent)" : "transparent",
-            color: chromeLinked ? "var(--accent-fg)" : "var(--subtle-fg)",
-            border: `1px solid ${chromeLinked ? "var(--accent)" : "transparent"}`,
+            display: "grid",
+            gridTemplateColumns: SETTINGS_GRID_COLS,
+            gap: "0.5em 0.833em",
+            alignItems: "center",
+            marginTop: "0.667em",
+            width: "fit-content",
+            fontSize: "var(--fz-lg)",
           }}
         >
-          {chromeLinked ? <LinkIcon /> : <UnlinkIcon />}
-        </IconButton>
-        <NumberField
-          grid
-          row={4}
-          label="Panel corner radius"
-          value={shownRadius}
-          min={0}
-          max={PANEL_RADIUS_MAX}
-          disabled={saving || chromeLinked}
-          onCommit={(v) => run(() => setPanelChrome(panelGap, v, panelBorder))}
-        />
-        <NumberField
-          grid
-          row={5}
-          label="Panel border thickness"
-          value={panelBorder}
-          min={0}
-          max={PANEL_BORDER_WIDTH_MAX}
-          disabled={saving}
-          onCommit={(v) => run(() => setPanelChrome(panelGap, shownRadius, v))}
-        />
-      </div>
+          <NumberField
+            grid
+            row={1}
+            label="Panel spacing"
+            value={panelGap}
+            min={0}
+            max={PANEL_GAP_MAX}
+            disabled={saving}
+            onCommit={(v) =>
+              run(() => setPanelChrome(v, chromeLinked ? linkedRadius(v) : panelRadius, panelBorder))
+            }
+          />
+          {/* Chain-link spanning the two inputs it governs (rows 1-2), in
+              the gutter column just left of the inputs - same pattern as
+              the Commits graph's line-height/lane-width link. */}
+          <IconButton
+            aria-pressed={chromeLinked}
+            title={
+              chromeLinked
+                ? "Linked: corner radius follows panel spacing; click to set it separately"
+                : "Unlinked: corner radius is set separately; click to link it to panel spacing"
+            }
+            onClick={toggleChromeLink}
+            disabled={saving}
+            style={{
+              gridColumn: 2,
+              gridRow: "1 / span 2",
+              justifySelf: "center",
+              alignSelf: "center",
+              width: "1.9em",
+              height: "1.7em",
+              padding: 0,
+              fontSize: "inherit",
+              background: chromeLinked ? "var(--accent)" : "transparent",
+              color: chromeLinked ? "var(--accent-fg)" : "var(--subtle-fg)",
+              border: `1px solid ${chromeLinked ? "var(--accent)" : "transparent"}`,
+            }}
+          >
+            {chromeLinked ? <LinkIcon /> : <UnlinkIcon />}
+          </IconButton>
+          <NumberField
+            grid
+            row={2}
+            label="Panel corner radius"
+            value={shownRadius}
+            min={0}
+            max={PANEL_RADIUS_MAX}
+            disabled={saving || chromeLinked}
+            onCommit={(v) => run(() => setPanelChrome(panelGap, v, panelBorder))}
+          />
+          <NumberField
+            grid
+            row={3}
+            label="Panel border thickness"
+            value={panelBorder}
+            min={0}
+            max={PANEL_BORDER_WIDTH_MAX}
+            disabled={saving}
+            onCommit={(v) => run(() => setPanelChrome(panelGap, shownRadius, v))}
+          />
+        </div>
+      </AdvancedSettings>
       {fontSize !== UI_FONT_SIZE_DEFAULT && (
         <div style={{ marginTop: "0.833em" }}>
           <button disabled={saving} onClick={() => saveFont(UI_FONT_SIZE_DEFAULT)}>

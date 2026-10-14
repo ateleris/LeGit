@@ -8,6 +8,7 @@ import type {
   GlobalSettings,
   PullStrategy,
   RegionPlacement,
+  RepoTabStyle,
   SwitchDirtyBehavior,
   SyncProbe,
   SyncStatusPayload,
@@ -46,6 +47,71 @@ export const PANEL_GAP_MAX = 16;
 export const PANEL_RADIUS_MAX = 16;
 export const PANEL_BORDER_WIDTH_MAX = 8;
 export const PANEL_BORDER_WIDTH_DEFAULT = 1;
+
+/** Defaults + bounds for the repo tab chrome. Mirror the backend defaults
+ * (`default_repo_tab_*`) and the clamps in `GlobalSettings::normalized`. */
+export const REPO_TAB_GAP_DEFAULT = 6;
+export const REPO_TAB_INSET_DEFAULT = 6;
+export const REPO_TAB_RADIUS_DEFAULT = 12;
+export const REPO_TAB_BORDER_WIDTH_DEFAULT = 0;
+export const REPO_TAB_STRIP_BORDER_WIDTH_DEFAULT = 1;
+export const REPO_TAB_HEIGHT_DEFAULT = 34;
+export const REPO_TAB_GAP_MAX = 16;
+export const REPO_TAB_INSET_MAX = 16;
+export const REPO_TAB_HEIGHT_MAX = 120;
+export const REPO_TAB_BORDER_WIDTH_MAX = 8;
+export const REPO_TAB_STRIP_BORDER_WIDTH_MAX = 8;
+
+/** Smallest pill/browser tab height: the text (one UI-font line) plus a
+ * little breathing room. Mirrors the backend `min_repo_tab_height`. */
+export const minRepoTabHeight = (fontSize: number) => fontSize + 4;
+
+/** Largest repo tab corner radius: the tab's top rounding and bottom flare
+ * (browser style) each consume one radius of the configured tab height.
+ * Mirrors the backend `max_repo_tab_radius`. */
+export const maxRepoTabRadius = (tabHeight: number) => Math.floor(tabHeight / 2);
+
+/** The repo tab chrome values, in the order `applyRepoTabStyle` takes them. */
+export interface RepoTabChrome {
+  style: RepoTabStyle;
+  gap: number;
+  inset: number;
+  height: number;
+  radius: number;
+  borderWidth: number;
+  /** Strip-level, independent of the tab style: the separator below the bar. */
+  stripBorderWidth: number;
+}
+
+/** Write the repo tab style to the root: the CSS vars the pill/browser rules
+ * read, and the `data-repo-tab-style` attribute that selects the rule set
+ * ("flush" matches no rule, so the default look stays untouched). */
+export function applyRepoTabStyle(
+  chrome: RepoTabChrome,
+  root: HTMLElement = document.documentElement,
+) {
+  root.style.setProperty("--legit-tab-gap", `${chrome.gap}px`);
+  root.style.setProperty("--legit-tab-inset", `${chrome.inset}px`);
+  root.style.setProperty("--legit-tab-height", `${chrome.height}px`);
+  root.style.setProperty("--legit-tab-radius", `${chrome.radius}px`);
+  root.style.setProperty("--legit-tab-border-width", `${chrome.borderWidth}px`);
+  root.style.setProperty("--legit-tab-strip-border-width", `${chrome.stripBorderWidth}px`);
+  root.setAttribute("data-repo-tab-style", chrome.style);
+}
+
+/** `applyRepoTabStyle` with a settings object's values (defaults filled in). */
+export function applyRepoTabStyleFrom(settings: GlobalSettings) {
+  applyRepoTabStyle({
+    style: settings.repo_tab_style ?? "flush",
+    gap: settings.repo_tab_gap ?? REPO_TAB_GAP_DEFAULT,
+    inset: settings.repo_tab_inset ?? REPO_TAB_INSET_DEFAULT,
+    height: settings.repo_tab_height ?? REPO_TAB_HEIGHT_DEFAULT,
+    radius: settings.repo_tab_corner_radius ?? REPO_TAB_RADIUS_DEFAULT,
+    borderWidth: settings.repo_tab_border_width ?? REPO_TAB_BORDER_WIDTH_DEFAULT,
+    stripBorderWidth:
+      settings.repo_tab_strip_border_width ?? REPO_TAB_STRIP_BORDER_WIDTH_DEFAULT,
+  });
+}
 
 /** Whether the `.legit-panel-chrome` styles are armed: any non-default value
  * switches from the flush look (shared separator lines) to per-group chrome.
@@ -141,6 +207,7 @@ interface SettingsStore {
   setTagsSortMode: (mode: RefsSortMode) => Promise<void>;
   setUiFontSize: (size: number) => Promise<void>;
   setPanelChrome: (gap: number, radius: number, borderWidth: number) => Promise<void>;
+  setRepoTabStyle: (chrome: RepoTabChrome) => Promise<void>;
   setWatcherEnabled: (enabled: boolean) => Promise<void>;
   setConfirmDiscard: (confirm: boolean) => Promise<void>;
   setDetectCaseRenames: (enabled: boolean) => Promise<void>;
@@ -225,6 +292,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
         settings.panel_corner_radius ?? 0,
         settings.panel_border_width ?? PANEL_BORDER_WIDTH_DEFAULT,
       );
+      applyRepoTabStyleFrom(settings);
       set({ settings });
     },
 
@@ -362,6 +430,35 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
       const merged = await patch({ ui_font_size: clamped });
       applyUiFontSize(merged.ui_font_size ?? UI_FONT_SIZE_DEFAULT);
       reapplyPanelConstraints();
+      // The tab inset/radius clamps derive from the font-sized strip, so the
+      // patch may have shrunk them - re-apply what the backend kept.
+      applyRepoTabStyleFrom(merged);
+    },
+
+    async setRepoTabStyle(chrome) {
+      // Apply immediately for a live preview, then persist (backend re-clamps).
+      const fontSize = get().settings?.ui_font_size ?? UI_FONT_SIZE_DEFAULT;
+      const height = clamp(chrome.height, minRepoTabHeight(fontSize), REPO_TAB_HEIGHT_MAX);
+      const clamped: RepoTabChrome = {
+        style: chrome.style,
+        gap: clamp(chrome.gap, 0, REPO_TAB_GAP_MAX),
+        inset: clamp(chrome.inset, 0, REPO_TAB_INSET_MAX),
+        height,
+        radius: clamp(chrome.radius, 0, maxRepoTabRadius(height)),
+        borderWidth: clamp(chrome.borderWidth, 0, REPO_TAB_BORDER_WIDTH_MAX),
+        stripBorderWidth: clamp(chrome.stripBorderWidth, 0, REPO_TAB_STRIP_BORDER_WIDTH_MAX),
+      };
+      applyRepoTabStyle(clamped);
+      const merged = await patch({
+        repo_tab_style: clamped.style,
+        repo_tab_gap: clamped.gap,
+        repo_tab_inset: clamped.inset,
+        repo_tab_height: clamped.height,
+        repo_tab_corner_radius: clamped.radius,
+        repo_tab_border_width: clamped.borderWidth,
+        repo_tab_strip_border_width: clamped.stripBorderWidth,
+      });
+      applyRepoTabStyleFrom(merged);
     },
 
     async setPanelChrome(gap, radius, borderWidth) {

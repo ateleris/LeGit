@@ -6,7 +6,7 @@
 import type { SettingsGroupDef } from "./SettingsShell";
 import { GeneralSection } from "./GeneralSection";
 import { CommitsGraphSection } from "./CommitsGraphSection";
-import { DiffViewerSection, WorkingChangesLayoutSection } from "./AppearanceSections";
+import { DiffViewerSection, RepoTabsSection, WorkingChangesLayoutSection } from "./AppearanceSections";
 import {
   AutoFetchSection,
   AutoOpenPanelsSection,
@@ -50,13 +50,19 @@ export function buildGlobalSettingsGroups(hasWsl: boolean): SettingsGroupDef[] {
         {
           id: "general",
           title: "General",
-          keywords: ["font", "size", "zoom", "layout", "orientation", "spacing", "corner", "radius", "border", "animation", "motion", "pulse", "reduced"],
+          keywords: ["font", "size", "zoom", "layout", "orientation", "spacing", "corner", "radius", "border", "animation", "motion", "pulse", "reduced", "advanced"],
           render: () => <GeneralSection />,
+        },
+        {
+          id: "repo-tabs",
+          title: "Repository tabs",
+          keywords: ["tab", "tabs", "strip", "pill", "browser", "flush", "style", "spacing", "inset", "outer", "height", "radius", "border", "separator", "advanced"],
+          render: () => <RepoTabsSection />,
         },
         {
           id: "commits-graph",
           title: "Commits graph",
-          keywords: ["lane", "row", "date", "avatar", "graph", "chips", "tree"],
+          keywords: ["lane", "row", "date", "avatar", "graph", "chips", "tree", "advanced"],
           render: () => <CommitsGraphSection />,
         },
         {

@@ -143,6 +143,7 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "tab.active.bg", group: "Repo Tabs", documentation: "Active repository tab background." },
   { name: "tab.active.fg", group: "Repo Tabs", documentation: "Active repository tab text." },
   { name: "tab.border", group: "Repo Tabs", documentation: "Repository tab strip border." },
+  { name: "tab.strip.border", group: "Repo Tabs", documentation: "Separator between the repository tab strip and the panels below it (its thickness is a global setting)." },
 
   { name: "panel.tab.bg", group: "Panel Tabs", documentation: "Panel tab strip background (dockview panels)." },
   { name: "panel.tab.fg", group: "Panel Tabs", documentation: "Inactive panel tab text." },

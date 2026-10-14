@@ -128,6 +128,18 @@ pub enum RegionPlacement {
     Left,
 }
 
+/// Repo tab strip style. Flush = full-height tabs with separator lines;
+/// Pill and Browser style each tab via the repo-tab gap/radius/border
+/// settings (rendering lives in `global.css`, keyed by a root attribute).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum RepoTabStyle {
+    #[default]
+    Flush,
+    Pill,
+    Browser,
+}
+
 /// Absolute date format for the Commits panel's Date column (applies when
 /// `commit_date_absolute` is on). Rendering lives in the frontend
 /// (`src/lib/time.ts`); this only persists the choice.
@@ -183,6 +195,43 @@ pub fn default_ui_font_size() -> f64 {
 /// Default panel-group border thickness (px): the classic hairline.
 pub fn default_panel_border_width() -> f64 {
     1.0
+}
+
+/// Defaults for the repo tab chrome, picked so switching the style away
+/// from Flush looks right without touching the knobs.
+pub fn default_repo_tab_gap() -> f64 {
+    6.0
+}
+pub fn default_repo_tab_inset() -> f64 {
+    6.0
+}
+pub fn default_repo_tab_corner_radius() -> f64 {
+    12.0
+}
+pub fn default_repo_tab_border_width() -> f64 {
+    0.0
+}
+pub fn default_repo_tab_strip_border_width() -> f64 {
+    1.0
+}
+
+/// Default repo tab height (px); also the flush strip's height.
+pub fn default_repo_tab_height() -> f64 {
+    34.0
+}
+
+/// Smallest pill/browser tab height: the text (one UI-font line) plus a
+/// little breathing room. Mirrors the frontend `minRepoTabHeight`.
+pub fn min_repo_tab_height(ui_font_size: f64) -> f64 {
+    ui_font_size + 4.0
+}
+
+/// Largest repo tab corner radius: the tab's top rounding and bottom flare
+/// (browser style) each consume one radius of the configured tab height, so
+/// beyond half of it the shape collapses. Mirrors the frontend
+/// `maxRepoTabRadius`.
+pub fn max_repo_tab_radius(tab_height: f64) -> f64 {
+    (tab_height / 2.0).floor()
 }
 
 /// Minimum Commits-panel row height for a given UI font size. A ref chip is
@@ -338,6 +387,35 @@ pub struct GlobalSettings {
     /// the chrome even at 0 gap/radius.
     #[serde(default = "default_panel_border_width")]
     pub panel_border_width: f64,
+    /// Repo tab strip style; `flush` keeps the classic look and ignores the
+    /// repo-tab gap/radius/border values below.
+    #[serde(default)]
+    pub repo_tab_style: RepoTabStyle,
+    /// Gap between repo tabs (px).
+    #[serde(default = "default_repo_tab_gap")]
+    pub repo_tab_gap: f64,
+    /// Inset between the tabs and the strip edges (px). The browser style
+    /// keeps the bottom inset at 0 - its tabs sit on the strip's bottom line.
+    #[serde(default = "default_repo_tab_inset")]
+    pub repo_tab_inset: f64,
+    /// Repo tab height (px). Pill/browser tabs take it directly (the strip
+    /// grows around them by the insets); flush tabs fill the strip, whose
+    /// height this sets.
+    #[serde(default = "default_repo_tab_height")]
+    pub repo_tab_height: f64,
+    /// Corner radius of repo tabs (px); the browser style rounds the top
+    /// corners and uses the same radius for the outward bottom flare.
+    #[serde(default = "default_repo_tab_corner_radius")]
+    pub repo_tab_corner_radius: f64,
+    /// Border thickness of repo tabs (px); only the pill style draws tab
+    /// borders (browser tabs are deliberately borderless).
+    #[serde(default = "default_repo_tab_border_width")]
+    pub repo_tab_border_width: f64,
+    /// Thickness of the separator between the repo tab strip and the panels
+    /// below it (px), for every tab style; its colour is the
+    /// `tab.strip.border` theme token.
+    #[serde(default = "default_repo_tab_strip_border_width")]
+    pub repo_tab_strip_border_width: f64,
     /// Colour branch chips in the Commits graph from their row's lane instead
     /// of the theme's static ref tokens (the theme contributes the per-part
     /// filters via `laneChipFilters`).
@@ -557,6 +635,13 @@ impl Default for GlobalSettings {
             panel_gap: 0.0,
             panel_corner_radius: 0.0,
             panel_border_width: default_panel_border_width(),
+            repo_tab_style: RepoTabStyle::default(),
+            repo_tab_gap: default_repo_tab_gap(),
+            repo_tab_inset: default_repo_tab_inset(),
+            repo_tab_height: default_repo_tab_height(),
+            repo_tab_corner_radius: default_repo_tab_corner_radius(),
+            repo_tab_border_width: default_repo_tab_border_width(),
+            repo_tab_strip_border_width: default_repo_tab_strip_border_width(),
             lane_colored_branch_chips: false,
             stash_base_lane_color: false,
             watcher_enabled: true,
@@ -646,6 +731,19 @@ impl GlobalSettings {
         self.panel_gap = self.panel_gap.clamp(0.0, 16.0);
         self.panel_corner_radius = self.panel_corner_radius.clamp(0.0, 16.0);
         self.panel_border_width = self.panel_border_width.clamp(0.0, 8.0);
+        self.repo_tab_gap = self.repo_tab_gap.clamp(0.0, 16.0);
+        self.repo_tab_inset = self.repo_tab_inset.clamp(0.0, 16.0);
+        // The height floor is font-derived (the text must fit) and the
+        // radius ceiling is height-derived (top rounding + bottom flare),
+        // so each clamp runs against the already-clamped value before it.
+        self.repo_tab_height = self
+            .repo_tab_height
+            .clamp(min_repo_tab_height(self.ui_font_size), 120.0);
+        self.repo_tab_corner_radius = self
+            .repo_tab_corner_radius
+            .clamp(0.0, max_repo_tab_radius(self.repo_tab_height));
+        self.repo_tab_border_width = self.repo_tab_border_width.clamp(0.0, 8.0);
+        self.repo_tab_strip_border_width = self.repo_tab_strip_border_width.clamp(0.0, 8.0);
         // The row must clear a ref chip, which scales with the UI font size;
         // lane width shares the same font-derived floor. Dot radius and line
         // width are capped to half the smaller (clamped) cell dimension so
@@ -1465,6 +1563,42 @@ mod tests {
         assert_eq!(chrome.panel_gap, 16.0);
         assert_eq!(chrome.panel_corner_radius, 0.0);
         assert_eq!(chrome.panel_border_width, 8.0);
+        let tabs = d()
+            .with_patch(&serde_json::json!({
+                "repo_tab_style": "pill",
+                "repo_tab_gap": 99.0, "repo_tab_inset": 99.0,
+                "repo_tab_corner_radius": -3.0, "repo_tab_border_width": 99.0
+            }))
+            .unwrap();
+        assert_eq!(tabs.repo_tab_style, RepoTabStyle::Pill);
+        assert_eq!(tabs.repo_tab_gap, 16.0);
+        assert_eq!(tabs.repo_tab_inset, 16.0);
+        assert_eq!(tabs.repo_tab_corner_radius, 0.0);
+        assert_eq!(tabs.repo_tab_border_width, 8.0);
+        // The height floor tracks the patched font size, and the radius
+        // ceiling the clamped height.
+        let tabs = d()
+            .with_patch(&serde_json::json!({
+                "ui_font_size": 24.0, "repo_tab_height": 1.0, "repo_tab_corner_radius": 99.0
+            }))
+            .unwrap();
+        assert_eq!(tabs.repo_tab_height, min_repo_tab_height(24.0)); // 24 + 4
+        assert_eq!(tabs.repo_tab_height, 28.0);
+        assert_eq!(tabs.repo_tab_corner_radius, max_repo_tab_radius(28.0)); // 28 / 2
+        assert_eq!(tabs.repo_tab_corner_radius, 14.0);
+        assert_eq!(
+            d().with_patch(&serde_json::json!({ "repo_tab_height": 999.0 }))
+                .unwrap()
+                .repo_tab_height,
+            120.0
+        );
+        assert_eq!(
+            d().with_patch(&serde_json::json!({ "repo_tab_strip_border_width": 99.0 }))
+                .unwrap()
+                .repo_tab_strip_border_width,
+            8.0
+        );
+        assert!(d().with_patch(&serde_json::json!({ "repo_tab_style": "zigzag" })).is_err());
     }
 
     #[test]
