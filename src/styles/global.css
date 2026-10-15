@@ -423,6 +423,10 @@ button.legit-region-divider__toggle:hover {
   font-size: var(--fz-lg);
   min-height: var(--legit-tab-height);
 }
+/* No scrollbar on tab overflow (browser tab strips show none): it would
+   wedge between the tabs and the strip's bottom border. Hidden tabs stay
+   reachable - wheel over the strip scrolls, activating scrolls into view,
+   the overflow menu lists every repo. */
 .legit-tabs__scroll {
   flex: 1 1 0;
   min-width: 0;
@@ -430,6 +434,28 @@ button.legit-region-divider__toggle:hover {
   align-items: stretch;
   overflow-x: auto;
   overflow-y: hidden;
+  scrollbar-width: none;
+}
+.legit-tabs__scroll::-webkit-scrollbar {
+  display: none;
+}
+/* Overflow signal: the clipped edge fades out (an alpha mask, not a colour -
+   the strip background shows through). RepoTabBar toggles the attributes. */
+.legit-tabs__scroll[data-clipped-left] {
+  --legit-tabs-fade-left: 3em;
+}
+.legit-tabs__scroll[data-clipped-right] {
+  --legit-tabs-fade-right: 3em;
+}
+.legit-tabs__scroll[data-clipped-left],
+.legit-tabs__scroll[data-clipped-right] {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black var(--legit-tabs-fade-left, 0px),
+    black calc(100% - var(--legit-tabs-fade-right, 0px)),
+    transparent
+  );
 }
 .legit-tabs__actions {
   flex: 0 0 auto;

@@ -12,6 +12,15 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Changed
+
+- The repository tab strip no longer shows a scrollbar when many repos are
+  open (it detached the tabs from the strip's bottom line); the strip edge
+  fades out where tabs continue offscreen, and tabs are reached by
+  scrolling with the mouse wheel or via the overflow menu
+- The commit composer's "Committing as" line no longer appends
+  "custom (this repo)" when the identity comes from the repo's local config
+
 ## [1.5.2] - 2026-10-15
 
 ### Added

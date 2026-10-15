@@ -28,7 +28,8 @@ export function RepoTabBar() {
   // A selected "Cloning" tab takes the active highlight from the repo tabs:
   // the repo region shows its progress view, not the active repo's panels.
   const cloneFocused = useCloneStore((s) => s.focusedOpId !== null && s.focusedOpId in s.jobs);
-  const hasClones = useCloneStore((s) => Object.keys(s.jobs).length > 0);
+  const cloneCount = useCloneStore((s) => Object.keys(s.jobs).length);
+  const hasClones = cloneCount > 0;
   const focusClone = useCloneStore((s) => s.focus);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const activeTabRef = useRef<HTMLDivElement | null>(null);
@@ -79,6 +80,26 @@ export function RepoTabBar() {
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
+
+  // The strip shows no scrollbar; a fade on the clipped edge(s) signals the
+  // hidden tabs instead. The data attributes drive the CSS mask (global.css).
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const update = () => {
+      const max = el.scrollWidth - el.clientWidth;
+      el.toggleAttribute("data-clipped-left", el.scrollLeft > 1);
+      el.toggleAttribute("data-clipped-right", el.scrollLeft < max - 1);
+    };
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", update);
+      ro.disconnect();
+    };
+  }, [openRepos, cloneCount]);
 
   const beginDrag = (e: React.PointerEvent, repoId: string) => {
     if (e.button !== 0) return; // left button only
