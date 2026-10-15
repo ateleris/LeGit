@@ -12,6 +12,8 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-10-15
+
 ### Added
 
 - Theme Editor: "Save as…" while editing saves the changes as a new theme
