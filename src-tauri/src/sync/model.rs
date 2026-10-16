@@ -11,7 +11,9 @@ use crate::state::{GitProfile, GitProfilesDoc, GlobalSettings};
 /// commands bound to this computer, accounts, and the sync pointer itself.
 /// `gitProfiles` is NOT listed: it syncs opt-in, gated per machine by
 /// `sync_git_profiles` in `export_synced_settings` / `import_synced_settings`.
-pub const GLOBAL_SETTINGS_NEVER_SYNCED: [&str; 14] = [
+pub const GLOBAL_SETTINGS_NEVER_SYNCED: [&str; 16] = [
+    "repo_groups",
+    "repo_remote_keys",
     "git_path_override",
     "external_editor_command",
     "last_open_repos",
@@ -78,6 +80,10 @@ pub fn export_synced_settings(s: &GlobalSettings) -> serde_json::Value {
             obj.remove(key);
         }
     }
+    obj.insert(
+        crate::repo_groups::REPO_GROUPS_SYNC_KEY.to_string(),
+        crate::repo_groups::export_groups(&s.repo_groups),
+    );
     serde_json::Value::Object(obj)
 }
 
@@ -168,6 +174,13 @@ pub fn import_synced_settings(
     }
     let mut next: GlobalSettings = serde_json::from_value(serde_json::Value::Object(merged))
         .map_err(|e| AppError::Settings(format!("invalid synced settings: {e}")))?;
+    if let Some(groups) = synced.get(crate::repo_groups::REPO_GROUPS_SYNC_KEY) {
+        next.repo_groups = crate::repo_groups::import_groups(
+            &local.repo_groups,
+            groups,
+            &local.repo_remote_keys,
+        );
+    }
     if local.sync_git_profiles {
         next.git_profiles_doc = localized_profiles_doc(&next.git_profiles_doc, &local_home());
     }
@@ -232,6 +245,7 @@ mod tests {
                 "pull_strategy",
                 "push_recurse_submodules",
                 "refs_sort_mode",
+                "repoGroups",
                 "repo_tab_border_width",
                 "repo_tab_corner_radius",
                 "repo_tab_gap",
@@ -302,6 +316,42 @@ mod tests {
         let exported = export_synced_settings(&s);
         assert!(exported.as_object().unwrap().contains_key("gitProfiles"));
         assert_eq!(exported["profile_assignments"]["https://github.com/org/repo"], "p1");
+    }
+
+    #[test]
+    fn repo_groups_sync_unconditionally() {
+        use crate::repo_groups::{GroupItem, GroupRepoRef, RepoGroup};
+        let mut sender = GlobalSettings::default();
+        sender.sync_git_profiles = false;
+        sender.repo_groups.items.push(GroupItem::Group(RepoGroup {
+            id: "g1".into(),
+            name: "Work".into(),
+            color: None,
+            collapsed: true,
+            items: vec![GroupItem::Repo(GroupRepoRef {
+                locator: Some("/sender/path".into()),
+                remote_key: Some("https://github.com/Org/Repo".into()),
+            color: None,
+            })],
+        }));
+        let exported = export_synced_settings(&sender);
+        assert!(!exported.as_object().unwrap().contains_key("repo_groups"));
+        assert_eq!(exported["repoGroups"][0]["items"][0], "https://github.com/Org/Repo");
+
+        let mut receiver = GlobalSettings::default();
+        receiver
+            .repo_remote_keys
+            .insert("/receiver/path".into(), "https://github.com/Org/Repo".into());
+        let merged = import_synced_settings(&receiver, &exported).unwrap();
+        let GroupItem::Group(g) = &merged.repo_groups.items[0] else {
+            panic!("expected a group")
+        };
+        assert_eq!(g.name, "Work");
+        assert!(!g.collapsed, "collapsed is machine-local and never arrives via sync");
+        assert!(matches!(&g.items[0], GroupItem::Repo(r)
+            if r.locator.as_deref() == Some("/receiver/path")));
+        // the receiver's bookkeeping map stays its own
+        assert!(merged.repo_remote_keys.contains_key("/receiver/path"));
     }
 
     #[test]

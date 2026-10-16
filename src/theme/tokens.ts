@@ -144,6 +144,8 @@ export const TOKEN_CONTRACT: readonly TokenDescriptor[] = [
   { name: "tab.active.fg", group: "Repo Tabs", documentation: "Active repository tab text." },
   { name: "tab.border", group: "Repo Tabs", documentation: "Repository tab strip border." },
   { name: "tab.strip.border", group: "Repo Tabs", documentation: "Separator between the repository tab strip and the panels below it (its thickness is a global setting)." },
+  { name: "group.bg", group: "Repo Tabs", documentation: "Repo group container background, drawn behind the member tabs (a per-group color override replaces it)." },
+  { name: "group.fg", group: "Repo Tabs", documentation: "Repo group name text (header band and collapsed chip)." },
 
   { name: "panel.tab.bg", group: "Panel Tabs", documentation: "Panel tab strip background (dockview panels)." },
   { name: "panel.tab.fg", group: "Panel Tabs", documentation: "Inactive panel tab text." },
@@ -349,6 +351,13 @@ export const CONTRAST_PAIRS: readonly ContrastPair[] = [
     bg: "tab.bg",
     base: "tab.strip.bg",
     label: "Inactive repo tab",
+    group: "Tabs & headers",
+  },
+  {
+    fg: "group.fg",
+    bg: "group.bg",
+    base: "tab.strip.bg",
+    label: "Repo group header",
     group: "Tabs & headers",
   },
   {

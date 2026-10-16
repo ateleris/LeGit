@@ -122,6 +122,15 @@ pub async fn open_session(
         let state = reconcile_app.state::<AppState>();
         crate::commands::profiles::reconcile_profile_on_open(&state, &reconcile_session).await;
     });
+    // Fold the repo into the groups doc and record its remote key. In the
+    // background: the key resolution runs git and must never gate opening
+    // (the frontend renders open repos missing from the doc meanwhile).
+    let groups_app = app.clone();
+    let groups_session = session.clone();
+    tokio::spawn(async move {
+        let state = groups_app.state::<AppState>();
+        crate::commands::repo_groups::record_repo_opened(&state, &groups_session).await;
+    });
     summary
 }
 
@@ -800,6 +809,11 @@ pub async fn close_repo(
                     if settings.active_open_repo.as_deref() == Some(key.as_str()) {
                         settings.active_open_repo = settings.currently_open.last().cloned();
                     }
+                    // Grouped membership persists across close; only the
+                    // ungrouped root item leaves the strip.
+                    let open = settings.currently_open.clone();
+                    settings.repo_groups =
+                        crate::repo_groups::normalize(&settings.repo_groups, &open);
                 })
                 .await,
         );
@@ -1191,6 +1205,10 @@ pub async fn set_open_repos_order(
                     }
                 }
                 settings.currently_open = next;
+                settings.repo_groups = crate::repo_groups::reorder_roots(
+                    &settings.repo_groups,
+                    &settings.currently_open,
+                );
             })
             .await,
     );

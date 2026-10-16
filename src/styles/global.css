@@ -51,6 +51,16 @@
   --legit-tab-radius: 12px;
   --legit-tab-border-width: 0px;
   --legit-tab-strip-border-width: 1px;
+  /* Repo-group header band height; the hidden nesting depth a collapsed
+     group preserves (RepoTabBar sets it per collapsed container). */
+  --legit-group-band: calc(var(--ui-font-size) * 1.5);
+  --legit-group-inner-depth: 0;
+  /* Pill mode: lifts a pill onto the strip's shared pill baseline
+     (RepoTabBar sets it per tab: deepest nesting level minus own depth). */
+  --legit-pill-lift: 0;
+  /* Nesting levels BELOW a group container (RepoTabBar sets it per group):
+     grows the corner radius so nested corners sit concentric. */
+  --legit-group-nest: 0;
   --fz-xs: calc(var(--ui-font-size) - 2px);
   --fz-sm: calc(var(--ui-font-size) - 1px);
   --fz-md: var(--ui-font-size);
@@ -594,25 +604,20 @@ button.legit-tab__close:hover {
   border-radius: var(--legit-tab-radius) var(--legit-tab-radius) 0 0;
   position: relative;
   --legit-tab-fillet-bg: var(--tab-bg);
+  /* Stacking among strip items is inline per row (descending left to
+     right, active on top) - see RepoTabBar's rowZ. */
 }
 :root[data-repo-tab-style="browser"] .legit-tab.is-active {
   --legit-tab-fillet-bg: var(--tab-active-bg);
-  /* The active tab's outward flares paint over the neighbouring tabs. */
-  z-index: 1;
 }
-/* Each flare is REAL GEOMETRY, not a gradient (hard gradient stops don't
-   anti-alias and crossing gradient rects left slivers in the notch): an
-   r x r box outside the bottom corner whose inner-bottom corner is fully
-   rounded, so the box's shape is the quarter disc the strip shows through,
-   and the box-shadow - painted outside the rounded shape - fills the
-   outward flare in the tab's colour. The shadow is OFFSET toward the tab's
-   bottom corner with a reduced spread so its shape stays clear of the
-   box's top and outer edges: a centred spread reaches past them, and
-   wherever the clip edge lands on a fractional device pixel (display
-   scaling, per-tab x offsets) the clip's anti-aliasing blends that
-   outside-the-box shadow into the edge row as a fill-coloured hairline.
-   clip-path keeps the shadow inside the box with a half-pixel bleed into
-   the tab so no hairline seam can open against the tab body. */
+/* Each flare is EXACT GEOMETRY: an r x r box outside the bottom corner,
+   filled with the tab colour and masked by an SVG quarter-arc path (unit
+   viewBox scaled by the mask box), so the fill meets the tab edge and the
+   strip line precisely at any device scale. This replaced the earlier
+   offset-box-shadow approximation: its 1px safety margins (needed against
+   fractional-DPI clip hairlines) left a bare concave notch wherever no
+   neighbouring tab covered it - invisible between packed strip tabs, but a
+   visible "cut" against a group container's colour. */
 :root[data-repo-tab-style="browser"] .legit-tab::before,
 :root[data-repo-tab-style="browser"] .legit-tab::after {
   content: "";
@@ -620,23 +625,248 @@ button.legit-tab__close:hover {
   bottom: 0;
   width: var(--legit-tab-radius);
   height: var(--legit-tab-radius);
+  background: var(--legit-tab-fillet-bg);
   pointer-events: none;
 }
 :root[data-repo-tab-style="browser"] .legit-tab::before {
   left: calc(-1 * var(--legit-tab-radius));
-  border-bottom-right-radius: 100%;
-  box-shadow:
-    calc(var(--legit-tab-radius) / 3 + 1px) calc(var(--legit-tab-radius) / 3 + 1px)
-    0 calc(var(--legit-tab-radius) / 3) var(--legit-tab-fillet-bg);
-  clip-path: inset(0 -0.5px 0 0);
+  -webkit-mask: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path d="M1,0 A1,1 0 0 1 0,1 L1,1 Z"/></svg>')
+    center / 100% 100% no-repeat;
+  mask: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path d="M1,0 A1,1 0 0 1 0,1 L1,1 Z"/></svg>')
+    center / 100% 100% no-repeat;
 }
 :root[data-repo-tab-style="browser"] .legit-tab::after {
   right: calc(-1 * var(--legit-tab-radius));
-  border-bottom-left-radius: 100%;
-  box-shadow:
-    calc(-1 * (var(--legit-tab-radius) / 3 + 1px)) calc(var(--legit-tab-radius) / 3 + 1px)
-    0 calc(var(--legit-tab-radius) / 3) var(--legit-tab-fillet-bg);
-  clip-path: inset(0 0 0 -0.5px);
+  -webkit-mask: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path d="M0,0 A1,1 0 0 0 1,1 L0,1 Z"/></svg>')
+    center / 100% 100% no-repeat;
+  mask: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path d="M0,0 A1,1 0 0 0 1,1 L0,1 Z"/></svg>')
+    center / 100% 100% no-repeat;
+}
+
+/* Repo tab groups (design/2026-10-16-repository-groups.md): a group renders
+   as a container drawn BEHIND its member tabs - the name band on top, the
+   member row below. Containers grow upward from the strip's bottom edge, so
+   the strip's height follows the deepest expanded group while everything
+   bottom-aligns; with zero groups the strip is byte-identical to before
+   (has-groups is only set when group nodes render). A collapsed group folds
+   to a tab-height chip. A per-group color override replaces --group-bg
+   inline on its container; text stays on the token. */
+.legit-tabs__scroll.has-groups {
+  align-items: flex-end;
+}
+/* Bottom-aligned flush tabs no longer stretch to the strip's min-height, so
+   pin them to the configured tab height instead (pill/browser set their own
+   heights; this must not outrank them). */
+:root:not([data-repo-tab-style="pill"]):not([data-repo-tab-style="browser"])
+  .legit-tabs__scroll.has-groups
+  .legit-tab {
+  height: var(--legit-tab-height);
+}
+.legit-tab-group {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  background: var(--group-bg);
+  /* Concentric corner radius: one gap wider per nesting level below, so
+     nested arcs fit snugly; min() collapses it to 0 for square tabs. */
+  --legit-group-radius: min(
+    calc(var(--legit-tab-radius) * 999),
+    calc(var(--legit-tab-radius) + (var(--legit-group-nest) + 1) * var(--legit-tab-gap))
+  );
+}
+.legit-tab-group__header {
+  height: var(--legit-group-band);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4em;
+  /* The name starts only once the container's own (concentric) corner
+     radius has finished, and at least a tab's text inset. */
+  padding: 0 max(var(--legit-group-radius), calc(var(--ui-font-size) * 1));
+  color: var(--group-fg);
+  font-size: var(--fz-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+/* Members keep a visible margin to the container (like the pill style's
+   inset) for separation; flush/browser keep the bottom flush so tabs stay
+   on the strip's bottom line. */
+.legit-tab-group__tabs {
+  display: flex;
+  align-items: flex-end;
+  /* A long group name can make the container wider than the member row:
+     the members then center under the name instead of hugging the left. */
+  justify-content: center;
+  gap: var(--legit-tab-gap);
+  padding: 0 var(--legit-tab-gap);
+}
+/* Flush group containers are SQUARE (no corner rounding anywhere in the
+   style), so the radius-derived header inset collapses to the text inset. */
+:root:not([data-repo-tab-style="pill"]):not([data-repo-tab-style="browser"]) .legit-tab-group {
+  --legit-group-radius: 0px;
+}
+/* Flush keeps its dense look inside groups too: members sit flush against
+   each other (the border-right separates them), and the LAST member drops
+   its trailing separator - it would float against the group colour. Group
+   containers carry the same separator as tabs so adjacent groups divide. */
+:root:not([data-repo-tab-style="pill"]):not([data-repo-tab-style="browser"])
+  .legit-tab-group__tabs {
+  gap: 0;
+}
+:root:not([data-repo-tab-style="pill"]):not([data-repo-tab-style="browser"]) .legit-tab-group {
+  border-right: 1px solid var(--tab-border);
+}
+/* At a junction where the NEXT item is a (taller) group, the separator
+   moves to the group's left edge so it spans the full container height;
+   the predecessor drops its shorter one. */
+:root:not([data-repo-tab-style="pill"]):not([data-repo-tab-style="browser"])
+  :is(.legit-tab, .legit-tab-group):has(+ .legit-tab-group) {
+  border-right: none;
+}
+:root:not([data-repo-tab-style="pill"]):not([data-repo-tab-style="browser"])
+  :is(.legit-tab, .legit-tab-group)
+  + .legit-tab-group {
+  border-left: 1px solid var(--tab-border);
+}
+:root:not([data-repo-tab-style="pill"]):not([data-repo-tab-style="browser"])
+  .legit-tab-group__tabs
+  > .legit-tab:last-child,
+:root:not([data-repo-tab-style="pill"]):not([data-repo-tab-style="browser"])
+  .legit-tab-group__tabs
+  > .legit-tab-group:last-child {
+  border-right: none;
+}
+
+/* A group emptied mid-drag (the preview keeps it until the drop) holds the
+   height a member tab would occupy instead of collapsing to the band. */
+.legit-tab-group__spacer {
+  height: var(--legit-tab-height);
+  flex-shrink: 0;
+}
+/* Collapsed groups keep the container shape - header band plus a tab-height
+   body - so the group reads as a group at its nesting level; only the member
+   tabs fold away into the count. */
+.legit-tab-group.is-collapsed {
+  cursor: pointer;
+}
+.legit-tab-group__count {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Fill the row so the count centers under the name; text at tab size.
+     The height carries the collapsed subtree's bands: collapse never
+     changes a group's height. */
+  flex: 1 1 auto;
+  height: calc(
+    var(--legit-tab-height) + var(--legit-group-inner-depth) * var(--legit-group-band)
+  );
+  /* No own inset: the badge sits like a member tab, the row padding is the
+     margin (a collapsed group must not be roomier than an expanded one). */
+  font-size: var(--fz-md);
+  color: var(--group-fg);
+  white-space: nowrap;
+  user-select: none;
+}
+/* The collapsed count renders as a tab-shaped badge in the tab's metrics
+   and colours; when the active repo hides inside, it takes the active
+   tab's colours instead. */
+.legit-tab-group.is-collapsed .legit-tab-group__count > span {
+  display: inline-flex;
+  align-items: center;
+  /* Sit where a pill would: on the body's bottom edge (the shared pill
+     baseline), not centered in the stretched collapsed body. */
+  align-self: flex-end;
+  height: var(--legit-tab-height);
+  padding: 0 calc(var(--ui-font-size) * 1);
+  background: var(--tab-bg);
+  color: var(--tab-fg);
+}
+/* The badge mirrors the active style's tab shape: square in flush,
+   top-rounded in browser, a full pill in pill mode (below). */
+:root[data-repo-tab-style="browser"]
+  .legit-tab-group.is-collapsed
+  .legit-tab-group__count
+  > span {
+  border-radius: var(--legit-tab-radius) var(--legit-tab-radius) 0 0;
+}
+.legit-tab-group.is-collapsed.has-active .legit-tab-group__count > span {
+  background: var(--tab-active-bg);
+  color: var(--tab-active-fg);
+}
+:root[data-repo-tab-style="pill"] .legit-tab-group.is-collapsed .legit-tab-group__count > span {
+  border-radius: var(--legit-tab-radius);
+}
+/* Drag previews: dwell-armed merge target, insertion edges, dragged item. */
+.is-merge-target {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* Pill style: the group is a big pill wrapping pill tabs. */
+:root[data-repo-tab-style="pill"] .legit-tab-group {
+  border-radius: var(--legit-group-radius);
+}
+:root[data-repo-tab-style="pill"] .legit-tab-group > .legit-tab-group__tabs {
+  gap: var(--legit-tab-gap);
+  padding: 0 var(--legit-tab-gap) var(--legit-tab-gap);
+}
+/* Every pill sits on ONE shared baseline - the line of the deepest-nested
+   pills - while group containers keep their stepped bottoms: each pill is
+   lifted by (deepest level - its own depth) gaps on top of its row's
+   bottom padding. The collapsed count rides the same line. */
+:root[data-repo-tab-style="pill"] .has-groups .legit-tab,
+:root[data-repo-tab-style="pill"] .has-groups .legit-tab-group__count,
+:root[data-repo-tab-style="pill"] .has-groups .legit-tab-group__spacer {
+  align-self: flex-end;
+  margin-bottom: calc(var(--legit-pill-lift) * var(--legit-tab-gap));
+}
+:root[data-repo-tab-style="pill"] .has-groups > .legit-tab-group {
+  align-self: flex-end;
+}
+/* Browser style: the group is a big borderless browser tab - rounded top
+   corners and outward bottom fillets, both scaled to the group's concentric
+   radius so nested feet flare at matching curvatures. The fillet fill
+   follows a per-group color override via --legit-group-flare, re-declared
+   on every container so an override never leaks into nested groups. */
+:root[data-repo-tab-style="browser"] .legit-tab-group {
+  align-self: flex-end;
+  --legit-group-flare: var(--group-bg);
+  border-radius: var(--legit-group-radius) var(--legit-group-radius) 0 0;
+  position: relative;
+}
+/* Group fillets are EXACT geometry: an r x r box filled with the group
+   colour, masked by an SVG path to the concave quarter-arc (unit viewBox,
+   scaled by the mask box), so the fill reaches the container edge and the
+   strip line exactly at any device scale. They are REAL first-child
+   elements, not pseudos: a ::after would paint on top of nested groups'
+   fillets (pseudos paint after children), truncating the inner feet where
+   the stepped right edges overlap; as first children, each container's
+   feet paint right after its own background and BENEATH its children. */
+.legit-tab-group__fillet {
+  display: none;
+}
+:root[data-repo-tab-style="browser"] .legit-tab-group > .legit-tab-group__fillet {
+  display: block;
+  position: absolute;
+  bottom: 0;
+  width: var(--legit-group-radius);
+  height: var(--legit-group-radius);
+  background: var(--legit-group-flare);
+  pointer-events: none;
+}
+:root[data-repo-tab-style="browser"] .legit-tab-group > .legit-tab-group__fillet.is-left {
+  left: calc(-1 * var(--legit-group-radius));
+  -webkit-mask: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path d="M1,0 A1,1 0 0 1 0,1 L1,1 Z"/></svg>')
+    center / 100% 100% no-repeat;
+  mask: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path d="M1,0 A1,1 0 0 1 0,1 L1,1 Z"/></svg>')
+    center / 100% 100% no-repeat;
+}
+:root[data-repo-tab-style="browser"] .legit-tab-group > .legit-tab-group__fillet.is-right {
+  right: calc(-1 * var(--legit-group-radius));
+  -webkit-mask: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path d="M0,0 A1,1 0 0 0 1,1 L0,1 Z"/></svg>')
+    center / 100% 100% no-repeat;
+  mask: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path d="M0,0 A1,1 0 0 0 1,1 L0,1 Z"/></svg>')
+    center / 100% 100% no-repeat;
 }
 
 /* "Cloning" tabs (a running clone, see CloneTab.tsx): the spinner scales with

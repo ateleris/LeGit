@@ -12,6 +12,14 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- Repository tabs can be grouped into named, collapsible, colorable groups
+  by drag and drop (groups nest, sync across machines, and follow the tab
+  style)
+- Individual repository tabs can be given a custom color (context menu),
+  synced like group colors
+
 ### Changed
 
 - The repository tab strip no longer shows a scrollbar when many repos are

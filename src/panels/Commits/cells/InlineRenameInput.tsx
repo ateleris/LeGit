@@ -65,6 +65,7 @@ export function InlineRenameInput({
   title,
   placeholder,
   pulse = false,
+  cancelOnBlur = false,
 }: {
   initialValue: string;
   onSave: (value: string) => void;
@@ -78,6 +79,9 @@ export function InlineRenameInput({
   /** Pulse an attention ring on mount - for inputs that appear away from
    *  where the user clicked (create-branch/-tag). */
   pulse?: boolean;
+  /** Abort the edit when focus leaves the input (click elsewhere, menu,
+   *  window switch) instead of staying in edit mode. */
+  cancelOnBlur?: boolean;
 }) {
   const [draft, setDraft] = useState(initialValue);
   const [element, setElement] = useState<HTMLInputElement | null>(null);
@@ -102,6 +106,7 @@ export function InlineRenameInput({
         placeholder={placeholder}
         onChange={(e) => setDraft(e.target.value)}
         onFocus={(e) => e.currentTarget.select()}
+        onBlur={cancelOnBlur ? () => onCancel() : undefined}
         // The row/chip underneath handles click (select row, open menus) — an
         // in-progress edit must not trigger those.
         onClick={(e) => e.stopPropagation()}

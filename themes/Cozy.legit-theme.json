@@ -7,6 +7,8 @@
   "name": "Cozy",
   "palette": {
     "accent": "#2563eb",
+    "group-bg": "#2563eb22",
+    "group-fg": "#1d4e9e",
     "accent-fg": "#ffffff",
     "accent-hover": "#1d4ed8",
     "ansi-black": "#1e2f45",
@@ -261,6 +263,8 @@
     "tab.strip.border": "panel-border",
     "tab.fg": "subtle-fg",
     "tab.strip.bg": "panel-bg",
+    "group.bg": "group-bg",
+    "group.fg": "group-fg",
     "warning.fg": "warning"
   },
   "laneChipFilters": {

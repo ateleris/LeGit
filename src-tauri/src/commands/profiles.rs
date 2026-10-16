@@ -529,7 +529,7 @@ pub async fn apply_profile_core(
 
 /// Best-effort machine-neutral key for the repo's picked remote (`None`:
 /// no remote, or one without a web form).
-async fn repo_assignment_key(session: &crate::state::RepoSession) -> Option<String> {
+pub(crate) async fn repo_assignment_key(session: &crate::state::RepoSession) -> Option<String> {
     let remotes = session.backend.list_remotes().await.ok()?;
     let remote = crate::commands::browser::pick_remote(&remotes)?;
     crate::commands::browser::canonical_remote_key(&remote.fetch_url)

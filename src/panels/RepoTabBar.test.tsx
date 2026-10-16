@@ -20,6 +20,16 @@ vi.mock("../lib/commands", () => ({
   repoSuperproject: vi.fn(() => Promise.resolve(null)),
   repoOpenInEditor: vi.fn(() => Promise.resolve()),
   repoOpenRemotePage: vi.fn(() => Promise.resolve()),
+  api: {
+    // Resolves whatever the groups store currently holds, so a test-seeded
+    // doc survives the component's load-on-mount.
+    getRepoGroups: vi.fn(() =>
+      Promise.resolve(useRepoGroupsStore.getState().doc),
+    ),
+    applyRepoGroupsOp: vi.fn(() => Promise.reject(new Error("no backend in tests"))),
+    repoRemoteWebUrl: vi.fn(() => Promise.resolve(null)),
+    repoSuperproject: vi.fn(() => Promise.resolve(null)),
+  },
 }));
 vi.mock("../lib/editorAction", () => ({
   useEditorAction: () => ({ label: "Open in editor", configured: true }),
@@ -30,6 +40,7 @@ vi.mock("./RepoAddMenu", () => ({ RepoAddMenu: () => null }));
 
 import { RepoTabBar } from "./RepoTabBar";
 import { useCloneStore } from "../store/clone";
+import { useRepoGroupsStore } from "../store/repoGroups";
 import { useRepoStore } from "../store/repos";
 import { useSettingsStore } from "../store/settings";
 
@@ -118,5 +129,100 @@ describe("RepoTabBar with a running clone", () => {
     expect(useCloneStore.getState().focusedOpId).toBe(opId);
     expect(isActive(cloneTab())).toBe(true);
     expect(repoTabs().some(isActive)).toBe(false);
+  });
+});
+
+describe("RepoTabBar with repo groups", () => {
+  let container: HTMLElement;
+  let root: Root;
+
+  const GROUPED_REPOS = [
+    { id: "a", name: "alpha", path: "/src/alpha", locator: "/src/alpha" },
+    { id: "b", name: "beta", path: "/src/beta", locator: "/src/beta" },
+    { id: "c", name: "gamma", path: "/src/gamma", locator: "/src/gamma" },
+  ];
+  const groupedDoc = (collapsed: boolean) => ({
+    items: [
+      {
+        kind: "group" as const,
+        id: "g1",
+        name: "Work",
+        color: null,
+        collapsed,
+        items: [
+          { kind: "repo" as const, locator: "/src/alpha", remote_key: null },
+          { kind: "repo" as const, locator: "/src/beta", remote_key: null },
+        ],
+      },
+      { kind: "repo" as const, locator: "/src/gamma", remote_key: null },
+    ],
+  });
+
+  const mount = () => {
+    document.body.innerHTML = "";
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const client = new QueryClient();
+    act(() =>
+      root.render(
+        <QueryClientProvider client={client}>
+          <RepoTabBar />
+        </QueryClientProvider>,
+      ),
+    );
+  };
+
+  beforeEach(() => {
+    useRepoStore.setState({
+      openRepos: GROUPED_REPOS,
+      activeRepoId: "a",
+      initialized: true,
+      repoSettings: { a: {}, b: {}, c: {} },
+    } as never);
+    useCloneStore.setState({ jobs: {}, focusedOpId: null, completedCount: 0 });
+    useSettingsStore.setState({ settings: { confirm_discard: true } } as never);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    useRepoGroupsStore.setState({ doc: { items: [] } });
+  });
+
+  it("zero groups renders today's flat DOM (no wrappers, no has-groups)", () => {
+    useRepoGroupsStore.setState({ doc: { items: [] } });
+    mount();
+    expect(container.querySelectorAll('[data-testid="repo-tab"]')).toHaveLength(3);
+    expect(container.querySelector('[data-testid="repo-group"]')).toBeNull();
+    expect(container.querySelector(".legit-tabs__scroll")!.classList.contains("has-groups")).toBe(
+      false,
+    );
+  });
+
+  it("renders a group container around its member tabs", () => {
+    useRepoGroupsStore.setState({ doc: groupedDoc(false) });
+    mount();
+    const group = container.querySelector<HTMLElement>('[data-testid="repo-group"]');
+    expect(group).not.toBeNull();
+    expect(group!.textContent).toContain("Work");
+    expect(group!.querySelectorAll('[data-testid="repo-tab"]')).toHaveLength(2);
+    // the ungrouped tab stays outside the container
+    expect(container.querySelectorAll('[data-testid="repo-tab"]')).toHaveLength(3);
+    expect(
+      container.querySelector(".legit-tabs__scroll")!.classList.contains("has-groups"),
+    ).toBe(true);
+  });
+
+  it("renders a collapsed group as a chip with count and active marker", () => {
+    useRepoGroupsStore.setState({ doc: groupedDoc(true) });
+    mount();
+    const chip = container.querySelector<HTMLElement>('[data-testid="repo-group-chip"]');
+    expect(chip).not.toBeNull();
+    expect(chip!.textContent).toContain("Work");
+    expect(chip!.querySelector(".legit-tab-group__count")!.textContent).toBe("2");
+    // the active repo "a" hides inside: the chip carries the marker
+    expect(chip!.classList.contains("has-active")).toBe(true);
+    // its member tabs do not render; the ungrouped tab does
+    expect(container.querySelectorAll('[data-testid="repo-tab"]')).toHaveLength(1);
   });
 });

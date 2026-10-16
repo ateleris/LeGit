@@ -7,6 +7,8 @@
   "description": "A tribute to git in a plain terminal: pure black, the classic xterm ANSI palette, and git's default colour semantics — green added, red removed, yellow tags, cyan hunk headers, magenta stashes. Deliberately red/green (git's own defaults), so not colourblind-safe by design.",
   "palette": {
     "accent": "#00cd00",
+    "group-bg": "#00cd0022",
+    "group-fg": "#7ddf7d",
     "accent-fg": "#000000",
     "console-bg": "#000000",
     "ansi-black": "#000000",
@@ -251,6 +253,8 @@
     "warning.fg": "warning",
     "merge.fold.bg": "merge-fold",
     "merge.fold.fg": "subtle-fg",
-    "tab.strip.bg": "panel-bg"
+    "tab.strip.bg": "panel-bg",
+    "group.bg": "group-bg",
+    "group.fg": "group-fg"
   }
 }

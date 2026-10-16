@@ -5,6 +5,7 @@ import { notifyLfsStubs } from "../lib/lfsFeedback";
 import type { RepoId, RepoSettings, RepoSettingsPatch, RepoSummary } from "../lib/types";
 import { pickNextActive, pushActivation } from "./repoActivation";
 import { useConsoleStore } from "./console";
+import { useRepoGroupsStore } from "./repoGroups";
 import { useSettingsStore } from "./settings";
 
 interface RepoStore {
@@ -142,7 +143,14 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
       for (const r of s.openRepos) if (byId.has(r.id)) next.push(r);
       return { openRepos: next };
     });
-    api.setOpenReposOrder(orderedIds).catch((e) => console.warn("persist repo order failed", e));
+    api
+      .setOpenReposOrder(orderedIds)
+      .then(
+        // The backend folds the order into the groups doc; refresh the cached
+        // doc so the strip's group-aware order never goes stale.
+        () => useRepoGroupsStore.getState().load(),
+      )
+      .catch((e) => console.warn("persist repo order failed", e));
   },
 
   async openRepo(path: string) {
