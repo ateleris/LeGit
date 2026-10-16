@@ -5,6 +5,7 @@ import { notifyLfsStubs } from "../lib/lfsFeedback";
 import type { RepoId, RepoSettings, RepoSettingsPatch, RepoSummary } from "../lib/types";
 import { pickNextActive, pushActivation } from "./repoActivation";
 import { useConsoleStore } from "./console";
+import { useRepoGroupsStore } from "./repoGroups";
 import { useSettingsStore } from "./settings";
 
 interface RepoStore {
@@ -142,11 +143,22 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
       for (const r of s.openRepos) if (byId.has(r.id)) next.push(r);
       return { openRepos: next };
     });
-    api.setOpenReposOrder(orderedIds).catch((e) => console.warn("persist repo order failed", e));
+    api
+      .setOpenReposOrder(orderedIds)
+      .then(
+        // The backend folds the order into the groups doc; refresh the cached
+        // doc so the strip's group-aware order never goes stale.
+        () => useRepoGroupsStore.getState().load(),
+      )
+      .catch((e) => console.warn("persist repo order failed", e));
   },
 
   async openRepo(path: string) {
     const summary = await api.openRepo(path);
+    // Fetch the groups doc BEFORE the new tab renders: the backend placed it
+    // (e.g. a submodule beside its superproject) by the time open resolved,
+    // and the stale cached doc would flash its old remembered position.
+    await useRepoGroupsStore.getState().load();
     await get().refresh();
     get().setActive(summary.id);
     return summary;
@@ -155,6 +167,7 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
   async initRepo(path, profileId, options) {
     const summary = await repoInitCmd(path, profileId, options);
     if (!summary) return null; // bare init: created, nothing to open
+    await useRepoGroupsStore.getState().load();
     await get().refresh();
     get().setActive(summary.id);
     return summary;
@@ -171,6 +184,7 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
     useSettingsStore.setState((s) =>
       s.settings ? { settings: { ...s.settings, last_clone_parent_dir: parentDir } } : s,
     );
+    await useRepoGroupsStore.getState().load();
     await get().refresh();
     get().setActive(outcome.summary.id);
     return outcome.summary;

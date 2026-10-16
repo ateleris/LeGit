@@ -87,6 +87,13 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 
 ## Smaller follow-ups
 
+- **Unload collapsed repo groups.** Collapsing a repo tab group is purely
+  visual in v1: sessions, watchers and background refresh keep running for
+  its repos. A later optimization may suspend the sessions/watchers of
+  fully collapsed groups and restore them on expand. Rough approach: a
+  repo-session suspend/resume seam keyed off the group's collapsed state
+  (see design/2026-10-16-repository-groups.md, Non-goals).
+
 - **Stash-all button in Working Changes?** (open question, 2026-09-16) The
   sections have "Stage all" / "Unstage all" / "Discard all"; a "Stash all"
   alongside them would complete the set. The action already exists (the

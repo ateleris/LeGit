@@ -7,6 +7,8 @@
   "description": "Built-in dark theme. Danger and success palette entries are chosen orange/blue so that red-green colourblind users see the diff distinction by default.",
   "palette": {
     "accent": "#4a9eff",
+    "group-bg": "#4a9eff22",
+    "group-fg": "#9ec9ff",
     "accent-fg": "#183454",
     "console-bg": "#1a1a1a",
     "ansi-black": "#000000",
@@ -249,6 +251,8 @@
     "tab.strip.border": "panel-border",
     "tab.fg": "subtle-fg",
     "tab.strip.bg": "panel-bg",
+    "group.bg": "group-bg",
+    "group.fg": "group-fg",
     "warning.fg": "warning",
     "merge.fold.bg": "merge-fold",
     "merge.fold.fg": "subtle-fg"

@@ -13,6 +13,7 @@ mod oauth;
 mod os_open;
 mod persist;
 mod remote;
+mod repo_groups;
 mod state;
 mod sync;
 mod watcher;
@@ -329,6 +330,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::recent_repos,
         commands::restore_open_repos,
         commands::set_open_repos_order,
+        commands::get_repo_groups,
+        commands::apply_repo_groups_op,
         commands::set_active_repo,
         commands::set_watcher_enabled,
         commands::console_exec,

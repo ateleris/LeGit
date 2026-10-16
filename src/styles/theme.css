@@ -72,6 +72,8 @@
   --palette-status-modified: #D29922;
   --palette-status-deleted: #F85149;
   --palette-status-renamed: #4C9BE8;
+  --palette-group-bg: #4a9eff22;
+  --palette-group-fg: #9ec9ff;
   --palette-ref-branch-bg: #50a0ff26;
   --palette-ref-branch-border: #50a0ff73;
   --palette-ref-branch-fg: #78b4ff;
@@ -119,6 +121,8 @@
   --tab-active-fg: var(--palette-accent-fg);
   --tab-border: var(--palette-panel-border);
   --tab-strip-border: var(--palette-panel-border);
+  --group-bg: var(--palette-group-bg);
+  --group-fg: var(--palette-group-fg);
   --panel-tab-bg: var(--palette-panel-bg);
   --panel-tab-fg: var(--palette-subtle-fg);
   --panel-tab-active-bg: var(--palette-input-bg);

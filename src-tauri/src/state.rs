@@ -569,6 +569,15 @@ pub struct GlobalSettings {
     /// serialize deterministically or every export would commit.
     #[serde(default)]
     pub profile_assignments: std::collections::BTreeMap<String, String>,
+    /// The repo tab strip's item tree (groups + repos). Owned by the
+    /// repo-groups commands; syncs as a portable projection under its own
+    /// key, never as this raw field (see `repo_groups`, `sync/model.rs`).
+    #[serde(default)]
+    pub repo_groups: crate::repo_groups::RepoGroupsDoc,
+    /// Locator -> canonical remote key, recorded whenever a repo opens, so
+    /// sync import can match repos that are currently closed.
+    #[serde(default)]
+    pub repo_remote_keys: std::collections::BTreeMap<String, String>,
 }
 
 /// One connected platform account (see `commands/accounts.rs`).
@@ -675,6 +684,8 @@ impl Default for GlobalSettings {
             settings_sync_path: None,
             sync_git_profiles: false,
             profile_assignments: std::collections::BTreeMap::new(),
+            repo_groups: crate::repo_groups::RepoGroupsDoc::default(),
+            repo_remote_keys: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -682,7 +693,9 @@ impl Default for GlobalSettings {
 /// Global settings owned by dedicated commands or flows (the probed git
 /// binary, theme name sanitizing, watcher start/stop side effects, session
 /// bookkeeping, profiles, accounts); a settings patch must never write them.
-const GLOBAL_SETTINGS_COMMAND_OWNED: [&str; 13] = [
+const GLOBAL_SETTINGS_COMMAND_OWNED: [&str; 15] = [
+    "repo_groups",
+    "repo_remote_keys",
     "file_history_window_size",
     "git_path_override",
     "active_theme",

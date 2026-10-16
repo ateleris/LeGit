@@ -7,6 +7,8 @@
   "description": "Ateleris brand theme: deep navy surfaces with the signature amber-gold accent (navy text on gold, like the brand banner). Danger is coral-red and success blue so the diff distinction stays clear of the gold accent.",
   "palette": {
     "accent": "#f0b03c",
+    "group-bg": "#f0b03c22",
+    "group-fg": "#f3cf8f",
     "accent-fg": "#17223a",
     "console-bg": "#101a2e",
     "ansi-black": "#000000",
@@ -249,6 +251,8 @@
     "tab.strip.border": "panel-border",
     "tab.fg": "subtle-fg",
     "tab.strip.bg": "panel-bg",
+    "group.bg": "group-bg",
+    "group.fg": "group-fg",
     "warning.fg": "warning",
     "merge.fold.bg": "merge-fold",
     "merge.fold.fg": "subtle-fg"

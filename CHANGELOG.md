@@ -12,6 +12,25 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- Repository tabs can be grouped into named, collapsible, colorable groups
+  by drag and drop (groups nest, sync across machines, and follow the tab
+  style)
+- Individual repository tabs can be given a custom color (context menu),
+  synced like group colors
+- Opening a submodule places its tab right of its superproject, joining
+  the superproject's group
+
+### Changed
+
+- The repository tab strip no longer shows a scrollbar when many repos are
+  open (it detached the tabs from the strip's bottom line); the strip edge
+  fades out where tabs continue offscreen, and tabs are reached by
+  scrolling with the mouse wheel or via the overflow menu
+- The commit composer's "Committing as" line no longer appends
+  "custom (this repo)" when the identity comes from the repo's local config
+
 ## [1.5.2] - 2026-10-15
 
 ### Added

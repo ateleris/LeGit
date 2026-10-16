@@ -59,9 +59,7 @@ describe("identityLineText", () => {
     expect(identityLineText(identity, match, [profile("p1", "")])).toBe(BASE);
   });
 
-  it("marks a repo-specific config as custom", () => {
-    expect(identityLineText(identity, { kind: "custom" }, [])).toBe(
-      `${BASE} - custom (this repo)`,
-    );
+  it("shows only the identity for a repo-specific config (no suffix)", () => {
+    expect(identityLineText(identity, { kind: "custom" }, [])).toBe(BASE);
   });
 });

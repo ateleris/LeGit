@@ -279,6 +279,22 @@ async setOpenReposOrder(repoIds: string[]) : Promise<Result<null, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async getRepoGroups() : Promise<Result<RepoGroupsDoc, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_repo_groups") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async applyRepoGroupsOp(op: RepoGroupsOp) : Promise<Result<RepoGroupsDoc, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("apply_repo_groups_op", { op }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async setActiveRepo(repoId: string | null) : Promise<Result<null, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_active_repo", { repoId }) };
@@ -3888,7 +3904,29 @@ sync_git_profiles?: boolean;
  * the profile for the same clone. BTreeMap: the sync doc must
  * serialize deterministically or every export would commit.
  */
-profile_assignments?: Partial<{ [key in string]: string }> }
+profile_assignments?: Partial<{ [key in string]: string }>; 
+/**
+ * The repo tab strip's item tree (groups + repos). Owned by the
+ * repo-groups commands; syncs as a portable projection under its own
+ * key, never as this raw field (see `repo_groups`, `sync/model.rs`).
+ */
+repo_groups?: RepoGroupsDoc; 
+/**
+ * Locator -> canonical remote key, recorded whenever a repo opens, so
+ * sync import can match repos that are currently closed.
+ */
+repo_remote_keys?: Partial<{ [key in string]: string }> }
+export type GroupItem = ({ kind: "repo" } & GroupRepoRef) | ({ kind: "group" } & RepoGroup)
+/**
+ * At least one of locator/remote_key is Some. locator None = pending member
+ * synced from another machine, waiting for a matching repo to open here.
+ */
+export type GroupRepoRef = { locator: string | null; remote_key: string | null; 
+/**
+ * Per-repo tab color override (user data, like a group's color).
+ * serde(default) keeps pre-color docs parsing.
+ */
+color?: string | null }
 /**
  * What a history window shows, handed to its frontend on boot (keyed by
  * window label; the label itself carries no decodable payload).
@@ -3938,6 +3976,7 @@ export type ImageFormat = "png" | "jpeg" | "gif" | "webp" | "bmp" | "ico" |
  * webview renders it via an `<img>` data URL, where scripts never run.
  */
 "svg"
+export type ItemRef = { kind: "repo"; locator: string } | { kind: "group"; id: string }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 /**
  * One differing key between the repo's local config and a profile.
@@ -4444,6 +4483,9 @@ export type RepoFileKind =
  * Matched by a gitignore rule.
  */
 "ignored"
+export type RepoGroup = { id: string; name: string; color: string | null; collapsed: boolean; items: GroupItem[] }
+export type RepoGroupsDoc = { items: GroupItem[] }
+export type RepoGroupsOp = { op: "merge_into_group"; dragged: ItemRef; target: ItemRef } | { op: "new_group_with"; item: ItemRef } | { op: "move_item"; item: ItemRef; parent: string | null; index: number } | { op: "ungroup"; group_id: string } | { op: "rename"; group_id: string; name: string } | { op: "set_color"; group_id: string; color: string | null } | { op: "set_repo_color"; locator: string; color: string | null } | { op: "set_collapsed"; group_id: string; collapsed: boolean }
 /**
  * Which multi-step git operation the repository is currently in, if any.
  * Cherry-pick/revert are detected (the banner machinery is shared) even
