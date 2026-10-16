@@ -63,7 +63,7 @@ already is), not by open-tab existence: a member that is not currently
 open simply does not render, but stays in the list.
 
 Nesting depth is capped by a hardcoded build constant (not a user
-setting; value 3, Claude's call pending a better number; the constant is
+setting; value 1 - Simon's call, revised from 3 after using the feature: groups hold only repos; the constant is
 app code, so it is not synced and never appears in settings). The cap is
 enforced at mutation time (a drop that would exceed it falls back to the
 reorder interpretation); a build that lowers the constant never destroys

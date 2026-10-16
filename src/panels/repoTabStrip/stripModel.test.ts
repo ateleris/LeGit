@@ -263,28 +263,54 @@ describe("classifyDrop", () => {
   });
 
   it("a group's inner inset targets INSIDE the group at the nearest gap", () => {
-    // G1 (0-300, root) wraps G2 (20-280, depth 1) which holds a tab
-    // (40-260, doc index 0). The corridors between the nested left/right
-    // edges must peel ONE level at a time.
+    // G1 (0-300, root) holds a tab (40-260, doc index 0): the inset
+    // corridors mean inside-the-group; outside the rect means beside it.
     const nested: DropItem[] = [
-      { ref: { kind: "group", id: "g1" }, left: 0, width: 300, parentId: null, index: 0, depth: 0, isGroup: true, subtreeDepth: 2 },
-      { ref: { kind: "group", id: "g2" }, left: 20, width: 260, parentId: "g1", index: 0, depth: 1, isGroup: true, subtreeDepth: 1 },
-      { ref: { kind: "repo", locator: "a" }, left: 40, width: 220, parentId: "g2", index: 0, depth: 2, isGroup: false, subtreeDepth: 0 },
+      { ref: { kind: "group", id: "g1" }, left: 0, width: 300, parentId: null, index: 0, depth: 0, isGroup: true, subtreeDepth: 1 },
+      { ref: { kind: "repo", locator: "a" }, left: 40, width: 220, parentId: "g1", index: 0, depth: 1, isGroup: false, subtreeDepth: 0 },
     ];
-    // between g2's left edge and the tab: inside g2, before the tab
-    expect(classifyDrop({ pointerX: 30, items: nested, dwellSatisfied: false, ...dragged })).toEqual(
-      { kind: "insert", parentId: "g2", index: 0 },
-    );
-    // between g1's left edge and g2: inside g1, before g2
     expect(classifyDrop({ pointerX: 10, items: nested, dwellSatisfied: false, ...dragged })).toEqual(
       { kind: "insert", parentId: "g1", index: 0 },
     );
-    // right corridors: one level at a time, after the content
-    expect(classifyDrop({ pointerX: 270, items: nested, dwellSatisfied: false, ...dragged })).toEqual(
-      { kind: "insert", parentId: "g2", index: 1 },
-    );
     expect(classifyDrop({ pointerX: 290, items: nested, dwellSatisfied: false, ...dragged })).toEqual(
       { kind: "insert", parentId: "g1", index: 1 },
+    );
+    expect(classifyDrop({ pointerX: 310, items: nested, dwellSatisfied: false, ...dragged })).toEqual(
+      { kind: "insert", parentId: null, index: 1 },
+    );
+  });
+
+  it("a dragged GROUP never targets the inside of another group at the cap", () => {
+    // g1 (root) wraps a tab; dragging a group over g1's inset must insert
+    // BESIDE g1, since nesting it would exceed MAX_GROUP_DEPTH.
+    const nested: DropItem[] = [
+      { ref: { kind: "group", id: "g1" }, left: 0, width: 300, parentId: null, index: 1, depth: 0, isGroup: true, subtreeDepth: 1 },
+      { ref: { kind: "repo", locator: "a" }, left: 40, width: 220, parentId: "g1", index: 0, depth: 1, isGroup: false, subtreeDepth: 0 },
+    ];
+    const r = classifyDrop({
+      pointerX: 10,
+      items: nested,
+      dwellSatisfied: false,
+      draggedRef: { kind: "group", id: "g2" },
+      draggedSubtreeDepth: MAX_GROUP_DEPTH,
+    });
+    expect(r).toEqual({ kind: "insert", parentId: null, index: 1 });
+  });
+
+  it("a dragged GROUP over a member tab climbs out to beside the group", () => {
+    // Hovering g1's member tab must not preview nesting: the target climbs
+    // to g1's own level.
+    const nested: DropItem[] = [
+      { ref: { kind: "group", id: "g1" }, left: 0, width: 300, parentId: null, index: 1, depth: 0, isGroup: true, subtreeDepth: 1 },
+      { ref: { kind: "repo", locator: "a" }, left: 40, width: 220, parentId: "g1", index: 0, depth: 1, isGroup: false, subtreeDepth: 0 },
+    ];
+    const drag = { draggedRef: { kind: "group", id: "g2" } as const, draggedSubtreeDepth: 1 };
+    // left half of the tab -> before g1; right half -> after g1
+    expect(classifyDrop({ pointerX: 60, items: nested, dwellSatisfied: false, ...drag })).toEqual(
+      { kind: "insert", parentId: null, index: 1 },
+    );
+    expect(classifyDrop({ pointerX: 250, items: nested, dwellSatisfied: false, ...drag })).toEqual(
+      { kind: "insert", parentId: null, index: 2 },
     );
   });
 

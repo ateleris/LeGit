@@ -9,7 +9,7 @@ use crate::error::AppError;
 
 /// Hardcoded build constant, deliberately not a user setting. Mirrored as
 /// MAX_GROUP_DEPTH in src/panels/repoTabStrip/stripModel.ts.
-pub const MAX_GROUP_DEPTH: usize = 3;
+pub const MAX_GROUP_DEPTH: usize = 1;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type, Default)]
 pub struct RepoGroupsDoc {
@@ -150,16 +150,6 @@ fn find_group_mut<'a>(items: &'a mut [GroupItem], id: &str) -> Option<&'a mut Re
     None
 }
 
-fn group_count(items: &[GroupItem]) -> usize {
-    items
-        .iter()
-        .map(|it| match it {
-            GroupItem::Repo(_) => 0,
-            GroupItem::Group(g) => 1 + group_count(&g.items),
-        })
-        .sum()
-}
-
 fn valid_hex_color(s: &str) -> bool {
     match s.strip_prefix('#') {
         Some(h) => {
@@ -189,7 +179,24 @@ pub fn apply_op(
     new_group_id: &str,
 ) -> Result<RepoGroupsDoc, AppError> {
     let mut items = doc.items.clone();
-    let default_name = format!("Group {}", group_count(&items) + 1);
+    // Smallest free "Group N" by NAME: counting groups would let invisible
+    // ghosts (all-closed members) or renames skew the numbering.
+    let default_name = {
+        let mut names = std::collections::HashSet::new();
+        fn collect<'a>(items: &'a [GroupItem], out: &mut std::collections::HashSet<&'a str>) {
+            for it in items {
+                if let GroupItem::Group(g) = it {
+                    out.insert(g.name.as_str());
+                    collect(&g.items, out);
+                }
+            }
+        }
+        collect(&items, &mut names);
+        (1..)
+            .map(|n| format!("Group {n}"))
+            .find(|candidate| !names.contains(candidate.as_str()))
+            .expect("some number is free")
+    };
     let new_group = |wrapped: Vec<GroupItem>| {
         GroupItem::Group(RepoGroup {
             id: new_group_id.to_string(),
@@ -1055,14 +1062,16 @@ mod tests {
 
     #[test]
     fn normalize_flattens_beyond_depth_cap() {
+        // cap 1: a group holds only repos - nested groups are absorbed.
         let d = doc(vec![group(
             "g1",
-            vec![group("g2", vec![group("g3", vec![group("g4", vec![repo("a")])])])],
+            vec![group("g2", vec![group("g3", vec![repo("a")])]), repo("b")],
         )]);
-        let n = normalize(&d, &open(&["a"]));
-        assert!(find_group(&n.items, "g4").is_none());
-        let g3 = find_group(&n.items, "g3").unwrap();
-        assert_eq!(g3.items, vec![repo("a")]);
+        let n = normalize(&d, &open(&["a", "b"]));
+        assert!(find_group(&n.items, "g2").is_none());
+        assert!(find_group(&n.items, "g3").is_none());
+        let g1 = find_group(&n.items, "g1").unwrap();
+        assert_eq!(g1.items, vec![repo("a"), repo("b")]);
     }
 
     #[test]
@@ -1074,7 +1083,8 @@ mod tests {
         };
         let n = apply_op(&d, &op, &open(&["a", "b", "c"]), "new-id").unwrap();
         let g = find_group(&n.items, "new-id").unwrap();
-        assert_eq!(g.name, "Group 2"); // one group existed before
+        // smallest free "Group N" NAME: ghosts or odd names never inflate it
+        assert_eq!(g.name, "Group 1");
         assert_eq!(all_locators(&RepoGroupsDoc { items: g.items.clone() }), vec!["a", "b"]);
         // the new group sits where a sat: first item
         assert!(matches!(&n.items[0], GroupItem::Group(g) if g.id == "new-id"));
@@ -1082,11 +1092,33 @@ mod tests {
     }
 
     #[test]
+    fn default_group_names_take_the_smallest_free_number() {
+        let d = doc(vec![
+            group("a1", vec![repo("a")]),
+            group("b1", vec![repo("b")]),
+            repo("c"),
+            repo("d"),
+        ]);
+        // name the existing groups "Group 1" and "Group 3"
+        let d = apply_op(&d, &RepoGroupsOp::Rename { group_id: "a1".into(), name: "Group 1".into() }, &open(&["a","b","c","d"]), "n").unwrap();
+        let d = apply_op(&d, &RepoGroupsOp::Rename { group_id: "b1".into(), name: "Group 3".into() }, &open(&["a","b","c","d"]), "n").unwrap();
+        let n = apply_op(
+            &d,
+            &RepoGroupsOp::MergeIntoGroup {
+                dragged: ItemRef::Repo { locator: "d".into() },
+                target: ItemRef::Repo { locator: "c".into() },
+            },
+            &open(&["a", "b", "c", "d"]),
+            "new-id",
+        )
+        .unwrap();
+        assert_eq!(find_group(&n.items, "new-id").unwrap().name, "Group 2");
+    }
+
+    #[test]
     fn merge_nested_at_cap_is_rejected() {
-        let d = doc(vec![group(
-            "g1",
-            vec![group("g2", vec![group("g3", vec![repo("a"), repo("b")])])],
-        )]);
+        // Members of a group sit AT the cap: merging two of them would nest.
+        let d = doc(vec![group("g1", vec![repo("a"), repo("b")])]);
         let op = RepoGroupsOp::MergeIntoGroup {
             dragged: ItemRef::Repo { locator: "b".into() },
             target: ItemRef::Repo { locator: "a".into() },
@@ -1530,18 +1562,15 @@ mod tests {
 
     #[test]
     fn import_flattens_beyond_depth_cap() {
+        // A doc from a build with a higher cap arrives nested: absorbed.
         let synced = serde_json::json!([
             { "id": "g1", "name": "g1", "color": null, "items": [
-                { "id": "g2", "name": "g2", "color": null, "items": [
-                    { "id": "g3", "name": "g3", "color": null, "items": [
-                        { "id": "g4", "name": "g4", "color": null, "items": ["k"] },
-                    ]},
-                ]},
+                { "id": "g2", "name": "g2", "color": null, "items": ["k"] },
             ]},
         ]);
         let n = import_groups(&doc(vec![]), &synced, &keys(&[]));
-        assert!(find_group(&n.items, "g4").is_none());
-        assert_eq!(find_group(&n.items, "g3").unwrap().items, vec![pending("k")]);
+        assert!(find_group(&n.items, "g2").is_none());
+        assert_eq!(find_group(&n.items, "g1").unwrap().items, vec![pending("k")]);
     }
 
     #[test]

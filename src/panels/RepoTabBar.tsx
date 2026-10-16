@@ -241,7 +241,19 @@ function RepoTabBarInner() {
   const tabMenuSection = (repo: RepoSummary, color: string | null) => {
     const ref: ItemRef = { kind: "repo", locator: repo.locator ?? "" };
     const meta = renderMeta.get(refKey(ref));
-    const groups = listGroups(groupsDoc);
+    // Only groups the strip actually shows: a ghost group (all members
+    // closed) survives in the doc but must not be reachable from the menu.
+    const visibleGroupIds = new Set<string>();
+    const collectVisible = (nodes: StripNode[]) => {
+      for (const n of nodes) {
+        if (n.kind === "group") {
+          visibleGroupIds.add(n.group.id);
+          collectVisible(n.children);
+        }
+      }
+    };
+    collectVisible(stripNodes);
+    const groups = listGroups(groupsDoc).filter((g) => visibleGroupIds.has(g.id));
     const parentMeta = meta?.parentId != null ? renderMeta.get(`group:${meta.parentId}`) : undefined;
     return (
       <>

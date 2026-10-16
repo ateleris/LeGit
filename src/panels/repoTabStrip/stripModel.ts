@@ -7,7 +7,7 @@ import type { ItemRef, RepoGroup, RepoGroupsDoc, RepoSummary } from "../../lib/t
 
 /** Mirrors MAX_GROUP_DEPTH in src-tauri/src/repo_groups.rs (the enforcement
  * authority); this copy only gates drag previews. */
-export const MAX_GROUP_DEPTH = 3;
+export const MAX_GROUP_DEPTH = 1;
 
 /** MoveItem index meaning "at the parent's end" (u32::MAX; the backend
  * clamps to the list length). */
@@ -324,9 +324,13 @@ export function classifyDrop(args: {
     .filter((it) => pointerX >= it.left && pointerX < it.left + it.width)
     .sort((a, b) => b.depth - a.depth)[0];
 
+  // Whether the dragged item may live INSIDE `group` without busting the cap.
+  const fitsInside = (group: DropItem) =>
+    group.depth + 1 + draggedSubtreeDepth <= MAX_GROUP_DEPTH;
+
   // An emptied group kept by the drag preview: dropping on it means "put the
   // item (back) inside", never "merge with the placeholder".
-  if (under?.isEmpty && under.ref.kind === "group") {
+  if (under?.isEmpty && under.ref.kind === "group" && fitsInside(under)) {
     return { kind: "insert", parentId: under.ref.id, index: 0 };
   }
 
@@ -352,7 +356,7 @@ export function classifyDrop(args: {
     // area, or the gaps between members): insert INSIDE the group at the
     // nearest gap, so nested boundaries peel one level per edge crossed. A
     // collapsed group shows no children and keeps meaning "beside it".
-    if (under.isGroup) {
+    if (under.isGroup && fitsInside(under)) {
       const children = items
         .filter((it) => it.parentId === (under.ref as { id: string }).id)
         .sort((a, b) => a.left - b.left);
@@ -365,7 +369,28 @@ export function classifyDrop(args: {
       }
     }
     const before = pointerX < under.left + under.width / 2;
-    return { kind: "insert", parentId: under.parentId, index: before ? under.index : under.index + 1 };
+    let target = {
+      parentId: under.parentId,
+      index: before ? under.index : under.index + 1,
+    };
+    // Climb out of any enclosing group the dragged item cannot legally live
+    // in (a dragged GROUP over a member tab must land BESIDE the group, not
+    // nested inside it).
+    const groupById = new Map(
+      items
+        .filter((it) => it.ref.kind === "group")
+        .map((it) => [(it.ref as { id: string }).id, it] as const),
+    );
+    while (target.parentId != null) {
+      const parent = groupById.get(target.parentId);
+      if (!parent || fitsInside(parent)) break;
+      target = {
+        parentId: parent.parentId,
+        index:
+          pointerX < parent.left + parent.width / 2 ? parent.index : parent.index + 1,
+      };
+    }
+    return { kind: "insert", ...target };
   }
 
   // In a gap (or past the ends): insert among the ROOT items.
