@@ -9,6 +9,10 @@ import type { ItemRef, RepoGroup, RepoGroupsDoc, RepoSummary } from "../../lib/t
  * authority); this copy only gates drag previews. */
 export const MAX_GROUP_DEPTH = 3;
 
+/** MoveItem index meaning "at the parent's end" (u32::MAX; the backend
+ * clamps to the list length). */
+export const APPEND_AT_END = 4294967295;
+
 export type StripNode =
   | {
       kind: "repo";

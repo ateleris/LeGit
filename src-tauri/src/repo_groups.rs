@@ -335,12 +335,9 @@ pub fn apply_op(
             }
         }
         RepoGroupsOp::Rename { group_id, name } => {
-            let name = name.trim();
-            if name.is_empty() {
-                return Err(err("group name must not be empty"));
-            }
+            // Empty is legal: a color-only group.
             let g = find_group_mut(&mut items, group_id).ok_or_else(|| err("group not found"))?;
-            g.name = name.to_string();
+            g.name = name.trim().to_string();
         }
         RepoGroupsOp::SetColor { group_id, color } => {
             if let Some(c) = color {
@@ -485,6 +482,41 @@ pub fn flatten_open(doc: &RepoGroupsDoc, open: &[String]) -> Vec<String> {
     all
 }
 
+/// Move `locator`'s item right next to `anchor_locator` (after it, in the
+/// anchor's parent): a freshly opened submodule spawns beside its
+/// superproject, joining its group. Unchanged when either side is missing.
+pub fn place_after(doc: &RepoGroupsDoc, locator: &str, anchor_locator: &str) -> RepoGroupsDoc {
+    let anchor = ItemRef::Repo { locator: anchor_locator.to_string() };
+    let moved_ref = ItemRef::Repo { locator: locator.to_string() };
+    if ancestors_of_ref(&doc.items, &anchor, 0).is_none() {
+        return doc.clone();
+    }
+    let mut items = doc.items.clone();
+    let Some(moved) = remove_ref(&mut items, &moved_ref) else {
+        return doc.clone();
+    };
+    fn insert_after(items: &mut Vec<GroupItem>, anchor: &ItemRef, moved: &mut Option<GroupItem>) {
+        if let Some(pos) = items.iter().position(|it| item_is_ref(it, anchor)) {
+            if let Some(m) = moved.take() {
+                items.insert(pos + 1, m);
+            }
+            return;
+        }
+        for it in items {
+            if let GroupItem::Group(g) = it {
+                insert_after(&mut g.items, anchor, moved);
+                if moved.is_none() {
+                    return;
+                }
+            }
+        }
+    }
+    let mut slot = Some(moved);
+    insert_after(&mut items, &anchor, &mut slot);
+    debug_assert!(slot.is_none(), "anchor existence checked above");
+    RepoGroupsDoc { items }
+}
+
 /// Reorder the ROOT repo items to `ordered`'s relative order; groups keep
 /// their indices and their contents. Root repos missing from `ordered` keep
 /// their relative order after the ordered ones.
@@ -615,10 +647,8 @@ pub fn import_groups(
             Some(serde_json::Value::String(s)) => valid_hex_color(s).then(|| s.clone()),
             Some(_) => return None,
         };
-        let name = o.get("name")?.as_str()?;
-        if name.trim().is_empty() {
-            return None;
-        }
+        // An empty name is legal (a color-only group); trim like the op does.
+        let name = o.get("name")?.as_str()?.trim();
         Some(SGroup {
             id: o.get("id")?.as_str()?.to_string(),
             name: name.to_string(),
@@ -1307,16 +1337,18 @@ mod tests {
     }
 
     #[test]
-    fn rename_rejects_empty() {
+    fn rename_trims_and_allows_empty_names() {
+        // An empty name is legal: a color-only group.
         let d = doc(vec![group("g1", vec![repo("a")])]);
         let o = open(&["a"]);
-        assert!(apply_op(
+        let cleared = apply_op(
             &d,
             &RepoGroupsOp::Rename { group_id: "g1".into(), name: "   ".into() },
             &o,
-            "n"
+            "n",
         )
-        .is_err());
+        .unwrap();
+        assert_eq!(find_group(&cleared.items, "g1").unwrap().name, "");
         let n = apply_op(
             &d,
             &RepoGroupsOp::Rename { group_id: "g1".into(), name: "  Work  ".into() },
@@ -1471,10 +1503,16 @@ mod tests {
             serde_json::json!({ "not": "an array" }),
             serde_json::json!([{ "id": 7, "name": "x", "items": [] }]),
             serde_json::json!([{ "id": "g", "name": "x", "items": [42] }]),
-            serde_json::json!([{ "id": "g", "name": "   ", "items": [] }]),
         ] {
             assert_eq!(import_groups(&local, &garbage, &km), local, "accepted {garbage}");
         }
+    }
+
+    #[test]
+    fn import_accepts_empty_group_names() {
+        let synced = serde_json::json!([{ "id": "g1", "name": "  ", "color": null, "items": [] }]);
+        let n = import_groups(&doc(vec![]), &synced, &keys(&[]));
+        assert_eq!(find_group(&n.items, "g1").unwrap().name, "");
     }
 
     #[test]
@@ -1504,6 +1542,20 @@ mod tests {
         let n = import_groups(&doc(vec![]), &synced, &keys(&[]));
         assert!(find_group(&n.items, "g4").is_none());
         assert_eq!(find_group(&n.items, "g3").unwrap().items, vec![pending("k")]);
+    }
+
+    #[test]
+    fn place_after_puts_a_repo_beside_its_anchor_joining_its_group() {
+        // A fresh submodule tab spawns right of its superproject, inheriting
+        // the super's group; a missing anchor leaves the doc unchanged.
+        let d = doc(vec![group("g1", vec![repo("super"), repo("x")]), repo("new")]);
+        let n = place_after(&d, "new", "super");
+        let g = find_group(&n.items, "g1").unwrap();
+        assert_eq!(all_locators(&RepoGroupsDoc { items: g.items.clone() }), vec!["super", "new", "x"]);
+        let root = doc(vec![repo("super"), repo("a"), repo("new")]);
+        assert_eq!(all_locators(&place_after(&root, "new", "super")), vec!["super", "new", "a"]);
+        let missing = place_after(&d, "new", "gone");
+        assert_eq!(missing, d);
     }
 
     #[test]

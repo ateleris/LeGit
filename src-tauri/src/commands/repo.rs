@@ -129,7 +129,8 @@ pub async fn open_session(
     let groups_session = session.clone();
     tokio::spawn(async move {
         let state = groups_app.state::<AppState>();
-        crate::commands::repo_groups::record_repo_opened(&state, &groups_session).await;
+        crate::commands::repo_groups::record_repo_opened(&state, &groups_app, &groups_session)
+            .await;
     });
     summary
 }
@@ -384,7 +385,21 @@ pub(crate) async fn probe_and_open(
 
     // open_session reuses an existing session for this directory (identity
     // comparison, atomically with the insert) or creates one.
+    // An already-open repo is only focused, never re-placed: the beside-the-
+    // superproject placement applies to tabs this open CREATES.
+    let already_open = {
+        let repos = state.repos.read().await;
+        repos.values().any(|s| sessions_match(s, &toplevel_locator))
+    };
     let summary = open_session(state, app, git_path, host, toplevel_locator).await;
+    // Awaited (not spawned): the frontend fetches the groups doc right after
+    // this command resolves, and a submodule must already sit beside its
+    // superproject there - never one frame at a stale remembered spot.
+    if !already_open {
+        if let Ok(session) = state.get_session(&summary.id).await {
+            crate::commands::repo_groups::place_user_opened(state, &session).await;
+        }
+    }
 
     warn_if_bookkeeping_persist_failed(
         "record opened repo",

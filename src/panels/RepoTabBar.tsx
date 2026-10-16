@@ -3,19 +3,16 @@ import { useQuery } from "@tanstack/react-query";
 import { useRepoStore } from "../store/repos";
 import { useRepoGroupsStore } from "../store/repoGroups";
 import {
+  APPEND_AT_END,
   buildStripModel,
-  classifyDrop,
-  visibleDepth,
   collectItemMeta,
   cssColorToHex,
-  type DropItem,
-  type DropTarget,
   listGroups,
-  moveOpIndex,
-  previewMove,
   refKey,
   type StripNode,
+  visibleDepth,
 } from "./repoTabStrip/stripModel";
+import { DRAG_THRESHOLD, MERGE_DWELL_MS, useGroupedDrag } from "./repoTabStrip/useGroupedDrag";
 import { onGlobalSettingsChanged } from "../lib/events";
 import type { ItemRef, RepoGroup, RepoGroupsDoc, RepoSummary } from "../lib/types";
 import { PanelContextMenuProvider, usePanelContextMenu } from "./shared/menu/PanelContextMenu";
@@ -34,13 +31,6 @@ import { HostBadge } from "./shared/HostBadge";
 import { WatchOffBadge } from "./shared/WatchOffBadge";
 import { useCloneStore } from "../store/clone";
 import { STALE } from "../lib/queryTiming";
-
-const DRAG_THRESHOLD = 4; // px before a press becomes a drag
-const MERGE_DWELL_MS = 350; // center-zone rest before a drop means "group up"
-// Hysteresis for the live preview: a re-layout shifts the snap zones under a
-// stationary pointer, so only pointer TRAVEL since the last applied move may
-// trigger the next one - never the layout shift itself (no cascades).
-const REARRANGE_HYSTERESIS = 16; // px
 
 export function RepoTabBar() {
   return (
@@ -64,17 +54,6 @@ function RepoTabBarInner() {
   const { openMenu, closeMenu } = usePanelContextMenu();
   const groupEls = useRef(new Map<string, HTMLDivElement>());
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
-  const [draggingKey, setDraggingKey] = useState<string | null>(null);
-  const [dropPreview, setDropPreview] = useState<DropTarget | null>(null);
-  /** Live drag preview: the doc as if the pending insert already happened.
-   * Rendered in place of the store doc while dragging; merge targets keep
-   * the highlight instead. */
-  const [previewDoc, setPreviewDoc] = useState<RepoGroupsDoc | null>(null);
-  /** The grouped-drag float: the dragged element follows the pointer while
-   * its layout slot holds the space (same feel as the flat reorder). */
-  const [floatX, setFloatX] = useState(0);
-  const floatXRef = useRef(0);
-  const desiredClientLeftRef = useRef(0);
   const colorInputRef = useRef<HTMLInputElement | null>(null);
   const colorTargetRef = useRef<ItemRef | null>(null);
   /** Where the hidden color input sits: the native picker anchors to it, so
@@ -111,6 +90,17 @@ function RepoTabBarInner() {
   const [order, setOrder] = useState<string[] | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragX, setDragX] = useState(0);
+
+  // The group-aware drag machine (live preview, dwell-merge, stability).
+  const drag = useGroupedDrag({
+    tabEls,
+    groupEls,
+    applyOp: applyGroupsOp,
+    onGroupCreated: setRenamingGroupId,
+    onDragEnd: markJustDragged,
+    isRenaming: () => renamingGroupId != null,
+  });
+  const { beginItemDrag, draggingKey, mergeTargetKey, previewDoc, floatX, elForKey } = drag;
 
   // After the order changes mid-drag the dragged tab moves to a new slot; its
   // base offsetLeft changed, so recompute the follow offset against the new
@@ -198,26 +188,12 @@ function RepoTabBarInner() {
   const hasGroups = stripNodes.some((n) => n.kind === "group");
   const stripDepth = visibleDepth(stripNodes);
   const renderMeta = collectItemMeta(displayDoc);
-  // The drag handlers close over the drag-start render; these refs hand them
-  // the CURRENT layout while the live preview re-renders the strip.
-  const stripNodesRef = useRef(stripNodes);
-  stripNodesRef.current = stripNodes;
-  const renderMetaRef = useRef(renderMeta);
-  renderMetaRef.current = renderMeta;
-  const displayDocRef = useRef(displayDoc);
-  displayDocRef.current = displayDoc;
+  // The drag machine reads the CURRENT layout through this ref while its
+  // live preview re-renders the strip.
+  drag.layout.current = { stripNodes, renderMeta, displayDoc, groupsDoc, openRepos };
 
   const previewClass = (ref: ItemRef): string =>
-    dropPreview?.kind === "merge" && refKey(dropPreview.target) === refKey(ref)
-      ? " is-merge-target"
-      : "";
-
-  const elForKey = (key: string): HTMLElement | undefined => {
-    if (key.startsWith("group:")) return groupEls.current.get(key.slice("group:".length));
-    const locator = key.slice("repo:".length);
-    const repo = openRepos.find((r) => r.locator === locator);
-    return repo ? tabEls.current.get(repo.id) : undefined;
-  };
+    mergeTargetKey === refKey(ref) ? " is-merge-target" : "";
 
   /** Style that floats the dragged element under the pointer (grouped drag);
    * its layout box stays in the preview slot and holds the space. */
@@ -230,245 +206,6 @@ function RepoTabBarInner() {
           cursor: "grabbing",
         }
       : null;
-
-  // The preview re-layout moves the dragged element's base position; recompute
-  // the follow offset against the new layout before paint (flat-mode's
-  // useLayoutEffect pattern, in client space because groups nest positioned
-  // ancestors).
-  useLayoutEffect(() => {
-    if (!draggingKey) return;
-    const el = elForKey(draggingKey);
-    if (!el) return;
-    const base = el.getBoundingClientRect().left - floatXRef.current;
-    const next = desiredClientLeftRef.current - base;
-    floatXRef.current = next;
-    setFloatX(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [previewDoc, draggingKey]);
-
-  /** Group-aware drag: dim the dragged item, preview merge/insert targets
-   * live (center dwell = merge), send ONE op on release. Runs whenever the
-   * strip has groups; the flat live-reorder below covers the rest. */
-  const beginItemDrag = (e: React.PointerEvent, ref: ItemRef) => {
-    if (e.button !== 0) return;
-    if ((e.target as HTMLElement).closest(".legit-tab__close")) return;
-    if (renamingGroupId) return;
-    const draggedKey = refKey(ref);
-    const draggedMeta = renderMeta.get(draggedKey);
-    if (!draggedMeta) return;
-    const info = {
-      startX: e.clientX,
-      startY: e.clientY,
-      moved: false,
-      lastX: e.clientX,
-      dwellKey: null as string | null,
-      dwellSince: 0,
-      mergeTarget: null as ItemRef | null,
-      lastAppliedX: null as number | null,
-      prevSlot: null as string | null,
-    };
-    let dwellTimer: ReturnType<typeof setTimeout> | null = null;
-    let settleTimer: ReturnType<typeof setTimeout> | null = null;
-    const grabOffset =
-      e.clientX - (elForKey(draggedKey)?.getBoundingClientRect().left ?? e.clientX);
-
-    const collectItems = (): DropItem[] => {
-      const items: DropItem[] = [];
-      const meta = renderMetaRef.current;
-      const visit = (nodes: StripNode[]) => {
-        for (const n of nodes) {
-          const r: ItemRef =
-            n.kind === "repo"
-              ? { kind: "repo", locator: n.repo.locator ?? "" }
-              : { kind: "group", id: n.group.id };
-          const key = refKey(r);
-          if (key === draggedKey) continue; // the dragged subtree is no target
-          const el =
-            n.kind === "repo" ? tabEls.current.get(n.repo.id) : groupEls.current.get(n.group.id);
-          const m = meta.get(key);
-          if (el && m) {
-            const rect = el.getBoundingClientRect();
-            items.push({
-              ref: r,
-              left: rect.left,
-              width: rect.width,
-              parentId: m.parentId,
-              index: m.index,
-              depth: m.depth,
-              isGroup: n.kind === "group",
-              subtreeDepth: m.subtreeDepth,
-              isEmpty: n.kind === "group" && n.group.items.length === 0,
-            });
-          }
-          if (n.kind === "group") visit(n.children);
-        }
-      };
-      visit(stripNodesRef.current);
-      return items;
-    };
-
-    const evaluate = (fromSettle = false) => {
-      if (dwellTimer) {
-        clearTimeout(dwellTimer);
-        dwellTimer = null;
-      }
-      if (settleTimer) {
-        clearTimeout(settleTimer);
-        settleTimer = null;
-      }
-      const base = {
-        pointerX: info.lastX,
-        items: collectItems(),
-        draggedRef: ref,
-        draggedSubtreeDepth: draggedMeta.subtreeDepth,
-      };
-      const probe = classifyDrop({ ...base, dwellSatisfied: true });
-      const candidate = probe.kind === "merge" ? refKey(probe.target) : null;
-      const now = performance.now();
-      if (candidate !== info.dwellKey) {
-        info.dwellKey = candidate;
-        info.dwellSince = now;
-      }
-      const dwellOk = candidate != null && now - info.dwellSince >= MERGE_DWELL_MS;
-      if (dwellOk && probe.kind === "merge") {
-        // Group formation keeps the highlight; the layout freezes meanwhile.
-        info.mergeTarget = probe.target;
-        setDropPreview(probe);
-      } else {
-        info.mergeTarget = null;
-        setDropPreview(null);
-        const result = classifyDrop({ ...base, dwellSatisfied: false });
-        if (result.kind === "insert") {
-          // Live preview: rearrange the strip as if the drop already landed.
-          const cur = renderMetaRef.current.get(draggedKey);
-          // A group that grew to make space keeps the item until the pointer
-          // actually LEAVES its bounds: a target outside an enclosing group
-          // is ignored while the pointer is still inside that group's rect.
-          if (cur) {
-            const within = (parentId: string | null, groupId: string): boolean => {
-              let p = parentId;
-              while (p != null) {
-                if (p === groupId) return true;
-                p = renderMetaRef.current.get(`group:${p}`)?.parentId ?? null;
-              }
-              return false;
-            };
-            let anchor = cur.parentId;
-            while (anchor != null) {
-              const el = groupEls.current.get(anchor);
-              if (el) {
-                const r = el.getBoundingClientRect();
-                if (
-                  info.lastX >= r.left &&
-                  info.lastX < r.right &&
-                  !within(result.parentId, anchor)
-                ) {
-                  return;
-                }
-              }
-              anchor = renderMetaRef.current.get(`group:${anchor}`)?.parentId ?? null;
-            }
-          }
-          const same =
-            cur != null &&
-            result.parentId === cur.parentId &&
-            (result.index === cur.index || result.index === cur.index + 1);
-          const travelled =
-            fromSettle ||
-            info.lastAppliedX == null ||
-            Math.abs(info.lastX - info.lastAppliedX) >= REARRANGE_HYSTERESIS;
-          const slotKey = `${result.parentId}:${result.index}`;
-          // Settling may never bounce the item back into the slot it just
-          // left: that re-target comes from the layout shift, not intent.
-          const bounced = fromSettle && slotKey === info.prevSlot;
-          if (!same && travelled && !bounced) {
-            info.prevSlot = cur ? `${cur.parentId}:${cur.index}` : null;
-            info.lastAppliedX = info.lastX;
-            setPreviewDoc(
-              previewMove(displayDocRef.current, ref, result.parentId, result.index),
-            );
-          } else if (!same && !travelled && slotKey !== info.prevSlot) {
-            // Suppressed by hysteresis: a resting pointer still reaches the
-            // slot after a short settle.
-            settleTimer = setTimeout(() => evaluate(true), 150);
-          }
-        }
-      }
-      // A resting pointer still completes the dwell.
-      if (candidate != null && !dwellOk) {
-        dwellTimer = setTimeout(evaluate, MERGE_DWELL_MS - (now - info.dwellSince) + 10);
-      }
-    };
-
-    const onMove = (ev: PointerEvent) => {
-      if (!info.moved) {
-        if (
-          Math.abs(ev.clientX - info.startX) < DRAG_THRESHOLD &&
-          Math.abs(ev.clientY - info.startY) < DRAG_THRESHOLD
-        ) {
-          return;
-        }
-        info.moved = true;
-        setDraggingKey(draggedKey);
-      }
-      info.lastX = ev.clientX;
-      // Follow the pointer: translate relative to the element's current
-      // layout slot (which the live preview moves underneath it).
-      desiredClientLeftRef.current = ev.clientX - grabOffset;
-      const el = elForKey(draggedKey);
-      if (el) {
-        const base = el.getBoundingClientRect().left - floatXRef.current;
-        const next = desiredClientLeftRef.current - base;
-        floatXRef.current = next;
-        setFloatX(next);
-      }
-      evaluate();
-    };
-
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      if (dwellTimer) clearTimeout(dwellTimer);
-      if (settleTimer) clearTimeout(settleTimer);
-      setDraggingKey(null);
-      setDropPreview(null);
-      floatXRef.current = 0;
-      setFloatX(0);
-      if (!info.moved) {
-        setPreviewDoc(null);
-        return;
-      }
-      markJustDragged();
-      if (info.mergeTarget) {
-        const target = info.mergeTarget;
-        const before = new Set(listGroups(groupsDoc).map((g) => g.id));
-        void applyGroupsOp({ op: "merge_into_group", dragged: ref, target })
-          .then((doc) => {
-            const created = doc && listGroups(doc).find((g) => !before.has(g.id));
-            if (created) setRenamingGroupId(created.id);
-          })
-          .finally(() => setPreviewDoc(null));
-        return;
-      }
-      // Commit the previewed position (converted to the backend's
-      // item-still-in-place index convention).
-      const orig = collectItemMeta(groupsDoc).get(draggedKey);
-      const fin = collectItemMeta(displayDocRef.current).get(draggedKey);
-      if (orig && fin && (fin.parentId !== orig.parentId || fin.index !== orig.index)) {
-        void applyGroupsOp({
-          op: "move_item",
-          item: ref,
-          parent: fin.parentId,
-          index: moveOpIndex(orig, fin.parentId, fin.index),
-        }).finally(() => setPreviewDoc(null));
-      } else {
-        setPreviewDoc(null);
-      }
-    };
-
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  };
 
   const newGroupWith = (ref: ItemRef) => {
     const before = new Set(listGroups(groupsDoc).map((g) => g.id));
@@ -521,7 +258,7 @@ function RepoTabBarInner() {
                     op: "move_item",
                     item: ref,
                     parent: g.id,
-                    index: 4294967295,
+                    index: APPEND_AT_END,
                   });
                 }}
               >
@@ -698,8 +435,8 @@ function RepoTabBarInner() {
       if (armed !== (mergeTargetId != null) || (armed && mergeTargetId !== hovered)) {
         mergeTargetId = armed ? hovered : null;
         const locator = armed && hovered != null ? locatorOf(hovered) : undefined;
-        setDropPreview(
-          armed && locator != null ? { kind: "merge", target: { kind: "repo", locator } } : null,
+        drag.setMergeTarget(
+          armed && locator != null ? { kind: "repo", locator } : null,
         );
       }
       if (hovered != null && !armed) {
@@ -755,7 +492,7 @@ function RepoTabBarInner() {
       if (dwellTimer) clearTimeout(dwellTimer);
       const info = dragInfo.current;
       dragInfo.current = null;
-      setDropPreview(null);
+      drag.setMergeTarget(null);
       if (info?.moved) {
         markJustDragged(); // suppress the click that follows
         const draggedLocator = locatorOf(info.id);
@@ -925,6 +662,7 @@ function RepoTabBarInner() {
           initialValue={group.name}
           title="Group name"
           cancelOnBlur
+          allowEmpty
           style={{
             fontSize: "var(--fz-sm)",
             height: "calc(var(--ui-font-size) * 1.25)",

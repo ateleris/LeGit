@@ -19,6 +19,8 @@ lives in the git log and the GitHub release notes.
   style)
 - Individual repository tabs can be given a custom color (context menu),
   synced like group colors
+- Opening a submodule places its tab right of its superproject, joining
+  the superproject's group
 
 ### Changed
 

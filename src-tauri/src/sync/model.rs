@@ -180,6 +180,17 @@ pub fn import_synced_settings(
             groups,
             &local.repo_remote_keys,
         );
+        // The strip order follows the doc; realign the open list with the
+        // imported structure, keeping entries the doc does not know (e.g.
+        // restore's kept-but-unopenable hosts) at the end.
+        let mut open =
+            crate::repo_groups::flatten_open(&next.repo_groups, &local.currently_open);
+        for p in &local.currently_open {
+            if !open.contains(p) {
+                open.push(p.clone());
+            }
+        }
+        next.currently_open = open;
     }
     if local.sync_git_profiles {
         next.git_profiles_doc = localized_profiles_doc(&next.git_profiles_doc, &local_home());
@@ -352,6 +363,43 @@ mod tests {
             if r.locator.as_deref() == Some("/receiver/path")));
         // the receiver's bookkeeping map stays its own
         assert!(merged.repo_remote_keys.contains_key("/receiver/path"));
+    }
+
+    #[test]
+    fn import_realigns_currently_open_with_the_imported_doc_order() {
+        use crate::repo_groups::{GroupItem, GroupRepoRef, RepoGroup};
+        let mut sender = GlobalSettings::default();
+        sender.repo_groups.items.push(GroupItem::Group(RepoGroup {
+            id: "g1".into(),
+            name: "g1".into(),
+            color: None,
+            collapsed: false,
+            items: vec![GroupItem::Repo(GroupRepoRef {
+                locator: Some("/sender/b".into()),
+                remote_key: Some("kb".into()),
+                color: None,
+            })],
+        }));
+        let mut receiver = GlobalSettings::default();
+        // locally b is ordered BEFORE a; the imported doc ends up [a, g1(b)],
+        // so currently_open must realign to the doc order (kept-but-unknown
+        // entries stay at the end).
+        receiver.currently_open = vec!["/r/b".into(), "/r/a".into(), "wsl://Down/kept".into()];
+        receiver.repo_remote_keys.insert("/r/b".into(), "kb".into());
+        receiver.repo_groups.items.push(GroupItem::Repo(GroupRepoRef {
+            locator: Some("/r/a".into()),
+            remote_key: None,
+            color: None,
+        }));
+        let merged =
+            import_synced_settings(&receiver, &export_synced_settings(&sender)).unwrap();
+        assert_eq!(merged.currently_open, vec!["/r/a", "/r/b", "wsl://Down/kept"]);
+        // and the doc itself holds b inside g1
+        let holds_b = matches!(&merged.repo_groups.items.iter().find_map(|it| match it {
+            GroupItem::Group(g) if g.id == "g1" => Some(g.items.clone()),
+            _ => None,
+        }), Some(items) if matches!(&items[0], GroupItem::Repo(r) if r.locator.as_deref() == Some("/r/b")));
+        assert!(holds_b);
     }
 
     #[test]

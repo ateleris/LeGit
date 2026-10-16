@@ -155,6 +155,10 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
 
   async openRepo(path: string) {
     const summary = await api.openRepo(path);
+    // Fetch the groups doc BEFORE the new tab renders: the backend placed it
+    // (e.g. a submodule beside its superproject) by the time open resolved,
+    // and the stale cached doc would flash its old remembered position.
+    await useRepoGroupsStore.getState().load();
     await get().refresh();
     get().setActive(summary.id);
     return summary;
@@ -163,6 +167,7 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
   async initRepo(path, profileId, options) {
     const summary = await repoInitCmd(path, profileId, options);
     if (!summary) return null; // bare init: created, nothing to open
+    await useRepoGroupsStore.getState().load();
     await get().refresh();
     get().setActive(summary.id);
     return summary;
@@ -179,6 +184,7 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
     useSettingsStore.setState((s) =>
       s.settings ? { settings: { ...s.settings, last_clone_parent_dir: parentDir } } : s,
     );
+    await useRepoGroupsStore.getState().load();
     await get().refresh();
     get().setActive(outcome.summary.id);
     return outcome.summary;

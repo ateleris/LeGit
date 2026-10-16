@@ -66,6 +66,7 @@ export function InlineRenameInput({
   placeholder,
   pulse = false,
   cancelOnBlur = false,
+  allowEmpty = false,
 }: {
   initialValue: string;
   onSave: (value: string) => void;
@@ -82,13 +83,16 @@ export function InlineRenameInput({
   /** Abort the edit when focus leaves the input (click elsewhere, menu,
    *  window switch) instead of staying in edit mode. */
   cancelOnBlur?: boolean;
+  /** Accept an empty value as a save (group names may be blank) instead of
+   *  treating it as a cancel. */
+  allowEmpty?: boolean;
 }) {
   const [draft, setDraft] = useState(initialValue);
   const [element, setElement] = useState<HTMLInputElement | null>(null);
 
   const save = () => {
     const value = draft.trim();
-    if (value.length === 0 || value === initialValue) {
+    if ((value.length === 0 && !allowEmpty) || value === initialValue) {
       onCancel();
       return;
     }

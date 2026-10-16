@@ -88,14 +88,20 @@ pub async fn apply_repo_groups_op(
 /// Background hook after a session opens: record the repo's canonical remote
 /// key, re-home a pending synced member, and fold the repo into the doc.
 /// Must never fail or gate the open.
-pub(crate) async fn record_repo_opened(state: &AppState, session: &Arc<RepoSession>) {
+pub(crate) async fn record_repo_opened(
+    state: &AppState,
+    app: &tauri::AppHandle,
+    session: &Arc<RepoSession>,
+) {
     let key = crate::commands::profiles::repo_assignment_key(session).await;
     let locator = session.locator.to_persist_string();
     let repos_guard = state.repos.read().await;
     let session_locs: Vec<String> =
         repos_guard.values().map(|s| s.locator.to_persist_string()).collect();
+    let mut doc_changed = false;
     let res = state
         .mutate_global(|s| {
+            let before = s.repo_groups.clone();
             let open = open_set(s, &session_locs);
             if let Some(k) = &key {
                 s.repo_remote_keys.insert(locator.clone(), k.clone());
@@ -103,11 +109,61 @@ pub(crate) async fn record_repo_opened(state: &AppState, session: &Arc<RepoSessi
             let noted = repo_groups::note_repo_opened(&s.repo_groups, &locator, key.as_deref());
             s.repo_groups = repo_groups::normalize(&noted, &open);
             rewrite_currently_open(s, &open);
+            doc_changed = s.repo_groups != before;
         })
         .await;
     drop(repos_guard);
     if let Err(e) = res {
         tracing::warn!(err = %e, "repo groups: recording opened repo failed");
+    } else if doc_changed {
+        // The strip renders from the frontend's cached doc: broadcast so a
+        // just-placed tab (pending claim, submodule-beside-super) shows at
+        // its real position, not the append fallback.
+        use tauri::Emitter as _;
+        let _ = app.emit(crate::commands::persistence::GLOBAL_SETTINGS_CHANGED_EVENT, ());
+    }
+}
+
+/// A USER-initiated open places a submodule beside its open superproject
+/// (joining its group), even over a remembered position - fresh intent wins.
+/// Awaited by `probe_and_open` before the command returns, so the frontend
+/// never renders the tab at a stale spot; restore never calls this.
+pub(crate) async fn place_user_opened(state: &AppState, session: &Arc<RepoSession>) {
+    let Ok(Some(superproject)) = session.backend.superproject_path().await else {
+        return;
+    };
+    let locator = session.locator.to_persist_string();
+    let repos_guard = state.repos.read().await;
+    let session_locs: Vec<String> =
+        repos_guard.values().map(|s| s.locator.to_persist_string()).collect();
+    let super_locator = {
+        use crate::remote::RepoLocator;
+        repos_guard
+            .values()
+            .find(|s2| match (&s2.locator, &session.locator) {
+                (RepoLocator::Local { path }, RepoLocator::Local { .. }) => {
+                    path.as_path() == superproject.as_path()
+                }
+                (
+                    RepoLocator::Wsl { distro: d2, path: p2 },
+                    RepoLocator::Wsl { distro: d1, .. },
+                ) => d1 == d2 && std::path::Path::new(p2.0.as_str()) == superproject.as_path(),
+                _ => false,
+            })
+            .map(|s2| s2.locator.to_persist_string())
+    };
+    let Some(sup) = super_locator else { return };
+    let res = state
+        .mutate_global(|s| {
+            let open = open_set(s, &session_locs);
+            s.repo_groups = repo_groups::normalize(&s.repo_groups, &open);
+            s.repo_groups = repo_groups::place_after(&s.repo_groups, &locator, &sup);
+            rewrite_currently_open(s, &open);
+        })
+        .await;
+    drop(repos_guard);
+    if let Err(e) = res {
+        tracing::warn!(err = %e, "repo groups: placing submodule beside superproject failed");
     }
 }
 
