@@ -127,6 +127,7 @@ impl SettingsSyncEngine {
             exec: Arc::new(legit_core::GitRunner::for_repo(git_path, &repo)),
             repo,
             user_themes_dir: state.user_themes_dir.clone(),
+            builtin_themes_dir: state.builtin_themes_dir.clone(),
             state_path,
         })
     }

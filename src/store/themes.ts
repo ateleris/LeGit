@@ -264,8 +264,20 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
       );
     }
     const doc = raw as ThemeDocument;
-    const name = suggestedName ?? doc.name;
-    const entry = await saveTheme(name, doc);
+    let name = suggestedName ?? doc.name;
+    // Theme names share one namespace with the built-ins (the backend
+    // refuses the collision): import under a free "(custom)" name instead.
+    const themes = get().themes;
+    const builtin = new Set(
+      themes.filter((t) => t.source === "builtin").map((t) => t.name.toLowerCase()),
+    );
+    if (builtin.has(name.toLowerCase())) {
+      const taken = new Set(themes.map((t) => t.name.toLowerCase()));
+      const base = name;
+      name = `${base} (custom)`;
+      for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${base} (custom ${n})`;
+    }
+    const entry = await saveTheme(name, name === doc.name ? doc : { ...doc, name });
     await get().refreshList();
     // An import is an explicit "use this" gesture: activate it right away
     // (applies + persists). Note this discards any open editor draft.

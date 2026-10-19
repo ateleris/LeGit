@@ -94,6 +94,7 @@ pub struct AdoptedSettings(pub serde_json::Value);
 pub struct SyncCore {
     pub repo: PathBuf,
     pub user_themes_dir: PathBuf,
+    pub builtin_themes_dir: PathBuf,
     pub state_path: PathBuf,
     pub exec: Arc<dyn GitExecutor>,
 }
@@ -226,8 +227,20 @@ impl SyncCore {
             return (None, SyncStatusPayload::error(e.to_string()));
         }
         let adopted = AdoptedSettings(doc.settings);
-        let manifest: Vec<String> =
-            doc.themes.iter().filter(|n| safe_theme_name(n)).cloned().collect();
+        // A theme named like a built-in would shadow it (themes share one
+        // name namespace): never import one. The machine that still has it
+        // renames it on startup and re-syncs under the new name.
+        let builtin: std::collections::HashSet<String> = theme_names(&self.builtin_themes_dir)
+            .await
+            .into_iter()
+            .map(|n| n.to_lowercase())
+            .collect();
+        let manifest: Vec<String> = doc
+            .themes
+            .iter()
+            .filter(|n| safe_theme_name(n) && !builtin.contains(&n.to_lowercase()))
+            .cloned()
+            .collect();
         let local_names = theme_names(&self.user_themes_dir).await;
         let state = read_state(&self.state_path).await;
         let plan = plan_theme_import(&manifest, &state.last_manifest, &local_names);
@@ -364,6 +377,7 @@ mod tests {
             core: SyncCore {
                 repo: clone.to_path_buf(),
                 user_themes_dir: home.join("themes"),
+                builtin_themes_dir: home.join("builtin-themes"),
                 state_path: home.join("sync-state.json"),
                 exec: Arc::new(GitRunner::for_repo("git", clone)),
             },

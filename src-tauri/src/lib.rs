@@ -173,7 +173,7 @@ pub fn run() {
             let (global_settings_path, repos_data_dir, user_themes_dir, builtin_themes_dir) =
                 commands::resolve_dirs(&app.handle());
 
-            let global_settings = load_global_settings_sync(&global_settings_path);
+            let mut global_settings = load_global_settings_sync(&global_settings_path);
             let git_override = global_settings.git_path_override.as_deref().map(PathBuf::from);
             let resolved_git_path = git_resolve::resolve_git_path(git_override.as_ref());
 
@@ -185,6 +185,35 @@ pub fn run() {
                 builtin_themes_dir = %builtin_themes_dir.display(),
                 "legit startup",
             );
+
+            // User themes must not share a built-in's name (one name
+            // namespace); rename leftovers from older versions before the
+            // frontend lists or applies any theme.
+            let theme_renames = commands::persistence::rename_shadowing_user_themes(
+                &user_themes_dir,
+                &builtin_themes_dir,
+            );
+            if !theme_renames.is_empty() {
+                tracing::info!(renames = ?theme_renames, "renamed user themes shadowing built-ins");
+                if let Some(active) = global_settings.active_theme.clone() {
+                    let renamed = theme_renames
+                        .iter()
+                        .find(|(old, _)| old.to_lowercase() == active.to_lowercase());
+                    if let Some((_, new_name)) = renamed {
+                        // The shadowing copy was what actually loaded: keep
+                        // the user's look by following the rename.
+                        global_settings.active_theme = Some(new_name.clone());
+                        match serde_json::to_string_pretty(&global_settings) {
+                            Ok(json) => {
+                                if let Err(e) = persist::write_atomic_sync(&global_settings_path, json) {
+                                    tracing::warn!(err = %e, "cannot persist the renamed active theme");
+                                }
+                            }
+                            Err(e) => tracing::warn!(err = %e, "cannot serialize global settings"),
+                        }
+                    }
+                }
+            }
 
             let state = AppState::new(
                 resolved_git_path,

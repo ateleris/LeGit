@@ -25,6 +25,25 @@ pub async fn write_atomic(path: &Path, bytes: impl AsRef<[u8]>) -> std::io::Resu
     result
 }
 
+/// `write_atomic` for synchronous contexts (startup, before the async
+/// runtime owns the files).
+pub fn write_atomic_sync(path: &Path, bytes: impl AsRef<[u8]>) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let tmp = sibling(path, &format!(".tmp-{}", uuid::Uuid::new_v4().simple()));
+    let result = (|| {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes.as_ref())?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
 /// Load a JSON document, falling back to defaults when it is missing. A file
 /// that fails to parse is renamed to `<name>.corrupt-<unix-ms>` first, so the
 /// next save cannot overwrite the user's data with defaults.
@@ -134,8 +153,6 @@ mod tests {
         assert!(sanitize_file_stem("theme..").is_err());
         assert!(sanitize_file_stem("the.me").is_ok());
     }
-
-    use super::*;
 
     #[derive(serde::Deserialize, Default, Debug, PartialEq)]
     struct Doc {

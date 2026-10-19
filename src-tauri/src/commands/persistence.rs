@@ -9,6 +9,7 @@ use crate::error::AppError;
 use crate::state::{AppState, GlobalSettings};
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 pub(crate) const THEME_EXT: &str = ".legit-theme.json";
@@ -148,6 +149,11 @@ pub async fn save_theme(
 ) -> Result<ThemeEntry, AppError> {
     validate_theme(&contents)?;
     let safe = sanitize_theme_name(&name)?;
+    if collides_with_builtin(&state.builtin_themes_dir, &safe).await? {
+        return Err(AppError::InvalidTheme(format!(
+            "'{safe}' is a built-in theme; save the theme under a different name"
+        )));
+    }
     let dir = state.user_themes_dir.clone();
     tokio::fs::create_dir_all(&dir).await?;
     let path = theme_file_path(&dir, &safe)?;
@@ -300,6 +306,92 @@ fn sanitize_theme_name(name: &str) -> Result<String, AppError> {
     crate::persist::sanitize_file_stem(name).map_err(|e| AppError::InvalidTheme(format!("theme {e}")))
 }
 
+/// Theme names are one namespace across built-ins and user themes: every
+/// consumer (`load_theme`, the picker, `set_active_theme`) addresses a theme
+/// by bare name, so a same-named user file would shadow the built-in.
+async fn collides_with_builtin(builtin_dir: &std::path::Path, name: &str) -> Result<bool, AppError> {
+    let builtin = read_theme_dir(builtin_dir, ThemeSource::Builtin).await?;
+    let lower = name.to_lowercase();
+    Ok(builtin.iter().any(|t| t.name.to_lowercase() == lower))
+}
+
+/// Startup counterpart of `save_theme`'s built-in-name check: files written
+/// by older versions, by settings sync, or by hand can still collide. Each
+/// offender is renamed to a free `<name> (custom)` variant and its document
+/// `name` field rewritten to match (best-effort per file). Returns the
+/// applied `(old, new)` pairs.
+pub fn rename_shadowing_user_themes(
+    user_dir: &std::path::Path,
+    builtin_dir: &std::path::Path,
+) -> Vec<(String, String)> {
+    let builtin: HashSet<String> =
+        theme_stems_sync(builtin_dir).iter().map(|s| s.to_lowercase()).collect();
+    if builtin.is_empty() {
+        return Vec::new();
+    }
+    let user = theme_stems_sync(user_dir);
+    let mut taken: HashSet<String> =
+        user.iter().map(|s| s.to_lowercase()).chain(builtin.iter().cloned()).collect();
+    let mut renames = Vec::new();
+    for name in user {
+        if !builtin.contains(&name.to_lowercase()) {
+            continue;
+        }
+        let target = free_rename_target(&name, &taken);
+        let old_path = user_dir.join(format!("{name}{THEME_EXT}"));
+        let new_path = user_dir.join(format!("{target}{THEME_EXT}"));
+        if let Err(e) = std::fs::rename(&old_path, &new_path) {
+            tracing::warn!(theme = %name, err = %e, "cannot rename user theme shadowing a built-in");
+            continue;
+        }
+        // The file stem is the authoritative name; the document's own `name`
+        // follows it so the editor shows the renamed theme consistently.
+        if let Ok(bytes) = std::fs::read(&new_path) {
+            if let Ok(mut doc) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                doc["name"] = serde_json::Value::String(target.clone());
+                if let Ok(json) = serde_json::to_vec_pretty(&doc) {
+                    let _ = std::fs::write(&new_path, json);
+                }
+            }
+        }
+        taken.insert(target.to_lowercase());
+        renames.push((name, target));
+    }
+    renames
+}
+
+fn theme_stems_sync(dir: &std::path::Path) -> Vec<String> {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in rd.flatten() {
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else {
+            continue;
+        };
+        if !file_name.to_lowercase().ends_with(THEME_EXT) {
+            continue;
+        }
+        out.push(file_name[..file_name.len() - THEME_EXT.len()].to_string());
+    }
+    out
+}
+
+fn free_rename_target(name: &str, taken: &HashSet<String>) -> String {
+    let base = format!("{name} (custom)");
+    if !taken.contains(&base.to_lowercase()) {
+        return base;
+    }
+    for n in 2u32.. {
+        let candidate = format!("{name} (custom {n})");
+        if !taken.contains(&candidate.to_lowercase()) {
+            return candidate;
+        }
+    }
+    unreachable!("u32 suffixes exhausted")
+}
+
 
 /// Compute the on-disk locations used by `AppState`. Returns
 /// `(global_settings_path, repos_data_dir, user_themes_dir, builtin_themes_dir)`.
@@ -363,6 +455,54 @@ mod tests {
     #[test]
     fn accepts_minimal_valid() {
         assert!(validate_theme(&good()).is_ok());
+    }
+
+    #[test]
+    fn free_rename_target_picks_the_first_free_custom_suffix() {
+        let none: HashSet<String> = HashSet::new();
+        assert_eq!(free_rename_target("Ateleris", &none), "Ateleris (custom)");
+        let taken: HashSet<String> =
+            ["ateleris (custom)", "ateleris (custom 2)"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(free_rename_target("Ateleris", &taken), "Ateleris (custom 3)");
+    }
+
+    #[test]
+    fn startup_rename_moves_shadowing_user_themes_and_rewrites_their_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let builtin = dir.path().join("builtin");
+        let user = dir.path().join("user");
+        std::fs::create_dir_all(&builtin).unwrap();
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::write(builtin.join(format!("Ateleris{THEME_EXT}")), b"{}").unwrap();
+        // Shadowing is matched case-insensitively (Windows file names are).
+        std::fs::write(
+            user.join(format!("ateleris{THEME_EXT}")),
+            serde_json::to_vec(&good()).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(user.join(format!("Mine{THEME_EXT}")), b"{}").unwrap();
+
+        let renames = rename_shadowing_user_themes(&user, &builtin);
+
+        assert_eq!(renames, vec![("ateleris".to_string(), "ateleris (custom)".to_string())]);
+        assert!(!user.join(format!("ateleris{THEME_EXT}")).exists());
+        assert!(user.join(format!("Mine{THEME_EXT}")).exists());
+        let moved = user.join(format!("ateleris (custom){THEME_EXT}"));
+        let doc: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&moved).unwrap()).unwrap();
+        assert_eq!(doc["name"], "ateleris (custom)");
+        // Second run: nothing left to rename.
+        assert!(rename_shadowing_user_themes(&user, &builtin).is_empty());
+    }
+
+    #[test]
+    fn startup_rename_without_builtin_dir_touches_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = dir.path().join("user");
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::write(user.join(format!("Ateleris{THEME_EXT}")), b"{}").unwrap();
+        assert!(rename_shadowing_user_themes(&user, &dir.path().join("missing")).is_empty());
+        assert!(user.join(format!("Ateleris{THEME_EXT}")).exists());
     }
 
     #[test]

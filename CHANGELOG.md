@@ -12,6 +12,15 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- A user theme could silently shadow a same-named built-in theme (the
+  picker showed both, but only the user copy ever loaded, and built-in
+  updates never arrived): theme names are now unique - saving refuses a
+  built-in's name, importing picks a free "(custom)" name, settings sync
+  skips such themes, and existing shadowing themes are renamed to
+  "<name> (custom)" at startup (the active theme follows the rename)
+
 ### Added
 
 - Repository tabs can be grouped into named, collapsible, colorable groups
