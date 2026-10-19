@@ -30,6 +30,11 @@ lives in the git log and the GitHub release notes.
   scrolling with the mouse wheel or via the overflow menu
 - The commit composer's "Committing as" line no longer appends
   "custom (this repo)" when the identity comes from the repo's local config
+- Built-in themes give inactive repository tabs a slightly offset surface
+  so their contour is visible against the tab strip, repo group
+  containers use opaque colors instead of translucent washes (the strip
+  border no longer shows through), and the strip's bottom border matches
+  the active tab color so the active tab merges into it
 
 ## [1.5.2] - 2026-10-15
 

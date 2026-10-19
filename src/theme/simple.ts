@@ -57,7 +57,8 @@ const RAMP = {
   washLine: { dark: 0.2, light: 0.18 },
   washWord: { dark: 0.45, light: 0.3 },
   hunkHeaderAlpha: 0.14,
-  groupAlpha: 0.13,
+  groupSurface: 0.13,
+  groupFg: 0.25,
   foldAlpha: 0.15,
   textHue: { dark: 0.68, light: 0.3 },
   ansi: { dark: 0.6, light: 0.38 },
@@ -156,8 +157,9 @@ export function derivePalette(seeds: ThemeSeeds): Record<string, string> {
     "status-deleted": textHue(s.diffRemoved),
     "status-renamed": textHue(s.primary),
     "row-selected-bg": withAlphaHex(s.primary, RAMP.selectedAlpha),
-    "group-bg": withAlphaHex(s.primary, RAMP.groupAlpha),
-    "group-fg": textHue(s.primary),
+    "group-bg": toward(RAMP.groupSurface),
+    "tab-bg": toward(RAMP.surfaceDeep),
+    "group-fg": mixHex(s.text, s.background, RAMP.groupFg),
     "ref-branch-bg": branch.bg,
     "ref-branch-border": branch.border,
     "ref-branch-fg": branch.fg,
@@ -218,7 +220,6 @@ const WASH_ADJUSTABLE = (name: string) =>
   name.startsWith("diff-") ||
   name === "merge-fold" ||
   name === "row-selected-bg" ||
-  name === "group-bg" ||
   /^ref-.*-bg$/.test(name);
 
 const MAX_STEPS_PER_PAIR = 15;
