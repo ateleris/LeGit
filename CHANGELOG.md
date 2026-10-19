@@ -12,6 +12,8 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-19
+
 ### Fixed
 
 - A user theme could silently shadow a same-named built-in theme (the
