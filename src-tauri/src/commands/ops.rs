@@ -281,13 +281,14 @@ pub async fn repo_conflict_entries(
 pub async fn repo_resolve_take_side(
     state: tauri::State<'_, AppState>,
     repo_id: String,
-    path: String,
+    paths: Vec<String>,
     side: ConflictSide,
 ) -> Result<(), AppError> {
     let session = state.get_session(&repo_id).await?;
+    let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
     session
         .backend
-        .resolve_take_side(&PathBuf::from(path), side)
+        .resolve_take_side(&paths, side)
         .await
         .map_err(AppError::Git)
 }

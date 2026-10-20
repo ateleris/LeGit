@@ -193,6 +193,7 @@ export function useWorkingChangesData(args: {
     unstagedTotals,
     totals,
     conflictCount,
+    opState,
     opActive,
     stagedMarkerSet,
     unstagedMarkerSet,

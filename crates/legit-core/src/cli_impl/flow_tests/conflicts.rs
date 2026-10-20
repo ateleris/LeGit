@@ -35,9 +35,30 @@ async fn take_side_checks_out_and_stages() {
     fake.expect_stdin(&["add", "--pathspec-from-file=-", "--pathspec-file-nul"], "a.txt\0", ok(""));
     let (b, exec) = backend(fake);
 
-    b.resolve_take_side(Path::new("a.txt"), ConflictSide::Ours)
+    b.resolve_take_side(&[PathBuf::from("a.txt")], ConflictSide::Ours)
         .await
         .unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn take_side_resolves_a_selection_in_one_checkout_and_one_add() {
+    // The bulk fast path: no per-path spawns when every path has the side.
+    let fake = FakeExecutor::default();
+    fake.expect(&["checkout", "--ours", "--", "a.txt", "b.txt"], ok(""));
+    fake.expect_stdin(
+        &["add", "--pathspec-from-file=-", "--pathspec-file-nul"],
+        "a.txt\0b.txt\0",
+        ok(""),
+    );
+    let (b, exec) = backend(fake);
+
+    b.resolve_take_side(
+        &[PathBuf::from("a.txt"), PathBuf::from("b.txt")],
+        ConflictSide::Ours,
+    )
+    .await
+    .unwrap();
     exec.assert_done();
 }
 
@@ -51,9 +72,36 @@ async fn take_deleted_side_falls_back_to_git_rm() {
     fake.expect(&["rm", "-f", "--", "a.txt"], ok("rm 'a.txt'"));
     let (b, exec) = backend(fake);
 
-    b.resolve_take_side(Path::new("a.txt"), ConflictSide::Theirs)
+    b.resolve_take_side(&[PathBuf::from("a.txt")], ConflictSide::Theirs)
         .await
         .unwrap();
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn take_side_delete_fallback_applies_per_path() {
+    // A delete conflict fails the bulk checkout wholesale; the per-path
+    // retry keeps the rm fallback for exactly the paths that need it.
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["checkout", "--theirs", "--", "a.txt", "b.txt"],
+        fail(1, "error: path 'b.txt' does not have their version"),
+    );
+    fake.expect(&["checkout", "--theirs", "--", "a.txt"], ok(""));
+    fake.expect_stdin(&["add", "--pathspec-from-file=-", "--pathspec-file-nul"], "a.txt\0", ok(""));
+    fake.expect(
+        &["checkout", "--theirs", "--", "b.txt"],
+        fail(1, "error: path 'b.txt' does not have their version"),
+    );
+    fake.expect(&["rm", "-f", "--", "b.txt"], ok("rm 'b.txt'"));
+    let (b, exec) = backend(fake);
+
+    b.resolve_take_side(
+        &[PathBuf::from("a.txt"), PathBuf::from("b.txt")],
+        ConflictSide::Theirs,
+    )
+    .await
+    .unwrap();
     exec.assert_done();
 }
 
@@ -67,10 +115,44 @@ async fn take_side_other_failures_stay_errors() {
     let (b, exec) = backend(fake);
 
     let err = b
-        .resolve_take_side(Path::new("a.txt"), ConflictSide::Ours)
+        .resolve_take_side(&[PathBuf::from("a.txt")], ConflictSide::Ours)
         .await
         .unwrap_err();
     assert!(matches!(err, GitError::CommandFailed { .. }), "{err:?}");
+    exec.assert_done();
+}
+
+#[tokio::test]
+async fn take_side_mid_list_failure_stops_and_reports_progress() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["checkout", "--ours", "--", "a.txt", "b.txt", "c.txt"],
+        fail(128, "fatal: unable to write file"),
+    );
+    fake.expect(&["checkout", "--ours", "--", "a.txt"], ok(""));
+    fake.expect_stdin(&["add", "--pathspec-from-file=-", "--pathspec-file-nul"], "a.txt\0", ok(""));
+    fake.expect(
+        &["checkout", "--ours", "--", "b.txt"],
+        fail(128, "fatal: unable to write file"),
+    );
+    let (b, exec) = backend(fake);
+
+    let err = b
+        .resolve_take_side(
+            &[PathBuf::from("a.txt"), PathBuf::from("b.txt"), PathBuf::from("c.txt")],
+            ConflictSide::Ours,
+        )
+        .await
+        .unwrap_err();
+    // The user must learn where it stopped and that the files before the
+    // failure stayed resolved.
+    let GitError::CommandFailed { stderr, .. } = &err else {
+        panic!("expected CommandFailed, got {err:?}");
+    };
+    assert!(stderr.contains("unable to write file"), "{stderr}");
+    assert!(stderr.contains("'b.txt'"), "{stderr}");
+    assert!(stderr.contains("1 file before it"), "{stderr}");
+    // assert_done: c.txt must NOT be touched after the failure.
     exec.assert_done();
 }
 

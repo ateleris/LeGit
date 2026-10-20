@@ -31,18 +31,61 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         parsers::conflicts::parse_unmerged(&stdout)
     }
 
-    pub(super) async fn resolve_take_side(&self, path: &Path, side: ConflictSide) -> Result<(), GitError> {
+    pub(super) async fn resolve_take_side(
+        &self,
+        paths: &[PathBuf],
+        side: ConflictSide,
+    ) -> Result<(), GitError> {
         let flag = match side {
             ConflictSide::Ours => "--ours",
             ConflictSide::Theirs => "--theirs",
         };
-        let p = path.to_string_lossy().into_owned();
-        let (code, _stdout, stderr) = self.run_classified(&["checkout", flag, "--", &p]).await?;
+        // Fast path: one checkout + one add for the whole selection. A
+        // multi-path checkout fails wholesale when ANY path lacks the chosen
+        // stage (delete conflicts), so a failure falls back to the per-path
+        // loop below, whose re-checkouts are idempotent and which keeps the
+        // per-path rm fallback.
+        if paths.len() > 1 {
+            let strs: Vec<String> = paths
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
+            let mut args: Vec<&str> = vec!["checkout", flag, "--"];
+            args.extend(strs.iter().map(String::as_str));
+            let (code, _stdout, _stderr) = self.run_classified(&args).await?;
+            if code == 0 {
+                return self.run_pathspec(&["add", "--"], paths).await;
+            }
+        }
+        for (done, path) in paths.iter().enumerate() {
+            let p = path.to_string_lossy().into_owned();
+            if let Err(e) = self.take_side_one(&p, path, flag).await {
+                if done == 0 {
+                    return Err(e);
+                }
+                return Err(append_error_note(
+                    e,
+                    &format!(
+                        "Note: taking the side failed at '{p}'; the {} resolved and staged.",
+                        if done == 1 {
+                            "1 file before it stayed".to_string()
+                        } else {
+                            format!("{done} files before it stayed")
+                        }
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    async fn take_side_one(&self, p: &str, path: &Path, flag: &str) -> Result<(), GitError> {
+        let (code, _stdout, stderr) = self.run_classified(&["checkout", flag, "--", p]).await?;
         if code != 0 {
             if take_side_means_delete(&stderr) {
                 // The chosen side deleted the file: taking it = delete + stage
                 // (git rm stages the removal itself).
-                return self.run_simple(&["rm", "-f", "--", &p]).await;
+                return self.run_simple(&["rm", "-f", "--", p]).await;
             }
             return Err(command_failed(code, &stderr));
         }

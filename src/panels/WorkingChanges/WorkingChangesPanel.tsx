@@ -37,7 +37,9 @@ import { AddToGitignoreMenuItem } from "../shared/AddToGitignoreMenuItem";
 import { allUntracked } from "./dirGitignore";
 import { caseDriftTitle, selectionDiffAction, splitDriftTargets } from "./caseDrift";
 import { CommitComposer } from "./CommitComposer";
-import { FileRowMenu } from "./FileRowMenu";
+import { FileRowMenu, ResolveConflictsSubmenu } from "./FileRowMenu";
+import { opSideNames } from "../../lib/conflictSides";
+import { useBranches } from "../../lib/queries/useRepoQueries";
 import {
   dropSelection,
   moveSelection,
@@ -197,6 +199,7 @@ export function WorkingChangesPanel() {
     unstagedTotals,
     totals,
     conflictCount,
+    opState,
     opActive,
     stagedMarkerSet,
     unstagedMarkerSet,
@@ -209,6 +212,14 @@ export function WorkingChangesPanel() {
     detectCaseRenames,
   });
   const { openDiff, driftDiffRequest, syncOpenDiff } = useDiffSync({ repo, entryFor });
+
+  // Branch names for the conflict Take labels; only fetched while conflicts
+  // exist (the menu entries don't render otherwise).
+  const { data: branches = [] } = useBranches(repo?.id, { enabled: conflictCount > 0 });
+  const sideNames = useMemo(
+    () => opSideNames(opState, branches.find((b) => b.is_current)?.name ?? null),
+    [opState, branches],
+  );
 
   const submoduleFileIcon = useCallback(
     (file: FileTreeEntry): ReactNode => {
@@ -400,12 +411,18 @@ export function WorkingChangesPanel() {
       useSummonStore.getState().summon("merge", { repoId: repo!.id, path });
     });
 
-  // Whole-file take from the conflict-row menu; a resolution identical to
-  // HEAD vanishes from status entirely, so it carries the explanatory note.
-  const takeSide = (path: string, side: ConflictSide) =>
+  // Whole-file take from the conflict-row menu (single row or the conflicted
+  // subset of a selection/folder); a resolution identical to HEAD vanishes
+  // from status entirely, so it carries the explanatory note. The resolved
+  // paths leave Unstaged (the resolution is staged), so the selection gets
+  // the same follow-through as staging.
+  const takeSide = (paths: string[], side: ConflictSide) =>
     run(async () => {
-      await api.repoResolveTakeSide(repo!.id, path, side);
-      await notifyResolutionInvisible(repo!.id, path);
+      await api.repoResolveTakeSide(repo!.id, paths, side);
+      const next = moveSelection(selected, "unstaged", "staged", paths);
+      setSelected(next);
+      syncOpenDiff(selected, next);
+      await notifyResolutionInvisible(repo!.id, paths);
     });
 
   // Stash specific files - each file's FULL change (staged + unstaged
@@ -709,12 +726,13 @@ export function WorkingChangesPanel() {
                     opActive={opActive}
                     reopenable={reopenable}
                     conflictKinds={conflictKinds}
+                    sideNames={sideNames}
                     stashable={opActive ? [] : stashablePaths(unstaged, targets)}
                     onPrimary={stage}
                     onDiscard={(paths) => void requestDiscard(paths)}
                     onStash={(paths) => void stashFiles(paths)}
-                    onTakeSide={(path, side) => void takeSide(path, side)}
-                    onMarkResolved={(path) => stage([path])}
+                    onTakeSide={(paths, side) => void takeSide(paths, side)}
+                    onMarkResolved={(paths) => stage(paths)}
                     onReopenConflict={(path) => void reopenConflict(path)}
                     onOpenSubmodule={openSubmodule}
                     closeMenu={closeMenu}
@@ -784,10 +802,21 @@ export function WorkingChangesPanel() {
                   <StageIcon />
                 </IconButton>
               )}
-              onDirContextMenu={(paths, dir, e) =>
+              onDirContextMenu={(paths, dir, e) => {
+                const conflicted = paths.filter((p) => conflictKinds.has(p));
                 openMenu(
                   e,
                   <>
+                    {conflicted.length > 0 && (
+                      <ResolveConflictsSubmenu
+                        paths={conflicted}
+                        conflictKinds={conflictKinds}
+                        sideNames={sideNames}
+                        onTakeSide={(ps, side) => void takeSide(ps, side)}
+                        onMarkResolved={(ps) => stage(ps)}
+                        closeMenu={closeMenu}
+                      />
+                    )}
                     <MenuItem onClick={() => { stage(paths); closeMenu(); }}>
                       Stage folder ({fileCountLabel(paths.length)})
                     </MenuItem>
@@ -798,8 +827,8 @@ export function WorkingChangesPanel() {
                       <AddToGitignoreMenuItem path={dir} isDir onClose={closeMenu} />
                     )}
                   </>,
-                )
-              }
+                );
+              }}
             />
           </Section>
           );
@@ -849,6 +878,7 @@ export function WorkingChangesPanel() {
                     opActive={opActive}
                     reopenable={reopenable}
                     conflictKinds={conflictKinds}
+                    sideNames={sideNames}
                     stashable={opActive ? [] : stashablePaths(staged, targets)}
                     onPrimary={unstage}
                     onDiscard={() => {}}

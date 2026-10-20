@@ -96,19 +96,45 @@ describe("notifyOpError", () => {
 describe("notifyResolutionInvisible", () => {
   test("notes the invisible resolution when the file left the status", async () => {
     vi.mocked(api.repoStatus).mockResolvedValue([]);
-    await notifyResolutionInvisible("r1", "a.txt");
-    expect(lastInfo()).toContain("won't appear as a change");
+    await notifyResolutionInvisible("r1", ["a.txt"]);
+    const msg = lastInfo()!;
+    expect(msg).toContain("'a.txt'");
+    expect(msg).toContain("won't appear as a change");
   });
   test("stays silent while the file still shows", async () => {
     vi.mocked(api.repoStatus).mockResolvedValue([
       { path: "a.txt" } as never,
     ]);
-    await notifyResolutionInvisible("r1", "a.txt");
+    await notifyResolutionInvisible("r1", ["a.txt"]);
+    expect(notify.info).not.toHaveBeenCalled();
+  });
+  test("a bulk resolve notes only the vanished files, by count", async () => {
+    vi.mocked(api.repoStatus).mockResolvedValue([
+      { path: "kept.txt" } as never,
+    ]);
+    await notifyResolutionInvisible("r1", ["a.txt", "b.txt", "kept.txt"]);
+    const msg = lastInfo()!;
+    expect(msg).toContain("2 files");
+    expect(msg).toContain("won't appear as changes");
+  });
+  test("a bulk resolve with one vanished file names it", async () => {
+    vi.mocked(api.repoStatus).mockResolvedValue([
+      { path: "kept.txt" } as never,
+    ]);
+    await notifyResolutionInvisible("r1", ["a.txt", "kept.txt"]);
+    expect(lastInfo()).toContain("'a.txt'");
+  });
+  test("a bulk resolve stays silent while every file still shows", async () => {
+    vi.mocked(api.repoStatus).mockResolvedValue([
+      { path: "a.txt" } as never,
+      { path: "b.txt" } as never,
+    ]);
+    await notifyResolutionInvisible("r1", ["a.txt", "b.txt"]);
     expect(notify.info).not.toHaveBeenCalled();
   });
   test("a status failure never throws (best-effort note)", async () => {
     vi.mocked(api.repoStatus).mockRejectedValue(new Error("boom"));
-    await expect(notifyResolutionInvisible("r1", "a.txt")).resolves.toBeUndefined();
+    await expect(notifyResolutionInvisible("r1", ["a.txt"])).resolves.toBeUndefined();
     expect(notify.info).not.toHaveBeenCalled();
   });
 });

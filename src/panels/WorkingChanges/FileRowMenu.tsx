@@ -1,11 +1,54 @@
 import type { ConflictKind, ConflictSide, DiffSource } from "../../lib/types";
+import type { SideNames } from "../../lib/conflictSides";
 import type { FileTreeEntry } from "../shared/FileTree/buildTree";
 import { useConfirmDestructive } from "../../store/settings";
-import { MenuItem } from "../shared/menu/primitives";
+import { MenuItem, Submenu } from "../shared/menu/primitives";
 import { useDestructiveMenuConfirm } from "../shared/menu/PanelContextMenu";
 import { FileRowMenuSection } from "../shared/FileRowMenuSection";
 import { takeSideLabels } from "./conflictLabels";
 import type { Section } from "./selection";
+
+/**
+ * "Resolve conflict" / "Resolve N conflicted" submenu - the one conflict
+ * surface for file rows, multi-selections and folders; the actions apply to
+ * the conflicted paths only. A single file gets its kind's delete-aware
+ * labels; a selection stays kind-generic (it has no single consequence) and
+ * each file still resolves per its own conflict kind.
+ */
+export function ResolveConflictsSubmenu({
+  paths,
+  conflictKinds,
+  sideNames,
+  onTakeSide,
+  onMarkResolved,
+  closeMenu,
+}: {
+  paths: string[];
+  conflictKinds: Map<string, ConflictKind>;
+  sideNames: SideNames;
+  onTakeSide: (paths: string[], side: ConflictSide) => void;
+  onMarkResolved: (paths: string[]) => void;
+  closeMenu: () => void;
+}) {
+  const single = paths.length === 1;
+  const labels = takeSideLabels(single ? conflictKinds.get(paths[0]) : undefined, sideNames);
+  return (
+    <Submenu
+      testId="resolve-conflicted"
+      label={single ? "Resolve conflict" : `Resolve ${paths.length} conflicted`}
+    >
+      <MenuItem testId="resolve-take-ours" onClick={() => { onTakeSide(paths, "ours"); closeMenu(); }}>
+        {labels.ours}
+      </MenuItem>
+      <MenuItem testId="resolve-take-theirs" onClick={() => { onTakeSide(paths, "theirs"); closeMenu(); }}>
+        {labels.theirs}
+      </MenuItem>
+      <MenuItem testId="resolve-mark-resolved" onClick={() => { onMarkResolved(paths); closeMenu(); }}>
+        Mark resolved
+      </MenuItem>
+    </Submenu>
+  );
+}
 
 /**
  * "Reopen conflict" entry for a row (staged or unstaged again) that was a
@@ -40,6 +83,7 @@ export function FileRowMenu({
   opActive,
   reopenable,
   conflictKinds,
+  sideNames,
   stashable,
   onPrimary,
   onDiscard,
@@ -58,20 +102,23 @@ export function FileRowMenu({
   /** Paths eligible for "Reopen conflict" (git's resolve-undo record). */
   reopenable: Set<string>;
   conflictKinds: Map<string, ConflictKind>;
+  /** Branch names for the conflict sides (the Take labels). */
+  sideNames: SideNames;
   /** The subset of `targets` a pathspec stash can take (pre-filtered). */
   stashable: string[];
   /** Stage (unstaged section) / unstage (staged section) the targets. */
   onPrimary: (paths: string[]) => void;
   onDiscard: (paths: string[]) => void;
   onStash: (paths: string[]) => void;
-  onTakeSide: (path: string, side: ConflictSide) => void;
-  onMarkResolved: (path: string) => void;
+  onTakeSide: (paths: string[], side: ConflictSide) => void;
+  onMarkResolved: (paths: string[]) => void;
   onReopenConflict: (path: string) => void;
   onOpenSubmodule: (path: string, source: DiffSource | null) => void;
   closeMenu: () => void;
 }) {
   const many = targets.length > 1;
   const unstaged = section === "unstaged";
+  const conflicted = targets.filter((p) => conflictKinds.has(p));
 
   // A dirty-inside submodule (unstaged only) has no stage/discard semantics:
   // its menu is just the submodule jump + the common section.
@@ -93,19 +140,17 @@ export function FileRowMenu({
 
   return (
     <>
-      {!many && unstaged && file.change === "Conflicted" && (
-        <>
-          <MenuItem onClick={() => { onTakeSide(file.path, "ours"); closeMenu(); }}>
-            {takeSideLabels(conflictKinds.get(file.path)).ours}
-          </MenuItem>
-          <MenuItem onClick={() => { onTakeSide(file.path, "theirs"); closeMenu(); }}>
-            {takeSideLabels(conflictKinds.get(file.path)).theirs}
-          </MenuItem>
-          <MenuItem onClick={() => { onMarkResolved(file.path); closeMenu(); }}>
-            Mark resolved
-          </MenuItem>
-        </>
-      )}
+      {unstaged &&
+        (many ? conflicted.length > 0 : file.change === "Conflicted") && (
+          <ResolveConflictsSubmenu
+            paths={many ? conflicted : [file.path]}
+            conflictKinds={conflictKinds}
+            sideNames={sideNames}
+            onTakeSide={onTakeSide}
+            onMarkResolved={onMarkResolved}
+            closeMenu={closeMenu}
+          />
+        )}
       {!many && file.change === "SubmoduleChanged" && (
         <MenuItem
           onClick={() => {

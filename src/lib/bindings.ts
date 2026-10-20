@@ -2450,9 +2450,9 @@ async repoConflictEntries(repoId: string) : Promise<Result<ConflictEntry[], AppE
     else return { status: "error", error: e  as any };
 }
 },
-async repoResolveTakeSide(repoId: string, path: string, side: ConflictSide) : Promise<Result<null, AppError>> {
+async repoResolveTakeSide(repoId: string, paths: string[], side: ConflictSide) : Promise<Result<null, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("repo_resolve_take_side", { repoId, path, side }) };
+    return { status: "ok", data: await TAURI_INVOKE("repo_resolve_take_side", { repoId, paths, side }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

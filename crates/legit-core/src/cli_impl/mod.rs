@@ -808,8 +808,8 @@ impl<E: GitExecutor + ?Sized> GitBackend for GitCliBackend<E> {
         self.conflict_entries().await
     }
 
-    async fn resolve_take_side(&self, path: &Path, side: ConflictSide) -> Result<(), GitError> {
-        self.resolve_take_side(path, side).await
+    async fn resolve_take_side(&self, paths: &[PathBuf], side: ConflictSide) -> Result<(), GitError> {
+        self.resolve_take_side(paths, side).await
     }
 
     async fn resolve_undo_paths(&self) -> Result<Vec<String>, GitError> {

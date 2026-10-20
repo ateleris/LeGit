@@ -8,21 +8,26 @@ import { notify } from "../store/notifications";
 import { api } from "./commands";
 
 /**
- * After resolving a conflict (mark resolved / take side): when the staged
+ * After resolving conflicts (mark resolved / take side): when a staged
  * resolution is identical to HEAD - e.g. every conflict was resolved with the
  * current side - git has NO change to report, so the file vanishes from
  * Working Changes entirely. Without this note that reads as data loss.
  * Best-effort: a status failure here must not fail the resolution.
  */
-export async function notifyResolutionInvisible(repoId: string, path: string) {
+export async function notifyResolutionInvisible(repoId: string, paths: string[]) {
   try {
     const status = await api.repoStatus(repoId);
-    if (!status.some((s) => s.path === path)) {
-      notify.info(
-        `Resolved '${path}' - the result is identical to your branch, so it ` +
-          `won't appear as a change. Conclude the operation from the banner.`,
-      );
-    }
+    const shown = new Set(status.map((s) => s.path));
+    const vanished = paths.filter((p) => !shown.has(p));
+    if (vanished.length === 0) return;
+    notify.info(
+      (vanished.length === 1
+        ? `Resolved '${vanished[0]}' - the result is identical to your branch, so it ` +
+          `won't appear as a change.`
+        : `Resolved ${vanished.length} files whose result is identical to your branch - ` +
+          `they won't appear as changes.`) +
+        ` Conclude the operation from the banner.`,
+    );
   } catch {
     /* the resolution itself succeeded; skip the note */
   }

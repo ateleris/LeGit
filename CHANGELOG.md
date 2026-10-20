@@ -12,6 +12,20 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- Conflicted files can be resolved in bulk: a multi-selection or folder
+  with conflicts gets a "Resolve N conflicted" context-menu submenu
+  (take either side or mark resolved for all of them at once); single
+  conflicted files use the same "Resolve conflict" submenu
+
+### Changed
+
+- The conflict "Take" entries now name the actual branches (e.g.
+  "Take 'main' (current)" / "Take 'feature/x' (incoming)") instead of
+  ours/theirs, including during rebases where git's ours/theirs invert;
+  the merge view's Current pane is also named during a rebase
+
 ## [1.6.0] - 2026-10-19
 
 ### Fixed

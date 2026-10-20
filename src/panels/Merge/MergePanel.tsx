@@ -10,6 +10,7 @@ import { useGuardedEditorRequest } from "../shared/useGuardedEditorRequest";
 import { api } from "../../lib/commands";
 import type { ConflictFileSides, ConflictSide } from "../../lib/types";
 import { useOpState } from "../../lib/useOpState";
+import { opSideNames } from "../../lib/conflictSides";
 import { formatAppError } from "../../lib/errors";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notifyResolutionInvisible } from "../../lib/mergeFeedback";
@@ -129,27 +130,18 @@ export function MergePanel() {
     [branches],
   );
 
-  // Names the incoming side when the markers cannot (a reopened conflict's
-  // labels are the literal "ours"/"theirs"): the merge source branch, the
-  // branch being rebased, or the picked/reverted commit.
+  // Names the sides when the markers cannot (a reopened conflict's labels
+  // are the literal "ours"/"theirs") from the in-progress operation. This
+  // also names "ours" during a rebase, where HEAD is detached so the current
+  // branch cannot: the onto ref names it.
   const opState = useOpState(request?.repoId);
-  const incomingName = useMemo(() => {
-    switch (opState?.kind) {
-      case "merge":
-        return opState.branch;
-      case "rebase":
-        return opState.head_name;
-      case "cherry_pick":
-      case "revert":
-        return opState.sha;
-      default:
-        return null;
-    }
-  }, [opState]);
-
+  const opNames = useMemo(
+    () => opSideNames(opState, currentBranchName),
+    [opState, currentBranchName],
+  );
   const sideNames = useMemo(
-    () => (parsed ? conflictSideNames(parsed, currentBranchName, incomingName) : null),
-    [parsed, currentBranchName, incomingName],
+    () => (parsed ? conflictSideNames(parsed, opNames.ours, opNames.theirs) : null),
+    [parsed, opNames],
   );
 
   // Per-line selections; live in a ref for the mounted view, in state for
@@ -216,13 +208,13 @@ export function MergePanel() {
       const req = requestRef.current;
       if (!req) return;
       try {
-        await api.repoResolveTakeSide(req.repoId, req.path, side);
+        await api.repoResolveTakeSide(req.repoId, [req.path], side);
         // The whole-file choice supersedes any in-editor result.
         setDirty(false);
         setStagedNotice(true);
         rebuild();
         invalidateRepoDomains(queryClient, req.repoId, ["status", "log", "diff", "op_state"]);
-        await notifyResolutionInvisible(req.repoId, req.path);
+        await notifyResolutionInvisible(req.repoId, [req.path]);
       } catch (e) {
         notify.error(formatAppError(e));
       }
@@ -252,7 +244,7 @@ export function MergePanel() {
           setStagedNotice(true);
           rebuild();
           invalidateRepoDomains(queryClient, req.repoId, ["status", "log", "diff", "op_state"]);
-          await notifyResolutionInvisible(req.repoId, req.path);
+          await notifyResolutionInvisible(req.repoId, [req.path]);
         } catch (e) {
           notify.error(formatAppError(e));
         }

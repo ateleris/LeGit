@@ -638,7 +638,7 @@ async fn take_theirs_on_delete_conflict_removes_the_file() {
     // Theirs deleted the file: taking their side = git rm (checkout --theirs
     // has no stage to check out). Validates the stderr-based fallback.
     repo.backend
-        .resolve_take_side(std::path::Path::new("a.txt"), ConflictSide::Theirs)
+        .resolve_take_side(&[std::path::PathBuf::from("a.txt")], ConflictSide::Theirs)
         .await
         .unwrap();
     assert!(!repo.exists("a.txt"));
@@ -655,11 +655,48 @@ async fn take_ours_on_delete_conflict_keeps_the_file() {
     modify_delete_conflict(&repo).await;
 
     repo.backend
-        .resolve_take_side(std::path::Path::new("a.txt"), ConflictSide::Ours)
+        .resolve_take_side(&[std::path::PathBuf::from("a.txt")], ConflictSide::Ours)
         .await
         .unwrap();
     assert_eq!(repo.read("a.txt"), "main\n");
     assert!(repo.backend.conflict_entries().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn bulk_take_theirs_resolves_content_and_delete_conflicts_together() {
+    // One selection mixing a content conflict and a modify/delete conflict:
+    // the bulk take must resolve both, applying the rm fallback only where
+    // the chosen side deleted the file.
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "base\n");
+    repo.write("b.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["switch", "-c", "feature"]).await;
+    repo.git(&["rm", "a.txt"]).await;
+    repo.write("b.txt", "feature\n");
+    repo.commit_all("feature deletes a, edits b").await;
+    repo.git(&["switch", "main"]).await;
+    repo.write("a.txt", "main\n");
+    repo.write("b.txt", "main\n");
+    repo.commit_all("main edits both").await;
+
+    let outcome = repo.backend.merge("feature", MergeOptions::default()).await.unwrap();
+    assert!(matches!(outcome, MergeOutcome::Conflicts { .. }), "{outcome:?}");
+    assert_eq!(repo.backend.conflict_entries().await.unwrap().len(), 2);
+
+    repo.backend
+        .resolve_take_side(
+            &[std::path::PathBuf::from("a.txt"), std::path::PathBuf::from("b.txt")],
+            ConflictSide::Theirs,
+        )
+        .await
+        .unwrap();
+    assert!(!repo.exists("a.txt"));
+    assert_eq!(repo.read("b.txt"), "feature\n");
+    assert!(repo.backend.conflict_entries().await.unwrap().is_empty());
+
+    let outcome = repo.backend.merge_continue().await.unwrap();
+    assert_eq!(outcome, MergeOutcome::Merged);
 }
 
 // ---------------------------------------------------------------------------
@@ -1682,7 +1719,7 @@ async fn cherry_pick_conflict_resolve_continue() {
     }
 
     repo.backend
-        .resolve_take_side(std::path::Path::new("a.txt"), ConflictSide::Theirs)
+        .resolve_take_side(&[std::path::PathBuf::from("a.txt")], ConflictSide::Theirs)
         .await
         .unwrap();
     let outcome = repo.backend.cherry_pick_continue().await.unwrap();

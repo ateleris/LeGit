@@ -80,6 +80,37 @@ export function buildConflictFixture(): string {
   return dir;
 }
 
+/**
+ * Mid-merge bulk-conflict fixture: `feature` was merged into `main` and the
+ * merge is left in progress with a.txt and b.txt conflicted, plus an
+ * unrelated unstaged modification to clean.txt (the file a bulk resolve must
+ * leave behind, selection intact).
+ */
+export function buildBulkConflictFixture(): string {
+  const dir = path.join(FIXTURES_DIR, "conflict-bulk");
+  initRepo(dir);
+  for (const f of ["a.txt", "b.txt", "clean.txt"]) {
+    writeFileSync(path.join(dir, f), "base\n");
+  }
+  git(dir, "add", ".");
+  git(dir, "commit", "-m", "base commit");
+  git(dir, "checkout", "-b", "feature");
+  writeFileSync(path.join(dir, "a.txt"), "feature change\n");
+  writeFileSync(path.join(dir, "b.txt"), "feature change\n");
+  git(dir, "commit", "-am", "feature edit");
+  git(dir, "checkout", "main");
+  writeFileSync(path.join(dir, "a.txt"), "main change\n");
+  writeFileSync(path.join(dir, "b.txt"), "main change\n");
+  git(dir, "commit", "-am", "main edit");
+  try {
+    git(dir, "merge", "feature");
+  } catch {
+    /* exits 1 with conflicts - the state this fixture wants */
+  }
+  writeFileSync(path.join(dir, "clean.txt"), "base\nlocal edit\n");
+  return dir;
+}
+
 function seedAppData(repoPath: string): void {
   mkdirSync(APP_DATA_DIR, { recursive: true });
   // GlobalSettings is #[serde(default)]; only the repo-restore fields matter,
@@ -134,6 +165,10 @@ function resetAppState(): void {
 export function seedForSpec(specPath: string): void {
   const name = path.basename(specPath.replace(/^file:\/\//, ""));
   resetAppState();
-  const repo = name.startsWith("conflict") ? buildConflictFixture() : buildSmokeFixture();
+  const repo = name.startsWith("conflict-bulk")
+    ? buildBulkConflictFixture()
+    : name.startsWith("conflict")
+      ? buildConflictFixture()
+      : buildSmokeFixture();
   seedAppData(repo);
 }

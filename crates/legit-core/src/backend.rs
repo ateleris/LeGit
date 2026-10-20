@@ -720,10 +720,12 @@ pub trait GitBackend: Send + Sync {
     /// conflicts) is `None`, not an error.
     async fn conflict_file_sides(&self, path: &Path) -> Result<ConflictFileSides, GitError>;
 
-    /// Resolve a conflicted path by taking one side wholesale:
+    /// Resolve conflicted paths by taking one side wholesale, per path:
     /// `git checkout --ours|--theirs -- <path>` + `git add`; for a
     /// delete-conflict where the chosen side deleted the file, `git rm -f`.
-    async fn resolve_take_side(&self, path: &Path, side: ConflictSide) -> Result<(), GitError>;
+    /// A mid-list failure stops there and reports how many were resolved.
+    async fn resolve_take_side(&self, paths: &[PathBuf], side: ConflictSide)
+        -> Result<(), GitError>;
 
     /// Paths whose conflict was resolved and staged during the in-progress
     /// operation (`git ls-files --resolve-undo`) - the candidates for

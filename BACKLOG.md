@@ -21,7 +21,19 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
 
 ## Known bugs
 
-(none currently)
+- **Some SVGs render blank in the Diff image preview.** (2026-10-20) The
+  SVG diff routes through the image panes (`DiffBody.tsx` -> `ImageDiffView`
+  -> `ImagePane`, an `<img>` with a `data:image/svg+xml;base64` src); for
+  some SVGs the metadata line ("SVG, 144x150, 30.4 KiB") shows but the
+  preview area stays blank (seen with diagram-tool exports, e.g.
+  a drawio/plantuml-style `*_sequence.svg`). Likely causes to check: SVGs
+  relying on features an `<img>` context disallows (external refs,
+  embedded fonts, `foreignObject` - drawio uses it heavily), or missing
+  width/height/viewBox making the img lay out at zero size. Rough
+  approach: reproduce with the failing file, then either rewrite the data
+  URL path to tolerate it (e.g. inject a viewBox / render inline instead
+  of `<img>`) and/or add an `onError`/zero-size fallback that drops that
+  side to the text diff instead of showing an empty pane.
 
 ## Git features (missing vs a normal client)
 
