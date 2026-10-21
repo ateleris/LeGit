@@ -6,6 +6,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { browser, $ } from "@wdio/globals";
+import { Key } from "webdriverio";
 import { textContentOf, waitForTextContent } from "../helpers.ts";
 import { E2E_HOME } from "../fixtures.ts";
 
@@ -42,39 +43,63 @@ describe("bulk conflict resolve from the context-menu submenu", () => {
   });
 
   it("multi-selects all three files and takes incoming for the conflicted two", async () => {
-    // Click the first row, then extend the selection with Shift+ArrowDown
-    // (the FileTree container holds focus after the click).
-    await $(row("wc-unstaged", "a.txt")).click();
-    await browser.keys(["Shift", "ArrowDown"]);
-    await browser.keys(["Shift", "ArrowDown"]);
-
-    // The menu content is a snapshot: it only holds the Resolve submenu once
-    // the conflict-kind data is in. Retry the right-click until it is
-    // (Escape closes a too-early menu via the layer stack).
+    // The whole interaction retries until its real outcome - a.txt leaving
+    // the unstaged list - is on screen. Each attempt redoes the selection
+    // and the menu dance from scratch: WebKitWebDriver's synthetic pointer
+    // can silently lose a step against the menu layers (a menu left open by
+    // a previous attempt overlays the row; a click that lands next to the
+    // flyout dismisses the menu instead of activating the entry), and the
+    // menu content is a snapshot that only holds the Resolve submenu once
+    // the conflict-kind data is in. A first CI run failed exactly this way:
+    // every step reported success, yet the end state showed up late.
     await browser.waitUntil(
       async () => {
-        await $(row("wc-unstaged", "a.txt")).click({ button: "right" });
-        if (await $('[data-testid="resolve-conflicted"]').isDisplayed()) return true;
-        await browser.keys("Escape");
-        return false;
+        if (!(await $(row("wc-unstaged", "a.txt")).isExisting())) return true;
+        try {
+          // Close any surface a previous attempt left open (layer stack).
+          await browser.keys(Key.Escape);
+          // Select a.txt, extend over b.txt and clean.txt (the FileTree
+          // container holds focus after the click).
+          await $(row("wc-unstaged", "a.txt")).click();
+          await browser.keys([Key.Shift, Key.ArrowDown]);
+          await browser.keys([Key.Shift, Key.ArrowDown]);
+          await $(row("wc-unstaged", "a.txt")).click({ button: "right" });
+          const trigger = $('[data-testid="resolve-conflicted"]');
+          await trigger.waitForDisplayed({ timeout: 2_000 });
+          // Only the 2 conflicted files of the 3 selected count. A wrong
+          // count keeps failing every attempt - the timeout reports it.
+          const label = await textContentOf('[data-testid="resolve-conflicted"]');
+          if (!label.includes("Resolve 2 conflicted")) {
+            throw new Error(`unexpected submenu label: ${label}`);
+          }
+          // Clicking the trigger pins the flyout open; take incoming.
+          await trigger.click();
+          const take = $('[data-testid="resolve-take-theirs"]');
+          await take.waitForClickable({ timeout: 2_000 });
+          await take.click();
+          // The action closes the menu and moves the row; a still-open
+          // flyout or a lingering row means a step was swallowed - retry.
+          await take.waitForDisplayed({ reverse: true, timeout: 2_000 });
+          await $(row("wc-unstaged", "a.txt")).waitForDisplayed({
+            reverse: true,
+            timeout: 5_000,
+          });
+          return true;
+        } catch {
+          return false;
+        }
       },
-      { timeout: 15_000, timeoutMsg: "the Resolve submenu never appeared" },
+      {
+        timeout: 60_000,
+        interval: 1_000,
+        timeoutMsg: "bulk take-incoming never resolved the conflicted files",
+      },
     );
-    // Only the 2 conflicted files of the 3 selected count.
-    expect(await textContentOf('[data-testid="resolve-conflicted"]')).toContain(
-      "Resolve 2 conflicted",
-    );
-
-    // Clicking the trigger pins the flyout open; take the incoming side.
-    await $('[data-testid="resolve-conflicted"]').click();
-    const take = $('[data-testid="resolve-take-theirs"]');
-    await take.waitForClickable({ timeout: 10_000 });
-    await take.click();
   });
 
   it("stages the resolved files, keeps the clean one unstaged, writes theirs to disk", async () => {
-    await $(row("wc-unstaged", "a.txt")).waitForDisplayed({ reverse: true, timeout: 15_000 });
-    await $(row("wc-unstaged", "b.txt")).waitForDisplayed({ reverse: true });
+    await $(row("wc-unstaged", "a.txt")).waitForDisplayed({ reverse: true, timeout: 30_000 });
+    await $(row("wc-unstaged", "b.txt")).waitForDisplayed({ reverse: true, timeout: 15_000 });
     await $(row("wc-staged", "a.txt")).waitForDisplayed({ timeout: 15_000 });
     await $(row("wc-staged", "b.txt")).waitForDisplayed();
     await $(row("wc-unstaged", "clean.txt")).waitForDisplayed();
@@ -93,6 +118,6 @@ describe("bulk conflict resolve from the context-menu submenu", () => {
     // read "Stage 3 selected".
     const texts = await menuTexts();
     expect(texts.some((t) => t.includes("selected"))).toBe(false);
-    await browser.keys("Escape");
+    await browser.keys(Key.Escape);
   });
 });
