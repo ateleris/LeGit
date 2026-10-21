@@ -12,6 +12,8 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-10-21
+
 ### Added
 
 - Conflicted files can be resolved in bulk: a multi-selection or folder
