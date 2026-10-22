@@ -1,30 +1,83 @@
-name: PR build
+name: On-demand build
 
-# Build installable bundles for every platform on each PR push and upload
-# them as workflow artifacts, so a PR can be tried out without merging or
-# cutting a release. A sticky PR comment links to the downloads.
+# Build installable bundles on demand (Actions tab -> run workflow) and upload
+# them as workflow artifacts, so a branch can be tried out without merging or
+# cutting a release. Pick the branch via the ref dropdown and the platform or
+# single installer format via the `target` input - `all` builds everything.
 #
 # Unlike release.yml this needs NO secrets: updater artifacts (which require
 # the signing key) are disabled via a --config override, and nothing is
-# published — artifacts expire after the retention period.
+# published - artifacts expire after the retention period.
 on:
-  pull_request:
-    branches: [main, dev]
   workflow_dispatch:
+    inputs:
+      target:
+        description: What to build
+        type: choice
+        default: all
+        options:
+          - all
+          - windows
+          - windows-msi
+          - windows-exe
+          - linux
+          - linux-deb
+          - linux-rpm
+          - linux-appimage
+          - macos
+          - macos-apple-silicon
+          - macos-intel
 
 permissions:
   contents: read
 
-# One in-flight build per PR: a new push cancels the previous run.
+# Re-dispatching the same target on the same ref cancels the stale run;
+# different targets may run side by side.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.target }}
   cancel-in-progress: true
 
 jobs:
+  # The `matrix` context is not available in a job-level `if`, so the target
+  # choice is applied here instead: this job emits only the matching matrix
+  # legs for the build job's `fromJSON` include.
+  plan:
+    name: Resolve build matrix
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - id: plan
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          LEGS='[
+            {"platform":"macos-latest","label":"macOS (Apple Silicon)",
+             "targets":["all","macos","macos-apple-silicon"],
+             "artifact":"LeGit-macos-apple-silicon",
+             "rust-targets":"aarch64-apple-darwin","args":"--target aarch64-apple-darwin",
+             "bundle-paths":"target/aarch64-apple-darwin/release/bundle/dmg/*.dmg"},
+            {"platform":"macos-latest","label":"macOS (Intel)",
+             "targets":["all","macos","macos-intel"],
+             "artifact":"LeGit-macos-intel",
+             "rust-targets":"x86_64-apple-darwin","args":"--target x86_64-apple-darwin",
+             "bundle-paths":"target/x86_64-apple-darwin/release/bundle/dmg/*.dmg"},
+            {"platform":"ubuntu-22.04","label":"Linux",
+             "targets":["all","linux","linux-deb","linux-rpm","linux-appimage"],
+             "rust-targets":"","args":""},
+            {"platform":"windows-latest","label":"Windows",
+             "targets":["all","windows","windows-msi","windows-exe"],
+             "rust-targets":"","args":""}
+          ]'
+          MATRIX=$(jq -c --arg t "$TARGET" '[ .[] | select(.targets | index($t)) | del(.targets) ]' <<< "$LEGS")
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
   # The Linux legit-agent binaries the Windows bundle ships (mirrors
-  # release.yml — deployed into a WSL distro on first connect).
+  # release.yml - deployed into a WSL distro on first connect). Only needed
+  # when a Windows bundle is built.
   build-agent:
     name: Build legit-agent (musl)
+    if: contains(fromJSON('["all","windows","windows-msi","windows-exe"]'), inputs.target)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -56,41 +109,18 @@ jobs:
 
   build:
     name: Build ${{ matrix.label }}
-    needs: build-agent
+    needs: [plan, build-agent]
+    # build-agent being skipped is fine for non-Windows targets (only the
+    # Windows bundle consumes its artifact, and plan emits no Windows leg
+    # without it being scheduled); its failure blocks the build.
+    if: >-
+      !cancelled() && needs.plan.result == 'success' &&
+      (needs.build-agent.result == 'success' || needs.build-agent.result == 'skipped')
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: macos-latest # Apple Silicon
-            label: macOS (Apple Silicon)
-            artifact: LeGit-macos-apple-silicon
-            rust-targets: aarch64-apple-darwin
-            args: "--target aarch64-apple-darwin"
-            bundle-paths: |
-              target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
-          - platform: macos-latest # Intel (cross-compiled on the arm runner)
-            label: macOS (Intel)
-            artifact: LeGit-macos-intel
-            rust-targets: x86_64-apple-darwin
-            args: "--target x86_64-apple-darwin"
-            bundle-paths: |
-              target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
-          # Linux and Windows produce several installer formats from one
-          # build - uploaded as one artifact PER FORMAT below (no `artifact`
-          # field), so a download grabs exactly the installer needed.
-          - platform: ubuntu-22.04 # .deb + .rpm + .AppImage
-            label: Linux
-            rust-targets: ""
-            args: ""
-          - platform: windows-latest # .msi + NSIS .exe
-            label: Windows
-            rust-targets: ""
-            args: ""
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.platform }}
-    env:
-      # Suffix for artifact names so downloads from different PRs stay
-      # distinguishable; empty on workflow_dispatch.
-      PR_SUFFIX: ${{ github.event.pull_request.number && format('-pr{0}', github.event.pull_request.number) || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -131,146 +161,73 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      # createUpdaterArtifacts needs the release signing key; PR builds only
-      # need the installers, so switch it off for this invocation.
-      - name: Write PR bundle config override
+      # createUpdaterArtifacts needs the release signing key; on-demand builds
+      # only need the installers, so switch it off for this invocation.
+      - name: Write bundle config override
         shell: bash
         run: echo '{"bundle":{"createUpdaterArtifacts":false}}' > pr-bundle.conf.json
 
-      - name: Build bundles
-        # The PR envs bake `<headsha>.PR<n>` as the build hash (build.rs):
-        # the PR number marks the artifact's origin, and the HEAD sha is the
-        # commit the sticky comment names (the checkout itself is the
-        # ephemeral merge commit). Empty on workflow_dispatch - plain dev
-        # hash behavior then.
-        env:
-          LEGIT_PR_NUMBER: ${{ github.event.pull_request.number }}
-          LEGIT_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: npm run tauri:build -- --config pr-bundle.conf.json ${{ matrix.args }}
-
-      # The installers inside every PR's artifacts would otherwise be named
-      # identically (the manifest version is the same across PRs): suffix
-      # each file with the PR number and HEAD sha so two downloaded builds
-      # stay tellable apart.
-      - name: Suffix installer names with the PR build id
-        if: github.event_name == 'pull_request'
+      # A single-format target packages only that bundle (the compile is the
+      # same either way; this skips the other formats' packaging).
+      - name: Resolve bundle restriction
         shell: bash
-        env:
-          PR: ${{ github.event.pull_request.number }}
-          SHA: ${{ github.event.pull_request.head.sha }}
-        # find, not a globstar loop: macOS runners run Apple's bash 3.2,
-        # which has no globstar (it needs bash >= 4).
         run: |
-          suffix="-pr${PR}-${SHA:0:7}"
-          find target -type f -path '*/release/bundle/*' \
-            \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \
-               -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) \
-            -print0 |
-          while IFS= read -r -d '' f; do
-            base="${f%.*}"
-            ext="${f##*.}"
-            mv "$f" "${base}${suffix}.${ext}"
-          done
+          case "${{ inputs.target }}" in
+            windows-msi)    echo "BUNDLES=--bundles msi" >> "$GITHUB_ENV" ;;
+            windows-exe)    echo "BUNDLES=--bundles nsis" >> "$GITHUB_ENV" ;;
+            linux-deb)      echo "BUNDLES=--bundles deb" >> "$GITHUB_ENV" ;;
+            linux-rpm)      echo "BUNDLES=--bundles rpm" >> "$GITHUB_ENV" ;;
+            linux-appimage) echo "BUNDLES=--bundles appimage" >> "$GITHUB_ENV" ;;
+            *)              echo "BUNDLES=" >> "$GITHUB_ENV" ;;
+          esac
+
+      - name: Build bundles
+        shell: bash
+        run: npm run tauri:build -- --config pr-bundle.conf.json ${{ matrix.args }} $BUNDLES
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: matrix.artifact != ''
         with:
-          name: ${{ matrix.artifact }}${{ env.PR_SUFFIX }}
+          name: ${{ matrix.artifact }}
           path: ${{ matrix.bundle-paths }}
           retention-days: 14
           if-no-files-found: error
 
       # One artifact per installer format (mirrors the release assets), so
-      # nobody downloads a second installer they don't need.
+      # nobody downloads a second installer they don't need. Formats the
+      # bundle restriction skipped are not uploaded.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        if: matrix.platform == 'windows-latest'
+        if: matrix.platform == 'windows-latest' && inputs.target != 'windows-msi'
         with:
-          name: LeGit-windows-setup-exe${{ env.PR_SUFFIX }}
+          name: LeGit-windows-setup-exe
           path: target/release/bundle/nsis/*.exe
           retention-days: 14
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        if: matrix.platform == 'windows-latest'
+        if: matrix.platform == 'windows-latest' && inputs.target != 'windows-exe'
         with:
-          name: LeGit-windows-msi${{ env.PR_SUFFIX }}
+          name: LeGit-windows-msi
           path: target/release/bundle/msi/*.msi
           retention-days: 14
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.platform == 'ubuntu-22.04' && inputs.target != 'linux-rpm' && inputs.target != 'linux-appimage'
         with:
-          name: LeGit-linux-deb${{ env.PR_SUFFIX }}
+          name: LeGit-linux-deb
           path: target/release/bundle/deb/*.deb
           retention-days: 14
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.platform == 'ubuntu-22.04' && inputs.target != 'linux-deb' && inputs.target != 'linux-appimage'
         with:
-          name: LeGit-linux-rpm${{ env.PR_SUFFIX }}
+          name: LeGit-linux-rpm
           path: target/release/bundle/rpm/*.rpm
           retention-days: 14
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.platform == 'ubuntu-22.04' && inputs.target != 'linux-deb' && inputs.target != 'linux-rpm'
         with:
-          name: LeGit-linux-appimage${{ env.PR_SUFFIX }}
+          name: LeGit-linux-appimage
           path: target/release/bundle/appimage/*.AppImage
           retention-days: 14
           if-no-files-found: error
-
-  # Sticky PR comment with direct download links for the uploaded artifacts.
-  # Skipped for fork PRs, whose GITHUB_TOKEN cannot write comments — the
-  # artifacts are still on the run's summary page.
-  comment:
-    name: Link artifacts on the PR
-    needs: build
-    if: github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork
-    runs-on: ubuntu-22.04
-    permissions:
-      pull-requests: write
-    steps:
-      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        with:
-          script: |
-            const marker = '<!-- pr-build-artifacts -->';
-            const { data: { artifacts } } = await github.rest.actions.listWorkflowRunArtifacts({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: context.runId,
-            });
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const rows = artifacts
-              .filter((a) => a.name !== 'legit-agent')
-              .map((a) => `| [${a.name}](${runUrl}/artifacts/${a.id}) | ${(a.size_in_bytes / 1048576).toFixed(1)} MB |`)
-              .join('\n');
-            const body = [
-              marker,
-              `### 📦 Installers for ${context.payload.pull_request.head.sha.slice(0, 7)}`,
-              '',
-              '| Artifact | Size |',
-              '| --- | --- |',
-              rows,
-              '',
-              `Downloads require being signed in to GitHub and expire after 14 days ([run](${runUrl})).`,
-            ].join('\n');
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-            const existing = comments.find((c) => c.body.startsWith(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body,
-              });
-            }
