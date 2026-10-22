@@ -16,22 +16,31 @@ export function textContentOf(selector: string): Promise<string> {
 }
 
 /**
- * Right-click via a raw W3C action chain: move to the element's geometric
- * center, press and release button 2. wdio v10's el.click({ button: "right" })
- * first hit-tests the element with elementFromPoint and scrolls on a miss;
- * WebKitGTK's hit-testing disagrees with the layout inside dockview's
- * overflow:hidden paneview content, so that scroll fires and the click then
- * lands on whatever sits at the stale coordinates (observed: the Branches
- * filter input instead of the branch row). The raw chain skips the hit-test,
- * which is exactly what wdio v9 did.
+ * Open a context menu by dispatching `contextmenu` at the element's center.
+ * WebKitWebDriver's pointer Actions API is unreliable here: element- and
+ * viewport-origin moves fail ("element not interactable" / "move target out
+ * of bounds") or land offset from the target, and wdio v10 routes
+ * el.click({ button: "right" }) through an elementFromPoint pre-check that
+ * WebKitGTK answers wrongly inside paneview content, scrolling the pane and
+ * misplacing the click. The dispatched event is what a native right-click
+ * bubbles to the app's onContextMenu handlers, with clientX/Y for menu
+ * placement.
  */
 export async function rightClick(el: ChainablePromiseElement): Promise<void> {
-  await browser
-    .action("pointer")
-    .move({ origin: await el })
-    .down({ button: 2 })
-    .up({ button: 2 })
-    .perform();
+  const elem = await el;
+  await browser.execute((node) => {
+    const target = node as Element;
+    const r = target.getBoundingClientRect();
+    target.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: Math.round(r.x + r.width / 2),
+        clientY: Math.round(r.y + r.height / 2),
+        button: 2,
+      }),
+    );
+  }, elem);
 }
 
 /** Poll until the element's textContent contains `needle`. */
