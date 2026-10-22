@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { browser, $ } from "@wdio/globals";
-import { waitForTextContent } from "../helpers.ts";
+import { rightClick, waitForTextContent } from "../helpers.ts";
 import { E2E_HOME } from "../fixtures.ts";
 
 // buildSmokeFixture: notes.txt is "first line\n" at HEAD with an unstaged
@@ -36,7 +36,7 @@ describe("discard: confirm-gated discard of an unstaged change", () => {
   it("requests the discard from the file row's context menu", async () => {
     const row = $('[data-testid="wc-unstaged"] [data-testid="file-row"][data-path="notes.txt"]');
     await row.waitForDisplayed();
-    await row.click({ button: "right" });
+    await rightClick(row);
     const discardItem = $('//button[@role="menuitem" and contains(., "Discard changes")]');
     await discardItem.waitForClickable({ timeout: 10_000 });
     await discardItem.click();

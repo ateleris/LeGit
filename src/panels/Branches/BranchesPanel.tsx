@@ -480,6 +480,7 @@ export function BranchesSection() {
           <SectionLabel>New branch</SectionLabel>
           <div style={{ display: "flex", gap: "0.5em", flexWrap: "wrap" }}>
             <input
+              data-testid="new-branch-name"
               value={createName}
               onChange={(e) => setCreateName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && doCreate()}

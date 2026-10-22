@@ -1,7 +1,7 @@
 // Conflict flow: merge a conflicting branch from the Branches panel and
 // verify the op-state banner reports the merge with 1 conflict remaining.
 import { $ } from "@wdio/globals";
-import { waitForTextContent } from "../helpers.ts";
+import { rightClick, waitForTextContent } from "../helpers.ts";
 
 describe("conflict: merge with conflicts shows the op-state banner", () => {
   it("launches and opens the conflict fixture repo", async () => {
@@ -33,7 +33,7 @@ describe("conflict: merge with conflicts shows the op-state banner", () => {
       '//div[@data-testid="branch-row" and @data-branch="feature"]//span[contains(text(), "feature")]',
     );
     await featureName.waitForDisplayed();
-    await featureName.click({ button: "right" });
+    await rightClick(featureName);
     // Merge variants live in a submenu: click the trigger to open the flyout,
     // then pick the default merge inside it.
     const mergeSubmenu = $('[data-testid="menu-merge-submenu"]');

@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { browser, $ } from "@wdio/globals";
 import { Key } from "webdriverio";
-import { textContentOf, waitForTextContent } from "../helpers.ts";
+import { rightClick, textContentOf, waitForTextContent } from "../helpers.ts";
 import { E2E_HOME } from "../fixtures.ts";
 
 const REPO_DIR = path.join(E2E_HOME, "fixtures", "conflict-bulk");
@@ -63,7 +63,7 @@ describe("bulk conflict resolve from the context-menu submenu", () => {
           await $(row("wc-unstaged", "a.txt")).click();
           await browser.keys([Key.Shift, Key.ArrowDown]);
           await browser.keys([Key.Shift, Key.ArrowDown]);
-          await $(row("wc-unstaged", "a.txt")).click({ button: "right" });
+          await rightClick($(row("wc-unstaged", "a.txt")));
           const trigger = $('[data-testid="resolve-conflicted"]');
           await trigger.waitForDisplayed({ timeout: 2_000 });
           // Only the 2 conflicted files of the 3 selected count. A wrong
@@ -108,7 +108,7 @@ describe("bulk conflict resolve from the context-menu submenu", () => {
   });
 
   it("the surviving file's menu acts on it alone (no stale selection)", async () => {
-    await $(row("wc-unstaged", "clean.txt")).click({ button: "right" });
+    await rightClick($(row("wc-unstaged", "clean.txt")));
     const stageItem = $('//button[@role="menuitem" and normalize-space(.)="Stage"]');
     await stageItem.waitForDisplayed({
       timeout: 10_000,

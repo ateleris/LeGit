@@ -30,7 +30,9 @@ describe("branch: create and switch", () => {
   });
 
   it("creates a branch from the New-branch form and auto-checks it out", async () => {
-    const nameInput = $('input[placeholder="name"]');
+    // placeholder="name" exists twice in the Refs pane (Branches + the
+    // collapsed-but-mounted Tags section), so select by testid.
+    const nameInput = $('[data-testid="new-branch-name"]');
     await nameInput.waitForDisplayed();
     await nameInput.setValue(BRANCH);
     // Enter submits the form (avoids disambiguating the Create button from
