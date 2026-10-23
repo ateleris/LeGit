@@ -12,6 +12,12 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Changed
+
+- In a repository with no commits yet, the Changed Files panel hands its
+  spot to Working Changes instead of showing an unfillable "select a
+  commit" hint
+
 ## [1.6.1] - 2026-10-21
 
 ### Added

@@ -16,9 +16,45 @@ import { useSummonStore } from "../../store/summon";
 import { useDockviewStore } from "../../store/dockview";
 import type { RepoId } from "../../lib/types";
 import { WORKING_DIR_ID } from "../Commits/commitRows";
-import { reconcileSlotAction, useRepoSlotSync } from "./repoSlotSync";
+import {
+  reconcileSlotAction,
+  shouldYieldSlotToWorkingChanges,
+  useRepoSlotSync,
+} from "./repoSlotSync";
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+
+// A repo with verifiably no commits can never fill Changed Files (nothing is
+// selectable in the log), so the panel yields the shared slot to Working
+// Changes - the panel a fresh init actually needs.
+describe("shouldYieldSlotToWorkingChanges", () => {
+  const unborn = {
+    logLoaded: true,
+    fetching: false,
+    commitShown: false,
+    hasCommits: false,
+  };
+
+  it("yields when the log verifiably has no commits", () => {
+    expect(shouldYieldSlotToWorkingChanges(unborn)).toBe(true);
+  });
+
+  it("does not yield before the log has loaded (startup must not flicker-swap)", () => {
+    expect(shouldYieldSlotToWorkingChanges({ ...unborn, logLoaded: false })).toBe(false);
+  });
+
+  it("does not yield while a refetch is in flight (stale data after the first commit)", () => {
+    expect(shouldYieldSlotToWorkingChanges({ ...unborn, fetching: true })).toBe(false);
+  });
+
+  it("does not yield when the repo has commits", () => {
+    expect(shouldYieldSlotToWorkingChanges({ ...unborn, hasCommits: true })).toBe(false);
+  });
+
+  it("does not yield while the panel shows a delivered commit (summon raced the probe)", () => {
+    expect(shouldYieldSlotToWorkingChanges({ ...unborn, commitShown: true })).toBe(false);
+  });
+});
 
 describe("reconcileSlotAction", () => {
   const base = {

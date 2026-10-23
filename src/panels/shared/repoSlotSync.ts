@@ -60,6 +60,24 @@ export function reconcileSlotAction(args: {
 }
 
 /**
+ * Whether Changed Files should yield the shared slot to Working Changes
+ * because the active repo verifiably has no commits: nothing is selectable in
+ * the log, so the panel can never be filled, while a fresh init needs Working
+ * Changes for the first commit. Conservative on anything unverified: an
+ * unloaded or refetching probe, or a commit already delivered to the panel
+ * (a summon can race the probe right after the first commit), keeps the slot.
+ */
+export function shouldYieldSlotToWorkingChanges(args: {
+  logLoaded: boolean;
+  fetching: boolean;
+  commitShown: boolean;
+  hasCommits: boolean;
+}): boolean {
+  const { logLoaded, fetching, commitShown, hasCommits } = args;
+  return logLoaded && !fetching && !commitShown && !hasCommits;
+}
+
+/**
  * Runs the reconcile whenever the active repo CHANGES (never on mount: the
  * restored startup layout must not be rewritten before any selection exists).
  * The swaps reuse the exact summon calls a row click makes, so suppression

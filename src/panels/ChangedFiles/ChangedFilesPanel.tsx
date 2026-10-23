@@ -24,6 +24,7 @@ import { FileRowMenuSection } from "../shared/FileRowMenuSection";
 import type { FileViewRequest } from "../FileView/FileViewPanel";
 import { STALE } from "../../lib/queryTiming";
 import { useStashes } from "../../lib/queries/useRepoQueries";
+import { useYieldSlotWhenNoCommits } from "./useYieldSlotWhenNoCommits";
 
 /**
  * Changed Files panel — receives a CommitId via the summon mechanism and shows
@@ -46,6 +47,9 @@ export function ChangedFilesPanel() {
     "changed-files.selectedPath",
     null,
   );
+  // A repo with verifiably no commits swaps this panel out for Working
+  // Changes; the flag stays visible here only while the swap is suppressed.
+  const repoHasNoCommits = useYieldSlotWhenNoCommits(selectedId);
   // A path the summoner asked us to pre-select once this commit's files load
   // (File History → "select this file's row and open its diff").
   const [pendingSelectPath, setPendingSelectPath] = useState<string | null>(null);
@@ -211,7 +215,11 @@ export function ChangedFilesPanel() {
     return (
       <div className="legit-panel">
         <div className="legit-panel__body">
-          <span className="legit-subtle">Select a commit in Log to see its changed files.</span>
+          <span className="legit-subtle">
+            {repoHasNoCommits
+              ? "No commits yet."
+              : "Select a commit in Log to see its changed files."}
+          </span>
         </div>
       </div>
     );
