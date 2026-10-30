@@ -44,6 +44,118 @@ pub(crate) fn parse_open_arg(args: &[String]) -> Option<String> {
 /// restoring tabs (`take_pending_open`).
 pub(crate) struct PendingOpen(pub std::sync::Mutex<Option<String>>);
 
+/// Env marker carried by the process relaunched after a failed webview
+/// creation, so a persistent failure reports instead of relaunching forever.
+pub(crate) const WEBVIEW_RETRY_ENV: &str = "LEGIT_WEBVIEW_RETRY";
+
+/// What to do when the main webview is missing after startup.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum MissingWebviewAction {
+    /// Transient WebView2 races (two near-simultaneous launches) succeed on
+    /// the next try, so the first failure relaunches the app once.
+    RelaunchOnce,
+    ReportAndExit,
+}
+
+pub(crate) fn missing_webview_action(retry_marker_set: bool) -> MissingWebviewAction {
+    if retry_marker_set {
+        MissingWebviewAction::ReportAndExit
+    } else {
+        MissingWebviewAction::RelaunchOnce
+    }
+}
+
+/// Whether the main window failed to actually come up. A webview whose
+/// runtime-side creation failed still has a manager-side wrapper, so
+/// `get_webview_window` returns it; the only observable signal is that every
+/// round-trip getter fails (the runtime dropped the window, so the reply
+/// channel is closed). Safe in setup: on the main thread the runtime handles
+/// the probe synchronously.
+fn main_window_is_dead(app: &tauri::AppHandle) -> bool {
+    match app.get_webview_window("main") {
+        None => true,
+        Some(win) => win.is_visible().is_err(),
+    }
+}
+
+/// Webview creation precedes the setup hook and tauri only LOGS its failure
+/// (seen in the wild as WebView2 0x80070057 when two instances started
+/// near-simultaneously): without intervention the process keeps running with
+/// no usable window, holding the single-instance mutex, and every later
+/// launch is forwarded to it and exits silently.
+fn recover_missing_main_window(app: &tauri::AppHandle) {
+    match missing_webview_action(std::env::var_os(WEBVIEW_RETRY_ENV).is_some()) {
+        MissingWebviewAction::RelaunchOnce => {
+            // Jitter decorrelates two instances that raced each other into
+            // this failure, so their relaunches don't collide again.
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or_default();
+            let delay = std::time::Duration::from_millis(500 + u64::from(nanos % 1500));
+            tracing::error!(
+                delay_ms = delay.as_millis() as u64,
+                "main webview missing after startup - relaunching once"
+            );
+            std::thread::sleep(delay);
+            let spawned = std::env::current_exe().and_then(|exe| {
+                std::process::Command::new(exe)
+                    .args(std::env::args().skip(1))
+                    .env(WEBVIEW_RETRY_ENV, "1")
+                    .spawn()
+            });
+            match spawned {
+                Ok(_) => {
+                    app.cleanup_before_exit();
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    tracing::error!(err = %e, "relaunch failed - reporting instead");
+                    report_missing_webview_and_exit(app);
+                }
+            }
+        }
+        MissingWebviewAction::ReportAndExit => {
+            tracing::error!("main webview still missing after a relaunch - reporting");
+            report_missing_webview_and_exit(app);
+        }
+    }
+}
+
+/// Queues the error dialog for when the event loop starts and exits once it
+/// is dismissed; the caller must return from setup so the loop can run.
+fn report_missing_webview_and_exit(app: &tauri::AppHandle) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+    let handle = app.clone();
+    app.dialog()
+        .message(
+            "LeGit could not create its main window: the system webview \
+             (WebView2 on Windows) failed to initialize.\n\n\
+             Try starting LeGit again. If this keeps happening, repair the \
+             \"Microsoft Edge WebView2 Runtime\" in the installed apps list, \
+             and check the LeGit log folder for details.",
+        )
+        .title("LeGit cannot start")
+        .kind(MessageDialogKind::Error)
+        .show(move |_| {
+            handle.cleanup_before_exit();
+            std::process::exit(1);
+        });
+}
+
+#[cfg(test)]
+mod missing_webview_tests {
+    use super::{missing_webview_action, MissingWebviewAction};
+
+    // The retry marker is what bounds the recovery: a persistent webview
+    // failure must report, never relaunch in a loop.
+    #[test]
+    fn relaunches_once_then_reports() {
+        assert_eq!(missing_webview_action(false), MissingWebviewAction::RelaunchOnce);
+        assert_eq!(missing_webview_action(true), MissingWebviewAction::ReportAndExit);
+    }
+}
+
 #[cfg(test)]
 mod open_arg_tests {
     use super::parse_open_arg;
@@ -107,9 +219,18 @@ pub fn run() {
         // is forwarded to the frontend instead of starting a second app.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             use tauri::{Emitter as _, Manager as _};
-            if let Some(win) = app.get_webview_window("main") {
-                let _ = win.show();
-                let _ = win.set_focus();
+            match app.get_webview_window("main") {
+                // The getter distinguishes a live window from the ghost
+                // wrapper of a failed webview creation (see
+                // `main_window_is_dead`); a forwarded launch must not be a
+                // silent no-op in the log.
+                Some(win) if win.is_visible().is_ok() => {
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                }
+                _ => tracing::error!(
+                    "second launch forwarded to an instance without a usable main window"
+                ),
             }
             if let Some(locator) = parse_open_arg(&argv) {
                 let _ = app.emit(OPEN_LOCATOR_EVENT, locator);
@@ -168,6 +289,14 @@ pub fn run() {
             }
         })
         .setup(move |app| {
+            if main_window_is_dead(app.handle()) {
+                recover_missing_main_window(app.handle());
+                return Ok(());
+            }
+            // The marker must not outlive a successful start: child processes
+            // (git, updater restarts) inherit this process's environment.
+            std::env::remove_var(WEBVIEW_RETRY_ENV);
+
             specta_builder.mount_events(app);
 
             let (global_settings_path, repos_data_dir, user_themes_dir, builtin_themes_dir) =
@@ -309,8 +438,11 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 // Process teardown does not reliably run `kill_on_drop`; a
                 // leaked wsl.exe bridge keeps its agent alive in the distro.
-                let state = app.state::<crate::state::AppState>();
-                tauri::async_runtime::block_on(state.wsl_hosts.kill_all_bridges());
+                // try_state: the missing-webview recovery path exits without
+                // ever managing AppState.
+                if let Some(state) = app.try_state::<crate::state::AppState>() {
+                    tauri::async_runtime::block_on(state.wsl_hosts.kill_all_bridges());
+                }
                 tracing::info!("LeGit exiting");
             }
         });

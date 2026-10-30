@@ -12,6 +12,13 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- A failed WebView2 startup no longer leaves an invisible LeGit process
+  that silently blocks every later launch: LeGit now relaunches itself
+  once and, if the window still cannot be created, reports the error and
+  exits
+
 ### Changed
 
 - In a repository with no commits yet, the Changed Files panel hands its
