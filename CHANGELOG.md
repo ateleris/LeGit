@@ -14,6 +14,12 @@ lives in the git log and the GitHub release notes.
 
 ### Fixed
 
+- The diff viewer's "Discard chunk" button now asks for confirmation
+  (when destructive-action confirmation is on) instead of discarding
+  immediately
+- The diff viewer's "Discard edits" button and the merge panel's "Take
+  ours/theirs" buttons now ask for confirmation before dropping unsaved
+  in-editor edits (when destructive-action confirmation is on)
 - A failed WebView2 startup no longer leaves an invisible LeGit process
   that silently blocks every later launch: LeGit now relaunches itself
   once and, if the window still cannot be created, reports the error and

@@ -39,6 +39,7 @@ import {
   type ContextMode,
 } from "./viewPrefs";
 import { diffCapabilities } from "./diffActions";
+import { confirmDropUnsavedEdits } from "../shared/unsavedEdits";
 
 /** Same file/source identity (a refetch of it must not count as a switch). */
 function sameTarget(a: DiffRequest | null, b: DiffRequest | null): boolean {
@@ -286,7 +287,8 @@ export function DiffPanel() {
     [guardSave, requestRef, setDirty, rebuild, queryClient],
   );
 
-  const onDiscardEdits = useCallback(() => {
+  const onDiscardEdits = useCallback(async () => {
+    if (!(await confirmDropUnsavedEdits(dirtyRef.current, requestRef.current?.path ?? ""))) return;
     setDirty(false);
     // The file on disk never changed, so the refetched diff is identical -
     // the rebuild key is what actually resets the editor's document.
@@ -295,7 +297,7 @@ export function DiffPanel() {
     // Still invalidate: the query was disabled while dirty and may have
     // missed watcher events.
     if (req) invalidateRepoDomains(queryClient, req.repoId, ["diff"]);
-  }, [setDirty, rebuild, requestRef, queryClient]);
+  }, [dirtyRef, setDirty, rebuild, requestRef, queryClient]);
 
   const onDirty = useCallback(() => setDirty(true), [setDirty]);
 

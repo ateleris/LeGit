@@ -29,6 +29,7 @@ import {
   type LineSelection,
 } from "./conflictModel";
 import { MergeView, type MergeViewHandle } from "./MergeView";
+import { confirmDropUnsavedEdits } from "../shared/unsavedEdits";
 import { STALE } from "../../lib/queryTiming";
 import { useBranches } from "../../lib/queries/useRepoQueries";
 
@@ -54,6 +55,7 @@ export function MergePanel() {
     request,
     requestRef,
     dirty,
+    dirtyRef,
     setDirty,
     pending,
     acceptPending,
@@ -207,9 +209,11 @@ export function MergePanel() {
     async (side: ConflictSide) => {
       const req = requestRef.current;
       if (!req) return;
+      // The whole-file choice supersedes any in-editor result - ask before
+      // dropping unsaved hand-edits to the resolution.
+      if (!(await confirmDropUnsavedEdits(dirtyRef.current, req.path))) return;
       try {
         await api.repoResolveTakeSide(req.repoId, [req.path], side);
-        // The whole-file choice supersedes any in-editor result.
         setDirty(false);
         setStagedNotice(true);
         rebuild();
@@ -219,7 +223,7 @@ export function MergePanel() {
         notify.error(formatAppError(e));
       }
     },
-    [requestRef, setDirty, rebuild, queryClient],
+    [requestRef, dirtyRef, setDirty, rebuild, queryClient],
   );
 
   // The single confirming action: write the result document to the file and

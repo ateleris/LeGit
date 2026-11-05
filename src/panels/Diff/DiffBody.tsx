@@ -15,6 +15,7 @@ import {
   type LineActionOp,
 } from "./DiffEditor";
 import { lineActionLabel } from "./selectionModel";
+import { confirmDestructiveAction } from "../../store/confirm";
 import { SubmoduleDiffView, SubmoduleDirtyNotice } from "./SubmoduleDiffView";
 import { ImageDiffView } from "./ImageDiffView";
 import { binarySizes, isSvgPath } from "../../lib/previewSurface";
@@ -84,6 +85,45 @@ export function DiffBody({
       else go();
     },
     [destructiveMenuConfirm, closeMenu]
+  );
+
+  // The editor's header buttons and hover affordances invoke the handlers
+  // directly (no menu confirm in between), so a discard from the editor takes
+  // the central dialog first. Menu entries keep their own confirm takeover
+  // and call the raw handlers.
+  const confirmedAction = useCallback(
+    (hunkIndex: number, action: HunkAction) => {
+      if (action !== "discard") {
+        onAction(hunkIndex, action);
+        return;
+      }
+      void confirmDestructiveAction({
+        title: "Discard chunk",
+        message: "Discards the chunk's working-tree changes. This cannot be undone.",
+        detail: request.path,
+        confirmLabel: "Discard",
+      }).then((ok) => {
+        if (ok) onAction(hunkIndex, action);
+      });
+    },
+    [onAction, request.path]
+  );
+  const confirmedLineAction = useCallback(
+    (hunkIndex: number, lines: number[], action: HunkAction) => {
+      if (action !== "discard") {
+        onLineAction(hunkIndex, lines, action);
+        return;
+      }
+      void confirmDestructiveAction({
+        title: lineActionLabel("discard", lines.length),
+        message: "Discards the working-tree changes on these lines. This cannot be undone.",
+        detail: request.path,
+        confirmLabel: "Discard",
+      }).then((ok) => {
+        if (ok) onLineAction(hunkIndex, lines, action);
+      });
+    },
+    [onLineAction, request.path]
   );
 
   const onContextMenu = useCallback(
@@ -220,10 +260,10 @@ export function DiffBody({
       diff={text}
       mode={mode}
       actions={actions}
-      onAction={onAction}
+      onAction={confirmedAction}
       onContextMenu={onContextMenu}
       lineActionOp={lineActionOp}
-      onLineAction={onLineAction}
+      onLineAction={confirmedLineAction}
       scrollResetKey={scrollResetKey}
       editable={editable}
       dirty={dirty}
