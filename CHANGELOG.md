@@ -24,6 +24,9 @@ lives in the git log and the GitHub release notes.
   that silently blocks every later launch: LeGit now relaunches itself
   once and, if the window still cannot be created, reports the error and
   exits
+- SVG previews that render blank (diagrams drawn via scripts or external
+  files, which image previews cannot load) now say so instead of showing
+  an empty pane
 
 ### Changed
 

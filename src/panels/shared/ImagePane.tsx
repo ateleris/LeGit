@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { FilePreview, ImageFormat } from "../../lib/types";
 import { formatByteSize } from "../../lib/formatBytes";
+import { svgPaintedNothing } from "./svgPaintCheck";
 
 /** data: URL for an image preview payload (CSP is null; data URLs render). */
 export function previewDataUrl(format: ImageFormat, base64: string): string {
@@ -19,6 +20,7 @@ export function ImagePane({
   label?: string;
 }) {
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
+  const [paintedNothing, setPaintedNothing] = useState(false);
   return (
     <div
       style={{
@@ -50,12 +52,28 @@ export function ImagePane({
             "repeating-conic-gradient(var(--preview-checker-a) 0% 25%, var(--preview-checker-b) 0% 50%) 0 0 / 1.4em 1.4em",
         }}
       >
+        {paintedNothing && (
+          <span
+            className="legit-subtle"
+            style={{ fontSize: "var(--fz-sm)", padding: "0.667em", textAlign: "center" }}
+          >
+            This SVG draws via scripts or external files, which the image preview cannot load.
+          </span>
+        )}
         <img
           src={previewDataUrl(preview.format, preview.base64)}
-          onLoad={(e) =>
-            setDims({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })
-          }
-          style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", display: "block" }}
+          onLoad={(e) => {
+            setDims({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight });
+            setPaintedNothing(preview.format === "svg" && svgPaintedNothing(e.currentTarget));
+          }}
+          style={{
+            maxWidth: "100%",
+            maxHeight: "100%",
+            objectFit: "contain",
+            // Stays mounted while hidden: the next preview's load event must
+            // still fire here to re-evaluate the notice.
+            display: paintedNothing ? "none" : "block",
+          }}
         />
       </div>
       <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
