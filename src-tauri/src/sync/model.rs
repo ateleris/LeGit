@@ -30,7 +30,7 @@ pub const GLOBAL_SETTINGS_NEVER_SYNCED: [&str; 16] = [
     "sync_git_profiles",
 ];
 
-const GIT_PROFILES_KEY: &str = "gitProfiles";
+pub(crate) const GIT_PROFILES_KEY: &str = "gitProfiles";
 
 /// The profile-sync keys, gated together by `sync_git_profiles`: the
 /// definitions and the remote-URL -> profile-id assignment map.
@@ -89,7 +89,7 @@ pub fn export_synced_settings(s: &GlobalSettings) -> serde_json::Value {
 
 /// This machine's home directory; an unset home degrades to no path
 /// rewriting (profiles then sync with their literal paths).
-fn local_home() -> String {
+pub(crate) fn local_home() -> String {
     crate::commands::ssh_keys::home_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_default()

@@ -12,6 +12,7 @@ mod logging;
 mod oauth;
 mod os_open;
 mod persist;
+mod profiles_store;
 mod remote;
 mod repo_groups;
 mod state;
@@ -303,6 +304,11 @@ pub fn run() {
                 commands::resolve_dirs(&app.handle());
 
             let mut global_settings = load_global_settings_sync(&global_settings_path);
+            let profiles_outcome = profiles_store::load_and_migrate_profiles(
+                &mut global_settings,
+                &profiles_store::git_profiles_path(&global_settings_path),
+                &sync::model::local_home(),
+            );
             let git_override = global_settings.git_path_override.as_deref().map(PathBuf::from);
             let resolved_git_path = git_resolve::resolve_git_path(git_override.as_ref());
 
@@ -332,7 +338,10 @@ pub fn run() {
                         // The shadowing copy was what actually loaded: keep
                         // the user's look by following the rename.
                         global_settings.active_theme = Some(new_name.clone());
-                        match serde_json::to_string_pretty(&global_settings) {
+                        match profiles_store::global_settings_disk_json(
+                            &global_settings,
+                            profiles_outcome.file_broken,
+                        ) {
                             Ok(json) => {
                                 if let Err(e) = persist::write_atomic_sync(&global_settings_path, json) {
                                     tracing::warn!(err = %e, "cannot persist the renamed active theme");
@@ -352,6 +361,8 @@ pub fn run() {
                 user_themes_dir,
                 builtin_themes_dir,
             );
+            *state.git_profiles_file_broken.lock().unwrap() = profiles_outcome.file_broken;
+            *state.startup_notices.lock().unwrap() = profiles_outcome.notices;
             app.manage(state);
 
             // Dev builds are visually distinct from the installed release:
@@ -510,6 +521,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::set_git_path,
         commands::set_repo_git_path,
         commands::get_global_settings,
+        commands::take_startup_notices,
         commands::get_repo_settings,
         commands::patch_repo_settings,
         commands::set_active_theme,

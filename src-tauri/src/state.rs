@@ -278,7 +278,7 @@ pub struct GitProfile {
 }
 
 /// Versioned on-disk envelope for the profile list (mirrors `LaneLocksDoc`).
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitProfilesDoc {
     pub format: String,
@@ -1028,6 +1028,18 @@ pub struct AppState {
     pub git_path: RwLock<PathBuf>,
     /// On-disk path for `global-settings.json`.
     pub global_settings_path: PathBuf,
+    /// On-disk path for `git-profiles.json` (see `profiles_store`).
+    pub git_profiles_path: PathBuf,
+    /// The profiles doc as last loaded from or written to its file; the file
+    /// is rewritten only when the live doc differs, so unrelated settings
+    /// persists never touch it (and a broken file survives until a profile
+    /// edit supersedes it).
+    pub git_profiles_baseline: std::sync::Mutex<GitProfilesDoc>,
+    /// `git-profiles.json` was present but unusable at startup; while set,
+    /// the embedded copy stays in `global-settings.json`.
+    pub git_profiles_file_broken: std::sync::Mutex<bool>,
+    /// One-shot warnings from startup, drained by `take_startup_notices`.
+    pub startup_notices: std::sync::Mutex<Vec<String>>,
     /// Held from settings snapshot to rename, so an older snapshot can never
     /// land on disk after a newer one.
     persist_lock: tokio::sync::Mutex<()>,
@@ -1075,6 +1087,8 @@ impl AppState {
         user_themes_dir: PathBuf,
         builtin_themes_dir: PathBuf,
     ) -> Self {
+        let git_profiles_path = crate::profiles_store::git_profiles_path(&global_settings_path);
+        let git_profiles_baseline = std::sync::Mutex::new(global_settings.git_profiles_doc.clone());
         let mut hosts: HashMap<HostId, Arc<dyn Host>> = HashMap::new();
         hosts.insert(HostId::Local, Arc::new(LocalHost));
         // Siblings of `repos/` under the app-data dir.
@@ -1098,6 +1112,10 @@ impl AppState {
             global_settings: Arc::new(RwLock::new(global_settings)),
             git_path: RwLock::new(git_path),
             global_settings_path,
+            git_profiles_path,
+            git_profiles_baseline,
+            git_profiles_file_broken: std::sync::Mutex::new(false),
+            startup_notices: std::sync::Mutex::new(Vec::new()),
             persist_lock: tokio::sync::Mutex::new(()),
             repos_data_dir,
             user_themes_dir,
@@ -1209,7 +1227,24 @@ impl AppState {
         if let Some(parent) = self.global_settings_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        let json = serde_json::to_string_pretty(&settings)?;
+        let doc_changed =
+            *self.git_profiles_baseline.lock().unwrap() != settings.git_profiles_doc;
+        // The profiles file is written BEFORE the strip below: a doc change
+        // supersedes a broken profiles file, but only a successful write may
+        // clear the broken state and drop the embedded fallback - the other
+        // order could leave a stripped settings file next to a broken
+        // profiles file, losing the machine-local profiles on restart.
+        if doc_changed {
+            let pjson = crate::profiles_store::portable_profiles_json(
+                &settings.git_profiles_doc,
+                &crate::sync::model::local_home(),
+            )?;
+            crate::persist::write_atomic(&self.git_profiles_path, pjson).await?;
+            *self.git_profiles_baseline.lock().unwrap() = settings.git_profiles_doc.clone();
+            *self.git_profiles_file_broken.lock().unwrap() = false;
+        }
+        let broken = *self.git_profiles_file_broken.lock().unwrap();
+        let json = crate::profiles_store::global_settings_disk_json(&settings, broken)?;
         crate::persist::write_atomic(&self.global_settings_path, json).await?;
         if let Some(tx) = self.sync_nudge.get() {
             let _ = tx.send(());
@@ -1361,6 +1396,108 @@ mod watch_lifecycle_tests {
         let id = session.id.clone();
         state.repos.write().await.insert(id.clone(), session);
         id
+    }
+
+    fn test_profile(id: &str, key: Option<String>) -> GitProfile {
+        GitProfile {
+            id: id.into(),
+            name: format!("p-{id}"),
+            user_name: None,
+            user_email: None,
+            gpg_format: None,
+            signing_key: None,
+            commit_gpgsign: None,
+            allowed_signers_file: None,
+            auth_ssh_key: key,
+            credential_helper: None,
+        }
+    }
+
+    async fn add_profile(state: &AppState, id: &str, key: Option<String>) {
+        state.global_settings.write().await.git_profiles_doc.profiles.push(test_profile(id, key));
+    }
+
+    #[tokio::test]
+    async fn global_settings_json_has_no_profiles_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state(dir.path());
+        add_profile(&state, "a", None).await;
+        state.persist_global_settings().await.unwrap();
+        let json = std::fs::read_to_string(dir.path().join("global-settings.json")).unwrap();
+        assert!(!json.contains("\"gitProfiles\""), "profiles key must be stripped: {json}");
+    }
+
+    #[tokio::test]
+    async fn unchanged_doc_never_touches_profiles_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state(dir.path());
+        state.persist_global_settings().await.unwrap();
+        state.global_settings.write().await.ui_font_size = 14.0;
+        state.persist_global_settings().await.unwrap();
+        assert!(!dir.path().join("git-profiles.json").exists());
+    }
+
+    #[tokio::test]
+    async fn changed_doc_writes_portable_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state(dir.path());
+        let home = crate::sync::model::local_home();
+        add_profile(&state, "a", Some(format!("{home}/.ssh/tkey"))).await;
+        state.persist_global_settings().await.unwrap();
+        let p = dir.path().join("git-profiles.json");
+        let first = std::fs::read_to_string(&p).unwrap();
+        assert!(first.contains("~/.ssh/tkey"), "portable form expected: {first}");
+        state.persist_global_settings().await.unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), first, "unchanged doc rewrites nothing");
+    }
+
+    #[tokio::test]
+    async fn profile_edit_supersedes_broken_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("git-profiles.json");
+        std::fs::write(&p, "not json").unwrap();
+        let state = state(dir.path());
+        add_profile(&state, "a", None).await;
+        state.persist_global_settings().await.unwrap();
+        let doc: GitProfilesDoc =
+            serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert_eq!(doc.profiles.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn broken_state_keeps_embedded_key_until_superseded() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state(dir.path());
+        *state.git_profiles_file_broken.lock().unwrap() = true;
+        state.global_settings.write().await.ui_font_size = 14.0;
+        state.persist_global_settings().await.unwrap();
+        let json = std::fs::read_to_string(dir.path().join("global-settings.json")).unwrap();
+        assert!(json.contains("\"gitProfiles\""), "broken state keeps the embedded copy");
+        add_profile(&state, "a", None).await;
+        state.persist_global_settings().await.unwrap();
+        assert!(!*state.git_profiles_file_broken.lock().unwrap(), "profile edit clears broken");
+        assert!(dir.path().join("git-profiles.json").exists());
+        let json = std::fs::read_to_string(dir.path().join("global-settings.json")).unwrap();
+        assert!(!json.contains("\"gitProfiles\""), "strip resumes after supersede");
+    }
+
+    #[tokio::test]
+    async fn failed_supersede_keeps_the_embedded_fallback() {
+        // A profiles-file write that fails mid-supersede must not have
+        // already stripped the embedded copy from global-settings.json or
+        // cleared the broken flag: exiting the app in that window would
+        // lose the machine-local profiles.
+        let dir = tempfile::tempdir().unwrap();
+        let state = state(dir.path());
+        *state.git_profiles_file_broken.lock().unwrap() = true;
+        state.persist_global_settings().await.unwrap();
+        // A directory at the file's path makes the atomic rename fail.
+        std::fs::create_dir(dir.path().join("git-profiles.json")).unwrap();
+        add_profile(&state, "a", None).await;
+        assert!(state.persist_global_settings().await.is_err());
+        assert!(*state.git_profiles_file_broken.lock().unwrap(), "flag clears only on success");
+        let json = std::fs::read_to_string(dir.path().join("global-settings.json")).unwrap();
+        assert!(json.contains("\"gitProfiles\""), "embedded fallback survives the failed write");
     }
 
     #[tokio::test]

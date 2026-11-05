@@ -475,6 +475,18 @@ async getGlobalSettings() : Promise<Result<GlobalSettings, AppError>> {
 }
 },
 /**
+ * One-shot startup warnings (e.g. an unusable git-profiles.json): drained,
+ * so a second caller gets nothing.
+ */
+async takeStartupNotices() : Promise<Result<string[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("take_startup_notices") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Read the repo-scoped settings for an open repo.
  */
 async getRepoSettings(repoId: string) : Promise<Result<RepoSettings, AppError>> {

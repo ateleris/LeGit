@@ -27,6 +27,9 @@ lives in the git log and the GitHub release notes.
 
 ### Changed
 
+- Git profiles now live in their own portable file (`git-profiles.json`
+  next to the app settings) so dotfile managers like chezmoi can sync
+  them between machines; existing profiles migrate automatically
 - In a repository with no commits yet, the Changed Files panel hands its
   spot to Working Changes instead of showing an unfillable "select a
   commit" hint

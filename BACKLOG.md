@@ -15,22 +15,7 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
 
 ## Release blockers
 
-- **Store git profiles in a separate file**
-  ([#50](https://github.com/ateleris/LeGit/issues/50)). Profiles are
-  embedded in `global-settings.json` (`GlobalSettings.git_profiles_doc`),
-  so dotfile managers like chezmoi cannot sync just the profiles between
-  devices without also syncing machine-local settings. Rough approach:
-  persist the `GitProfilesDoc` to its own file (e.g.
-  `<app-data>/git-profiles.json` - the doc already carries its own
-  `legit-git-profiles` format/version envelope), with a one-time migration
-  that lifts the embedded field out of `global-settings.json` on load and
-  keeps reading it as a fallback. Write atomically on change like the
-  other stores. Consider storing home paths in portable (`~`-relative)
-  form in the file - `sync/model.rs` already has
-  `portable_profiles_doc` / `localized_profiles_doc` for exactly this
-  mapping - so one file works across machines. Keep the settings-sync
-  engine (`sync/engine.rs`) and the command-owned-field rule (profiles are
-  refused by `patch_global_settings`) pointed at the new location.
+(none currently)
 
 ---
 

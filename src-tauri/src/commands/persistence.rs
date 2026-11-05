@@ -41,6 +41,16 @@ pub async fn get_global_settings(
     Ok(state.global_settings.read().await.clone())
 }
 
+/// One-shot startup warnings (e.g. an unusable git-profiles.json): drained,
+/// so a second caller gets nothing.
+#[tauri::command]
+#[specta::specta]
+pub async fn take_startup_notices(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<String>, AppError> {
+    Ok(std::mem::take(&mut *state.startup_notices.lock().unwrap()))
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn set_active_theme(

@@ -11,6 +11,7 @@ import { useGitLogStore } from "../store/gitLog";
 import { useConsoleStore } from "../store/console";
 import { useRemoteProgressStore } from "../store/remoteProgress";
 import { api } from "../lib/commands";
+import { notify } from "../store/notifications";
 import { onConsoleOutput, onGitInvocation, onRemoteProgress } from "../lib/events";
 import { useRepoChangeListener } from "../lib/useRepoChangeListener";
 import { useWatchStateListener } from "../lib/useWatchStateListener";
@@ -83,6 +84,15 @@ export function AppLayout() {
 
   // One quiet update check shortly after launch (setting, default on).
   useStartupUpdateCheck();
+
+  // One-shot backend startup warnings (e.g. an unusable git-profiles.json).
+  // A failed fetch stays silent: a notice must never break startup.
+  useEffect(() => {
+    api.takeStartupNotices().then(
+      (notices) => notices.forEach((n) => notify.error(n)),
+      () => {},
+    );
+  }, []);
 
   // Feed the Git Log panel with every git invocation the backend reports.
   useEffect(() => {
