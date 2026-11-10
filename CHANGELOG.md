@@ -12,6 +12,8 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-11-10
+
 ### Fixed
 
 - The diff viewer's "Discard chunk" button now asks for confirmation
