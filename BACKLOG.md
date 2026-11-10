@@ -154,6 +154,20 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
     `#[serde(default)]` migration). Rejected then and still rejected:
     HTTP(S)/WebDAV endpoints and two-way sync via a plain folder.
     Build when a team asks; the sync-doc format is already shared.
+  - **Reanalyze the local/global file split for syncing.** The
+    shareable-vs-machine-local split grew piecemeal: the git sync mode
+    filters shareable fields out of the settings doc, while the chezmoi
+    path syncs whole files (which is why git profiles got their own
+    `git-profiles.json`). Revisit how the on-disk settings are split
+    into files - a split where each file is either fully shareable or
+    fully machine-local could serve both approaches without per-field
+    filtering, and would make "sync this file with your dotfile
+    manager" a documentable contract. Rough approach: inventory every
+    persisted field (global settings, repo settings, themes, layouts,
+    profiles, sync state) and classify shareable / machine-local /
+    secret-adjacent; then propose a file layout with a migration
+    (`Option<T>` + `#[serde(default)]` keeps old files parsing) and
+    check it against both sync paths before moving anything.
   - **Phase 2 candidates**: named layouts (files under
     `<app-data>/layouts/`, so syncing mirrors the themes approach; LIVE
     dock state stays localStorage), an export/import bundle file.
