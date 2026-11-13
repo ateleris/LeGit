@@ -29,8 +29,10 @@ import { CaretDropdown } from "../shared/CaretDropdown";
 import {
   commitAndPushMenuLabel,
   commitButtonPlan,
+  commitMenuChoices,
   commitPushFailureMessage,
   commitPushSuccessMessage,
+  type CommitMenuChoice,
   type CommitPushTarget,
 } from "./commitButtonMode";
 import { gitmodulesFindingLabel } from "./gitmodulesWarning";
@@ -109,6 +111,10 @@ export function CommitComposer({
   // When set, the commit rewrites HEAD (`git commit --amend`) instead of
   // creating a new commit. Reset after each successful commit.
   const [amend, setAmend] = useState(false);
+  // The amend-only "Commit & Force Push" pick. Transient like amend itself
+  // (never persisted - a stored force-push default would be a footgun) and
+  // cleared whenever amend turns off.
+  const [amendForcePush, setAmendForcePush] = useState(false);
   const [confirmDetachedCommit, setConfirmDetachedCommit] = useState(false);
   const [confirmAmendPushed, setConfirmAmendPushed] = useState(false);
   const [confirmEolCommit, setConfirmEolCommit] = useState(false);
@@ -204,6 +210,7 @@ export function CommitComposer({
       setHookDeclined(null);
       setMessage("");
       setAmend(false);
+      setAmendForcePush(false);
       if (push) {
         // Push failures are their own outcome — the commit already stands, so
         // they must never surface through run()'s onError as a failed commit.
@@ -215,7 +222,7 @@ export function CommitComposer({
               remote: push.remote,
               branch: push.branch,
               set_upstream: push.setUpstream,
-              force_with_lease: false,
+              force_with_lease: push.force,
               recurse_submodules: pushRecurseSubmodules,
             },
             crypto.randomUUID(),
@@ -268,6 +275,7 @@ export function CommitComposer({
   const commitPlan = commitButtonPlan({
     mode: commitMode,
     amend,
+    forcePush: amendForcePush,
     detached,
     currentBranch,
     remotes: remoteNames,
@@ -293,10 +301,24 @@ export function CommitComposer({
   // Caret-menu pick configures the button (persists the mode for this repo),
   // it does not commit — the same semantics as the Stash and Pull-strategy
   // carets. Committing stays one explicit click on the (now relabeled) button.
-  const pickCommitMode = (mode: CommitButtonMode) => {
+  // The amend-only force-push pick is the exception: transient, not persisted.
+  const pickCommitMode = (choice: CommitMenuChoice) => {
     setCommitMenuOpen(false);
-    void updateRepoSetting(repo.id, "commit_button_mode", mode);
+    if (choice === "amend_force_push") {
+      setAmendForcePush(true);
+      return;
+    }
+    setAmendForcePush(false);
+    void updateRepoSetting(repo.id, "commit_button_mode", choice);
   };
+  const activeChoice: CommitMenuChoice =
+    amend && amendForcePush ? "amend_force_push" : commitMode;
+  const choiceLabel = (choice: CommitMenuChoice) =>
+    choice === "commit"
+      ? "Commit"
+      : choice === "commit_and_push"
+        ? commitAndPushMenuLabel(currentBranch, remoteNames)
+        : "Commit & Force Push";
 
   // Drop a pending detached-HEAD confirmation once HEAD is back on a branch
   // (e.g. the user switched away with the prompt still open).
@@ -320,6 +342,7 @@ export function CommitComposer({
   // so typed-but-uncommitted text is never clobbered.
   const toggleAmend = (next: boolean) => {
     setAmend(next);
+    if (!next) setAmendForcePush(false);
     if (next && head && message.trim().length === 0) setMessage(head.message);
   };
 
@@ -453,8 +476,8 @@ export function CommitComposer({
           <div style={{ marginBottom: "0.667em", fontSize: "var(--fz-md)" }}>
             The last commit is <strong>already pushed</strong>
             {tracking?.upstream ? <> to <code>{tracking.upstream}</code></> : null}. Amending
-            rewrites it, so you'll need to force-push and it may disrupt anyone who has pulled
-            it. Amend anyway?
+            rewrites it, so {commitPlan.push?.force ? "this will force-push" : "you'll need to force-push"}{" "}
+            and it may disrupt anyone who has pulled it. Amend anyway?
           </div>
           <div style={{ display: "flex", gap: "0.5em" }}>
             <Button
@@ -561,19 +584,11 @@ export function CommitComposer({
             </Button>
             {commitMenuOpen && (
               <CaretDropdown onClose={() => setCommitMenuOpen(false)}>
-                {(
-                  [
-                    { mode: "commit" as const, label: "Commit" },
-                    {
-                      mode: "commit_and_push" as const,
-                      label: commitAndPushMenuLabel(currentBranch, remoteNames),
-                    },
-                  ]
-                ).map((entry) => (
-                  <MenuItem key={entry.mode} onClick={() => pickCommitMode(entry.mode)}>
-                    <span style={{ fontWeight: entry.mode === commitMode ? 600 : 400 }}>
-                      {entry.mode === commitMode ? "✓ " : " "}
-                      {entry.label}
+                {commitMenuChoices(amend).map((choice) => (
+                  <MenuItem key={choice} onClick={() => pickCommitMode(choice)}>
+                    <span style={{ fontWeight: choice === activeChoice ? 600 : 400 }}>
+                      {choice === activeChoice ? "✓ " : " "}
+                      {choiceLabel(choice)}
                     </span>
                   </MenuItem>
                 ))}

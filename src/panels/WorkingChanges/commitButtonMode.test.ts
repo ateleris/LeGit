@@ -1,12 +1,14 @@
 // Decision logic for the split commit button: which label the button shows
-// and whether (and where) the commit is followed by a push. Pins the four
-// backlog rules: contextual Push/Publish label, detached degradation, amend
-// never auto-pushes, and the plain-commit default.
+// and whether (and where) the commit is followed by a push. Pins the backlog
+// rules: contextual Push/Publish label, detached degradation, amend pushes
+// only through the explicit (transient) force-push choice, and the
+// plain-commit default.
 
 import { describe, expect, it } from "vitest";
 import {
   commitAndPushMenuLabel,
   commitButtonPlan,
+  commitMenuChoices,
   commitPushFailureMessage,
   commitPushSuccessMessage,
 } from "./commitButtonMode";
@@ -29,6 +31,7 @@ const plan = (over: Partial<Parameters<typeof commitButtonPlan>[0]> = {}) =>
   commitButtonPlan({
     mode: "commit_and_push",
     amend: false,
+    forcePush: false,
     detached: false,
     currentBranch: branch(),
     remotes: ["origin"],
@@ -48,14 +51,14 @@ describe("commitButtonPlan", () => {
   it("a tracked branch gets Commit & Push to the upstream's remote", () => {
     expect(plan()).toEqual({
       label: "Commit & Push",
-      push: { remote: "origin", branch: "main", setUpstream: false },
+      push: { remote: "origin", branch: "main", setUpstream: false, force: false },
     });
   });
 
   it("an untracked branch gets Commit & Publish (push -u)", () => {
     expect(plan({ currentBranch: branch({ upstream: null }) })).toEqual({
       label: "Commit & Publish",
-      push: { remote: "origin", branch: "main", setUpstream: true },
+      push: { remote: "origin", branch: "main", setUpstream: true, force: false },
     });
   });
 
@@ -70,12 +73,44 @@ describe("commitButtonPlan", () => {
       }),
     ).toEqual({
       label: "Commit & Publish",
-      push: { remote: "origin", branch: "main", setUpstream: true },
+      push: { remote: "origin", branch: "main", setUpstream: true, force: false },
     });
   });
 
-  it("amend never auto-pushes, whatever the mode", () => {
+  it("amend never auto-pushes through the persisted mode", () => {
     expect(plan({ amend: true })).toEqual({ label: "Amend", push: null });
+  });
+
+  it("amend + force-push choice force-pushes (with lease) to the upstream", () => {
+    expect(plan({ mode: "commit", amend: true, forcePush: true })).toEqual({
+      label: "Amend & Force Push",
+      push: { remote: "origin", branch: "main", setUpstream: false, force: true },
+    });
+  });
+
+  it("the force-push choice never applies to a plain (non-amend) commit", () => {
+    expect(plan({ mode: "commit", forcePush: true })).toEqual({ label: "Commit", push: null });
+    expect(plan({ forcePush: true }).push?.force).toBe(false);
+  });
+
+  it("amend + force-push on an untracked branch publishes without force", () => {
+    expect(
+      plan({ amend: true, forcePush: true, currentBranch: branch({ upstream: null }) }),
+    ).toEqual({
+      label: "Amend & Publish",
+      push: { remote: "origin", branch: "main", setUpstream: true, force: false },
+    });
+  });
+
+  it("amend + force-push degrades to plain Amend without a target or when detached", () => {
+    expect(plan({ amend: true, forcePush: true, remotes: [] })).toEqual({
+      label: "Amend",
+      push: null,
+    });
+    expect(plan({ amend: true, forcePush: true, detached: true })).toEqual({
+      label: "Amend",
+      push: null,
+    });
   });
 
   it("detached HEAD degrades to plain Commit", () => {
@@ -111,7 +146,7 @@ describe("commitButtonPlan", () => {
       }),
     ).toEqual({
       label: "Commit & Push",
-      push: { remote: "origin", branch: "feat/nested", setUpstream: false },
+      push: { remote: "origin", branch: "feat/nested", setUpstream: false, force: false },
     });
   });
 });
@@ -133,14 +168,28 @@ describe("commitAndPushMenuLabel", () => {
   });
 });
 
+describe("commitMenuChoices", () => {
+  it("offers force push only while amending", () => {
+    expect(commitMenuChoices(false)).toEqual(["commit", "commit_and_push"]);
+    expect(commitMenuChoices(true)).toEqual([
+      "commit",
+      "commit_and_push",
+      "amend_force_push",
+    ]);
+  });
+});
+
 describe("push-leg messages", () => {
   it("distinguishes pushed from published", () => {
     expect(
-      commitPushSuccessMessage({ remote: "origin", branch: "main", setUpstream: false }),
+      commitPushSuccessMessage({ remote: "origin", branch: "main", setUpstream: false, force: false }),
     ).toBe("Committed and pushed 'main' to origin");
     expect(
-      commitPushSuccessMessage({ remote: "origin", branch: "main", setUpstream: true }),
+      commitPushSuccessMessage({ remote: "origin", branch: "main", setUpstream: true, force: false }),
     ).toBe("Committed and published 'main' to origin");
+    expect(
+      commitPushSuccessMessage({ remote: "origin", branch: "main", setUpstream: false, force: true }),
+    ).toBe("Amended and force-pushed 'main' to origin");
   });
 
   it("the failure message says the commit itself succeeded", () => {
