@@ -524,6 +524,10 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         match source {
             DiffSource::WorkingUnstaged => {}
             DiffSource::WorkingStaged => args.push("--cached".into()),
+            DiffSource::WorkingTree => {
+                args.push("--end-of-options".into());
+                args.push("HEAD".into());
+            }
             DiffSource::Commit { commit_id } => {
                 let sha = safe_ref("revision", commit_id.as_str())?;
                 let from = self.first_parent(&runner, sha).await?;
@@ -558,8 +562,9 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         // rename (`ls-files` matches case-sensitively, the drifted file is
         // tracked under the other spelling). Two cases produce this:
         if output.stdout.trim().is_empty() && !paired_rename {
-            // 1. A working-tree untracked file (`git diff` ignores it).
-            if matches!(source, DiffSource::WorkingUnstaged)
+            // 1. A working-tree untracked file (`git diff` ignores it; `git
+            //    diff HEAD` equally - the file is in no tree and no index).
+            if matches!(source, DiffSource::WorkingUnstaged | DiffSource::WorkingTree)
                 && self.is_untracked(&runner, &path_str).await?
             {
                 return self.diff_no_index(&runner, &path_str, context).await;

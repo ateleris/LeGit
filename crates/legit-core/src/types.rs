@@ -80,6 +80,24 @@ pub struct Commit {
     pub decorations: Vec<RefDecoration>,
 }
 
+/// One commit in the Work Log sweep (per-day work overview).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct WorkLogCommit {
+    pub id: CommitId,
+    pub author: Signature,
+    pub subject: String,
+    /// Ref the commit was reached from (`%S` with `--source`); best-effort.
+    pub source_ref: Option<String>,
+}
+
+/// Work Log sweep result for one repository.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct WorkLogRepoData {
+    /// Absolute git common dir; worktree tabs of one repository share it.
+    pub common_dir: String,
+    pub commits: Vec<WorkLogCommit>,
+}
+
 /// Sign mode requested when creating a commit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub enum SignMode {
@@ -435,6 +453,9 @@ pub enum DiffSource {
     WorkingUnstaged,
     /// HEAD vs index (`git diff --cached`).
     WorkingStaged,
+    /// HEAD vs working tree (`git diff HEAD`): staged + unstaged in one
+    /// view. Read-only consumer (Work Log); hunk ops never receive it.
+    WorkingTree,
     /// A commit vs its first parent (`git diff <parent> <sha>`).
     Commit { commit_id: CommitId },
     /// Two arbitrary revs (`git diff <from> <to>`) — the Compare view. The

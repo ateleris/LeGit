@@ -35,13 +35,15 @@ export type MacMenuAction =
   | { kind: "layout"; name: string }
   | { kind: "maximize" }
   | { kind: "open-repo" }
-  | { kind: "settings" };
+  | { kind: "settings" }
+  | { kind: "work-log" };
 
 /** Action id -> action; null for ids this build doesn't know (stale menu). */
 export function parseMacMenuAction(actionId: string): MacMenuAction | null {
   if (actionId === "maximize") return { kind: "maximize" };
   if (actionId === "open-repo") return { kind: "open-repo" };
   if (actionId === "settings") return { kind: "settings" };
+  if (actionId === "work-log") return { kind: "work-log" };
   const sep = actionId.indexOf(":");
   if (sep < 0) return null;
   const prefix = actionId.slice(0, sep);

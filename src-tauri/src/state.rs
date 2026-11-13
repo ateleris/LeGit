@@ -486,6 +486,10 @@ pub struct GlobalSettings {
     /// Written by the window-close handler, never by a settings patch.
     #[serde(default)]
     pub file_history_window_size: Option<WindowSize>,
+    /// Last-used Work Log window size; written by the window-close handler,
+    /// never by a settings patch.
+    #[serde(default)]
+    pub work_log_window_size: Option<WindowSize>,
     /// `git push --recurse-submodules` guard mode. `None` = off (no flag).
     #[serde(default)]
     pub push_recurse_submodules: Option<legit_core::PushRecurseMode>,
@@ -667,6 +671,7 @@ impl Default for GlobalSettings {
             stash_include_untracked: false,
             file_history_opens_window: false,
             file_history_window_size: None,
+            work_log_window_size: None,
             push_recurse_submodules: None,
             auto_push_tags: false,
             submodule_attach_branch: false,
@@ -693,10 +698,11 @@ impl Default for GlobalSettings {
 /// Global settings owned by dedicated commands or flows (the probed git
 /// binary, theme name sanitizing, watcher start/stop side effects, session
 /// bookkeeping, profiles, accounts); a settings patch must never write them.
-const GLOBAL_SETTINGS_COMMAND_OWNED: [&str; 15] = [
+const GLOBAL_SETTINGS_COMMAND_OWNED: [&str; 16] = [
     "repo_groups",
     "repo_remote_keys",
     "file_history_window_size",
+    "work_log_window_size",
     "git_path_override",
     "active_theme",
     "watcher_enabled",
@@ -1639,6 +1645,15 @@ mod tests {
         assert!(GlobalSettings::default()
             .with_patch(&serde_json::json!({
                 "file_history_window_size": { "width": 1.0, "height": 1.0 }
+            }))
+            .is_err());
+    }
+
+    #[test]
+    fn work_log_window_size_is_command_owned() {
+        assert!(GlobalSettings::default()
+            .with_patch(&serde_json::json!({
+                "work_log_window_size": { "width": 1.0, "height": 1.0 }
             }))
             .is_err());
     }

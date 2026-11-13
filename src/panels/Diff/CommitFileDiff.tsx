@@ -37,6 +37,27 @@ const noop = () => {};
 
 export function CommitFileDiff({ repoId, entry }: { repoId: string; entry: FileHistoryEntry }) {
   const request = useMemo(() => commitDiffRequest(repoId, entry), [repoId, entry]);
+  return (
+    <ReadOnlyFileDiff
+      repoId={repoId}
+      request={request}
+      label={`${entry.commit_id.slice(0, 8)} - ${request.path}`}
+    />
+  );
+}
+
+/** The shared read-only diff viewer: any DiffRequest, no stage/discard
+ *  affordances. CommitFileDiff (history windows) and the Work Log window
+ *  both render through it, so viewer improvements reach every popup. */
+export function ReadOnlyFileDiff({
+  repoId,
+  request,
+  label,
+}: {
+  repoId: string;
+  request: DiffRequest;
+  label: string;
+}) {
   const [mode, setMode] = useState<DiffViewMode>(() => loadPref(MODE_KEY, "inline"));
   const [contextMode, setContextMode] = useState<ContextMode>(() =>
     loadPref(CONTEXT_KEY, "chunked")
@@ -111,7 +132,7 @@ export function CommitFileDiff({ repoId, entry }: { repoId: string; entry: FileH
             }}
             title={request.path}
           >
-            {entry.commit_id.slice(0, 8)} · {request.path}
+            {label}
           </span>
         </div>
 

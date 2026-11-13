@@ -115,6 +115,61 @@ pub fn history_window_context(
 /// `lib.rs` and `close_repo` match on it.
 pub const FILE_HISTORY_LABEL_PREFIX: &str = "fh-";
 
+/// The Work Log window: one instance, not repo-bound (sweeps all open
+/// repos itself), always a separate window.
+pub const WORK_LOG_LABEL: &str = "wl-main";
+
+pub const WORK_LOG_DEFAULT_SIZE: (f64, f64) = (1100.0, 700.0);
+
+#[tauri::command]
+#[specta::specta]
+pub async fn open_work_log_window(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), AppError> {
+    use tauri::Manager;
+    if let Some(win) = app.get_webview_window(WORK_LOG_LABEL) {
+        let _ = win.show();
+        let _ = win.set_focus();
+        return Ok(());
+    }
+
+    let size = state.global_settings.read().await.work_log_window_size.clone();
+    let (w, h) = size.map(|s| (s.width, s.height)).unwrap_or(WORK_LOG_DEFAULT_SIZE);
+
+    let win = tauri::WebviewWindowBuilder::new(
+        &app,
+        WORK_LOG_LABEL,
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title("Work Log")
+    .inner_size(w, h)
+    .min_inner_size(600.0, 400.0)
+    .visible(false)
+    .build()
+    .map_err(|e| AppError::Io(format!("failed to open the work log window: {e}")))?;
+
+    #[cfg(debug_assertions)]
+    match tauri::image::Image::from_bytes(include_bytes!("../../icons/icon-dev.png")) {
+        Ok(icon) => {
+            if let Err(e) = win.set_icon(icon) {
+                tracing::warn!(err = %e, "failed to set dev icon on work log window");
+            }
+        }
+        Err(e) => tracing::warn!(err = %e, "failed to decode the dev icon"),
+    }
+
+    // Hidden until the frontend applied the theme, with a failsafe show so a
+    // broken frontend never leaves an invisible window.
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(4));
+        if !win.is_visible().unwrap_or(true) {
+            let _ = win.show();
+        }
+    });
+    Ok(())
+}
+
 // FNV-1a 64-bit: deterministic within a run so re-summoning the same
 // (path, rev) focuses the existing window instead of spawning a duplicate.
 fn fnv1a(bytes: &[u8]) -> u64 {

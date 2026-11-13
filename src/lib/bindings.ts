@@ -2812,6 +2812,30 @@ async historyWindowContext() : Promise<Result<HistoryWindowContext, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async openWorkLogWindow() : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_work_log_window") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async repoWorkLog(repoId: string, sinceUnix: number) : Promise<Result<WorkLogRepoData, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("repo_work_log", { repoId, sinceUnix }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async repoWorkLogUncommitted(repoId: string) : Promise<Result<WorkLogUncommittedFile[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("repo_work_log_uncommitted", { repoId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Open the file's content AT a revision in the configured external editor:
  * the blob is written to a fresh host temp dir under a name that keeps the
@@ -3266,6 +3290,11 @@ export type DiffSource =
  * HEAD vs index (`git diff --cached`).
  */
 { kind: "working_staged" } | 
+/**
+ * HEAD vs working tree (`git diff HEAD`): staged + unstaged in one
+ * view. Read-only consumer (Work Log); hunk ops never receive it.
+ */
+{ kind: "working_tree" } | 
 /**
  * A commit vs its first parent (`git diff <parent> <sha>`).
  */
@@ -3817,6 +3846,11 @@ file_history_opens_window?: boolean;
  * Written by the window-close handler, never by a settings patch.
  */
 file_history_window_size?: WindowSize | null; 
+/**
+ * Last-used Work Log window size; written by the window-close handler,
+ * never by a settings patch.
+ */
+work_log_window_size?: WindowSize | null; 
 /**
  * `git push --recurse-submodules` guard mode. `None` = off (no flag).
  */
@@ -5020,6 +5054,36 @@ export type WatchStatePayload = { repo_id: string; error: string | null }
  * Logical (DPI-independent) window size.
  */
 export type WindowSize = { width: number; height: number }
+/**
+ * One commit in the Work Log sweep (per-day work overview).
+ */
+export type WorkLogCommit = { id: CommitId; author: Signature; subject: string; 
+/**
+ * Ref the commit was reached from (`%S` with `--source`); best-effort.
+ */
+source_ref: string | null }
+/**
+ * Work Log sweep result for one repository.
+ */
+export type WorkLogRepoData = { 
+/**
+ * Absolute git common dir; worktree tabs of one repository share it.
+ */
+common_dir: string; commits: WorkLogCommit[] }
+/**
+ * One working-tree change with its file's last-modified time. A path both
+ * staged and modified yields two entries (same shape as `FileStatus`).
+ */
+export type WorkLogUncommittedFile = { path: string; 
+/**
+ * Rename/copy source; a diff of such an entry must pair both sides or
+ * it reads as a whole-file add.
+ */
+old_path: string | null; state: FileState; staged: boolean; 
+/**
+ * `None` for deleted files (nothing to stat) and stat failures.
+ */
+mtime_unix: number | null }
 /**
  * How `worktree add` populates the new worktree.
  */

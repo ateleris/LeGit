@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 pub mod cred;
 pub use cred::{CredAnswer, ShimRelayRequest};
 
-pub const PROTO_VERSION: u32 = 2;
+pub const PROTO_VERSION: u32 = 3;
 
 /// First line the agent prints once it is ready to speak the protocol.
 pub const READY_PREFIX: &str = "LEGIT-AGENT-READY ";
@@ -185,6 +185,7 @@ pub enum Method {
     GitStream(GitStreamParams),
     GitCancel { op_id: OperationId },
     FsStat { path: HostPath },
+    FsStatMany { paths: Vec<HostPath> },
     FsRead { path: HostPath, cap: Option<u64> },
     FsProbeMany { paths: Vec<HostPath>, cap_each: u64 },
     FsWrite { path: HostPath, data_b64: String },

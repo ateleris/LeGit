@@ -19,7 +19,7 @@ use crate::types::{
     ResetMode, SequenceOutcome, StashApplyOutcome,
     StashEntry, StashOutcome, SubmoduleAutoUpdateResult, SubmoduleGitdirInfo, SubmoduleInfo,
     SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy, SwitchDirtyBehavior,
-    SwitchResult, TagInfo, TrackingStatus, WorktreeAddMode, WorktreeInfo,
+    SwitchResult, TagInfo, TrackingStatus, WorkLogRepoData, WorktreeAddMode, WorktreeInfo,
 };
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
@@ -29,6 +29,10 @@ pub trait GitBackend: Send + Sync {
     async fn status(&self) -> Result<Vec<FileStatus>, GitError>;
 
     async fn log(&self, opts: LogOptions) -> Result<Vec<Commit>, GitError>;
+
+    /// Commits on any local branch (plus HEAD) authored since `since_unix`,
+    /// with the repo's absolute git common dir for worktree-tab grouping.
+    async fn work_log(&self, since_unix: i64) -> Result<WorkLogRepoData, GitError>;
 
     /// The subset of `ids` whose commit objects carry a signature header
     /// (`gpgsig`/`gpgsig-sha256`/`mergetag`) - PRESENCE only, detected via one

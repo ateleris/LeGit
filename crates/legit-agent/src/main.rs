@@ -396,6 +396,7 @@ async fn dispatch_post_handshake(
             Ok(to_value(&killed))
         }
         Method::FsStat { path } => Ok(to_value(&fs.stat(&path).await.map_err(we)?)),
+        Method::FsStatMany { paths } => Ok(to_value(&fs.stat_many(&paths).await.map_err(we)?)),
         Method::FsRead { path, cap } => {
             let bytes = fs.read(&path, cap).await.map_err(we)?;
             Ok(to_value(&b64_encode(&bytes)))

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckIcon } from "../icons";
+import { api } from "../lib/commands";
 import { formatAppError } from "../lib/errors";
 import { confirmDestructiveAction } from "../store/confirm";
 import { hasMaximizedPanel, toggleMaximizeActivePanel, useDockviewStore } from "../store/dockview";
@@ -146,6 +147,15 @@ export function ViewMenu() {
               </>
             )}
             <Separator />
+            <MenuItem
+              testId="view-menu-work-log"
+              onClick={() => {
+                void api.openWorkLogWindow().catch((e) => notify.error(formatAppError(e)));
+                setOpen(false);
+              }}
+            >
+              Work Log
+            </MenuItem>
             {/* Focus mode: maximize the active panel's group over its dock
                 region; exiting restores the previous arrangement. The label is
                 computed when the menu opens (a fresh render), so it always

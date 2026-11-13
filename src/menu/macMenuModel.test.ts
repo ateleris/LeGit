@@ -40,6 +40,7 @@ describe("parseMacMenuAction", () => {
     expect(parseMacMenuAction("maximize")).toEqual({ kind: "maximize" });
     expect(parseMacMenuAction("open-repo")).toEqual({ kind: "open-repo" });
     expect(parseMacMenuAction("settings")).toEqual({ kind: "settings" });
+    expect(parseMacMenuAction("work-log")).toEqual({ kind: "work-log" });
   });
 
   it("keeps colons inside layout names intact", () => {

@@ -12,6 +12,8 @@ export function diffSides(source: DiffSource): { rev: string | null; oldRev: str
       return { rev: null, oldRev: ":" }; // working tree vs index
     case "working_staged":
       return { rev: ":", oldRev: "HEAD" }; // index vs HEAD
+    case "working_tree":
+      return { rev: null, oldRev: "HEAD" }; // working tree vs HEAD
     case "commit":
       return { rev: source.commit_id, oldRev: `${source.commit_id}^` }; // commit vs first parent
     case "commit_range":

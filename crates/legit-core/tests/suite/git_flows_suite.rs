@@ -6315,3 +6315,139 @@ async fn squash_selection_plan_collapses_to_one_commit_with_the_edited_message()
     assert!(full.contains("edited in the dialog"), "{full}");
     assert!(repo.exists("a.txt") && repo.exists("b.txt") && repo.exists("c.txt"));
 }
+
+// ---------------------------------------------------------------------------
+// work_log - the Work Log window's per-day sweep
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn work_log_sees_unmerged_branch_and_source_ref() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "a\n");
+    repo.commit_all("base").await;
+    repo.git(&["switch", "-c", "feature"]).await;
+    repo.write("b.txt", "b\n");
+    repo.commit_all("feature work").await;
+    repo.git(&["switch", "main"]).await;
+
+    let data = repo.backend.work_log(0).await.unwrap();
+    assert!(
+        std::path::Path::new(&data.common_dir).is_absolute(),
+        "common_dir must be absolute, got {}",
+        data.common_dir
+    );
+    let feat = data
+        .commits
+        .iter()
+        .find(|c| c.subject == "feature work")
+        .expect("unmerged branch commit must appear");
+    assert!(
+        feat.source_ref.as_deref().unwrap_or("").ends_with("feature"),
+        "source_ref = {:?}",
+        feat.source_ref
+    );
+}
+
+#[tokio::test]
+async fn work_log_since_excludes_old_commits() {
+    let repo = TestRepo::init().await;
+    repo.write("old.txt", "old\n");
+    commit_all_at(&repo, "old work", "2020-01-01T12:00:00+00:00").await;
+    repo.write("new.txt", "new\n");
+    repo.commit_all("new work").await;
+
+    // Cutoff 2021-01-01T00:00:00Z.
+    let data = repo.backend.work_log(1609459200).await.unwrap();
+    assert!(data.commits.iter().any(|c| c.subject == "new work"));
+    assert!(!data.commits.iter().any(|c| c.subject == "old work"));
+}
+
+#[tokio::test]
+async fn work_log_rebased_commit_keeps_author_day() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "a\n");
+    repo.commit_all("base").await;
+    repo.git(&["switch", "-c", "topic"]).await;
+    repo.write("t.txt", "t\n");
+    commit_all_at(&repo, "old topic work", "2020-06-15T10:00:00+00:00").await;
+    repo.git(&["switch", "main"]).await;
+    repo.write("m.txt", "m\n");
+    repo.commit_all("advance main").await;
+    repo.git(&["switch", "topic"]).await;
+    repo.git(&["rebase", "main"]).await;
+
+    let data = repo.backend.work_log(0).await.unwrap();
+    let c = data
+        .commits
+        .iter()
+        .find(|c| c.subject == "old topic work")
+        .expect("rebased commit present");
+    // 2020-06-15T10:00:00Z - the rebase moved the committer date to now, the
+    // author date (what the work log books by) must survive.
+    assert_eq!(c.author.timestamp, 1592215200);
+}
+
+#[tokio::test]
+async fn work_log_empty_repo_is_empty() {
+    let repo = TestRepo::init().await;
+    let data = repo.backend.work_log(0).await.unwrap();
+    assert!(data.commits.is_empty());
+}
+
+use legit_core::DiffLineKind;
+
+#[tokio::test]
+async fn working_tree_diff_combines_staged_and_unstaged() {
+    let repo = TestRepo::init().await;
+    repo.write("f.txt", "one\ntwo\nthree\n");
+    repo.commit_all("base").await;
+    repo.write("f.txt", "ONE\ntwo\nthree\n");
+    repo.git(&["add", "f.txt"]).await;
+    repo.write("f.txt", "ONE\ntwo\nTHREE\n");
+
+    let entry = repo
+        .backend
+        .file_diff(&DiffSource::WorkingTree, Path::new("f.txt"), None, 3, false)
+        .await
+        .unwrap();
+    let text = match entry {
+        DiffEntry::Text(t) => t,
+        other => panic!("expected text diff, got {other:?}"),
+    };
+    let adds: Vec<&str> = text
+        .hunks
+        .iter()
+        .flat_map(|h| h.lines.iter())
+        .filter(|l| l.kind == DiffLineKind::Added)
+        .map(|l| l.content.trim_end())
+        .collect();
+    // The staged edit (ONE) and the unstaged edit (THREE) appear in ONE diff.
+    assert!(adds.contains(&"ONE"), "staged edit missing: {adds:?}");
+    assert!(adds.contains(&"THREE"), "unstaged edit missing: {adds:?}");
+}
+
+#[tokio::test]
+async fn working_tree_diff_shows_untracked_file() {
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "a\n");
+    repo.commit_all("base").await;
+    repo.write("fresh.txt", "hello\n");
+
+    let entry = repo
+        .backend
+        .file_diff(&DiffSource::WorkingTree, Path::new("fresh.txt"), None, 3, false)
+        .await
+        .unwrap();
+    let text = match entry {
+        DiffEntry::Text(t) => t,
+        other => panic!("expected text diff, got {other:?}"),
+    };
+    let added: Vec<&str> = text
+        .hunks
+        .iter()
+        .flat_map(|h| h.lines.iter())
+        .filter(|l| l.kind == DiffLineKind::Added)
+        .map(|l| l.content.trim_end())
+        .collect();
+    assert_eq!(added, vec!["hello"]);
+}

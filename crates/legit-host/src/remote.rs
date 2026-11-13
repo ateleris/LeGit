@@ -651,6 +651,12 @@ impl RepoFs for RemoteFs {
         self.call(path, Method::FsStat { path: path.clone() }).await
     }
 
+    async fn stat_many(&self, paths: &[HostPath]) -> Result<Vec<Option<FsStat>>, FsError> {
+        let anchor = paths.first().cloned().unwrap_or_else(|| HostPath("/".into()));
+        self.call(&anchor, Method::FsStatMany { paths: paths.to_vec() })
+            .await
+    }
+
     async fn read(&self, path: &HostPath, cap: Option<u64>) -> Result<Vec<u8>, FsError> {
         let b64: String = self
             .call(path, Method::FsRead { path: path.clone(), cap })

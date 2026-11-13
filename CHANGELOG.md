@@ -12,6 +12,11 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- Work Log window: per-day overview of your commits, stashes and uncommitted
+  changes across all open repos, with read-only diffs (View menu)
+
 ## [1.6.2] - 2026-11-10
 
 ### Fixed

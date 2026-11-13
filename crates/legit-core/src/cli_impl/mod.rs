@@ -25,7 +25,7 @@ use crate::types::{
     RenormalizeOutcome, RepoFileEntry, RepoFileKind, RepoOpState, ResetMode, SequenceOutcome, SignMode, StashApplyOutcome, StashEntry,
     StashOutcome, SubmoduleAutoUpdateResult, SubmoduleChange, SubmoduleGitdirInfo,
     SubmoduleInfo, SubmoduleLog, SubmoduleUpdateOptions, SubmoduleUpdateStrategy,
-    SwitchDirtyBehavior, SwitchOutcome, SwitchResult, TagInfo, TrackingStatus, WorktreeAddMode, WorktreeInfo,
+    SwitchDirtyBehavior, SwitchOutcome, SwitchResult, TagInfo, TrackingStatus, WorkLogRepoData, WorktreeAddMode, WorktreeInfo,
 };
 
 /// Display cap for a single file's diff text. Above this the entry crosses
@@ -62,6 +62,7 @@ mod case_drift;
 mod classify;
 use classify::*;
 mod history;
+mod worklog;
 mod hooks;
 mod changes;
 use changes::*;
@@ -229,6 +230,10 @@ impl<E: GitExecutor + ?Sized> GitBackend for GitCliBackend<E> {
 
     async fn log(&self, opts: LogOptions) -> Result<Vec<Commit>, GitError> {
         self.log(opts).await
+    }
+
+    async fn work_log(&self, since_unix: i64) -> Result<WorkLogRepoData, GitError> {
+        self.work_log(since_unix).await
     }
 
     async fn signature_presence(&self, ids: &[CommitId]) -> Result<Vec<CommitId>, GitError> {

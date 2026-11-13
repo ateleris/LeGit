@@ -11,7 +11,7 @@ use crate::state::{GitProfile, GitProfilesDoc, GlobalSettings};
 /// commands bound to this computer, accounts, and the sync pointer itself.
 /// `gitProfiles` is NOT listed: it syncs opt-in, gated per machine by
 /// `sync_git_profiles` in `export_synced_settings` / `import_synced_settings`.
-pub const GLOBAL_SETTINGS_NEVER_SYNCED: [&str; 16] = [
+pub const GLOBAL_SETTINGS_NEVER_SYNCED: [&str; 17] = [
     "repo_groups",
     "repo_remote_keys",
     "git_path_override",
@@ -24,6 +24,7 @@ pub const GLOBAL_SETTINGS_NEVER_SYNCED: [&str; 16] = [
     "global_region_size_left",
     "global_dock_collapsed",
     "file_history_window_size",
+    "work_log_window_size",
     "connected_accounts",
     "platform_key_cache",
     "settings_sync_path",

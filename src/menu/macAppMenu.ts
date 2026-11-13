@@ -11,6 +11,7 @@
 
 import { Menu, MenuItem, PredefinedMenuItem, Submenu } from "@tauri-apps/api/menu";
 import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
+import { api } from "../lib/commands";
 import { formatAppError } from "../lib/errors";
 import { summonGlobalPanel } from "../layout/globalSummon";
 import { openRepoPanel } from "../panels/RepoDock";
@@ -49,6 +50,13 @@ export async function handleMacMenuAction(actionId: string): Promise<void> {
       return;
     case "settings":
       summonGlobalPanel("global-settings");
+      return;
+    case "work-log":
+      try {
+        await api.openWorkLogWindow();
+      } catch (e) {
+        notify.error(formatAppError(e));
+      }
       return;
     case "open-repo": {
       const selected = await openFolderDialog({ directory: true, multiple: false });
@@ -127,6 +135,7 @@ async function buildAndSetMenu(): Promise<void> {
     viewItems.push(...(await Promise.all(entries.layouts.map(actionItem))));
   }
   viewItems.push(await separator());
+  viewItems.push(await actionItem({ actionId: "work-log", label: "Work Log" }));
   viewItems.push(await actionItem({ actionId: "maximize", label: "Toggle Maximized Panel" }));
   const viewMenu = await Submenu.new({ text: "View", items: viewItems });
 

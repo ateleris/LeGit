@@ -87,6 +87,16 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 
 ## Smaller follow-ups
 
+- **Hover highlight on every file list.** The Work Log window reuses the
+  Commits panel's `.legit-commit-row` hover/selected classes
+  (`--graph-row-hover-bg` / `--graph-row-selected-bg`) on its commit and
+  file rows; most other file lists (Working Changes, commit details files,
+  conflicts, submodules, LFS, file history) have selection washes but no
+  hover feedback. Rough approach: apply the same class pair (or a shared
+  `.legit-file-row` alias to the same tokens) in the shared file-row
+  components, keeping the `:not(--selected)` guard so selected rows stay
+  stable under the pointer.
+
 - **Unload collapsed repo groups.** Collapsing a repo tab group is purely
   visual in v1: sessions, watchers and background refresh keep running for
   its repos. A later optimization may suspend the sessions/watchers of

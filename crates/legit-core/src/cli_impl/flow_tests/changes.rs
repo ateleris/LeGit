@@ -116,6 +116,48 @@ async fn file_diff_commit_range_passes_both_revs() {
 }
 
 #[tokio::test]
+async fn working_tree_diff_runs_against_head() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["-c", "diff.submodule=short", "diff", "--no-color", "--no-ext-diff", "-U3", "--end-of-options", "HEAD", "--", "a.txt"],
+        ok("diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-x\n+y\n"),
+    );
+    let (b, exec) = backend(fake);
+
+    let entry = b
+        .file_diff(&DiffSource::WorkingTree, Path::new("a.txt"), None, 3, false)
+        .await
+        .unwrap();
+    assert!(matches!(entry, DiffEntry::Text(_)), "{entry:?}");
+    exec.assert_done();
+}
+
+/// An untracked file is invisible to `git diff HEAD` (empty output) exactly
+/// like it is to the unstaged diff - the no-index fallback must cover the
+/// WorkingTree source too.
+#[tokio::test]
+async fn working_tree_diff_falls_back_to_no_index_for_untracked() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["-c", "diff.submodule=short", "diff", "--no-color", "--no-ext-diff", "-U3", "--end-of-options", "HEAD", "--", "new.txt"],
+        ok(""),
+    );
+    fake.expect(&["ls-files", "-z", "--", "new.txt"], ok(""));
+    fake.expect(
+        &["diff", "--no-index", "--no-color", "--no-ext-diff", "-U3", "--", "/dev/null", "new.txt"],
+        out(1, "diff --git a/new.txt b/new.txt\n--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1 @@\n+hi\n", ""),
+    );
+    let (b, exec) = backend(fake);
+
+    let entry = b
+        .file_diff(&DiffSource::WorkingTree, Path::new("new.txt"), None, 3, false)
+        .await
+        .unwrap();
+    assert!(matches!(entry, DiffEntry::Text(_)), "{entry:?}");
+    exec.assert_done();
+}
+
+#[tokio::test]
 async fn file_diff_ignore_whitespace_adds_w() {
     let fake = FakeExecutor::default();
     fake.expect(

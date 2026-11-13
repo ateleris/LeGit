@@ -123,6 +123,11 @@ impl FsError {
 pub struct FsStat {
     pub is_dir: bool,
     pub len: u64,
+    /// Last-modified time (unix seconds). `serde(default)` keeps a stale
+    /// agent's pre-mtime wire shape parsing; this type never crosses the
+    /// specta/IPC boundary, so the output-only default rule does not apply.
+    #[serde(default)]
+    pub mtime_unix: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,6 +167,19 @@ pub trait RepoFs: Send + Sync + 'static {
     /// `Ok(None)` = the path does not exist.
     async fn stat(&self, path: &HostPath) -> Result<Option<FsStat>, FsError>;
 
+    /// Batched `stat`, best-effort per entry (mirrors `probe_many`): one
+    /// entry per input path, in input order, and a path that cannot be
+    /// stat'ed degrades to `None` instead of failing the batch. Remote
+    /// implementations override this with a single round trip; transport
+    /// failures still error.
+    async fn stat_many(&self, paths: &[HostPath]) -> Result<Vec<Option<FsStat>>, FsError> {
+        let mut out = Vec::with_capacity(paths.len());
+        for path in paths {
+            out.push(self.stat(path).await.unwrap_or(None));
+        }
+        Ok(out)
+    }
+
     /// Full contents; `cap` (bytes) rejects oversized files with `TooLarge`
     /// before transferring them.
     async fn read(&self, path: &HostPath, cap: Option<u64>) -> Result<Vec<u8>, FsError>;
@@ -197,6 +215,11 @@ fn stat_of(meta: &std::fs::Metadata) -> FsStat {
     FsStat {
         is_dir: meta.is_dir(),
         len: meta.len(),
+        mtime_unix: meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64),
     }
 }
 
@@ -355,6 +378,69 @@ mod tests {
         assert!(matches!(probes[3], FsProbe::Missing));
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn stat_reports_mtime() {
+        let fs = LocalFs;
+        let dir = std::env::temp_dir().join(format!("legit-fs-mtime-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("f"), b"x").unwrap();
+        let st = fs.stat(&HostPath::from_path(&dir.join("f"))).await.unwrap().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let mtime = st.mtime_unix.expect("fresh file must carry an mtime");
+        assert!((now - mtime).abs() < 300, "mtime {mtime} vs now {now}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn stat_many_preserves_order_and_absence() {
+        let fs = LocalFs;
+        let dir = std::env::temp_dir().join(format!("legit-fs-statmany-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a"), b"a").unwrap();
+        std::fs::write(dir.join("b"), b"bb").unwrap();
+        let paths = [
+            HostPath::from_path(&dir.join("a")),
+            HostPath::from_path(&dir.join("missing")),
+            HostPath::from_path(&dir.join("b")),
+        ];
+        let stats = fs.stat_many(&paths).await.unwrap();
+        assert_eq!(stats.len(), 3);
+        assert_eq!(stats[0].as_ref().unwrap().len, 1);
+        assert!(stats[1].is_none());
+        assert_eq!(stats[2].as_ref().unwrap().len, 2);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// One unreadable path must not fail the whole batch: it degrades to
+    /// `None` like a missing file (a file as parent gives NotADirectory,
+    /// an io error distinct from NotFound).
+    #[tokio::test]
+    async fn stat_many_degrades_errors_to_none() {
+        let fs = LocalFs;
+        let dir = std::env::temp_dir().join(format!("legit-fs-statdeg-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("f"), b"x").unwrap();
+        let paths = [
+            HostPath::from_path(&dir.join("f")),
+            HostPath::from_path(&dir.join("f").join("child")),
+        ];
+        let stats = fs.stat_many(&paths).await.unwrap();
+        assert!(stats[0].is_some());
+        assert!(stats[1].is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A stale agent (pre-mtime wire shape) must keep deserializing.
+    #[test]
+    fn fsstat_deserializes_without_mtime() {
+        let st: FsStat = serde_json::from_str(r#"{"is_dir":false,"len":3}"#).unwrap();
+        assert_eq!(st.len, 3);
+        assert_eq!(st.mtime_unix, None);
     }
 
     #[tokio::test]

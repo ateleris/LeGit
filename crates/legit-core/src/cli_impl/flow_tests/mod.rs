@@ -34,4 +34,5 @@ mod remote;
 mod sequencer;
 mod stash;
 mod submodules;
+mod worklog;
 mod worktrees;

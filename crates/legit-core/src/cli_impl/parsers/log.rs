@@ -124,7 +124,7 @@ fn parse_record(record: &str) -> Result<Commit, ParseError> {
 
 /// Parse a strict ISO 8601 timestamp (e.g. `2023-01-15T10:30:00+02:00`) into
 /// (unix_seconds, tz_offset_minutes).
-fn parse_iso_timestamp(s: &str) -> Result<(i64, i32), ParseError> {
+pub(super) fn parse_iso_timestamp(s: &str) -> Result<(i64, i32), ParseError> {
     DateTime::parse_from_rfc3339(s)
         .map(|dt| {
             let unix = dt.timestamp();

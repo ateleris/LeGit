@@ -38,5 +38,6 @@ windows-sys = { version = "0.59", features = [
 [dev-dependencies]
 tokio = { workspace = true }
 tempfile = "3"
+serde_json = { workspace = true }
 # Captures the formatted log output to prove secrets never reach a log line.
 tracing-subscriber = { workspace = true }

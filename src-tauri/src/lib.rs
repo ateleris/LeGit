@@ -253,9 +253,32 @@ pub fn run() {
                 // them with it so the process can exit.
                 if matches!(event, WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed) {
                     for win in window.app_handle().webview_windows().values() {
-                        if win.label().starts_with(commands::FILE_HISTORY_LABEL_PREFIX) {
+                        if win.label().starts_with(commands::FILE_HISTORY_LABEL_PREFIX)
+                            || win.label() == commands::WORK_LOG_LABEL
+                        {
                             let _ = win.close();
                         }
+                    }
+                }
+                return;
+            }
+            if label == commands::WORK_LOG_LABEL {
+                if let WindowEvent::CloseRequested { .. } = event {
+                    // Remember the size for the next Work Log window (logical px).
+                    if let (Ok(size), Ok(scale)) = (window.inner_size(), window.scale_factor()) {
+                        let logical = size.to_logical::<f64>(scale);
+                        let app = window.app_handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            let state = app.state::<AppState>();
+                            let _ = state
+                                .mutate_global(|s| {
+                                    s.work_log_window_size = Some(state::WindowSize {
+                                        width: logical.width,
+                                        height: logical.height,
+                                    });
+                                })
+                                .await;
+                        });
                     }
                 }
                 return;
@@ -737,6 +760,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::unset_lane_lock,
         commands::open_file_history_window,
         commands::history_window_context,
+        commands::open_work_log_window,
+        commands::repo_work_log,
+        commands::repo_work_log_uncommitted,
         commands::repo_open_file_at_revision_in_editor,
         commands::repo_open_folder,
     ])
