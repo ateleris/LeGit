@@ -12,6 +12,12 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- The commit button's menu offers "Commit & Force Push" while "Amend last
+  commit" is checked, so an amended commit can be force-pushed (with lease)
+  in one click
+
 ## [1.6.2] - 2026-11-10
 
 ### Fixed
