@@ -18,6 +18,8 @@ async-trait = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 specta = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
 
 # Process-tree lifetime control (see runner.rs): each git runs in its own
 # process group so cancel can kill the whole tree, and children must not
@@ -37,6 +39,7 @@ windows-sys = { version = "0.59", features = [
 
 [dev-dependencies]
 tokio = { workspace = true }
+async-trait = { workspace = true }
 tempfile = "3"
 serde_json = { workspace = true }
 # Captures the formatted log output to prove secrets never reach a log line.

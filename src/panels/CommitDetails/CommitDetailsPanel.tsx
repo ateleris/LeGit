@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { TitledSection } from "../shared/SectionChrome";
 import { PanelError } from "../shared/PanelError";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { confirmDialog } from "../../store/confirm";
+import { notify } from "../../store/notifications";
+import { formatAppError } from "../../lib/errors";
 import { useActiveRepo } from "../../store/repos";
 import { useSignatureStore } from "../../store/signatures";
 import { useSummonTarget } from "../../store/summon";
@@ -72,12 +75,12 @@ export function CommitDetailsPanel() {
         <PanelError error={error} />
       )}
 
-      {data && <CommitView details={data} />}
+      {data && <CommitView details={data} repoId={repo.id} />}
     </div>
   );
 }
 
-function CommitView({ details }: { details: CommitDetails }) {
+function CommitView({ details, repoId }: { details: CommitDetails; repoId: string }) {
   const { commit, raw_object } = details;
   const [showRaw, setShowRaw] = useState(false);
 
@@ -123,7 +126,7 @@ function CommitView({ details }: { details: CommitDetails }) {
 
       {commit.signature && (
         <TitledSection title="Signature">
-          <SignatureView sig={commit.signature} />
+          <SignatureView sig={commit.signature} repoId={repoId} commitId={commit.id} />
         </TitledSection>
       )}
 
@@ -141,13 +144,70 @@ function CommitView({ details }: { details: CommitDetails }) {
   );
 }
 
-function SignatureView({ sig }: { sig: SignatureVerification }) {
+function SignatureView({
+  sig,
+  repoId,
+  commitId,
+}: {
+  sig: SignatureVerification;
+  repoId: string;
+  commitId: CommitId;
+}) {
   const { color, title } = signaturePresentation(sig.status);
+  const queryClient = useQueryClient();
+  const running = useRef(false);
+
+  const trustSigner = async () => {
+    if (running.current) return;
+    running.current = true;
+    try {
+      const info = await api.signerTrustInfo(repoId, commitId);
+      if (!info.key) {
+        notify.error("Cannot trust this signer: the commit does not carry an SSH signature.");
+        return;
+      }
+      const path =
+        info.target === "Unconfigured"
+          ? "~/.config/git/allowed_signers"
+          : info.target.Configured.path;
+      const unconfigured = info.target === "Unconfigured";
+      const confirmed = await confirmDialog({
+        title: unconfigured ? "Set up signature verification?" : "Trust this signer?",
+        message: unconfigured
+          ? "No allowed-signers file is configured. A new one will be created and set " +
+            "in the global git config of this repository's host. Commits signed with " +
+            "this key will then show as verified."
+          : "Commits signed with this key will show as verified.",
+        detail: `${info.principal}\n${info.key.fingerprint}\n-> ${path}`,
+        confirmLabel: "Trust signer",
+        danger: false,
+      });
+      if (!confirmed) return;
+      await api.trustCommitSigner(
+        repoId,
+        info.principal,
+        info.key.key_type,
+        info.key.key_b64,
+        unconfigured,
+      );
+      useSignatureStore.getState().clearRepo(repoId);
+      queryClient.invalidateQueries({ queryKey: [repoId, "commit-details"] });
+    } catch (e: unknown) {
+      notify.error(formatAppError(e));
+    } finally {
+      running.current = false;
+    }
+  };
 
   return (
     <div>
       <span style={{ color, fontWeight: 600 }} title={title}>{sig.status}</span>
       {sig.signer && <span className="legit-subtle" style={{ marginLeft: "0.667em" }}>{sig.signer}</span>}
+      {sig.status === "Untrusted" && (
+        <button onClick={trustSigner} style={{ marginLeft: "0.667em", fontSize: "var(--fz-sm)" }}>
+          Trust this signer...
+        </button>
+      )}
       {sig.key_id && <div className="legit-subtle"><code>{sig.key_id}</code></div>}
     </div>
   );

@@ -51,6 +51,37 @@ pub enum SignatureStatus {
     NoSignature,
 }
 
+/// An SSH public key as embedded in a commit's SSHSIG signature.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SshSignerKey {
+    /// Wire key type, e.g. `ssh-ed25519`.
+    pub key_type: String,
+    /// Base64 of the full public-key blob (authorized-keys style).
+    pub key_b64: String,
+    /// `SHA256:` + unpadded base64 digest of the key blob.
+    pub fingerprint: String,
+}
+
+/// One recognized entry of an allowed-signers file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct AllowedSigner {
+    /// 0-based line number in the file (addressing for removal).
+    pub line_index: u32,
+    /// Principal field verbatim (may be a comma-separated list).
+    pub principal: String,
+    pub key_type: String,
+    pub key_b64: String,
+    pub fingerprint: String,
+}
+
+/// A non-blank, non-comment line the parser cannot classify (including
+/// `cert-authority` entries): displayed opaquely, never removable in-app.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct UnrecognizedSignerLine {
+    pub line_index: u32,
+    pub text: String,
+}
+
 /// Signing metadata attached to a commit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct SignatureVerification {

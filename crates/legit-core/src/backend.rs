@@ -43,6 +43,25 @@ pub trait GitBackend: Send + Sync {
 
     async fn commit_details(&self, id: &CommitId) -> Result<CommitDetails, GitError>;
 
+    /// What the trust-this-signer dialog needs for `id`: committer email, the
+    /// SSHSIG-embedded public key (`None` for non-SSH signatures) and the
+    /// repo-effective allowed-signers file.
+    async fn signer_trust_info(
+        &self,
+        id: &CommitId,
+    ) -> Result<crate::signers::SignerTrustInfo, GitError>;
+
+    /// Append a trust entry to the repo-effective allowed-signers file;
+    /// `bootstrap` permits creating the file + global config when none is
+    /// configured.
+    async fn trust_signer(
+        &self,
+        principal: &str,
+        key_type: &str,
+        key_b64: &str,
+        bootstrap: bool,
+    ) -> Result<crate::signers::TrustSignerOutcome, GitError>;
+
     /// Files changed by `id`, relative to its first parent (or the empty tree
     /// for a root commit). Used by the Changed Files panel.
     async fn commit_files(&self, id: &CommitId) -> Result<Vec<CommitFileChange>, GitError>;

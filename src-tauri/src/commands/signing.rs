@@ -19,7 +19,7 @@ use specta::Type;
 pub(crate) const KEY_GPGSIGN: &str = "commit.gpgsign";
 pub(crate) const KEY_FORMAT: &str = "gpg.format";
 pub(crate) const KEY_SIGNING_KEY: &str = "user.signingkey";
-pub(crate) const KEY_ALLOWED_SIGNERS: &str = "gpg.ssh.allowedSignersFile";
+pub(crate) use legit_core::signers::KEY_ALLOWED_SIGNERS;
 const KEY_SSH_PROGRAM: &str = "gpg.ssh.program";
 
 /// All signing-relevant config keys, each resolved across scopes.

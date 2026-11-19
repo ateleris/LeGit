@@ -911,6 +911,46 @@ async globalWriteSigning(gpgsign: string | null, format: string | null, signingK
     else return { status: "error", error: e  as any };
 }
 },
+async signerTrustInfo(repoId: string, commitId: string) : Promise<Result<SignerTrustInfo, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("signer_trust_info", { repoId, commitId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async trustCommitSigner(repoId: string, principal: string, keyType: string, keyB64: string, bootstrap: boolean) : Promise<Result<TrustSignerOutcome, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("trust_commit_signer", { repoId, principal, keyType, keyB64, bootstrap }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * List one allowed-signers file on a settings host. `path` may be
+ * tilde-prefixed; it is expanded by git on that host.
+ */
+async listTrustedSigners(distro: string | null, path: string) : Promise<Result<AllowedSignersView, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_trusted_signers", { distro, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Remove one listed entry (addressed by line + principal + key, which
+ * guards against concurrent edits) and return the refreshed view.
+ */
+async removeTrustedSigner(distro: string | null, path: string, lineIndex: number, expectedPrincipal: string, expectedKeyB64: string) : Promise<Result<AllowedSignersView, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_trusted_signer", { distro, path, lineIndex, expectedPrincipal, expectedKeyB64 }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async listGitProfiles() : Promise<Result<GitProfile[], AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_git_profiles") };
@@ -2876,6 +2916,22 @@ async repoOpenFolder(repoId: string) : Promise<Result<null, AppError>> {
 
 /** user-defined types **/
 
+/**
+ * One recognized entry of an allowed-signers file.
+ */
+export type AllowedSigner = { 
+/**
+ * 0-based line number in the file (addressing for removal).
+ */
+line_index: number; 
+/**
+ * Principal field verbatim (may be a comma-separated list).
+ */
+principal: string; key_type: string; key_b64: string; fingerprint: string }
+/**
+ * One allowed-signers file, parsed for the settings view.
+ */
+export type AllowedSignersView = { path: string; exists: boolean; signers: AllowedSigner[]; unrecognized: UnrecognizedSignerLine[] }
 export type AppError = { kind: "UnknownRepo"; details: string } | { kind: "NotARepo"; details: string } | { kind: "Io"; details: string } | { kind: "Git"; details: GitError } | { kind: "GitUnavailable"; details: string } | { kind: "ForbiddenArg"; details: string } | { kind: "InvalidTheme"; details: string } | { kind: "InvalidLayout"; details: string } | { kind: "Settings"; details: string } | { kind: "ParseArgs"; details: string } | { kind: "InvalidLockIndex"; details: number } | { kind: "UnknownProfile"; details: string }
 /**
  * One repo a profile edit was re-applied to.
@@ -4683,6 +4739,26 @@ export type SignatureStatus = "Good" | "BadSignature" | "UnknownKey" | "Untruste
  */
 export type SignatureVerification = { status: SignatureStatus; signer: string | null; key_id: KeyId | null; raw: string | null }
 /**
+ * Everything the trust dialog needs for an Untrusted commit.
+ */
+export type SignerTrustInfo = { 
+/**
+ * Committer email (the identity git matches against the signers file).
+ */
+principal: string; 
+/**
+ * `None` when the commit's signature is not an SSHSIG (e.g. GPG).
+ */
+key: SshSignerKey | null; target: SignersFileTarget }
+/**
+ * Where `gpg.ssh.allowedSignersFile` resolves for a repo (effective config).
+ */
+export type SignersFileTarget = 
+/**
+ * `path` is already tilde-expanded (read with `--type=path`).
+ */
+{ Configured: { path: string; scope: ConfigScope } } | "Unconfigured"
+/**
  * All signing-relevant config keys, each resolved across scopes.
  */
 export type SigningView = { 
@@ -4729,6 +4805,22 @@ public_key: string | null }
  * account is the goal state, so it crosses as data, not as an error.
  */
 export type SshKeyUploadResult = { kind: "added" } | { kind: "already_present" }
+/**
+ * An SSH public key as embedded in a commit's SSHSIG signature.
+ */
+export type SshSignerKey = { 
+/**
+ * Wire key type, e.g. `ssh-ed25519`.
+ */
+key_type: string; 
+/**
+ * Base64 of the full public-key blob (authorized-keys style).
+ */
+key_b64: string; 
+/**
+ * `SHA256:` + unpadded base64 digest of the key blob.
+ */
+fingerprint: string }
 /**
  * Result of an `ssh -T git@<host>` authentication probe.
  */
@@ -5049,6 +5141,12 @@ ahead: number;
  * Commits on the upstream not yet on the local branch.
  */
 behind: number }
+export type TrustSignerOutcome = { Added: { path: string } } | { AlreadyTrusted: { path: string } }
+/**
+ * A non-blank, non-comment line the parser cannot classify (including
+ * `cert-authority` entries): displayed opaquely, never removable in-app.
+ */
+export type UnrecognizedSignerLine = { line_index: number; text: string }
 export type WatchStatePayload = { repo_id: string; error: string | null }
 /**
  * Logical (DPI-independent) window size.

@@ -299,6 +299,14 @@ pub fn parse_verify_commit(stderr: &str) -> Option<SignatureVerification> {
             } else if status == SignatureStatus::NoSignature {
                 status = SignatureStatus::Untrusted;
             }
+        } else if line.contains("gpg.ssh.allowedSignersFile needs to be configured") {
+            // Older gits (2.43) refuse to verify without a signers file; the
+            // signature was not checked, but the actionable state for the
+            // user is the same as an unmatched signer: offer trust/setup
+            // (the post-trust re-verification performs the real check).
+            if status == SignatureStatus::NoSignature {
+                status = SignatureStatus::Untrusted;
+            }
         } else if line.starts_with("Could not verify signature")
             || line.starts_with("Signature verification failed")
         {
@@ -509,6 +517,18 @@ mod tests {
     fn verify_ssh_missing_signers_file_is_untrusted() {
         // gpg.ssh.allowedSignersFile unset/empty; exit 1.
         let stderr = "Good \"git\" signature with ED25519 key SHA256:OfRkdI/ogfETTsQmkALPa6b4UqaINmHWzWIzUd0NKcU\nUnable to open allowed keys file \"\": No such file or directory\nsig_find_principals: sshsig_find_principal: No such file or directory\nNo principal matched.\n";
+        let v = parse_verify_commit(stderr).unwrap();
+        assert_eq!(v.status, SignatureStatus::Untrusted);
+    }
+
+    #[test]
+    fn verify_ssh_unconfigured_signers_file_is_untrusted() {
+        // Older gits (e.g. 2.43) refuse to verify at all when
+        // gpg.ssh.allowedSignersFile is unset: a hard error, no "Good" line.
+        // Newer gits (2.52) print the Good-with + "Unable to open" form
+        // covered above. Both must classify as Untrusted so the trust/setup
+        // action is reachable.
+        let stderr = "error: gpg.ssh.allowedSignersFile needs to be configured and exist for ssh signature verification\n";
         let v = parse_verify_commit(stderr).unwrap();
         assert_eq!(v.status, SignatureStatus::Untrusted);
     }

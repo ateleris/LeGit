@@ -16,6 +16,9 @@ lives in the git log and the GitHub release notes.
 
 - Work Log window: per-day overview of your commits, stashes and uncommitted
   changes across all open repos, with read-only diffs (View menu)
+- Trust SSH commit signers from a commit's details (with guided
+  allowed-signers setup) and manage trusted signers per file in the global
+  settings
 
 ## [1.6.2] - 2026-11-10
 

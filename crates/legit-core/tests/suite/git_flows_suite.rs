@@ -5271,11 +5271,54 @@ async fn commit_details_classifies_real_ssh_signatures() {
 
     let details = repo
         .backend
-        .commit_details(&CommitId::new(untrusted_sha))
+        .commit_details(&CommitId::new(untrusted_sha.clone()))
         .await
         .expect("details (unknown key)");
     let sig = details.commit.signature.expect("verification must run");
     assert_eq!(sig.status, SignatureStatus::Untrusted, "raw: {:?}", sig.raw);
+
+    // 2b. Trust the unknown signer: info carries the committer email + the
+    // SSHSIG-embedded key, the append lands in the configured file without
+    // touching the existing entry, and re-verification flips to Good.
+    let info = repo
+        .backend
+        .signer_trust_info(&CommitId::new(untrusted_sha.clone()))
+        .await
+        .expect("trust info");
+    assert_eq!(info.principal, "test@example.invalid");
+    let key = info.key.expect("ssh signature must embed the public key");
+    assert_eq!(key.key_type, "ssh-ed25519");
+    match &info.target {
+        legit_core::signers::SignersFileTarget::Configured { path, .. } => {
+            assert_eq!(path, signers.to_str().unwrap());
+        }
+        other => panic!("expected configured target, got {other:?}"),
+    }
+
+    let outcome = repo
+        .backend
+        .trust_signer(&info.principal, &key.key_type, &key.key_b64, false)
+        .await
+        .expect("trust signer");
+    assert!(
+        matches!(outcome, legit_core::signers::TrustSignerOutcome::Added { .. }),
+        "expected Added, got {outcome:?}"
+    );
+
+    let details = repo
+        .backend
+        .commit_details(&CommitId::new(untrusted_sha))
+        .await
+        .expect("details (after trust)");
+    let sig = details.commit.signature.expect("verification must run");
+    assert_eq!(sig.status, SignatureStatus::Good, "raw: {:?}", sig.raw);
+    assert_eq!(sig.signer.as_deref(), Some("test@example.invalid"));
+
+    let file_now = std::fs::read_to_string(&signers).expect("read signers");
+    assert!(
+        file_now.starts_with(&format!("test@example.invalid {ktype} {kdata}\n")),
+        "pre-existing entry must be byte-identical: {file_now}"
+    );
 
     // 3. Tampered content -> BadSignature. Rewrite the signed commit's
     // message and store the forgery with `hash-object --literally`.
@@ -5300,6 +5343,107 @@ async fn commit_details_classifies_real_ssh_signatures() {
         .expect("details (tampered)");
     let sig = details.commit.signature.expect("verification must run");
     assert_eq!(sig.status, SignatureStatus::BadSignature, "raw: {:?}", sig.raw);
+}
+
+/// The guided-setup path against the real binary: with NO allowed-signers
+/// file configured anywhere (GIT_CONFIG_GLOBAL and HOME redirected into the
+/// tempdir, so the developer's real config is neither read nor written), an
+/// SSH-signed commit must classify Untrusted - older gits (2.43) hard-error
+/// without verifying, newer ones (2.52) verify and report the unreadable
+/// file; both shapes must land on Untrusted or the trust/setup action is
+/// unreachable. `trust_signer(.., bootstrap: true)` must then write the
+/// global config, create `~/.config/git/allowed_signers` under the
+/// redirected HOME (pinning the `--type=path` tilde expansion), and
+/// re-verification must flip to Good. Also pins the exit-1 "unset" probe of
+/// `config --show-scope --type=path --get-all`.
+#[tokio::test]
+async fn trust_signer_bootstraps_unconfigured_verification() {
+    use legit_core::cli_impl::GitCliBackend;
+    use legit_core::runner::{GitRequest, RunOutputBytes, RunnerError};
+    use legit_core::signers::{SignersFileTarget, TrustSignerOutcome};
+
+    if std::process::Command::new("ssh-keygen").arg("-?").output().is_err() {
+        eprintln!("skipping: ssh-keygen not available");
+        return;
+    }
+
+    /// Injects the test's env redirects into every request; per-request env
+    /// wins over the runner's base env, so the redirects always apply.
+    struct EnvExec {
+        inner: GitRunner,
+        env: Vec<(String, String)>,
+    }
+    #[async_trait::async_trait]
+    impl GitExecutor for EnvExec {
+        async fn execute(&self, req: GitRequest<'_>) -> Result<RunOutputBytes, RunnerError> {
+            let mut env: Vec<(&str, &str)> =
+                self.env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+            env.extend_from_slice(req.env);
+            self.inner.execute(GitRequest { env: &env, ..req }).await
+        }
+    }
+
+    let repo = TestRepo::init().await;
+    let home = repo.path.join("fake-home");
+    std::fs::create_dir_all(&home).expect("mkdir fake home");
+    let gcfg = home.join("gitconfig");
+
+    let keydir = repo.path.join(".git").join("test-keys");
+    std::fs::create_dir_all(&keydir).expect("mkdir keydir");
+    let key = keydir.join("signer");
+    let st = std::process::Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-C", "legit-flows", "-f"])
+        .arg(&key)
+        .status()
+        .expect("spawn ssh-keygen");
+    assert!(st.success(), "ssh-keygen failed");
+
+    repo.git(&["config", "gpg.format", "ssh"]).await;
+    repo.git(&["config", "user.signingkey", key.to_str().unwrap()]).await;
+    repo.write("a.txt", "one\n");
+    repo.git(&["add", "a.txt"]).await;
+    repo.git(&["commit", "-S", "-m", "ssh signed, nothing configured"]).await;
+    let sha = repo.head().await;
+
+    let exec = EnvExec {
+        inner: GitRunner::for_repo("git", &repo.path),
+        env: vec![
+            ("GIT_CONFIG_GLOBAL".into(), gcfg.to_str().unwrap().to_string()),
+            ("HOME".into(), home.to_str().unwrap().to_string()),
+        ],
+    };
+    let backend = GitCliBackend::new(
+        std::sync::Arc::new(tokio::sync::RwLock::new(std::sync::Arc::new(exec))),
+        std::sync::Arc::new(legit_core::fs::LocalFs),
+    );
+
+    let details =
+        backend.commit_details(&CommitId::new(sha.clone())).await.expect("details (unconfigured)");
+    let sig = details.commit.signature.expect("verification must run");
+    assert_eq!(sig.status, SignatureStatus::Untrusted, "raw: {:?}", sig.raw);
+
+    let info = backend.signer_trust_info(&CommitId::new(sha.clone())).await.expect("trust info");
+    assert_eq!(info.target, SignersFileTarget::Unconfigured, "dev config must not leak in");
+    let k = info.key.expect("sshsig key");
+
+    let expected_path = home.join(".config").join("git").join("allowed_signers");
+    let outcome = backend
+        .trust_signer(&info.principal, &k.key_type, &k.key_b64, true)
+        .await
+        .expect("bootstrap trust");
+    assert_eq!(
+        outcome,
+        TrustSignerOutcome::Added { path: expected_path.to_str().unwrap().to_string() },
+        "tilde must expand against the redirected HOME"
+    );
+    assert!(expected_path.exists(), "signers file must be created");
+    let gcfg_text = std::fs::read_to_string(&gcfg).expect("global config written");
+    assert!(gcfg_text.contains("allowedSignersFile") || gcfg_text.contains("allowedsignersfile"));
+
+    let details =
+        backend.commit_details(&CommitId::new(sha)).await.expect("details (after bootstrap)");
+    let sig = details.commit.signature.expect("verification must run");
+    assert_eq!(sig.status, SignatureStatus::Good, "raw: {:?}", sig.raw);
 }
 
 /// Local-scope semantics the repo Custom editor depends on

@@ -32,6 +32,7 @@ mod hooks;
 mod lfs;
 mod remote;
 mod sequencer;
+mod signers;
 mod stash;
 mod submodules;
 mod worklog;

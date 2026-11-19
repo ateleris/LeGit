@@ -2189,10 +2189,12 @@ name = "legit-core"
 version = "1.6.2"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "libc",
  "serde",
  "serde_json",
+ "sha2",
  "specta",
  "tempfile",
  "thiserror 2.0.18",

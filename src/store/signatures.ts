@@ -3,10 +3,10 @@
 // Verification runs on demand in the Commit Details panel (`verify-commit`,
 // one commit at a time - the bulk log never verifies). Recording each result
 // here lets the Commits list keep showing the verified verdict chip on every
-// commit the user has inspected, not just the currently selected row. Results
-// are immutable per SHA for the session (a signature never changes; trust
-// config changes are rare enough that a restart is acceptable), so entries
-// are never invalidated.
+// commit the user has inspected, not just the currently selected row. Entries
+// are immutable per SHA (a signature never changes) UNTIL the trust config
+// changes: any trusted-signer mutation calls `clearRepo`, and the affected
+// commits re-verify on their next inspection.
 
 import { create } from "zustand";
 import type { SignatureVerification } from "../lib/types";
@@ -15,6 +15,8 @@ interface SignatureStore {
   /** repoId -> commit sha -> verification result. */
   byRepo: Record<string, Record<string, SignatureVerification>>;
   record: (repoId: string, sha: string, verification: SignatureVerification) => void;
+  /** Drop a repo's verdicts after a trust-config change. */
+  clearRepo: (repoId: string) => void;
 }
 
 export const useSignatureStore = create<SignatureStore>((set) => ({
@@ -30,5 +32,12 @@ export const useSignatureStore = create<SignatureStore>((set) => ({
           [repoId]: { ...s.byRepo[repoId], [sha]: verification },
         },
       };
+    }),
+  clearRepo: (repoId) =>
+    set((s) => {
+      if (!s.byRepo[repoId]) return s;
+      const byRepo = { ...s.byRepo };
+      delete byRepo[repoId];
+      return { byRepo };
     }),
 }));

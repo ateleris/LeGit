@@ -76,6 +76,7 @@ use tags::*;
 mod stash;
 use stash::*;
 mod sequencer;
+mod signers;
 #[cfg(test)]
 use sequencer::*;
 mod conflicts;
@@ -246,6 +247,23 @@ impl<E: GitExecutor + ?Sized> GitBackend for GitCliBackend<E> {
 
     async fn commit_files(&self, id: &CommitId) -> Result<Vec<CommitFileChange>, GitError> {
         self.commit_files(id).await
+    }
+
+    async fn signer_trust_info(
+        &self,
+        id: &CommitId,
+    ) -> Result<crate::signers::SignerTrustInfo, GitError> {
+        self.signer_trust_info(id).await
+    }
+
+    async fn trust_signer(
+        &self,
+        principal: &str,
+        key_type: &str,
+        key_b64: &str,
+        bootstrap: bool,
+    ) -> Result<crate::signers::TrustSignerOutcome, GitError> {
+        self.trust_signer(principal, key_type, key_b64, bootstrap).await
     }
 
     async fn branches(&self) -> Result<Vec<Branch>, GitError> {

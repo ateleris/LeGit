@@ -27,6 +27,7 @@ import { GitExecutableSection } from "./GitExecutableSection";
 import { ConnectedAccountsSection } from "./ConnectedAccountsSection";
 import { SshKeysSection } from "./SshKeyTools";
 import { GlobalGitConfigSection } from "./GlobalGitConfigSection";
+import { TrustedSignersSection } from "./TrustedSignersSection";
 import { LineEndingsGlobalSection } from "./LineEndingsGlobalSection";
 import { GlobalProfilesSection } from "./GlobalProfilesSection";
 import { localGitConfigScope } from "./gitConfigHost";
@@ -36,6 +37,7 @@ import {
   WslEolSection,
   WslGitExecutableSection,
   WslSshKeysSection,
+  WslTrustedSignersSection,
 } from "./WslGitGroup";
 import { SettingsSyncSection } from "./SettingsSyncSection";
 import { AboutSection } from "./AboutSection";
@@ -241,6 +243,12 @@ export function buildGlobalSettingsGroups(hasWsl: boolean): SettingsGroupDef[] {
           render: () => <GlobalGitConfigSection scope={localGitConfigScope} />,
         },
         {
+          id: "trusted-signers",
+          title: "Trusted signers",
+          keywords: ["signature", "signers", "trust", "ssh", "verification", "allowed"],
+          render: () => <TrustedSignersSection scope={localGitConfigScope} />,
+        },
+        {
           id: "ssh-keys",
           title: "SSH keys",
           keywords: ["ssh", "key", "keygen", "generate", "ed25519", "rsa", "public key", "key pair"],
@@ -279,6 +287,12 @@ export function buildGlobalSettingsGroups(hasWsl: boolean): SettingsGroupDef[] {
           title: "Identity, signing & credentials (WSL)",
           keywords: ["gpg", "ssh", "signing", "credential", "helper"],
           render: () => <WslConfigSection />,
+        },
+        {
+          id: "wsl-trusted-signers",
+          title: "Trusted signers (WSL)",
+          keywords: ["signature", "signers", "trust", "ssh", "verification", "allowed"],
+          render: () => <WslTrustedSignersSection />,
         },
         {
           id: "wsl-ssh-keys",

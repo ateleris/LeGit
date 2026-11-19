@@ -12,6 +12,7 @@ pub mod executor;
 pub mod fs;
 pub mod progress;
 pub mod runner;
+pub mod signers;
 pub mod sync;
 pub mod types;
 

@@ -15,7 +15,17 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
 
 ## Release blockers
 
-(none currently)
+- **Large-file warning when staging/committing.** Warn (non-blocking, just
+  visible) when a file above a size threshold (XX MB, threshold TBD, likely a
+  settings value) is about to enter history, so an accidentally un-gitignored
+  big file gets noticed before it is committed. Open where to surface it:
+  at stage time (Working Changes row/badge when staging a large file) or at
+  commit time (commit composer warning next to the input, like the existing
+  composer warnings); composer warning is probably enough since that is the
+  last gate. Rough approach: file sizes are already known host-side (status
+  + `RepoFs::stat` through the host seam, works for WSL too); add the
+  threshold check when building the status/composer view, render as an
+  inline warning, LFS-tracked files exempt.
 
 ---
 
@@ -86,6 +96,21 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   dialog plumbing.
 
 ## Smaller follow-ups
+
+- **Trusted-signers polish** (from the 2026-11-19 feature review; all minor):
+  invalidate signature caches + commit-details queries across ALL open repos
+  on any trust mutation (trust clears only the active repo today); toast on
+  `AlreadyTrusted` (entry exists but e.g. wrong namespace - user sees nothing
+  happen); trust dialog could name the config scope (profile/repo vs global)
+  and the distro instead of "this repository's host"; 150ms-delayed disabled
+  state on the trust button; bootstrap should write config AFTER creating the
+  file or append an `append_error_note` on partial failure; create missing
+  parent dirs for a configured-but-missing signers file; `gpgsig-sha256`
+  commits (SHA-256 repos) are not recognized as SSH-signed; pass the
+  dialog-shown path into `trust_signer` and error on mismatch (re-resolve
+  race after profile switch); settings section: isolate per-file load errors
+  instead of failing the whole section; reuse `config::write` in
+  `bootstrap_signers_file`.
 
 - **Hover highlight on every file list.** The Work Log window reuses the
   Commits panel's `.legit-commit-row` hover/selected classes

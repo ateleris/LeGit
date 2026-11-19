@@ -24,6 +24,7 @@ import { Section, Row, FieldNote } from "./primitives";
 import { GitStatusReadout } from "./GitStatusReadout";
 import { GlobalGitConfigSection } from "./GlobalGitConfigSection";
 import { LineEndingsGlobalSection } from "./LineEndingsGlobalSection";
+import { TrustedSignersSection } from "./TrustedSignersSection";
 import { SshKeysSection, wslSshKeysApi } from "./SshKeyTools";
 import { useWslHost } from "./WslHostContext";
 
@@ -92,6 +93,20 @@ export function WslConfigSection() {
     // for one distribution can never be saved into another.
     <GlobalGitConfigSection
       key={`config-${distro}`}
+      scope={scope}
+      enabled={everConnected}
+      reloadNonce={reloadNonce}
+      disabled={status === "disconnected"}
+    />
+  );
+}
+
+/** Trusted signers of the selected distribution's allowed-signers file. */
+export function WslTrustedSignersSection() {
+  const { distro, scope, everConnected, reloadNonce, status } = useWslHost();
+  return (
+    <TrustedSignersSection
+      key={`signers-${distro}`}
       scope={scope}
       enabled={everConnected}
       reloadNonce={reloadNonce}

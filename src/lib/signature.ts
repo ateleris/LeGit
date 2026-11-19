@@ -24,7 +24,8 @@ export function signaturePresentation(status: SignatureStatus): SignaturePresent
         color: "var(--warning-fg)",
         label: "Unverified",
         symbol: "?",
-        title: "Valid signature, but the signer's validity is unknown (no allowed-signers entry / not trusted)",
+        title:
+          "Valid signature, but the signer is not in your allowed signers - open the commit to trust them",
       };
     case "Expired":
       return { color: "var(--warning-fg)", label: "Expired", symbol: "!", title: "Signature or signing key expired" };
