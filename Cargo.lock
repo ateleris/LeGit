@@ -2129,7 +2129,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "legit-agent"
-version = "1.6.3"
+version = "1.6.4"
 dependencies = [
  "async-trait",
  "legit-core",
@@ -2146,7 +2146,7 @@ dependencies = [
 
 [[package]]
 name = "legit-app"
-version = "1.6.3"
+version = "1.6.4"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2187,7 +2187,7 @@ dependencies = [
 
 [[package]]
 name = "legit-core"
-version = "1.6.3"
+version = "1.6.4"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2208,7 +2208,7 @@ dependencies = [
 
 [[package]]
 name = "legit-host"
-version = "1.6.3"
+version = "1.6.4"
 dependencies = [
  "async-trait",
  "legit-core",
@@ -2224,7 +2224,7 @@ dependencies = [
 
 [[package]]
 name = "legit-proto"
-version = "1.6.3"
+version = "1.6.4"
 dependencies = [
  "base64 0.22.1",
  "legit-core",
@@ -2236,7 +2236,7 @@ dependencies = [
 
 [[package]]
 name = "legit-providers"
-version = "1.6.3"
+version = "1.6.4"
 dependencies = [
  "reqwest 0.12.28",
  "serde",
@@ -2246,7 +2246,7 @@ dependencies = [
 
 [[package]]
 name = "legit-watch"
-version = "1.6.3"
+version = "1.6.4"
 dependencies = [
  "ignore",
  "notify",

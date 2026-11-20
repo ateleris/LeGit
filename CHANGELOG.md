@@ -12,6 +12,13 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.6.4] - 2026-11-20
+
+### Changed
+
+- Releases are now built only after the tagged commit's CI has passed
+  (v1.6.3 shipped while CI was red; its app binaries were unaffected)
+
 ## [1.6.3] - 2026-11-20
 
 ### Fixed
