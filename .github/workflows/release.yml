@@ -85,9 +85,36 @@ jobs:
   # The Linux legit-agent binaries the WINDOWS bundle ships (deployed into a
   # WSL distro on first connect). Static musl so one binary runs on any
   # distro (glibc-any, Alpine included); both x86_64 and aarch64 (ARM64 WSL).
+  # A tag alone must not ship a release: the tagged commit's CI run has to be
+  # green first. Polls, because the tag push usually races the CI run started
+  # by the main push of the same commit; a commit whose CI never ran times
+  # out and fails the release.
+  require-green-ci:
+    name: Require green CI on the tagged commit
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Wait for the CI workflow on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          QUERY="repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&per_page=1"
+          for i in $(seq 1 60); do
+            STATUS=$(gh api "$QUERY" --jq '.workflow_runs[0].status // "none"')
+            if [ "$STATUS" = "completed" ]; then
+              CONCLUSION=$(gh api "$QUERY" --jq '.workflow_runs[0].conclusion // "unknown"')
+              [ "$CONCLUSION" = "success" ] && { echo "CI is green."; exit 0; }
+              echo "::error::CI on ${GITHUB_SHA} concluded '${CONCLUSION}' - fix CI, then re-tag."
+              exit 1
+            fi
+            echo "CI on ${GITHUB_SHA}: ${STATUS} (poll ${i}/60)"
+            sleep 30
+          done
+          echo "::error::CI on ${GITHUB_SHA} did not complete within 30 minutes."
+          exit 1
+
   build-agent:
     name: Build legit-agent (musl)
-    needs: verify-version
+    needs: [verify-version, require-green-ci]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -120,7 +147,7 @@ jobs:
   # splits the installers across several drafts.
   create-release:
     name: Create draft release
-    needs: verify-version
+    needs: [verify-version, require-green-ci]
     runs-on: ubuntu-22.04
     permissions:
       contents: write

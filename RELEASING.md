@@ -24,6 +24,11 @@ The release workflow refuses to build if the tag disagrees with any of the
 three version files (`verify-version` job in `release.yml`) — a forgotten bump
 fails fast instead of drafting a release with the old version.
 
+It also refuses to build until the tagged commit's CI run is green
+(`require-green-ci` job): it waits for the CI workflow on that commit (up to
+30 minutes) and fails the release if CI failed or never ran. Fix CI, then
+delete and re-push the tag.
+
 ## Automated release (recommended)
 
 Pushing a version tag builds every platform and drafts a GitHub Release with

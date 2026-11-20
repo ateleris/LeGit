@@ -249,7 +249,10 @@ describe("OlderDetail", () => {
                   oldPath: null,
                   state: "Modified",
                   staged: false,
-                  mtimeUnix: NOW - 90 * 86400,
+                  // Midday UTC: the rendered date is local-time, so a
+                  // near-midnight instant names different days on the UTC CI
+                  // runner and a CET dev machine.
+                  mtimeUnix: NOW - 90 * 86400 + 14 * 3600,
                 },
               ],
             },
