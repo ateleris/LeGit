@@ -12,6 +12,8 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-11-20
+
 ### Fixed
 
 - SVG previews without width/height attributes now render (they collapsed to
