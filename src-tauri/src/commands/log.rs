@@ -69,6 +69,18 @@ pub async fn repo_status(
     session.backend.status().await.map_err(AppError::Git)
 }
 
+/// Index-blob size of every staged blob. Drives the commit composer's
+/// large-file warning (threshold comparison happens frontend-side).
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_staged_blob_sizes(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<Vec<legit_core::StagedBlobSize>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session.backend.staged_blob_sizes().await.map_err(AppError::Git)
+}
+
 /// Files changed by a commit, relative to its first parent (empty tree for a
 /// root commit). Drives the Changed Files panel.
 #[tauri::command]

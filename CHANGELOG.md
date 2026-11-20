@@ -19,6 +19,9 @@ lives in the git log and the GitHub release notes.
 - Trust SSH commit signers from a commit's details (with guided
   allowed-signers setup) and manage trusted signers per file in the global
   settings
+- Warning in the commit composer when a staged file exceeds a size threshold
+  (default 10 MB, configurable globally and per repo; LFS-tracked files
+  don't trigger it)
 
 ## [1.6.2] - 2026-11-10
 

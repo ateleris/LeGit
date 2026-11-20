@@ -162,6 +162,10 @@ fn default_auto_fetch_interval() -> u32 {
     15
 }
 
+fn default_large_file_warn_mb() -> u32 {
+    10
+}
+
 fn default_true() -> bool {
     true
 }
@@ -331,6 +335,10 @@ pub struct GlobalSettings {
     /// settings can override.
     #[serde(default = "default_true")]
     pub line_ending_chips_in_changes: bool,
+    /// Commit-composer warning threshold for staged index blobs, in MB
+    /// (10^6 bytes); 0 disables. Per-repo settings can override.
+    #[serde(default = "default_large_file_warn_mb")]
+    pub large_file_warn_mb: u32,
     /// Warn before committing staged line-ending changes; per-repo override.
     #[serde(default = "default_true")]
     pub warn_on_line_ending_commit: bool,
@@ -632,6 +640,7 @@ impl Default for GlobalSettings {
             global_region_size_left: None,
             global_dock_collapsed: false,
             line_ending_chips_in_changes: true,
+            large_file_warn_mb: default_large_file_warn_mb(),
             warn_on_line_ending_commit: true,
             column_preferences: serde_json::Value::Null,
             commits_row_height: default_commits_row_height(),
@@ -839,6 +848,9 @@ pub struct RepoSettings {
     /// Per-repo override for the commit line-ending warning
     /// (None = inherit global).
     pub warn_on_line_ending_commit: Option<bool>,
+    /// Per-repo override for the large-staged-file warning threshold in MB
+    /// (None = inherit global; 0 disables).
+    pub large_file_warn_mb: Option<u32>,
     /// Per-repo override for the external editor command template
     /// (None = inherit global; same `$ROOT` semantics).
     #[serde(default)]

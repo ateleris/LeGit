@@ -3,6 +3,25 @@
 use super::*;
 
 impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
+    pub(super) async fn staged_blob_sizes(
+        &self,
+    ) -> Result<Vec<crate::types::StagedBlobSize>, GitError> {
+        use parsers::staged_sizes::{
+            parse_staged_blobs, zip_blob_sizes, BATCH_CHECK_SIZE_ARGS, DIFF_CACHED_RAW_ARGS,
+        };
+        let runner = self.runner().await;
+        let listed = runner.run(&DIFF_CACHED_RAW_ARGS).await?;
+        Self::ensure_success(&listed)?;
+        let blobs = parse_staged_blobs(&listed.stdout);
+        if blobs.is_empty() {
+            return Ok(vec![]);
+        }
+        let stdin: String = blobs.iter().map(|(sha, _)| format!("{sha}\n")).collect();
+        let sized = runner.run_with_stdin(&BATCH_CHECK_SIZE_ARGS, &stdin).await?;
+        Self::ensure_success(&sized)?;
+        Ok(zip_blob_sizes(&blobs, &sized.stdout))
+    }
+
     pub(super) async fn status(&self) -> Result<Vec<FileStatus>, GitError> {
         let mut statuses = self.status_entries().await?;
 

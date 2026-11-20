@@ -19,6 +19,7 @@ import {
   ConfirmDiscardSection,
   DetectCaseRenamesSection,
   ExternalEditorSection,
+  LargeFileWarningSection,
   LineEndingChangesSection,
   PushGuardSection,
   SubmoduleAttachSection,
@@ -150,6 +151,12 @@ export function buildGlobalSettingsGroups(hasWsl: boolean): SettingsGroupDef[] {
           title: "Line ending changes",
           keywords: ["eol", "crlf", "chips", "warn", "commit"],
           render: () => <LineEndingChangesSection />,
+        },
+        {
+          id: "large-file-warning",
+          title: "Large staged files",
+          keywords: ["large", "file", "size", "warning", "commit", "megabyte", "mb", "lfs"],
+          render: () => <LargeFileWarningSection />,
         },
         {
           id: "case-renames",

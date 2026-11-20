@@ -24,6 +24,7 @@ const fresh: RepoSettings = {
   git_path_override: null,
   line_ending_chips_in_changes: null,
   warn_on_line_ending_commit: null,
+  large_file_warn_mb: null,
   git_profile_id: "work",
   show_remote_branches: true,
 };
@@ -32,6 +33,7 @@ const stale: RepoSettings = {
   git_path_override: null,
   line_ending_chips_in_changes: null,
   warn_on_line_ending_commit: null,
+  large_file_warn_mb: null,
   git_profile_id: null,
   show_remote_branches: true,
 };

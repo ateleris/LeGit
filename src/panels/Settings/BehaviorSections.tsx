@@ -461,6 +461,58 @@ export function BranchSwitchingSection() {
   );
 }
 
+export function LargeFileWarningSection() {
+  const mb = useSettingsStore((s) => s.settings?.large_file_warn_mb ?? 10);
+  const setLargeFileWarnMb = useSettingsStore((s) => s.setLargeFileWarnMb);
+  const { busy: saving, run } = useDelayedBusy();
+  const [draft, setDraft] = useState(String(mb));
+
+  useEffect(() => setDraft(String(mb)), [mb]);
+
+  const commitMb = () => {
+    const parsed = Math.round(Number(draft));
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      setDraft(String(mb));
+      return;
+    }
+    if (parsed === mb) {
+      setDraft(String(parsed));
+      return;
+    }
+    return run(() => setLargeFileWarnMb(parsed));
+  };
+
+  return (
+    <Section title="Large staged files">
+      <WritesTo note="default for all repos" />
+      <div style={{ display: "flex", alignItems: "center", gap: "0.667em" }}>
+        <label htmlFor="global-large-file-warn" style={{ fontSize: "var(--fz-lg)" }}>
+          Warn when a staged file exceeds (MB)
+        </label>
+        <input
+          type="number"
+          id="global-large-file-warn"
+          min={0}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commitMb}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitMb();
+          }}
+          disabled={saving}
+          style={{ width: "5em" }}
+        />
+      </div>
+      <FieldNote>
+        Shows a warning in the commit composer when a staged file is larger
+        than this, so an accidentally un-gitignored file gets noticed before
+        it enters history. Measures what would be committed, so files tracked
+        by Git LFS never trigger it. 0 disables the warning.
+      </FieldNote>
+    </Section>
+  );
+}
+
 export function LineEndingChangesSection() {
   const chips = useSettingsStore((s) => s.settings?.line_ending_chips_in_changes ?? true);
   const warn = useSettingsStore((s) => s.settings?.warn_on_line_ending_commit ?? true);

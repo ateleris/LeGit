@@ -250,6 +250,7 @@ mod tests {
                 "files_view_mode",
                 "global_region_placement",
                 "lane_colored_branch_chips",
+                "large_file_warn_mb",
                 "line_ending_chips_in_changes",
                 "panel_border_width",
                 "panel_corner_radius",

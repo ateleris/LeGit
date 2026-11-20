@@ -226,6 +226,7 @@ interface SettingsStore {
   setCommitDateFormat: (format: CommitDateFormat) => Promise<void>;
   setCommitDateShowTime: (enabled: boolean) => Promise<void>;
   setLineEndingChipsInChanges: (enabled: boolean) => Promise<void>;
+  setLargeFileWarnMb: (mb: number) => Promise<void>;
   setWarnOnLineEndingCommit: (warn: boolean) => Promise<void>;
   setSuppressedAutoOpenPanels: (panels: string[]) => Promise<void>;
   setWorkingChangesSectionOrder: (order: string[]) => Promise<void>;
@@ -390,6 +391,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
     },
     async setLineEndingChipsInChanges(enabled) {
       await patch({ line_ending_chips_in_changes: enabled });
+    },
+    async setLargeFileWarnMb(mb) {
+      await patch({ large_file_warn_mb: mb });
     },
     async setWarnOnLineEndingCommit(warn) {
       await patch({ warn_on_line_ending_commit: warn });

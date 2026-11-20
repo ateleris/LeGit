@@ -13,6 +13,7 @@ import {
   ExternalEditorRepoSection,
   GitHooksRepoSection,
   LfsWarningRepoSection,
+  LargeFileWarningRepoSection,
   LineEndingChangesRepoSection,
   LineEndingsRepoSection,
   RemoteRepoGitSection,
@@ -85,6 +86,14 @@ export const REPO_SETTINGS_GROUPS: readonly RepoGroupDef[] = [
         keywords: ["eol", "crlf", "chips", "warn", "inherit"],
         render: ({ repo, repoSettings }) => (
           <LineEndingChangesRepoSection repoId={repo.id} repoSettings={repoSettings} />
+        ),
+      },
+      {
+        id: "repo-large-file-warning",
+        title: "Large staged files",
+        keywords: ["large", "file", "size", "warning", "commit", "megabyte", "mb", "inherit"],
+        render: ({ repo, repoSettings }) => (
+          <LargeFileWarningRepoSection repoId={repo.id} repoSettings={repoSettings} />
         ),
       },
     ],

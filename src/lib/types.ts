@@ -130,6 +130,7 @@ export type {
   Signature,
   SignatureStatus,
   SignatureVerification,
+  StagedBlobSize,
   AllowedSigner,
   AllowedSignersView,
   SignerTrustInfo,

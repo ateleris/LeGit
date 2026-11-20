@@ -863,6 +863,18 @@ async repoLfsUntrack(repoId: string, pattern: string) : Promise<Result<LfsPatter
 }
 },
 /**
+ * Index-blob size of every staged blob. Drives the commit composer's
+ * large-file warning (threshold comparison happens frontend-side).
+ */
+async repoStagedBlobSizes(repoId: string) : Promise<Result<StagedBlobSize[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("repo_staged_blob_sizes", { repoId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Preview of a file's content at a rev (`None` = working tree): an image
  * payload, or why there is none. Read-only; a failed side is a content
  * state, never a toast.
@@ -3708,6 +3720,11 @@ global_dock_collapsed: boolean;
  */
 line_ending_chips_in_changes?: boolean; 
 /**
+ * Commit-composer warning threshold for staged index blobs, in MB
+ * (10^6 bytes); 0 disables. Per-repo settings can override.
+ */
+large_file_warn_mb?: number; 
+/**
  * Warn before committing staged line-ending changes; per-repo override.
  */
 warn_on_line_ending_commit?: boolean; 
@@ -4615,6 +4632,11 @@ line_ending_chips_in_changes: boolean | null;
  */
 warn_on_line_ending_commit: boolean | null; 
 /**
+ * Per-repo override for the large-staged-file warning threshold in MB
+ * (None = inherit global; 0 disables).
+ */
+large_file_warn_mb: number | null; 
+/**
  * Per-repo override for the external editor command template
  * (None = inherit global; same `$ROOT` semantics).
  */
@@ -4825,6 +4847,10 @@ fingerprint: string }
  * Result of an `ssh -T git@<host>` authentication probe.
  */
 export type SshTestOutcome = { kind: "authenticated"; detail: string } | { kind: "rejected"; detail: string } | { kind: "cannot_connect"; detail: string } | { kind: "unknown"; detail: string }
+/**
+ * Size of one staged blob in the index (what a commit would record).
+ */
+export type StagedBlobSize = { path: string; size: number }
 /**
  * Outcome of `git stash apply` / `git stash pop`. A merge conflict is reported
  * as `Conflicts` (not `Err`) because the apply itself partially succeeded and

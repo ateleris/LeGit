@@ -28,6 +28,11 @@ use std::path::{Path, PathBuf};
 pub trait GitBackend: Send + Sync {
     async fn status(&self) -> Result<Vec<FileStatus>, GitError>;
 
+    /// Index-blob size of every stage-0 staged blob (what a commit would
+    /// record - LFS-tracked files report their small pointer). Backs the
+    /// composer's large-file warning.
+    async fn staged_blob_sizes(&self) -> Result<Vec<crate::types::StagedBlobSize>, GitError>;
+
     async fn log(&self, opts: LogOptions) -> Result<Vec<Commit>, GitError>;
 
     /// Commits on any local branch (plus HEAD) authored since `since_unix`,

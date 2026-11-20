@@ -51,6 +51,13 @@ pub enum SignatureStatus {
     NoSignature,
 }
 
+/// Size of one staged blob in the index (what a commit would record).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct StagedBlobSize {
+    pub path: PathBuf,
+    pub size: u64,
+}
+
 /// An SSH public key as embedded in a commit's SSHSIG signature.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct SshSignerKey {

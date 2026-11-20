@@ -5345,6 +5345,77 @@ async fn commit_details_classifies_real_ssh_signatures() {
     assert_eq!(sig.status, SignatureStatus::BadSignature, "raw: {:?}", sig.raw);
 }
 
+/// The large-file warning's core claim against the real binary: the INDEX
+/// blob is measured, not the worktree file. Staged sizes are exact, and
+/// shrinking the worktree copy without re-adding changes nothing (which is
+/// also the mechanism that exempts LFS pointers).
+#[tokio::test]
+async fn staged_blob_sizes_reports_index_blobs() {
+    let repo = TestRepo::init().await;
+    repo.write("big.bin", &"x".repeat(1_000_000));
+    repo.write("small.txt", "hello world\n");
+    repo.git(&["add", "big.bin", "small.txt"]).await;
+
+    let sizes = repo.backend.staged_blob_sizes().await.expect("staged sizes");
+    let by_path = |name: &str| {
+        sizes
+            .iter()
+            .find(|s| s.path.to_str() == Some(name))
+            .unwrap_or_else(|| panic!("{name} missing from {sizes:?}"))
+            .size
+    };
+    assert_eq!(by_path("big.bin"), 1_000_000);
+    assert_eq!(by_path("small.txt"), 12);
+
+    // Worktree changes without re-adding must not affect the reported size.
+    repo.write("big.bin", "tiny");
+    let sizes = repo.backend.staged_blob_sizes().await.expect("staged sizes (shrunk)");
+    let big = sizes.iter().find(|s| s.path.to_str() == Some("big.bin")).expect("big.bin");
+    assert_eq!(big.size, 1_000_000);
+
+    // A COMMITTED large file that the next commit does not change must not be
+    // reported: only entries staged relative to HEAD count, or every commit
+    // in a repo with any committed big file would warn forever.
+    repo.git(&["checkout", "--", "big.bin"]).await;
+    repo.commit_all("base with big file").await;
+    repo.write("another.txt", "small change\n");
+    repo.git(&["add", "another.txt"]).await;
+    let sizes = repo.backend.staged_blob_sizes().await.expect("staged sizes (after commit)");
+    let paths: Vec<&str> = sizes.iter().filter_map(|s| s.path.to_str()).collect();
+    assert_eq!(paths, ["another.txt"], "committed-but-unchanged files must be absent");
+}
+
+/// Unmerged (conflicted) paths must not be reported while a merge conflict is
+/// open: `diff --cached --raw` lists them with status U and zero SHAs, which
+/// the parser must skip; freshly staged files still report.
+#[tokio::test]
+async fn staged_blob_sizes_skips_unmerged_entries() {
+    let repo = TestRepo::init().await;
+    repo.write("shared.txt", "base\n");
+    repo.commit_all("base").await;
+    repo.git(&["switch", "-c", "other"]).await;
+    repo.write("shared.txt", "theirs\n");
+    repo.commit_all("theirs").await;
+    repo.git(&["switch", "main"]).await;
+    repo.write("shared.txt", "ours\n");
+    repo.commit_all("ours").await;
+    repo.git_any(&["merge", "other"]).await;
+
+    let sizes = repo.backend.staged_blob_sizes().await.expect("staged sizes (conflict)");
+    assert!(
+        sizes.iter().all(|s| s.path.to_str() != Some("shared.txt")),
+        "unmerged path must be absent: {sizes:?}"
+    );
+
+    repo.write("new.txt", "hello\n");
+    repo.git(&["add", "new.txt"]).await;
+    let sizes = repo.backend.staged_blob_sizes().await.expect("staged sizes (conflict + add)");
+    assert!(
+        sizes.iter().any(|s| s.path.to_str() == Some("new.txt")),
+        "freshly staged file must report during a conflict: {sizes:?}"
+    );
+}
+
 /// The guided-setup path against the real binary: with NO allowed-signers
 /// file configured anywhere (GIT_CONFIG_GLOBAL and HOME redirected into the
 /// tempdir, so the developer's real config is neither read nor written), an

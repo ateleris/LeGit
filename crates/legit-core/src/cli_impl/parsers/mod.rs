@@ -18,6 +18,7 @@ pub mod tracking;
 pub mod remotes;
 pub mod reflog;
 pub mod renormalize;
+pub mod staged_sizes;
 pub mod stash;
 pub mod tags;
 pub mod conflicts;

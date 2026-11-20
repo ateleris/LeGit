@@ -12,6 +12,7 @@ import type {
   RepoSummary,
   ResolvedIdentity,
   SettingsJumpRequest,
+  StagedBlobSize,
 } from "../../lib/types";
 import { useCommitDraftStore } from "../../store/commitDraft";
 import { notify } from "../../store/notifications";
@@ -26,6 +27,7 @@ import { remoteOpErrorMessage } from "../../lib/pushFeedback";
 import { SYNC_DOMAINS } from "../../lib/queries/domains";
 import { useBranches, useRemotes, useTracking } from "../../lib/queries/useRepoQueries";
 import { CaretDropdown } from "../shared/CaretDropdown";
+import { cappedLargeFiles, formatMb, largeStagedFiles } from "./largeFileWarning";
 import {
   commitAndPushMenuLabel,
   commitButtonPlan,
@@ -78,6 +80,16 @@ export function CommitComposer({
 }) {
   const queryClient = useQueryClient();
   const repoSettings = useRepoStore((s) => s.repoSettings[repo.id]);
+  const globalLargeFileWarnMb = useSettingsStore((s) => s.settings?.large_file_warn_mb ?? 10);
+  const largeFileWarnMb = repoSettings?.large_file_warn_mb ?? globalLargeFileWarnMb;
+  const { data: stagedSizes = [] } = useQuery<StagedBlobSize[]>({
+    queryKey: [repo.id, "status", "staged-sizes"],
+    queryFn: () => api.repoStagedBlobSizes(repo.id),
+    enabled: stagedCount > 0 && largeFileWarnMb > 0,
+    staleTime: STALE.live,
+  });
+  const largeFiles =
+    stagedCount > 0 ? largeStagedFiles(stagedSizes, largeFileWarnMb) : [];
   const updateRepoSetting = useRepoStore((s) => s.updateRepoSetting);
   // Commit button default: plain commit vs commit-and-push. Per-repo ONLY,
   // set via the button's caret menu (deliberately no settings-panel section).
@@ -360,6 +372,40 @@ export function CommitComposer({
           <button onClick={() => summonGlobalPanel("global-settings")}>
             Set identity…
           </button>
+        </div>
+      )}
+      {largeFiles.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: "0.5em",
+            padding: "0.5em 0.667em",
+            border: "1px solid var(--panel-border)",
+            borderRadius: 4,
+            background: "var(--button-hover-bg)",
+            fontSize: "var(--fz-md)",
+          }}
+        >
+          <span style={{ display: "inline-flex", color: "var(--warning-fg)" }}>
+            <WarningIcon />
+          </span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            {largeFiles.length === 1
+              ? `1 staged file is larger than ${largeFileWarnMb} MB:`
+              : `${largeFiles.length} staged files are larger than ${largeFileWarnMb} MB:`}
+            {cappedLargeFiles(largeFiles).shown.map((f) => (
+              <div key={f.path} style={{ fontSize: "var(--fz-sm)" }}>
+                <code style={{ wordBreak: "break-all" }}>{f.path}</code>{" "}
+                <span className="legit-subtle">({formatMb(f.size)})</span>
+              </div>
+            ))}
+            {cappedLargeFiles(largeFiles).hidden > 0 && (
+              <div className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
+                +{cappedLargeFiles(largeFiles).hidden} more
+              </div>
+            )}
+          </span>
         </div>
       )}
       <textarea

@@ -9,7 +9,9 @@
 
 use super::*;
 use crate::test_support::{fail, ok, out, FakeExecutor};
-use crate::types::{BlobBytes, CaseDriftEntry, KeyId, SubmoduleAutoUpdateStatus, WorktreeAddMode};
+use crate::types::{
+    BlobBytes, CaseDriftEntry, KeyId, StagedBlobSize, SubmoduleAutoUpdateStatus, WorktreeAddMode,
+};
 
 /// Build a backend over a scripted executor; the returned Arc lets the test
 /// call `assert_done` after exercising the flow.

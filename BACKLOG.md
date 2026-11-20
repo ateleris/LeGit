@@ -15,17 +15,8 @@ Companion state-of-the-app review: `design/2026-07-11-state-of-the-app.md`.
 
 ## Release blockers
 
-- **Large-file warning when staging/committing.** Warn (non-blocking, just
-  visible) when a file above a size threshold (XX MB, threshold TBD, likely a
-  settings value) is about to enter history, so an accidentally un-gitignored
-  big file gets noticed before it is committed. Open where to surface it:
-  at stage time (Working Changes row/badge when staging a large file) or at
-  commit time (commit composer warning next to the input, like the existing
-  composer warnings); composer warning is probably enough since that is the
-  last gate. Rough approach: file sizes are already known host-side (status
-  + `RepoFs::stat` through the host seam, works for WSL too); add the
-  threshold check when building the status/composer view, render as an
-  inline warning, LFS-tracked files exempt.
+(none currently - the large-file staging warning shipped 2026-11-19, see
+design/2026-11-19-large-staged-file-warning.md)
 
 ---
 
@@ -96,6 +87,17 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   dialog plumbing.
 
 ## Smaller follow-ups
+
+- **Large-file-warning polish** (from the 2026-11-19 feature review; all
+  minor): clearing the global threshold field commits 0 and silently
+  disables the warning (treat a blank draft as revert); a value above
+  u32::MAX fails the settings patch as an unhandled rejection (clamp with a
+  `max` on both number inputs); the repo override's number input is editable
+  while "Inherit" is selected but drops the edit (disable it, or have an
+  edit select the override); the repo draft isn't reset when the committed
+  value equals the override ("10.4" stays visible while 10 is stored); pin a
+  non-ASCII path in the staged-sizes parser test; share the composer warning
+  banner's inline style with the identity banner.
 
 - **Trusted-signers polish** (from the 2026-11-19 feature review; all minor):
   invalidate signature caches + commit-details queries across ALL open repos

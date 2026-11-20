@@ -695,3 +695,49 @@ async fn line_ending_entries_for_no_files_run_nothing() {
     assert!(b.line_ending_entries(vec![]).await.unwrap().is_empty());
     exec.assert_done();
 }
+
+// Staged-blob sizing for the large-file commit warning: one staged-diff
+// listing, one stdin-fed batch-check, nothing else.
+#[tokio::test]
+async fn staged_blob_sizes_sequence() {
+    let zero = "0".repeat(40);
+    let sha_a = "a".repeat(40);
+    let sha_b = "b".repeat(40);
+    let script = FakeExecutor::default();
+    script
+        .expect(
+            &["diff", "--cached", "--raw", "-z", "--no-abbrev", "--no-renames"],
+            ok(&format!(
+                ":100644 100644 {zero} {sha_a} M\0small.txt\0\
+                 :000000 100644 {zero} {sha_b} A\0big bin.dat\0\
+                 :000000 160000 {zero} {} A\0sub\0",
+                "c".repeat(40)
+            )),
+        )
+        .expect_stdin(
+            &["cat-file", "--batch-check=%(objectsize)"],
+            &format!("{sha_a}\n{sha_b}\n"),
+            ok("12\n10485760\n"),
+        );
+    let (b, exec) = backend(script);
+
+    let sizes = b.staged_blob_sizes().await.unwrap();
+    assert_eq!(
+        sizes,
+        vec![
+            StagedBlobSize { path: "small.txt".into(), size: 12 },
+            StagedBlobSize { path: "big bin.dat".into(), size: 10485760 },
+        ]
+    );
+    exec.assert_done();
+}
+
+// An empty staged set must not spawn cat-file at all.
+#[tokio::test]
+async fn staged_blob_sizes_empty_skips_batch() {
+    let script = FakeExecutor::default();
+    script.expect(&["diff", "--cached", "--raw", "-z", "--no-abbrev", "--no-renames"], ok(""));
+    let (b, exec) = backend(script);
+    assert!(b.staged_blob_sizes().await.unwrap().is_empty());
+    exec.assert_done();
+}

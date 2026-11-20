@@ -579,6 +579,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::repo_lfs_patterns,
         commands::repo_lfs_track,
         commands::repo_lfs_untrack,
+        commands::repo_staged_blob_sizes,
         commands::repo_file_preview,
         commands::repo_write_gitattributes_eol,
         commands::global_signing_config,

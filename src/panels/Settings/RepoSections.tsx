@@ -218,6 +218,87 @@ export function ExternalEditorRepoSection({
   );
 }
 
+export function LargeFileWarningRepoSection({
+  repoId,
+  repoSettings,
+}: {
+  repoId: string;
+  repoSettings: RepoSettings | null;
+}) {
+  const globalMb = useSettingsStore((s) => s.settings?.large_file_warn_mb ?? 10);
+  const updateRepoSetting = useRepoStore((s) => s.updateRepoSetting);
+  const { busy: saving, run } = useDelayedBusy();
+  const override = repoSettings?.large_file_warn_mb ?? null;
+  const [draft, setDraft] = useState(override === null ? String(globalMb) : String(override));
+
+  useEffect(
+    () => setDraft(override === null ? String(globalMb) : String(override)),
+    [override, globalMb],
+  );
+
+  const setOverride = (value: number | null) => {
+    if (!repoSettings) return;
+    return run(async () => {
+      await updateRepoSetting(repoId, "large_file_warn_mb", value);
+    });
+  };
+
+  const commitDraft = () => {
+    const parsed = Math.round(Number(draft));
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      setDraft(override === null ? String(globalMb) : String(override));
+      return;
+    }
+    if (parsed === override) return;
+    return setOverride(parsed);
+  };
+
+  return (
+    <Section title="Large staged files">
+      <FieldNote>writes to: repos/&lt;hash&gt;/settings.json (this repo only)</FieldNote>
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.5em", marginTop: "0.667em" }}>
+        <div style={{ fontSize: "var(--fz-md)" }}>Warn when a staged file exceeds (MB, 0 disables)</div>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.5em", cursor: saving ? "default" : "pointer", opacity: saving ? 0.5 : 1 }}>
+          <input
+            type="radio"
+            name={`repo-large-file-warn-${repoId}`}
+            checked={override === null}
+            disabled={saving}
+            onChange={() => void setOverride(null)}
+          />
+          <span style={{ fontSize: "var(--fz-lg)" }}>
+            Inherit from global (currently {globalMb} MB)
+          </span>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.5em", cursor: saving ? "default" : "pointer", opacity: saving ? 0.5 : 1 }}>
+          <input
+            type="radio"
+            name={`repo-large-file-warn-${repoId}`}
+            checked={override !== null}
+            disabled={saving}
+            onChange={() => void setOverride(Math.round(Number(draft)) || 0)}
+          />
+          <span style={{ fontSize: "var(--fz-lg)" }}>Override for this repo:</span>
+          <input
+            type="number"
+            min={0}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => {
+              if (override !== null) void commitDraft();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && override !== null) void commitDraft();
+            }}
+            disabled={saving}
+            style={{ width: "5em" }}
+          />
+        </label>
+      </div>
+    </Section>
+  );
+}
+
 export function LineEndingChangesRepoSection({
   repoId,
   repoSettings,
