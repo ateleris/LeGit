@@ -10,6 +10,18 @@ export function previewDataUrl(format: ImageFormat, base64: string): string {
   return `data:${mime};base64,${base64}`;
 }
 
+/** An SVG without width/height attributes loads with no intrinsic size
+ * (engines report 0), so an unstyled `<img>` collapses to nothing; such
+ * images get explicit box-filling dimensions instead. SVG-only: a raster
+ * image reporting 0 is broken, and stretching it would hide that. */
+export function needsSvgSizeFallback(
+  format: ImageFormat,
+  naturalWidth: number,
+  naturalHeight: number,
+): boolean {
+  return format === "svg" && (naturalWidth === 0 || naturalHeight === 0);
+}
+
 /** One image preview: checkerboard backdrop (transparency stays visible),
  * fit-to-pane image, caption with format / natural dimensions / byte size. */
 export function ImagePane({
@@ -21,6 +33,7 @@ export function ImagePane({
 }) {
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
   const [paintedNothing, setPaintedNothing] = useState(false);
+  const [sizeFallback, setSizeFallback] = useState(false);
   return (
     <div
       style={{
@@ -63,13 +76,16 @@ export function ImagePane({
         <img
           src={previewDataUrl(preview.format, preview.base64)}
           onLoad={(e) => {
-            setDims({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight });
+            const { naturalWidth, naturalHeight } = e.currentTarget;
+            setDims({ w: naturalWidth, h: naturalHeight });
+            setSizeFallback(needsSvgSizeFallback(preview.format, naturalWidth, naturalHeight));
             setPaintedNothing(preview.format === "svg" && svgPaintedNothing(e.currentTarget));
           }}
           style={{
             maxWidth: "100%",
             maxHeight: "100%",
             objectFit: "contain",
+            ...(sizeFallback ? { width: "100%", height: "100%" } : null),
             // Stays mounted while hidden: the next preview's load event must
             // still fire here to re-evaluate the notice.
             display: paintedNothing ? "none" : "block",
@@ -78,7 +94,8 @@ export function ImagePane({
       </div>
       <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
         {preview.format.toUpperCase()}
-        {dims ? `, ${dims.w}×${dims.h}` : ""}, {formatByteSize(preview.size)}
+        {dims && dims.w > 0 && dims.h > 0 ? `, ${dims.w}×${dims.h}` : ""},{" "}
+        {formatByteSize(preview.size)}
       </span>
     </div>
   );

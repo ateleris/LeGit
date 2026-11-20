@@ -12,6 +12,11 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- SVG previews without width/height attributes now render (they collapsed to
+  an invisible 0x0 image in the diff and file views)
+
 ### Added
 
 - Work Log window: per-day overview of your commits, stashes and uncommitted
