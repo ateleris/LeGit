@@ -949,8 +949,10 @@ button.legit-tab__close:hover {
    leading edge): with gaps/radius they float through the gaps and run
    straight past the rounded corners; the per-group border above replaces
    them. Dockview's own spaced themes do the same. */
-.legit-panel-chrome .dv-dockview,
-.legit-panel-chrome .dockview-theme-abyss {
+/* Scoped to the docks: a bare splitview (the popup windows) has no
+   groupviews to carry a border, so it must keep its separator lines. */
+.legit-panel-chrome .legit-dock .dv-dockview,
+.legit-panel-chrome .legit-dock .dockview-theme-abyss {
   --dv-separator-border: transparent;
 }
 

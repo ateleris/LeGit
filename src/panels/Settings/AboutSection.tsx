@@ -1,8 +1,10 @@
 import { useState } from "react";
+import logoUrl from "../../assets/legit-logo.png";
 import { checkForUpdate, promptAndInstall } from "../../lib/updateFlow";
 import { useAppVersion, useAppVersionDisplay } from "../../lib/appVersion";
 import { formatAppError } from "../../lib/errors";
 import { api } from "../../lib/commands";
+import { toggleLabelText } from "../../lib/labelText";
 import { notify } from "../../store/notifications";
 import { useSettingsStore } from "../../store/settings";
 import { Button } from "../shared/buttons";
@@ -94,6 +96,15 @@ export function AboutSection() {
         checked={startupCheck}
         onChange={() => void setCheckUpdatesOnStartup(!startupCheck)}
       />
+      <div style={{ display: "flex", justifyContent: "center", padding: "2em 0 1em" }}>
+        <img
+          src={logoUrl}
+          alt=""
+          draggable={false}
+          onDoubleClick={() => toggleLabelText((word) => (/^[AEIOU]/.test(word) ? "L'" : "Le"))}
+          style={{ width: "6em", height: "6em", userSelect: "none" }}
+        />
+      </div>
     </Section>
   );
 }

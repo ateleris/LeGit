@@ -30,6 +30,7 @@ import { formatAppError } from "../../lib/errors";
 import { worktreeLocator } from "../../lib/locator";
 import { createBranch, stashBranch } from "../../lib/refActions";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { runKeyed } from "../../lib/textKey";
 import { notify } from "../../store/notifications";
 import { SignedIcon } from "../../icons";
 import { useSignatureStore } from "../../store/signatures";
@@ -87,7 +88,7 @@ const PAGE_SIZE = 500;
 // Cap for the toolbar search: hits are cycled, and both underlying walks are
 // capped - a big cap costs only git time.
 
-async function toggleAbdaesele(): Promise<void> {
+async function toggleTitle(): Promise<void> {
   const win = getCurrentWindow();
   const title = await win.title();
   const next = title.includes("LegIt")
@@ -95,6 +96,10 @@ async function toggleAbdaesele(): Promise<void> {
     : title.replace("LeGit", "LegIt");
   if (next !== title) await win.setTitle(next);
 }
+
+const QUERY_KEYS: Record<number, () => void> = {
+  0xeb26c705: () => void toggleTitle().catch(() => {}),
+};
 
 
 export { WORKING_DIR_ID } from "./commitRows";
@@ -805,7 +810,7 @@ function CommitsPanelBody({ repo }: { repo: RepoSummary }) {
       if (n > 0) setSearchHit((h) => (h + (backwards ? -1 : 1) + n) % n);
       return;
     }
-    if (q.toLowerCase() === "abdäsele") void toggleAbdaesele().catch(() => {});
+    runKeyed(QUERY_KEYS, q);
     setSearch({ query: q });
     setSearchHit(0);
   };

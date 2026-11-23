@@ -12,6 +12,11 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Work Log and File History windows show the divider lines between their
+  panes again when panel gap, corner radius or border width is customised
+
 ## [1.6.4] - 2026-11-20
 
 ### Changed
