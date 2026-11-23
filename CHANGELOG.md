@@ -12,6 +12,8 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.6.5] - 2026-11-23
+
 ### Fixed
 
 - Work Log and File History windows show the divider lines between their
