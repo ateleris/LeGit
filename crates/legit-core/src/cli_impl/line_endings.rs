@@ -217,6 +217,56 @@ pub fn parse_cat_file_batch(out: &[u8]) -> Option<Vec<Option<Vec<u8>>>> {
     Some(entries)
 }
 
+pub const CAT_FILE_BATCH_CHECK_ARGS: [&str; 2] = ["cat-file", "--batch-check"];
+
+/// One resolved object of `git cat-file --batch-check`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchCheckEntry {
+    pub oid: String,
+    pub kind: String,
+    pub size: u64,
+}
+
+/// Parse `git cat-file --batch-check` output (default format
+/// `<oid> <type> <size>`) into one entry per request line, in request order:
+/// `None` for anything git could not resolve (`<input> missing`, where the
+/// echoed input may itself contain spaces).
+pub fn parse_cat_file_batch_check(stdout: &str) -> Vec<Option<BatchCheckEntry>> {
+    stdout
+        .lines()
+        .map(|line| {
+            let mut fields = line.rsplitn(3, ' ');
+            let size = fields.next()?.parse::<u64>().ok()?;
+            let kind = fields.next()?;
+            let oid = fields.next()?;
+            (!oid.is_empty() && oid.bytes().all(|b| b.is_ascii_hexdigit())).then(|| BatchCheckEntry {
+                oid: oid.to_string(),
+                kind: kind.to_string(),
+                size,
+            })
+        })
+        .collect()
+}
+
+/// Group `(oid, size)` blobs into `cat-file --batch` requests whose declared
+/// sizes sum to at most `budget` bytes, preserving order. A blob larger than
+/// the budget gets a batch of its own.
+pub fn plan_blob_batches(blobs: &[(String, u64)], budget: u64) -> Vec<Vec<String>> {
+    let mut batches: Vec<Vec<String>> = Vec::new();
+    let mut used = 0u64;
+    for (oid, size) in blobs {
+        if batches.is_empty() || (used > 0 && used.saturating_add(*size) > budget) {
+            batches.push(Vec::new());
+            used = 0;
+        }
+        if let Some(batch) = batches.last_mut() {
+            batch.push(oid.clone());
+        }
+        used = used.saturating_add(*size);
+    }
+    batches
+}
+
 /// Parse `git check-attr -z --stdin text eol` output (path NUL attr NUL
 /// value NUL triples) into per-path line-ending attributes: the `text`
 /// attribute plus whether an `eol=` attribute applies. Output shape is
@@ -281,6 +331,29 @@ fn transition_between(
         .then_some(LineEndingTransition { from, to })
 }
 
+/// A working file's line-ending facts. Scans carry this instead of the file's
+/// bytes so memory stays independent of how many files changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkingEol {
+    pub raw: LineEndingKind,
+    /// The kind after `git add`'s CRLF->LF normalization.
+    pub normalized: LineEndingKind,
+    pub mixed: bool,
+}
+
+pub fn summarize_working_eol(bytes: &[u8]) -> WorkingEol {
+    let text = String::from_utf8_lossy(bytes);
+    WorkingEol {
+        raw: classify_line_endings(&text),
+        normalized: classify_line_endings_normalized(&text),
+        mixed: mixed_endings_in_bytes(bytes).unwrap_or(false),
+    }
+}
+
+pub fn blob_eol_kind(bytes: &[u8]) -> LineEndingKind {
+    classify_line_endings(&String::from_utf8_lossy(bytes))
+}
+
 /// Assemble one changed file's line-ending summary from its (optional)
 /// sides. Pure: the `repo_line_ending_status` command only does IO around
 /// this. `working`/`index`/`head` are the raw bytes of each side, `None`
@@ -294,19 +367,33 @@ pub fn derive_line_ending_entry(
     eol_attr_set: bool,
     autocrlf: AutocrlfSetting,
 ) -> LineEndingStatusEntry {
-    let classify = |b: &[u8]| classify_line_endings(&String::from_utf8_lossy(b));
-    let index_kind = index.map(classify);
-    let head_kind = head.map(classify);
-    let working_raw = working.map(classify);
+    derive_line_ending_entry_from_kinds(
+        path,
+        working.map(summarize_working_eol),
+        index.map(blob_eol_kind),
+        head.map(blob_eol_kind),
+        text_attr,
+        eol_attr_set,
+        autocrlf,
+    )
+}
 
+/// `derive_line_ending_entry` over already-classified sides.
+pub fn derive_line_ending_entry_from_kinds(
+    path: &str,
+    working: Option<WorkingEol>,
+    index_kind: Option<LineEndingKind>,
+    head_kind: Option<LineEndingKind>,
+    text_attr: EolTextAttr,
+    eol_attr_set: bool,
+    autocrlf: AutocrlfSetting,
+) -> LineEndingStatusEntry {
     // What `git add` would store for the working file (the policy-aware side).
-    let checkin = working.map(|b| {
-        let text = String::from_utf8_lossy(b);
-        let raw = classify_line_endings(&text);
-        if checkin_normalizes(text_attr, eol_attr_set, autocrlf, raw, index_kind) {
-            classify_line_endings_normalized(&text)
+    let checkin = working.map(|w| {
+        if checkin_normalizes(text_attr, eol_attr_set, autocrlf, w.raw, index_kind) {
+            w.normalized
         } else {
-            raw
+            w.raw
         }
     });
 
@@ -314,8 +401,8 @@ pub fn derive_line_ending_entry(
         path: path.to_string(),
         unstaged: transition_between(index_kind, checkin),
         staged: transition_between(head_kind, index_kind),
-        mixed: working.and_then(mixed_endings_in_bytes).unwrap_or(false),
-        working_raw,
+        mixed: working.is_some_and(|w| w.mixed),
+        working_raw: working.map(|w| w.raw),
     }
 }
 
@@ -360,14 +447,23 @@ pub fn convert_line_endings(bytes: &[u8], target: LineEndingKind) -> Option<Vec<
 /// indicator) rather than read and scanned.
 pub const MAX_LINE_ENDING_BYTES: usize = 2 * 1024 * 1024;
 
-/// A changed file to classify. `working` is the working-tree content, read by
-/// the caller through the host filesystem (`None` when missing, unreadable or
-/// over `MAX_LINE_ENDING_BYTES`).
+/// Changed-file count above which the line-ending scan is skipped entirely
+/// (no chips, no commit warning): it reads every changed file's content, and
+/// a change set this large is a merge or checkout in flight, not an edit.
+pub const MAX_LINE_ENDING_FILES: usize = 1000;
+
+/// Declared blob bytes requested per `cat-file --batch` run; bounds what one
+/// run buffers no matter how many files changed.
+const BLOB_BATCH_BUDGET_BYTES: u64 = 16 * 1024 * 1024;
+
+/// A changed file to classify. `working` summarizes the working-tree content,
+/// read by the caller through the host filesystem (`None` when missing,
+/// unreadable or over `MAX_LINE_ENDING_BYTES`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LineEndingInput {
     pub path: String,
     pub untracked: bool,
-    pub working: Option<Vec<u8>>,
+    pub working: Option<WorkingEol>,
 }
 
 /// The changed files whose line endings are classified, once each (a
@@ -392,11 +488,14 @@ pub fn line_ending_candidates(statuses: &[FileStatus]) -> Vec<(String, bool)> {
 }
 
 impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
-    /// Line-ending summary for `inputs`, with a fixed subprocess budget
-    /// regardless of file count: one `config --get`, one `check-attr
-    /// --stdin`, one `cat-file --batch`. Best-effort per source: a failed
-    /// read degrades that source (autocrlf false, no attributes, no blobs)
-    /// instead of failing the whole summary.
+    /// Line-ending summary for `inputs`: one `config --get`, one `check-attr
+    /// --stdin`, one `cat-file --batch-check` sizing every index/HEAD side,
+    /// then `cat-file --batch` runs for the blobs within
+    /// `MAX_LINE_ENDING_BYTES` only, split by `BLOB_BATCH_BUDGET_BYTES`.
+    /// Content is never requested before its size is known: an unsized
+    /// `--batch` buffers every changed blob, binaries included. Best-effort
+    /// per source: a failed read degrades that source (autocrlf false, no
+    /// attributes, no blobs) instead of failing the whole summary.
     pub(super) async fn line_ending_entries(
         &self,
         inputs: Vec<LineEndingInput>,
@@ -424,20 +523,20 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         // Index and HEAD blobs for every tracked path in one subprocess; the
         // request order mirrors `tracked`, so results zip back positionally.
         let tracked: Vec<&str> = inputs.iter().filter(|i| !i.untracked).map(|i| i.path.as_str()).collect();
-        let mut blobs: HashMap<&str, (Option<Vec<u8>>, Option<Vec<u8>>)> = HashMap::new();
+        let mut sides: HashMap<&str, (Option<LineEndingKind>, Option<LineEndingKind>)> = HashMap::new();
         if !tracked.is_empty() {
             let stdin: String = tracked.iter().map(|p| format!(":{p}\nHEAD:{p}\n")).collect();
-            if let Ok(out) = runner.run_with_stdin_bytes(&["cat-file", "--batch"], &stdin).await {
-                if let Some(parsed) = parse_cat_file_batch(&out.stdout) {
-                    if parsed.len() == tracked.len() * 2 {
-                        let mut it = parsed.into_iter();
-                        let capped = |b: Option<Option<Vec<u8>>>| b.flatten().filter(|b| b.len() <= MAX_LINE_ENDING_BYTES);
-                        for p in &tracked {
-                            let index = capped(it.next());
-                            let head = capped(it.next());
-                            blobs.insert(p, (index, head));
-                        }
-                    }
+            let checked = match runner.run_with_stdin(&CAT_FILE_BATCH_CHECK_ARGS, &stdin).await {
+                Ok(o) if o.success => parse_cat_file_batch_check(&o.stdout),
+                _ => Vec::new(),
+            };
+            if checked.len() == tracked.len() * 2 {
+                let kinds = self.blob_eol_kinds(&checked).await;
+                let kind_of = |e: &Option<BatchCheckEntry>| {
+                    e.as_ref().and_then(|e| kinds.get(e.oid.as_str()).copied())
+                };
+                for (p, pair) in tracked.iter().zip(checked.chunks_exact(2)) {
+                    sides.insert(p, (kind_of(&pair[0]), kind_of(&pair[1])));
                 }
             }
         }
@@ -445,20 +544,45 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
         Ok(inputs
             .iter()
             .map(|i| {
-                let (index, head) = blobs.get(i.path.as_str()).cloned().unwrap_or((None, None));
+                let (index, head) = sides.get(i.path.as_str()).copied().unwrap_or((None, None));
                 let (text_attr, eol_set) =
                     attrs.get(&i.path).copied().unwrap_or((EolTextAttr::Unspecified, false));
-                derive_line_ending_entry(
-                    &i.path,
-                    i.working.as_deref(),
-                    index.as_deref(),
-                    head.as_deref(),
-                    text_attr,
-                    eol_set,
-                    autocrlf,
-                )
+                derive_line_ending_entry_from_kinds(&i.path, i.working, index, head, text_attr, eol_set, autocrlf)
             })
             .collect())
+    }
+
+    /// Line-ending kind per distinct blob oid in `checked`, reading only
+    /// blobs within `MAX_LINE_ENDING_BYTES`. A failed or malformed batch
+    /// leaves its blobs unclassified.
+    async fn blob_eol_kinds(&self, checked: &[Option<BatchCheckEntry>]) -> HashMap<String, LineEndingKind> {
+        let runner = self.runner().await;
+        let mut seen: HashSet<&str> = HashSet::new();
+        let wanted: Vec<(String, u64)> = checked
+            .iter()
+            .flatten()
+            .filter(|e| e.kind == "blob" && e.size <= MAX_LINE_ENDING_BYTES as u64)
+            .filter(|e| seen.insert(e.oid.as_str()))
+            .map(|e| (e.oid.clone(), e.size))
+            .collect();
+
+        let mut kinds = HashMap::new();
+        for batch in plan_blob_batches(&wanted, BLOB_BATCH_BUDGET_BYTES) {
+            let stdin: String = batch.iter().map(|oid| format!("{oid}\n")).collect();
+            let Ok(out) = runner.run_with_stdin_bytes(&["cat-file", "--batch"], &stdin).await else {
+                continue;
+            };
+            let Some(parsed) = parse_cat_file_batch(&out.stdout) else { continue };
+            if parsed.len() != batch.len() {
+                continue;
+            }
+            for (oid, bytes) in batch.into_iter().zip(parsed) {
+                if let Some(bytes) = bytes {
+                    kinds.insert(oid, blob_eol_kind(&bytes));
+                }
+            }
+        }
+        kinds
     }
 }
 
@@ -641,6 +765,40 @@ mod tests {
         assert_eq!(parsed[0].as_deref(), Some(b"ab\ncd".as_slice()));
         assert_eq!(parsed[1], None);
         assert_eq!(parsed[2].as_deref(), Some(b"a\0b".as_slice()));
+    }
+
+    #[test]
+    fn parse_batch_check_found_missing_and_spaced_input() {
+        let oid = "1111111111111111111111111111111111111111";
+        let out = format!("{oid} blob 12\n:my file.txt missing\nHEAD:x ambiguous\n{oid} commit 200\n");
+        let parsed = parse_cat_file_batch_check(&out);
+        assert_eq!(parsed.len(), 4);
+        assert_eq!(
+            parsed[0],
+            Some(BatchCheckEntry { oid: oid.to_string(), kind: "blob".to_string(), size: 12 })
+        );
+        assert_eq!(parsed[1], None);
+        assert_eq!(parsed[2], None);
+        assert_eq!(parsed[3].as_ref().map(|e| e.kind.as_str()), Some("commit"));
+    }
+
+    #[test]
+    fn blob_batches_respect_the_byte_budget() {
+        let blobs: Vec<(String, u64)> =
+            [("a", 4), ("b", 4), ("c", 4), ("big", 50), ("d", 1)].iter().map(|(o, s)| (o.to_string(), *s)).collect();
+        assert_eq!(
+            plan_blob_batches(&blobs, 10),
+            vec![vec!["a".to_string(), "b".to_string()], vec!["c".to_string()], vec!["big".to_string()], vec!["d".to_string()]]
+        );
+        assert!(plan_blob_batches(&[], 10).is_empty());
+    }
+
+    #[test]
+    fn working_summary_matches_the_byte_level_derivation() {
+        let w = summarize_working_eol(b"a\r\nb\n");
+        assert_eq!(w.raw, LineEndingKind::Mixed);
+        assert_eq!(w.normalized, LineEndingKind::Lf);
+        assert!(w.mixed);
     }
 
     #[test]

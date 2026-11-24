@@ -675,10 +675,13 @@ async repoRevertLineEndings(repoId: string, path: string, target: LineEndingKind
 /**
  * Line-ending summary for every changed file - drives the Working Changes
  * chips, the Diff/Merge working-vs-index badges, and the commit warning.
- * Working files are read through the host filesystem (repo-escape checked);
- * the git side is `line_ending_entries`. Every classifiable changed file
- * gets an entry (the Diff header wants `working_raw` even when nothing is
- * noteworthy); consumers filter for attention client-side.
+ * Working files are read through the host filesystem (repo-escape checked)
+ * and reduced to a summary one at a time; the git side is
+ * `line_ending_entries`. Every classifiable changed file gets an entry (the
+ * Diff header wants `working_raw` even when nothing is noteworthy);
+ * consumers filter for attention client-side. Above
+ * `MAX_LINE_ENDING_FILES` changed files the scan is skipped and the
+ * summary is empty.
  */
 async repoLineEndingStatus(repoId: string) : Promise<Result<LineEndingStatusEntry[], AppError>> {
     try {

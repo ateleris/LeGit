@@ -310,7 +310,9 @@ async fn start_repo_watcher(state: &AppState, app: &tauri::AppHandle, session: &
         .absolute_git_dir()
         .await
         .unwrap_or_else(|_| session.root.clone().join(".git"));
-    let sink = crate::watcher::emit_sink(app.clone(), session.id.clone());
+    let sink = session
+        .watch_quiet
+        .attach(crate::watcher::emit_sink(app.clone(), session.id.clone()));
     match session
         .host
         .watch(&session.root.clone(), &git_dir, sink)

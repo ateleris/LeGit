@@ -66,7 +66,7 @@ pub async fn repo_status(
     repo_id: String,
 ) -> Result<Vec<FileStatus>, AppError> {
     let session = state.get_session(&repo_id).await?;
-    session.backend.status().await.map_err(AppError::Git)
+    session.status().await
 }
 
 /// Index-blob size of every staged blob. Drives the commit composer's
@@ -78,7 +78,11 @@ pub async fn repo_staged_blob_sizes(
     repo_id: String,
 ) -> Result<Vec<legit_core::StagedBlobSize>, AppError> {
     let session = state.get_session(&repo_id).await?;
-    session.backend.staged_blob_sizes().await.map_err(AppError::Git)
+    session
+        .scans
+        .staged_sizes
+        .run(|| async { session.backend.staged_blob_sizes().await.map_err(AppError::Git) })
+        .await
 }
 
 /// Files changed by a commit, relative to its first parent (empty tree for a

@@ -23,6 +23,34 @@ use crate::runner::{
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
+/// Whether a git invocation rewrites the working tree in bulk. While one
+/// runs, the on-disk index still describes the old tree, so anything reading
+/// status sees the files written so far as modified; hosts use this to hold
+/// watcher-driven refreshes until it ends.
+pub fn rewrites_worktree(args: &[&str]) -> bool {
+    let mut rest = args.iter().copied();
+    let subcommand = loop {
+        match rest.next() {
+            Some("-c" | "-C") => {
+                rest.next();
+            }
+            Some(a) if a.starts_with('-') => {}
+            other => break other,
+        }
+    };
+    let action = rest.find(|a| !a.starts_with('-'));
+    match subcommand {
+        Some(
+            "merge" | "pull" | "checkout" | "switch" | "rebase" | "reset" | "cherry-pick"
+            | "revert" | "restore" | "clean" | "am",
+        ) => true,
+        Some("stash") => !matches!(action, Some("list" | "show" | "drop" | "create" | "store")),
+        Some("submodule") => action == Some("update"),
+        Some("lfs") => matches!(action, Some("pull" | "checkout")),
+        _ => false,
+    }
+}
+
 #[async_trait]
 pub trait GitExecutor: Send + Sync + 'static {
     /// Run one `git` invocation and collect its full output.
@@ -164,6 +192,42 @@ impl GitExecutor for GitRunner {
 mod tests {
     use super::*;
     use crate::test_support::FakeExecutor;
+
+    #[test]
+    fn worktree_rewriting_invocations_are_recognized() {
+        for args in [
+            &["merge", "main"][..],
+            &["pull", "--ff-only"],
+            &["-c", "gc.auto=0", "-c", "maintenance.auto=false", "pull", "origin"],
+            &["checkout", "main", "--", "a.txt"],
+            &["switch", "-c", "feature"],
+            &["rebase", "--continue"],
+            &["reset", "--hard", "HEAD~1"],
+            &["cherry-pick", "abc"],
+            &["stash", "pop", "stash@{0}"],
+            &["stash", "push", "-m", "x"],
+            &["stash"],
+            &["submodule", "update", "--init"],
+            &["lfs", "pull"],
+        ] {
+            assert!(rewrites_worktree(args), "{args:?}");
+        }
+        for args in [
+            &["status", "--porcelain=v2"][..],
+            &["diff", "--numstat"],
+            &["fetch", "--all"],
+            &["log", "--merge"],
+            &["stash", "list"],
+            &["stash", "show", "-p"],
+            &["submodule", "status"],
+            &["lfs", "ls-files"],
+            &["-C", "sub", "status"],
+            &["commit", "-m", "merge"],
+            &[],
+        ] {
+            assert!(!rewrites_worktree(args), "{args:?}");
+        }
+    }
 
     /// The default `stream` contract: stdout lines, then stderr lines, then
     /// exactly one Finished carrying the run's exit metadata.

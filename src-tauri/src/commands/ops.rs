@@ -310,7 +310,11 @@ pub async fn repo_staged_marker_paths(
     repo_id: String,
 ) -> Result<Vec<String>, AppError> {
     let session = state.get_session(&repo_id).await?;
-    session.backend.staged_marker_paths().await.map_err(AppError::Git)
+    session
+        .scans
+        .staged_markers
+        .run(|| async { session.backend.staged_marker_paths().await.map_err(AppError::Git) })
+        .await
 }
 
 #[tauri::command]
@@ -320,7 +324,11 @@ pub async fn repo_unstaged_marker_paths(
     repo_id: String,
 ) -> Result<Vec<String>, AppError> {
     let session = state.get_session(&repo_id).await?;
-    session.backend.unstaged_marker_paths().await.map_err(AppError::Git)
+    session
+        .scans
+        .unstaged_markers
+        .run(|| async { session.backend.unstaged_marker_paths().await.map_err(AppError::Git) })
+        .await
 }
 
 #[tauri::command]

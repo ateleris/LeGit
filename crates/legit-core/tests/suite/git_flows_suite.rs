@@ -4890,6 +4890,80 @@ async fn cat_file_batch_resolves_index_and_head_specs() {
     assert_eq!(parsed[2], None);
 }
 
+/// `cat-file --batch-check` answers one `<oid> <type> <size>` line per spec
+/// without emitting content, echoes unresolvable specs as `missing`, and the
+/// oids it reports are fetchable through `--batch` - the sizing step that
+/// keeps the line-ending scan from buffering every changed blob.
+#[tokio::test]
+async fn cat_file_batch_check_sizes_specs_without_content() {
+    use legit_core::cli_impl::{parse_cat_file_batch, parse_cat_file_batch_check, CAT_FILE_BATCH_CHECK_ARGS};
+
+    let repo = TestRepo::init().await;
+    repo.write("a.txt", "one\ntwo\n");
+    repo.write("my file.txt", "x\n");
+    repo.git(&["add", "-A"]).await;
+    repo.git(&["commit", "-m", "init"]).await;
+    repo.write("a.txt", "one\r\ntwo\r\n");
+    repo.git(&["add", "a.txt"]).await;
+
+    let runner = GitRunner::for_repo("git", &repo.path);
+    let out = runner
+        .run_with_stdin(&CAT_FILE_BATCH_CHECK_ARGS, ":a.txt\nHEAD:a.txt\n:gone file.txt\n:my file.txt\n")
+        .await
+        .expect("spawn");
+    let checked = parse_cat_file_batch_check(&out.stdout);
+    assert_eq!(checked.len(), 4);
+    let index = checked[0].clone().expect("index side");
+    let head = checked[1].clone().expect("head side");
+    assert_eq!((index.kind.as_str(), index.size), ("blob", 10));
+    assert_eq!((head.kind.as_str(), head.size), ("blob", 8));
+    assert_eq!(checked[2], None);
+    assert_eq!(checked[3].as_ref().map(|e| e.size), Some(2));
+
+    let content = runner
+        .run_with_stdin_bytes(&["cat-file", "--batch"], &format!("{}\n{}\n", index.oid, head.oid))
+        .await
+        .expect("spawn");
+    let parsed = parse_cat_file_batch(&content.stdout).expect("framing");
+    assert_eq!(parsed[0].as_deref(), Some(b"one\r\ntwo\r\n".as_slice()));
+    assert_eq!(parsed[1].as_deref(), Some(b"one\ntwo\n".as_slice()));
+}
+
+/// While a merge rewrites the working tree the on-disk index is still the
+/// pre-merge one, and once it stops on a conflict every cleanly merged file
+/// is staged: `git status` reports the whole incoming diff as changed. This
+/// is why status-driven scans must be bounded by size, not by "edits are
+/// small".
+#[tokio::test]
+async fn conflicted_merge_reports_every_incoming_file_as_staged() {
+    let repo = TestRepo::init().await;
+    for i in 0..5 {
+        repo.write(&format!("f{i}.txt"), "base\n");
+    }
+    repo.git(&["add", "-A"]).await;
+    repo.git(&["commit", "-m", "base"]).await;
+    repo.git(&["branch", "incoming"]).await;
+    repo.git(&["checkout", "-b", "dev"]).await;
+    repo.write("f0.txt", "dev\n");
+    repo.git(&["commit", "-am", "dev"]).await;
+    repo.git(&["checkout", "incoming"]).await;
+    for i in 0..5 {
+        repo.write(&format!("f{i}.txt"), "incoming\n");
+    }
+    repo.git(&["commit", "-am", "incoming"]).await;
+    repo.git(&["checkout", "dev"]).await;
+
+    let outcome = repo.backend.merge("incoming", Default::default()).await.expect("merge runs");
+    assert!(matches!(outcome, legit_core::types::MergeOutcome::Conflicts { .. }), "{outcome:?}");
+
+    let status = repo.backend.status().await.expect("status");
+    let modified = legit_core::types::FileState::Modified;
+    let staged = status.iter().filter(|s| s.staged && s.state == modified).count();
+    let conflicted =
+        status.iter().filter(|s| s.state == legit_core::types::FileState::Conflicted).count();
+    assert_eq!((staged, conflicted), (4, 1), "{status:?}");
+}
+
 /// `check-attr -z --stdin text eol` emits path NUL attr NUL value NUL
 /// triples with the values our parser encodes.
 #[tokio::test]

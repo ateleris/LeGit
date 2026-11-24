@@ -104,10 +104,9 @@ pub async fn set_wsl_host_git_path(
         if repo_override {
             continue;
         }
-        *session.runner.write().await = session.host.executor_for(
-            &HostPath(effective.clone()),
-            Some(&session.root.clone()),
-        );
+        session
+            .set_runner(session.host.executor_for(&HostPath(effective.clone()), Some(&session.root.clone())))
+            .await;
     }
     Ok(status)
 }

@@ -10,11 +10,12 @@ use legit_core::config::{self, ConfigValue, WriteScope};
 use crate::commands::settings_host::{settings_executor, SettingsHost};
 use crate::commands::working::resolve_repo_relative;
 use crate::error::AppError;
-use crate::state::AppState;
+use crate::state::{AppState, RepoSession};
 use legit_core::types::{FileState, LineEndingKind, LineEndingStatusEntry, RenormalizeOutcome};
 use legit_core::{
     BlobBytes, GitExecutor, LineEndingInput, MAX_LINE_ENDING_BYTES, classify_line_endings, convert_line_endings, line_ending_candidates,
 };
+use legit_core::cli_impl::{summarize_working_eol, MAX_LINE_ENDING_FILES};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -311,10 +312,13 @@ pub async fn repo_revert_line_endings(
 
 /// Line-ending summary for every changed file - drives the Working Changes
 /// chips, the Diff/Merge working-vs-index badges, and the commit warning.
-/// Working files are read through the host filesystem (repo-escape checked);
-/// the git side is `line_ending_entries`. Every classifiable changed file
-/// gets an entry (the Diff header wants `working_raw` even when nothing is
-/// noteworthy); consumers filter for attention client-side.
+/// Working files are read through the host filesystem (repo-escape checked)
+/// and reduced to a summary one at a time; the git side is
+/// `line_ending_entries`. Every classifiable changed file gets an entry (the
+/// Diff header wants `working_raw` even when nothing is noteworthy);
+/// consumers filter for attention client-side. Above
+/// `MAX_LINE_ENDING_FILES` changed files the scan is skipped and the
+/// summary is empty.
 #[tauri::command]
 #[specta::specta]
 pub async fn repo_line_ending_status(
@@ -322,12 +326,24 @@ pub async fn repo_line_ending_status(
     repo_id: String,
 ) -> Result<Vec<LineEndingStatusEntry>, AppError> {
     let session = state.get_session(&repo_id).await?;
-    let statuses = session.backend.status().await?;
+    session
+        .scans
+        .line_endings
+        .run(|| line_ending_status(&session))
+        .await
+}
+
+async fn line_ending_status(session: &RepoSession) -> Result<Vec<LineEndingStatusEntry>, AppError> {
+    let statuses = session.status().await?;
+    let candidates = line_ending_candidates(&statuses);
+    if candidates.len() > MAX_LINE_ENDING_FILES {
+        return Ok(Vec::new());
+    }
     let fs = session.host.fs();
-    let mut inputs = Vec::new();
-    for (path, untracked) in line_ending_candidates(&statuses) {
+    let mut inputs = Vec::with_capacity(candidates.len());
+    for (path, untracked) in candidates {
         let working = match resolve_repo_relative(fs.as_ref(), &session.root, &path).await {
-            Ok(abs) => read_capped_bytes(fs.as_ref(), &abs).await,
+            Ok(abs) => read_capped_bytes(fs.as_ref(), &abs).await.map(|b| summarize_working_eol(&b)),
             Err(_) => None,
         };
         inputs.push(LineEndingInput { path, untracked, working });
@@ -371,7 +387,7 @@ pub async fn repo_renormalize_preview(
     let _preview_guard = session.renormalize_preview_lock.lock().await;
     let files = session.backend.renormalize_preview().await?;
 
-    let statuses = session.backend.status().await.map_err(AppError::Git)?;
+    let statuses = session.status().await?;
     // `--renormalize` implies `-u`: unstaged modifications, deletions, and
     // submodule pointer moves of tracked paths all get staged by the run.
     let unstaged_changes = statuses

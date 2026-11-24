@@ -25,7 +25,7 @@ pub use cli_impl::{
     lfs_stubs_from_stderr, line_ending_candidates, GitCliBackend, LineEndingInput,
     BINARY_SNIFF_WINDOW, MAX_LINE_ENDING_BYTES,
 };
-pub use executor::GitExecutor;
+pub use executor::{rewrites_worktree, GitExecutor};
 pub use fs::{FsDirEntry, FsError, FsProbe, FsStat, HostPath, LocalFs, RepoFs};
 pub use error::GitError;
 pub use progress::RemoteProgress;

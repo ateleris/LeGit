@@ -657,13 +657,18 @@ async fn blob_bytes_parses_found_capped_and_missing() {
 }
 
 // ---------------------------------------------------------------------------
-// line-ending summary - fixed subprocess budget
+// line-ending summary - sizes first, content only for small blobs
 // ---------------------------------------------------------------------------
 
+const OID_1: &str = "1111111111111111111111111111111111111111";
+const OID_2: &str = "2222222222222222222222222222222222222222";
+const OID_3: &str = "3333333333333333333333333333333333333333";
+
 #[tokio::test]
-async fn line_ending_entries_run_three_commands_for_any_file_count() {
-    // One config read, one check-attr for every path, one cat-file batch for
-    // the TRACKED paths only (index + HEAD sides, in request order).
+async fn line_ending_entries_size_blobs_before_reading_them() {
+    // One config read, one check-attr for every path, one batch-check for
+    // the TRACKED paths only (index + HEAD sides, in request order), then
+    // the content of the sized blobs by oid.
     let fake = FakeExecutor::default();
     fake.expect(&["config", "--get", "core.autocrlf"], fail(1, ""));
     fake.expect_stdin(
@@ -672,20 +677,83 @@ async fn line_ending_entries_run_three_commands_for_any_file_count() {
         ok("a.txt\0text\0unspecified\0a.txt\0eol\0unspecified\0new.txt\0text\0unspecified\0new.txt\0eol\0unspecified\0"),
     );
     fake.expect_stdin(
-        &["cat-file", "--batch"],
+        &["cat-file", "--batch-check"],
         ":a.txt\nHEAD:a.txt\n",
-        ok("1111111111111111111111111111111111111111 blob 4\nx\r\ny\n\n2222222222222222222222222222222222222222 blob 4\nx\ny\n\n"),
+        ok(&format!("{OID_1} blob 5\n{OID_2} blob 4\n")),
+    );
+    fake.expect_stdin(
+        &["cat-file", "--batch"],
+        &format!("{OID_1}\n{OID_2}\n"),
+        ok(&format!("{OID_1} blob 5\nx\r\ny\n\n{OID_2} blob 4\nx\ny\n\n")),
     );
     let (b, exec) = backend(fake);
     let entries = b
         .line_ending_entries(vec![
-            LineEndingInput { path: "a.txt".into(), untracked: false, working: Some(b"x\r\ny\r\n".to_vec()) },
-            LineEndingInput { path: "new.txt".into(), untracked: true, working: Some(b"n\n".to_vec()) },
+            LineEndingInput {
+                path: "a.txt".into(),
+                untracked: false,
+                working: Some(summarize_working_eol(b"x\r\ny\r\n")),
+            },
+            LineEndingInput { path: "new.txt".into(), untracked: true, working: Some(summarize_working_eol(b"n\n")) },
         ])
         .await
         .unwrap();
     assert_eq!(entries.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(), ["a.txt", "new.txt"]);
     assert_eq!(entries[0].working_raw, Some(crate::types::LineEndingKind::Crlf));
+    let staged = entries[0].staged.expect("HEAD LF -> index mixed");
+    assert_eq!(staged.from, crate::types::LineEndingKind::Lf);
+    assert_eq!(staged.to, crate::types::LineEndingKind::Mixed);
+    exec.assert_done();
+}
+
+/// The memory guard: a blob over `MAX_LINE_ENDING_BYTES` is sized but its
+/// content is never requested, an unchanged side (same oid in index and
+/// HEAD) is read once, and a missing side shifts nothing.
+#[tokio::test]
+async fn line_ending_entries_never_read_oversized_blobs() {
+    let huge = MAX_LINE_ENDING_BYTES as u64 + 1;
+    let fake = FakeExecutor::default();
+    fake.expect(&["config", "--get", "core.autocrlf"], fail(1, ""));
+    fake.expect_stdin(
+        &["check-attr", "-z", "--stdin", "text", "eol"],
+        "big.asset\0same.txt\0added.txt\0",
+        ok(""),
+    );
+    fake.expect_stdin(
+        &["cat-file", "--batch-check"],
+        ":big.asset\nHEAD:big.asset\n:same.txt\nHEAD:same.txt\n:added.txt\nHEAD:added.txt\n",
+        ok(&format!(
+            "{OID_1} blob {huge}\n{OID_2} blob {huge}\n{OID_3} blob 2\n{OID_3} blob 2\n{OID_3} blob 2\nHEAD:added.txt missing\n"
+        )),
+    );
+    fake.expect_stdin(&["cat-file", "--batch"], &format!("{OID_3}\n"), ok(&format!("{OID_3} blob 2\na\n\n")));
+    let (b, exec) = backend(fake);
+    let input = |path: &str| LineEndingInput { path: path.into(), untracked: false, working: None };
+    let entries = b
+        .line_ending_entries(vec![input("big.asset"), input("same.txt"), input("added.txt")])
+        .await
+        .unwrap();
+    assert_eq!(entries.len(), 3);
+    assert!(entries.iter().all(|e| e.staged.is_none() && e.unstaged.is_none()));
+    exec.assert_done();
+}
+
+/// With every blob over the cap, no content run happens at all.
+#[tokio::test]
+async fn line_ending_entries_skip_the_content_run_when_nothing_qualifies() {
+    let huge = MAX_LINE_ENDING_BYTES as u64 + 1;
+    let fake = FakeExecutor::default();
+    fake.expect(&["config", "--get", "core.autocrlf"], fail(1, ""));
+    fake.expect_stdin(&["check-attr", "-z", "--stdin", "text", "eol"], "big.asset\0", ok(""));
+    fake.expect_stdin(
+        &["cat-file", "--batch-check"],
+        ":big.asset\nHEAD:big.asset\n",
+        ok(&format!("{OID_1} blob {huge}\n{OID_2} blob {huge}\n")),
+    );
+    let (b, exec) = backend(fake);
+    b.line_ending_entries(vec![LineEndingInput { path: "big.asset".into(), untracked: false, working: None }])
+        .await
+        .unwrap();
     exec.assert_done();
 }
 

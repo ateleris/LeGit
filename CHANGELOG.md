@@ -12,6 +12,20 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Large merges, pulls and checkouts no longer exhaust memory: the
+  line-ending check reads only small files instead of every changed file,
+  and refreshes no longer pile up while the working tree is being rewritten
+
+### Changed
+
+- Line-ending chips and the line-ending commit warning are skipped when
+  more than 1000 files are changed
+- Working Changes refreshes once when a merge, pull, checkout, rebase, reset
+  or stash operation started in LeGit finishes, instead of continuously
+  while it runs
+
 ## [1.6.5] - 2026-11-23
 
 ### Fixed

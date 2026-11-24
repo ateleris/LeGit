@@ -66,10 +66,12 @@ pub async fn set_git_path(
         else {
             continue;
         };
-        *session.runner.write().await = session.host.executor_for(
-            &legit_core::HostPath::from_path(&effective),
-            Some(&session.root.clone()),
-        );
+        session
+            .set_runner(session.host.executor_for(
+                &legit_core::HostPath::from_path(&effective),
+                Some(&session.root.clone()),
+            ))
+            .await;
     }
 
     probe(&resolved, path).await
@@ -125,9 +127,13 @@ async fn set_repo_git_path_impl(
     *session.settings.write().await = candidate_settings;
     state.persist_session_settings(&session).await?;
 
-    *session.runner.write().await = session
-        .host
-        .executor_for(&legit_core::HostPath::from_path(&resolved), Some(&session.root));
+    session
+        .set_runner(
+            session
+                .host
+                .executor_for(&legit_core::HostPath::from_path(&resolved), Some(&session.root)),
+        )
+        .await;
     Ok(state.attach_watch_error(session.summary()))
 }
 

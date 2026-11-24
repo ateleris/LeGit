@@ -38,7 +38,7 @@ pub async fn repo_work_log_uncommitted(
     repo_id: String,
 ) -> Result<Vec<WorkLogUncommittedFile>, AppError> {
     let session = state.get_session(&repo_id).await?;
-    let status = session.backend.status().await.map_err(AppError::Git)?;
+    let status = session.status().await?;
     let fs = session.host.fs();
     // Paths come from git's own status output (repo-relative, no user
     // input), so a plain join needs no canonicalize round trips; stat_many

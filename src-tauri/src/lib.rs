@@ -15,8 +15,10 @@ mod persist;
 mod profiles_store;
 mod remote;
 mod repo_groups;
+mod scan_gate;
 mod state;
 mod sync;
+mod watch_quiet;
 mod watcher;
 
 use std::path::PathBuf;

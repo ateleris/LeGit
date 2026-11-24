@@ -951,7 +951,22 @@ pub struct RepoSession {
     /// throwaway index (`GIT_INDEX_FILE`), so two concurrent previews would
     /// collide on git's `.lock` for that file.
     pub renormalize_preview_lock: tokio::sync::Mutex<()>,
+    pub scans: RepoScans,
+    pub watch_quiet: Arc<crate::watch_quiet::WatchQuiet>,
 }
+
+/// One gate per status-domain read scan: the watcher re-triggers all of them
+/// together, and each costs git processes proportional to the change set.
+#[derive(Default)]
+pub struct RepoScans {
+    pub status: ScanResultGate<Vec<legit_core::types::FileStatus>>,
+    pub line_endings: ScanResultGate<Vec<legit_core::types::LineEndingStatusEntry>>,
+    pub staged_sizes: ScanResultGate<Vec<legit_core::types::StagedBlobSize>>,
+    pub staged_markers: ScanResultGate<Vec<String>>,
+    pub unstaged_markers: ScanResultGate<Vec<String>>,
+}
+
+pub type ScanResultGate<T> = crate::scan_gate::ScanGate<Result<T, crate::error::AppError>>;
 
 impl RepoSession {
     pub fn new(
@@ -961,7 +976,11 @@ impl RepoSession {
         settings: RepoSettings,
         settings_path: PathBuf,
     ) -> Self {
-        let runner_lock = Arc::new(RwLock::new(runner));
+        let watch_quiet = Arc::new(crate::watch_quiet::WatchQuiet::default());
+        let runner_lock = Arc::new(RwLock::new(crate::watch_quiet::QuietingExecutor::wrap(
+            runner,
+            watch_quiet.clone(),
+        )));
         let backend = Arc::new(GitCliBackend::new(runner_lock.clone(), host.fs()));
         let root = legit_core::HostPath(locator.display_path());
         Self {
@@ -974,7 +993,25 @@ impl RepoSession {
             settings: Arc::new(RwLock::new(settings)),
             settings_path,
             renormalize_preview_lock: tokio::sync::Mutex::new(()),
+            scans: RepoScans::default(),
+            watch_quiet,
         }
+    }
+
+    /// Replace the session's executor (git-path change). Always go through
+    /// this: a bare write to `runner` would drop the watcher quieting.
+    pub async fn set_runner(&self, runner: Arc<dyn GitExecutor>) {
+        *self.runner.write().await =
+            crate::watch_quiet::QuietingExecutor::wrap(runner, self.watch_quiet.clone());
+    }
+
+    /// `git status` through the scan gate, shared by every command that
+    /// needs the full status.
+    pub async fn status(&self) -> Result<Vec<legit_core::types::FileStatus>, crate::error::AppError> {
+        self.scans
+            .status
+            .run(|| async { self.backend.status().await.map_err(crate::error::AppError::Git) })
+            .await
     }
 
     pub fn summary(&self) -> RepoSummary {

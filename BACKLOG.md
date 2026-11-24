@@ -22,7 +22,12 @@ design/2026-11-19-large-staged-file-warning.md)
 
 ## Known bugs
 
-(none currently)
+- **SVG preview does not render for some files**: `gear.svg` in the
+  LeGit-Test repo shows no image. Re-check the SVG path of the file
+  preview (`src-tauri/src/commands/preview.rs` image sniffing and the
+  frontend preview component): find what distinguishes this file (XML
+  prolog, doctype, missing `xmlns`, size, encoding) and pin the fix with a
+  regression test on that shape.
 
 ## Git features (missing vs a normal client)
 
@@ -87,6 +92,32 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   dialog plumbing.
 
 ## Smaller follow-ups
+
+- **Memory guardrails: LeGit must stop itself before it can exhaust the
+  host.** A large merge made the line-ending scan buffer every changed blob
+  and took a Windows machine down (fixed: size-first reads, one scan in
+  flight, watcher held during own worktree rewrites). The remaining
+  unbounded paths and the missing safety net:
+  - *Runner output cap*: `GitRunner` buffers stdout without limit
+    (`read_to_bytes`). Add a per-request byte limit on `GitRequest` with a
+    conservative default; on overflow kill the process tree and return a
+    dedicated `GitError` variant the panels can show as "too large".
+  - *Size before content everywhere*: `blob_bytes` (preview, single-file
+    line-ending badge) and `file_at_revision` read the whole blob and
+    `file_diff` the whole diff before applying their caps. Size with
+    `cat-file --batch-check` (or the new runner cap) first.
+  - *Change-set-proportional scans*: status runs two `diff --numstat -M`
+    over the full change set, the marker checks run `diff --check`; skip or
+    degrade them above a file-count threshold like the line-ending scan.
+  - *Global git concurrency limit*: a semaphore in the runner so no trigger
+    storm can spawn more than N git processes per repo.
+  - *Watchdog*: monitor the app's own RSS plus its git children; above a
+    budget cancel background scans, pause watcher refreshes and tell the
+    user. On Windows put spawned git processes in a Job Object with a
+    memory limit so a runaway child is killed by the OS, not the machine.
+  - *Regression gate*: a large-change-set fixture (thousands of files,
+    multi-MB blobs, conflicted merge) run through the real-git suite with a
+    peak-memory assertion, so a new unbounded read fails CI.
 
 - **Large-file-warning polish** (from the 2026-11-19 feature review; all
   minor): clearing the global threshold field commits 0 and silently
