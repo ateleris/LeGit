@@ -17,9 +17,15 @@ lives in the git log and the GitHub release notes.
 - Large merges, pulls and checkouts no longer exhaust memory: the
   line-ending check reads only small files instead of every changed file,
   and refreshes no longer pile up while the working tree is being rewritten
+- SVG files without a width and height (icons with only a viewBox) show in
+  the diff preview again instead of collapsing to nothing, the caption no
+  longer shows made-up pixel dimensions for them, and a hint says when
+  `currentColor` is being shown as black
 
 ### Changed
 
+- File View draws SVG files as images, like the Diff panel, and falls back
+  to the source when a file does not preview as an image
 - Line-ending chips and the line-ending commit warning are skipped when
   more than 1000 files are changed
 - Working Changes refreshes once when a merge, pull, checkout, rebase, reset

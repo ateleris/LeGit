@@ -22,12 +22,7 @@ design/2026-11-19-large-staged-file-warning.md)
 
 ## Known bugs
 
-- **SVG preview does not render for some files**: `gear.svg` in the
-  LeGit-Test repo shows no image. Re-check the SVG path of the file
-  preview (`src-tauri/src/commands/preview.rs` image sniffing and the
-  frontend preview component): find what distinguishes this file (XML
-  prolog, doctype, missing `xmlns`, size, encoding) and pin the fix with a
-  regression test on that shape.
+(none currently)
 
 ## Git features (missing vs a normal client)
 
@@ -359,6 +354,14 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   silently changes the user's index).
 
 ## Only if it hurts in practice
+
+- **`currentColor` picker in the SVG preview**: an SVG that paints with
+  `currentColor` shows as black (the convention every standalone renderer
+  follows), which is invisible on a dark theme's checkerboard. A small
+  colour picker in the image pane's caption would let the viewer choose the
+  colour for the session, still defaulting to black: set `color` on the
+  SVG root before building the data URL (`ImagePane.tsx`; the pane already
+  detects the case for its hint via `svgUsesInheritedColor`).
 
 - **Multiple main windows (one per Windows virtual desktop)** (deferred
   2026-09-29: nice-to-have, not important enough yet; workaround exists -

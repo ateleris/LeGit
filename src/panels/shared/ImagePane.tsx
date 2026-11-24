@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { FilePreview, ImageFormat } from "../../lib/types";
 import { formatByteSize } from "../../lib/formatBytes";
 import { svgPaintedNothing } from "./svgPaintCheck";
+import { decodeBase64Utf8, svgLacksIntrinsicSize, svgUsesInheritedColor } from "./svgPreviewMarkup";
 
 /** data: URL for an image preview payload (CSP is null; data URLs render). */
 export function previewDataUrl(format: ImageFormat, base64: string): string {
@@ -10,16 +11,22 @@ export function previewDataUrl(format: ImageFormat, base64: string): string {
   return `data:${mime};base64,${base64}`;
 }
 
-/** An SVG without width/height attributes loads with no intrinsic size
- * (engines report 0), so an unstyled `<img>` collapses to nothing; such
- * images get explicit box-filling dimensions instead. SVG-only: a raster
- * image reporting 0 is broken, and stretching it would hide that. */
-export function needsSvgSizeFallback(
-  format: ImageFormat,
-  naturalWidth: number,
-  naturalHeight: number,
-): boolean {
-  return format === "svg" && (naturalWidth === 0 || naturalHeight === 0);
+/** What the pane must know about an SVG payload: whether it has to be sized
+ * explicitly, and whether its `currentColor` paint shows as black for lack of
+ * a colour to inherit. An undecodable payload reports neither. */
+export function svgPreviewFacts(base64: string): {
+  lacksIntrinsicSize: boolean;
+  usesInheritedColor: boolean;
+} {
+  try {
+    const markup = decodeBase64Utf8(base64);
+    return {
+      lacksIntrinsicSize: svgLacksIntrinsicSize(markup),
+      usesInheritedColor: svgUsesInheritedColor(markup),
+    };
+  } catch {
+    return { lacksIntrinsicSize: false, usesInheritedColor: false };
+  }
 }
 
 /** One image preview: checkerboard backdrop (transparency stays visible),
@@ -33,7 +40,11 @@ export function ImagePane({
 }) {
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
   const [paintedNothing, setPaintedNothing] = useState(false);
-  const [sizeFallback, setSizeFallback] = useState(false);
+  const svg = useMemo(
+    () => (preview.format === "svg" ? svgPreviewFacts(preview.base64) : null),
+    [preview.format, preview.base64],
+  );
+  const sizeFallback = svg?.lacksIntrinsicSize ?? false;
   return (
     <div
       style={{
@@ -78,14 +89,16 @@ export function ImagePane({
           onLoad={(e) => {
             const { naturalWidth, naturalHeight } = e.currentTarget;
             setDims({ w: naturalWidth, h: naturalHeight });
-            setSizeFallback(needsSvgSizeFallback(preview.format, naturalWidth, naturalHeight));
             setPaintedNothing(preview.format === "svg" && svgPaintedNothing(e.currentTarget));
           }}
           style={{
             maxWidth: "100%",
             maxHeight: "100%",
             objectFit: "contain",
-            ...(sizeFallback ? { width: "100%", height: "100%" } : null),
+            // An explicit em width, never a percentage: the box around the
+            // image is content-sized, and an image with no intrinsic size
+            // contributes nothing to it, so a percentage resolves to zero.
+            ...(sizeFallback ? { width: "20em", height: "auto" } : null),
             // Stays mounted while hidden: the next preview's load event must
             // still fire here to re-evaluate the notice.
             display: paintedNothing ? "none" : "block",
@@ -94,9 +107,14 @@ export function ImagePane({
       </div>
       <span className="legit-subtle" style={{ fontSize: "var(--fz-sm)" }}>
         {preview.format.toUpperCase()}
-        {dims && dims.w > 0 && dims.h > 0 ? `, ${dims.w}×${dims.h}` : ""},{" "}
+        {dims && !sizeFallback && dims.w > 0 && dims.h > 0 ? `, ${dims.w}×${dims.h}` : ""},{" "}
         {formatByteSize(preview.size)}
       </span>
+      {svg?.usesInheritedColor && (
+        <span className="legit-subtle" style={{ fontSize: "var(--fz-xs)", textAlign: "center" }}>
+          currentColor shown as black
+        </span>
+      )}
     </div>
   );
 }

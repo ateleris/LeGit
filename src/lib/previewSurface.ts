@@ -41,3 +41,29 @@ export function isSvgPath(path: string): boolean {
   const ext = path.split(".").pop() ?? "";
   return path.length > 4 && ext.toLowerCase() === "svg";
 }
+
+export type FileViewSurface = "image" | "binary" | "lfs" | "text" | "pending";
+
+/** Which surface File View renders for one file. The image preview is
+ * requested for the same content the Diff panel routes to its image panes:
+ * binary blobs, LFS pointers and `.svg` paths. An SVG waits for its preview
+ * (`pending`) so the source never flashes before the image, and falls back
+ * to its source when it does not preview as an image. */
+export function fileViewSurface(args: {
+  binary: boolean;
+  lfsPointer: boolean;
+  path: string;
+  preview: FilePreview | undefined;
+  previewPending: boolean;
+}): FileViewSurface {
+  const { binary, lfsPointer, preview, previewPending } = args;
+  if (!fileViewWantsPreview(args)) return "text";
+  if (preview?.kind === "image") return "image";
+  if (binary) return "binary";
+  if (lfsPointer) return "lfs";
+  return previewPending ? "pending" : "text";
+}
+
+export function fileViewWantsPreview(args: { binary: boolean; lfsPointer: boolean; path: string }): boolean {
+  return args.binary || args.lfsPointer || isSvgPath(args.path);
+}

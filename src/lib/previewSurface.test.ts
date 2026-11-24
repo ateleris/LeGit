@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { binarySizes, hasImageSide, sideNotice, isSvgPath } from "./previewSurface";
+import {
+  binarySizes,
+  fileViewSurface,
+  fileViewWantsPreview,
+  hasImageSide,
+  sideNotice,
+  isSvgPath,
+} from "./previewSurface";
 import type { FilePreview } from "./types";
 
 const img: FilePreview = { kind: "image", format: "png", size: 10, base64: "aa" };
@@ -45,5 +52,31 @@ describe("isSvgPath", () => {
     expect(isSvgPath("LOGO.SVG")).toBe(true);
     expect(isSvgPath("logo.svg.bak")).toBe(false);
     expect(isSvgPath("svg")).toBe(false);
+  });
+});
+
+describe("fileViewSurface", () => {
+  const image: FilePreview = { kind: "image", format: "svg", size: 1, base64: "" };
+  const base = { binary: false, lfsPointer: false, preview: undefined, previewPending: false };
+
+  it("draws an svg as an image once its preview arrives, never flashing the source", () => {
+    expect(fileViewSurface({ ...base, path: "gear.svg", previewPending: true })).toBe("pending");
+    expect(fileViewSurface({ ...base, path: "gear.svg", preview: image })).toBe("image");
+  });
+
+  it("falls back to the source for an svg that does not preview as an image", () => {
+    expect(fileViewSurface({ ...base, path: "x.svg", preview: { kind: "not_previewable", size: 9 } })).toBe("text");
+    expect(fileViewSurface({ ...base, path: "x.svg" })).toBe("text");
+  });
+
+  it("never waits on a preview for plain text", () => {
+    expect(fileViewWantsPreview({ binary: false, lfsPointer: false, path: "a.ts" })).toBe(false);
+    expect(fileViewSurface({ ...base, path: "a.ts", previewPending: true })).toBe("text");
+  });
+
+  it("keeps the binary and LFS placeholders until an image arrives", () => {
+    expect(fileViewSurface({ ...base, binary: true, path: "a.bin", previewPending: true })).toBe("binary");
+    expect(fileViewSurface({ ...base, lfsPointer: true, path: "a.psd" })).toBe("lfs");
+    expect(fileViewSurface({ ...base, binary: true, path: "a.png", preview: { ...image, format: "png" } })).toBe("image");
   });
 });

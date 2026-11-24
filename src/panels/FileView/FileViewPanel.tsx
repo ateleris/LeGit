@@ -14,6 +14,7 @@ import { LineEndingBadge } from "../shared/LineEndingBadge";
 import { LfsPointerNotice } from "../shared/LfsPointerNotice";
 import { ImagePane } from "../shared/ImagePane";
 import { useFilePreview } from "../../lib/useFilePreview";
+import { fileViewSurface, fileViewWantsPreview } from "../../lib/previewSurface";
 import { parseLfsPointer } from "../../lib/lfsPointer";
 import { formatByteSize } from "../../lib/formatBytes";
 import { usePanelViewState } from "../../store/panelViewState";
@@ -124,15 +125,20 @@ export function FileViewPanel() {
   // Committed blobs are never smudged (and a working-tree stub from a broken
   // git-lfs setup has the same shape): show the placeholder, not the pointer.
   const lfsInfo = content != null ? parseLfsPointer(content) : null;
-  // Image preview for the two placeholder cases (binary blob, LFS pointer);
-  // enable-gated, so it never fires for text content or without a request.
-  const previewWanted = (data != null && "Binary" in data) || lfsInfo != null;
-  const { data: preview } = useFilePreview(
+  // Enable-gated, so the preview never fires for plain text or without a
+  // request.
+  const previewInput = {
+    binary: data != null && "Binary" in data,
+    lfsPointer: lfsInfo != null,
+    path: request?.path ?? "",
+  };
+  const { data: preview, isPending: previewPending } = useFilePreview(
     repo?.id,
     worktree ? null : request?.rev ?? null,
     request?.path,
-    previewWanted,
+    data != null && fileViewWantsPreview(previewInput),
   );
+  const surface = fileViewSurface({ ...previewInput, preview, previewPending });
   const syntaxEnabled = useSettingsStore((s) => s.settings?.diff_syntax_highlighting ?? false);
   usePanelFocusEffect(useCallback(() => { refetch(); }, [refetch]));
 
@@ -171,20 +177,14 @@ export function FileViewPanel() {
       <div className="legit-panel__body" style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: 0 }}>
         {isError ? (
           <PanelError error={error} margin={8} />
-        ) : data && "Binary" in data ? (
-          preview?.kind === "image" ? (
-            <ImagePane preview={preview} />
-          ) : (
-            <span className="legit-subtle" style={{ display: "block", padding: "0.667em", fontSize: "var(--fz-md)" }}>
-              Binary file, {formatByteSize(data.Binary.size_bytes)}. No text content to show.
-            </span>
-          )
-        ) : lfsInfo ? (
-          preview?.kind === "image" ? (
-            <ImagePane preview={preview} />
-          ) : (
-            <LfsPointerNotice info={lfsInfo} />
-          )
+        ) : !data || surface === "pending" ? null : surface === "image" && preview?.kind === "image" ? (
+          <ImagePane preview={preview} />
+        ) : surface === "binary" && "Binary" in data ? (
+          <span className="legit-subtle" style={{ display: "block", padding: "0.667em", fontSize: "var(--fz-md)" }}>
+            Binary file, {formatByteSize(data.Binary.size_bytes)}. No text content to show.
+          </span>
+        ) : surface === "lfs" && lfsInfo ? (
+          <LfsPointerNotice info={lfsInfo} />
         ) : (
           content != null && (
             <FileContentView content={content} path={request.path} syntaxEnabled={syntaxEnabled} />
