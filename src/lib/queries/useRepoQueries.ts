@@ -1,4 +1,4 @@
-import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { api } from "../commands";
 import type {
   Branch,
@@ -39,6 +39,18 @@ function useRepoQuery<T>(
 
 export const useStatus = (repoId: RepoId, opts?: RepoQueryOptions) =>
   useRepoQuery<FileStatus[]>(repoKeys.status(repoId), repoId, api.repoStatus, STALE.live, opts);
+
+/** The status with line counts filled in: slow on a large change set, so it
+ * is fetched apart from `useStatus` and merged in (`mergeStatusCounts`).
+ * The previous counts stay up while a refresh runs, so they never blink. */
+export const useStatusCounts = (repoId: RepoId, opts?: RepoQueryOptions) =>
+  useQuery<FileStatus[]>({
+    queryKey: [repoId, "status", "counts"],
+    queryFn: () => api.repoStatusCounts(repoId!),
+    enabled: !!repoId && (opts?.enabled ?? true),
+    staleTime: STALE.live,
+    placeholderData: keepPreviousData,
+  });
 
 export const useBranches = (repoId: RepoId, opts?: RepoQueryOptions) =>
   useRepoQuery<Branch[]>(repoKeys.branches(repoId), repoId, api.repoBranches, STALE.live, opts);

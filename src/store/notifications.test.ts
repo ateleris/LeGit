@@ -14,6 +14,14 @@ describe("notifications store", () => {
     expect(toast.action).toBeUndefined();
   });
 
+  test("an error repeating a warning on screen adds no second toast", () => {
+    const id = notify.warning("The operation was stopped.");
+    expect(notify.error("Merge failed: The operation was stopped.")).toBe(id);
+    expect(useNotificationsStore.getState().toasts).toHaveLength(1);
+    notify.error("something else");
+    expect(useNotificationsStore.getState().toasts).toHaveLength(2);
+  });
+
   test("push carries sticky and action through to the toast", () => {
     const action = vi.fn();
     const id = useNotificationsStore.getState().push("info", "update available", {

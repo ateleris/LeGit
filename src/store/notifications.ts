@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { api } from "../lib/commands";
 
-export type NotificationKind = "error" | "success" | "info";
+export type NotificationKind = "error" | "warning" | "success" | "info";
 
 export interface Notification {
   id: number;
@@ -52,6 +52,12 @@ export const useNotificationsStore = create<NotificationsStore>((set) => ({
 /** Convenience for non-component code (e.g. action handlers). */
 export const notify = {
   error: (message: string, opts?: NotificationOptions) => {
+    // A failure already reported as a warning (a stopped operation rejects
+    // its command with the same text) adds nothing as an error on top.
+    const shown = useNotificationsStore
+      .getState()
+      .toasts.find((t) => t.kind === "warning" && message.includes(t.message));
+    if (shown) return shown.id;
     // Error toasts are what the user actually saw go wrong - mirror them into
     // the persistent log so a report ("it showed an error at some point")
     // can be matched to the git calls around it. Fire-and-forget; must never
@@ -64,6 +70,8 @@ export const notify = {
     }
     return useNotificationsStore.getState().push("error", message, opts);
   },
+  warning: (message: string, opts?: NotificationOptions) =>
+    useNotificationsStore.getState().push("warning", message, opts),
   success: (message: string) => useNotificationsStore.getState().push("success", message),
   info: (message: string, opts?: NotificationOptions) =>
     useNotificationsStore.getState().push("info", message, opts),

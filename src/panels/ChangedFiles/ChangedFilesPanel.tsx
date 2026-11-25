@@ -387,7 +387,7 @@ function FileAtCommitMenuSection({
         onClose={onClose}
       />
       <Separator />
-      <MenuItem disabled={deleted} onClick={requestRestore}>
+      <MenuItem writes disabled={deleted} onClick={requestRestore}>
         {deleted
           ? stash
             ? "Apply file (deleted in this stash)"

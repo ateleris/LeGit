@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
+import { BUSY_DELAY_MS } from "../../lib/opActivity";
 
-/** The shared "delayed busy indicator" window: fast operations finish within
- * this and must never flicker their indicator. */
-export const BUSY_DELAY_MS = 150;
+export { BUSY_DELAY_MS };
 
 /**
  * True only once `active` has been continuously true for `delayMs`; false the

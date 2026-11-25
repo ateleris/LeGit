@@ -23,6 +23,10 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
     }
 
     pub(super) async fn status(&self) -> Result<Vec<FileStatus>, GitError> {
+        self.status_entries().await
+    }
+
+    pub(super) async fn status_with_counts(&self) -> Result<Vec<FileStatus>, GitError> {
         let mut statuses = self.status_entries().await?;
 
         // Line counts come from two extra numstat diffs, run only when some
@@ -452,9 +456,7 @@ impl<E: GitExecutor + ?Sized> GitCliBackend<E> {
             .await
     }
 
-    /// `git status` parsed, without line counts - the cheap form for internal
-    /// flows (e.g. `discard`) that only need path classification. The trait's
-    /// `status()` enriches this with numstat counts for the UI.
+    /// `git status` parsed, without line counts.
     pub(super) async fn status_entries(&self) -> Result<Vec<FileStatus>, GitError> {
         let runner = self.runner().await;
         let output = runner

@@ -30,6 +30,10 @@ import type {
 
 import { commands } from "./bindings";
 import type { AppError, Result } from "./bindings";
+import { withOpActivity } from "./opActivity";
+import { isStoppable, opLabel } from "./opLabels";
+import { settleStoppable } from "./opStop";
+import { repoWriteClass, runRepoWrite } from "./repoWrites";
 
 const isResult = (v: unknown): v is Result<unknown, AppError> =>
   !!v &&
@@ -57,12 +61,24 @@ type UnwrappedFn<F> = F extends (...args: infer A) => Promise<Result<infer T, Ap
 
 /** Every generated command, unwrapped - `api.<command>` is the default way to
  * call the backend. The hand-written wrappers below exist only where they add
- * value (argument defaults, the scope-pinned git-config command maps). */
+ * value (argument defaults, the scope-pinned git-config command maps). A
+ * command listed in `OP_LABELS` runs under a busy notice, and a repository
+ * write takes the repository's write turn (`runRepoWrite`). */
 export const api = Object.fromEntries(
   Object.entries(commands).map(([name, fn]) => [
     name,
-    (...args: unknown[]) =>
-      unwrap((fn as (...a: unknown[]) => Promise<unknown>)(...args) as Promise<unknown>),
+    (...args: unknown[]) => {
+      const call = () =>
+        unwrap((fn as (...a: unknown[]) => Promise<unknown>)(...args) as Promise<unknown>);
+      const label = opLabel(name, args);
+      const repoId = name.startsWith("repo") && typeof args[0] === "string" ? args[0] : null;
+      const stoppable = repoId != null && isStoppable(name);
+      const settled = stoppable ? () => settleStoppable(repoId, call) : call;
+      const run =
+        label == null ? settled : () => withOpActivity(label, settled, repoId, stoppable);
+      const write = repoWriteClass(name, args);
+      return write == null ? run() : runRepoWrite(String(args[0]), write, run);
+    },
   ]),
 ) as { [K in keyof typeof commands]: UnwrappedFn<(typeof commands)[K]> };
 
@@ -451,14 +467,14 @@ export const repoFileHistory = (
 /** One git invocation, applied in the given order (pass newest-first for a
  *  clean unwind). `mainline` (1-based parent number) is required for merge
  *  commits (`-m N`) - single-sha calls only. */
-export const repoRevert = (repoId: string, shas: string[], mainline?: number) =>
-  invoke<SequenceOutcome>("repo_revert", { repoId, shas, mainline: mainline ?? null });
+export const repoRevert = (repoId: string, shas: string[], mainline?: number): Promise<SequenceOutcome> =>
+  api.repoRevert(repoId, shas, mainline ?? null);
 
 /** One git invocation, applied in the given order (pass oldest-first).
  *  `mainline` (1-based parent number) is required for merge commits (`-m N`)
  *  - single-sha calls only. */
-export const repoCherryPick = (repoId: string, shas: string[], mainline?: number) =>
-  invoke<SequenceOutcome>("repo_cherry_pick", { repoId, shas, mainline: mainline ?? null });
+export const repoCherryPick = (repoId: string, shas: string[], mainline?: number): Promise<SequenceOutcome> =>
+  api.repoCherryPick(repoId, shas, mainline ?? null);
 
 
 
@@ -479,7 +495,7 @@ export const repoCommit = (
   message: string,
   amend = false,
   noVerify = false,
-) => invoke<string>("repo_commit", { repoId, message, amend, noVerify });
+) => api.repoCommit(repoId, message, amend, noVerify);
 
 
 

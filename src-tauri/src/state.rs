@@ -953,6 +953,7 @@ pub struct RepoSession {
     pub renormalize_preview_lock: tokio::sync::Mutex<()>,
     pub scans: RepoScans,
     pub watch_quiet: Arc<crate::watch_quiet::WatchQuiet>,
+    pub rewrites: Arc<crate::watch_quiet::InFlightRewrites>,
 }
 
 /// One gate per status-domain read scan: the watcher re-triggers all of them
@@ -960,6 +961,7 @@ pub struct RepoSession {
 #[derive(Default)]
 pub struct RepoScans {
     pub status: ScanResultGate<Vec<legit_core::types::FileStatus>>,
+    pub status_counts: ScanResultGate<Vec<legit_core::types::FileStatus>>,
     pub line_endings: ScanResultGate<Vec<legit_core::types::LineEndingStatusEntry>>,
     pub staged_sizes: ScanResultGate<Vec<legit_core::types::StagedBlobSize>>,
     pub staged_markers: ScanResultGate<Vec<String>>,
@@ -977,9 +979,11 @@ impl RepoSession {
         settings_path: PathBuf,
     ) -> Self {
         let watch_quiet = Arc::new(crate::watch_quiet::WatchQuiet::default());
+        let rewrites = Arc::new(crate::watch_quiet::InFlightRewrites::default());
         let runner_lock = Arc::new(RwLock::new(crate::watch_quiet::QuietingExecutor::wrap(
             runner,
             watch_quiet.clone(),
+            rewrites.clone(),
         )));
         let backend = Arc::new(GitCliBackend::new(runner_lock.clone(), host.fs()));
         let root = legit_core::HostPath(locator.display_path());
@@ -995,14 +999,18 @@ impl RepoSession {
             renormalize_preview_lock: tokio::sync::Mutex::new(()),
             scans: RepoScans::default(),
             watch_quiet,
+            rewrites,
         }
     }
 
     /// Replace the session's executor (git-path change). Always go through
     /// this: a bare write to `runner` would drop the watcher quieting.
     pub async fn set_runner(&self, runner: Arc<dyn GitExecutor>) {
-        *self.runner.write().await =
-            crate::watch_quiet::QuietingExecutor::wrap(runner, self.watch_quiet.clone());
+        *self.runner.write().await = crate::watch_quiet::QuietingExecutor::wrap(
+            runner,
+            self.watch_quiet.clone(),
+            self.rewrites.clone(),
+        );
     }
 
     /// `git status` through the scan gate, shared by every command that

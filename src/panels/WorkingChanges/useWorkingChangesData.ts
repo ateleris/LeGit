@@ -2,13 +2,14 @@
 // over the repo's status, so the panel component holds only view state and
 // action handlers.
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/commands";
 import type { CaseDriftEntry, ConflictEntry, FileStatus } from "../../lib/types";
 import { useOpState } from "../../lib/useOpState";
 import { STALE } from "../../lib/queryTiming";
-import { useStatus, useSubmodules } from "../../lib/queries/useRepoQueries";
+import { useStatus, useStatusCounts, useSubmodules } from "../../lib/queries/useRepoQueries";
+import { countableEntries, mergeStatusCounts, statusCountsMode } from "../../lib/statusCounts";
 import { useLineEndingStatusMap } from "../shared/lineEndingStatus";
 import type { FileTreeEntry } from "../shared/FileTree/buildTree";
 import { isSubmodulePath, submodulePathSet } from "./submoduleRows";
@@ -45,12 +46,34 @@ export function useWorkingChangesData(args: {
   const { repoId, eolEnabled, detectCaseRenames } = args;
 
   const {
-    data: status = [],
+    data: fastStatus = [],
     isFetching,
     isError,
     error,
     refetch,
   } = useStatus(repoId);
+
+  // Line counts load apart from the file list so the list never waits for
+  // them; above the auto threshold only once the user asks.
+  const countable = useMemo(() => countableEntries(fastStatus), [fastStatus]);
+  const countsMode = statusCountsMode(countable);
+  const [countsRequested, setCountsRequested] = useState(false);
+  useEffect(() => setCountsRequested(false), [repoId]);
+  const countsEnabled = countsMode === "auto" || (countsMode === "on_demand" && countsRequested);
+  const { data: counted, isFetching: countsFetching } = useStatusCounts(repoId, {
+    enabled: countsEnabled,
+  });
+  const status = useMemo(
+    () => mergeStatusCounts(fastStatus, countsEnabled ? counted : undefined),
+    [fastStatus, counted, countsEnabled],
+  );
+  const lineCounts = {
+    /** Not computed and not coming unless requested. */
+    skipped: countsMode === "on_demand" && !countsRequested,
+    countable,
+    loading: countsEnabled && countsFetching,
+    request: () => setCountsRequested(true),
+  };
 
   // Known submodule paths (gitlinked, or declared in .gitmodules but never
   // added) drive the fork-glyph icon override, so a to-be-added submodule
@@ -200,5 +223,6 @@ export function useWorkingChangesData(args: {
     reopenable,
     conflictKinds,
     entryFor,
+    lineCounts,
   };
 }

@@ -37,13 +37,13 @@ export function ResolveConflictsSubmenu({
       testId="resolve-conflicted"
       label={single ? "Resolve conflict" : `Resolve ${paths.length} conflicted`}
     >
-      <MenuItem testId="resolve-take-ours" onClick={() => { onTakeSide(paths, "ours"); closeMenu(); }}>
+      <MenuItem writes testId="resolve-take-ours" onClick={() => { onTakeSide(paths, "ours"); closeMenu(); }}>
         {labels.ours}
       </MenuItem>
-      <MenuItem testId="resolve-take-theirs" onClick={() => { onTakeSide(paths, "theirs"); closeMenu(); }}>
+      <MenuItem writes testId="resolve-take-theirs" onClick={() => { onTakeSide(paths, "theirs"); closeMenu(); }}>
         {labels.theirs}
       </MenuItem>
-      <MenuItem testId="resolve-mark-resolved" onClick={() => { onMarkResolved(paths); closeMenu(); }}>
+      <MenuItem writes testId="resolve-mark-resolved" onClick={() => { onMarkResolved(paths); closeMenu(); }}>
         Mark resolved
       </MenuItem>
     </Submenu>
@@ -63,7 +63,7 @@ function ReopenConflictMenuItem({ onReopen }: { onReopen: () => void }) {
   const request = () =>
     destructiveMenuConfirm("Reopen conflict? The current resolution will be discarded.", onReopen);
   return (
-    <MenuItem onClick={request}>
+    <MenuItem writes onClick={request}>
       {confirmDestructive ? "Reopen conflict…" : "Reopen conflict"}
     </MenuItem>
   );
@@ -174,13 +174,13 @@ export function FileRowMenu({
             }}
           />
         )}
-      <MenuItem onClick={() => { onPrimary(targets); closeMenu(); }}>
+      <MenuItem writes onClick={() => { onPrimary(targets); closeMenu(); }}>
         {unstaged
           ? many ? `Stage ${targets.length} selected` : "Stage"
           : many ? `Unstage ${targets.length} selected` : "Unstage"}
       </MenuItem>
       {unstaged && (
-        <MenuItem onClick={() => { onDiscard(targets); closeMenu(); }}>
+        <MenuItem writes onClick={() => { onDiscard(targets); closeMenu(); }}>
           {many
             ? `Discard ${targets.length} selected`
             : file.change === "Untracked"
@@ -189,7 +189,7 @@ export function FileRowMenu({
         </MenuItem>
       )}
       {!opActive && stashable.length > 0 && (
-        <MenuItem
+        <MenuItem writes
           onClick={() => {
             onStash(stashable);
             closeMenu();

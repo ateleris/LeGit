@@ -29,7 +29,7 @@ export function UndoLastCommitMenuItem({
     );
   };
   return (
-    <MenuItem onClick={request}>
+    <MenuItem writes onClick={request}>
       {pushed ? "Undo last commit (keep changes staged)…" : "Undo last commit (keep changes staged)"}
     </MenuItem>
   );

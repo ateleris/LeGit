@@ -30,6 +30,7 @@ import {
   type QueryDomain,
 } from "./queries/domains";
 import { notify } from "../store/notifications";
+import { withOpActivity } from "./opActivity";
 import { useRepoStore } from "../store/repos";
 import { useSettingsStore } from "../store/settings";
 
@@ -147,11 +148,16 @@ export const setUpstream = (ctx: RefActionContext, branch: string, upstream: str
     invalidate(ctx, BRANCH_DOMAINS);
   }, reportError);
 
+/** A push started from a menu has no toolbar meter of its own, unlike the
+ *  sync toolbar's, so it raises the busy notice here. */
+const pushFromMenu = (label: string, ...args: Parameters<typeof pushWithTagFollowUp>) =>
+  withOpActivity(label, () => pushWithTagFollowUp(...args), args[1]);
+
 /** Push `branch` (checked out or not); `setUpstream` makes `remote` its
  *  upstream. */
 export const pushBranch = (ctx: RefActionContext, branch: string, remote: string, setUpstream: boolean) =>
   attempt(async () => {
-    await pushWithTagFollowUp(
+    await pushFromMenu(`Pushing ${branch} to ${remote}…`,
       ctx.queryClient,
       ctx.repo.id,
       {
@@ -172,7 +178,7 @@ export const pushBranch = (ctx: RefActionContext, branch: string, remote: string
  *  stays put. */
 export const pushToCommit = (ctx: RefActionContext, branch: string, remote: string, commitId: string) =>
   attempt(async () => {
-    await pushWithTagFollowUp(
+    await pushFromMenu(`Pushing ${branch} to ${remote}…`,
       ctx.queryClient,
       ctx.repo.id,
       {

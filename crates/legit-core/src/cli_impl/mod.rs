@@ -229,6 +229,10 @@ impl<E: GitExecutor + ?Sized> GitBackend for GitCliBackend<E> {
         self.status().await
     }
 
+    async fn status_with_counts(&self) -> Result<Vec<FileStatus>, GitError> {
+        self.status_with_counts().await
+    }
+
     async fn staged_blob_sizes(&self) -> Result<Vec<crate::types::StagedBlobSize>, GitError> {
         self.staged_blob_sizes().await
     }

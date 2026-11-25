@@ -1,3 +1,10 @@
+import { useRepoWriteBusy } from "../lib/repoWrites";
+import { useOpActivityStore, type RunningOp } from "../lib/opActivity";
+import { requestStop } from "../lib/opStop";
+import { confirmDestructiveAction } from "../store/confirm";
+import { notify } from "../store/notifications";
+import { formatAppError } from "../lib/errors";
+import { useDelayedFlag } from "./shared/useDelayedFlag";
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConfirmDestructive } from "../store/settings";
@@ -52,8 +59,86 @@ export function OpStateStrip() {
     [status],
   );
 
-  if (!activeRepoId || !opState || opState.kind === "none") return null;
-  return <OpStateBanner repoId={activeRepoId} opState={opState} conflictCount={conflictCount} />;
+  const running = useOpActivityStore((s) =>
+    activeRepoId ? s.ops.find((o) => o.repoId === activeRepoId) : undefined,
+  );
+
+  if (!activeRepoId) return null;
+  const banner =
+    opState && opState.kind !== "none" ? (
+      <OpStateBanner repoId={activeRepoId} opState={opState} conflictCount={conflictCount} />
+    ) : null;
+  if (!running) return banner;
+  // A running operation takes the banner's place. The banner stays mounted
+  // underneath so its held-busy state survives until the new state arrives.
+  return (
+    <>
+      <OpActivityBar op={running} />
+      {banner && <div style={{ display: "none" }}>{banner}</div>}
+    </>
+  );
+}
+
+/** The activity bar: "something is rewriting this repository right now".
+ * Same place and look as the operation banner, with a moving line instead
+ * of actions. */
+function OpActivityBar({ op }: { op: RunningOp }) {
+  const repoId = op.repoId;
+  const canStop = op.stoppable && repoId != null;
+  const onStop = async () => {
+    if (!repoId) return;
+    const subject = op.label.replace(/…$/, "");
+    const confirmed = await confirmDestructiveAction({
+      title: "Stop operation",
+      message:
+        `Stop "${subject}"? Git is interrupted where it is. LeGit then tells you what state ` +
+        "the repository is in; an operation left in progress can be aborted from the operation banner.",
+      confirmLabel: "Stop",
+    });
+    if (!confirmed) return;
+    try {
+      const outcome = await requestStop(repoId);
+      if (outcome.stopped === 0) notify.info("The operation had already finished.");
+    } catch (e) {
+      notify.error(`Could not stop the operation: ${formatAppError(e)}`);
+    }
+  };
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      data-testid="op-activity-bar"
+      style={{
+        position: "relative",
+        display: "flex",
+        alignItems: "center",
+        gap: "0.667em",
+        padding: "0.333em 0.667em",
+        background: "var(--banner-op-bg)",
+        color: "var(--banner-op-fg)",
+        fontSize: "var(--fz-sm)",
+        borderBottom: "1px solid var(--panel-border)",
+      }}
+    >
+      <div className="legit-progress legit-progress--on-banner" aria-hidden="true" />
+      <b>{op.stopping ? "Stopping…" : op.label}</b>
+      {/* Always rendered, invisible when Stop is not offered: the banner's
+          button sets the row height, so the bar and the operation banner it
+          replaces are the same height by construction. */}
+      <span
+        aria-hidden={!canStop}
+        style={{ visibility: canStop ? "visible" : "hidden", display: "flex", marginLeft: "auto" }}
+      >
+        <ToolbarButton
+          label="Stop"
+          title="Interrupt this operation"
+          disabled={!canStop || !!op.stopping}
+          onClick={() => void onStop()}
+          style={BANNER_BUTTON_STYLE}
+        />
+      </span>
+    </div>
+  );
 }
 
 /**
@@ -74,12 +159,13 @@ export function OpStateBanner({
   const queryClient = useQueryClient();
   const confirmDestructive = useConfirmDestructive();
   const [confirmingAbort, setConfirmingAbort] = useState(false);
+  const heldByOperation = useDelayedFlag(useRepoWriteBusy(repoId) != null);
   // Success means the op state is about to change (usually to "none",
   // unmounting the banner): HOLD the rendering disabled until the refreshed
   // state arrives - flipping back to live Continue/Abort buttons during the
   // refetch gap reads as "the abort didn't work". The opState effect below
   // releases if the banner stays mounted.
-  const { busy, run, release } = usePanelRunner({
+  const { busy: actionBusy, run, release } = usePanelRunner({
     holdBusyOnSuccess: true,
     onSettled: () => invalidateRepoDomains(queryClient, repoId, OP_DOMAINS),
     onError: (e) => {
@@ -100,6 +186,7 @@ export function OpStateBanner({
   }, [opState, release]);
 
   if (opState.kind === "none") return null;
+  const busy = actionBusy || heldByOperation;
   const kind = opState.kind;
   const meta = OP_META[kind];
 

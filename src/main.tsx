@@ -7,6 +7,7 @@ import { HistoryWindowShell } from "./windows/HistoryWindowShell";
 import { WorkLogWindowShell } from "./windows/WorkLogWindowShell";
 import { initWindowFocusTracking } from "./lib/windowFocus";
 import { installCrashLogging } from "./lib/crashLog";
+import { installPerfProbe } from "./lib/perfProbe";
 // Vendor styles first: global.css overrides dockview's theme variables at
 // equal specificity, so cascade order decides who wins (cssImportOrder.test.ts).
 import "dockview-react/dist/styles/dockview.css";
@@ -32,6 +33,9 @@ initWindowFocusTracking();
 // Uncaught errors + unhandled rejections forward into the backend's
 // persistent log file, so frontend breakage survives a crash report.
 installCrashLogging();
+
+// Dev builds report every UI-thread stall over the budget, with its cause.
+if (import.meta.env.DEV) installPerfProbe();
 
 const queryClient = new QueryClient({
   defaultOptions: {

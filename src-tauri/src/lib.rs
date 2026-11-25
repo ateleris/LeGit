@@ -205,6 +205,12 @@ pub fn run() {
     let context = tauri::generate_context!();
     logging::init_tracing(&context.config().identifier);
 
+    // Off the startup path: until it lands, git calls hide a console each.
+    std::thread::spawn(|| {
+        let shared = legit_core::runner::ensure_shared_console();
+        tracing::info!(shared, "shared console for git children");
+    });
+
     // A fresh launch may itself carry `--open <locator>` (launcher ran with
     // no app running): stash it for the frontend to consume after restore.
     let pending_open: Vec<String> = std::env::args().collect();
@@ -641,6 +647,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::repo_open_remote_page,
         commands::repo_log,
         commands::repo_status,
+        commands::repo_status_counts,
+        commands::repo_stop_operation,
         commands::repo_branches,
         commands::repo_create_branch,
         commands::repo_set_upstream,

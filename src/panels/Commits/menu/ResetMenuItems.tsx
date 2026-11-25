@@ -32,13 +32,13 @@ export function ResetMenuItems({
     <>
       <Separator />
       <Submenu label={`Reset ${label} to here`}>
-        <MenuItem onClick={() => onReset("soft")}>
+        <MenuItem writes onClick={() => onReset("soft")}>
           Soft (keep changes staged)
         </MenuItem>
-        <MenuItem onClick={() => onReset("mixed")}>
+        <MenuItem writes onClick={() => onReset("mixed")}>
           Mixed (keep changes unstaged)
         </MenuItem>
-        <MenuItem onClick={requestHard}>
+        <MenuItem writes onClick={requestHard}>
           {confirmDestructive ? "Hard (discard changes)…" : "Hard (discard changes)"}
         </MenuItem>
       </Submenu>

@@ -477,7 +477,7 @@ function FileMenuSection({
       {!atRev && tracked && !submodule && (
         <>
           <Separator />
-          <MenuItem onClick={requestUntrack}>
+          <MenuItem writes onClick={requestUntrack}>
             {confirmDestructive ? "Stop tracking & ignore…" : "Stop tracking & ignore"}
           </MenuItem>
         </>
@@ -526,7 +526,7 @@ function DirMenuSection({
           <Separator />
           <AddToGitignoreMenuItem path={dirPath} isDir onClose={onClose} />
           {canUntrack && (
-            <MenuItem onClick={requestUntrack}>
+            <MenuItem writes onClick={requestUntrack}>
               {confirmDestructive ? "Stop tracking & ignore…" : "Stop tracking & ignore"}
             </MenuItem>
           )}

@@ -196,7 +196,7 @@ export function RevertChipButton({
   const section = (
     <>
       <SectionLabel>{title}</SectionLabel>
-      <MenuItem disabled={disabled} onClick={requestRevert}>
+      <MenuItem writes disabled={disabled} onClick={requestRevert}>
         {confirmDestructive
           ? `Revert line endings to ${targetLabel}…`
           : `Revert line endings to ${targetLabel}`}

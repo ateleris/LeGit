@@ -1152,8 +1152,20 @@ button.legit-tab__close:hover {
 .legit-toast--error {
   border-left-color: var(--error-fg);
 }
+.legit-toast--warning {
+  border-left-color: var(--warning-fg);
+}
 .legit-toast--success {
   border-left-color: var(--success-fg);
+}
+/* The moving bar on a coloured banner follows the banner's own text colour:
+   the default bar colour is the accent, which banners use as background. */
+.legit-progress--on-banner {
+  top: auto;
+  bottom: 0;
+}
+.legit-progress--on-banner::before {
+  background: currentColor;
 }
 .legit-toast__body {
   flex: 1;

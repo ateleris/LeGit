@@ -266,6 +266,58 @@ pub async fn repo_op_state(
     session.backend.op_state().await.map_err(AppError::Git)
 }
 
+/// What stopping a running operation left behind.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct StopOutcome {
+    /// Git invocations that were interrupted; 0 when the operation had
+    /// already finished.
+    pub stopped: u32,
+    /// A git lock file the interrupted process could not clean up itself
+    /// was removed.
+    pub lock_removed: bool,
+    /// The operation state the repository is in afterwards, which decides
+    /// the recovery the UI offers.
+    pub op_state: RepoOpState,
+}
+
+/// How long a stop waits for the interrupted invocations to end.
+const STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Interrupt the worktree-rewriting git invocations running for this repo
+/// (the activity bar's Stop). Git is ended gracefully where the platform
+/// allows it; where it is killed outright it cannot remove its own
+/// `index.lock`, which would make every later git command fail, so a lock
+/// left behind by the processes this call ended is removed.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_stop_operation(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<StopOutcome, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    let runner = session.runner.read().await.clone();
+    let stopped = session.rewrites.snapshot().iter().filter(|id| runner.cancel(id)).count() as u32;
+
+    let deadline = std::time::Instant::now() + STOP_WAIT;
+    while !session.rewrites.is_empty() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    let mut lock_removed = false;
+    if stopped > 0 && session.rewrites.is_empty() {
+        if let Ok(git_dir) = session.backend.absolute_git_dir().await {
+            let lock = git_dir.join("index.lock");
+            let fs = session.host.fs();
+            if matches!(fs.stat(&lock).await, Ok(Some(_))) {
+                lock_removed = fs.remove_file(&lock).await.is_ok();
+            }
+        }
+    }
+
+    let op_state = session.backend.op_state().await.map_err(AppError::Git)?;
+    Ok(StopOutcome { stopped, lock_removed, op_state })
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn repo_conflict_entries(

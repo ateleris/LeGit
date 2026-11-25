@@ -128,7 +128,7 @@ function FileHistoryBody() {
             Diff in this commit
           </MenuItem>
           <Separator />
-          <MenuItem
+          <MenuItem writes
             onClick={() =>
               destructiveMenuConfirm(
                 `Restore ${entry.path} to its content at ${sha.slice(0, 8)}?`,

@@ -15,6 +15,8 @@ import {
 import { createPortal } from "react-dom";
 import { ChevronRightIcon } from "../../../icons";
 import { VIEWPORT_MARGIN, flyoutPosition } from "./flyoutPosition";
+import { useRepoWriteBusy } from "../../../lib/repoWrites";
+import { useRepoStore } from "../../../store/repos";
 
 /**
  * Marker attribute carried by every floating menu surface (the MenuShell root
@@ -48,16 +50,24 @@ export const menuSurfaceStyle: React.CSSProperties = {
 export function MenuItem({
   children,
   onClick,
-  disabled,
+  disabled: disabledProp,
+  writes,
   testId,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   disabled?: boolean;
+  /** The entry changes the working tree, index or HEAD of the active repo:
+   *  it goes inert while a long-running operation holds that repository
+   *  (see `lib/repoWrites.ts`), instead of failing with a refusal on click. */
+  writes?: boolean;
   /** Stable hook for the E2E suite. */
   testId?: string;
 }) {
   const [hover, setHover] = useState(false);
+  const holder = useRepoWriteBusy(useRepoStore((s) => s.activeRepoId));
+  const held = writes && holder != null;
+  const disabled = disabledProp || held;
   // A real <button> (keyboard focus + Enter activation), with the global CSS
   // button chrome (bg, border, padding) explicitly reset to menu-entry style.
   return (
@@ -66,6 +76,7 @@ export function MenuItem({
       role="menuitem"
       data-testid={testId}
       disabled={disabled}
+      title={held ? `Not available while "${holder.replace(/…$/, "")}" is running` : undefined}
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}

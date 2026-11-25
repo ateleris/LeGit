@@ -91,13 +91,13 @@ export function BulkSelectionMenu({
           single-row menu. */}
       {!opInProgress && (
         <>
-          <MenuItem
+          <MenuItem writes
             disabled={plan.containsMerge}
             onClick={() => { closeMenu(); handleCherryPick(plan.cherryPickShas); }}
           >
             Cherry-pick {plan.count} commits
           </MenuItem>
-          <MenuItem
+          <MenuItem writes
             disabled={plan.containsMerge}
             onClick={() => { closeMenu(); handleRevert(plan.revertShas); }}
           >
@@ -111,12 +111,12 @@ export function BulkSelectionMenu({
           )}
           {rewrite && (
             <>
-              <MenuItem onClick={requestDrop}>
+              <MenuItem writes onClick={requestDrop}>
                 {confirmDestructive
                   ? `Drop ${plan.count} commits…`
                   : `Drop ${plan.count} commits`}
               </MenuItem>
-              <MenuItem onClick={() => { closeMenu(); onSquash?.(); }}>
+              <MenuItem writes onClick={() => { closeMenu(); onSquash?.(); }}>
                 Squash {plan.count} commits into one…
               </MenuItem>
               {!rewrite.contiguous && (
@@ -154,10 +154,10 @@ export function WorkdirRowMenu({
   return (
     <>
       <SectionLabel>Uncommitted changes</SectionLabel>
-      <MenuItem onClick={() => { closeMenu(); handleCreateStash(false); }}>
+      <MenuItem writes onClick={() => { closeMenu(); handleCreateStash(false); }}>
         Stash changes
       </MenuItem>
-      <MenuItem onClick={() => { closeMenu(); handleCreateStash(true); }}>
+      <MenuItem writes onClick={() => { closeMenu(); handleCreateStash(true); }}>
         Stash changes (incl. untracked)
       </MenuItem>
     </>
@@ -324,7 +324,7 @@ export function CommitRowMenu(props: CommitRowMenuProps) {
       <MenuItem onClick={() => { closeMenu(); void copyAndNotify(commit.message, "Commit message"); }}>
         Copy message
       </MenuItem>
-      <MenuItem onClick={() => { closeMenu(); handleCommitCheckout(commit.id); }}>
+      <MenuItem writes onClick={() => { closeMenu(); handleCommitCheckout(commit.id); }}>
         Checkout commit
       </MenuItem>
       <MenuItem onClick={() => { closeMenu(); handleCreateBranchStart(commit.id); }}>
@@ -365,7 +365,7 @@ export function CommitRowMenu(props: CommitRowMenuProps) {
         </MenuItem>
       )}
       {commit.id === headSha && headIsRewordable && (
-        <MenuItem onClick={() => { closeMenu(); handleRewordStart(commit); }}>
+        <MenuItem writes onClick={() => { closeMenu(); handleRewordStart(commit); }}>
           Reword message…
         </MenuItem>
       )}
@@ -387,7 +387,7 @@ export function CommitRowMenu(props: CommitRowMenuProps) {
               <Submenu label="Cherry-pick commit">
                 <SectionLabel>Apply changes relative to…</SectionLabel>
                 {mainline.map((c) => (
-                  <MenuItem
+                  <MenuItem writes
                     key={c.mainline}
                     onClick={() => { closeMenu(); handleCherryPick([commit.id], c.mainline); }}
                   >
@@ -398,7 +398,7 @@ export function CommitRowMenu(props: CommitRowMenuProps) {
               <Submenu label="Revert commit">
                 <SectionLabel>Undo changes relative to…</SectionLabel>
                 {mainline.map((c) => (
-                  <MenuItem
+                  <MenuItem writes
                     key={c.mainline}
                     onClick={() => { closeMenu(); handleRevert([commit.id], c.mainline); }}
                   >
@@ -415,10 +415,10 @@ export function CommitRowMenu(props: CommitRowMenuProps) {
             </>
           ) : (
             <>
-              <MenuItem onClick={() => { closeMenu(); handleCherryPick([commit.id]); }}>
+              <MenuItem writes onClick={() => { closeMenu(); handleCherryPick([commit.id]); }}>
                 Cherry-pick commit
               </MenuItem>
-              <MenuItem onClick={() => { closeMenu(); handleRevert([commit.id]); }}>
+              <MenuItem writes onClick={() => { closeMenu(); handleRevert([commit.id]); }}>
                 Revert commit
               </MenuItem>
             </>

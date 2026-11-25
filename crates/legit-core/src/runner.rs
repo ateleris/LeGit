@@ -27,6 +27,7 @@ use crate::executor::GitExecutor;
 
 mod invocation_log;
 mod proc_tree;
+mod shared_console;
 
 pub use invocation_log::{
     redact_url_credentials, set_invocation_observer, set_progress_observer, GitInvocation,
@@ -35,6 +36,7 @@ use invocation_log::{log_invocation, logged_ok, report_progress};
 #[cfg(windows)]
 use proc_tree::app_job;
 use proc_tree::{terminate_tree, ProcTree};
+pub use shared_console::ensure_shared_console;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{info, instrument, warn};
 use uuid::Uuid;
@@ -559,8 +561,11 @@ impl GitRunner {
         // one per invocation — a visible flash on every git call. CREATE_NO_WINDOW
         // suppresses that. Dev builds never flashed only because they run
         // attached to the dev terminal, which children inherit.
+        // With a shared console the child inherits ours, see `shared_console`.
         #[cfg(windows)]
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        if !shared_console::active() {
+            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
         cmd
     }
 

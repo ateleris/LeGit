@@ -454,6 +454,44 @@ mod tests {
         assert!(merged.git_profiles_doc.profiles.is_empty());
     }
 
+    fn work_profile() -> crate::state::GitProfile {
+        crate::state::GitProfile {
+            id: "p1".into(),
+            name: "Work".into(),
+            user_name: Some("Simon".into()),
+            user_email: Some("simon@example.com".into()),
+            gpg_format: None,
+            signing_key: None,
+            commit_gpgsign: None,
+            allowed_signers_file: None,
+            auth_ssh_key: None,
+            credential_helper: None,
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "known bug, see BACKLOG.md Known bugs"]
+    async fn opting_in_on_a_second_machine_keeps_the_first_machines_profiles() {
+        let mut a_settings = GlobalSettings::default();
+        a_settings.sync_git_profiles = true;
+        a_settings.git_profiles_doc.profiles.push(work_profile());
+        let f = fixture(&a_settings).await;
+        // b has no profiles and only now opts in: the toggle's settings
+        // nudge runs an export, never an import first.
+        let mut b_settings = GlobalSettings::default();
+        b_settings.sync_git_profiles = true;
+        assert_eq!(f.b.core.export_cycle(&b_settings).await.kind, SyncStatusKind::InSync);
+        // a's next startup sync.
+        let (adopted, status) = f.a.core.import_cycle_capturing(&a_settings).await;
+        assert_eq!(status.kind, SyncStatusKind::InSync, "{:?}", status.message);
+        let merged = import_synced_settings(&a_settings, &adopted.unwrap().0).unwrap();
+        assert_eq!(
+            merged.git_profiles_doc.profiles,
+            vec![work_profile()],
+            "b's empty list must not wipe a's profiles"
+        );
+    }
+
     #[tokio::test]
     async fn capturing_import_preserves_unexported_local_drift() {
         let f = fixture(&GlobalSettings::default()).await;

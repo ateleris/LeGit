@@ -327,6 +327,27 @@ project memory for details.
   paired with a `useRef` re-entry guard so double-clicks are still blocked
   immediately (see `run()` in WorkingChangesPanel). Genuinely slow network
   ops (fetch/pull/push/clone) may show busy immediately.
+- **Repository operations report through the activity bar, and one write
+  runs at a time per repo.** Two app-chrome surfaces share the slot below
+  the repo tabs (`OpStateStrip.tsx`): the **operation banner** (an operation
+  is paused and waits for the user: Continue / Skip / Abort) and the
+  **activity bar** (git is running right now: label plus moving line; it
+  takes the banner's place while it shows and has the same height; it
+  appears only after `ACTIVITY_BAR_DELAY_MS`, so everyday operations on an
+  ordinary repo never show it). A
+  command gets its activity-bar label in `OP_LABELS` (`src/lib/opLabels.ts`)
+  and `api` applies it, so call sites never add their own indicator. A
+  command that writes the working tree, index or HEAD is classified in
+  `src/lib/repoWrites.ts`: a long write holds the repo and other writes are
+  refused with `RepoBusyError`, quick writes take turns; reads, other repos
+  and the rest of the UI are never blocked. A new mutating command needs
+  both entries. Menu entries that write carry `<MenuItem writes>` so they
+  go inert while the repo is held. The activity bar offers **Stop** only for
+  commands in `STOPPABLE` (`opLabels.ts`): operations git records as "in
+  progress", where an interrupted run can be recovered through the
+  operation banner's Abort (a stopped fast-forward has no Abort but wrote
+  only committed content, which is accepted); never add one whose
+  interruption can lose work.
 - **Extract decision logic into pure functions and unit-test them** — parsers,
   error classification, and "did X actually happen" checks
   (`stash_created`, `classify_switch_error`, `find_stash_selector`,

@@ -29,7 +29,8 @@ function Toast({ toast, onDismiss }: { toast: Notification; onDismiss: () => voi
     // Sticky toasts stay until dismissed - they are the only pointer to
     // their flow (e.g. update available / install progress).
     if (toast.sticky) return;
-    const ms = toast.kind === "error" ? ERROR_AUTO_DISMISS_MS : AUTO_DISMISS_MS;
+    const lasting = toast.kind === "error" || toast.kind === "warning";
+    const ms = lasting ? ERROR_AUTO_DISMISS_MS : AUTO_DISMISS_MS;
     const h = setTimeout(onDismiss, ms);
     return () => clearTimeout(h);
   }, [toast.kind, toast.sticky, onDismiss]);

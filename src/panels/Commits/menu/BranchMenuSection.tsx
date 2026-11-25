@@ -67,20 +67,20 @@ function MergeRebaseItems({
     <>
       <Separator />
       <Submenu testId="menu-merge-submenu" label={`Merge '${targetLabel}' into '${currentBranch}'`}>
-        <MenuItem testId="menu-merge" onClick={() => onMerge({ ff: "auto", squash: false })}>
+        <MenuItem writes testId="menu-merge" onClick={() => onMerge({ ff: "auto", squash: false })}>
           Merge (fast-forward if possible)
         </MenuItem>
-        <MenuItem onClick={() => onMerge({ ff: "no_ff", squash: false })}>
+        <MenuItem writes onClick={() => onMerge({ ff: "no_ff", squash: false })}>
           Merge (no fast-forward)
         </MenuItem>
-        <MenuItem onClick={() => onMerge({ ff: "ff_only", squash: false })}>
+        <MenuItem writes onClick={() => onMerge({ ff: "ff_only", squash: false })}>
           Merge (fast-forward only)
         </MenuItem>
-        <MenuItem onClick={() => onMerge({ ff: "auto", squash: true })}>
+        <MenuItem writes onClick={() => onMerge({ ff: "auto", squash: true })}>
           Squash merge
         </MenuItem>
       </Submenu>
-      <MenuItem onClick={onRebaseOnto}>
+      <MenuItem writes onClick={onRebaseOnto}>
         Rebase '{currentBranch}' onto '{targetLabel}'
       </MenuItem>
     </>
@@ -147,7 +147,7 @@ export function BranchMenuSection({
   return (
     <>
       <SectionLabel>{name}</SectionLabel>
-      <MenuItem onClick={onCheckout} disabled={isCurrent}>
+      <MenuItem writes onClick={onCheckout} disabled={isCurrent}>
         {isCurrent ? "Checkout branch (current)" : "Checkout branch"}
       </MenuItem>
       <FilterGraphItem refName={name} />
@@ -242,7 +242,7 @@ export function RemoteBranchMenuSection({
   return (
     <>
       <SectionLabel>{remoteName}</SectionLabel>
-      <MenuItem onClick={onCheckout}>Checkout branch</MenuItem>
+      <MenuItem writes onClick={onCheckout}>Checkout branch</MenuItem>
       <FilterGraphItem refName={remoteName} />
       <CopyNameItem refName={remoteName} />
       <MergeRebaseItems

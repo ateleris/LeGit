@@ -26,7 +26,16 @@ use std::path::{Path, PathBuf};
 
 #[async_trait]
 pub trait GitBackend: Send + Sync {
+    /// The changed files, from `git status` alone: `additions`/`deletions`
+    /// stay `None` and `binary` false. Its cost follows the number of files,
+    /// never their content, so everything that only needs to know WHAT
+    /// changed reads this.
     async fn status(&self) -> Result<Vec<FileStatus>, GitError>;
+
+    /// `status` plus per-entry line counts and binary flags, from two
+    /// `diff --numstat` passes that read every changed file's content: slow
+    /// on a large change set, which is why it is a separate call.
+    async fn status_with_counts(&self) -> Result<Vec<FileStatus>, GitError>;
 
     /// Index-blob size of every stage-0 staged blob (what a commit would
     /// record - LFS-tracked files report their small pointer). Backs the

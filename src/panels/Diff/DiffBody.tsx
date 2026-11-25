@@ -141,7 +141,7 @@ export function DiffBody({
         <>
           {lines !== null &&
             actions.map((a) => (
-              <MenuItem
+              <MenuItem writes
                 key={`line-${a}`}
                 onClick={() =>
                   runMenuAction(a, `${lineActionLabel(a, lines.length)}?`, () =>
@@ -154,7 +154,7 @@ export function DiffBody({
             ))}
           {lines !== null && <Separator />}
           {actions.map((a) => (
-            <MenuItem
+            <MenuItem writes
               key={a}
               onClick={() =>
                 runMenuAction(a, `${ACTION_TITLE[a]}?`, () => onAction(hunkIndex, a))

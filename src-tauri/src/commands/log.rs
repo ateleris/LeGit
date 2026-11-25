@@ -58,7 +58,9 @@ pub async fn repo_branches(
 }
 
 /// Working-tree status for the active repo: every staged, unstaged, and
-/// untracked change. Drives the Commits panel's "uncommitted changes" row.
+/// untracked change, WITHOUT line counts (`additions`/`deletions` are null,
+/// `binary` false). Fast at any change-set size; everything that only needs
+/// to know what changed reads this.
 #[tauri::command]
 #[specta::specta]
 pub async fn repo_status(
@@ -67,6 +69,23 @@ pub async fn repo_status(
 ) -> Result<Vec<FileStatus>, AppError> {
     let session = state.get_session(&repo_id).await?;
     session.status().await
+}
+
+/// `repo_status` with per-entry line counts and binary flags filled in.
+/// Reads every changed file's content, so it is slow on a large change set:
+/// callers fetch it separately and merge it into the fast status.
+#[tauri::command]
+#[specta::specta]
+pub async fn repo_status_counts(
+    state: tauri::State<'_, AppState>,
+    repo_id: String,
+) -> Result<Vec<FileStatus>, AppError> {
+    let session = state.get_session(&repo_id).await?;
+    session
+        .scans
+        .status_counts
+        .run(|| async { session.backend.status_with_counts().await.map_err(AppError::Git) })
+        .await
 }
 
 /// Index-blob size of every staged blob. Drives the commit composer's

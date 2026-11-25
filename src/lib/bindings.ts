@@ -1583,11 +1583,41 @@ async repoLog(repoId: string, maxCount: number | null, skip: number | null, revi
 },
 /**
  * Working-tree status for the active repo: every staged, unstaged, and
- * untracked change. Drives the Commits panel's "uncommitted changes" row.
+ * untracked change, WITHOUT line counts (`additions`/`deletions` are null,
+ * `binary` false). Fast at any change-set size; everything that only needs
+ * to know what changed reads this.
  */
 async repoStatus(repoId: string) : Promise<Result<FileStatus[], AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("repo_status", { repoId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `repo_status` with per-entry line counts and binary flags filled in.
+ * Reads every changed file's content, so it is slow on a large change set:
+ * callers fetch it separately and merge it into the fast status.
+ */
+async repoStatusCounts(repoId: string) : Promise<Result<FileStatus[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("repo_status_counts", { repoId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Interrupt the worktree-rewriting git invocations running for this repo
+ * (the activity bar's Stop). Git is ended gracefully where the platform
+ * allows it; where it is killed outright it cannot remove its own
+ * `index.lock`, which would make every later git command fail, so a lock
+ * left behind by the processes this call ended is removed.
+ */
+async repoStopOperation(repoId: string) : Promise<Result<StopOutcome, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("repo_stop_operation", { repoId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4900,6 +4930,25 @@ export type StashOutcome = { kind: "created" } |
  * The working tree was clean — nothing to stash.
  */
 { kind: "nothing_to_stash" }
+/**
+ * What stopping a running operation left behind.
+ */
+export type StopOutcome = { 
+/**
+ * Git invocations that were interrupted; 0 when the operation had
+ * already finished.
+ */
+stopped: number; 
+/**
+ * A git lock file the interrupted process could not clean up itself
+ * was removed.
+ */
+lock_removed: boolean; 
+/**
+ * The operation state the repository is in afterwards, which decides
+ * the recovery the UI offers.
+ */
+op_state: RepoOpState }
 /**
  * One submodule's auto-update outcome.
  */

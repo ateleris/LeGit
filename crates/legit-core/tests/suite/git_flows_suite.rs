@@ -2611,7 +2611,7 @@ async fn status_reports_line_counts_per_side() {
     repo.git(&["add", "pic.bin"]).await;
     repo.write("untracked.txt", "x\n");
 
-    let status = repo.backend.status().await.unwrap();
+    let status = repo.backend.status_with_counts().await.unwrap();
     let find = |path: &str, staged: bool| {
         status
             .iter()
@@ -2645,7 +2645,7 @@ async fn status_reports_untracked_nested_repo_without_trailing_slash() {
     repo.git(&["init", "app/backend/FlowControl.NET"]).await;
     repo.write("app/backend/FlowControl.NET/x.cs", "class X {}\n");
 
-    let status = repo.backend.status().await.unwrap();
+    let status = repo.backend.status_with_counts().await.unwrap();
     assert_eq!(status.len(), 1, "{status:?}");
     assert_eq!(status[0].path.as_os_str(), "app/backend/FlowControl.NET");
     assert_eq!(status[0].state, FileState::Untracked);
@@ -2660,7 +2660,7 @@ async fn status_counts_work_before_the_first_commit() {
     repo.write("a.txt", "one\ntwo\n");
     repo.git(&["add", "a.txt"]).await;
 
-    let status = repo.backend.status().await.unwrap();
+    let status = repo.backend.status_with_counts().await.unwrap();
     assert_eq!(status.len(), 1);
     assert_eq!(status[0].state, FileState::Added);
     assert!(status[0].staged);
@@ -2682,7 +2682,7 @@ async fn status_reports_counts_for_a_staged_rename() {
     repo.write("new.txt", "one\ntwo\nthree\nfour\n");
     repo.git(&["add", "new.txt"]).await;
 
-    let status = repo.backend.status().await.unwrap();
+    let status = repo.backend.status_with_counts().await.unwrap();
     let entry = status
         .iter()
         .find(|s| s.path == PathBuf::from("new.txt") && s.staged)
@@ -2701,7 +2701,7 @@ async fn status_reports_a_conflict_as_a_single_unstaged_entry() {
     let outcome = repo.backend.merge("feature", MergeOptions::default()).await.unwrap();
     assert!(matches!(outcome, MergeOutcome::Conflicts { .. }), "{outcome:?}");
 
-    let status = repo.backend.status().await.unwrap();
+    let status = repo.backend.status_with_counts().await.unwrap();
     let conflicted: Vec<_> = status
         .iter()
         .filter(|s| s.path == PathBuf::from("a.txt"))
@@ -2898,7 +2898,7 @@ async fn status_classifies_submodule_pointer_moves_and_dirt() {
     // Dirty-only (untracked file inside): visible as the informational
     // SubmoduleDirty entry (unmoved pointer - nothing stageable).
     sup.write("lib/junk.txt", "x\n");
-    let status = sup.backend.status().await.unwrap();
+    let status = sup.backend.status_with_counts().await.unwrap();
     let entry = status
         .iter()
         .find(|s| s.path == PathBuf::from("lib"))
@@ -2910,7 +2910,7 @@ async fn status_classifies_submodule_pointer_moves_and_dirt() {
 
     // Worktree pointer move: unstaged SubmoduleChanged.
     sup.git(&["-C", &sub_path, "commit", "--allow-empty", "-m", "bump"]).await;
-    let status = sup.backend.status().await.unwrap();
+    let status = sup.backend.status_with_counts().await.unwrap();
     let entry = status
         .iter()
         .find(|s| s.path == PathBuf::from("lib"))
@@ -2921,7 +2921,7 @@ async fn status_classifies_submodule_pointer_moves_and_dirt() {
 
     // Staged pointer move: staged SubmoduleChanged.
     sup.git(&["add", "lib"]).await;
-    let status = sup.backend.status().await.unwrap();
+    let status = sup.backend.status_with_counts().await.unwrap();
     let entry = status
         .iter()
         .find(|s| s.path == PathBuf::from("lib"))

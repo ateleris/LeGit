@@ -11,6 +11,16 @@ import { api } from "../../lib/commands";
 import type { LineEndingKind, LineEndingStatusEntry } from "../../lib/types";
 import { STALE } from "../../lib/queryTiming";
 
+/** Mirrors the backend's `MAX_LINE_ENDING_FILES`: above it the batch scan is
+ * skipped and the summary comes back empty. */
+export const LINE_ENDING_SCAN_MAX_FILES = 1000;
+
+/** Whether the line-ending scan is skipped for this many changed files, so
+ * the panel can say so instead of silently showing no chips. */
+export function lineEndingScanSkipped(changedFiles: number): boolean {
+  return changedFiles > LINE_ENDING_SCAN_MAX_FILES;
+}
+
 export function useLineEndingStatusMap(
   repoId: string | undefined,
   enabled: boolean,

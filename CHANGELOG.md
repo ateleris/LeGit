@@ -14,6 +14,8 @@ lives in the git log and the GitHub release notes.
 
 ### Fixed
 
+- Opening a file with a very large conflict block no longer freezes the
+  app for seconds
 - Large merges, pulls and checkouts no longer exhaust memory: the
   line-ending check reads only small files instead of every changed file,
   and refreshes no longer pile up while the working tree is being rewritten
@@ -24,10 +26,28 @@ lives in the git log and the GitHub release notes.
 
 ### Changed
 
+- Every git command runs faster on Windows (about 20 to 40 ms less per
+  command): LeGit no longer starts a hidden console for each one
 - File View draws SVG files as images, like the Diff panel, and falls back
   to the source when a file does not preview as an image
 - Line-ending chips and the line-ending commit warning are skipped when
-  more than 1000 files are changed
+  more than 1000 files are changed, and Working Changes now says so
+- The uncommitted-changes row, the merge banner and the Working Changes
+  list appear as soon as git reports what changed; per-file line counts
+  load afterwards, and above 200 changed files only on request ("Count
+  lines")
+- Operations that change the repository (merge, rebase, cherry-pick,
+  revert, reset, checkout, stash, discard, commit, including continue, skip
+  and abort) show an activity bar below the repo tabs while they run, in
+  the place of the merge/rebase banner
+- While such an operation runs, other changes to the same repository are
+  held back: staging, committing, pulling and the context-menu entries that
+  would change the repository are disabled, naming the running operation.
+  Reading history and diffs, and other repositories, stay fully usable
+- A running merge, rebase, cherry-pick or revert can be stopped from the
+  activity bar; a warning then says what state the repository is in (still
+  in progress and abortable, or stopped early with files possibly left in
+  Working Changes)
 - Working Changes refreshes once when a merge, pull, checkout, rebase, reset
   or stash operation started in LeGit finishes, instead of continuously
   while it runs

@@ -425,6 +425,23 @@ async fn discard_unstages_and_removes_staged_new_files() {
 // status - numstat count enrichment
 // ---------------------------------------------------------------------------
 
+/// The fast path every "what changed" consumer reads: one `git status`, no
+/// content-reading diff, however many files changed.
+#[tokio::test]
+async fn status_runs_git_status_only() {
+    let fake = FakeExecutor::default();
+    fake.expect(
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        ok("1 MM N... 100644 100644 100644 aaaaaaa bbbbbbb file.rs\0? new.txt\0"),
+    );
+    let (b, exec) = backend(fake);
+
+    let statuses = b.status().await.unwrap();
+    assert_eq!(statuses.len(), 3);
+    assert!(statuses.iter().all(|s| s.additions.is_none() && s.deletions.is_none() && !s.binary));
+    exec.assert_done();
+}
+
 #[tokio::test]
 async fn status_enriches_entries_with_numstat_counts() {
     let fake = FakeExecutor::default();
@@ -437,7 +454,7 @@ async fn status_enriches_entries_with_numstat_counts() {
     fake.expect(&["diff", "--numstat", "-M", "-z"], ok("2\t0\tfile.rs\0"));
     let (b, exec) = backend(fake);
 
-    let statuses = b.status().await.unwrap();
+    let statuses = b.status_with_counts().await.unwrap();
     assert_eq!(statuses.len(), 3);
     assert!(statuses[0].staged);
     assert_eq!((statuses[0].additions, statuses[0].deletions), (Some(3), Some(1)));
@@ -458,7 +475,7 @@ async fn status_skips_numstat_for_an_all_untracked_tree() {
     );
     let (b, exec) = backend(fake);
 
-    let statuses = b.status().await.unwrap();
+    let statuses = b.status_with_counts().await.unwrap();
     assert_eq!(statuses.len(), 2);
     exec.assert_done();
 }
@@ -479,7 +496,7 @@ async fn status_survives_a_failing_numstat() {
     );
     let (b, exec) = backend(fake);
 
-    let statuses = b.status().await.unwrap();
+    let statuses = b.status_with_counts().await.unwrap();
     assert_eq!(statuses.len(), 1);
     assert_eq!(statuses[0].additions, None);
     assert_eq!(statuses[0].deletions, None);

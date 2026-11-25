@@ -1,3 +1,5 @@
+import { useRepoWriteBusy } from "../../lib/repoWrites";
+import { useDelayedFlag } from "../shared/useDelayedFlag";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ToolbarButton } from "../shared/ToolbarButton";
@@ -204,12 +206,14 @@ export function RemoteSyncToolbar({
   };
 
   const busy = busyOp !== null;
+  // Pull rewrites the working tree: inert while another operation holds it.
+  const heldByOperation = useDelayedFlag(useRepoWriteBusy(repoId) != null) && !busy;
   const pushLabel = hasUpstream ? "Push" : "Publish";
 
   // Keyboard commands delegate to the same handlers as the buttons; inert
   // while an op runs or (push) nothing is publishable.
   useCommandAction("repo.fetch", busy ? null : doFetch);
-  useCommandAction("repo.pull", busy ? null : doPull);
+  useCommandAction("repo.pull", busy || heldByOperation ? null : doPull);
   useCommandAction(
     "repo.push",
     busy || !currentBranch || !remoteName ? null : () => void doPush(false),
@@ -253,7 +257,7 @@ export function RemoteSyncToolbar({
                   )
                 : "No upstream for the current branch"
           }
-          disabled={busyOp === "pull" ? false : busy || !hasUpstream}
+          disabled={busyOp === "pull" ? false : busy || heldByOperation || !hasUpstream}
           loading={busyOp === "pull"}
           icon={<PullIcon />}
           label={busyOp === "pull" ? "Cancel" : "Pull"}

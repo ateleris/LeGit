@@ -104,23 +104,76 @@ impl Drop for QuietGuard {
     }
 }
 
+/// The worktree-rewriting invocations currently running for one repo, by
+/// operation id: what "Stop" on the activity bar cancels. Commands do not
+/// carry these ids themselves, so the session's executor wrapper mints and
+/// records them.
+#[derive(Default)]
+pub struct InFlightRewrites {
+    ids: Mutex<Vec<OperationId>>,
+}
+
+impl InFlightRewrites {
+    fn enter(self: &Arc<Self>, id: OperationId) -> RewriteGuard {
+        self.lock().push(id.clone());
+        RewriteGuard { set: self.clone(), id }
+    }
+
+    pub fn snapshot(&self) -> Vec<OperationId> {
+        self.lock().clone()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.lock().is_empty()
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<OperationId>> {
+        self.ids.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+struct RewriteGuard {
+    set: Arc<InFlightRewrites>,
+    id: OperationId,
+}
+
+impl Drop for RewriteGuard {
+    fn drop(&mut self) {
+        let mut ids = self.set.lock();
+        if let Some(pos) = ids.iter().position(|i| *i == self.id) {
+            ids.remove(pos);
+        }
+    }
+}
+
 /// Wraps a session's executor so every worktree-rewriting invocation, from
-/// any command or the console, quiets the repo's watcher for its duration.
+/// any command or the console, quiets the repo's watcher for its duration
+/// and is cancellable through the session's `InFlightRewrites`.
 pub struct QuietingExecutor {
     inner: Arc<dyn GitExecutor>,
     quiet: Arc<WatchQuiet>,
+    rewrites: Arc<InFlightRewrites>,
 }
 
 impl QuietingExecutor {
-    pub fn wrap(inner: Arc<dyn GitExecutor>, quiet: Arc<WatchQuiet>) -> Arc<dyn GitExecutor> {
-        Arc::new(Self { inner, quiet })
+    pub fn wrap(
+        inner: Arc<dyn GitExecutor>,
+        quiet: Arc<WatchQuiet>,
+        rewrites: Arc<InFlightRewrites>,
+    ) -> Arc<dyn GitExecutor> {
+        Arc::new(Self { inner, quiet, rewrites })
     }
 }
 
 #[async_trait]
 impl GitExecutor for QuietingExecutor {
-    async fn execute(&self, req: GitRequest<'_>) -> Result<RunOutputBytes, RunnerError> {
-        let _quiet = rewrites_worktree(req.args).then(|| self.quiet.begin());
+    async fn execute(&self, mut req: GitRequest<'_>) -> Result<RunOutputBytes, RunnerError> {
+        if !rewrites_worktree(req.args) {
+            return self.inner.execute(req).await;
+        }
+        let _quiet = self.quiet.begin();
+        let id = req.op_id.get_or_insert_with(OperationId::new).clone();
+        let _running = self.rewrites.enter(id);
         self.inner.execute(req).await
     }
 
@@ -190,17 +243,23 @@ mod tests {
         assert_eq!(seen.lock().unwrap().len(), 1);
     }
 
-    /// Records how many rewrites the gate counts while each invocation runs.
+    /// Records, while each invocation runs, how many rewrites the gate
+    /// counts and whether the invocation is registered as stoppable under
+    /// the op id it was handed.
     struct Probe {
         inner: FakeExecutor,
         gate: Arc<WatchQuiet>,
+        rewrites: Arc<InFlightRewrites>,
         active_during: Mutex<Vec<u32>>,
+        registered_during: Mutex<Vec<bool>>,
     }
 
     #[async_trait]
     impl GitExecutor for Probe {
         async fn execute(&self, req: GitRequest<'_>) -> Result<RunOutputBytes, RunnerError> {
             self.active_during.lock().unwrap().push(self.gate.lock().active);
+            let registered = req.op_id.as_ref().is_some_and(|id| self.rewrites.snapshot().contains(id));
+            self.registered_during.lock().unwrap().push(registered);
             self.inner.execute(req).await
         }
     }
@@ -211,14 +270,25 @@ mod tests {
         let inner = FakeExecutor::default();
         inner.expect(&["status"], ok(""));
         inner.expect(&["merge", "main"], ok(""));
-        let probe = Arc::new(Probe { inner, gate: gate.clone(), active_during: Mutex::default() });
-        let exec = QuietingExecutor::wrap(probe.clone(), gate.clone());
+        let rewrites = Arc::new(InFlightRewrites::default());
+        let probe = Arc::new(Probe {
+            inner,
+            gate: gate.clone(),
+            rewrites: rewrites.clone(),
+            active_during: Mutex::default(),
+            registered_during: Mutex::default(),
+        });
+        let exec = QuietingExecutor::wrap(probe.clone(), gate.clone(), rewrites.clone());
 
         exec.run(&["status"]).await.unwrap();
         exec.run(&["merge", "main"]).await.unwrap();
 
         assert_eq!(*probe.active_during.lock().unwrap(), vec![0, 1]);
         assert_eq!(gate.lock().active, 0, "released when the invocation ends");
+        // Only the rewrite is stoppable, under the id the runner was given,
+        // and nothing stays registered once it has ended.
+        assert_eq!(*probe.registered_during.lock().unwrap(), vec![false, true]);
+        assert!(rewrites.is_empty());
         probe.inner.assert_done();
     }
 }

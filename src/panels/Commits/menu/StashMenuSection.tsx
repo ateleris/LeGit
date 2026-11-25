@@ -38,12 +38,12 @@ export function StashMenuSection({
     <>
       <SectionLabel>{selector}</SectionLabel>
       <MenuItem onClick={onViewDiff}>View stash diff</MenuItem>
-      <MenuItem onClick={onApply}>Apply stash</MenuItem>
-      <MenuItem onClick={onPop}>Pop stash</MenuItem>
-      <MenuItem onClick={onBranch}>Branch from stash…</MenuItem>
-      <MenuItem onClick={onRename}>Rename stash…</MenuItem>
+      <MenuItem writes onClick={onApply}>Apply stash</MenuItem>
+      <MenuItem writes onClick={onPop}>Pop stash</MenuItem>
+      <MenuItem writes onClick={onBranch}>Branch from stash…</MenuItem>
+      <MenuItem writes onClick={onRename}>Rename stash…</MenuItem>
       <Separator />
-      <MenuItem onClick={requestDrop}>
+      <MenuItem writes onClick={requestDrop}>
         {confirmDestructive ? "Drop stash…" : "Drop stash"}
       </MenuItem>
     </>

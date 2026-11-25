@@ -22,7 +22,35 @@ design/2026-11-19-large-staged-file-warning.md)
 
 ## Known bugs
 
-(none currently)
+- **Settings sync: opting in to profile sync can wipe the profiles on every
+  machine.** Found 2026-11-25. The "sync git profiles" checkbox is a plain
+  settings patch, so the machine exports its own profile list ~30s later
+  without importing first, and the import replaces the list wholesale: a
+  machine with no profiles pushes an empty list, and every other opted-in
+  machine adopts it at its next startup sync (which also rewrites
+  `git-profiles.json` empty). The lost profiles survive only in the sync
+  repo's history (`git log -p -- legit-sync.json`). Repro is pinned by the
+  ignored test `opting_in_on_a_second_machine_keeps_the_first_machines_profiles`
+  (`src-tauri/src/sync/engine.rs`); un-ignore it with the fix. Approach: make
+  `sync_git_profiles` command-owned, and on opt-in pull first and union the
+  repo's profiles with the local ones by id before the first export;
+  afterwards last-writer-wins stays, so edits and deletions still propagate.
+  Rejected alternative: merge by id on every import (deleted profiles would
+  resurrect without tombstones). Also worth doing with it: a restore path
+  for a list that was already wiped.
+
+- **Copying a key into a WSL distro can overwrite without the confirmed
+  "Replace key".** Found 2026-11-25 in `wsl_install_ssh_key`
+  (`src-tauri/src/commands/ssh_keys.rs`); limited to the distro's `~/.ssh`.
+  Two gaps in the existence check before the write: only the private key
+  is checked, so a `.pub` without its private key is replaced silently;
+  and a `stat` that errors counts as "does not exist", so the copy goes
+  ahead. Fix: without `overwrite`, refuse when either file exists and when
+  either check fails. Extract the decision into a pure function and
+  unit-test it (both files, both error cases). The two key-generation
+  commands treat a failed check the same way and rely on `ssh-keygen`
+  getting no answer to its overwrite prompt; make them refuse too, and
+  pin that `ssh-keygen` assumption against the real binary.
 
 ## Git features (missing vs a normal client)
 
@@ -88,31 +116,13 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
 
 ## Smaller follow-ups
 
-- **Memory guardrails: LeGit must stop itself before it can exhaust the
-  host.** A large merge made the line-ending scan buffer every changed blob
-  and took a Windows machine down (fixed: size-first reads, one scan in
-  flight, watcher held during own worktree rewrites). The remaining
-  unbounded paths and the missing safety net:
-  - *Runner output cap*: `GitRunner` buffers stdout without limit
-    (`read_to_bytes`). Add a per-request byte limit on `GitRequest` with a
-    conservative default; on overflow kill the process tree and return a
-    dedicated `GitError` variant the panels can show as "too large".
-  - *Size before content everywhere*: `blob_bytes` (preview, single-file
-    line-ending badge) and `file_at_revision` read the whole blob and
-    `file_diff` the whole diff before applying their caps. Size with
-    `cat-file --batch-check` (or the new runner cap) first.
-  - *Change-set-proportional scans*: status runs two `diff --numstat -M`
-    over the full change set, the marker checks run `diff --check`; skip or
-    degrade them above a file-count threshold like the line-ending scan.
-  - *Global git concurrency limit*: a semaphore in the runner so no trigger
-    storm can spawn more than N git processes per repo.
-  - *Watchdog*: monitor the app's own RSS plus its git children; above a
-    budget cancel background scans, pause watcher refreshes and tell the
-    user. On Windows put spawned git processes in a Job Object with a
-    memory limit so a runaway child is killed by the OS, not the machine.
-  - *Regression gate*: a large-change-set fixture (thousands of files,
-    multi-MB blobs, conflicted merge) run through the real-git suite with a
-    peak-memory assertion, so a new unbounded read fails CI.
+- **Performance and memory guardrails.** Make git calls through LeGit cost
+  about what they cost in a console, and keep everything LeGit does on its
+  own bounded and responsive, so an incident like the 2026-11-24 large-merge
+  memory exhaustion cannot recur. Plan with budgets, audit scope, structural
+  guardrails (runner output cap, scheduler, end-to-end cancellation,
+  watchdog) and CI gates: `design/2026-11-24-performance-memory-guardrails.md`.
+  Not started; next step is Phase 0 (fixtures and baseline measurements).
 
 - **Large-file-warning polish** (from the 2026-11-19 feature review; all
   minor): clearing the global threshold field commits 0 and silently
@@ -231,6 +241,24 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
     secret-adjacent; then propose a file layout with a migration
     (`Option<T>` + `#[serde(default)]` keeps old files parsing) and
     check it against both sync paths before moving anything.
+  - **Version-aware sync between different LeGit versions.** Seen in
+    practice: a newer instance adds a setting to `legit-sync.json`, an
+    older instance exports next and removes it again (the export
+    serializes that version's own settings struct, so keys it does not
+    know are dropped), and the two keep reverting each other. Write the
+    LeGit version that produced the doc into `legit-sync.json` so
+    instances can tell who is newer. Rough approach: an older instance
+    carries keys it does not know through from the repo doc unchanged
+    on export instead of dropping them (the version says when that
+    applies, and lets the UI report "another machine runs a newer
+    LeGit"); the newer instance keeps importing as today. When a sync
+    reads a doc written by a newer LeGit than the running one, show a
+    hint toast telling the user to update this machine to the same
+    version (info, not an error; once per session, not on every sync
+    cycle). Check
+    `formatVersion` on import in the same slice (not checked today),
+    and pin the mixed-version round trip with a test in
+    `sync/engine.rs`.
   - **Phase 2 candidates**: named layouts (files under
     `<app-data>/layouts/`, so syncing mirrors the themes approach; LIVE
     dock state stays localStorage), an export/import bundle file.

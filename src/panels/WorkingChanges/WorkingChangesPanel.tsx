@@ -23,6 +23,8 @@ import { StageIcon, UnstageIcon, WarningIcon } from "../../icons";
 import { PanelContextMenuProvider, type BaselineEntry } from "../shared/menu/PanelContextMenu";
 import { MenuItem } from "../shared/menu/primitives";
 import { PanelLoadingBar } from "../shared/PanelLoadingBar";
+import { LINE_ENDING_SCAN_MAX_FILES, lineEndingScanSkipped } from "../shared/lineEndingStatus";
+import { STATUS_COUNTS_AUTO_MAX } from "../../lib/statusCounts";
 import { usePanelRunner } from "../shared/usePanelRunner";
 import { invalidateRepoDomains } from "../../lib/repoInvalidation";
 import { notifyResolutionInvisible } from "../../lib/mergeFeedback";
@@ -62,6 +64,7 @@ import { expandUnstagePaths } from "./unstagePaths";
 import { useWorkingChangesData } from "./useWorkingChangesData";
 import { useDiffSync } from "./useDiffSync";
 import { useDelayedFlag } from "../shared/useDelayedFlag";
+import { useRepoWriteBusy } from "../../lib/repoWrites";
 
 /** Persisted unstaged/staged height split (fraction of the first file
  *  section in render order) + its clamp, so neither list can be squeezed
@@ -206,6 +209,7 @@ export function WorkingChangesPanel() {
     reopenable,
     conflictKinds,
     entryFor,
+    lineCounts,
   } = useWorkingChangesData({
     repoId: repo?.id,
     eolEnabled: chipsEnabled || warnEolCommit,
@@ -321,11 +325,15 @@ export function WorkingChangesPanel() {
     invalidateRepoDomains(queryClient, repo.id, ["status", "log", "branches", "diff", "op_state"]);
   }, [repo, queryClient]);
 
-  const { busy, run } = usePanelRunner({
+  const { busy: actionBusy, run } = usePanelRunner({
     enabled: !!repo,
     onSuccess: refresh,
     onError: (e) => notify.error(formatAppError(e)),
   });
+  // Write controls also go inert while a long-running operation started
+  // elsewhere (a merge from the graph menu) holds the repository.
+  const heldByOperation = useDelayedFlag(useRepoWriteBusy(repo?.id) != null);
+  const busy = actionBusy || heldByOperation;
 
   // In-flight stage/unstage/discard targets render dimmed IN PLACE, so the
   // gap between the instant selection advance and the row actually moving
@@ -583,7 +591,7 @@ export function WorkingChangesPanel() {
           style={{ display: "flex", flexDirection: "column" }}
           onContextMenu={(e) => openMenu(e)}
         >
-      <PanelLoadingBar active={isFetching} />
+      <PanelLoadingBar active={isFetching || lineCounts.loading} />
       <div className="legit-panel__toolbar" style={{ display: "flex", alignItems: "center", gap: "0.667em" }}>
         <div style={{ display: "flex" }}>
           <button onClick={() => setViewMode("tree")} aria-pressed={viewMode === "tree"} style={segStyle(viewMode === "tree", "left")}>
@@ -606,6 +614,24 @@ export function WorkingChangesPanel() {
           )}
           {" · Working changes"}
         </span>
+        {lineCounts.skipped && (
+          <button
+            onClick={lineCounts.request}
+            title={`Line counts are not computed automatically for more than ${STATUS_COUNTS_AUTO_MAX} changed files (${lineCounts.countable} here): counting reads every file. Click to count now.`}
+            style={{ flexShrink: 0 }}
+          >
+            Count lines
+          </button>
+        )}
+        {(chipsEnabled || warnEolCommit) && lineEndingScanSkipped(totals.files) && (
+          <span
+            className="legit-subtle"
+            title={`Line endings are not checked for more than ${LINE_ENDING_SCAN_MAX_FILES} changed files (${totals.files} here), so no line-ending chips or commit warning are shown.`}
+            style={{ fontSize: "var(--fz-sm)", flexShrink: 0, whiteSpace: "nowrap" }}
+          >
+            Line endings not checked
+          </span>
+        )}
       </div>
 
       {isError && (
@@ -698,10 +724,10 @@ export function WorkingChangesPanel() {
                   openMenu(
                     e,
                     <>
-                      <MenuItem onClick={() => { void stage([d.disk_path]); closeMenu(); }}>
+                      <MenuItem writes onClick={() => { void stage([d.disk_path]); closeMenu(); }}>
                         Stage rename
                       </MenuItem>
-                      <MenuItem onClick={() => { void requestDiscardCaseRename(d); closeMenu(); }}>
+                      <MenuItem writes onClick={() => { void requestDiscardCaseRename(d); closeMenu(); }}>
                         Discard rename
                       </MenuItem>
                       <FileRowMenuSection
@@ -817,10 +843,10 @@ export function WorkingChangesPanel() {
                         closeMenu={closeMenu}
                       />
                     )}
-                    <MenuItem onClick={() => { stage(paths); closeMenu(); }}>
+                    <MenuItem writes onClick={() => { stage(paths); closeMenu(); }}>
                       Stage folder ({fileCountLabel(paths.length)})
                     </MenuItem>
-                    <MenuItem onClick={() => { void requestDiscard(paths, dir); closeMenu(); }}>
+                    <MenuItem writes onClick={() => { void requestDiscard(paths, dir); closeMenu(); }}>
                       Discard folder ({fileCountLabel(paths.length)})
                     </MenuItem>
                     {allUntracked(paths, unstagedWithDrift) && (
@@ -930,7 +956,7 @@ export function WorkingChangesPanel() {
               onDirContextMenu={(paths, _dir, e) =>
                 openMenu(
                   e,
-                  <MenuItem onClick={() => { unstage(paths); closeMenu(); }}>
+                  <MenuItem writes onClick={() => { unstage(paths); closeMenu(); }}>
                     Unstage folder ({fileCountLabel(paths.length)})
                   </MenuItem>,
                 )
