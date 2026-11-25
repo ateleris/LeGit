@@ -328,6 +328,41 @@ pub async fn register_allowed_signer(
     Ok(path.display().to_string())
 }
 
+/// What a check found at a path a key file is about to be written to.
+#[derive(Debug, Clone, PartialEq)]
+enum Presence {
+    Absent,
+    Present,
+    /// The check itself failed; the file may or may not be there.
+    Unknown(String),
+}
+
+impl Presence {
+    fn of<T, E: std::fmt::Display>(checked: Result<Option<T>, E>) -> Self {
+        match checked {
+            Ok(None) => Presence::Absent,
+            Ok(Some(_)) => Presence::Present,
+            Err(e) => Presence::Unknown(e.to_string()),
+        }
+    }
+}
+
+/// Why a key pair must not be written to these two paths, if it must not.
+/// Without `overwrite`, either file being there refuses, and so does a
+/// check that failed: "could not look" is never "not there".
+fn key_write_refusal(targets: &[(&str, Presence)], overwrite: bool) -> Option<String> {
+    if overwrite {
+        return None;
+    }
+    targets.iter().find_map(|(path, presence)| match presence {
+        Presence::Absent => None,
+        Presence::Present => Some(format!("{path} already exists")),
+        Presence::Unknown(why) => Some(format!(
+            "cannot tell whether {path} already exists ({why}), so nothing was written"
+        )),
+    })
+}
+
 /// Generate a key pair in `~/.ssh` via `ssh-keygen`, without a passphrase
 /// (see module doc). Refuses to overwrite an existing key.
 #[tauri::command]
@@ -359,13 +394,14 @@ pub async fn generate_ssh_key(
 
     let key_path = dir.join(&file_name);
     let pub_path = dir.join(format!("{file_name}.pub"));
-    if tokio::fs::try_exists(&key_path).await.unwrap_or(false)
-        || tokio::fs::try_exists(&pub_path).await.unwrap_or(false)
-    {
-        return Err(AppError::Io(format!(
-            "{} already exists: choose another file name",
-            key_path.display()
-        )));
+    let local = |found: std::io::Result<bool>| Presence::of(found.map(|there| there.then_some(())));
+    let (key_shown, pub_shown) = (key_path.display().to_string(), pub_path.display().to_string());
+    let targets = [
+        (key_shown.as_str(), local(tokio::fs::try_exists(&key_path).await)),
+        (pub_shown.as_str(), local(tokio::fs::try_exists(&pub_path).await)),
+    ];
+    if let Some(reason) = key_write_refusal(&targets, false) {
+        return Err(AppError::Io(format!("{reason}: choose another file name")));
     }
 
     let mut cmd = quiet_command("ssh-keygen");
@@ -546,10 +582,12 @@ pub async fn wsl_generate_ssh_key(
 
     let key_path = HostPath(format!("{}/{file_name}", dir.0));
     let pub_path = HostPath(format!("{}.pub", key_path.0));
-    if matches!(fs.stat(&key_path).await, Ok(Some(_)))
-        || matches!(fs.stat(&pub_path).await, Ok(Some(_)))
-    {
-        return Err(AppError::Io(format!("{} already exists: choose another file name", key_path.0)));
+    let targets = [
+        (key_path.0.as_str(), Presence::of(fs.stat(&key_path).await)),
+        (pub_path.0.as_str(), Presence::of(fs.stat(&pub_path).await)),
+    ];
+    if let Some(reason) = key_write_refusal(&targets, false) {
+        return Err(AppError::Io(format!("{reason}: choose another file name")));
     }
 
     let mut args: Vec<String> = vec!["-q".into(), "-t".into(), key_type.clone()];
@@ -681,8 +719,12 @@ pub async fn wsl_install_ssh_key(
 
     let target = HostPath(format!("{}/{name}", dir.0));
     let target_pub = HostPath(format!("{}.pub", target.0));
-    if !overwrite && matches!(fs.stat(&target).await, Ok(Some(_))) {
-        return Err(AppError::Io(format!("{} already exists in {distro}", target.0)));
+    let targets = [
+        (target.0.as_str(), Presence::of(fs.stat(&target).await)),
+        (target_pub.0.as_str(), Presence::of(fs.stat(&target_pub).await)),
+    ];
+    if let Some(reason) = key_write_refusal(&targets, overwrite) {
+        return Err(AppError::Io(format!("{reason} (in {distro})")));
     }
     fs.write(&target, &private)
         .await
@@ -743,6 +785,62 @@ pub async fn open_platform_key_settings(platform: String) -> Result<(), AppError
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_key_is_written_only_over_nothing_unless_replacing() {
+        let pair = |private: Presence, public: Presence| {
+            [("id_x", private), ("id_x.pub", public)]
+        };
+        let unknown = || Presence::Unknown("permission denied".into());
+        assert_eq!(key_write_refusal(&pair(Presence::Absent, Presence::Absent), false), None);
+        assert_eq!(
+            key_write_refusal(&pair(Presence::Present, Presence::Absent), false).as_deref(),
+            Some("id_x already exists")
+        );
+        // A public key without its private key is still someone's file.
+        assert_eq!(
+            key_write_refusal(&pair(Presence::Absent, Presence::Present), false).as_deref(),
+            Some("id_x.pub already exists")
+        );
+        // A check that failed is not "not there".
+        let refusal = key_write_refusal(&pair(unknown(), Presence::Absent), false).unwrap();
+        assert!(refusal.contains("cannot tell whether id_x already exists"), "{refusal}");
+        assert!(refusal.contains("permission denied"), "{refusal}");
+        let refusal = key_write_refusal(&pair(Presence::Absent, unknown()), false).unwrap();
+        assert!(refusal.contains("id_x.pub"), "{refusal}");
+        // The confirmed replace goes ahead whatever is there.
+        assert_eq!(key_write_refusal(&pair(Presence::Present, Presence::Present), true), None);
+        assert_eq!(key_write_refusal(&pair(unknown(), unknown()), true), None);
+    }
+
+    #[test]
+    fn presence_reads_a_failed_check_as_unknown() {
+        assert_eq!(Presence::of(Ok::<_, String>(None::<()>)), Presence::Absent);
+        assert_eq!(Presence::of(Ok::<_, String>(Some(()))), Presence::Present);
+        assert_eq!(Presence::of(Err::<Option<()>, _>("boom")), Presence::Unknown("boom".into()));
+    }
+
+    /// The generate commands never pass an overwrite answer: with stdin
+    /// closed, `ssh-keygen` must leave an existing key alone and fail.
+    #[tokio::test]
+    async fn ssh_keygen_does_not_replace_an_existing_key_without_an_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("id_probe");
+        let generate = || async {
+            let mut cmd = quiet_command("ssh-keygen");
+            cmd.args(["-q", "-t", "ed25519", "-N", "", "-f"]).arg(&key);
+            cmd.output().await
+        };
+        let Ok(first) = generate().await else {
+            eprintln!("ssh-keygen not available, skipping");
+            return;
+        };
+        assert!(first.status.success(), "{}", String::from_utf8_lossy(&first.stderr));
+        let before = std::fs::read(&key).unwrap();
+        let second = generate().await.unwrap();
+        assert!(!second.status.success(), "ssh-keygen replaced an existing key unasked");
+        assert_eq!(std::fs::read(&key).unwrap(), before);
+    }
 
     #[test]
     fn allowed_signer_line_builds_safe_entries_only() {

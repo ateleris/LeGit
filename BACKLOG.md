@@ -22,18 +22,7 @@ design/2026-11-19-large-staged-file-warning.md)
 
 ## Known bugs
 
-- **Copying a key into a WSL distro can overwrite without the confirmed
-  "Replace key".** Found 2026-11-25 in `wsl_install_ssh_key`
-  (`src-tauri/src/commands/ssh_keys.rs`); limited to the distro's `~/.ssh`.
-  Two gaps in the existence check before the write: only the private key
-  is checked, so a `.pub` without its private key is replaced silently;
-  and a `stat` that errors counts as "does not exist", so the copy goes
-  ahead. Fix: without `overwrite`, refuse when either file exists and when
-  either check fails. Extract the decision into a pure function and
-  unit-test it (both files, both error cases). The two key-generation
-  commands treat a failed check the same way and rely on `ssh-keygen`
-  getting no answer to its overwrite prompt; make them refuse too, and
-  pin that `ssh-keygen` assumption against the real binary.
+(none currently)
 
 ## Git features (missing vs a normal client)
 

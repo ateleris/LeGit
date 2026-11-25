@@ -6,11 +6,14 @@
 //! it instead. Git never talks to it: stdin, stdout and stderr are always
 //! pipes or closed.
 
+#[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(windows)]
 static SHARED: AtomicBool = AtomicBool::new(false);
 
 /// Whether spawned gits can inherit this process's console.
+#[cfg(windows)]
 pub(super) fn active() -> bool {
     SHARED.load(Ordering::Relaxed)
 }

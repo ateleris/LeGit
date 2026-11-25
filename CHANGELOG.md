@@ -14,6 +14,9 @@ lives in the git log and the GitHub release notes.
 
 ### Fixed
 
+- Copying or generating an SSH key never writes over an existing key file
+  unasked: a public key without its private key now counts as existing, and
+  a failed existence check stops the write instead of letting it through
 - Settings sync: turning on "Sync git profiles" on another computer no
   longer replaces the profiles on every synced machine with that computer's
   list; its profiles are added to the shared ones instead
