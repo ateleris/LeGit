@@ -14,6 +14,11 @@ lives in the git log and the GitHub release notes.
 
 ### Fixed
 
+- Settings sync: turning on "Sync git profiles" on another computer no
+  longer replaces the profiles on every synced machine with that computer's
+  list; its profiles are added to the shared ones instead
+- Settings sync: a computer that does not sync git profiles no longer
+  removes the shared profiles from the sync repository when it syncs
 - Opening a file with a very large conflict block no longer freezes the
   app for seconds
 - Large merges, pulls and checkouts no longer exhaust memory: the

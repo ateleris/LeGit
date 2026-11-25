@@ -436,6 +436,19 @@ async settingsSyncNow() : Promise<Result<SyncStatusPayload, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Turn profile sync on or off for this machine. Turning it on joins the
+ * repository's profiles first and fails, leaving it off, when they cannot
+ * be fetched.
+ */
+async setSyncGitProfiles(enabled: boolean) : Promise<Result<SyncStatusPayload, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_sync_git_profiles", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async settingsSyncStatus() : Promise<Result<SyncStatusPayload, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("settings_sync_status") };

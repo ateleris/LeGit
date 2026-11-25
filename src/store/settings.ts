@@ -183,6 +183,10 @@ interface SettingsStore {
   /** Designate (adopt/seed) or clear (`null`) the sync repository. */
   setSyncPath: (path: string | null) => Promise<SyncStatusPayload>;
   syncNow: () => Promise<SyncStatusPayload>;
+  /** Turn profile sync on or off. Turning it on first merges the profiles
+   *  already in the sync repository; it rejects, staying off, when they
+   *  cannot be fetched. */
+  setSyncGitProfiles: (enabled: boolean) => Promise<SyncStatusPayload>;
   /** Refetch and re-apply; for secondary windows reacting to the
    *  settings-changed broadcast. */
   reload: () => Promise<void>;
@@ -281,6 +285,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 
     async syncNow() {
       const status = await api.settingsSyncNow();
+      get().applySyncStatus(status);
+      return status;
+    },
+
+    async setSyncGitProfiles(enabled) {
+      const status = await api.setSyncGitProfiles(enabled);
+      await get().reload();
       get().applySyncStatus(status);
       return status;
     },

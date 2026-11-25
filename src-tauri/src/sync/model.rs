@@ -88,6 +88,28 @@ pub fn export_synced_settings(s: &GlobalSettings) -> serde_json::Value {
     serde_json::Value::Object(obj)
 }
 
+/// `export_synced_settings` for a repository that already holds `repo_doc`.
+/// A machine that does not take part in profile sync leaves the profile
+/// keys other machines put there untouched: dropping them would delete the
+/// shared profiles from the repository with every export.
+pub fn export_synced_settings_over(
+    s: &GlobalSettings,
+    repo_doc: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    let mut exported = export_synced_settings(s);
+    if s.sync_git_profiles {
+        return exported;
+    }
+    if let (Some(obj), Some(repo)) = (exported.as_object_mut(), repo_doc.and_then(|d| d.as_object())) {
+        for key in PROFILE_SYNC_KEYS {
+            if let Some(value) = repo.get(key) {
+                obj.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+    exported
+}
+
 /// This machine's home directory; an unset home degrades to no path
 /// rewriting (profiles then sync with their literal paths).
 pub(crate) fn local_home() -> String {
@@ -199,9 +221,103 @@ pub fn import_synced_settings(
     Ok(next.normalized())
 }
 
+/// The import for a machine JOINING profile sync (opting in, or adopting a
+/// repository with the opt-in already on). Everything else imports as usual,
+/// but the profile list becomes the union by id of the repository's and this
+/// machine's, so a machine with fewer profiles cannot wipe the others' with
+/// its first export. The repository's version wins an id collision; the same
+/// holds for the assignment map.
+pub fn import_joining_profile_sync(
+    local: &GlobalSettings,
+    synced: &serde_json::Value,
+) -> Result<GlobalSettings, AppError> {
+    let mut joining = local.clone();
+    joining.sync_git_profiles = true;
+    let mut next = import_synced_settings(&joining, synced)?;
+    for profile in &local.git_profiles_doc.profiles {
+        if !next.git_profiles_doc.profiles.iter().any(|p| p.id == profile.id) {
+            next.git_profiles_doc.profiles.push(profile.clone());
+        }
+    }
+    for (remote, profile_id) in &local.profile_assignments {
+        next.profile_assignments
+            .entry(remote.clone())
+            .or_insert_with(|| profile_id.clone());
+    }
+    Ok(next)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn named_profile(id: &str, name: &str) -> GitProfile {
+        GitProfile {
+            id: id.into(),
+            name: name.into(),
+            user_name: None,
+            user_email: None,
+            gpg_format: None,
+            signing_key: None,
+            commit_gpgsign: None,
+            allowed_signers_file: None,
+            auth_ssh_key: None,
+            credential_helper: None,
+        }
+    }
+
+    #[test]
+    fn joining_profile_sync_unions_profiles_and_assignments() {
+        let mut other = GlobalSettings::default();
+        other.sync_git_profiles = true;
+        other.git_profiles_doc.profiles = vec![named_profile("shared", "Repo name"), named_profile("theirs", "Theirs")];
+        other.profile_assignments.insert("host/a".into(), "theirs".into());
+        other.profile_assignments.insert("host/both".into(), "theirs".into());
+        let doc = export_synced_settings(&other);
+
+        let mut local = GlobalSettings::default();
+        local.git_profiles_doc.profiles = vec![named_profile("shared", "Local name"), named_profile("mine", "Mine")];
+        local.profile_assignments.insert("host/b".into(), "mine".into());
+        local.profile_assignments.insert("host/both".into(), "mine".into());
+
+        let joined = import_joining_profile_sync(&local, &doc).unwrap();
+        assert!(joined.sync_git_profiles);
+        let names: Vec<&str> =
+            joined.git_profiles_doc.profiles.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["Repo name", "Theirs", "Mine"]);
+        assert_eq!(joined.profile_assignments["host/a"], "theirs");
+        assert_eq!(joined.profile_assignments["host/b"], "mine");
+        assert_eq!(joined.profile_assignments["host/both"], "theirs");
+    }
+
+    #[test]
+    fn a_machine_outside_profile_sync_exports_the_repos_profiles_unchanged() {
+        let mut other = GlobalSettings::default();
+        other.sync_git_profiles = true;
+        other.git_profiles_doc.profiles = vec![named_profile("theirs", "Theirs")];
+        other.profile_assignments.insert("host/a".into(), "theirs".into());
+        let repo_doc = export_synced_settings(&other);
+
+        let mut local = GlobalSettings::default();
+        local.git_profiles_doc.profiles = vec![named_profile("mine", "Mine")];
+        let exported = export_synced_settings_over(&local, Some(&repo_doc));
+        assert_eq!(exported[GIT_PROFILES_KEY], repo_doc[GIT_PROFILES_KEY]);
+        assert_eq!(exported["profile_assignments"], repo_doc["profile_assignments"]);
+
+        // An opted-in machine exports its own list.
+        local.sync_git_profiles = true;
+        let exported = export_synced_settings_over(&local, Some(&repo_doc));
+        assert_eq!(exported[GIT_PROFILES_KEY]["profiles"][0]["id"], "mine");
+    }
+
+    #[test]
+    fn joining_a_repository_without_profiles_keeps_the_local_ones() {
+        let doc = export_synced_settings(&GlobalSettings::default());
+        let mut local = GlobalSettings::default();
+        local.git_profiles_doc.profiles = vec![named_profile("mine", "Mine")];
+        let joined = import_joining_profile_sync(&local, &doc).unwrap();
+        assert_eq!(joined.git_profiles_doc.profiles, vec![named_profile("mine", "Mine")]);
+    }
 
     #[test]
     fn never_synced_keys_all_exist_on_the_struct() {

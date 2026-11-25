@@ -14,7 +14,7 @@ export function SettingsSyncSection() {
   const syncPath = useSettingsStore((s) => s.settings?.settings_sync_path ?? null);
   const syncStatus = useSettingsStore((s) => s.syncStatus);
   const syncProfiles = useSettingsStore((s) => s.settings?.sync_git_profiles ?? false);
-  const patchSettings = useSettingsStore((s) => s.patchSettings);
+  const setSyncGitProfiles = useSettingsStore((s) => s.setSyncGitProfiles);
   const probeSyncPath = useSettingsStore((s) => s.probeSyncPath);
   const setSyncPath = useSettingsStore((s) => s.setSyncPath);
   const syncNow = useSettingsStore((s) => s.syncNow);
@@ -98,9 +98,7 @@ export function SettingsSyncSection() {
             label="Sync git profiles"
             checked={syncProfiles}
             disabled={busy}
-            onChange={() =>
-              act(() => patchSettings({ sync_git_profiles: !syncProfiles }))
-            }
+            onChange={() => act(() => setSyncGitProfiles(!syncProfiles))}
           />
           <FieldNote>
             Profiles sync by key file name; the SSH keys themselves never
@@ -108,7 +106,8 @@ export function SettingsSyncSection() {
             use "Create &amp; upload key" in Connected accounts to give it one
             there. Which repository uses which profile also syncs (by remote
             URL), so other computers suggest the right profile for the same
-            clone. Enable this on every computer that should share profiles.
+            clone. Enable this on every computer that should share profiles;
+            turning it on adds this computer's profiles to the shared ones.
           </FieldNote>
         </>
       ) : (

@@ -707,7 +707,7 @@ impl Default for GlobalSettings {
 /// Global settings owned by dedicated commands or flows (the probed git
 /// binary, theme name sanitizing, watcher start/stop side effects, session
 /// bookkeeping, profiles, accounts); a settings patch must never write them.
-const GLOBAL_SETTINGS_COMMAND_OWNED: [&str; 16] = [
+const GLOBAL_SETTINGS_COMMAND_OWNED: [&str; 17] = [
     "repo_groups",
     "repo_remote_keys",
     "file_history_window_size",
@@ -723,6 +723,7 @@ const GLOBAL_SETTINGS_COMMAND_OWNED: [&str; 16] = [
     "connected_accounts",
     "platform_key_cache",
     "settings_sync_path",
+    "sync_git_profiles",
     "profile_assignments",
 ];
 

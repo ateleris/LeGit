@@ -548,6 +548,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::probe_settings_sync_path,
         commands::set_settings_sync_path,
         commands::settings_sync_now,
+        commands::set_sync_git_profiles,
         commands::settings_sync_status,
         commands::set_git_path,
         commands::set_repo_git_path,

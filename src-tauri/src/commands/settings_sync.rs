@@ -1,6 +1,7 @@
 //! Commands for the settings-sync feature: probe/designate the sync
-//! repository, query status, and sync on demand. `settings_sync_path` is
-//! command-owned because setting it has side effects (adopt or seed).
+//! repository, query status, and sync on demand. `settings_sync_path` and
+//! `sync_git_profiles` are command-owned because setting them has side
+//! effects (adopt or seed; join the repository's profiles).
 
 use std::path::Path;
 
@@ -105,6 +106,29 @@ pub async fn set_settings_sync_path(
     } else {
         engine.0.run_export().await
     };
+    Ok(status)
+}
+
+/// Turn profile sync on or off for this machine. Turning it on joins the
+/// repository's profiles first and fails, leaving it off, when they cannot
+/// be fetched.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_sync_git_profiles(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    engine: tauri::State<'_, SyncHandle>,
+    enabled: bool,
+) -> Result<SyncStatusPayload, AppError> {
+    use tauri::Emitter as _;
+    let status = if enabled {
+        engine.0.enable_profile_sync().await.map_err(AppError::Settings)?
+    } else {
+        state.global_settings.write().await.sync_git_profiles = false;
+        engine.0.status().await
+    };
+    state.persist_global_settings().await?;
+    let _ = app.emit(crate::commands::persistence::GLOBAL_SETTINGS_CHANGED_EVENT, ());
     Ok(status)
 }
 

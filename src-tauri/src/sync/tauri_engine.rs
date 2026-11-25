@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter as _, Manager as _};
 
 use super::engine::{SyncCore, SyncStatusKind, SyncStatusPayload};
-use super::model::import_synced_settings;
+use super::model::{import_joining_profile_sync, import_synced_settings};
 use crate::commands::persistence::GLOBAL_SETTINGS_CHANGED_EVENT;
 use crate::state::AppState;
 
@@ -134,6 +134,10 @@ impl SettingsSyncEngine {
 
     pub async fn run_export(&self) -> SyncStatusPayload {
         let _cycle = self.cycle_lock.lock().await;
+        self.run_export_locked().await
+    }
+
+    async fn run_export_locked(&self) -> SyncStatusPayload {
         let Some(core) = self.core().await else {
             return SyncStatusPayload::of(SyncStatusKind::Disabled);
         };
@@ -145,13 +149,41 @@ impl SettingsSyncEngine {
     }
 
     /// Plain (non-capturing) import: the ADOPT path, where the repo's
-    /// content replacing this machine's is the point.
+    /// content replacing this machine's is the point. Profiles are the
+    /// exception: a machine that takes part in profile sync joins the
+    /// repo's list instead of dropping its own.
     pub async fn run_import(&self) -> SyncStatusPayload {
         let _cycle = self.cycle_lock.lock().await;
-        self.run_import_locked(false).await
+        let joining = self.app.state::<AppState>().global_settings.read().await.sync_git_profiles;
+        self.run_import_locked(false, joining).await
     }
 
-    async fn run_import_locked(&self, capture: bool) -> SyncStatusPayload {
+    /// Opt this machine in to profile sync: pull, join the repo's profile
+    /// list with the local one, then export the union. A plain settings
+    /// write would export the local list first, and every other machine
+    /// would adopt it wholesale. `Err` means the opt-in did NOT happen.
+    pub async fn enable_profile_sync(&self) -> Result<SyncStatusPayload, String> {
+        let _cycle = self.cycle_lock.lock().await;
+        let state = self.app.state::<AppState>();
+        if self.core().await.is_none() {
+            state.global_settings.write().await.sync_git_profiles = true;
+            return Ok(SyncStatusPayload::of(SyncStatusKind::Disabled));
+        }
+        let status = self.run_import_locked(true, true).await;
+        if !state.global_settings.read().await.sync_git_profiles {
+            let why = status.message.unwrap_or_else(|| match status.kind {
+                SyncStatusKind::Offline => "the sync repository's remote cannot be reached".into(),
+                _ => "the sync repository could not be read".into(),
+            });
+            return Err(format!(
+                "profile sync was not turned on, because the profiles already in the sync repository could not be fetched first: {why}"
+            ));
+        }
+        Ok(self.run_export_locked().await)
+    }
+
+    /// `joining`: merge with `import_joining_profile_sync` (see there).
+    async fn run_import_locked(&self, capture: bool, joining: bool) -> SyncStatusPayload {
         let Some(core) = self.core().await else {
             return SyncStatusPayload::of(SyncStatusKind::Disabled);
         };
@@ -169,7 +201,12 @@ impl SettingsSyncEngine {
             let mut profile_edits = Vec::new();
             {
                 let mut settings = state.global_settings.write().await;
-                match import_synced_settings(&settings, &adopted.0) {
+                let imported = if joining {
+                    import_joining_profile_sync(&settings, &adopted.0)
+                } else {
+                    import_synced_settings(&settings, &adopted.0)
+                };
+                match imported {
                     Ok(merged) => {
                         profile_edits = crate::commands::profiles::changed_profiles(
                             &settings.git_profiles_doc.profiles,
@@ -207,7 +244,7 @@ impl SettingsSyncEngine {
     pub async fn sync_now(&self) -> SyncStatusPayload {
         let status = {
             let _cycle = self.cycle_lock.lock().await;
-            self.run_import_locked(true).await
+            self.run_import_locked(true, false).await
         };
         if matches!(
             status.kind,

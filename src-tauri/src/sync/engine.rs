@@ -13,7 +13,7 @@ use legit_core::sync::{
 use legit_core::GitExecutor;
 use serde::{Deserialize, Serialize};
 
-use super::model::{export_synced_settings, import_synced_settings, SyncDoc};
+use super::model::{export_synced_settings_over, import_synced_settings, SyncDoc};
 use super::state_file::{read_state, write_state, SyncStateFile};
 use super::themes::{plan_theme_export, plan_theme_import, safe_theme_name};
 use crate::commands::persistence::THEME_EXT;
@@ -116,7 +116,14 @@ impl SyncCore {
             .into_iter()
             .filter(|n| safe_theme_name(n))
             .collect();
-        let doc = SyncDoc::new(export_synced_settings(settings), local_names.clone());
+        let repo_doc = match tokio::fs::read_to_string(self.repo.join(SYNC_SETTINGS_FILE)).await {
+            Ok(text) => serde_json::from_str::<SyncDoc>(&text).ok().map(|d| d.settings),
+            Err(_) => None,
+        };
+        let doc = SyncDoc::new(
+            export_synced_settings_over(settings, repo_doc.as_ref()),
+            local_names.clone(),
+        );
         let json = match serde_json::to_string_pretty(&doc) {
             Ok(json) => json,
             Err(e) => return Err(SyncStatusPayload::error(e.to_string())),
@@ -359,6 +366,7 @@ impl SyncCore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sync::model::{export_synced_settings, import_joining_profile_sync};
     use legit_core::GitRunner;
     use tempfile::TempDir;
 
@@ -470,26 +478,48 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "known bug, see BACKLOG.md Known bugs"]
     async fn opting_in_on_a_second_machine_keeps_the_first_machines_profiles() {
         let mut a_settings = GlobalSettings::default();
         a_settings.sync_git_profiles = true;
         a_settings.git_profiles_doc.profiles.push(work_profile());
         let f = fixture(&a_settings).await;
-        // b has no profiles and only now opts in: the toggle's settings
-        // nudge runs an export, never an import first.
+        // b has one profile of its own and only now opts in: it pulls and
+        // joins before its first profile export.
         let mut b_settings = GlobalSettings::default();
-        b_settings.sync_git_profiles = true;
-        assert_eq!(f.b.core.export_cycle(&b_settings).await.kind, SyncStatusKind::InSync);
+        let mut home_profile = work_profile();
+        home_profile.id = "p2".into();
+        home_profile.name = "Home".into();
+        b_settings.git_profiles_doc.profiles.push(home_profile.clone());
+        let (adopted, status) = f.b.core.import_cycle_capturing(&b_settings).await;
+        assert_eq!(status.kind, SyncStatusKind::InSync, "{:?}", status.message);
+        let b_joined = import_joining_profile_sync(&b_settings, &adopted.unwrap().0).unwrap();
+        assert_eq!(b_joined.git_profiles_doc.profiles, vec![work_profile(), home_profile.clone()]);
+        assert_eq!(f.b.core.export_cycle(&b_joined).await.kind, SyncStatusKind::InSync);
         // a's next startup sync.
         let (adopted, status) = f.a.core.import_cycle_capturing(&a_settings).await;
         assert_eq!(status.kind, SyncStatusKind::InSync, "{:?}", status.message);
         let merged = import_synced_settings(&a_settings, &adopted.unwrap().0).unwrap();
         assert_eq!(
             merged.git_profiles_doc.profiles,
-            vec![work_profile()],
-            "b's empty list must not wipe a's profiles"
+            vec![work_profile(), home_profile],
+            "b joining must add its profile, never wipe a's"
         );
+    }
+
+    #[tokio::test]
+    async fn a_machine_outside_profile_sync_does_not_remove_the_repos_profiles() {
+        let mut a_settings = GlobalSettings::default();
+        a_settings.sync_git_profiles = true;
+        a_settings.git_profiles_doc.profiles.push(work_profile());
+        let f = fixture(&a_settings).await;
+        let mut b_settings = GlobalSettings::default();
+        b_settings.commits_row_height = 40.0;
+        assert_eq!(f.b.core.export_cycle(&b_settings).await.kind, SyncStatusKind::InSync);
+        let (adopted, status) = f.a.core.import_cycle(&GlobalSettings::default()).await;
+        assert_eq!(status.kind, SyncStatusKind::InSync, "{:?}", status.message);
+        let doc = adopted.unwrap().0;
+        assert_eq!(doc["commits_row_height"], 40.0);
+        assert_eq!(doc["gitProfiles"]["profiles"][0]["id"], "p1");
     }
 
     #[tokio::test]

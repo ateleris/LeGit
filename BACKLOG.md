@@ -22,23 +22,6 @@ design/2026-11-19-large-staged-file-warning.md)
 
 ## Known bugs
 
-- **Settings sync: opting in to profile sync can wipe the profiles on every
-  machine.** Found 2026-11-25. The "sync git profiles" checkbox is a plain
-  settings patch, so the machine exports its own profile list ~30s later
-  without importing first, and the import replaces the list wholesale: a
-  machine with no profiles pushes an empty list, and every other opted-in
-  machine adopts it at its next startup sync (which also rewrites
-  `git-profiles.json` empty). The lost profiles survive only in the sync
-  repo's history (`git log -p -- legit-sync.json`). Repro is pinned by the
-  ignored test `opting_in_on_a_second_machine_keeps_the_first_machines_profiles`
-  (`src-tauri/src/sync/engine.rs`); un-ignore it with the fix. Approach: make
-  `sync_git_profiles` command-owned, and on opt-in pull first and union the
-  repo's profiles with the local ones by id before the first export;
-  afterwards last-writer-wins stays, so edits and deletions still propagate.
-  Rejected alternative: merge by id on every import (deleted profiles would
-  resurrect without tombstones). Also worth doing with it: a restore path
-  for a list that was already wiped.
-
 - **Copying a key into a WSL distro can overwrite without the confirmed
   "Replace key".** Found 2026-11-25 in `wsl_install_ssh_key`
   (`src-tauri/src/commands/ssh_keys.rs`); limited to the distro's `~/.ssh`.
@@ -122,7 +105,8 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
   memory exhaustion cannot recur. Plan with budgets, audit scope, structural
   guardrails (runner output cap, scheduler, end-to-end cancellation,
   watchdog) and CI gates: `design/2026-11-24-performance-memory-guardrails.md`.
-  Not started; next step is Phase 0 (fixtures and baseline measurements).
+  Done so far: wrapper overhead measured and fixed, activity bar, write
+  block, Stop. Next step is Phase 1, the exhaustive audit.
 
 - **Large-file-warning polish** (from the 2026-11-19 feature review; all
   minor): clearing the global threshold field commits 0 and silently
