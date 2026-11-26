@@ -117,6 +117,19 @@ describe("smoke: stage and commit", () => {
       });
       await $(rowSel).waitForDisplayed({ timeout: 10_000 });
     }
+    // Line counts load apart from the row itself, so the row can show first.
+    await browser.waitUntil(
+      () =>
+        browser.execute(
+          (sel: string) =>
+            (document
+              .querySelector(sel)
+              ?.querySelector('[data-testid="file-row-stats"]')
+              ?.getBoundingClientRect().width ?? 0) > 0,
+          rowSel,
+        ),
+      { timeout: 10_000, timeoutMsg: "the diffstat never rendered for the staged file" },
+    );
     const rects = await browser.execute((sel: string) => {
       const row = document.querySelector(sel)!;
       const name = row.querySelector('[data-testid="file-row-name"]')!.getBoundingClientRect();
