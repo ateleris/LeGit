@@ -168,6 +168,22 @@ section's entry in the settings manifest; consumers read
 `normalized()`; command-owned fields refused), with one-line setters in
 `store/settings.ts` caching the merged result.
 
+**Synced settings carry a shape revision.** A global setting is either
+never-synced or synced (`sync/model.rs`, pinned by test). Changing the
+shape of a synced setting at any depth (a new setting, a new field on a
+git profile) means raising `SYNC_SETTINGS_REVISION` and refreshing the
+snapshot (`LEGIT_UPDATE_SYNC_SHAPE=1`); the shape test fails until then. A
+new enum value on a synced setting needs the raise too (no test sees it).
+An instance never writes a sync doc of a higher revision than its own: it
+goes receive-only (lenient import, no export, own unpushed sync commits
+dropped) until updated, so an older LeGit cannot flatten what a newer one
+wrote. Sync must never lose data: an instance reads before it writes (no
+export before an import at its revision, never over a doc it cannot
+read), and what it changed but could not send survives the import
+(`import_keeping_unsent` against the agreed `base` in `sync-state.json`;
+edited themes are kept as a "(local copy)"). A new sync path needs a test
+in `sync/engine.rs` showing what happens to the unsent side.
+
 **Settings panels are manifest-driven.** Both settings panels render through
 `SettingsShell` (search filter, category nav with scroll-spy on wide panels,
 always-expanded groups under sticky full-width header bands; collapsing

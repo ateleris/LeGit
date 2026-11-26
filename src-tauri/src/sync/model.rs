@@ -37,25 +37,66 @@ pub(crate) const GIT_PROFILES_KEY: &str = "gitProfiles";
 /// definitions and the remote-URL -> profile-id assignment map.
 const PROFILE_SYNC_KEYS: [&str; 2] = [GIT_PROFILES_KEY, "profile_assignments"];
 
+pub const SYNC_FORMAT: &str = "legit-sync";
+pub const SYNC_FORMAT_VERSION: u32 = 1;
+
+/// Revision of the SHAPE of the synced settings: raise it whenever a synced
+/// setting is added, removed or changes shape at any depth (the pinned
+/// shape test fails until then), and when one gains a value older versions
+/// cannot read, such as a new enum variant (no test can see that). An instance never writes a doc of a higher
+/// revision than its own: it would drop what it cannot represent. It
+/// receives only, until it is updated.
+pub const SYNC_SETTINGS_REVISION: u32 = 1;
+
 /// Versioned envelope of `legit-sync.json` in the sync repo.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncDoc {
     pub format: String,
     pub format_version: u32,
+    /// The LeGit version that wrote this doc, to name it to the user.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_version: Option<String>,
+    /// `SYNC_SETTINGS_REVISION` of the instance that wrote the doc; docs
+    /// from before revisions existed read as 0.
+    #[serde(default)]
+    pub settings_revision: u32,
     pub settings: serde_json::Value,
     /// Manifest of synced theme names; deletion propagation relies on it.
     pub themes: Vec<String>,
 }
 
 impl SyncDoc {
-    pub fn new(settings: serde_json::Value, themes: Vec<String>) -> Self {
+    pub fn new(settings: serde_json::Value, themes: Vec<String>, app_version: String) -> Self {
         Self {
-            format: "legit-sync".to_string(),
-            format_version: 1,
+            format: SYNC_FORMAT.to_string(),
+            format_version: SYNC_FORMAT_VERSION,
+            app_version: Some(app_version),
+            settings_revision: SYNC_SETTINGS_REVISION,
             settings,
             themes,
         }
+    }
+
+    /// Written by an instance with a newer settings shape: this one may
+    /// read it (leniently) and must never replace it.
+    pub fn from_newer_instance(&self) -> bool {
+        self.settings_revision > SYNC_SETTINGS_REVISION
+    }
+
+    /// Why this instance must not read or replace the doc, if it must not:
+    /// a layout it does not understand would be misread on import and
+    /// flattened on export.
+    pub fn unsupported_reason(&self) -> Option<String> {
+        if self.format != SYNC_FORMAT {
+            return Some(format!("the sync repository holds an unknown document format {:?}", self.format));
+        }
+        (self.format_version > SYNC_FORMAT_VERSION).then(|| {
+            format!(
+                "the sync repository was written by a newer LeGit (sync format {}); update LeGit on this computer to keep syncing",
+                self.format_version
+            )
+        })
     }
 }
 
@@ -178,6 +219,14 @@ pub fn import_synced_settings(
     local: &GlobalSettings,
     synced: &serde_json::Value,
 ) -> Result<GlobalSettings, AppError> {
+    import_settings(local, synced, false)
+}
+
+fn import_settings(
+    local: &GlobalSettings,
+    synced: &serde_json::Value,
+    lenient: bool,
+) -> Result<GlobalSettings, AppError> {
     let synced = synced
         .as_object()
         .ok_or_else(|| AppError::Settings("synced settings must be a JSON object".into()))?;
@@ -193,7 +242,17 @@ pub fn import_synced_settings(
         {
             continue;
         }
-        merged.insert(key.clone(), value.clone());
+        let previous = merged.insert(key.clone(), value.clone());
+        if lenient
+            && serde_json::from_value::<GlobalSettings>(serde_json::Value::Object(merged.clone()))
+                .is_err()
+        {
+            tracing::warn!(setting = %key, "synced value from a newer LeGit not readable here; kept the local one");
+            match previous {
+                Some(previous) => merged.insert(key.clone(), previous),
+                None => merged.remove(key),
+            };
+        }
     }
     let mut next: GlobalSettings = serde_json::from_value(serde_json::Value::Object(merged))
         .map_err(|e| AppError::Settings(format!("invalid synced settings: {e}")))?;
@@ -230,10 +289,11 @@ pub fn import_synced_settings(
 pub fn import_joining_profile_sync(
     local: &GlobalSettings,
     synced: &serde_json::Value,
+    lenient: bool,
 ) -> Result<GlobalSettings, AppError> {
     let mut joining = local.clone();
     joining.sync_git_profiles = true;
-    let mut next = import_synced_settings(&joining, synced)?;
+    let mut next = import_settings(&joining, synced, lenient)?;
     for profile in &local.git_profiles_doc.profiles {
         if !next.git_profiles_doc.profiles.iter().any(|p| p.id == profile.id) {
             next.git_profiles_doc.profiles.push(profile.clone());
@@ -247,9 +307,230 @@ pub fn import_joining_profile_sync(
     Ok(next)
 }
 
+/// How an import treats what this machine changed but has not sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportMode {
+    /// The repository's values replace the local ones: unsent local changes
+    /// were committed and merged by git beforehand, or the user chose to
+    /// adopt the repository.
+    Plain,
+    /// The repository is from a newer instance. Nothing can be sent, so
+    /// every unsent local change stays in place on this machine.
+    ReceiveOnly,
+    /// First import at this instance's settings revision. Unsent local
+    /// changes are kept where the repository did not change the same
+    /// setting, so the export that follows sends them.
+    CatchUp,
+}
+
+pub struct Imported {
+    pub settings: GlobalSettings,
+    /// The synced settings this machine and the repository agree on after
+    /// this import: the base the next import measures unsent changes from.
+    pub base: serde_json::Value,
+    /// Settings changed both here and elsewhere, where the repository's
+    /// value was taken.
+    pub superseded: Vec<String>,
+}
+
+/// Import `synced` without losing what this machine changed since `base`
+/// (the agreed state after its last sync) but could not send.
+pub fn import_keeping_unsent(
+    local: &GlobalSettings,
+    synced: &serde_json::Value,
+    base: Option<&serde_json::Value>,
+    mode: ImportMode,
+    joining: bool,
+) -> Result<Imported, AppError> {
+    let lenient = mode == ImportMode::ReceiveOnly;
+    let plain = if joining {
+        import_joining_profile_sync(local, synced, lenient)?
+    } else {
+        import_settings(local, synced, lenient)?
+    };
+    let theirs = export_synced_settings(&plain);
+    let (Some(base), false) = (base, mode == ImportMode::Plain) else {
+        return Ok(Imported { settings: plain, base: theirs, superseded: Vec::new() });
+    };
+    // The base in this version's representation: it may have been recorded
+    // by an older one.
+    let agreed_settings = import_settings(local, base, true)?;
+    let agreed = export_synced_settings(&agreed_settings);
+    let mine = export_synced_settings(local);
+    let local_raw = serde_json::to_value(local).map_err(|e| AppError::Settings(e.to_string()))?;
+    let serde_json::Value::Object(mut raw) =
+        serde_json::to_value(&plain).map_err(|e| AppError::Settings(e.to_string()))?
+    else {
+        unreachable!("GlobalSettings serializes to an object");
+    };
+    let mut next_base = theirs.clone();
+    let mut superseded = Vec::new();
+    let mut merged_profiles = None;
+    for (key, my_value) in mine.as_object().into_iter().flatten() {
+        // Repo groups reconcile through their own merge (`import_groups`).
+        if key == crate::repo_groups::REPO_GROUPS_SYNC_KEY {
+            continue;
+        }
+        let Some(agreed_value) = agreed.get(key) else { continue };
+        let their_value = theirs.get(key);
+        if my_value == agreed_value || their_value == Some(my_value) {
+            continue;
+        }
+        if mode == ImportMode::ReceiveOnly || their_value == Some(agreed_value) {
+            if let Some(value) = local_raw.get(key) {
+                raw.insert(key.clone(), value.clone());
+            }
+            next_base[key.as_str()] = agreed_value.clone();
+        } else if key == GIT_PROFILES_KEY {
+            let (profiles, edits_lost) = merge_profile_lists(
+                &plain.git_profiles_doc.profiles,
+                &local.git_profiles_doc.profiles,
+                &agreed_settings.git_profiles_doc.profiles,
+            );
+            if edits_lost {
+                superseded.push(key.clone());
+            }
+            merged_profiles = Some(profiles);
+        } else {
+            superseded.push(key.clone());
+        }
+    }
+    let mut settings: GlobalSettings = serde_json::from_value(serde_json::Value::Object(raw))
+        .map_err(|e| AppError::Settings(format!("invalid synced settings: {e}")))?;
+    if let Some(profiles) = merged_profiles {
+        settings.git_profiles_doc.profiles = profiles;
+    }
+    Ok(Imported { settings: settings.normalized(), base: next_base, superseded })
+}
+
+/// Both sides changed the profile list since `agreed`: the repository's
+/// profiles win, profiles created here are added. The flag reports a local
+/// edit to an existing profile that the repository's version replaced.
+fn merge_profile_lists(
+    theirs: &[GitProfile],
+    mine: &[GitProfile],
+    agreed: &[GitProfile],
+) -> (Vec<GitProfile>, bool) {
+    let find = |list: &[GitProfile], id: &str| list.iter().find(|p| p.id == id).cloned();
+    let mut merged = theirs.to_vec();
+    let mut edits_lost = false;
+    for profile in mine {
+        match (find(agreed, &profile.id), find(theirs, &profile.id)) {
+            (None, None) => merged.push(profile.clone()),
+            (Some(before), Some(their)) => {
+                edits_lost |= *profile != before && *profile != their;
+            }
+            // Deleted elsewhere while edited here.
+            (Some(before), None) => edits_lost |= *profile != before,
+            (None, Some(_)) => {}
+        }
+    }
+    (merged, edits_lost)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn with(change: impl FnOnce(&mut GlobalSettings)) -> GlobalSettings {
+        let mut s = GlobalSettings::default();
+        change(&mut s);
+        s
+    }
+
+    #[test]
+    fn a_plain_import_takes_the_repositorys_values() {
+        let base = export_synced_settings(&GlobalSettings::default());
+        let local = with(|s| s.commit_initials = true);
+        let doc = export_synced_settings(&with(|s| s.commits_row_height = 40.0));
+        let out = import_keeping_unsent(&local, &doc, Some(&base), ImportMode::Plain, false).unwrap();
+        assert!(!out.settings.commit_initials);
+        assert_eq!(out.settings.commits_row_height, 40.0);
+        assert_eq!(out.base, doc);
+    }
+
+    #[test]
+    fn receive_only_keeps_every_unsent_local_change_in_place() {
+        let base = export_synced_settings(&GlobalSettings::default());
+        // Changed here: initials and the row height. The newer machine
+        // changed the row height too, and the lane width.
+        let local = with(|s| {
+            s.commit_initials = true;
+            s.commits_row_height = 25.0;
+        });
+        let doc = export_synced_settings(&with(|s| {
+            s.commits_row_height = 40.0;
+            s.commits_lane_width = 30.0;
+        }));
+        let out =
+            import_keeping_unsent(&local, &doc, Some(&base), ImportMode::ReceiveOnly, false).unwrap();
+        assert!(out.settings.commit_initials);
+        assert_eq!(out.settings.commits_row_height, 25.0);
+        assert_eq!(out.settings.commits_lane_width, 30.0);
+        assert!(out.superseded.is_empty());
+        // The base moves on only where this machine has nothing unsent, so
+        // the next import still knows what is waiting here.
+        assert_eq!(out.base["commit_initials"], false);
+        assert_eq!(out.base["commits_row_height"], base["commits_row_height"]);
+        assert_eq!(out.base["commits_lane_width"], 30.0);
+        let again = import_keeping_unsent(
+            &out.settings, &doc, Some(&out.base), ImportMode::ReceiveOnly, false,
+        )
+        .unwrap();
+        assert_eq!(export_synced_settings(&again.settings), export_synced_settings(&out.settings));
+        assert_eq!(again.base, out.base);
+    }
+
+    #[test]
+    fn catching_up_keeps_unsent_changes_and_names_the_ones_changed_elsewhere_too() {
+        let base = export_synced_settings(&GlobalSettings::default());
+        let local = with(|s| {
+            s.commit_initials = true;
+            s.commits_row_height = 25.0;
+        });
+        let doc = export_synced_settings(&with(|s| s.commits_row_height = 40.0));
+        let out = import_keeping_unsent(&local, &doc, Some(&base), ImportMode::CatchUp, false).unwrap();
+        assert!(out.settings.commit_initials, "unchanged elsewhere: kept, to be sent");
+        assert_eq!(out.settings.commits_row_height, 40.0);
+        assert_eq!(out.superseded, vec!["commits_row_height".to_string()]);
+        // A value this instance never chose is not an unsent change.
+        let fresh = import_keeping_unsent(
+            &GlobalSettings::default(), &doc, Some(&base), ImportMode::CatchUp, false,
+        )
+        .unwrap();
+        assert_eq!(fresh.settings.commits_row_height, 40.0);
+        assert!(fresh.superseded.is_empty());
+    }
+
+    #[test]
+    fn catching_up_never_drops_a_profile_created_here() {
+        let shared = with(|s| {
+            s.sync_git_profiles = true;
+            s.git_profiles_doc.profiles = vec![named_profile("a", "A"), named_profile("b", "B")];
+        });
+        let base = export_synced_settings(&shared);
+        let mut local = shared.clone();
+        local.git_profiles_doc.profiles.push(named_profile("mine", "Mine"));
+        local.git_profiles_doc.profiles[0].name = "A edited here".into();
+        let mut other = shared.clone();
+        other.git_profiles_doc.profiles[0].name = "A edited there".into();
+        other.git_profiles_doc.profiles.remove(1);
+        let doc = export_synced_settings(&other);
+
+        let out = import_keeping_unsent(&local, &doc, Some(&base), ImportMode::CatchUp, false).unwrap();
+        let names: Vec<&str> =
+            out.settings.git_profiles_doc.profiles.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["A edited there", "Mine"]);
+        assert_eq!(out.superseded, vec![GIT_PROFILES_KEY.to_string()]);
+    }
+
+    #[test]
+    fn without_a_recorded_base_the_repository_wins() {
+        let local = with(|s| s.commit_initials = true);
+        let doc = export_synced_settings(&GlobalSettings::default());
+        let out = import_keeping_unsent(&local, &doc, None, ImportMode::CatchUp, false).unwrap();
+        assert!(!out.settings.commit_initials);
+    }
 
     fn named_profile(id: &str, name: &str) -> GitProfile {
         GitProfile {
@@ -280,7 +561,7 @@ mod tests {
         local.profile_assignments.insert("host/b".into(), "mine".into());
         local.profile_assignments.insert("host/both".into(), "mine".into());
 
-        let joined = import_joining_profile_sync(&local, &doc).unwrap();
+        let joined = import_joining_profile_sync(&local, &doc, false).unwrap();
         assert!(joined.sync_git_profiles);
         let names: Vec<&str> =
             joined.git_profiles_doc.profiles.iter().map(|p| p.name.as_str()).collect();
@@ -311,11 +592,130 @@ mod tests {
     }
 
     #[test]
+    fn a_doc_in_a_newer_or_foreign_format_is_refused() {
+        let mut doc = SyncDoc::new(serde_json::json!({}), vec![], "1.0.0".into());
+        assert_eq!(doc.unsupported_reason(), None);
+        doc.format_version = SYNC_FORMAT_VERSION + 1;
+        assert!(doc.unsupported_reason().unwrap().contains("newer LeGit"));
+        doc.format_version = SYNC_FORMAT_VERSION;
+        doc.format = "something-else".into();
+        assert!(doc.unsupported_reason().unwrap().contains("unknown document format"));
+    }
+
+    #[test]
+    fn docs_carry_the_settings_revision_and_old_docs_read_as_zero() {
+        let doc = SyncDoc::new(serde_json::json!({}), vec![], "1.0.0".into());
+        assert_eq!(doc.settings_revision, SYNC_SETTINGS_REVISION);
+        assert!(!doc.from_newer_instance());
+        let old: SyncDoc = serde_json::from_str(
+            r#"{"format":"legit-sync","formatVersion":1,"settings":{},"themes":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(old.settings_revision, 0);
+        let mut newer = doc;
+        newer.settings_revision = SYNC_SETTINGS_REVISION + 1;
+        assert!(newer.from_newer_instance());
+    }
+
+    #[test]
+    fn lenient_import_skips_only_the_values_it_cannot_read() {
+        let mut doc = export_synced_settings(&GlobalSettings::default());
+        let obj = doc.as_object_mut().unwrap();
+        obj.insert("commits_row_height".into(), serde_json::json!(40.0));
+        obj.insert("ui_font_size".into(), serde_json::json!("large"));
+        obj.insert("setting_from_the_future".into(), serde_json::json!(true));
+
+        let local = GlobalSettings::default();
+        assert!(import_synced_settings(&local, &doc).is_err(), "strict import stays loud");
+        let merged = import_settings(&local, &doc, true).unwrap();
+        assert_eq!(merged.commits_row_height, 40.0);
+        assert_eq!(merged.ui_font_size, local.ui_font_size);
+    }
+
+    /// Recursive key shape of a JSON value: what an older instance would
+    /// have to know to round-trip it without loss.
+    fn shape(value: &serde_json::Value) -> serde_json::Value {
+        use serde_json::Value;
+        match value {
+            Value::Object(map) => {
+                Value::Object(map.iter().map(|(k, v)| (k.clone(), shape(v))).collect())
+            }
+            Value::Array(items) => {
+                let mut shapes: Vec<Value> = Vec::new();
+                for item in items {
+                    let s = shape(item);
+                    if !shapes.contains(&s) {
+                        shapes.push(s);
+                    }
+                }
+                Value::Array(shapes)
+            }
+            Value::Null => Value::String("null".into()),
+            Value::Bool(_) => Value::String("bool".into()),
+            Value::Number(_) => Value::String("number".into()),
+            Value::String(_) => Value::String("string".into()),
+        }
+    }
+
+    /// Settings with every nested synced value populated, so its inner
+    /// shape is visible. A new synced collection needs an entry here.
+    fn populated_settings() -> GlobalSettings {
+        use crate::repo_groups::{GroupItem, GroupRepoRef, RepoGroup};
+        let mut s = GlobalSettings::default();
+        s.sync_git_profiles = true;
+        s.git_profiles_doc.profiles = vec![named_profile("p", "P")];
+        s.profile_assignments.insert("host/repo".into(), "p".into());
+        let repo: GroupRepoRef =
+            serde_json::from_value(serde_json::json!({"locator": "/r", "remote_key": "host/repo"}))
+                .unwrap();
+        s.repo_groups.items = vec![GroupItem::Group(RepoGroup {
+            id: "g".into(),
+            name: "G".into(),
+            color: Some("accent".into()),
+            collapsed: false,
+            items: vec![GroupItem::Repo(repo)],
+        })];
+        s
+    }
+
+    /// Pins the synced settings' shape to `SYNC_SETTINGS_REVISION`. When it
+    /// fails, a synced setting changed shape: raise the revision, then
+    /// refresh the snapshot with `LEGIT_UPDATE_SYNC_SHAPE=1`. Without the
+    /// raise, older instances would overwrite the new shape with theirs.
+    #[test]
+    fn synced_settings_shape_is_pinned_to_the_revision() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/sync/synced_settings_shape.json");
+        let current = shape(&export_synced_settings(&populated_settings()));
+        let pinned: serde_json::Value = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or(serde_json::Value::Null);
+        let pinned_revision = pinned["revision"].as_u64().unwrap_or(0) as u32;
+        if pinned["shape"] == current && pinned_revision == SYNC_SETTINGS_REVISION {
+            return;
+        }
+        if std::env::var_os("LEGIT_UPDATE_SYNC_SHAPE").is_some() {
+            assert!(
+                pinned["shape"] == current || SYNC_SETTINGS_REVISION > pinned_revision,
+                "the shape changed: raise SYNC_SETTINGS_REVISION above {pinned_revision} first"
+            );
+            let doc = serde_json::json!({ "revision": SYNC_SETTINGS_REVISION, "shape": current });
+            std::fs::write(&path, serde_json::to_string_pretty(&doc).unwrap() + "\n").unwrap();
+            return;
+        }
+        panic!(
+            "the synced settings' shape or SYNC_SETTINGS_REVISION changed: raise the revision \
+             if the shape changed, then run with LEGIT_UPDATE_SYNC_SHAPE=1"
+        );
+    }
+
+    #[test]
     fn joining_a_repository_without_profiles_keeps_the_local_ones() {
         let doc = export_synced_settings(&GlobalSettings::default());
         let mut local = GlobalSettings::default();
         local.git_profiles_doc.profiles = vec![named_profile("mine", "Mine")];
-        let joined = import_joining_profile_sync(&local, &doc).unwrap();
+        let joined = import_joining_profile_sync(&local, &doc, false).unwrap();
         assert_eq!(joined.git_profiles_doc.profiles, vec![named_profile("mine", "Mine")]);
     }
 

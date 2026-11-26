@@ -4,7 +4,8 @@
 //! two clones, the way the sync engine uses them.
 
 use legit_core::sync::{
-    first_remote, rebase_in_progress, sync_commit, sync_pull, sync_push, SyncCommitOutcome,
+    first_remote, rebase_in_progress, sync_commit, sync_fetch, sync_pull, sync_push,
+    sync_reset_to_upstream, upstream_sync_doc, SyncCommitOutcome, SyncFetchOutcome,
     SyncPullOutcome, SyncPushOutcome, SYNC_SETTINGS_FILE, SYNC_THEMES_DIR,
 };
 use legit_core::{GitExecutor, GitRunner};
@@ -160,4 +161,38 @@ async fn commit_identity_is_fixed() {
 async fn first_remote_sees_a_clone_origin() {
     let f = fixture().await;
     assert_eq!(first_remote(&runner(&f.a)).await.unwrap().as_deref(), Some("origin"));
+}
+
+// What a receive-only instance relies on: after a fetch the upstream's doc
+// is readable without touching the checkout, and the reset drops the local
+// unpushed sync commit instead of rebasing it onto the upstream.
+#[tokio::test]
+async fn fetch_shows_the_upstream_doc_and_reset_drops_local_commits() {
+    let f = fixture().await;
+    tokio::fs::write(f.b.join(SYNC_SETTINGS_FILE), "{\n  \"from\": \"b\"\n}\n").await.unwrap();
+    assert_eq!(sync_commit(&runner(&f.b)).await.unwrap(), SyncCommitOutcome::Committed);
+    tokio::fs::write(f.a.join(SYNC_SETTINGS_FILE), "{\n  \"from\": \"a\"\n}\n").await.unwrap();
+    assert_eq!(sync_commit(&runner(&f.a)).await.unwrap(), SyncCommitOutcome::Committed);
+    assert_eq!(sync_push(&runner(&f.a), "origin").await.unwrap(), SyncPushOutcome::Pushed);
+
+    assert_eq!(sync_fetch(&runner(&f.b)).await.unwrap(), SyncFetchOutcome::Fetched);
+    assert_eq!(
+        upstream_sync_doc(&runner(&f.b)).await.unwrap().as_deref(),
+        Some("{\n  \"from\": \"a\"\n}\n")
+    );
+    let local = tokio::fs::read_to_string(f.b.join(SYNC_SETTINGS_FILE)).await.unwrap();
+    assert_eq!(local, "{\n  \"from\": \"b\"\n}\n", "fetch must not touch the checkout");
+
+    sync_reset_to_upstream(&runner(&f.b)).await.unwrap();
+    let local = tokio::fs::read_to_string(f.b.join(SYNC_SETTINGS_FILE)).await.unwrap();
+    assert_eq!(local, "{\n  \"from\": \"a\"\n}\n");
+    assert_eq!(git(&f.b, &["rev-list", "--count", "@{upstream}..HEAD"]).await.trim(), "0");
+}
+
+#[tokio::test]
+async fn upstream_doc_is_none_before_any_upstream_exists() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let repo = dir.path();
+    git(repo, &["init", "-b", "main"]).await;
+    assert_eq!(upstream_sync_doc(&runner(repo)).await.unwrap(), None);
 }

@@ -1,0 +1,88 @@
+{
+  "revision": 1,
+  "shape": {
+    "active_theme": "null",
+    "auto_fetch_enabled": "bool",
+    "auto_fetch_interval_minutes": "number",
+    "auto_push_tags": "bool",
+    "branch_list_view": "null",
+    "changed_files_view_mode": "null",
+    "check_updates_on_startup": "bool",
+    "checkout_new_branch": "bool",
+    "checkout_remote_fast_forward": "bool",
+    "column_preferences": "null",
+    "commit_avatars": "bool",
+    "commit_date_absolute": "bool",
+    "commit_date_format": "string",
+    "commit_date_show_time": "bool",
+    "commit_initials": "bool",
+    "commits_dot_radius": "number",
+    "commits_lane_width": "number",
+    "commits_line_width": "number",
+    "commits_row_height": "number",
+    "confirm_discard": "bool",
+    "detect_case_renames": "bool",
+    "diff_syntax_highlighting": "bool",
+    "file_history_opens_window": "bool",
+    "files_show_ignored": "null",
+    "files_view_mode": "null",
+    "gitProfiles": {
+      "format": "string",
+      "formatVersion": "number",
+      "profiles": [
+        {
+          "allowedSignersFile": "null",
+          "authSshKey": "null",
+          "commitGpgsign": "null",
+          "credentialHelper": "null",
+          "gpgFormat": "null",
+          "id": "string",
+          "name": "string",
+          "signingKey": "null",
+          "userEmail": "null",
+          "userName": "null"
+        }
+      ]
+    },
+    "global_region_placement": "string",
+    "lane_colored_branch_chips": "bool",
+    "large_file_warn_mb": "number",
+    "line_ending_chips_in_changes": "bool",
+    "panel_border_width": "number",
+    "panel_corner_radius": "number",
+    "panel_gap": "number",
+    "profile_assignments": {
+      "host/repo": "string"
+    },
+    "pull_strategy": "null",
+    "push_recurse_submodules": "null",
+    "refs_sort_mode": "null",
+    "repoGroups": [
+      {
+        "color": "string",
+        "id": "string",
+        "items": [
+          "string"
+        ],
+        "name": "string"
+      }
+    ],
+    "repo_tab_border_width": "number",
+    "repo_tab_corner_radius": "number",
+    "repo_tab_gap": "number",
+    "repo_tab_height": "number",
+    "repo_tab_inset": "number",
+    "repo_tab_strip_border_width": "number",
+    "repo_tab_style": "string",
+    "stash_base_lane_color": "bool",
+    "stash_include_untracked": "bool",
+    "submodule_attach_branch": "bool",
+    "suppressed_auto_open_panels": [],
+    "switch_dirty_behavior": "null",
+    "tags_sort_mode": "null",
+    "ui_font_size": "number",
+    "warn_on_line_ending_commit": "bool",
+    "watcher_enabled": "bool",
+    "working_changes_section_order": []
+  }
+}

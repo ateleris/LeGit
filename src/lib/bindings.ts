@@ -5175,8 +5175,23 @@ export type SwitchOutcome = { kind: "clean" } |
  */
 export type SwitchResult = { outcome: SwitchOutcome; lfs_stubs: LfsStubs | null }
 export type SyncProbe = { valid: boolean; reason: string | null; hasSyncDoc: boolean }
-export type SyncStatusKind = "disabled" | "inSync" | "ahead" | "offline" | "conflict" | "error"
-export type SyncStatusPayload = { kind: SyncStatusKind; message: string | null; lastSync: string | null }
+export type SyncStatusKind = "disabled" | "inSync" | 
+/**
+ * The sync repository holds settings from a newer LeGit: this instance
+ * applies what it can read and sends nothing until it is updated.
+ */
+"receiveOnly" | "ahead" | "offline" | "conflict" | "error"
+export type SyncStatusPayload = { kind: SyncStatusKind; message: string | null; lastSync: string | null; 
+/**
+ * The LeGit version that wrote the sync repository's settings, when
+ * they are from a newer settings revision than this instance's.
+ */
+newerAppVersion: string | null; 
+/**
+ * Settings changed both here and on another machine while this one
+ * could not send, where the other machine's value was taken.
+ */
+superseded: string[] }
 /**
  * A local tag from `git for-each-ref refs/tags`.
  */

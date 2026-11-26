@@ -13,6 +13,21 @@ use crate::error::AppError;
 pub struct SyncStateFile {
     pub last_manifest: Vec<String>,
     pub last_sync: Option<String>,
+    /// The sync checkout this bookkeeping belongs to. It says nothing about
+    /// any other repository: a theme missing from a newly designated one
+    /// was not deleted there.
+    pub repo: Option<String>,
+    /// `SYNC_SETTINGS_REVISION` at the last completed import. Until this
+    /// instance has imported at its current revision, its values for
+    /// settings it did not know before are defaults nobody chose.
+    pub settings_revision: u32,
+    /// The synced settings this machine and the repository agreed on at
+    /// the last sync. A local value that differs from it is a change this
+    /// machine has not sent yet (`import_keeping_unsent`).
+    pub base: Option<serde_json::Value>,
+    /// Content hash of each synced theme as of the last sync: a local file
+    /// that differs was edited here since.
+    pub theme_hashes: std::collections::BTreeMap<String, String>,
 }
 
 pub async fn read_state(path: &Path) -> SyncStateFile {
@@ -56,6 +71,10 @@ mod tests {
         let state = SyncStateFile {
             last_manifest: vec!["A".into(), "B".into()],
             last_sync: Some("2026-10-02T10:00:00Z".into()),
+            repo: Some("/sync".into()),
+            settings_revision: 3,
+            base: Some(serde_json::json!({"a": 1})),
+            theme_hashes: [("A".to_string(), "00".to_string())].into(),
         };
         write_state(&path, &state).await.unwrap();
         assert_eq!(read_state(&path).await, state);

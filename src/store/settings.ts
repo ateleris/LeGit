@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import { api } from "../lib/commands";
-import { shouldToastSyncStatus, syncStatusText } from "../lib/syncStatus";
+import {
+  newerVersionHint,
+  shouldToastSyncStatus,
+  supersededNote,
+  syncStatusText,
+} from "../lib/syncStatus";
 import { notify } from "./notifications";
 import { reapplyPanelConstraints } from "./dockview";
 import type {
@@ -243,6 +248,9 @@ interface SettingsStore {
   setFileHistoryOpensWindow: (enabled: boolean) => Promise<void>;
 }
 
+/** The newer-LeGit sync hint toasts once per session, not per sync cycle. */
+let newerVersionHintShown = false;
+
 export const useSettingsStore = create<SettingsStore>((set, get) => {
   const patch = async (fields: Partial<GlobalSettings>) => {
     const merged = await api.patchGlobalSettings(fields);
@@ -264,6 +272,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
       set({ syncStatus: status });
       if (shouldToastSyncStatus(prev, status.kind)) {
         notify.error(`Settings sync: ${status.message ?? syncStatusText(status)}`);
+      }
+      const superseded = supersededNote(status);
+      if (superseded) notify.warning(superseded);
+      const hint = newerVersionHint(status);
+      if (hint && !newerVersionHintShown) {
+        newerVersionHintShown = true;
+        notify.info(hint);
       }
     },
 

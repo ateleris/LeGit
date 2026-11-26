@@ -1,7 +1,7 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
 import { formatAppError } from "../../lib/errors";
-import { syncStatusText } from "../../lib/syncStatus";
+import { newerVersionHint, syncStatusText } from "../../lib/syncStatus";
 import { confirmDialog } from "../../store/confirm";
 import { notify } from "../../store/notifications";
 import { useRepoStore } from "../../store/repos";
@@ -69,6 +69,7 @@ export function SettingsSyncSection() {
             <span style={{ fontFamily: "monospace" }}>{syncPath}</span>
           </div>
           <FieldNote>{syncStatusText(syncStatus)}</FieldNote>
+          {newerVersionHint(syncStatus) && <FieldNote>{newerVersionHint(syncStatus)}</FieldNote>}
           <div style={{ display: "flex", gap: "0.5em", marginTop: "0.667em" }}>
             <Button
               variant="primary"

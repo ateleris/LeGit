@@ -214,24 +214,6 @@ Each follows the same vertical slice: `GitBackend` method -> `cli_impl` via
     secret-adjacent; then propose a file layout with a migration
     (`Option<T>` + `#[serde(default)]` keeps old files parsing) and
     check it against both sync paths before moving anything.
-  - **Version-aware sync between different LeGit versions.** Seen in
-    practice: a newer instance adds a setting to `legit-sync.json`, an
-    older instance exports next and removes it again (the export
-    serializes that version's own settings struct, so keys it does not
-    know are dropped), and the two keep reverting each other. Write the
-    LeGit version that produced the doc into `legit-sync.json` so
-    instances can tell who is newer. Rough approach: an older instance
-    carries keys it does not know through from the repo doc unchanged
-    on export instead of dropping them (the version says when that
-    applies, and lets the UI report "another machine runs a newer
-    LeGit"); the newer instance keeps importing as today. When a sync
-    reads a doc written by a newer LeGit than the running one, show a
-    hint toast telling the user to update this machine to the same
-    version (info, not an error; once per session, not on every sync
-    cycle). Check
-    `formatVersion` on import in the same slice (not checked today),
-    and pin the mixed-version round trip with a test in
-    `sync/engine.rs`.
   - **Phase 2 candidates**: named layouts (files under
     `<app-data>/layouts/`, so syncing mirrors the themes approach; LIVE
     dock state stays localStorage), an export/import bundle file.

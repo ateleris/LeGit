@@ -14,6 +14,27 @@ lives in the git log and the GitHub release notes.
 
 ### Fixed
 
+- Settings sync keeps what a computer changed while it could not send
+  (receiving only, or just updated): its settings stay in place and are
+  shared once it can send; if another computer changed the same setting, a
+  warning names it
+- Settings sync never overwrites a theme edited on a computer that could
+  not send it: the edit is kept as "<name> (local copy)"
+- Settings sync never replaces a sync file it cannot read, and a missing
+  or unreadable themes folder no longer deletes the themes on the other
+  computers
+- Settings sync: the first sync after updating LeGit no longer sends this
+  computer's default values for settings it did not know before, which
+  could overwrite what another computer had set
+- Settings sync: pointing LeGit at a different sync repository no longer
+  deletes local themes that only the previous repository contained
+- Settings sync between computers on different LeGit versions: an older
+  LeGit no longer overwrites what a newer one synced (the two kept
+  reverting each other). While another computer runs a version with newer
+  settings, the older one receives the settings it understands and sends
+  none until it is updated, and says so
+- Settings sync refuses a sync repository written in a newer sync format
+  instead of misreading or overwriting it
 - Copying or generating an SSH key never writes over an existing key file
   unasked: a public key without its private key now counts as existing, and
   a failed existence check stops the write instead of letting it through

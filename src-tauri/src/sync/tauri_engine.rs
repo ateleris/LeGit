@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter as _, Manager as _};
 
 use super::engine::{SyncCore, SyncStatusKind, SyncStatusPayload};
-use super::model::{import_joining_profile_sync, import_synced_settings};
+use super::model::import_keeping_unsent;
 use crate::commands::persistence::GLOBAL_SETTINGS_CHANGED_EVENT;
 use crate::state::AppState;
 
@@ -129,6 +129,7 @@ impl SettingsSyncEngine {
             user_themes_dir: state.user_themes_dir.clone(),
             builtin_themes_dir: state.builtin_themes_dir.clone(),
             state_path,
+            app_version: env!("CARGO_PKG_VERSION").to_string(),
         })
     }
 
@@ -201,18 +202,21 @@ impl SettingsSyncEngine {
             let mut profile_edits = Vec::new();
             {
                 let mut settings = state.global_settings.write().await;
-                let imported = if joining {
-                    import_joining_profile_sync(&settings, &adopted.0)
-                } else {
-                    import_synced_settings(&settings, &adopted.0)
-                };
+                let imported = import_keeping_unsent(
+                    &settings,
+                    &adopted.settings,
+                    adopted.base.as_ref(),
+                    adopted.mode,
+                    joining,
+                );
                 match imported {
-                    Ok(merged) => {
+                    Ok(imported) => {
                         profile_edits = crate::commands::profiles::changed_profiles(
                             &settings.git_profiles_doc.profiles,
-                            &merged.git_profiles_doc.profiles,
+                            &imported.settings.git_profiles_doc.profiles,
                         );
-                        *settings = merged;
+                        *settings = imported.settings;
+                        status.superseded = imported.superseded;
                     }
                     Err(e) => status = SyncStatusPayload::error(e.to_string()),
                 }

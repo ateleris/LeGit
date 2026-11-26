@@ -154,6 +154,42 @@ pub async fn sync_pull(exec: &dyn GitExecutor) -> Result<SyncPullOutcome, GitErr
     Ok(classify_pull_failure(&out.stderr))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SyncFetchOutcome {
+    Fetched,
+    Offline,
+    Failed(String),
+}
+
+pub async fn sync_fetch(exec: &dyn GitExecutor) -> Result<SyncFetchOutcome, GitError> {
+    let out = exec.run_expecting(&["fetch"], &[1, 128]).await?;
+    if out.success {
+        return Ok(SyncFetchOutcome::Fetched);
+    }
+    if !is_auth_failure(&out.stderr) && is_network_failure(&out.stderr) {
+        return Ok(SyncFetchOutcome::Offline);
+    }
+    Ok(SyncFetchOutcome::Failed(out.stderr.trim().to_string()))
+}
+
+/// The sync doc as the upstream branch has it (as of the last fetch);
+/// `None` without an upstream or without a doc there.
+pub async fn upstream_sync_doc(exec: &dyn GitExecutor) -> Result<Option<String>, GitError> {
+    let spec = format!("@{{upstream}}:{SYNC_SETTINGS_FILE}");
+    let out = exec.run_expecting(&["show", &spec], &[128]).await?;
+    Ok(out.success.then_some(out.stdout))
+}
+
+/// Make the checkout the upstream's: local sync commits the upstream does
+/// not have, staged leftovers and working-tree edits are all dropped.
+pub async fn sync_reset_to_upstream(exec: &dyn GitExecutor) -> Result<(), GitError> {
+    let out = exec.run(&["reset", "--hard", "@{upstream}"]).await?;
+    if !out.success {
+        return Err(command_failed(&out));
+    }
+    Ok(())
+}
+
 pub async fn sync_commit(exec: &dyn GitExecutor) -> Result<SyncCommitOutcome, GitError> {
     let add = exec.run(&["add", "-A", "--", SYNC_SETTINGS_FILE]).await?;
     if !add.success {
@@ -197,6 +233,42 @@ pub async fn sync_push(exec: &dyn GitExecutor, remote: &str) -> Result<SyncPushO
 mod tests {
     use super::*;
     use crate::test_support::{fail, ok, FakeExecutor};
+
+    #[tokio::test]
+    async fn fetch_outcomes_follow_the_pull_classification() {
+        let fake = FakeExecutor::default();
+        fake.expect(&["fetch"], ok(""));
+        assert_eq!(sync_fetch(&fake).await.unwrap(), SyncFetchOutcome::Fetched);
+        fake.expect(&["fetch"], fail(128, "fatal: unable to access 'https://x/': Could not resolve host: x"));
+        assert_eq!(sync_fetch(&fake).await.unwrap(), SyncFetchOutcome::Offline);
+        fake.expect(
+            &["fetch"],
+            fail(128, "git@x: Permission denied (publickey).\nfatal: Could not read from remote repository."),
+        );
+        assert!(matches!(sync_fetch(&fake).await.unwrap(), SyncFetchOutcome::Failed(_)));
+        fake.assert_done();
+    }
+
+    #[tokio::test]
+    async fn upstream_doc_is_none_without_upstream_or_doc() {
+        let fake = FakeExecutor::default();
+        fake.expect(&["show", "@{upstream}:legit-sync.json"], ok("{}"));
+        assert_eq!(upstream_sync_doc(&fake).await.unwrap().as_deref(), Some("{}"));
+        fake.expect(
+            &["show", "@{upstream}:legit-sync.json"],
+            fail(128, "fatal: no upstream configured for branch 'main'"),
+        );
+        assert_eq!(upstream_sync_doc(&fake).await.unwrap(), None);
+        fake.assert_done();
+    }
+
+    #[tokio::test]
+    async fn reset_to_upstream_runs_one_hard_reset() {
+        let fake = FakeExecutor::default();
+        fake.expect(&["reset", "--hard", "@{upstream}"], ok(""));
+        sync_reset_to_upstream(&fake).await.unwrap();
+        fake.assert_done();
+    }
 
     #[test]
     fn pull_failure_classification() {
