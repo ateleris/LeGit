@@ -14,9 +14,10 @@ lives in the git log and the GitHub release notes.
 
 ### Added
 
-- The commit button's menu offers "Commit & Force Push" while "Amend last
-  commit" is checked, so an amended commit can be force-pushed (with lease)
-  in one click
+- The commit button's menu offers "Amend & Force Push" while "Amend last
+  commit" is checked, so an amended commit can be pushed in one click. It
+  warns before removing commits from the remote that are not in your branch,
+  and pushes without force when the amended commit was never pushed
 - File lists (Working Changes, changed files, Compare, Files), the File
   History list and the Work Log's day list highlight the row under the
   pointer

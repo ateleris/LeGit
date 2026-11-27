@@ -24,6 +24,7 @@ import { summonGlobalPanel } from "../../layout/globalSummon";
 import { isDetachedHead } from "../../lib/detachedHead";
 import { pushWithTagFollowUp } from "../../lib/autoPushTags";
 import { remoteOpErrorMessage } from "../../lib/pushFeedback";
+import { gitErrorKind } from "../../lib/errors";
 import { SYNC_DOMAINS } from "../../lib/queries/domains";
 import { useBranches, useRemotes, useTracking } from "../../lib/queries/useRepoQueries";
 import { CaretDropdown } from "../shared/CaretDropdown";
@@ -31,11 +32,15 @@ import { cappedLargeFiles, formatMb, largeStagedFiles } from "./largeFileWarning
 import {
   commitAndPushMenuLabel,
   commitButtonPlan,
+  commitContext,
   commitMenuChoices,
+  commitPushFailureDetail,
   commitPushFailureMessage,
   commitPushSuccessMessage,
+  forcePushRemoteLoss,
+  parkedPushLeg,
   type CommitMenuChoice,
-  type CommitPushTarget,
+  type ParkedPush,
 } from "./commitButtonMode";
 import { gitmodulesFindingLabel } from "./gitmodulesWarning";
 import { commitHookRejection, hookNamesLabel } from "./hookWarning";
@@ -123,10 +128,11 @@ export function CommitComposer({
   // When set, the commit rewrites HEAD (`git commit --amend`) instead of
   // creating a new commit. Reset after each successful commit.
   const [amend, setAmend] = useState(false);
-  // The amend-only "Commit & Force Push" pick. Transient like amend itself
-  // (never persisted - a stored force-push default would be a footgun) and
-  // cleared whenever amend turns off.
-  const [amendForcePush, setAmendForcePush] = useState(false);
+  // The amend-only "Commit & Force Push" pick, as the commit context (repo and
+  // branch) it was made in. Transient like amend itself (never persisted - a
+  // stored force-push default would be a footgun) and cleared whenever amend
+  // turns off.
+  const [forceArmedFor, setForceArmedFor] = useState<string | null>(null);
   const [confirmDetachedCommit, setConfirmDetachedCommit] = useState(false);
   const [confirmAmendPushed, setConfirmAmendPushed] = useState(false);
   const [confirmEolCommit, setConfirmEolCommit] = useState(false);
@@ -138,7 +144,7 @@ export function CommitComposer({
   const [hookDeclined, setHookDeclined] = useState<{
     hooks: string[];
     output: string;
-    push: CommitPushTarget | null;
+    push: ParkedPush | null;
   } | null>(null);
   const [commitMenuOpen, setCommitMenuOpen] = useState(false);
 
@@ -178,6 +184,8 @@ export function CommitComposer({
   const { data: remotes = [] } = useRemotes(repo.id);
   const currentBranch = branches.find((b) => b.is_current && !b.is_remote) ?? null;
   const remoteNames = remotes.map((r) => r.name);
+  const context = commitContext(repo.id, currentBranch);
+  const amendForcePush = amend && forceArmedFor === context;
 
   // Commit identity resolved across all config scopes: when name or email is
   // missing everywhere, a commit fails with git's "Please tell me who you are";
@@ -204,11 +212,13 @@ export function CommitComposer({
   // The push leg the in-flight commit chains (set by requestCommit from the
   // plan, consumed by commit). A ref, not state: the confirm banners defer
   // commit() to a later click and the value must survive that gap unchanged.
-  const pendingPushRef = useRef<CommitPushTarget | null>(null);
+  const pendingPushRef = useRef<ParkedPush | null>(null);
   const commit = (noVerify = false) =>
     run(async () => {
-      const push = pendingPushRef.current;
+      const parked = pendingPushRef.current;
       pendingPushRef.current = null;
+      const { push, dropped } = parkedPushLeg(parked, context);
+      const amended = amend;
       try {
         await repoCommit(repo.id, message, amend, noVerify);
       } catch (e) {
@@ -216,13 +226,16 @@ export function CommitComposer({
         // retry) instead of run()'s error toast; everything else rethrows.
         const rejection = commitHookRejection(e);
         if (!rejection) throw e;
-        setHookDeclined({ ...rejection, push });
+        setHookDeclined({ ...rejection, push: parked });
         return;
       }
       setHookDeclined(null);
       setMessage("");
       setAmend(false);
-      setAmendForcePush(false);
+      setForceArmedFor(null);
+      if (dropped) {
+        notify.warning("Amended, but not force-pushed: the branch changed after the push was planned.");
+      }
       if (push) {
         // Push failures are their own outcome — the commit already stands, so
         // they must never surface through run()'s onError as a failed commit.
@@ -239,9 +252,13 @@ export function CommitComposer({
             },
             crypto.randomUUID(),
           );
-          notify.success(commitPushSuccessMessage(push));
+          notify.success(commitPushSuccessMessage(push, amended));
         } catch (e) {
-          notify.error(commitPushFailureMessage(remoteOpErrorMessage(e)));
+          notify.error(
+            commitPushFailureMessage(
+              commitPushFailureDetail(push, gitErrorKind(e), remoteOpErrorMessage(e)),
+            ),
+          );
         }
         invalidateRepoDomains(queryClient, repo.id, SYNC_DOMAINS);
       }
@@ -292,19 +309,30 @@ export function CommitComposer({
     currentBranch,
     remotes: remoteNames,
   });
+  const remoteLoss = forcePushRemoteLoss(commitPlan, currentBranch);
+  const amendNeedsConfirm = amendingPushed || remoteLoss > 0;
+  const amendPushPlan = commitButtonPlan({
+    mode: commitMode,
+    amend: true,
+    forcePush: true,
+    detached,
+    currentBranch,
+    remotes: remoteNames,
+  });
   const requestCommit = () => {
     // The push leg is decided at request time and parked in the ref: the
     // confirm banners defer commit() to a later click, and the plan must
     // survive that gap unchanged.
-    pendingPushRef.current = commitPlan.push;
+    pendingPushRef.current = { push: commitPlan.push, context };
     if (detached) {
       setConfirmDetachedCommit(true);
       return;
     }
     // Amending an already-pushed commit rewrites published history (force-push
-    // needed, disrupts collaborators). Warn first — like the detached case, a
+    // needed, disrupts collaborators), and a force push from a branch that is
+    // behind removes remote commits. Warn first - like the detached case, a
     // history-safety warning, deliberately NOT gated by the confirm setting.
-    if (amendingPushed) {
+    if (amendNeedsConfirm) {
       setConfirmAmendPushed(true);
       return;
     }
@@ -313,24 +341,24 @@ export function CommitComposer({
   // Caret-menu pick configures the button (persists the mode for this repo),
   // it does not commit — the same semantics as the Stash and Pull-strategy
   // carets. Committing stays one explicit click on the (now relabeled) button.
-  // The amend-only force-push pick is the exception: transient, not persisted.
+  // The amend-only force-push pick is the exception: a transient toggle, not persisted.
   const pickCommitMode = (choice: CommitMenuChoice) => {
     setCommitMenuOpen(false);
     if (choice === "amend_force_push") {
-      setAmendForcePush(true);
+      setForceArmedFor(amendForcePush ? null : context);
       return;
     }
-    setAmendForcePush(false);
-    void updateRepoSetting(repo.id, "commit_button_mode", choice);
+    setForceArmedFor(null);
+    if (choice !== commitMode) void updateRepoSetting(repo.id, "commit_button_mode", choice);
   };
   const activeChoice: CommitMenuChoice =
-    amend && amendForcePush ? "amend_force_push" : commitMode;
+    amendForcePush && amendPushPlan.push ? "amend_force_push" : commitMode;
   const choiceLabel = (choice: CommitMenuChoice) =>
     choice === "commit"
       ? "Commit"
       : choice === "commit_and_push"
         ? commitAndPushMenuLabel(currentBranch, remoteNames)
-        : "Commit & Force Push";
+        : amendPushPlan.label;
 
   // Drop a pending detached-HEAD confirmation once HEAD is back on a branch
   // (e.g. the user switched away with the prompt still open).
@@ -341,8 +369,8 @@ export function CommitComposer({
   // Drop a pending amend-pushed confirmation if it no longer applies (amend
   // toggled off, or new local commits mean the tip is no longer published).
   useEffect(() => {
-    if (!amendingPushed) setConfirmAmendPushed(false);
-  }, [amendingPushed]);
+    if (!amendNeedsConfirm) setConfirmAmendPushed(false);
+  }, [amendNeedsConfirm]);
 
   // Drop a pending line-ending confirmation once it no longer applies
   // (files unstaged, endings reverted, or the setting turned off).
@@ -354,7 +382,7 @@ export function CommitComposer({
   // so typed-but-uncommitted text is never clobbered.
   const toggleAmend = (next: boolean) => {
     setAmend(next);
-    if (!next) setAmendForcePush(false);
+    if (!next) setForceArmedFor(null);
     if (next && head && message.trim().length === 0) setMessage(head.message);
   };
 
@@ -520,10 +548,25 @@ export function CommitComposer({
       ) : confirmAmendPushed ? (
         <div style={bannerStyle}>
           <div style={{ marginBottom: "0.667em", fontSize: "var(--fz-md)" }}>
-            The last commit is <strong>already pushed</strong>
-            {tracking?.upstream ? <> to <code>{tracking.upstream}</code></> : null}. Amending
-            rewrites it, so {commitPlan.push?.force ? "this will force-push" : "you'll need to force-push"}{" "}
-            and it may disrupt anyone who has pulled it. Amend anyway?
+            {amendingPushed && (
+              <>
+                The last commit is <strong>already pushed</strong>
+                {tracking?.upstream ? <> to <code>{tracking.upstream}</code></> : null}. Amending
+                rewrites it, so {commitPlan.push?.force ? "this will force-push" : "you'll need to force-push"}{" "}
+                and it may disrupt anyone who has pulled it.{" "}
+              </>
+            )}
+            {remoteLoss > 0 && (
+              <>
+                {tracking?.upstream ? <code>{tracking.upstream}</code> : "The remote branch"} has{" "}
+                <strong>
+                  {remoteLoss} {remoteLoss === 1 ? "commit" : "commits"} that {remoteLoss === 1 ? "is" : "are"} not
+                  in your branch
+                </strong>
+                . The force push will remove {remoteLoss === 1 ? "it" : "them"} from the remote.{" "}
+              </>
+            )}
+            Amend anyway?
           </div>
           <div style={{ display: "flex", gap: "0.5em" }}>
             <Button
@@ -630,7 +673,7 @@ export function CommitComposer({
             </Button>
             {commitMenuOpen && (
               <CaretDropdown onClose={() => setCommitMenuOpen(false)}>
-                {commitMenuChoices(amend).map((choice) => (
+                {commitMenuChoices(amend, amendPushPlan.push !== null).map((choice) => (
                   <MenuItem key={choice} onClick={() => pickCommitMode(choice)}>
                     <span style={{ fontWeight: choice === activeChoice ? 600 : 400 }}>
                       {choice === activeChoice ? "✓ " : " "}

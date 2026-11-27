@@ -8,9 +8,13 @@ import { describe, expect, it } from "vitest";
 import {
   commitAndPushMenuLabel,
   commitButtonPlan,
+  commitContext,
   commitMenuChoices,
+  commitPushFailureDetail,
   commitPushFailureMessage,
   commitPushSuccessMessage,
+  forcePushRemoteLoss,
+  parkedPushLeg,
 } from "./commitButtonMode";
 import type { Branch } from "../../lib/types";
 
@@ -113,6 +117,35 @@ describe("commitButtonPlan", () => {
     });
   });
 
+  it("amend + force-push on an unpushed tip pushes without force", () => {
+    expect(
+      plan({ amend: true, forcePush: true, currentBranch: branch({ ahead: 2 }) }),
+    ).toEqual({
+      label: "Amend & Push",
+      push: { remote: "origin", branch: "main", setUpstream: false, force: false },
+    });
+  });
+
+  it("amend + force-push on a diverged branch still forces", () => {
+    const diverged = plan({
+      amend: true,
+      forcePush: true,
+      currentBranch: branch({ ahead: 1, behind: 2 }),
+    });
+    expect(diverged.label).toBe("Amend & Force Push");
+    expect(diverged.push?.force).toBe(true);
+  });
+
+  it("amend + force-push degrades to plain Amend when the upstream has another name", () => {
+    expect(
+      plan({
+        amend: true,
+        forcePush: true,
+        currentBranch: branch({ name: "fix", upstream: "refs/remotes/origin/main" }),
+      }),
+    ).toEqual({ label: "Amend", push: null });
+  });
+
   it("detached HEAD degrades to plain Commit", () => {
     expect(plan({ detached: true })).toEqual({ label: "Commit", push: null });
   });
@@ -170,12 +203,85 @@ describe("commitAndPushMenuLabel", () => {
 
 describe("commitMenuChoices", () => {
   it("offers force push only while amending", () => {
-    expect(commitMenuChoices(false)).toEqual(["commit", "commit_and_push"]);
-    expect(commitMenuChoices(true)).toEqual([
+    expect(commitMenuChoices(false, true)).toEqual(["commit", "commit_and_push"]);
+    expect(commitMenuChoices(true, true)).toEqual([
       "commit",
       "commit_and_push",
       "amend_force_push",
     ]);
+  });
+
+  it("hides force push when amending cannot push anywhere", () => {
+    expect(commitMenuChoices(true, false)).toEqual(["commit", "commit_and_push"]);
+  });
+});
+
+describe("forcePushRemoteLoss", () => {
+  const forced = (currentBranch: Branch) =>
+    forcePushRemoteLoss(plan({ amend: true, forcePush: true, currentBranch }), currentBranch);
+
+  it("counts the upstream commits a force push would remove", () => {
+    expect(forced(branch({ behind: 2 }))).toBe(2);
+    expect(forced(branch({ ahead: 1, behind: 3 }))).toBe(3);
+  });
+
+  it("is zero when the branch is not behind", () => {
+    expect(forced(branch())).toBe(0);
+  });
+
+  it("is zero when the plan does not force", () => {
+    const behind = branch({ behind: 2 });
+    expect(forcePushRemoteLoss(plan({ currentBranch: behind }), behind)).toBe(0);
+    expect(forcePushRemoteLoss(plan({ amend: true, currentBranch: behind }), behind)).toBe(0);
+  });
+});
+
+describe("parkedPushLeg", () => {
+  const target = (force: boolean) => ({
+    remote: "origin",
+    branch: "main",
+    setUpstream: false,
+    force,
+  });
+  const here = commitContext("repo-a", branch());
+
+  it("keeps the push when repo and branch are unchanged", () => {
+    expect(parkedPushLeg({ push: target(true), context: here }, here)).toEqual({
+      push: target(true),
+      dropped: false,
+    });
+  });
+
+  it("drops a force push parked on another branch", () => {
+    const other = commitContext("repo-a", branch({ name: "other" }));
+    expect(parkedPushLeg({ push: target(true), context: here }, other)).toEqual({
+      push: null,
+      dropped: true,
+    });
+  });
+
+  it("drops a force push parked in another repo", () => {
+    const other = commitContext("repo-b", branch());
+    expect(parkedPushLeg({ push: target(true), context: here }, other)).toEqual({
+      push: null,
+      dropped: true,
+    });
+  });
+
+  it("leaves a plain push alone", () => {
+    const other = commitContext("repo-a", branch({ name: "other" }));
+    expect(parkedPushLeg({ push: target(false), context: here }, other)).toEqual({
+      push: target(false),
+      dropped: false,
+    });
+  });
+
+  it("has nothing to drop without a push", () => {
+    expect(parkedPushLeg(null, here)).toEqual({ push: null, dropped: false });
+    expect(parkedPushLeg({ push: null, context: "x" }, here)).toEqual({
+      push: null,
+      dropped: false,
+    });
   });
 });
 
@@ -190,6 +296,32 @@ describe("push-leg messages", () => {
     expect(
       commitPushSuccessMessage({ remote: "origin", branch: "main", setUpstream: false, force: true }),
     ).toBe("Amended and force-pushed 'main' to origin");
+  });
+
+  it("says Amended after an amend", () => {
+    expect(
+      commitPushSuccessMessage(
+        { remote: "origin", branch: "main", setUpstream: true, force: false },
+        true,
+      ),
+    ).toBe("Amended and published 'main' to origin");
+    expect(
+      commitPushSuccessMessage(
+        { remote: "origin", branch: "main", setUpstream: false, force: false },
+        true,
+      ),
+    ).toBe("Amended and pushed 'main' to origin");
+  });
+
+  it("a rejected force push blames the moved remote, not a missing pull", () => {
+    const forced = { remote: "origin", branch: "main", setUpstream: false, force: true };
+    expect(commitPushFailureDetail(forced, "PushRejected", "Pull first")).toBe(
+      "the remote branch changed since the last fetch. Fetch and review before force-pushing again.",
+    );
+    expect(commitPushFailureDetail(forced, "AuthFailed", "Auth text")).toBe("Auth text");
+    expect(
+      commitPushFailureDetail({ ...forced, force: false }, "PushRejected", "Pull first"),
+    ).toBe("Pull first");
   });
 
   it("the failure message says the commit itself succeeded", () => {
