@@ -12,6 +12,8 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-27
+
 ### Added
 
 - The commit button's menu offers "Amend & Force Push" while "Amend last
@@ -68,6 +70,9 @@ lives in the git log and the GitHub release notes.
 
 ### Changed
 
+- Settings sync: computers that share a sync repository all need this
+  version; one still on an older version receives settings but sends none
+  until it is updated
 - Every git command runs faster on Windows (about 20 to 40 ms less per
   command): LeGit no longer starts a hidden console for each one
 - File View draws SVG files as images, like the Diff panel, and falls back
