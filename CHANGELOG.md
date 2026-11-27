@@ -12,6 +12,12 @@ lives in the git log and the GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- The commit button's menu offers "Commit & Force Push" while "Amend last
+  commit" is checked, so an amended commit can be force-pushed (with lease)
+  in one click
+
 ### Fixed
 
 - Settings sync keeps what a computer changed while it could not send
