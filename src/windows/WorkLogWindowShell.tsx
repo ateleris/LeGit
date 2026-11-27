@@ -407,11 +407,11 @@ export function WorkLogDayList({
       key={key}
       data-testid={`wl-day-${key}`}
       onClick={() => onSelect(key)}
+      className={`legit-commit-row${selected === key ? " legit-commit-row--selected" : ""}`}
       style={{
         padding: "0.4em 0.75em",
         cursor: "pointer",
         borderBottom: "1px solid var(--panel-border)",
-        background: selected === key ? "var(--graph-row-selected-bg)" : undefined,
       }}
     >
       <div style={{ fontWeight: dim ? 400 : 600, opacity: dim ? 0.6 : 1 }}>{title}</div>

@@ -28,7 +28,7 @@ import { useRestoreVirtualizerScroll } from "../../PanelApiContext";
 import { baseName, flatten, fullyDimmedDirs, type FileTreeEntry, type Row, type ViewMode } from "./buildTree";
 import { eventToChord } from "../../../keys/chord";
 import { nextCursorPath, spaceStageTargets } from "./stageTargets";
-import { horizontalKeyAction, rowTint, verticalMoveTarget } from "./treeKeyNav";
+import { fileRowClassName, horizontalKeyAction, rowTint, verticalMoveTarget } from "./treeKeyNav";
 import { fileRowIndent } from "./useFileRowMetrics";
 import { ShrinkingPathText } from "../ShrinkingPathText";
 
@@ -424,6 +424,7 @@ export function FileTree({
                   : undefined
               }
               title={row.kind === "file" ? fileTitle(row.file) : row.label}
+              className={fileRowClassName(tint)}
               style={{
                 position: "absolute",
                 top: 0,
@@ -443,15 +444,6 @@ export function FileTree({
                 // a dir row dims when everything beneath it is dimmed.
                 opacity:
                   (row.kind === "file" ? row.file.dimmed : dimmedDirs.has(row.path)) ? 0.55 : 1,
-                // Fallbacks mirror the built-in Dark theme values (pre-theme-load
-                // safety nets only): selected = row-selected-bg, focused = its
-                // "faded" (45% alpha) variant.
-                background:
-                  tint === "selected"
-                    ? "var(--graph-row-selected-bg, #4a9eff33)"
-                    : tint === "focused"
-                    ? "var(--graph-row-focused-bg, #4a9eff17)"
-                    : "transparent",
               }}
             >
               {row.kind === "dir" ? (

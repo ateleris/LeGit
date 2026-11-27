@@ -973,13 +973,26 @@ button.legit-tab__close:hover {
   height: calc(var(--ui-font-size) - 1px);
 }
 
-/* Commit-panel rows: hover wash + selection highlight (classes rather than
+/* Commit and file rows: hover wash + selection highlight (classes rather than
  * inline styles because :hover can't be expressed inline). The :not() guard
  * keeps the selected background stable while hovered. */
-.legit-commit-row:not(.legit-commit-row--selected):hover {
+.legit-commit-row:not(.legit-commit-row--selected):hover,
+.legit-file-row:not(.legit-file-row--selected):hover {
   background: var(--graph-row-hover-bg);
 }
-.legit-commit-row--selected {
+.legit-file-row--focused {
+  background: var(--graph-row-focused-bg);
+}
+.legit-commit-row--selected,
+.legit-file-row--selected {
+  background: var(--graph-row-selected-bg);
+}
+/* A row that is a <button> must out-rank the global button backgrounds. */
+button.legit-commit-row {
+  background: transparent;
+}
+button.legit-commit-row--selected,
+button.legit-commit-row--selected:hover:not(:disabled) {
   background: var(--graph-row-selected-bg);
 }
 

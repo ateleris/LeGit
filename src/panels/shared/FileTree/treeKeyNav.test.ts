@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Row } from "./buildTree";
-import { horizontalKeyAction, rowTint, verticalMoveTarget } from "./treeKeyNav";
+import { horizontalKeyAction, fileRowClassName, rowTint, verticalMoveTarget } from "./treeKeyNav";
 
 const file: Row = { kind: "file", path: "a.txt", depth: 0, file: { path: "a.txt" } };
 const dir = (collapsed: boolean): Row => ({
@@ -90,5 +90,13 @@ describe("rowTint", () => {
 
   it("the keyboard cursor on an unselected file shows the focus wash", () => {
     expect(rowTint({ row: fileRow("a.txt"), selected: false, focusedFile: true, actorDirPath: null })).toBe("focused");
+  });
+});
+
+describe("fileRowClassName", () => {
+  it("maps each tint to the row classes the stylesheet highlights", () => {
+    expect(fileRowClassName("none")).toBe("legit-file-row");
+    expect(fileRowClassName("focused")).toBe("legit-file-row legit-file-row--focused");
+    expect(fileRowClassName("selected")).toBe("legit-file-row legit-file-row--selected");
   });
 });

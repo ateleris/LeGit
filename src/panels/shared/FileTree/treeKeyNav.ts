@@ -53,6 +53,10 @@ export function rowTint(args: {
   return "none";
 }
 
+export function fileRowClassName(tint: RowTint): string {
+  return tint === "none" ? "legit-file-row" : `legit-file-row legit-file-row--${tint}`;
+}
+
 export function horizontalKeyAction(
   key: "ArrowLeft" | "ArrowRight",
   row: Row | undefined,

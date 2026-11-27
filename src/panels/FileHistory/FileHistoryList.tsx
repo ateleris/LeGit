@@ -125,12 +125,12 @@ function HistoryRow({
       onClick={onActivate}
       onContextMenu={(e) => openMenu(e, renderMenu(entry, closeMenu))}
       aria-current={selected ? "true" : undefined}
+      className={`legit-commit-row${selected ? " legit-commit-row--selected" : ""}`}
       title={`${sha.slice(0, 8)} · ${entry.author} · ${entry.summary}`}
       style={{
         display: "block",
         width: "100%",
         textAlign: "left",
-        background: selected ? "var(--graph-row-selected-bg)" : "transparent",
         border: "none",
         borderBottom: "1px solid var(--panel-border)",
         padding: "0.333em 0.667em",

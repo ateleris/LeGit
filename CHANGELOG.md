@@ -17,6 +17,9 @@ lives in the git log and the GitHub release notes.
 - The commit button's menu offers "Commit & Force Push" while "Amend last
   commit" is checked, so an amended commit can be force-pushed (with lease)
   in one click
+- File lists (Working Changes, changed files, Compare, Files), the File
+  History list and the Work Log's day list highlight the row under the
+  pointer
 
 ### Fixed
 
