@@ -46,7 +46,7 @@ pub const SYNC_FORMAT_VERSION: u32 = 1;
 /// cannot read, such as a new enum variant (no test can see that). An instance never writes a doc of a higher
 /// revision than its own: it would drop what it cannot represent. It
 /// receives only, until it is updated.
-pub const SYNC_SETTINGS_REVISION: u32 = 1;
+pub const SYNC_SETTINGS_REVISION: u32 = 2;
 
 /// Versioned envelope of `legit-sync.json` in the sync repo.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -771,6 +771,7 @@ mod tests {
                 "panel_border_width",
                 "panel_corner_radius",
                 "panel_gap",
+                "problem_notice_style",
                 "pull_strategy",
                 "push_recurse_submodules",
                 "refs_sort_mode",

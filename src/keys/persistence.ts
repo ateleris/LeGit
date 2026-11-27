@@ -39,7 +39,7 @@ export async function initKeymap(): Promise<void> {
     const diff = applyCommandAliases(file.bindings, COMMAND_ID_ALIASES);
     useKeymapStore.getState().setDiff(diff);
   } catch (e) {
-    notify.error(`Could not load keybindings: ${formatAppError(e)}`);
+    notify.error(`Could not load keybindings: ${formatAppError(e)}`, { background: true });
   }
 }
 

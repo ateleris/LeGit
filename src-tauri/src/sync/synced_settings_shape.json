@@ -1,5 +1,5 @@
 {
-  "revision": 1,
+  "revision": 2,
   "shape": {
     "active_theme": "null",
     "auto_fetch_enabled": "bool",
@@ -51,6 +51,7 @@
     "panel_border_width": "number",
     "panel_corner_radius": "number",
     "panel_gap": "number",
+    "problem_notice_style": "string",
     "profile_assignments": {
       "host/repo": "string"
     },

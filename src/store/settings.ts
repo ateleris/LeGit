@@ -15,6 +15,7 @@ import type {
   RegionPlacement,
   RepoTabStyle,
   SwitchDirtyBehavior,
+  ProblemNoticeStyle,
   SyncProbe,
   SyncStatusPayload,
 } from "../lib/types";
@@ -240,6 +241,7 @@ interface SettingsStore {
   setSuppressedAutoOpenPanels: (panels: string[]) => Promise<void>;
   setWorkingChangesSectionOrder: (order: string[]) => Promise<void>;
   setSwitchDirtyBehavior: (behavior: SwitchDirtyBehavior) => Promise<void>;
+  setProblemNoticeStyle: (style: ProblemNoticeStyle) => Promise<void>;
   setPullStrategy: (strategy: PullStrategy) => Promise<void>;
   setStashIncludeUntracked: (include: boolean) => Promise<void>;
   setLaneColoredBranchChips: (enabled: boolean) => Promise<void>;
@@ -271,10 +273,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
       const prev = get().syncStatus?.kind ?? null;
       set({ syncStatus: status });
       if (shouldToastSyncStatus(prev, status.kind)) {
-        notify.error(`Settings sync: ${status.message ?? syncStatusText(status)}`);
+        notify.error(`Settings sync: ${status.message ?? syncStatusText(status)}`, {
+          background: true,
+        });
       }
       const superseded = supersededNote(status);
-      if (superseded) notify.warning(superseded);
+      if (superseded) notify.warning(superseded, { background: true });
       const hint = newerVersionHint(status);
       if (hint && !newerVersionHintShown) {
         newerVersionHintShown = true;
@@ -367,6 +371,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 
     async setConfirmDiscard(confirm) {
       await patch({ confirm_discard: confirm });
+    },
+    async setProblemNoticeStyle(style) {
+      await patch({ problem_notice_style: style });
     },
     async setDetectCaseRenames(enabled) {
       await patch({ detect_case_renames: enabled });

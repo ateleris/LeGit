@@ -43,7 +43,7 @@ export function handleRemoteHostStatus(p: RemoteHostStatusPayload) {
       useNotificationsStore.getState().dismiss(existing);
       disconnectToasts.delete(p.distro);
     } else {
-      notify.error(`Connection to ${p.distro} lost`);
+      notify.error(`Connection to ${p.distro} lost`, { background: true });
     }
   } else if (p.status === "connected" && existing != null) {
     useNotificationsStore.getState().dismiss(existing);
@@ -59,7 +59,7 @@ export function handleRemoteHostGit(p: RemoteHostGitPayload) {
   const message = remoteHostGitMessage(p);
   if (!message || gitWarnedDistros.has(p.distro)) return;
   gitWarnedDistros.add(p.distro);
-  notify.error(message);
+  notify.error(message, { background: true });
 }
 
 export function useRemoteHostEvents() {

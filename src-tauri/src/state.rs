@@ -140,6 +140,18 @@ pub enum RepoTabStyle {
     Browser,
 }
 
+/// Where error and warning notices appear: as a toast that dismisses itself,
+/// or as a banner or popup that stays until dismissed. Notices raised by
+/// background work stay toasts in every mode (decided in the frontend).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProblemNoticeStyle {
+    #[default]
+    Toast,
+    Banner,
+    Popup,
+}
+
 /// Absolute date format for the Commits panel's Date column (applies when
 /// `commit_date_absolute` is on). Rendering lives in the frontend
 /// (`src/lib/time.ts`); this only persists the choice.
@@ -441,6 +453,8 @@ pub struct GlobalSettings {
     /// actions run immediately.
     #[serde(default = "default_true")]
     pub confirm_discard: bool,
+    #[serde(default)]
+    pub problem_notice_style: ProblemNoticeStyle,
     /// Detect case-only renames git status cannot see (tracked path vs
     /// on-disk case on case-insensitive filesystems) and offer to stage
     /// them. When off, the scan never runs.
@@ -668,6 +682,7 @@ impl Default for GlobalSettings {
             stash_base_lane_color: false,
             watcher_enabled: true,
             confirm_discard: true,
+            problem_notice_style: ProblemNoticeStyle::default(),
             detect_case_renames: true,
             checkout_new_branch: true,
             auto_fetch_enabled: false,
@@ -1751,6 +1766,17 @@ mod tests {
         ] {
             assert!(GlobalSettings::default().with_patch(&patch).is_err(), "accepted {patch}");
         }
+    }
+
+    #[test]
+    fn global_settings_patch_sets_the_problem_notice_style() {
+        let current = GlobalSettings::default();
+        assert_eq!(current.problem_notice_style, ProblemNoticeStyle::Toast);
+        let next = current
+            .with_patch(&serde_json::json!({ "problem_notice_style": "popup" }))
+            .unwrap();
+        assert_eq!(next.problem_notice_style, ProblemNoticeStyle::Popup);
+        assert!(current.with_patch(&serde_json::json!({ "problem_notice_style": "modal" })).is_err());
     }
 
     #[test]

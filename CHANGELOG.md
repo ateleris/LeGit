@@ -21,6 +21,9 @@ lives in the git log and the GitHub release notes.
 - File lists (Working Changes, changed files, Compare, Files), the File
   History list and the Work Log's day list highlight the row under the
   pointer
+- Global setting "Errors and warnings": show them as a toast (as before), as
+  a banner below the repo tabs or as a popup; banner and popup stay until
+  dismissed, so a failed push cannot go unnoticed
 
 ### Fixed
 

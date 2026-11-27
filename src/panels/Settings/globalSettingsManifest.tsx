@@ -17,6 +17,7 @@ import {
   BranchSwitchingSection,
   CheckoutRemoteFastForwardSection,
   ConfirmDiscardSection,
+  ProblemNoticeSection,
   DetectCaseRenamesSection,
   ExternalEditorSection,
   LargeFileWarningSection,
@@ -200,6 +201,12 @@ export function buildGlobalSettingsGroups(hasWsl: boolean): SettingsGroupDef[] {
           title: "Destructive action confirmation",
           keywords: ["confirm", "discard", "delete", "prompt"],
           render: () => <ConfirmDiscardSection />,
+        },
+        {
+          id: "problem-notices",
+          title: "Errors and warnings",
+          keywords: ["error", "warning", "toast", "banner", "popup", "dialog", "notification", "failed"],
+          render: () => <ProblemNoticeSection />,
         },
         {
           id: "external-editor",

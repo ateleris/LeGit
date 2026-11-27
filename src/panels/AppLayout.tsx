@@ -22,6 +22,7 @@ import type { RegionPlacement } from "../lib/types";
 import { GlobalDock } from "./GlobalDock";
 import { CloneProgressView } from "./CloneProgressView";
 import { OpStateStrip } from "./OpStateStrip";
+import { ProblemBanner } from "./ProblemNotices";
 import { NoRepoHint } from "./NoRepoHint";
 import { LfsWarningBanner } from "./LfsWarningBanner";
 import { RepoDock } from "./RepoDock";
@@ -378,6 +379,7 @@ export function AppLayout() {
           <div style={{ flex: 1, minWidth: collapsed ? 0 : MIN_WIDTH, display: "flex", flexDirection: "column" }}>
             <RepoTabBar />
             <OpStateStrip />
+            <ProblemBanner />
             <LfsWarningBanner />
             <div className="legit-repo-region" style={{ flex: 1, minHeight: 0, position: "relative" }}>
               <RepoDock />
@@ -415,6 +417,7 @@ export function AppLayout() {
       </div>
       <RepoTabBar />
       <OpStateStrip />
+      <ProblemBanner />
       <LfsWarningBanner />
       <div className="legit-repo-region" style={{ flex: 1, minHeight: 0, position: "relative" }}>
         <RepoDock />

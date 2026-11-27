@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useDelayedBusy } from "../shared/useDelayedBusy";
 import { useSettingsStore } from "../../store/settings";
 import { ALL_PANELS, SUPPRESSIBLE_SUMMON_PANELS } from "../registry";
-import type { PushRecurseMode, SwitchDirtyBehavior } from "../../lib/types";
+import type { ProblemNoticeStyle, PushRecurseMode, SwitchDirtyBehavior } from "../../lib/types";
 import {
   FieldNote,
   Section,
@@ -456,6 +456,50 @@ export function BranchSwitchingSection() {
           label="Auto-stash and keep stashed"
           detail="stashes changes and leaves them parked; the new branch starts clean"
         />
+      </div>
+    </Section>
+  );
+}
+
+export function ProblemNoticeSection() {
+  const style = useSettingsStore((s) => s.settings?.problem_notice_style ?? "toast");
+  const setProblemNoticeStyle = useSettingsStore((s) => s.setProblemNoticeStyle);
+  const { busy: saving, run } = useDelayedBusy();
+
+  const select = (next: ProblemNoticeStyle) => {
+    if (next === style) return;
+    return run(() => setProblemNoticeStyle(next));
+  };
+
+  return (
+    <Section title="Errors and warnings">
+      <WritesTo note="applies to all repos" />
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.667em", marginTop: "0.667em" }}>
+        <SettingRadio
+          checked={style === "toast"}
+          onSelect={() => void select("toast")}
+          disabled={saving}
+          label="Toast"
+          detail="a notice in the corner that disappears after 30 seconds"
+        />
+        <SettingRadio
+          checked={style === "banner"}
+          onSelect={() => void select("banner")}
+          disabled={saving}
+          label="Banner"
+          detail="a bar below the repo tabs that stays until dismissed"
+        />
+        <SettingRadio
+          checked={style === "popup"}
+          onSelect={() => void select("popup")}
+          disabled={saving}
+          label="Popup"
+          detail="a dialog that must be confirmed before you continue"
+        />
+      </div>
+      <div className="legit-subtle" style={{ marginTop: "0.667em", fontSize: "var(--fz-sm)" }}>
+        Problems from background work (settings sync, a lost WSL connection) always show as a
+        toast.
       </div>
     </Section>
   );

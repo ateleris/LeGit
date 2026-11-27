@@ -3898,7 +3898,7 @@ watcher_enabled?: boolean;
  * Whether discarding changes asks for confirmation first. When off, discard
  * actions run immediately.
  */
-confirm_discard?: boolean; 
+confirm_discard?: boolean; problem_notice_style?: ProblemNoticeStyle; 
 /**
  * Detect case-only renames git status cannot see (tracked path vs
  * on-disk case on case-insensitive filesystems) and offer to stage
@@ -4324,6 +4324,12 @@ signing_keys: CachedPlatformKey[] | null; live: boolean;
  * RFC 3339; only meaningful when `live` is false.
  */
 checked_at: string | null }
+/**
+ * Where error and warning notices appear: as a toast that dismisses itself,
+ * or as a banner or popup that stays until dismissed. Notices raised by
+ * background work stay toasts in every mode (decided in the frontend).
+ */
+export type ProblemNoticeStyle = "toast" | "banner" | "popup"
 /**
  * `apply_profile_to_repo`'s result: the refreshed status plus, for a repo on
  * a remote host, how the profile's auth key resolved there.

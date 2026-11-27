@@ -122,6 +122,7 @@ export type {
   RepoSettings,
   RepoSummary,
   RepoTabStyle,
+  ProblemNoticeStyle,
   ResetMode,
   ResolvedIdentity,
   RestoreResult,

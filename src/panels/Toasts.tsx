@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useNotificationsStore, type Notification } from "../store/notifications";
 import { useSummonStore } from "../store/summon";
+import { ProblemPopup } from "./ProblemNotices";
 
 const AUTO_DISMISS_MS = 4000;
 /** Errors linger long enough to read and react, but no longer pile up
@@ -14,13 +15,17 @@ const ERROR_AUTO_DISMISS_MS = 30_000;
 export function Toasts() {
   const toasts = useNotificationsStore((s) => s.toasts);
   const dismiss = useNotificationsStore((s) => s.dismiss);
-  if (toasts.length === 0) return null;
   return (
-    <div className="legit-toasts">
-      {toasts.map((t) => (
-        <Toast key={t.id} toast={t} onDismiss={() => dismiss(t.id)} />
-      ))}
-    </div>
+    <>
+      <ProblemPopup />
+      {toasts.length > 0 && (
+        <div className="legit-toasts">
+          {toasts.map((t) => (
+            <Toast key={t.id} toast={t} onDismiss={() => dismiss(t.id)} />
+          ))}
+        </div>
+      )}
+    </>
   );
 }
 
